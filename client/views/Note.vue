@@ -145,6 +145,7 @@ import ToastViewer from "../components/toastui/ToastViewer.vue";
 import { authTypes } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { getToastOptions } from "../helpers.js";
+import { refreshNoteIndex } from "../noteIndex.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
 
 const props = defineProps({
@@ -243,6 +244,7 @@ function deleteHandler() {
 function deleteConfirmedHandler() {
   deleteNote(note.value.title)
     .then(() => {
+      refreshNoteIndex();
       toast.add(getToastOptions("Note deleted ✓", "Success", "success"));
       router.push({ name: "home" });
     })
@@ -284,6 +286,7 @@ function saveNew(newTitle, newContent, close = false) {
     .then((data) => {
       clearDraft();
       note.value = data;
+      refreshNoteIndex();
       router
         .push({
           name: "note",
@@ -305,10 +308,14 @@ function saveExisting(newTitle, newContent, close = false) {
     return;
   }
 
-  updateNote(note.value.title, newTitle, newContent)
+  const oldTitle = note.value.title;
+  updateNote(oldTitle, newTitle, newContent)
     .then((data) => {
       clearDraft();
       note.value = data;
+      if (oldTitle != data.title) {
+        refreshNoteIndex();
+      }
       router.replace({ name: "note", params: { title: note.value.title } });
       noteSaveSuccess(close);
     })

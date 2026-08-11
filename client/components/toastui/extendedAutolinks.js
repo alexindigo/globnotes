@@ -1,6 +1,8 @@
 import { params, searchSortOptions } from "../../constants.js";
+import { resolveNoteTitle } from "../../noteIndex.js";
 
 import router from "../../router.js";
+import { slugifyHeading } from "./baseOptions.js";
 
 /*
  * Sourced from toast-ui. Their autolink options are
@@ -77,18 +79,41 @@ export function parseUrlLink(source) {
 
 function parseWikiLink(source) {
   const matched = source.matchAll(/\[\[\s*(\S(?:[^\[\]]*?\S)?)\s*\]\]/g);
-  if (matched) {
-    return Array.from(matched).map((match) => {
-      const text = match[1];
-      return {
-        text,
-        range: [match.index, match.index + match[0].length - 1],
-        url: `${router.resolve({ name: "note", params: { title: text.trim() } }).href}`,
-      };
-    });
+  if (!matched) {
+    return null;
   }
-
-  return null;
+  return Array.from(matched).flatMap((match) => {
+    // Skip embeds (![[...]]); those are handled by preprocessing.
+    if (match.index > 0 && source[match.index - 1] === "!") {
+      return [];
+    }
+    const inner = match[1];
+    const pipeIndex = inner.indexOf("|");
+    const targetPart = (
+      pipeIndex === -1 ? inner : inner.slice(0, pipeIndex)
+    ).trim();
+    const alias =
+      pipeIndex === -1 ? null : inner.slice(pipeIndex + 1).trim();
+    const hashIndex = targetPart.indexOf("#");
+    const target =
+      hashIndex === -1 ? targetPart : targetPart.slice(0, hashIndex);
+    const anchor =
+      hashIndex === -1 ? null : targetPart.slice(hashIndex + 1);
+    const route = {
+      name: "note",
+      params: { title: resolveNoteTitle(target) },
+    };
+    if (anchor) {
+      route.hash = `#${slugifyHeading(anchor)}`;
+    }
+    return [
+      {
+        text: alias || targetPart,
+        range: [match.index, match.index + match[0].length - 1],
+        url: `${router.resolve(route).href}`,
+      },
+    ];
+  });
 }
 
 function parseTagLink(source) {

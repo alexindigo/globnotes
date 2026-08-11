@@ -19,6 +19,8 @@
     "@toast-ui/editor": "3.2.2",
     "@toast-ui/editor-plugin-code-syntax-highlight": "3.1.0",
     "axios": "1.19.0",
+    "katex": "^0.18.4",
+    "mermaid": "^11.16.1",
     "mousetrap": "1.6.5",
     "pinia": "4.0.2",
     "primevue": "3.53.1",

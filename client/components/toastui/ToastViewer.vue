@@ -4,8 +4,11 @@
 
 <script setup>
 import Viewer from "@toast-ui/editor/dist/toastui-editor-viewer";
+import renderMathInElement from "katex/contrib/auto-render/auto-render.js";
+import mermaid from "mermaid";
 import { onMounted, ref } from "vue";
 
+import { preprocessObsidianFlavored } from "../../obsidianFlavored.js";
 import baseOptions from "./baseOptions.js";
 import extendedAutolinks from "./extendedAutolinks.js";
 
@@ -15,12 +18,24 @@ const props = defineProps({
 
 const viewerElement = ref();
 
+mermaid.initialize({ startOnLoad: false });
+
 onMounted(() => {
   new Viewer({
     ...baseOptions,
     extendedAutolinks,
     el: viewerElement.value,
-    initialValue: props.initialValue,
+    initialValue: preprocessObsidianFlavored(props.initialValue),
+  });
+  mermaid
+    .run({ nodes: viewerElement.value.querySelectorAll(".mermaid") })
+    .catch((error) => console.error("Mermaid rendering failed", error));
+  renderMathInElement(viewerElement.value, {
+    delimiters: [
+      { left: "$$", right: "$$", display: true },
+      { left: "$", right: "$", display: false },
+    ],
+    throwOnError: false,
   });
 });
 </script>
@@ -29,5 +44,6 @@ onMounted(() => {
 @import "@toast-ui/editor/dist/toastui-editor-viewer.css";
 @import "prismjs/themes/prism.css";
 @import "@toast-ui/editor-plugin-code-syntax-highlight/dist/toastui-editor-plugin-code-syntax-highlight.css";
+@import "katex/dist/katex.min.css";
 @import "./toastui-editor-overrides.scss";
 </style>

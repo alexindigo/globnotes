@@ -140,6 +140,15 @@ export async function getTags() {
   }
 }
 
+export async function getNoteIndex() {
+  try {
+    const response = await api.get("api/note-index");
+    return response.data;
+  } catch (response) {
+    return Promise.reject(response);
+  }
+}
+
 export async function uploadFile(file, directory) {
   try {
     const formData = new FormData();

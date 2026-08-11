@@ -27,6 +27,7 @@ import { apiErrorHandler, getConfig } from "./api.js";
 import PrimeToast from "./components/PrimeToast.vue";
 import { useGlobalStore } from "./globalStore.js";
 import { loadTheme } from "./helpers.js";
+import { refreshNoteIndex } from "./noteIndex.js";
 import NavBar from "./partials/NavBar.vue";
 import SearchModal from "./partials/SearchModal.vue";
 import LoadingIndicator from "./components/LoadingIndicator.vue";
@@ -67,6 +68,7 @@ getConfig()
   .then((data) => {
     globalStore.config = data;
     loadingIndicator.value.setLoaded();
+    refreshNoteIndex();
   })
   .catch((error) => {
     apiErrorHandler(error, toast);
