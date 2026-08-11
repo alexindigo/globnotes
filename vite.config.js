@@ -8,7 +8,7 @@ export default defineConfig({
   root: "client",
   base: "",
   server: {
-    // Note: The FLATNOTES_PATH_PREFIX environment variable is not supported by the dev server
+    // Note: The GLOBNOTES_PATH_PREFIX environment variable is not supported by the dev server
     port: 8080,
     proxy: {
       "/api/": {

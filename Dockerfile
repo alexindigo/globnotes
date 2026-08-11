@@ -30,14 +30,14 @@ ARG BUILD_DIR
 ENV PUID=1000
 ENV PGID=1000
 ENV EXEC_TOOL=gosu
-ENV FLATNOTES_HOST=0.0.0.0
-ENV FLATNOTES_PORT=8080
+ENV GLOBNOTES_HOST=0.0.0.0
+ENV GLOBNOTES_PORT=8080
 
 ENV APP_PATH=/app
-ENV FLATNOTES_PATH=/data
+ENV GLOBNOTES_PATH=/data
 
 RUN mkdir -p ${APP_PATH}
-RUN mkdir -p ${FLATNOTES_PATH}
+RUN mkdir -p ${GLOBNOTES_PATH}
 
 RUN apt update && apt install -y \
     curl \
@@ -46,7 +46,7 @@ RUN apt update && apt install -y \
 
 WORKDIR ${APP_PATH}
 
-COPY LICENSE pyproject.toml .python-version uv.lock ./
+COPY LICENSE THIRD-PARTY-NOTICES.md pyproject.toml .python-version uv.lock ./
 
 ENV UV_NO_MANAGED_PYTHON=1
 ENV UV_PROJECT_ENVIRONMENT=/usr/local
@@ -59,7 +59,7 @@ COPY entrypoint.sh healthcheck.sh /
 RUN chmod +x /entrypoint.sh /healthcheck.sh
 
 VOLUME /data
-EXPOSE ${FLATNOTES_PORT}/tcp
+EXPOSE ${GLOBNOTES_PORT}/tcp
 HEALTHCHECK --interval=60s --timeout=10s CMD /healthcheck.sh
 
 ENTRYPOINT [ "/entrypoint.sh" ]

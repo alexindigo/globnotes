@@ -48,7 +48,7 @@ class FileSystemNotes(BaseNotes):
     )
 
     def __init__(self):
-        self.storage_path = get_env("FLATNOTES_PATH", mandatory=True)
+        self.storage_path = get_env("GLOBNOTES_PATH", mandatory=True)
         if not os.path.exists(self.storage_path):
             raise NotADirectoryError(
                 f"'{self.storage_path}' is not a valid directory."
@@ -161,7 +161,7 @@ class FileSystemNotes(BaseNotes):
 
     @property
     def _index_path(self):
-        return os.path.join(self.storage_path, ".flatnotes")
+        return os.path.join(self.storage_path, ".globnotes")
 
     def _path_from_title(self, title: str) -> str:
         return os.path.join(self.storage_path, title + MARKDOWN_EXT)

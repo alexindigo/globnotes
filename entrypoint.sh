@@ -1,8 +1,8 @@
 #!/bin/sh
 
 [ "$EXEC_TOOL" ] || EXEC_TOOL=gosu
-[ "$FLATNOTES_HOST" ] || FLATNOTES_HOST=0.0.0.0
-[ "$FLATNOTES_PORT" ] || FLATNOTES_PORT=8080
+[ "$GLOBNOTES_HOST" ] || GLOBNOTES_HOST=0.0.0.0
+[ "$GLOBNOTES_PORT" ] || GLOBNOTES_PORT=8080
 
 set -e
 
@@ -25,14 +25,14 @@ flatnotes_command="python -m \
                   uvicorn \
                   main:app \
                   --app-dir server \
-                  --host ${FLATNOTES_HOST} \
-                  --port ${FLATNOTES_PORT} \
+                  --host ${GLOBNOTES_HOST} \
+                  --port ${GLOBNOTES_PORT} \
                   --proxy-headers \
                   --forwarded-allow-ips '*'"
 
 if [ `id -u` -eq 0 ] && [ `id -g` -eq 0 ]; then
     echo Setting file permissions...
-    chown -R ${PUID}:${PGID} ${FLATNOTES_PATH}
+    chown -R ${PUID}:${PGID} ${GLOBNOTES_PATH}
 
     echo Starting flatnotes as user ${PUID}...
     exec ${EXEC_TOOL} ${PUID}:${PGID} ${flatnotes_command}

@@ -23,18 +23,18 @@ class LocalAuth(BaseAuth):
     JWT_ALGORITHM = "HS256"
 
     def __init__(self) -> None:
-        self.username = get_env("FLATNOTES_USERNAME", mandatory=True).lower()
-        self.password = get_env("FLATNOTES_PASSWORD", mandatory=True)
-        self.secret_key = get_env("FLATNOTES_SECRET_KEY", mandatory=True)
+        self.username = get_env("GLOBNOTES_USERNAME", mandatory=True).lower()
+        self.password = get_env("GLOBNOTES_PASSWORD", mandatory=True)
+        self.secret_key = get_env("GLOBNOTES_SECRET_KEY", mandatory=True)
         self.session_expiry_days = get_env(
-            "FLATNOTES_SESSION_EXPIRY_DAYS", default=30, cast_int=True
+            "GLOBNOTES_SESSION_EXPIRY_DAYS", default=30, cast_int=True
         )
 
         # TOTP
         self.is_totp_enabled = False
         if global_config.auth_type == AuthType.TOTP:
             self.is_totp_enabled = True
-            self.totp_key = get_env("FLATNOTES_TOTP_KEY", mandatory=True)
+            self.totp_key = get_env("GLOBNOTES_TOTP_KEY", mandatory=True)
             self.totp_key = b32encode(self.totp_key.encode("utf-8"))
             self.totp = TOTP(self.totp_key)
             self.last_used_totp = None

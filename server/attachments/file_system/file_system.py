@@ -14,7 +14,7 @@ from ..models import AttachmentCreateResponse
 
 class FileSystemAttachments(BaseAttachments):
     def __init__(self):
-        self.base_path = get_env("FLATNOTES_PATH", mandatory=True)
+        self.base_path = get_env("GLOBNOTES_PATH", mandatory=True)
         if not os.path.exists(self.base_path):
             raise NotADirectoryError(
                 f"'{self.base_path}' is not a valid directory."

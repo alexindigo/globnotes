@@ -1,7 +1,8 @@
 [project]
-name = "flatnotes"
-version = "5.5.4"
-description = "A database-less note taking web app that utilises a flat folder of markdown files for storage."
+name = "globnotes"
+version = "0.1.0"
+description = "A database-less note taking web app where a note's title is its path — built for Obsidian vaults and nested markdown trees."
+license = "LGPL-3.0-only"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
