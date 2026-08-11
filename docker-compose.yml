@@ -1,0 +1,21 @@
+services:
+  globnotes:
+    image: ghcr.io/alexindigo/globnotes:latest
+    container_name: globnotes
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./notes:/data
+      # Optional: mount additional sources as subdirectories
+      # - /srv/dad-notes:/data/dad
+      # - /srv/mom-notes:/data/mom
+    environment:
+      # Optional. Leave unset for the first-run setup wizard, or choose
+      # explicitly:
+      # GLOBNOTES_AUTH_TYPE: "none"  # trusted home network only!
+      # GLOBNOTES_AUTH_TYPE: "password"
+      # GLOBNOTES_USERNAME: "admin"
+      # GLOBNOTES_PASSWORD: "change-me"
+      # GLOBNOTES_SECRET_KEY: "change-me-to-a-long-random-string"
+      TZ: "UTC"
