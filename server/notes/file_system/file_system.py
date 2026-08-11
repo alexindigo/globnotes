@@ -173,6 +173,15 @@ class FileSystemNotes(BaseNotes):
             tags = reader.field_terms("tags")
             return [tag for tag in tags]
 
+    def get_titles(self) -> list[str]:
+        """Return a list of all note titles (paths relative to the storage
+        root, without extension). Always fresh (read from the filesystem,
+        not the index)."""
+        return [
+            self._strip_ext(filename)
+            for filename in self._list_all_note_filenames()
+        ]
+
     @property
     def _index_path(self):
         return os.path.join(self.storage_path, ".globnotes")

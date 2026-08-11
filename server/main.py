@@ -176,6 +176,17 @@ def get_tags():
     return note_storage.get_tags()
 
 
+@router.get(
+    "/api/note-index",
+    dependencies=auth_deps,
+    response_model=List[str],
+)
+def get_note_index():
+    """Get a list of all note titles. Used by the client to resolve
+    wiki-links."""
+    return note_storage.get_titles()
+
+
 # endregion
 
 

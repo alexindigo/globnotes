@@ -57,3 +57,10 @@ class TestNoteRoutes:
         response = client.get("/api/search", params={"term": "*"})
         titles = [r["title"] for r in response.json()]
         assert "dad/recipes/soup" in titles
+
+    def test_note_index_returns_all_titles(self, client):
+        client.post("/api/notes", json={"title": "a/b", "content": "1"})
+        client.post("/api/notes", json={"title": "c", "content": "2"})
+        response = client.get("/api/note-index")
+        assert response.status_code == 200
+        assert sorted(response.json()) == ["a/b", "c"]

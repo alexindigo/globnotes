@@ -40,3 +40,8 @@ class BaseNotes(ABC):
     def get_tags(self) -> list[str]:
         """Get a list of all indexed tags."""
         pass
+
+    @abstractmethod
+    def get_titles(self) -> list[str]:
+        """Get a list of all note titles."""
+        pass
