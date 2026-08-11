@@ -162,7 +162,7 @@ const isDraftModalVisible = ref(false);
 const isNewNote = computed(() => !props.title);
 const loadingIndicator = ref();
 const note = ref({});
-const reservedFilenameCharacters = /[<>:"/\\|?*]/;
+const reservedFilenameCharacters = /[<>:"\\|?*]/;
 const router = useRouter();
 const newTitle = ref();
 const toast = useToast();
@@ -496,7 +496,7 @@ function entityTooLargeToast(entityName) {
 function badFilenameToast(entityName) {
   toast.add(
     getToastOptions(
-      'Due to filename restrictions, the following characters are not allowed: <>:"/\\|?*',
+      'Due to filename restrictions, the following characters are not allowed: <>:"\\|?*',
       `Invalid ${entityName}`,
       "error",
     ),

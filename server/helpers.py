@@ -25,6 +25,52 @@ def is_valid_filename(value):
     return value
 
 
+NOTE_PATH_INVALID_CHARS = r'<>:"\|?*'
+NOTE_PATH_MAX_SEGMENT_BYTES = 255
+
+
+def is_valid_note_path(value):
+    """Raise ValueError if the declared string is not a valid note path.
+
+    A note path is a POSIX-style relative path with segments separated by
+    '/'. Each segment must be non-empty, must not be '.' or '..', must not
+    start with '.', must not contain any of <>:"\\|?* and must be at most
+    255 bytes."""
+    if not value:
+        raise ValueError("title cannot be empty")
+    for segment in value.split("/"):
+        if not segment:
+            raise ValueError("title cannot contain empty path segments")
+        if segment in (".", ".."):
+            raise ValueError(
+                "title cannot contain '.' or '..' path segments"
+            )
+        if segment.startswith("."):
+            raise ValueError("title path segments cannot start with '.'")
+        if any(char in segment for char in NOTE_PATH_INVALID_CHARS):
+            raise ValueError(
+                "title cannot include any of the following characters: "
+                + NOTE_PATH_INVALID_CHARS
+            )
+        if len(segment.encode("utf-8")) > NOTE_PATH_MAX_SEGMENT_BYTES:
+            raise ValueError("title path segments cannot exceed 255 bytes")
+    return value
+
+
+def resolve_in_root(root: str, rel_path: str) -> str:
+    """Resolve rel_path inside root and verify containment.
+
+    Returns the absolute, symlink-resolved path. Raises ValueError if
+    rel_path is not a valid note path or if the resolved path escapes root
+    (via '..' segments or symlinks)."""
+    is_valid_note_path(rel_path)
+    root_real = os.path.realpath(root)
+    resolved = os.path.realpath(os.path.join(root_real, rel_path))
+    if os.path.commonpath([root_real, resolved]) != root_real:
+        raise ValueError(f"'{rel_path}' resolves outside the root directory")
+    return resolved
+
+
 def strip_whitespace(value):
     """Return the declared string with leading and trailing whitespace
     removed."""

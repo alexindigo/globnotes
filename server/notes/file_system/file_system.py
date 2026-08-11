@@ -18,14 +18,14 @@ from whoosh.query import Every
 from whoosh.searching import Hit
 from whoosh.support.charset import accent_map
 
-from helpers import get_env, is_valid_filename
+from helpers import get_env, is_valid_note_path, resolve_in_root
 from logger import logger
 
 from ..base import BaseNotes
 from ..models import Note, NoteCreate, NoteUpdate, SearchResult
 
 MARKDOWN_EXT = ".md"
-INDEX_SCHEMA_VERSION = "5"
+INDEX_SCHEMA_VERSION = "6"
 
 StemmingFoldingAnalyzer = StemmingAnalyzer() | CharsetFilter(accent_map)
 
@@ -59,7 +59,13 @@ class FileSystemNotes(BaseNotes):
     def create(self, data: NoteCreate) -> Note:
         """Create a new note."""
         filepath = self._path_from_title(data.title)
-        self._write_file(filepath, data.content)
+        try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            self._write_file(filepath, data.content)
+        except (NotADirectoryError, IsADirectoryError) as e:
+            raise FileExistsError(
+                f"Failed to create '{data.title}': {e.strerror}"
+            )
         return Note(
             title=data.title,
             content=data.content,
@@ -68,7 +74,7 @@ class FileSystemNotes(BaseNotes):
 
     def get(self, title: str) -> Note:
         """Get a specific note."""
-        is_valid_filename(title)
+        is_valid_note_path(title)
         filepath = self._path_from_title(title)
         content = self._read_file(filepath)
         return Note(
@@ -79,7 +85,7 @@ class FileSystemNotes(BaseNotes):
 
     def update(self, title: str, data: NoteUpdate) -> Note:
         """Update a specific note."""
-        is_valid_filename(title)
+        is_valid_note_path(title)
         filepath = self._path_from_title(title)
         if data.new_title is not None:
             new_filepath = self._path_from_title(data.new_title)
@@ -87,7 +93,14 @@ class FileSystemNotes(BaseNotes):
                 raise FileExistsError(
                     f"Failed to rename. '{data.new_title}' already exists."
                 )
-            os.rename(filepath, new_filepath)
+            try:
+                os.makedirs(os.path.dirname(new_filepath), exist_ok=True)
+                os.rename(filepath, new_filepath)
+            except (NotADirectoryError, IsADirectoryError) as e:
+                raise FileExistsError(
+                    f"Failed to rename to '{data.new_title}': {e.strerror}"
+                )
+            self._prune_empty_parents(os.path.dirname(filepath))
             title = data.new_title
             filepath = new_filepath
         if data.new_content is not None:
@@ -103,9 +116,10 @@ class FileSystemNotes(BaseNotes):
 
     def delete(self, title: str) -> None:
         """Delete a specific note."""
-        is_valid_filename(title)
+        is_valid_note_path(title)
         filepath = self._path_from_title(title)
         os.remove(filepath)
+        self._prune_empty_parents(os.path.dirname(filepath))
 
     def search(
         self,
@@ -164,7 +178,20 @@ class FileSystemNotes(BaseNotes):
         return os.path.join(self.storage_path, ".globnotes")
 
     def _path_from_title(self, title: str) -> str:
-        return os.path.join(self.storage_path, title + MARKDOWN_EXT)
+        return resolve_in_root(self.storage_path, title + MARKDOWN_EXT)
+
+    def _prune_empty_parents(self, dirpath: str) -> None:
+        """Remove empty parent directories up to (but excluding) the storage
+        root. Stops at the first non-empty or non-removable directory (e.g. a
+        mount point)."""
+        root = os.path.realpath(self.storage_path)
+        dirpath = os.path.realpath(dirpath)
+        while dirpath != root and os.path.commonpath([root, dirpath]) == root:
+            try:
+                os.rmdir(dirpath)
+            except OSError:
+                break
+            dirpath = os.path.dirname(dirpath)
 
     def _get_by_filename(self, filename: str) -> Note:
         """Get a note by its filename."""
@@ -223,11 +250,14 @@ class FileSystemNotes(BaseNotes):
         )
 
     def _list_all_note_filenames(self) -> List[str]:
-        """Return a list of all note filenames."""
+        """Return a list of all note filenames, relative to the storage
+        path. Hidden directories (such as the index directory) are
+        skipped."""
         return [
-            os.path.split(filepath)[1]
+            os.path.relpath(filepath, self.storage_path)
             for filepath in glob.glob(
-                os.path.join(self.storage_path, "*" + MARKDOWN_EXT)
+                os.path.join(self.storage_path, "**/*" + MARKDOWN_EXT),
+                recursive=True,
             )
         ]
 

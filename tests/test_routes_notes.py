@@ -1,0 +1,59 @@
+class TestNoteRoutes:
+    def test_create_and_get_nested(self, client):
+        response = client.post(
+            "/api/notes", json={"title": "a/b/c", "content": "hi"}
+        )
+        assert response.status_code == 200
+        response = client.get("/api/notes/a/b/c")
+        assert response.status_code == 200
+        assert response.json()["title"] == "a/b/c"
+        assert response.json()["content"] == "hi"
+
+    def test_get_missing_is_404(self, client):
+        assert client.get("/api/notes/no/such").status_code == 404
+
+    def test_get_invalid_title_is_400(self, client):
+        assert client.get("/api/notes/a<b").status_code == 400
+
+    def test_create_invalid_titles_rejected(self, client):
+        for title in ["../evil", "a//b", ".hidden/x", "a/../b"]:
+            response = client.post(
+                "/api/notes", json={"title": title, "content": "x"}
+            )
+            assert response.status_code in (400, 422), title
+
+    def test_create_duplicate_is_409(self, client):
+        client.post("/api/notes", json={"title": "a/b", "content": "1"})
+        response = client.post(
+            "/api/notes", json={"title": "a/b", "content": "2"}
+        )
+        assert response.status_code == 409
+
+    def test_patch_rename_nested(self, client):
+        client.post("/api/notes", json={"title": "a/b", "content": "x"})
+        response = client.patch("/api/notes/a/b", json={"newTitle": "x/y/z"})
+        assert response.status_code == 200
+        assert client.get("/api/notes/a/b").status_code == 404
+        assert client.get("/api/notes/x/y/z").status_code == 200
+
+    def test_patch_content(self, client):
+        client.post("/api/notes", json={"title": "a/b", "content": "old"})
+        response = client.patch(
+            "/api/notes/a/b", json={"newContent": "new"}
+        )
+        assert response.status_code == 200
+        assert response.json()["content"] == "new"
+
+    def test_delete_nested(self, client):
+        client.post("/api/notes", json={"title": "a/b", "content": "x"})
+        assert client.delete("/api/notes/a/b").status_code == 200
+        assert client.get("/api/notes/a/b").status_code == 404
+
+    def test_search_returns_nested_titles(self, client):
+        client.post(
+            "/api/notes",
+            json={"title": "dad/recipes/soup", "content": "yum"},
+        )
+        response = client.get("/api/search", params={"term": "*"})
+        titles = [r["title"] for r in response.json()]
+        assert "dad/recipes/soup" in titles
