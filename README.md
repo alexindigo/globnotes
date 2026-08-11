@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" width="333px"></img>
+</p>
+
 # globnotes
 
 A self-hosted, database-less note-taking web app where **a note's title is its path** — built for Obsidian vaults and nested markdown trees.

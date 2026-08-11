@@ -35,8 +35,16 @@
         src: url("assets/fonts/Poppins/Poppins-SemiBoldItalic.ttf");
     }
 
+    @font-face {
+        font-family: "Dancing Script";
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url("assets/fonts/DancingScript/DancingScript-Regular.otf");
+    }
+
     body {
-        --theme-brand: 248 166 107;
+        --theme-brand: 56 189 248;
         --theme-background: 255 255 255;
         --theme-background-elevated: 243 244 245;
         --theme-text: 44 49 57;
@@ -47,7 +55,7 @@
     }
 
     body.dark {
-        /* --theme-brand: 248 166 107; */
+        /* --theme-brand: 56 189 248; */
         --theme-background: 34 38 44;
         --theme-background-elevated: 44 49 57;
         --theme-text: 193 199 208;
