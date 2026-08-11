@@ -8,20 +8,16 @@ set -e
 
 echo "\
 ======================================
-======== Welcome to flatnotes ========
+======== Welcome to globnotes ========
 ======================================
 
-If you enjoy using flatnotes, please
-consider sponsoring the project at:
-
-https://sponsor.flatnotes.io
-
-It would really make my day 🙏.
+A fork of flatnotes by Adam Dullage,
+where a note's title is its path.
 
 ──────────────────────────────────────
 "
 
-flatnotes_command="python -m \
+globnotes_command="python -m \
                   uvicorn \
                   main:app \
                   --app-dir server \
@@ -34,11 +30,11 @@ if [ `id -u` -eq 0 ] && [ `id -g` -eq 0 ]; then
     echo Setting file permissions...
     chown -R ${PUID}:${PGID} ${GLOBNOTES_PATH}
 
-    echo Starting flatnotes as user ${PUID}...
-    exec ${EXEC_TOOL} ${PUID}:${PGID} ${flatnotes_command}
+    echo Starting globnotes as user ${PUID}...
+    exec ${EXEC_TOOL} ${PUID}:${PGID} ${globnotes_command}
 
 else
     echo "A user was set by docker, skipping file permission changes."
-    echo Starting flatnotes as user $(id -u)...
-    exec ${flatnotes_command}
+    echo Starting globnotes as user $(id -u)...
+    exec ${globnotes_command}
 fi
