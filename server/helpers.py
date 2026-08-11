@@ -1,5 +1,7 @@
+import hashlib
 import os
 import re
+import secrets
 import sys
 
 from pydantic import BaseModel
@@ -75,6 +77,30 @@ def strip_whitespace(value):
     """Return the declared string with leading and trailing whitespace
     removed."""
     return value.strip()
+
+
+def hash_password(password: str, iterations: int = 100_000) -> str:
+    """Hash a password for stored (file-backed) credentials."""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, iterations
+    )
+    return f"pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """Verify a password against a hash produced by hash_password."""
+    try:
+        _, iterations, salt_hex, digest_hex = stored.split("$")
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            bytes.fromhex(salt_hex),
+            int(iterations),
+        )
+        return secrets.compare_digest(digest.hex(), digest_hex)
+    except (AttributeError, ValueError):
+        return False
 
 
 def get_env(

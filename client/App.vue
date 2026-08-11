@@ -4,15 +4,21 @@
     class="container mx-auto flex h-screen flex-col px-2 py-4 print:max-w-full"
   >
     <PrimeToast />
-    <SearchModal v-model="isSearchModalVisible" />
-    <NavBar
-      v-if="showNavBar"
-      ref="navBar"
-      :class="{ 'print:hidden': route.name == 'note' }"
-      :hide-logo="!showNavBarLogo"
-      @toggleSearchModal="toggleSearchModal"
+    <SetupModal
+      v-if="globalStore.config.setupRequired"
+      @completed="setupCompleted"
     />
-    <RouterView />
+    <template v-else>
+      <SearchModal v-model="isSearchModalVisible" />
+      <NavBar
+        v-if="showNavBar"
+        ref="navBar"
+        :class="{ 'print:hidden': route.name == 'note' }"
+        :hide-logo="!showNavBarLogo"
+        @toggleSearchModal="toggleSearchModal"
+      />
+      <RouterView />
+    </template>
   </LoadingIndicator>
 </template>
 
@@ -25,6 +31,7 @@ import { RouterView, useRoute } from "vue-router";
 
 import { apiErrorHandler, getConfig } from "./api.js";
 import PrimeToast from "./components/PrimeToast.vue";
+import SetupModal from "./components/SetupModal.vue";
 import { useGlobalStore } from "./globalStore.js";
 import { loadTheme } from "./helpers.js";
 import { refreshNoteIndex } from "./noteIndex.js";
@@ -85,6 +92,11 @@ const showNavBarLogo = computed(() => {
 
 function toggleSearchModal() {
   isSearchModalVisible.value = !isSearchModalVisible.value;
+}
+
+function setupCompleted() {
+  // Reload so the app boots fresh with the new auth state.
+  window.location.reload();
 }
 
 loadTheme();

@@ -1,5 +1,8 @@
+import json
+import os
 import sys
 from enum import Enum
+from typing import Literal, Optional
 
 from helpers import CustomBaseModel, get_env
 from logger import logger
@@ -8,7 +11,10 @@ from logger import logger
 class GlobalConfig:
     def __init__(self) -> None:
         logger.debug("Loading global config...")
-        self.auth_type: AuthType = self._load_auth_type()
+        self.notes_path: str = get_env("GLOBNOTES_PATH", mandatory=True)
+        self.stored_config = self._load_stored_config()
+        self.auth_type: Optional[AuthType] = self._load_auth_type()
+        self.setup_required: bool = self.auth_type is None
         self.quick_access_hide: bool = self._quick_access_hide()
         self.quick_access_title: str = self._quick_access_title()
         self.quick_access_term: str = self._quick_access_term()
@@ -16,13 +22,31 @@ class GlobalConfig:
         self.quick_access_limit: int = self._quick_access_limit()
         self.path_prefix: str = self._load_path_prefix()
 
-    def load_auth(self):
-        if self.auth_type in (AuthType.NONE, AuthType.READ_ONLY):
+    @property
+    def _config_path(self):
+        return os.path.join(self.notes_path, ".globnotes", "config.json")
+
+    def _load_stored_config(self):
+        """Load the config written by the first-run setup wizard (if any)."""
+        try:
+            with open(self._config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
             return None
-        elif self.auth_type in (AuthType.PASSWORD, AuthType.TOTP):
+
+    def save_stored_config(self, config: dict) -> None:
+        """Persist the first-run setup choice."""
+        os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
+        with open(self._config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        self.stored_config = config
+
+    def load_auth(self):
+        if self.auth_type in (AuthType.PASSWORD, AuthType.TOTP):
             from auth.local import LocalAuth
 
-            return LocalAuth()
+            return LocalAuth(self)
+        return None
 
     def load_note_storage(self):
         from notes.file_system import FileSystemNotes
@@ -36,20 +60,32 @@ class GlobalConfig:
 
     def _load_auth_type(self):
         key = "GLOBNOTES_AUTH_TYPE"
-        auth_type = get_env(
-            key, mandatory=False, default=AuthType.PASSWORD.value
-        )
-        try:
-            auth_type = AuthType(auth_type.lower())
-        except ValueError:
-            logger.error(
-                f"Invalid value '{auth_type}' for {key}. "
-                + "Must be one of: "
-                + ", ".join([auth_type.value for auth_type in AuthType])
-                + "."
-            )
-            sys.exit(1)
-        return auth_type
+        value = get_env(key, mandatory=False)
+        if value:
+            try:
+                return AuthType(value.lower())
+            except ValueError:
+                logger.error(
+                    f"Invalid value '{value}' for {key}. "
+                    + "Must be one of: "
+                    + ", ".join([auth_type.value for auth_type in AuthType])
+                    + "."
+                )
+                sys.exit(1)
+        # Fall back to the stored first-run setup choice (env always wins)
+        stored_auth_type = (self.stored_config or {}).get("auth_type")
+        if stored_auth_type:
+            try:
+                return AuthType(stored_auth_type)
+            except ValueError:
+                logger.error(
+                    f"Invalid auth_type '{stored_auth_type}' in "
+                    + self._config_path
+                    + "."
+                )
+                sys.exit(1)
+        # No env and no stored choice: first-run setup is required
+        return None
 
     def _quick_access_hide(self):
         key = "GLOBNOTES_QUICK_ACCESS_HIDE"
@@ -110,9 +146,20 @@ class AuthType(str, Enum):
 
 
 class GlobalConfigResponseModel(CustomBaseModel):
-    auth_type: AuthType
+    setup_required: bool
+    auth_type: Optional[AuthType]
     quick_access_hide: bool
     quick_access_title: str
     quick_access_term: str
     quick_access_sort: str
     quick_access_limit: int
+
+
+class SetupRequest(CustomBaseModel):
+    mode: Literal["none", "password"]
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
+class SetupStatus(CustomBaseModel):
+    setup_required: bool

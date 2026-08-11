@@ -1,30 +1,82 @@
+import secrets
 from typing import List, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from jose import JWTError
 
 import api_messages
-from auth.base import BaseAuth
 from auth.models import Login, Token
 from files import FileServing
 from files.models import FileCreateResponse
-from global_config import AuthType, GlobalConfig, GlobalConfigResponseModel
-from helpers import replace_base_href
+from global_config import (
+    AuthType,
+    GlobalConfig,
+    GlobalConfigResponseModel,
+    SetupRequest,
+    SetupStatus,
+)
+from helpers import hash_password, replace_base_href
+from logger import logger
 from notes.base import BaseNotes
 from notes.models import Note, NoteCreate, NoteUpdate, SearchResult
 
 global_config = GlobalConfig()
-auth: BaseAuth = global_config.load_auth()
+# Mutable holder so the first-run setup wizard can attach auth at runtime.
+auth_state = {"auth": global_config.load_auth()}
 note_storage: BaseNotes = global_config.load_note_storage()
 file_serving: FileServing = global_config.load_file_serving()
-auth_deps = [Depends(auth.authenticate)] if auth else []
+
+
+def require_auth(request: Request):
+    """Authenticate the request against the current auth state. Also gates
+    all data APIs while first-run setup is incomplete."""
+    if global_config.setup_required:
+        raise HTTPException(status_code=503, detail="setup_required")
+    current_auth = auth_state["auth"]
+    if current_auth is not None:
+        token = None
+        authorization = request.headers.get("Authorization")
+        if authorization and authorization.lower().startswith("bearer "):
+            token = authorization[len("bearer ") :]
+        if token is None:
+            token = request.cookies.get("token")
+        try:
+            current_auth._validate_token(token)
+        except (JWTError, ValueError):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+
+auth_deps = [Depends(require_auth)]
 router = APIRouter()
 app = FastAPI(
     docs_url=global_config.path_prefix + "/docs",
     openapi_url=global_config.path_prefix + "/openapi.json",
 )
 replace_base_href("client/dist/index.html", global_config.path_prefix)
+
+if global_config.setup_required:
+    logger.info(
+        "First-run setup required. Open the web UI to complete setup."
+    )
+elif global_config.auth_type == AuthType.NONE:
+    logger.warning(
+        "globnotes is running with NO authentication. Anyone who can "
+        "reach this server can read and modify notes."
+    )
 
 
 # region UI
@@ -42,13 +94,62 @@ def root(title: str = ""):
 # endregion
 
 
+# region Setup
+@router.get("/api/setup", response_model=SetupStatus)
+def get_setup():
+    """Get the first-run setup status."""
+    return SetupStatus(setup_required=global_config.setup_required)
+
+
+@router.post("/api/setup", response_model=SetupStatus)
+def post_setup(data: SetupRequest):
+    """Complete first-run setup: create a password or disable auth."""
+    if not global_config.setup_required:
+        raise HTTPException(
+            status_code=409, detail="Setup has already been completed."
+        )
+    if data.mode == "none":
+        global_config.save_stored_config({"auth_type": AuthType.NONE.value})
+        global_config.auth_type = AuthType.NONE
+        global_config.setup_required = False
+        logger.warning(
+            "Authentication disabled via first-run setup. Anyone who can "
+            "reach this server can read and modify notes."
+        )
+    else:
+        if not data.username or not data.password:
+            raise HTTPException(
+                status_code=400,
+                detail="Username and password are required.",
+            )
+        global_config.save_stored_config(
+            {
+                "auth_type": AuthType.PASSWORD.value,
+                "username": data.username.lower(),
+                "password_hash": hash_password(data.password),
+                "secret_key": secrets.token_hex(32),
+            }
+        )
+        global_config.auth_type = AuthType.PASSWORD
+        global_config.setup_required = False
+        auth_state["auth"] = global_config.load_auth()
+    return SetupStatus(setup_required=global_config.setup_required)
+
+
+# endregion
+
+
 # region Auth
 if global_config.auth_type not in [AuthType.NONE, AuthType.READ_ONLY]:
 
     @router.post("/api/token", response_model=Token)
     def token(data: Login):
+        if auth_state["auth"] is None:
+            raise HTTPException(
+                status_code=400, detail="Authentication is not enabled."
+            )
         try:
-            return auth.login(data)
+            return auth_state["auth"].login(data)
         except ValueError:
             raise HTTPException(
                 status_code=401, detail=api_messages.login_failed
@@ -195,6 +296,7 @@ def get_note_index():
 def get_config():
     """Retrieve server-side config required for the UI."""
     return GlobalConfigResponseModel(
+        setup_required=global_config.setup_required,
         auth_type=global_config.auth_type,
         quick_access_hide=global_config.quick_access_hide,
         quick_access_title=global_config.quick_access_title,

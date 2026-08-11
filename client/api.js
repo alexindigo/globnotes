@@ -53,6 +53,15 @@ export async function getConfig() {
   }
 }
 
+export async function postSetup(data) {
+  try {
+    const response = await api.post("api/setup", data);
+    return response.data;
+  } catch (response) {
+    return Promise.reject(response);
+  }
+}
+
 export async function getToken(username, password, totp) {
   try {
     const response = await api.post("api/token", {

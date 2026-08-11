@@ -1,6 +1,7 @@
 import secrets
+import sys
 from base64 import b32encode
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
@@ -9,30 +10,56 @@ from pyotp import TOTP
 from pyotp.utils import build_uri
 from qrcode import QRCode
 
-from global_config import AuthType, GlobalConfig
-from helpers import get_env
+from global_config import AuthType
+from helpers import get_env, verify_password
+from logger import logger
 
 from ..base import BaseAuth
 from ..models import Login, Token
 
-global_config = GlobalConfig()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/token", auto_error=False)
 
 
 class LocalAuth(BaseAuth):
     JWT_ALGORITHM = "HS256"
 
-    def __init__(self) -> None:
-        self.username = get_env("GLOBNOTES_USERNAME", mandatory=True).lower()
-        self.password = get_env("GLOBNOTES_PASSWORD", mandatory=True)
-        self.secret_key = get_env("GLOBNOTES_SECRET_KEY", mandatory=True)
+    def __init__(self, global_config) -> None:
+        # Credentials come from environment variables when set (env always
+        # wins), otherwise from the stored first-run setup config.
+        stored_config = global_config.stored_config or {}
+        self.username = get_env("GLOBNOTES_USERNAME") or stored_config.get(
+            "username"
+        )
+        self.password = get_env("GLOBNOTES_PASSWORD")
+        self.password_hash = (
+            None if self.password else stored_config.get("password_hash")
+        )
+        self.secret_key = get_env("GLOBNOTES_SECRET_KEY") or stored_config.get(
+            "secret_key"
+        )
+        if (
+            not self.username
+            or not (self.password or self.password_hash)
+            or not self.secret_key
+        ):
+            logger.error(
+                "Login credentials must be provided via environment "
+                "variables or the first-run setup wizard."
+            )
+            sys.exit(1)
+        self.username = self.username.lower()
         self.session_expiry_days = get_env(
             "GLOBNOTES_SESSION_EXPIRY_DAYS", default=30, cast_int=True
         )
 
-        # TOTP
+        # TOTP (env-configured only)
         self.is_totp_enabled = False
         if global_config.auth_type == AuthType.TOTP:
+            if not self.password:
+                logger.error(
+                    "GLOBNOTES_PASSWORD must be set when using TOTP auth."
+                )
+                sys.exit(1)
             self.is_totp_enabled = True
             self.totp_key = get_env("GLOBNOTES_TOTP_KEY", mandatory=True)
             self.totp_key = b32encode(self.totp_key.encode("utf-8"))
@@ -47,13 +74,19 @@ class LocalAuth(BaseAuth):
         )
 
         # Check Password & TOTP
-        expected_password = self.password
         if self.is_totp_enabled:
             current_totp = self.totp.now()
-            expected_password += current_totp
-        password_correct = secrets.compare_digest(
-            expected_password, data.password
-        )
+            password_correct = secrets.compare_digest(
+                self.password + current_totp, data.password
+            )
+        elif self.password is not None:
+            password_correct = secrets.compare_digest(
+                self.password, data.password
+            )
+        else:
+            password_correct = verify_password(
+                data.password, self.password_hash
+            )
 
         # Raise error if incorrect
         if not (
@@ -101,7 +134,7 @@ class LocalAuth(BaseAuth):
 
     def _create_access_token(self, data: dict):
         to_encode = data.copy()
-        expiry_datetime = datetime.utcnow() + timedelta(
+        expiry_datetime = datetime.now(timezone.utc) + timedelta(
             days=self.session_expiry_days
         )
         to_encode.update({"exp": expiry_datetime})
@@ -114,7 +147,7 @@ class LocalAuth(BaseAuth):
         # Fix for #237. Remove padding as per spec:
         # https://github.com/google/google-authenticator/wiki/Key-Uri-Format#secret
         unpadded_secret = self.totp_key.rstrip(b"=")
-        uri = build_uri(unpadded_secret, self.username, issuer="flatnotes")
+        uri = build_uri(unpadded_secret, self.username, issuer="globnotes")
         qr = QRCode()
         qr.add_data(uri)
         print(
