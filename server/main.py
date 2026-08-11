@@ -1,14 +1,14 @@
 from typing import List, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 import api_messages
-from attachments.base import BaseAttachments
-from attachments.models import AttachmentCreateResponse
 from auth.base import BaseAuth
 from auth.models import Login, Token
+from files import FileServing
+from files.models import FileCreateResponse
 from global_config import AuthType, GlobalConfig, GlobalConfigResponseModel
 from helpers import replace_base_href
 from notes.base import BaseNotes
@@ -17,7 +17,7 @@ from notes.models import Note, NoteCreate, NoteUpdate, SearchResult
 global_config = GlobalConfig()
 auth: BaseAuth = global_config.load_auth()
 note_storage: BaseNotes = global_config.load_note_storage()
-attachment_storage: BaseAttachments = global_config.load_attachment_storage()
+file_serving: FileServing = global_config.load_file_serving()
 auth_deps = [Depends(auth.authenticate)] if auth else []
 router = APIRouter()
 app = FastAPI(
@@ -196,53 +196,52 @@ def get_config():
 # endregion
 
 
-# region Attachments
-# Get Attachment
+# region Files
+# Get File
 @router.get(
-    "/api/attachments/{filename}",
+    "/api/files/{path:path}",
     dependencies=auth_deps,
 )
 # Include a secondary route used to create relative URLs that can be used
-# outside the context of globnotes (e.g. "/attachments/image.jpg").
+# outside the context of globnotes (e.g. "/files/dad/image.jpg").
 @router.get(
-    "/attachments/{filename}",
+    "/files/{path:path}",
     dependencies=auth_deps,
     include_in_schema=False,
 )
-def get_attachment(filename: str):
-    """Download an attachment."""
+def get_file(path: str):
+    """Download a file from anywhere in the notes tree."""
     try:
-        return attachment_storage.get(filename)
+        return file_serving.get(path)
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=api_messages.invalid_attachment_filename,
+            detail=api_messages.invalid_file_path,
         )
     except FileNotFoundError:
         raise HTTPException(
-            status_code=404, detail=api_messages.attachment_not_found
+            status_code=404, detail=api_messages.file_not_found
         )
 
 
 if global_config.auth_type != AuthType.READ_ONLY:
 
-    # Create Attachment
+    # Upload File
     @router.post(
-        "/api/attachments",
+        "/api/files",
         dependencies=auth_deps,
-        response_model=AttachmentCreateResponse,
+        response_model=FileCreateResponse,
     )
-    def post_attachment(file: UploadFile):
-        """Upload an attachment."""
+    def post_file(file: UploadFile, directory: str = Form("")):
+        """Upload a file into the given directory (relative to the notes
+        root)."""
         try:
-            return attachment_storage.create(file)
+            return file_serving.create(directory, file)
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=api_messages.invalid_attachment_filename,
+                detail=api_messages.invalid_file_name,
             )
-        except FileExistsError:
-            raise HTTPException(409, api_messages.attachment_exists)
 
 
 # endregion

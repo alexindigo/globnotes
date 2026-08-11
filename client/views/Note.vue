@@ -128,17 +128,18 @@ import { useRouter } from "vue-router";
 
 import {
   apiErrorHandler,
-  createAttachment,
   createNote,
   deleteNote,
   getNote,
   updateNote,
+  uploadFile,
 } from "../api.js";
 import { Note } from "../classes.js";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import CustomButton from "../components/CustomButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Toggle from "../components/Toggle.vue";
+import { setCurrentNoteDir } from "../components/toastui/baseOptions.js";
 import ToastEditor from "../components/toastui/ToastEditor.vue";
 import ToastViewer from "../components/toastui/ToastViewer.vue";
 import { authTypes } from "../constants.js";
@@ -175,6 +176,7 @@ function init() {
     return;
   }
 
+  setCurrentNoteDir(directoryFromTitle(props.title || ""));
   loadingIndicator.value.setLoading();
   if (props.title) {
     getNote(props.title)
@@ -384,7 +386,7 @@ function postAttachment(file) {
   toast.add(getToastOptions("Uploading attachment..."));
 
   // Upload the attachment
-  return createAttachment(file)
+  return uploadFile(file, noteDirectory())
     .then((data) => {
       // Success Toast
       toast.add(
@@ -483,6 +485,17 @@ function keydownHandler(event) {
 }
 
 // Helpers
+function directoryFromTitle(title) {
+  const index = title.lastIndexOf("/");
+  return index === -1 ? "" : title.slice(0, index);
+}
+
+function noteDirectory() {
+  // The directory of the note being edited (falling back to the note being
+  // viewed), so uploads land beside the note.
+  return directoryFromTitle(newTitle.value || props.title || "");
+}
+
 function entityTooLargeToast(entityName) {
   toast.add(
     getToastOptions(

@@ -29,10 +29,10 @@ class GlobalConfig:
 
         return FileSystemNotes()
 
-    def load_attachment_storage(self):
-        from attachments.file_system import FileSystemAttachments
+    def load_file_serving(self):
+        from files import FileServing
 
-        return FileSystemAttachments()
+        return FileServing()
 
     def _load_auth_type(self):
         key = "GLOBNOTES_AUTH_TYPE"

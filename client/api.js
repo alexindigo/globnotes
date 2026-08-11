@@ -140,11 +140,12 @@ export async function getTags() {
   }
 }
 
-export async function createAttachment(file) {
+export async function uploadFile(file, directory) {
   try {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await api.post("api/attachments", formData, {
+    formData.append("directory", directory || "");
+    const response = await api.post("api/files", formData, {
       headers: {
         "Content-Type": "multipart/form-data",
       },
