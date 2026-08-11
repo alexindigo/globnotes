@@ -20,11 +20,17 @@ dependencies = [
 dev = [
     "black",
     "flake8",
+    "httpx",
+    "pytest",
     "rope",
     "isort",
 ]
 
+[tool.pytest.ini_options]
+pythonpath = ["server"]
+testpaths = ["tests"]
+
 [tool.isort]
 profile = "black"
 line_length = 79
-src_paths = ["server"]
+src_paths = ["server", "tests"]
