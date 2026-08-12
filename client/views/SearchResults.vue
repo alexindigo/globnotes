@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-full flex-col">
     <!-- Sort By -->
-    <div class="-mt-3 flex justify-start">
+    <div class="-mt-3 flex justify-end">
       <CustomButton
         :label="`Sort By: ${sortByName}`"
         :iconPath="mdiSort"
