@@ -56,7 +56,7 @@
         </div>
         <div
           v-show="!editMode && noteDirName"
-          class="truncate text-sm text-theme-text-muted"
+          class="truncate pt-8 text-sm text-theme-text-muted"
           :title="note.title"
         >
           {{ noteDirName }}/
