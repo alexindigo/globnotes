@@ -8,6 +8,7 @@
 !entrypoint.sh
 !healthcheck.sh
 !LICENSE
+!THIRD-PARTY-NOTICES.md
 !package-lock.json
 !package.json
 !postcss.config.js
