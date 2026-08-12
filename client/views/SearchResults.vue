@@ -171,6 +171,9 @@ function init() {
       results.value = sortResults(data);
       if (results.value.length > 0) {
         loadingIndicator.value.setLoaded();
+      } else if (!includeNested.value && currentSubdirs.value.length > 0) {
+        // No direct notes, but there are subdirectories to traverse into.
+        loadingIndicator.value.setLoaded();
       } else {
         loadingIndicator.value.setFailed("No Results", mdiMagnify);
       }
