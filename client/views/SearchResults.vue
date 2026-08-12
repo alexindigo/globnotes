@@ -18,29 +18,48 @@
     <!-- Search Input -->
     <SearchInput :initialSearchTerm="props.searchTerm" class="mb-12" />
 
-    <!-- Folders at this level (when not including nested) -->
-    <div
-      v-if="!includeNested && (currentSubdirs.length || props.folder)"
-      class="mb-4 flex flex-wrap gap-1"
-    >
-      <RouterLink v-if="props.folder" :to="upTarget">
-        <CustomButton :iconPath="mdilArrowUp" label=".." />
-      </RouterLink>
-      <RouterLink
+    <!-- Level up + folders at this level (when not including nested) -->
+    <template v-if="!includeNested">
+      <div
+        v-if="props.folder"
+        class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
+      >
+        <RouterLink :to="upTarget" class="flex items-center">
+          <SvgIcon
+            type="mdi"
+            :path="mdilArrowUp"
+            size="1.25em"
+            class="mr-2 text-theme-text-muted"
+          />
+          <span>..</span>
+        </RouterLink>
+      </div>
+      <div
         v-for="dir in currentSubdirs"
         :key="dir"
-        :to="{
-          name: 'search',
-          query: {
-            [params.searchTerm]: props.searchTerm,
-            [params.sortBy]: props.sortBy,
-            [params.folder]: dir,
-          },
-        }"
+        class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
       >
-        <CustomButton :iconPath="mdilFolder" :label="dir.split('/').pop()" />
-      </RouterLink>
-    </div>
+        <RouterLink
+          :to="{
+            name: 'search',
+            query: {
+              [params.searchTerm]: props.searchTerm,
+              [params.sortBy]: props.sortBy,
+              [params.folder]: dir,
+            },
+          }"
+          class="flex items-center"
+        >
+          <SvgIcon
+            type="mdi"
+            :path="mdilFolder"
+            size="1.25em"
+            class="mr-2 text-theme-text-muted"
+          />
+          <span>{{ dir.split("/").pop() }}</span>
+        </RouterLink>
+      </div>
+    </template>
 
     <LoadingIndicator ref="loadingIndicator" class="flex-1">
       <!-- Search Results -->
@@ -76,6 +95,7 @@ import { useToast } from "primevue/usetoast";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
+import SvgIcon from "@jamescoyle/vue-icon";
 import { mdiMagnify, mdiSort } from "@mdi/js";
 import { mdilArrowUp, mdilFolder } from "@mdi/light-js";
 import { apiErrorHandler, getNotes } from "../api.js";
