@@ -13,26 +13,26 @@ def _write(root, rel, content):
 class TestGetFile:
     def test_serves_nested_file(self, client, tmp_path):
         _write(str(tmp_path), "dad/assets/broth.jpg", b"jpgdata")
-        response = client.get("/files/dad/assets/broth.jpg")
+        response = client.get("/dad/assets/broth.jpg")
         assert response.status_code == 200
         assert response.content == b"jpgdata"
 
     def test_serves_markdown_as_plain_text(self, client, tmp_path):
         _write(str(tmp_path), "a/b.md", "# Hi")
-        response = client.get("/files/a/b.md")
+        response = client.get("/_/api/files/a/b.md")
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/plain")
         assert response.text == "# Hi"
 
     def test_html_is_forced_download(self, client, tmp_path):
         _write(str(tmp_path), "x/page.html", "<script>alert(1)</script>")
-        response = client.get("/files/x/page.html")
+        response = client.get("/x/page.html")
         assert response.status_code == 200
         assert "attachment" in response.headers["content-disposition"]
 
     def test_svg_has_script_blocking_csp(self, client, tmp_path):
         _write(str(tmp_path), "x/pic.svg", "<svg></svg>")
-        response = client.get("/files/x/pic.svg")
+        response = client.get("/x/pic.svg")
         assert response.status_code == 200
         assert (
             response.headers.get("content-security-policy")
@@ -41,14 +41,14 @@ class TestGetFile:
 
     def test_dotfiles_are_404(self, client, tmp_path):
         _write(str(tmp_path), ".secret/thing.md", "x")
-        assert client.get("/files/.secret/thing.md").status_code == 404
+        assert client.get("/.secret/thing.md").status_code == 404
 
     def test_traversal_is_rejected(self, client):
-        response = client.get("/files/..%2F..%2Fetc%2Fpasswd")
+        response = client.get("/..%2F..%2Fetc%2Fpasswd")
         assert response.status_code in (400, 404)
 
     def test_missing_is_404(self, client):
-        assert client.get("/files/no/such.jpg").status_code == 404
+        assert client.get("/no/such.jpg").status_code == 404
 
     def test_api_prefix_route_also_works(self, client, tmp_path):
         _write(str(tmp_path), "a.png", b"p")

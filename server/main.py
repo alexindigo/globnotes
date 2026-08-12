@@ -1,3 +1,4 @@
+import os
 import secrets
 from typing import List, Literal
 
@@ -25,7 +26,7 @@ from global_config import (
     SetupRequest,
     SetupStatus,
 )
-from helpers import hash_password, replace_base_href
+from helpers import hash_password, rewrite_index_html
 from logger import logger
 from notes.base import BaseNotes
 from notes.models import Note, NoteCreate, NoteUpdate, SearchResult
@@ -66,7 +67,7 @@ app = FastAPI(
     docs_url=global_config.path_prefix + "/_/api/docs",
     openapi_url=global_config.path_prefix + "/_/api/openapi.json",
 )
-replace_base_href("client/dist/index.html", global_config.path_prefix)
+rewrite_index_html("client/dist/index.html", global_config.path_prefix)
 
 if global_config.setup_required:
     logger.info(
@@ -84,8 +85,7 @@ elif global_config.auth_type == AuthType.NONE:
 @router.get("/_/login", include_in_schema=False)
 @router.get("/_/search", include_in_schema=False)
 @router.get("/_/new", include_in_schema=False)
-@router.get("/note/{title:path}", include_in_schema=False)
-def root(title: str = ""):
+def serve_index():
     with open("client/dist/index.html", "r", encoding="utf-8") as f:
         html = f.read()
     return HTMLResponse(content=html)
@@ -310,17 +310,11 @@ def get_config():
 
 
 # region Files
-# Get File
+# Get File (direct API access, e.g. raw markdown for agents; note-relative
+# vault files are served by the root catch-all)
 @router.get(
     "/_/api/files/{path:path}",
     dependencies=auth_deps,
-)
-# Include a secondary route used to create relative URLs that can be used
-# outside the context of globnotes (e.g. "/files/dad/image.jpg").
-@router.get(
-    "/files/{path:path}",
-    dependencies=auth_deps,
-    include_in_schema=False,
 )
 def get_file(path: str):
     """Download a file from anywhere in the notes tree."""
@@ -372,7 +366,45 @@ def healthcheck() -> str:
 
 app.include_router(router, prefix=global_config.path_prefix)
 app.mount(
-    global_config.path_prefix,
+    global_config.path_prefix + "/_",
     StaticFiles(directory="client/dist"),
     name="dist",
 )
+
+
+# region Catch-all
+# Vault files and note pages live in the root URL space. Anything not
+# claimed above (API, app pages, built assets) lands here.
+catchall_router = APIRouter()
+
+MARKDOWN_EXT = ".md"
+
+
+@catchall_router.get("/{path:path}", include_in_schema=False)
+def catch_all(path: str, request: Request):
+    segments = path.split("/")
+    # Machinery and hidden paths are never served from the vault space.
+    if segments[0] == "_" or any(s.startswith(".") for s in segments):
+        raise HTTPException(status_code=404)
+    _, ext = os.path.splitext(path)
+    if path and ext and ext.lower() != MARKDOWN_EXT:
+        # Looks like a file: serve it if it exists (a real 404 keeps
+        # broken-image behavior honest). A note page still wins for
+        # dotted titles (e.g. a note named "a/v2.1").
+        try:
+            require_auth(request)
+            return file_serving.get(path)
+        except FileNotFoundError:
+            if not os.path.isfile(
+                os.path.join(file_serving.storage_path, path + MARKDOWN_EXT)
+            ):
+                raise HTTPException(404, api_messages.file_not_found)
+        except ValueError:
+            raise HTTPException(400, api_messages.invalid_file_path)
+    # Everything else is a note page (the client 404s unknown titles).
+    return serve_index()
+
+
+# endregion
+
+app.include_router(catchall_router, prefix=global_config.path_prefix)

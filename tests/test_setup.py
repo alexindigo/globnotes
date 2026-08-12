@@ -57,7 +57,7 @@ class TestSetupMode:
             ).status_code
             == 503
         )
-        assert setup_client.get("/files/a.jpg").status_code == 503
+        assert setup_client.get("/a.jpg").status_code == 503
         assert setup_client.get("/_/api/tags").status_code == 503
         assert setup_client.get("/_/api/note-index").status_code == 503
 

@@ -139,7 +139,6 @@ import ConfirmModal from "../components/ConfirmModal.vue";
 import CustomButton from "../components/CustomButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Toggle from "../components/Toggle.vue";
-import { setCurrentNoteDir } from "../components/toastui/baseOptions.js";
 import ToastEditor from "../components/toastui/ToastEditor.vue";
 import ToastViewer from "../components/toastui/ToastViewer.vue";
 import { authTypes } from "../constants.js";
@@ -176,8 +175,6 @@ function init() {
   if (props.title && props.title == note.value.title) {
     return;
   }
-
-  setCurrentNoteDir(directoryFromTitle(props.title || ""));
   loadingIndicator.value.setLoading();
   if (props.title) {
     getNote(props.title)

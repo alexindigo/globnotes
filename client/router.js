@@ -4,8 +4,11 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import { authCheck } from "./api.js";
 
+const pathPrefix =
+  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+
 const router = createRouter({
-  history: createWebHistory(""),
+  history: createWebHistory(pathPrefix + "/"),
   routes: [
     {
       path: "/",
@@ -17,12 +20,6 @@ const router = createRouter({
       name: "login",
       component: () => import("./views/LogIn.vue"),
       props: (route) => ({ redirect: route.query[constants.params.redirect] }),
-    },
-    {
-      path: "/note/:title",
-      name: "note",
-      component: () => import("./views/Note.vue"),
-      props: true,
     },
     {
       path: "/_/new",
@@ -38,7 +35,30 @@ const router = createRouter({
         sortBy: Number(route.query[constants.params.sortBy]) || undefined,
       }),
     },
+    {
+      // Notes live in the root URL space; titles may contain slashes.
+      path: "/:title(.*)",
+      name: "note",
+      component: () => import("./views/Note.vue"),
+      props: true,
+    },
   ],
+});
+
+// Normalize note titles: a clicked relative link may carry the .md suffix
+// (e.g. /dad/other.md -> note "dad/other").
+router.beforeEach(async (to) => {
+  if (
+    to.name === "note" &&
+    typeof to.params.title === "string" &&
+    to.params.title.endsWith(".md")
+  ) {
+    return {
+      name: "note",
+      params: { title: to.params.title.slice(0, -".md".length) },
+      replace: true,
+    };
+  }
 });
 
 // Check the user is authenticated on first navigation (unless going to login)

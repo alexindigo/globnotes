@@ -132,20 +132,24 @@ def get_env(
     return value
 
 
-def replace_base_href(html_file, path_prefix):
-    """Replace the href value for the base element in an HTML file."""
-    base_path = path_prefix + "/"
-    logger.info(
-        f"Replacing href value for base element in '{html_file}' "
-        + f"with '{base_path}'."
-    )
+def rewrite_index_html(html_file, path_prefix):
+    """Publish the path prefix to the client (meta tag) and point the built
+    asset references at it when one is configured."""
     with open(html_file, "r", encoding="utf-8") as f:
         html = f.read()
-    pattern = r'(<base\s+href=")[^"]*(")'
-    replacement = r"\1" + base_path + r"\2"
-    updated_html = re.sub(pattern, replacement, html, flags=re.IGNORECASE)
+    if path_prefix:
+        html = html.replace('"/_/', f'"{path_prefix}/_/')
+    if 'name="globnotes-prefix"' in html:
+        html = re.sub(
+            r'(<meta name="globnotes-prefix" content=")[^"]*',
+            r"\1" + path_prefix,
+            html,
+        )
+    else:
+        meta = f'<meta name="globnotes-prefix" content="{path_prefix}">'
+        html = html.replace("<head>", "<head>\n    " + meta, 1)
     with open(html_file, "w", encoding="utf-8") as f:
-        f.write(updated_html)
+        f.write(html)
 
 
 class CustomBaseModel(BaseModel):

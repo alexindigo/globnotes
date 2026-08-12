@@ -7,7 +7,10 @@ import { getStoredToken } from "./tokenStorage.js";
 import { getToastOptions } from "./helpers.js";
 import router from "./router.js";
 
-const api = axios.create({ baseURL: "/_/api" });
+const pathPrefix =
+  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+
+const api = axios.create({ baseURL: `${pathPrefix}/_/api` });
 
 api.interceptors.request.use(
   // If the request is not for the token endpoint, add the token to the headers.

@@ -6,28 +6,12 @@ const devApiUrl = "http://127.0.0.1:8000";
 export default defineConfig({
   plugins: [vue()],
   root: "client",
-  base: "",
+  base: "/_/",
   server: {
     // Note: The GLOBNOTES_PATH_PREFIX environment variable is not supported by the dev server
     port: 8080,
     proxy: {
-      "/api/": {
-        target: devApiUrl,
-        changeOrigin: true,
-      },
-      "/attachments/": {
-        target: devApiUrl,
-        changeOrigin: true,
-      },
-      "/docs": {
-        target: devApiUrl,
-        changeOrigin: true,
-      },
-      "/openapi.json": {
-        target: devApiUrl,
-        changeOrigin: true,
-      },
-      "/health": {
+      "/_/api/": {
         target: devApiUrl,
         changeOrigin: true,
       },
