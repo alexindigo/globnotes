@@ -3,12 +3,6 @@
     class="sticky top-0 z-20 mb-2 flex justify-between bg-theme-background align-top md:mb-6"
   >
     <div class="flex items-start">
-      <CustomButton
-        :iconPath="mdiDockLeft"
-        label=""
-        title="Toggle sidebar"
-        @click="toggleSidebar"
-      />
       <RouterLink :to="{ name: 'home' }" v-if="!hideLogo">
         <Logo responsive></Logo>
       </RouterLink>
@@ -31,7 +25,6 @@
 </template>
 
 <script setup>
-import { mdiDockLeft } from "@mdi/js";
 import {
   mdilLogout,
   mdilMagnify,
@@ -109,11 +102,6 @@ function logOut() {
 
 function toggleMenu(event) {
   menu.value.toggle(event);
-}
-
-function toggleSidebar() {
-  globalStore.sidebarVisible = !globalStore.sidebarVisible;
-  localStorage.setItem("sidebarVisible", globalStore.sidebarVisible);
 }
 
 function showLogOutButton() {

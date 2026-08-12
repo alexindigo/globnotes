@@ -1,4 +1,14 @@
 <template>
+  <!-- Floating open button (corner of the page, when sidebar is closed) -->
+  <CustomButton
+    v-if="!globalStore.sidebarVisible"
+    :iconPath="mdiDockLeft"
+    label=""
+    title="Open sidebar"
+    style="cta"
+    class="fixed bottom-4 left-4 z-30 shadow-md"
+    @click="openSidebar"
+  />
   <!-- Backdrop -->
   <div
     v-if="globalStore.sidebarVisible"
@@ -16,7 +26,7 @@
       </span>
       <div class="flex items-center">
         <CustomButton
-          :iconPath="mdilChevronDoubleLeft"
+          :iconPath="mdilUnfoldLessVertical"
           label=""
           title="Collapse all"
           @click="collapseAll"
@@ -71,8 +81,12 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiClose } from "@mdi/js";
-import { mdilChevronDoubleLeft, mdilChevronDown, mdilChevronRight } from "@mdi/light-js";
+import { mdiClose, mdiDockLeft } from "@mdi/js";
+import {
+  mdilChevronDown,
+  mdilChevronRight,
+  mdilUnfoldLessVertical,
+} from "@mdi/light-js";
 import CustomButton from "../components/CustomButton.vue";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
@@ -203,5 +217,10 @@ watch(
 function toggleSidebar() {
   globalStore.sidebarVisible = false;
   localStorage.setItem("sidebarVisible", "false");
+}
+
+function openSidebar() {
+  globalStore.sidebarVisible = true;
+  localStorage.setItem("sidebarVisible", "true");
 }
 </script>
