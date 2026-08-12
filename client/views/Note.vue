@@ -43,13 +43,6 @@
     <div class="flex flex-col-reverse md:flex-row md:items-baseline">
       <!-- Title -->
       <div class="min-w-0 grow">
-        <div
-          v-show="!editMode && noteDirName"
-          class="truncate text-sm text-theme-text-muted"
-          :title="note.title"
-        >
-          {{ noteDirName }}/
-        </div>
         <div class="truncate text-3xl leading-[1.6em]">
           <span v-show="!editMode" :title="note.title">{{
             noteBasename
@@ -60,6 +53,13 @@
             class="w-full bg-theme-background outline-none"
             placeholder="Title"
           />
+        </div>
+        <div
+          v-show="!editMode && noteDirName"
+          class="truncate text-sm text-theme-text-muted"
+          :title="note.title"
+        >
+          {{ noteDirName }}/
         </div>
       </div>
 
