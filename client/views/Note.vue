@@ -59,7 +59,15 @@
           class="truncate pt-1 text-sm text-theme-text-muted"
           :title="note.title"
         >
-          {{ noteDirDisplay }}/
+          <template v-for="(crumb, i) in noteDirBreadcrumbs" :key="i">
+            <span v-if="crumb.ellipsis">…/</span>
+            <RouterLink
+              v-else
+              :to="folderTarget(crumb.folder)"
+              class="hover:text-theme-text hover:underline"
+              >{{ crumb.label }}/</RouterLink
+            >
+          </template>
         </div>
       </div>
 
@@ -152,7 +160,7 @@ import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Toggle from "../components/Toggle.vue";
 import ToastEditor from "../components/toastui/ToastEditor.vue";
 import ToastViewer from "../components/toastui/ToastViewer.vue";
-import { authTypes } from "../constants.js";
+import { authTypes, params } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { getToastOptions } from "../helpers.js";
 import { refreshNoteIndex } from "../noteIndex.js";
@@ -183,9 +191,34 @@ const noteBasename = computed(() => {
   const dir = noteDirName.value;
   return dir ? title.slice(dir.length + 1) : title;
 });
-const noteDirDisplay = computed(() =>
-  middleEllipsis(noteDirName.value, 60),
-);
+// The path as breadcrumb links; each section links to its folder view.
+// Long paths keep two sections on each side of a non-linked ellipsis.
+const noteDirBreadcrumbs = computed(() => {
+  const dir = noteDirName.value;
+  if (!dir) {
+    return [];
+  }
+  const parts = dir.split("/");
+  const toCrumb = (label, i) => ({
+    label,
+    folder: parts.slice(0, i + 1).join("/"),
+  });
+  if (dir.length <= 60) {
+    return parts.map(toCrumb);
+  }
+  const lead = parts.slice(0, 2).map(toCrumb);
+  const trail = parts
+    .slice(-2)
+    .map((label, i) => toCrumb(label, parts.length - 2 + i));
+  return [...lead, { ellipsis: true }, ...trail];
+});
+
+function folderTarget(folder) {
+  return {
+    name: "search",
+    query: { [params.searchTerm]: "*", [params.folder]: folder },
+  };
+}
 const reservedFilenameCharacters = /[<>:"\\|?*]/;
 const router = useRouter();
 const newTitle = ref();
@@ -509,43 +542,6 @@ function keydownHandler(event) {
 }
 
 // Helpers
-function middleEllipsis(path, maxChars) {
-  // Cut the middle of long paths, keeping at least two segments on each
-  // side where they fit: node_modules/@antfu/…/install-pkg/assets
-  if (path.length <= maxChars) {
-    return path;
-  }
-  const parts = path.split("/");
-  const n = parts.length;
-  const candidate = (lead, trail) =>
-    parts.slice(0, lead).join("/") + "/…/" + parts.slice(n - trail).join("/");
-  if (n >= 4) {
-    if (candidate(2, 2).length <= maxChars) {
-      // two leading + extend trailing while they fit
-      let best = candidate(2, 2);
-      for (let trail = 3; trail <= n - 2; trail++) {
-        const c = candidate(2, trail);
-        if (c.length <= maxChars) {
-          best = c;
-        } else {
-          break;
-        }
-      }
-      return best;
-    }
-    for (const [lead, trail] of [
-      [1, 2],
-      [1, 1],
-    ]) {
-      if (candidate(lead, trail).length <= maxChars) {
-        return candidate(lead, trail);
-      }
-    }
-  }
-  const keep = Math.floor((maxChars - 1) / 2);
-  return path.slice(0, keep) + "…" + path.slice(-keep);
-}
-
 function directoryFromTitle(title) {
   const index = title.lastIndexOf("/");
   return index === -1 ? "" : title.slice(0, index);
