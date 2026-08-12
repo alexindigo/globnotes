@@ -108,7 +108,6 @@ import PrimeMenu from "../components/PrimeMenu.vue";
 import Tag from "../components/Tag.vue";
 import Toggle from "../components/Toggle.vue";
 import { params, searchSortOptions } from "../constants.js";
-import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
 import SearchInput from "../partials/SearchInput.vue";
 
@@ -129,14 +128,16 @@ const toast = useToast();
 
 const includeNested = ref(localStorage.getItem("includeNested") !== "false");
 
-const globalStore = useGlobalStore();
+// Titles of all matches under the current folder (nested), used to derive
+// this level's subdirectories when nested folders are excluded.
+const subdirMatches = ref([]);
 
-// Immediate subdirectories of the current folder (from the full title
-// index, so traversal works regardless of the search term).
+// Immediate subdirectories of the current folder, filtered by the search
+// term (derived from the nested match set).
 const currentSubdirs = computed(() => {
   const prefix = props.folder ? props.folder + "/" : "";
   const dirs = new Set();
-  for (const title of globalStore.noteTitles || []) {
+  for (const title of subdirMatches.value) {
     if (props.folder && !title.startsWith(prefix)) {
       continue;
     }
@@ -191,20 +192,34 @@ const sortByName = computed(() => {
 
 function init() {
   loadingIndicator.value.setLoading();
-  getNotes(
+  const resultsRequest = getNotes(
     props.searchTerm,
     undefined,
     undefined,
     undefined,
     includeNested.value,
     props.folder,
-  )
-    .then((data) => {
+  );
+  // When nested folders are excluded, also fetch the full (nested) match
+  // set to derive this level's subdirectories.
+  const subdirsRequest = includeNested.value
+    ? Promise.resolve([])
+    : getNotes(
+        props.searchTerm,
+        undefined,
+        undefined,
+        undefined,
+        true,
+        props.folder,
+      )
+        .then((data) => data.map((result) => result.title))
+        .catch(() => []);
+  Promise.all([resultsRequest, subdirsRequest])
+    .then(([data, subdirTitles]) => {
+      subdirMatches.value = subdirTitles;
       results.value = sortResults(data);
-      if (results.value.length > 0) {
-        loadingIndicator.value.setLoaded();
-      } else if (!includeNested.value && currentSubdirs.value.length > 0) {
-        // No direct notes, but there are subdirectories to traverse into.
+      if (results.value.length > 0 || currentSubdirs.value.length > 0) {
+        // Content to show: direct notes and/or subdirectories.
         loadingIndicator.value.setLoaded();
       } else {
         loadingIndicator.value.setFailed("No Results", mdiMagnify);
