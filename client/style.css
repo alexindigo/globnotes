@@ -89,3 +89,8 @@
 ::-webkit-scrollbar-thumb:hover {
     background-color: rgb(var(--theme-text-very-muted));
 }
+
+/* Always leave room for the scrollbar: content doesn't jump when it appears */
+.overflow-y-auto {
+    scrollbar-gutter: stable;
+}
