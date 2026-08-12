@@ -39,8 +39,8 @@
   />
 
   <LoadingIndicator ref="loadingIndicator" class="flex h-full flex-col">
-    <!-- Header (sticky shelf) -->
-    <div class="sticky top-0 z-10 bg-theme-background">
+    <!-- Header (sits outside the scrollable content) -->
+    <div>
       <div class="flex flex-col-reverse md:flex-row md:items-baseline">
         <!-- Title -->
         <div class="min-w-0 grow">
@@ -109,8 +109,8 @@
       <hr v-if="!editMode" class="mt-2 mb-4 border-theme-border" />
     </div>
 
-    <!-- Content -->
-    <div class="flex-1">
+    <!-- Content (scrolls internally; the header never moves) -->
+    <div class="min-h-0 flex-1 overflow-y-auto print:overflow-visible">
       <ToastViewer
         v-if="!editMode"
         :initialValue="note.content"
