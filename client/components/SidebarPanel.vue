@@ -1,12 +1,12 @@
 <template>
-  <!-- Floating open button (corner of the page, when sidebar is closed) -->
+  <!-- Floating open button (top-left corner of the page, when sidebar is closed) -->
   <CustomButton
     v-if="!globalStore.sidebarVisible"
     :iconPath="mdiDockLeft"
     label=""
     title="Open sidebar"
     style="cta"
-    class="fixed bottom-4 left-4 z-30 shadow-md"
+    class="fixed left-4 top-4 z-30 shadow-md"
     @click="openSidebar"
   />
   <!-- Backdrop -->

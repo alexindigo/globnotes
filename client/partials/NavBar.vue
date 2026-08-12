@@ -2,26 +2,31 @@
   <nav
     class="sticky top-0 z-20 mb-2 flex justify-between bg-theme-background align-top md:mb-6"
   >
-    <div class="flex items-start">
+    <div class="flex items-start pl-10">
       <RouterLink :to="{ name: 'home' }" v-if="!hideLogo">
         <Logo responsive></Logo>
       </RouterLink>
     </div>
-    <div class="flex grow items-start justify-end">
+    <div class="flex grow items-start justify-end pr-10">
       <!-- New Note -->
       <RouterLink v-if="showNewButton" :to="{ name: 'new' }">
         <CustomButton :iconPath="mdilPlusCircle" label="New Note" />
       </RouterLink>
-      <!-- Menu -->
-      <CustomButton
-        class="ml-1"
-        :iconPath="mdilMenu"
-        label="Menu"
-        @click="toggleMenu"
-      />
-      <PrimeMenu ref="menu" :model="menuItems" :popup="true" />
     </div>
   </nav>
+
+  <!-- Floating corner menu (matches the sidebar toggle treatment) -->
+  <div class="fixed right-4 top-4 z-30">
+    <CustomButton
+      :iconPath="mdilMenu"
+      label=""
+      style="cta"
+      class="shadow-md"
+      title="Menu"
+      @click="toggleMenu"
+    />
+    <PrimeMenu ref="menu" :model="menuItems" :popup="true" />
+  </div>
 </template>
 
 <script setup>
