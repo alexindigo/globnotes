@@ -17,7 +17,12 @@
         :hide-logo="!showNavBarLogo"
         @toggleSearchModal="toggleSearchModal"
       />
-      <RouterView />
+      <div class="flex min-h-0 flex-1">
+        <SidebarPanel />
+        <div class="min-w-0 flex-1 overflow-y-auto">
+          <RouterView />
+        </div>
+      </div>
     </template>
   </LoadingIndicator>
 </template>
@@ -32,6 +37,7 @@ import { RouterView, useRoute } from "vue-router";
 import { apiErrorHandler, getConfig } from "./api.js";
 import PrimeToast from "./components/PrimeToast.vue";
 import SetupModal from "./components/SetupModal.vue";
+import SidebarPanel from "./components/SidebarPanel.vue";
 import { useGlobalStore } from "./globalStore.js";
 import { loadTheme } from "./helpers.js";
 import { refreshNoteIndex } from "./noteIndex.js";

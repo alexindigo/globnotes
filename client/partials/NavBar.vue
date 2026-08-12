@@ -1,8 +1,16 @@
 <template>
   <nav class="mb-2 flex justify-between align-top md:mb-6">
-    <RouterLink :to="{ name: 'home' }" v-if="!hideLogo">
-      <Logo responsive></Logo>
-    </RouterLink>
+    <div class="flex items-start">
+      <CustomButton
+        :iconPath="mdiDockLeft"
+        label=""
+        title="Toggle sidebar"
+        @click="toggleSidebar"
+      />
+      <RouterLink :to="{ name: 'home' }" v-if="!hideLogo">
+        <Logo responsive></Logo>
+      </RouterLink>
+    </div>
     <div class="flex grow items-start justify-end">
       <!-- New Note -->
       <RouterLink v-if="showNewButton" :to="{ name: 'new' }">
@@ -21,6 +29,7 @@
 </template>
 
 <script setup>
+import { mdiDockLeft } from "@mdi/js";
 import {
   mdilLogout,
   mdilMagnify,
@@ -98,6 +107,11 @@ function logOut() {
 
 function toggleMenu(event) {
   menu.value.toggle(event);
+}
+
+function toggleSidebar() {
+  globalStore.sidebarVisible = !globalStore.sidebarVisible;
+  localStorage.setItem("sidebarVisible", globalStore.sidebarVisible);
 }
 
 function showLogOutButton() {
