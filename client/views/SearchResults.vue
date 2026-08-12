@@ -5,10 +5,11 @@
 
     <LoadingIndicator ref="loadingIndicator" class="flex-1">
       <!-- Sort By -->
-      <div class="flex justify-end">
+      <div class="flex justify-start">
         <CustomButton
           :label="`Sort By: ${sortByName}`"
           :iconPath="mdiSort"
+          style="quiet"
           class="mb-1"
           @click="toggleSortMenu"
         />

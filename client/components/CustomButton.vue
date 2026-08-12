@@ -4,6 +4,8 @@
     :class="{
       'bg-theme-background text-theme-text-muted hover:bg-theme-background-elevated':
         style === 'subtle',
+      'text-theme-text-very-muted hover:bg-theme-background-elevated hover:text-theme-text-muted':
+        style === 'quiet',
       'border bg-theme-background hover:bg-theme-background-elevated':
         style === 'cta',
       'border border-theme-danger text-theme-danger hover:bg-theme-danger/10':
@@ -28,7 +30,7 @@ defineProps({
     type: String,
     default: "subtle",
     validator: (value) => {
-      return ["subtle", "cta", "danger", "success"].includes(value);
+      return ["subtle", "cta", "danger", "success", "quiet"].includes(value);
     },
   },
 });
