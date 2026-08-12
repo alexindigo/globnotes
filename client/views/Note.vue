@@ -39,73 +39,75 @@
   />
 
   <LoadingIndicator ref="loadingIndicator" class="flex h-full flex-col">
-    <!-- Header -->
-    <div class="flex flex-col-reverse md:flex-row md:items-baseline">
-      <!-- Title -->
-      <div class="min-w-0 grow">
-        <div class="truncate text-3xl leading-[1.6em]">
-          <span v-show="!editMode" :title="note.title">{{
-            noteBasename
-          }}</span>
-          <input
+    <!-- Header (sticky shelf) -->
+    <div class="sticky top-0 z-10 bg-theme-background">
+      <div class="flex flex-col-reverse md:flex-row md:items-baseline">
+        <!-- Title -->
+        <div class="min-w-0 grow">
+          <div class="truncate text-3xl leading-[1.6em]">
+            <span v-show="!editMode" :title="note.title">{{
+              noteBasename
+            }}</span>
+            <input
+              v-show="editMode"
+              v-model.trim="newTitle"
+              class="w-full bg-theme-background outline-none"
+              placeholder="Title"
+            />
+          </div>
+          <div
+            v-show="!editMode && noteDirName"
+            class="truncate pt-1 text-sm text-theme-text-muted"
+            :title="note.title"
+          >
+            <template v-for="(crumb, i) in noteDirBreadcrumbs" :key="i">
+              <span v-if="crumb.ellipsis">…/</span>
+              <RouterLink
+                v-else
+                :to="folderTarget(crumb.folder)"
+                class="hover:text-theme-text hover:underline"
+                >{{ crumb.label }}/</RouterLink
+              >
+            </template>
+          </div>
+        </div>
+
+        <!-- Buttons -->
+        <div class="flex shrink-0 self-end md:self-end print:hidden">
+          <!-- Delete Button -->
+          <CustomButton
+            v-show="canModify && !isNewNote"
+            label="Delete"
+            :iconPath="mdilDelete"
+            @click="deleteHandler"
+          />
+          <!-- Save Button -->
+          <CustomButton
             v-show="editMode"
-            v-model.trim="newTitle"
-            class="w-full bg-theme-background outline-none"
-            placeholder="Title"
+            label="Save"
+            :iconPath="mdilContentSave"
+            @click="saveHandler((close = false))"
+            class="relative ml-1"
+          >
+            <!-- Unsaved Changes Indicator -->
+            <div
+              v-show="unsavedChanges"
+              class="absolute right-1 h-1.5 w-1.5 rounded-full bg-theme-brand"
+            ></div>
+          </CustomButton>
+          <!-- Edit Toggle -->
+          <Toggle
+            v-if="canModify"
+            label="Edit"
+            :isOn="editMode"
+            class="ml-1"
+            @click="toggleEditModeHandler"
           />
         </div>
-        <div
-          v-show="!editMode && noteDirName"
-          class="truncate pt-1 text-sm text-theme-text-muted"
-          :title="note.title"
-        >
-          <template v-for="(crumb, i) in noteDirBreadcrumbs" :key="i">
-            <span v-if="crumb.ellipsis">…/</span>
-            <RouterLink
-              v-else
-              :to="folderTarget(crumb.folder)"
-              class="hover:text-theme-text hover:underline"
-              >{{ crumb.label }}/</RouterLink
-            >
-          </template>
-        </div>
       </div>
 
-      <!-- Buttons -->
-      <div class="flex shrink-0 self-end md:self-end print:hidden">
-        <!-- Delete Button -->
-        <CustomButton
-          v-show="canModify && !isNewNote"
-          label="Delete"
-          :iconPath="mdilDelete"
-          @click="deleteHandler"
-        />
-        <!-- Save Button -->
-        <CustomButton
-          v-show="editMode"
-          label="Save"
-          :iconPath="mdilContentSave"
-          @click="saveHandler((close = false))"
-          class="relative ml-1"
-        >
-          <!-- Unsaved Changes Indicator -->
-          <div
-            v-show="unsavedChanges"
-            class="absolute right-1 h-1.5 w-1.5 rounded-full bg-theme-brand"
-          ></div>
-        </CustomButton>
-        <!-- Edit Toggle -->
-        <Toggle
-          v-if="canModify"
-          label="Edit"
-          :isOn="editMode"
-          class="ml-1"
-          @click="toggleEditModeHandler"
-        />
-      </div>
+      <hr v-if="!editMode" class="mt-2 mb-4 border-theme-border" />
     </div>
-
-    <hr v-if="!editMode" class="mt-2 mb-4 border-theme-border" />
 
     <!-- Content -->
     <div class="flex-1">
