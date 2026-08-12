@@ -29,6 +29,7 @@
           :iconPath="mdilUnfoldLessVertical"
           label=""
           title="Collapse all"
+          :disabled="!canCollapse"
           @click="collapseAll"
         />
         <CustomButton
@@ -148,6 +149,9 @@ function collapseAll() {
   expanded.value = new Set();
   persistExpanded();
 }
+
+// Whether there is anything left to collapse.
+const canCollapse = computed(() => expanded.value.size > 0);
 
 // -- Visible rows (flattened, depth-first, folders before notes) ------------
 

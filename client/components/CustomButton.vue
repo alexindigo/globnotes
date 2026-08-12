@@ -1,6 +1,7 @@
 <template>
   <button
     class="text-nowrap rounded px-2 py-1"
+    :disabled="disabled"
     :class="{
       'bg-theme-background text-theme-text-muted hover:bg-theme-background-elevated':
         style === 'subtle',
@@ -10,6 +11,7 @@
         style === 'danger',
       'border border-theme-success text-theme-success hover:bg-theme-success/10':
         style === 'success',
+      'opacity-40': disabled,
     }"
   >
     <slot></slot>
@@ -24,6 +26,7 @@ defineProps({
   iconPath: String,
   iconSize: String,
   label: String,
+  disabled: Boolean,
   style: {
     type: String,
     default: "subtle",
