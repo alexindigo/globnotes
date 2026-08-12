@@ -145,6 +145,7 @@ import { authTypes } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { getToastOptions } from "../helpers.js";
 import { refreshNoteIndex } from "../noteIndex.js";
+import { notePath } from "../notePath.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
 
 const props = defineProps({
@@ -285,10 +286,7 @@ function saveNew(newTitle, newContent, close = false) {
       note.value = data;
       refreshNoteIndex();
       router
-        .push({
-          name: "note",
-          params: { title: note.value.title },
-        })
+        .push(notePath(note.value.title))
         .then(() => {
           // Wait for the route to be updated before setting edit mode to false
           // as the route is used to determine the action.
@@ -313,7 +311,7 @@ function saveExisting(newTitle, newContent, close = false) {
       if (oldTitle != data.title) {
         refreshNoteIndex();
       }
-      router.replace({ name: "note", params: { title: note.value.title } });
+      router.replace(notePath(note.value.title));
       noteSaveSuccess(close);
     })
     .catch(noteSaveFailure);

@@ -16,7 +16,7 @@
         </p>
         <RouterLink
           v-for="note in notes.slice(0, globalStore.config.quickAccessLimit)"
-          :to="{ name: 'note', params: { title: note.title } }"
+          :to="notePath(note.title)"
           class="mb-1"
         >
           <CustomButton :label="note.title" />
@@ -50,6 +50,7 @@ import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Logo from "../components/Logo.vue";
 import { searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
+import { notePath } from "../notePath.js";
 import SearchInput from "../partials/SearchInput.vue";
 
 const globalStore = useGlobalStore();

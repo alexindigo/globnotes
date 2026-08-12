@@ -20,7 +20,7 @@
         v-for="result in results"
         class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
       >
-        <RouterLink :to="{ name: 'note', params: { title: result.title } }">
+        <RouterLink :to="notePath(result.title)">
           <!-- Title and Tags -->
           <div>
             <span v-html="result.titleHighlightsOrTitle" class="mr-2"></span>
@@ -55,6 +55,7 @@ import LoadingIndicator from "../components/LoadingIndicator.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
 import Tag from "../components/Tag.vue";
 import { params, searchSortOptions } from "../constants.js";
+import { notePath } from "../notePath.js";
 import SearchInput from "../partials/SearchInput.vue";
 
 const props = defineProps({

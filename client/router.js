@@ -3,6 +3,7 @@ import * as constants from "./constants.js";
 import { createRouter, createWebHistory } from "vue-router";
 
 import { authCheck } from "./api.js";
+import { notePath } from "./notePath.js";
 
 const pathPrefix =
   document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
@@ -54,8 +55,7 @@ router.beforeEach(async (to) => {
     to.params.title.endsWith(".md")
   ) {
     return {
-      name: "note",
-      params: { title: to.params.title.slice(0, -".md".length) },
+      path: notePath(to.params.title.slice(0, -".md".length)),
       replace: true,
     };
   }

@@ -1,5 +1,6 @@
 import { params, searchSortOptions } from "../../constants.js";
 import { resolveNoteTitle } from "../../noteIndex.js";
+import { notePath } from "../../notePath.js";
 
 import router from "../../router.js";
 import { slugifyHeading } from "./baseOptions.js";
@@ -99,18 +100,15 @@ function parseWikiLink(source) {
       hashIndex === -1 ? targetPart : targetPart.slice(0, hashIndex);
     const anchor =
       hashIndex === -1 ? null : targetPart.slice(hashIndex + 1);
-    const route = {
-      name: "note",
-      params: { title: resolveNoteTitle(target) },
-    };
+    let path = notePath(resolveNoteTitle(target));
     if (anchor) {
-      route.hash = `#${slugifyHeading(anchor)}`;
+      path += `#${slugifyHeading(anchor)}`;
     }
     return [
       {
         text: alias || targetPart,
         range: [match.index, match.index + match[0].length - 1],
-        url: `${router.resolve(route).href}`,
+        url: `${router.resolve(path).href}`,
       },
     ];
   });
