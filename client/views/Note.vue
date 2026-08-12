@@ -59,12 +59,12 @@
           class="truncate pt-1 text-sm text-theme-text-muted"
           :title="note.title"
         >
-          {{ noteDirName }}/
+          {{ noteDirDisplay }}/
         </div>
       </div>
 
       <!-- Buttons -->
-      <div class="flex shrink-0 self-end md:self-baseline print:hidden">
+      <div class="flex shrink-0 self-end md:self-end print:hidden">
         <!-- Delete Button -->
         <CustomButton
           v-show="canModify && !isNewNote"
@@ -183,6 +183,9 @@ const noteBasename = computed(() => {
   const dir = noteDirName.value;
   return dir ? title.slice(dir.length + 1) : title;
 });
+const noteDirDisplay = computed(() =>
+  middleEllipsis(noteDirName.value, 60),
+);
 const reservedFilenameCharacters = /[<>:"\\|?*]/;
 const router = useRouter();
 const newTitle = ref();
@@ -506,6 +509,29 @@ function keydownHandler(event) {
 }
 
 // Helpers
+function middleEllipsis(path, maxChars) {
+  // Cut the middle of long paths, keeping the first segment and as many
+  // trailing segments as fit: node_modules/…/install-pkg
+  if (path.length <= maxChars) {
+    return path;
+  }
+  const parts = path.split("/");
+  if (parts.length <= 2) {
+    const keep = Math.floor((maxChars - 1) / 2);
+    return path.slice(0, keep) + "…" + path.slice(-keep);
+  }
+  let out = parts[0] + "/…/" + parts[parts.length - 1];
+  for (let i = parts.length - 2; i > 0; i--) {
+    const candidate = parts[0] + "/…/" + parts.slice(i).join("/");
+    if (candidate.length <= maxChars) {
+      out = candidate;
+    } else {
+      break;
+    }
+  }
+  return out;
+}
+
 function directoryFromTitle(title) {
   const index = title.lastIndexOf("/");
   return index === -1 ? "" : title.slice(0, index);
