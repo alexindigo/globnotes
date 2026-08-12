@@ -233,6 +233,7 @@ function toggleSortMenu(event) {
 
 watch(() => props.searchTerm, init);
 watch(() => props.sortBy, reSortResults);
+watch(() => props.folder, init);
 onMounted(init);
 </script>
 
