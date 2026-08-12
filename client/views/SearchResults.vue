@@ -51,7 +51,7 @@
         <RouterLink :to="notePath(result.title)">
           <!-- Title and Tags -->
           <div>
-            <span v-html="result.titleHighlightsOrTitle" class="mr-2"></span>
+            <span v-html="displayTitle(result)" class="mr-2"></span>
             <Tag v-for="tag in result.tagMatches" :tag="tag" class="mr-1" />
           </div>
           <!-- Last Modified and Content Highlights -->
@@ -181,8 +181,19 @@ function init() {
     });
 }
 
-function sortResults(results) {
-  if (props.sortBy === searchSortOptions.title) {
+function displayTitle(result) {
+  // Show the title relative to the current folder. Highlighted titles
+  // keep their markup intact (the prefix may contain match spans).
+  if (result.titleHighlights) {
+    return result.titleHighlights;
+  }
+  const prefix = props.folder ? props.folder + "/" : "";
+  return prefix && result.title.startsWith(prefix)
+    ? result.title.slice(prefix.length)
+    : result.title;
+}
+
+function sortResults(results) {  if (props.sortBy === searchSortOptions.title) {
     return results.sort((a, b) => a.title.localeCompare(b.title));
   } else if (props.sortBy === searchSortOptions.lastModified) {
     return results.sort((a, b) => b.lastModified - a.lastModified);
