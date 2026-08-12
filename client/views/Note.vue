@@ -97,7 +97,7 @@
       </div>
     </div>
 
-    <hr v-if="!editMode" class="mt-1 mb-4 border-theme-border" />
+    <hr v-if="!editMode" class="mt-2 mb-4 border-theme-border" />
 
     <!-- Content -->
     <div class="flex-1">
