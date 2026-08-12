@@ -56,7 +56,7 @@
         </div>
         <div
           v-show="!editMode && noteDirName"
-          class="truncate pt-2 text-sm text-theme-text-muted"
+          class="truncate pt-1 text-sm text-theme-text-muted"
           :title="note.title"
         >
           {{ noteDirName }}/
@@ -97,7 +97,7 @@
       </div>
     </div>
 
-    <hr v-if="!editMode" class="my-4 border-theme-border" />
+    <hr v-if="!editMode" class="mt-1 mb-4 border-theme-border" />
 
     <!-- Content -->
     <div class="flex-1">
