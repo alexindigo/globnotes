@@ -18,8 +18,9 @@
     <!-- Search Input -->
     <SearchInput :initialSearchTerm="props.searchTerm" class="mb-12" />
 
-    <!-- Level up + folders at this level (when not including nested) -->
-    <template v-if="!includeNested">
+    <!-- Level up (whenever inside a folder) + folders at this level (when
+         not including nested) -->
+    <template v-if="props.folder || (!includeNested && currentSubdirs.length)">
       <div
         v-if="props.folder"
         class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
@@ -34,31 +35,33 @@
           <span>..</span>
         </RouterLink>
       </div>
-      <div
-        v-for="dir in currentSubdirs"
-        :key="dir"
-        class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
-      >
-        <RouterLink
-          :to="{
-            name: 'search',
-            query: {
-              [params.searchTerm]: props.searchTerm,
-              [params.sortBy]: props.sortBy,
-              [params.folder]: dir,
-            },
-          }"
-          class="flex items-center"
+      <template v-if="!includeNested">
+        <div
+          v-for="dir in currentSubdirs"
+          :key="dir"
+          class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
         >
-          <SvgIcon
-            type="mdi"
-            :path="mdilFolder"
-            size="1.25em"
-            class="mr-2 text-theme-text-muted"
-          />
-          <span>{{ dir.split("/").pop() }}</span>
-        </RouterLink>
-      </div>
+          <RouterLink
+            :to="{
+              name: 'search',
+              query: {
+                [params.searchTerm]: props.searchTerm,
+                [params.sortBy]: props.sortBy,
+                [params.folder]: dir,
+              },
+            }"
+            class="flex items-center"
+          >
+            <SvgIcon
+              type="mdi"
+              :path="mdilFolder"
+              size="1.25em"
+              class="mr-2 text-theme-text-muted"
+            />
+            <span>{{ dir.split("/").pop() }}</span>
+          </RouterLink>
+        </div>
+      </template>
     </template>
 
     <LoadingIndicator ref="loadingIndicator" class="flex-1">
