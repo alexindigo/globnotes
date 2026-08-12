@@ -33,6 +33,7 @@ class BaseNotes(ABC):
         order: Literal["asc", "desc"] = "desc",
         limit: int = None,
         nested: bool = True,
+        folder: str = None,
     ) -> list[SearchResult]:
         """Search for notes."""
         pass

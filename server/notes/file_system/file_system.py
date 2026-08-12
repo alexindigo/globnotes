@@ -128,9 +128,11 @@ class FileSystemNotes(BaseNotes):
         order: Literal["asc", "desc"] = "desc",
         limit: int = None,
         nested: bool = True,
+        folder: str = None,
     ) -> Tuple[SearchResult, ...]:
         """Search the index for the given term. When nested is False, only
-        root-level notes are included."""
+        root-level notes are included. When folder is given, only notes
+        under that folder path are included."""
         self._sync_index_with_retry()
         term = self._pre_process_search_term(term)
         with self.index.searcher() as searcher:
@@ -158,9 +160,9 @@ class FileSystemNotes(BaseNotes):
                 reverse = not reverse
 
             # Run Search
-            # When filtering to root-level notes, fetch without a limit and
-            # apply the limit after filtering.
-            fetch_limit = limit if nested else None
+            # When filtering (by nested and/or folder), fetch without a
+            # limit and apply the limit after filtering.
+            fetch_limit = limit if (nested and folder is None) else None
             results = searcher.search(
                 query,
                 sortedby=sort,
@@ -171,11 +173,19 @@ class FileSystemNotes(BaseNotes):
             hits = [
                 hit
                 for hit in results
-                if nested or "/" not in hit["filename"]
+                if (nested or "/" not in hit["filename"])
+                and (folder is None or self._in_folder(hit["filename"], folder))
             ]
             if limit is not None:
                 hits = hits[:limit]
             return tuple(self._search_result_from_hit(hit) for hit in hits)
+
+    @staticmethod
+    def _in_folder(filename: str, folder: str) -> bool:
+        """Return True if the note filename is the folder itself or lives
+        under it (segment-aware prefix match)."""
+        title = filename[: -len(MARKDOWN_EXT)]
+        return title == folder or title.startswith(folder + "/")
 
     def get_tags(self) -> list[str]:
         """Return a list of all indexed tags. Note: Tags no longer in use will

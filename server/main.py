@@ -26,7 +26,7 @@ from global_config import (
     SetupRequest,
     SetupStatus,
 )
-from helpers import hash_password, rewrite_index_html
+from helpers import hash_password, is_valid_note_path, rewrite_index_html
 from logger import logger
 from notes.base import BaseNotes
 from notes.models import Note, NoteCreate, NoteUpdate, SearchResult
@@ -276,13 +276,22 @@ def search(
     order: Literal["asc", "desc"] = "desc",
     limit: int = None,
     nested: bool = True,
+    folder: str = None,
 ):
     """Perform a full text search on all notes. When nested is false, only
-    root-level notes are included."""
+    root-level notes are included. When folder is given, only notes under
+    that folder path are included."""
+    if folder is not None:
+        try:
+            is_valid_note_path(folder)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail=api_messages.invalid_folder_path
+            )
     if sort == "lastModified":
         sort = "last_modified"
     return note_storage.search(
-        term, sort=sort, order=order, limit=limit, nested=nested
+        term, sort=sort, order=order, limit=limit, nested=nested, folder=folder
     )
 
 

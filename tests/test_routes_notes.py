@@ -103,3 +103,68 @@ class TestNoteRoutes:
         ).json()
         assert len(response) == 1
         assert response[0]["title"] == "z-root"
+
+    def test_search_folder_filter(self, client):
+        client.post(
+            "/_/api/notes", json={"title": "dad/a", "content": "needle"}
+        )
+        client.post(
+            "/_/api/notes",
+            json={"title": "dad/recipes/b", "content": "needle"},
+        )
+        client.post(
+            "/_/api/notes", json={"title": "mom/c", "content": "needle"}
+        )
+        client.post(
+            "/_/api/notes", json={"title": "daddy/d", "content": "needle"}
+        )
+
+        dad = client.get(
+            "/_/api/search", params={"term": "needle", "folder": "dad"}
+        ).json()
+        assert sorted(r["title"] for r in dad) == ["dad/a", "dad/recipes/b"]
+
+        recipes = client.get(
+            "/_/api/search",
+            params={"term": "needle", "folder": "dad/recipes"},
+        ).json()
+        assert [r["title"] for r in recipes] == ["dad/recipes/b"]
+
+        # No partial-segment matches
+        assert (
+            client.get(
+                "/_/api/search", params={"term": "needle", "folder": "da"}
+            ).json()
+            == []
+        )
+
+        # Invalid folder path
+        assert (
+            client.get(
+                "/_/api/search", params={"term": "needle", "folder": "../x"}
+            ).status_code
+            == 400
+        )
+
+    def test_search_folder_filter_applies_before_limit(self, client):
+        client.post(
+            "/_/api/notes", json={"title": "dad/one", "content": "needle"}
+        )
+        client.post(
+            "/_/api/notes", json={"title": "dad/two", "content": "needle"}
+        )
+        client.post(
+            "/_/api/notes", json={"title": "mom/three", "content": "needle"}
+        )
+        response = client.get(
+            "/_/api/search",
+            params={
+                "term": "needle",
+                "folder": "dad",
+                "limit": 1,
+                "sort": "title",
+                "order": "asc",
+            },
+        ).json()
+        assert len(response) == 1
+        assert response[0]["title"] == "dad/one"
