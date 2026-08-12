@@ -116,7 +116,7 @@ export async function createNote(title, content) {
 
 export async function getNote(title) {
   try {
-    const response = await api.get(`api/notes/${encodeURIComponent(title)}`);
+    const response = await api.get(`notes/${encodeURIComponent(title)}`);
     return new Note(response.data);
   } catch (response) {
     return Promise.reject(response);
@@ -125,7 +125,7 @@ export async function getNote(title) {
 
 export async function updateNote(title, newTitle, newContent) {
   try {
-    const response = await api.patch(`api/notes/${encodeURIComponent(title)}`, {
+    const response = await api.patch(`notes/${encodeURIComponent(title)}`, {
       newTitle: newTitle,
       newContent: newContent,
     });
@@ -137,7 +137,7 @@ export async function updateNote(title, newTitle, newContent) {
 
 export async function deleteNote(title) {
   try {
-    await api.delete(`api/notes/${encodeURIComponent(title)}`);
+    await api.delete(`notes/${encodeURIComponent(title)}`);
   } catch (response) {
     return Promise.reject(response);
   }
