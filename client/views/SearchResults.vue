@@ -1,21 +1,21 @@
 <template>
   <div class="flex h-full flex-col">
+    <!-- Sort By -->
+    <div class="flex justify-start">
+      <CustomButton
+        :label="`Sort By: ${sortByName}`"
+        :iconPath="mdiSort"
+        style="quiet"
+        class="mb-1"
+        @click="toggleSortMenu"
+      />
+      <PrimeMenu ref="sortMenu" :model="menuItems" :popup="true" />
+    </div>
+
     <!-- Search Input -->
     <SearchInput :initialSearchTerm="props.searchTerm" class="mb-2" />
 
     <LoadingIndicator ref="loadingIndicator" class="flex-1">
-      <!-- Sort By -->
-      <div class="flex justify-start">
-        <CustomButton
-          :label="`Sort By: ${sortByName}`"
-          :iconPath="mdiSort"
-          style="quiet"
-          class="mb-1"
-          @click="toggleSortMenu"
-        />
-        <PrimeMenu ref="sortMenu" :model="menuItems" :popup="true" />
-      </div>
-
       <!-- Search Results -->
       <div
         v-for="result in results"
