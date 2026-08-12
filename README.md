@@ -44,7 +44,7 @@ docker run -d \
   ghcr.io/alexindigo/globnotes:latest
 ```
 
-Open `http://localhost:8080` and complete the first-run setup (create a password, or disable auth on a trusted network).
+Open `http://localhost:8080` and complete the first-run setup: create a password, choose read-only (browse and search, no editing), or disable auth entirely (trusted networks only).
 
 Or with docker compose:
 

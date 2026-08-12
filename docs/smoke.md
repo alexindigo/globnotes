@@ -15,6 +15,7 @@ printf '# Quick\n\n==highlighted== #taggy\n' > /tmp/globnotes-fixture/dad/quickn
 
 - [ ] Start container without `GLOBNOTES_AUTH_TYPE` → UI shows the setup wizard; API calls return 503.
 - [ ] "Create password" → login prompt appears; logging in works.
+- [ ] (Fresh dir) "Read-only" → notes browse/search fine; edit/delete/upload return 403 immediately and after restart.
 - [ ] Restart container → no wizard; login still works.
 - [ ] (Fresh dir) "Disable auth" → straight into the app; startup log warns about no auth.
 

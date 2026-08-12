@@ -156,7 +156,7 @@ class GlobalConfigResponseModel(CustomBaseModel):
 
 
 class SetupRequest(CustomBaseModel):
-    mode: Literal["none", "password"]
+    mode: Literal["none", "password", "read_only"]
     username: Optional[str] = None
     password: Optional[str] = None
 

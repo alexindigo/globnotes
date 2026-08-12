@@ -40,9 +40,15 @@ file_serving: FileServing = global_config.load_file_serving()
 
 def require_auth(request: Request):
     """Authenticate the request against the current auth state. Also gates
-    all data APIs while first-run setup is incomplete."""
+    all data APIs while first-run setup is incomplete, and writes while in
+    read-only mode."""
     if global_config.setup_required:
         raise HTTPException(status_code=503, detail="setup_required")
+    if (
+        global_config.auth_type == AuthType.READ_ONLY
+        and request.method != "GET"
+    ):
+        raise HTTPException(status_code=403, detail="read-only mode")
     current_auth = auth_state["auth"]
     if current_auth is not None:
         token = None
@@ -116,6 +122,16 @@ def post_setup(data: SetupRequest):
             "Authentication disabled via first-run setup. Anyone who can "
             "reach this server can read and modify notes."
         )
+    elif data.mode == "read_only":
+        global_config.save_stored_config(
+            {"auth_type": AuthType.READ_ONLY.value}
+        )
+        global_config.auth_type = AuthType.READ_ONLY
+        global_config.setup_required = False
+        logger.info(
+            "Read-only mode enabled via first-run setup. Notes can be "
+            "browsed and searched but not modified."
+        )
     else:
         if not data.username or not data.password:
             raise HTTPException(
@@ -185,65 +201,64 @@ def get_note(title: str):
         raise HTTPException(404, api_messages.note_not_found)
 
 
-if global_config.auth_type != AuthType.READ_ONLY:
 
-    # Create Note
-    @router.post(
-        "/_/api/notes",
-        dependencies=auth_deps,
-        response_model=Note,
-    )
-    def post_note(note: NoteCreate):
-        """Create a new note."""
-        try:
-            return note_storage.create(note)
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=api_messages.invalid_note_title,
-            )
-        except FileExistsError:
-            raise HTTPException(
-                status_code=409, detail=api_messages.note_exists
-            )
+# Create Note
+@router.post(
+    "/_/api/notes",
+    dependencies=auth_deps,
+    response_model=Note,
+)
+def post_note(note: NoteCreate):
+    """Create a new note."""
+    try:
+        return note_storage.create(note)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=api_messages.invalid_note_title,
+        )
+    except FileExistsError:
+        raise HTTPException(
+            status_code=409, detail=api_messages.note_exists
+        )
 
-    # Update Note
-    @router.patch(
-        "/_/api/notes/{title:path}",
-        dependencies=auth_deps,
-        response_model=Note,
-    )
-    def patch_note(title: str, data: NoteUpdate):
-        try:
-            return note_storage.update(title, data)
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=api_messages.invalid_note_title,
-            )
-        except FileExistsError:
-            raise HTTPException(
-                status_code=409, detail=api_messages.note_exists
-            )
-        except FileNotFoundError:
-            raise HTTPException(404, api_messages.note_not_found)
+# Update Note
+@router.patch(
+    "/_/api/notes/{title:path}",
+    dependencies=auth_deps,
+    response_model=Note,
+)
+def patch_note(title: str, data: NoteUpdate):
+    try:
+        return note_storage.update(title, data)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=api_messages.invalid_note_title,
+        )
+    except FileExistsError:
+        raise HTTPException(
+            status_code=409, detail=api_messages.note_exists
+        )
+    except FileNotFoundError:
+        raise HTTPException(404, api_messages.note_not_found)
 
-    # Delete Note
-    @router.delete(
-        "/_/api/notes/{title:path}",
-        dependencies=auth_deps,
-        response_model=None,
-    )
-    def delete_note(title: str):
-        try:
-            note_storage.delete(title)
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=api_messages.invalid_note_title,
-            )
-        except FileNotFoundError:
-            raise HTTPException(404, api_messages.note_not_found)
+# Delete Note
+@router.delete(
+    "/_/api/notes/{title:path}",
+    dependencies=auth_deps,
+    response_model=None,
+)
+def delete_note(title: str):
+    try:
+        note_storage.delete(title)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=api_messages.invalid_note_title,
+        )
+    except FileNotFoundError:
+        raise HTTPException(404, api_messages.note_not_found)
 
 
 # endregion
@@ -331,24 +346,23 @@ def get_file(path: str):
         )
 
 
-if global_config.auth_type != AuthType.READ_ONLY:
 
-    # Upload File
-    @router.post(
-        "/_/api/files",
-        dependencies=auth_deps,
-        response_model=FileCreateResponse,
-    )
-    def post_file(file: UploadFile, directory: str = Form("")):
-        """Upload a file into the given directory (relative to the notes
-        root)."""
-        try:
-            return file_serving.create(directory, file)
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=api_messages.invalid_file_name,
-            )
+# Upload File
+@router.post(
+    "/_/api/files",
+    dependencies=auth_deps,
+    response_model=FileCreateResponse,
+)
+def post_file(file: UploadFile, directory: str = Form("")):
+    """Upload a file into the given directory (relative to the notes
+    root)."""
+    try:
+        return file_serving.create(directory, file)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=api_messages.invalid_file_name,
+        )
 
 
 # endregion

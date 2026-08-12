@@ -61,6 +61,60 @@ class TestSetupMode:
         assert setup_client.get("/_/api/tags").status_code == 503
         assert setup_client.get("/_/api/note-index").status_code == 503
 
+    def test_read_only_flow(self, setup_client, tmp_path):
+        response = setup_client.post("/_/api/setup", json={"mode": "read_only"})
+        assert response.status_code == 200
+        assert response.json()["setupRequired"] is False
+        # Reads work
+        assert setup_client.get("/_/api/notes/a/b").status_code == 404
+        assert (
+            setup_client.get(
+                "/_/api/search", params={"term": "*"}
+            ).status_code
+            == 200
+        )
+        # Writes are rejected with 403, without a restart
+        assert (
+            setup_client.post(
+                "/_/api/notes", json={"title": "a/b", "content": "x"}
+            ).status_code
+            == 403
+        )
+        assert (
+            setup_client.patch(
+                "/_/api/notes/a/b", json={"newContent": "y"}
+            ).status_code
+            == 403
+        )
+        assert setup_client.delete("/_/api/notes/a/b").status_code == 403
+        assert (
+            setup_client.post(
+                "/_/api/files",
+                files={"file": ("a.png", b"p", "image/png")},
+            ).status_code
+            == 403
+        )
+        # The choice is persisted
+        config_path = os.path.join(
+            str(tmp_path), ".globnotes", "config.json"
+        )
+        with open(config_path) as f:
+            assert json.load(f)["auth_type"] == "read_only"
+
+    def test_read_only_persists_across_restart(
+        self, setup_client, tmp_path, monkeypatch
+    ):
+        setup_client.post("/_/api/setup", json={"mode": "read_only"})
+        client2 = _fresh_client(tmp_path, monkeypatch, auth_type=None)
+        assert client2.get("/_/api/setup").json()["setupRequired"] is False
+        assert client2.get("/_/api/notes/a/b").status_code == 404
+        assert (
+            client2.post(
+                "/_/api/notes", json={"title": "a/b", "content": "x"}
+            ).status_code
+            == 403
+        )
+
     def test_disable_auth_flow(self, setup_client, tmp_path):
         response = setup_client.post("/_/api/setup", json={"mode": "none"})
         assert response.status_code == 200

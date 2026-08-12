@@ -27,17 +27,26 @@
     <hr class="mb-4 border-theme-border" />
 
     <p class="mb-2 text-sm text-theme-text-muted">
-      On a trusted home network you can disable authentication entirely.
-      <strong>
-        Anyone who can reach this server will be able to read and modify
-        your notes.
-      </strong>
+      Or choose open access on a trusted network:
     </p>
-    <CustomButton
-      label="Disable Authentication"
-      style="danger"
-      @click="disableAuth"
-    />
+    <div class="flex gap-2">
+      <CustomButton
+        label="Read-Only"
+        style="cta"
+        @click="chooseReadOnly"
+      />
+      <CustomButton
+        label="Disable Authentication"
+        style="danger"
+        @click="disableAuth"
+      />
+    </div>
+    <p class="mt-2 text-sm text-theme-text-muted">
+      <strong>Read-only:</strong> anyone can browse and search, nobody can
+      edit (family wiki; editing happens elsewhere).
+      <strong>Disable auth:</strong> anyone who can reach this server can
+      read <em>and modify</em> your notes.
+    </p>
   </Modal>
 </template>
 
@@ -67,6 +76,12 @@ function createPassword() {
     username: username.value,
     password: password.value,
   })
+    .then(() => emit("completed"))
+    .catch(setupFailed);
+}
+
+function chooseReadOnly() {
+  postSetup({ mode: "read_only" })
     .then(() => emit("completed"))
     .catch(setupFailed);
 }
