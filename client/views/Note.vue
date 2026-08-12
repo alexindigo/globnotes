@@ -42,14 +42,25 @@
     <!-- Header -->
     <div class="flex flex-col-reverse md:flex-row md:items-baseline">
       <!-- Title -->
-      <div class="grow truncate text-3xl leading-[1.6em]">
-        <span v-show="!editMode" :title="note.title">{{ note.title }}</span>
-        <input
-          v-show="editMode"
-          v-model.trim="newTitle"
-          class="w-full bg-theme-background outline-none"
-          placeholder="Title"
-        />
+      <div class="min-w-0 grow">
+        <div
+          v-show="!editMode && noteDirName"
+          class="truncate text-sm text-theme-text-muted"
+          :title="note.title"
+        >
+          {{ noteDirName }}/
+        </div>
+        <div class="truncate text-3xl leading-[1.6em]">
+          <span v-show="!editMode" :title="note.title">{{
+            noteBasename
+          }}</span>
+          <input
+            v-show="editMode"
+            v-model.trim="newTitle"
+            class="w-full bg-theme-background outline-none"
+            placeholder="Title"
+          />
+        </div>
       </div>
 
       <!-- Buttons -->
@@ -164,6 +175,14 @@ const isDraftModalVisible = ref(false);
 const isNewNote = computed(() => !props.title);
 const loadingIndicator = ref();
 const note = ref({});
+const noteDirName = computed(() =>
+  directoryFromTitle(note.value.title || props.title || ""),
+);
+const noteBasename = computed(() => {
+  const title = note.value.title || props.title || "";
+  const dir = noteDirName.value;
+  return dir ? title.slice(dir.length + 1) : title;
+});
 const reservedFilenameCharacters = /[<>:"\\|?*]/;
 const router = useRouter();
 const newTitle = ref();
