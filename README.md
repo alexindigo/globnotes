@@ -1,5 +1,3 @@
-![globnotes](docs/logo.png)
-
 # globnotes
 
 A self-hosted, database-less note-taking web app where **a note's title is its path** — built for Obsidian vaults and nested markdown trees.
@@ -10,10 +8,10 @@ globnotes is a fork of [flatnotes](https://github.com/dullage/flatnotes) by Adam
 data/
 ├── dad/
 │   ├── recipes/
-│   │   └── soup.md        →  note title: "dad/recipes/soup"
+│   │   └── soup.md        →  note at /dad/recipes/soup
 │   └── assets/
-│       └── broth.jpg      →  served inline at /files/dad/assets/broth.jpg
-└── ideas.md               →  note title: "ideas"
+│       └── broth.jpg      →  served at /dad/assets/broth.jpg
+└── ideas.md               →  note at /ideas
 ```
 
 ## Why
@@ -30,9 +28,9 @@ Folders are never "managed": creating `a/b/c` makes the directories, renaming `a
 
 ## Features
 
-- **Title-as-path notes** — slashes in titles; every `.md` under `/data` is a note; full-text search and `#tags` across the whole tree (searching a path segment like `school` finds everything under it).
-- **Obsidian-flavored rendering** — `[[wiki-links]]` (with `|alias` and `#heading`), `![[image embeds]]`, `==highlights==`, `> [!callouts]`, `%%comments%%`, YAML frontmatter, mermaid diagrams, KaTeX math, and relative `[links](../other.md)` that just work.
-- **Vault-fidelity files** — images and files live beside the notes that use them (no separate attachments folder), so vaults stay self-contained for Syncthing/git round-trips. Anything in the tree is served: images/PDFs/media inline, markdown as raw text, everything else as a download.
+- **Real-path notes** — the URL path IS the vault path: `/dad/recipes/soup` is the note, `/dad/assets/broth.jpg` is its image. Relative links (`![](broth.jpg)`, `[x](../other.md)`) work exactly like in Obsidian — no rewriting, no magic.
+- **Obsidian-flavored rendering** — `[[wiki-links]]` (with `|alias` and `#heading`), `![[image embeds]]`, `==highlights==`, `> [!callouts]`, `%%comments%%`, YAML frontmatter, mermaid diagrams, KaTeX math.
+- **Full-text search and `#tags`** across the whole tree (searching a path segment like `school` finds everything under it).
 - **First-run setup wizard** — no auth env vars? globnotes asks on first launch: create a password or explicitly disable auth. Open deployments are always a deliberate choice.
 - **Agent-friendly** — raw markdown and files over plain HTTP (see below).
 
@@ -68,6 +66,20 @@ services:
       # GLOBNOTES_AUTH_TYPE: "none"  # trusted home network only!
 ```
 
+## URL model
+
+| What | URL |
+|---|---|
+| Notes | `/dad/recipes/soup` — the whole root space |
+| Vault files | `/dad/assets/broth.jpg` — same tree |
+| App pages | `/_/login`, `/_/new`, `/_/search` |
+| API, health, swagger | `/_/api/*` |
+| Built assets | `/_/assets/*` |
+
+The only reserved top-level segment is `_` — don't name a vault folder that. Everything else is yours.
+
+`GLOBNOTES_PATH_PREFIX` is respected for multi-instance deployments (e.g. one instance at `/dad/` and another at `/mom/` behind one host) — note pages, files, API and assets all live under the prefix, and relative links keep working.
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -79,7 +91,7 @@ services:
 | `GLOBNOTES_TOTP_KEY` | — | TOTP secret (for `totp`). |
 | `GLOBNOTES_SESSION_EXPIRY_DAYS` | `30` | Login session length. |
 | `GLOBNOTES_HOST` / `GLOBNOTES_PORT` | `0.0.0.0` / `8080` | Listen address (container). |
-| `GLOBNOTES_PATH_PREFIX` | — | Serve under a sub-path, e.g. `/notes` (for reverse proxies). |
+| `GLOBNOTES_PATH_PREFIX` | — | Serve under a sub-path, e.g. `/mom` (multi-instance reverse proxies). |
 | `GLOBNOTES_QUICK_ACCESS_*` | — | `HIDE`, `TITLE`, `TERM`, `SORT`, `LIMIT` for the home page quick-access section. |
 
 ### Home network deployment
@@ -91,23 +103,23 @@ services:
 With token auth (or no auth at all), your notes are plain HTTP:
 
 ```bash
-# Raw markdown, no JSON unwrapping
-curl -H "Authorization: Bearer $TOKEN" https://notes.example/files/dad/recipes/soup.md
+# Raw markdown
+curl -H "Authorization: Bearer $TOKEN" https://notes.example/_/api/files/dad/recipes/soup.md
 
 # Search
-curl -H "Authorization: Bearer $TOKEN" "https://notes.example/api/search?term=soup"
+curl -H "Authorization: Bearer $TOKEN" "https://notes.example/_/api/search?term=soup"
 
 # Drop a file into a vault
 curl -H "Authorization: Bearer $TOKEN" \
   -F "file=@photo.jpg" -F "directory=dad/recipes" \
-  https://notes.example/api/files
+  https://notes.example/_/api/files
 ```
 
 ## Migrating from flatnotes
 
 - Rename `FLATNOTES_*` env vars to `GLOBNOTES_*` (same names otherwise).
 - Your `/data` works as-is: flat notes keep their titles, and the index is rebuilt automatically (`.globnotes` replaces `.flatnotes`; both are hidden and safe to delete).
-- Attachments: the special `attachments/` directory is gone as a concept, but existing `attachments/x.jpg` links keep working — the directory is now just a directory, served like any other. New uploads land beside the note being edited.
+- The special `attachments/` directory is gone as a concept — existing `attachments/x.jpg` links keep working (it's now just a directory, served like any other). New uploads land beside the note being edited.
 
 ## Deferred / future work
 
