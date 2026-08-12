@@ -1,5 +1,7 @@
 <template>
-  <nav class="mb-2 flex justify-between align-top md:mb-6">
+  <nav
+    class="sticky top-0 z-20 mb-2 flex justify-between bg-theme-background align-top md:mb-6"
+  >
     <div class="flex items-start">
       <CustomButton
         :iconPath="mdiDockLeft"
