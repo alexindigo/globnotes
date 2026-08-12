@@ -109,7 +109,10 @@ function search() {
   if (searchTerm.value) {
     router.push({
       name: "search",
-      query: { [constants.params.searchTerm]: searchTerm.value },
+      query: {
+        ...router.currentRoute.value.query,
+        [constants.params.searchTerm]: searchTerm.value,
+      },
     });
     emit("search");
   } else {

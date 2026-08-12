@@ -117,7 +117,7 @@ const props = defineProps({
   folder: String,
   sortBy: {
     type: Number,
-    default: searchSortOptions.score,
+    default: undefined,
   },
 });
 
@@ -171,13 +171,22 @@ function toggleNested() {
   init();
 }
 
+// Score means nothing for a "list everything" (*) search; default to title.
+const effectiveSortBy = computed(
+  () =>
+    props.sortBy ??
+    (props.searchTerm === "*"
+      ? searchSortOptions.title
+      : searchSortOptions.score),
+);
+
 const sortByName = computed(() => {
   const sortOptionNames = {
     [searchSortOptions.title]: "Title",
     [searchSortOptions.lastModified]: "Last Modified",
     [searchSortOptions.score]: "Score",
   };
-  return sortOptionNames[props.sortBy];
+  return sortOptionNames[effectiveSortBy.value];
 });
 
 function init() {
@@ -218,10 +227,10 @@ function displayTitle(result) {
     ? result.title.slice(prefix.length)
     : result.title;
 }
-
-function sortResults(results) {  if (props.sortBy === searchSortOptions.title) {
+function sortResults(results) {
+  if (effectiveSortBy.value === searchSortOptions.title) {
     return results.sort((a, b) => a.title.localeCompare(b.title));
-  } else if (props.sortBy === searchSortOptions.lastModified) {
+  } else if (effectiveSortBy.value === searchSortOptions.lastModified) {
     return results.sort((a, b) => b.lastModified - a.lastModified);
   } else {
     return results.sort((a, b) => b.score - a.score);
@@ -269,8 +278,8 @@ function toggleSortMenu(event) {
 }
 
 watch(() => props.searchTerm, init);
-watch(() => props.sortBy, reSortResults);
 watch(() => props.folder, init);
+watch(effectiveSortBy, reSortResults);
 onMounted(init);
 </script>
 
