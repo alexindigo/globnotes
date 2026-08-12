@@ -1,25 +1,33 @@
 <template>
-  <!-- Backdrop (mobile overlay) -->
+  <!-- Backdrop -->
   <div
     v-if="globalStore.sidebarVisible"
-    class="fixed inset-0 z-30 bg-slate-950/40 md:hidden"
+    class="fixed inset-0 z-30 bg-slate-950/40"
     @click="toggleSidebar"
   />
   <aside
     v-show="globalStore.sidebarVisible"
-    class="w-64 shrink-0 overflow-y-auto border-theme-border bg-theme-background py-2 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:border-r max-md:shadow-lg md:border-r"
+    class="fixed inset-y-0 left-0 z-40 w-64 overflow-y-auto border-r border-theme-border bg-theme-background py-2 shadow-lg"
   >
     <!-- Header -->
     <div class="mb-1 flex items-center justify-between px-2">
       <span class="text-xs font-bold uppercase text-theme-text-very-muted">
         Notes
       </span>
-      <CustomButton
-        :iconPath="mdilChevronDoubleLeft"
-        label=""
-        title="Collapse all"
-        @click="collapseAll"
-      />
+      <div class="flex items-center">
+        <CustomButton
+          :iconPath="mdilChevronDoubleLeft"
+          label=""
+          title="Collapse all"
+          @click="collapseAll"
+        />
+        <CustomButton
+          :iconPath="mdiClose"
+          label=""
+          title="Close sidebar"
+          @click="toggleSidebar"
+        />
+      </div>
     </div>
 
     <!-- Tree -->
@@ -63,6 +71,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import SvgIcon from "@jamescoyle/vue-icon";
+import { mdiClose } from "@mdi/js";
 import { mdilChevronDoubleLeft, mdilChevronDown, mdilChevronRight } from "@mdi/light-js";
 import CustomButton from "../components/CustomButton.vue";
 import { useGlobalStore } from "../globalStore.js";

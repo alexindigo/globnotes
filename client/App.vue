@@ -17,11 +17,9 @@
         :hide-logo="!showNavBarLogo"
         @toggleSearchModal="toggleSearchModal"
       />
-      <div class="flex min-h-0 flex-1">
-        <SidebarPanel />
-        <div class="min-w-0 flex-1 overflow-y-auto pr-2">
-          <RouterView />
-        </div>
+      <SidebarPanel />
+      <div class="min-w-0 flex-1 overflow-y-auto pr-2">
+        <RouterView />
       </div>
     </template>
   </LoadingIndicator>
