@@ -3,13 +3,13 @@
     class="text-nowrap rounded px-2 py-1"
     :disabled="disabled"
     :class="{
-      'bg-theme-background text-theme-text-muted hover:bg-theme-background-elevated':
+      'bg-theme-background text-theme-text-muted enabled:hover:bg-theme-background-elevated':
         style === 'subtle',
-      'border bg-theme-background hover:bg-theme-background-elevated':
+      'border bg-theme-background enabled:hover:bg-theme-background-elevated':
         style === 'cta',
-      'border border-theme-danger text-theme-danger hover:bg-theme-danger/10':
+      'border border-theme-danger text-theme-danger enabled:hover:bg-theme-danger/10':
         style === 'danger',
-      'border border-theme-success text-theme-success hover:bg-theme-success/10':
+      'border border-theme-success text-theme-success enabled:hover:bg-theme-success/10':
         style === 'success',
       'opacity-40': disabled,
     }"
