@@ -63,8 +63,8 @@ def require_auth(request: Request):
 auth_deps = [Depends(require_auth)]
 router = APIRouter()
 app = FastAPI(
-    docs_url=global_config.path_prefix + "/docs",
-    openapi_url=global_config.path_prefix + "/openapi.json",
+    docs_url=global_config.path_prefix + "/_/api/docs",
+    openapi_url=global_config.path_prefix + "/_/api/openapi.json",
 )
 replace_base_href("client/dist/index.html", global_config.path_prefix)
 
@@ -81,9 +81,9 @@ elif global_config.auth_type == AuthType.NONE:
 
 # region UI
 @router.get("/", include_in_schema=False)
-@router.get("/login", include_in_schema=False)
-@router.get("/search", include_in_schema=False)
-@router.get("/new", include_in_schema=False)
+@router.get("/_/login", include_in_schema=False)
+@router.get("/_/search", include_in_schema=False)
+@router.get("/_/new", include_in_schema=False)
 @router.get("/note/{title:path}", include_in_schema=False)
 def root(title: str = ""):
     with open("client/dist/index.html", "r", encoding="utf-8") as f:
@@ -95,13 +95,13 @@ def root(title: str = ""):
 
 
 # region Setup
-@router.get("/api/setup", response_model=SetupStatus)
+@router.get("/_/api/setup", response_model=SetupStatus)
 def get_setup():
     """Get the first-run setup status."""
     return SetupStatus(setup_required=global_config.setup_required)
 
 
-@router.post("/api/setup", response_model=SetupStatus)
+@router.post("/_/api/setup", response_model=SetupStatus)
 def post_setup(data: SetupRequest):
     """Complete first-run setup: create a password or disable auth."""
     if not global_config.setup_required:
@@ -142,7 +142,7 @@ def post_setup(data: SetupRequest):
 # region Auth
 if global_config.auth_type not in [AuthType.NONE, AuthType.READ_ONLY]:
 
-    @router.post("/api/token", response_model=Token)
+    @router.post("/_/api/token", response_model=Token)
     def token(data: Login):
         if auth_state["auth"] is None:
             raise HTTPException(
@@ -156,7 +156,7 @@ if global_config.auth_type not in [AuthType.NONE, AuthType.READ_ONLY]:
             )
 
 
-@router.get("/api/auth-check", dependencies=auth_deps)
+@router.get("/_/api/auth-check", dependencies=auth_deps)
 def auth_check() -> str:
     """A lightweight endpoint that simply returns 'OK' if the user is
     authenticated."""
@@ -169,7 +169,7 @@ def auth_check() -> str:
 # region Notes
 # Get Note
 @router.get(
-    "/api/notes/{title:path}",
+    "/_/api/notes/{title:path}",
     dependencies=auth_deps,
     response_model=Note,
 )
@@ -189,7 +189,7 @@ if global_config.auth_type != AuthType.READ_ONLY:
 
     # Create Note
     @router.post(
-        "/api/notes",
+        "/_/api/notes",
         dependencies=auth_deps,
         response_model=Note,
     )
@@ -209,7 +209,7 @@ if global_config.auth_type != AuthType.READ_ONLY:
 
     # Update Note
     @router.patch(
-        "/api/notes/{title:path}",
+        "/_/api/notes/{title:path}",
         dependencies=auth_deps,
         response_model=Note,
     )
@@ -230,7 +230,7 @@ if global_config.auth_type != AuthType.READ_ONLY:
 
     # Delete Note
     @router.delete(
-        "/api/notes/{title:path}",
+        "/_/api/notes/{title:path}",
         dependencies=auth_deps,
         response_model=None,
     )
@@ -251,7 +251,7 @@ if global_config.auth_type != AuthType.READ_ONLY:
 
 # region Search
 @router.get(
-    "/api/search",
+    "/_/api/search",
     dependencies=auth_deps,
     response_model=List[SearchResult],
 )
@@ -268,7 +268,7 @@ def search(
 
 
 @router.get(
-    "/api/tags",
+    "/_/api/tags",
     dependencies=auth_deps,
     response_model=List[str],
 )
@@ -278,7 +278,7 @@ def get_tags():
 
 
 @router.get(
-    "/api/note-index",
+    "/_/api/note-index",
     dependencies=auth_deps,
     response_model=List[str],
 )
@@ -292,7 +292,7 @@ def get_note_index():
 
 
 # region Config
-@router.get("/api/config", response_model=GlobalConfigResponseModel)
+@router.get("/_/api/config", response_model=GlobalConfigResponseModel)
 def get_config():
     """Retrieve server-side config required for the UI."""
     return GlobalConfigResponseModel(
@@ -312,7 +312,7 @@ def get_config():
 # region Files
 # Get File
 @router.get(
-    "/api/files/{path:path}",
+    "/_/api/files/{path:path}",
     dependencies=auth_deps,
 )
 # Include a secondary route used to create relative URLs that can be used
@@ -341,7 +341,7 @@ if global_config.auth_type != AuthType.READ_ONLY:
 
     # Upload File
     @router.post(
-        "/api/files",
+        "/_/api/files",
         dependencies=auth_deps,
         response_model=FileCreateResponse,
     )
@@ -361,7 +361,7 @@ if global_config.auth_type != AuthType.READ_ONLY:
 
 
 # region Healthcheck
-@router.get("/health")
+@router.get("/_/api/health")
 def healthcheck() -> str:
     """A lightweight endpoint that simply returns 'OK' to indicate the server
     is running."""

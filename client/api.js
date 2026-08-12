@@ -7,12 +7,12 @@ import { getStoredToken } from "./tokenStorage.js";
 import { getToastOptions } from "./helpers.js";
 import router from "./router.js";
 
-const api = axios.create();
+const api = axios.create({ baseURL: "/_/api" });
 
 api.interceptors.request.use(
   // If the request is not for the token endpoint, add the token to the headers.
   function (config) {
-    if (config.url !== "api/token") {
+    if (config.url !== "token") {
       const token = getStoredToken();
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
@@ -46,7 +46,7 @@ export function apiErrorHandler(error, toast) {
 
 export async function getConfig() {
   try {
-    const response = await api.get("api/config");
+    const response = await api.get("config");
     return response.data;
   } catch (response) {
     return Promise.reject(response);
@@ -55,7 +55,7 @@ export async function getConfig() {
 
 export async function postSetup(data) {
   try {
-    const response = await api.post("api/setup", data);
+    const response = await api.post("setup", data);
     return response.data;
   } catch (response) {
     return Promise.reject(response);
@@ -64,7 +64,7 @@ export async function postSetup(data) {
 
 export async function getToken(username, password, totp) {
   try {
-    const response = await api.post("api/token", {
+    const response = await api.post("token", {
       username: username,
       password: totp ? password + totp : password,
     });
@@ -76,7 +76,7 @@ export async function getToken(username, password, totp) {
 
 export async function authCheck() {
   try {
-    const response = await api.get("api/auth-check");
+    const response = await api.get("auth-check");
     return response.data;
   } catch (response) {
     return Promise.reject(response);
@@ -85,7 +85,7 @@ export async function authCheck() {
 
 export async function getNotes(term, sort, order, limit) {
   try {
-    const response = await api.get("api/search", {
+    const response = await api.get("search", {
       params: {
         term: term,
         sort: sort,
@@ -101,7 +101,7 @@ export async function getNotes(term, sort, order, limit) {
 
 export async function createNote(title, content) {
   try {
-    const response = await api.post("api/notes", {
+    const response = await api.post("notes", {
       title: title,
       content: content,
     });
@@ -142,7 +142,7 @@ export async function deleteNote(title) {
 
 export async function getTags() {
   try {
-    const response = await api.get("api/tags");
+    const response = await api.get("tags");
     return response.data;
   } catch (response) {
     return Promise.reject(response);
@@ -151,7 +151,7 @@ export async function getTags() {
 
 export async function getNoteIndex() {
   try {
-    const response = await api.get("api/note-index");
+    const response = await api.get("note-index");
     return response.data;
   } catch (response) {
     return Promise.reject(response);
@@ -163,7 +163,7 @@ export async function uploadFile(file, directory) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("directory", directory || "");
-    const response = await api.post("api/files", formData, {
+    const response = await api.post("files", formData, {
       headers: {
         "Content-Type": "multipart/form-data",
       },

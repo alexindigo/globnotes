@@ -17,7 +17,7 @@ from logger import logger
 from ..base import BaseAuth
 from ..models import Login, Token
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/token", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="_/api/token", auto_error=False)
 
 
 class LocalAuth(BaseAuth):

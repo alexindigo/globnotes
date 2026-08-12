@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="docs/logo.png" width="333px"></img>
-</p>
+![globnotes](docs/logo.png)
 
 # globnotes
 

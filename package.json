@@ -30,6 +30,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "6.0.8",
     "autoprefixer": "10.5.4",
+    "jsdom": "^30.0.1",
     "postcss": "8.5.25",
     "prettier": "3.9.6",
     "prettier-plugin-tailwindcss": "0.8.1",

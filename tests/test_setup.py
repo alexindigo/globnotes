@@ -36,37 +36,37 @@ def setup_client(tmp_path, monkeypatch):
 
 class TestSetupMode:
     def test_setup_status_reports_required(self, setup_client):
-        response = setup_client.get("/api/setup")
+        response = setup_client.get("/_/api/setup")
         assert response.status_code == 200
         assert response.json()["setupRequired"] is True
 
     def test_config_reports_setup_required(self, setup_client):
-        response = setup_client.get("/api/config")
+        response = setup_client.get("/_/api/config")
         assert response.json()["setupRequired"] is True
         assert response.json()["authType"] is None
 
     def test_data_apis_return_503_until_setup(self, setup_client):
-        assert setup_client.get("/api/notes/a/b").status_code == 503
+        assert setup_client.get("/_/api/notes/a/b").status_code == 503
         assert (
-            setup_client.get("/api/search", params={"term": "*"}).status_code
+            setup_client.get("/_/api/search", params={"term": "*"}).status_code
             == 503
         )
         assert (
             setup_client.post(
-                "/api/notes", json={"title": "a", "content": "x"}
+                "/_/api/notes", json={"title": "a", "content": "x"}
             ).status_code
             == 503
         )
         assert setup_client.get("/files/a.jpg").status_code == 503
-        assert setup_client.get("/api/tags").status_code == 503
-        assert setup_client.get("/api/note-index").status_code == 503
+        assert setup_client.get("/_/api/tags").status_code == 503
+        assert setup_client.get("/_/api/note-index").status_code == 503
 
     def test_disable_auth_flow(self, setup_client, tmp_path):
-        response = setup_client.post("/api/setup", json={"mode": "none"})
+        response = setup_client.post("/_/api/setup", json={"mode": "none"})
         assert response.status_code == 200
         assert response.json()["setupRequired"] is False
         # Data APIs work immediately
-        assert setup_client.get("/api/notes/a/b").status_code == 404
+        assert setup_client.get("/_/api/notes/a/b").status_code == 404
         # The choice is persisted
         config_path = os.path.join(
             str(tmp_path), ".globnotes", "config.json"
@@ -75,13 +75,13 @@ class TestSetupMode:
             assert json.load(f)["auth_type"] == "none"
         # Setup cannot be repeated
         assert (
-            setup_client.post("/api/setup", json={"mode": "none"}).status_code
+            setup_client.post("/_/api/setup", json={"mode": "none"}).status_code
             == 409
         )
 
     def test_password_flow(self, setup_client, tmp_path):
         response = setup_client.post(
-            "/api/setup",
+            "/_/api/setup",
             json={
                 "mode": "password",
                 "username": "Alice",
@@ -91,22 +91,22 @@ class TestSetupMode:
         assert response.status_code == 200
         assert response.json()["setupRequired"] is False
         # Data APIs now require a token
-        assert setup_client.get("/api/notes/a/b").status_code == 401
+        assert setup_client.get("/_/api/notes/a/b").status_code == 401
         # Login works (username is lowercased)
         response = setup_client.post(
-            "/api/token", json={"username": "alice", "password": "secret"}
+            "/_/api/token", json={"username": "alice", "password": "secret"}
         )
         assert response.status_code == 200
         token = response.json()["access_token"]
         response = setup_client.get(
-            "/api/notes/a/b",
+            "/_/api/notes/a/b",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 404
         # Wrong password is rejected
         assert (
             setup_client.post(
-                "/api/token",
+                "/_/api/token",
                 json={"username": "alice", "password": "wrong"},
             ).status_code
             == 401
@@ -121,7 +121,7 @@ class TestSetupMode:
 
     def test_password_flow_requires_credentials(self, setup_client):
         response = setup_client.post(
-            "/api/setup",
+            "/_/api/setup",
             json={"mode": "password", "username": "", "password": ""},
         )
         assert response.status_code == 400
@@ -130,7 +130,7 @@ class TestSetupMode:
         self, setup_client, tmp_path, monkeypatch
     ):
         setup_client.post(
-            "/api/setup",
+            "/_/api/setup",
             json={
                 "mode": "password",
                 "username": "alice",
@@ -139,10 +139,10 @@ class TestSetupMode:
         )
         # Simulate a restart: fresh app, same storage dir, still no env vars
         client2 = _fresh_client(tmp_path, monkeypatch, auth_type=None)
-        assert client2.get("/api/setup").json()["setupRequired"] is False
-        assert client2.get("/api/notes/a/b").status_code == 401
+        assert client2.get("/_/api/setup").json()["setupRequired"] is False
+        assert client2.get("/_/api/notes/a/b").status_code == 401
         response = client2.post(
-            "/api/token", json={"username": "alice", "password": "secret"}
+            "/_/api/token", json={"username": "alice", "password": "secret"}
         )
         assert response.status_code == 200
 
@@ -161,9 +161,9 @@ class TestEnvPrecedence:
         monkeypatch.setenv("GLOBNOTES_PASSWORD", "hunter2")
         monkeypatch.setenv("GLOBNOTES_SECRET_KEY", "testsecret")
         client = _fresh_client(tmp_path, monkeypatch, auth_type="password")
-        assert client.get("/api/setup").json()["setupRequired"] is False
-        assert client.get("/api/notes/a/b").status_code == 401
+        assert client.get("/_/api/setup").json()["setupRequired"] is False
+        assert client.get("/_/api/notes/a/b").status_code == 401
         response = client.post(
-            "/api/token", json={"username": "bob", "password": "hunter2"}
+            "/_/api/token", json={"username": "bob", "password": "hunter2"}
         )
         assert response.status_code == 200

@@ -13,7 +13,7 @@ const router = createRouter({
       component: () => import("./views/Home.vue"),
     },
     {
-      path: "/login",
+      path: "/_/login",
       name: "login",
       component: () => import("./views/LogIn.vue"),
       props: (route) => ({ redirect: route.query[constants.params.redirect] }),
@@ -25,12 +25,12 @@ const router = createRouter({
       props: true,
     },
     {
-      path: "/new",
+      path: "/_/new",
       name: "new",
       component: () => import("./views/Note.vue"),
     },
     {
-      path: "/search",
+      path: "/_/search",
       name: "search",
       component: () => import("./views/SearchResults.vue"),
       props: (route) => ({
