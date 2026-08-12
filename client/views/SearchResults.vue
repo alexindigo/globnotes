@@ -20,9 +20,12 @@
 
     <!-- Folders at this level (when not including nested) -->
     <div
-      v-if="!includeNested && currentSubdirs.length"
+      v-if="!includeNested && (currentSubdirs.length || props.folder)"
       class="mb-4 flex flex-wrap gap-1"
     >
+      <RouterLink v-if="props.folder" :to="upTarget">
+        <CustomButton :iconPath="mdilArrowUp" label=".." />
+      </RouterLink>
       <RouterLink
         v-for="dir in currentSubdirs"
         :key="dir"
@@ -74,7 +77,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import { mdiMagnify, mdiSort } from "@mdi/js";
-import { mdilFolder } from "@mdi/light-js";
+import { mdilArrowUp, mdilFolder } from "@mdi/light-js";
 import { apiErrorHandler, getNotes } from "../api.js";
 import CustomButton from "../components/CustomButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
@@ -121,6 +124,22 @@ const currentSubdirs = computed(() => {
     }
   }
   return [...dirs].sort();
+});
+
+// One level up: the parent folder, or the unscoped search from a
+// top-level folder.
+const upTarget = computed(() => {
+  const query = {
+    [params.searchTerm]: props.searchTerm,
+    [params.sortBy]: props.sortBy,
+  };
+  if (props.folder) {
+    const parent = props.folder.split("/").slice(0, -1).join("/");
+    if (parent) {
+      query[params.folder] = parent;
+    }
+  }
+  return { name: "search", query };
 });
 
 function toggleNested() {
