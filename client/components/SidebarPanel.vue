@@ -22,7 +22,7 @@
     <!-- Header -->
     <div class="mb-1 flex items-center justify-between px-2">
       <span class="text-xs font-bold uppercase text-theme-text-very-muted">
-        Notes
+        Files
       </span>
       <div class="flex items-center">
         <CustomButton
