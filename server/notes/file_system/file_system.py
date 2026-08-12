@@ -173,19 +173,26 @@ class FileSystemNotes(BaseNotes):
             hits = [
                 hit
                 for hit in results
-                if (nested or "/" not in hit["filename"])
-                and (folder is None or self._in_folder(hit["filename"], folder))
+                if self._in_scope(hit["filename"], folder, nested)
             ]
             if limit is not None:
                 hits = hits[:limit]
             return tuple(self._search_result_from_hit(hit) for hit in hits)
 
     @staticmethod
-    def _in_folder(filename: str, folder: str) -> bool:
-        """Return True if the note filename is the folder itself or lives
-        under it (segment-aware prefix match)."""
+    def _in_scope(filename: str, folder: str, nested: bool) -> bool:
+        """Return True if the note filename is inside the search scope:
+        optionally under the given folder, and optionally only directly at
+        that level (nested=False means no deeper subdirectories)."""
         title = filename[: -len(MARKDOWN_EXT)]
-        return title == folder or title.startswith(folder + "/")
+        if folder is not None:
+            if not (title == folder or title.startswith(folder + "/")):
+                return False
+        if not nested:
+            rest = title[len(folder) + 1 :] if folder else title
+            if "/" in rest:
+                return False
+        return True
 
     def get_tags(self) -> list[str]:
         """Return a list of all indexed tags. Note: Tags no longer in use will

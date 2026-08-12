@@ -168,3 +168,31 @@ class TestNoteRoutes:
         ).json()
         assert len(response) == 1
         assert response[0]["title"] == "dad/one"
+
+    def test_search_folder_and_nested_compose(self, client):
+        client.post(
+            "/_/api/notes", json={"title": "dad/direct", "content": "needle"}
+        )
+        client.post(
+            "/_/api/notes",
+            json={"title": "dad/deep/er", "content": "needle"},
+        )
+        client.post(
+            "/_/api/notes", json={"title": "mom/other", "content": "needle"}
+        )
+        # nested=false is level-relative to the folder: only notes directly
+        # inside it, no deeper
+        response = client.get(
+            "/_/api/search",
+            params={"term": "needle", "folder": "dad", "nested": "false"},
+        ).json()
+        assert [r["title"] for r in response] == ["dad/direct"]
+        # nested=true includes deeper levels
+        response = client.get(
+            "/_/api/search",
+            params={"term": "needle", "folder": "dad", "nested": "true"},
+        ).json()
+        assert sorted(r["title"] for r in response) == [
+            "dad/deep/er",
+            "dad/direct",
+        ]

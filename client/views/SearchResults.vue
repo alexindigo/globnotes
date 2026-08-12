@@ -18,6 +18,27 @@
     <!-- Search Input -->
     <SearchInput :initialSearchTerm="props.searchTerm" class="mb-12" />
 
+    <!-- Folders at this level (when not including nested) -->
+    <div
+      v-if="!includeNested && currentSubdirs.length"
+      class="mb-4 flex flex-wrap gap-1"
+    >
+      <RouterLink
+        v-for="dir in currentSubdirs"
+        :key="dir"
+        :to="{
+          name: 'search',
+          query: {
+            [params.searchTerm]: props.searchTerm,
+            [params.sortBy]: props.sortBy,
+            [params.folder]: dir,
+          },
+        }"
+      >
+        <CustomButton :iconPath="mdilFolder" :label="dir.split('/').pop()" />
+      </RouterLink>
+    </div>
+
     <LoadingIndicator ref="loadingIndicator" class="flex-1">
       <!-- Search Results -->
       <div
@@ -53,6 +74,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import { mdiMagnify, mdiSort } from "@mdi/js";
+import { mdilFolder } from "@mdi/light-js";
 import { apiErrorHandler, getNotes } from "../api.js";
 import CustomButton from "../components/CustomButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
@@ -60,6 +82,7 @@ import PrimeMenu from "../components/PrimeMenu.vue";
 import Tag from "../components/Tag.vue";
 import Toggle from "../components/Toggle.vue";
 import { params, searchSortOptions } from "../constants.js";
+import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
 import SearchInput from "../partials/SearchInput.vue";
 
@@ -79,6 +102,26 @@ const sortMenu = ref();
 const toast = useToast();
 
 const includeNested = ref(localStorage.getItem("includeNested") !== "false");
+
+const globalStore = useGlobalStore();
+
+// Immediate subdirectories of the current folder (from the full title
+// index, so traversal works regardless of the search term).
+const currentSubdirs = computed(() => {
+  const prefix = props.folder ? props.folder + "/" : "";
+  const dirs = new Set();
+  for (const title of globalStore.noteTitles || []) {
+    if (props.folder && !title.startsWith(prefix)) {
+      continue;
+    }
+    const rest = props.folder ? title.slice(prefix.length) : title;
+    const idx = rest.indexOf("/");
+    if (idx !== -1) {
+      dirs.add((props.folder ? prefix : "") + rest.slice(0, idx));
+    }
+  }
+  return [...dirs].sort();
+});
 
 function toggleNested() {
   includeNested.value = !includeNested.value;
