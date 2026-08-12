@@ -510,26 +510,40 @@ function keydownHandler(event) {
 
 // Helpers
 function middleEllipsis(path, maxChars) {
-  // Cut the middle of long paths, keeping the first segment and as many
-  // trailing segments as fit: node_modules/…/install-pkg
+  // Cut the middle of long paths, keeping at least two segments on each
+  // side where they fit: node_modules/@antfu/…/install-pkg/assets
   if (path.length <= maxChars) {
     return path;
   }
   const parts = path.split("/");
-  if (parts.length <= 2) {
-    const keep = Math.floor((maxChars - 1) / 2);
-    return path.slice(0, keep) + "…" + path.slice(-keep);
-  }
-  let out = parts[0] + "/…/" + parts[parts.length - 1];
-  for (let i = parts.length - 2; i > 0; i--) {
-    const candidate = parts[0] + "/…/" + parts.slice(i).join("/");
-    if (candidate.length <= maxChars) {
-      out = candidate;
-    } else {
-      break;
+  const n = parts.length;
+  const candidate = (lead, trail) =>
+    parts.slice(0, lead).join("/") + "/…/" + parts.slice(n - trail).join("/");
+  if (n >= 4) {
+    if (candidate(2, 2).length <= maxChars) {
+      // two leading + extend trailing while they fit
+      let best = candidate(2, 2);
+      for (let trail = 3; trail <= n - 2; trail++) {
+        const c = candidate(2, trail);
+        if (c.length <= maxChars) {
+          best = c;
+        } else {
+          break;
+        }
+      }
+      return best;
+    }
+    for (const [lead, trail] of [
+      [1, 2],
+      [1, 1],
+    ]) {
+      if (candidate(lead, trail).length <= maxChars) {
+        return candidate(lead, trail);
+      }
     }
   }
-  return out;
+  const keep = Math.floor((maxChars - 1) / 2);
+  return path.slice(0, keep) + "…" + path.slice(-keep);
 }
 
 function directoryFromTitle(title) {
