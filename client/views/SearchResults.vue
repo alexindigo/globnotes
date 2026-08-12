@@ -21,7 +21,7 @@
     <LoadingIndicator ref="loadingIndicator" class="flex-1">
       <!-- Search Results -->
       <div
-        v-for="result in filteredResults"
+        v-for="result in results"
         class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
       >
         <RouterLink :to="notePath(result.title)">
@@ -78,15 +78,11 @@ const sortMenu = ref();
 const toast = useToast();
 
 const includeNested = ref(localStorage.getItem("includeNested") !== "false");
-const filteredResults = computed(() =>
-  includeNested.value
-    ? results.value
-    : results.value.filter((result) => !result.title.includes("/")),
-);
 
 function toggleNested() {
   includeNested.value = !includeNested.value;
   localStorage.setItem("includeNested", includeNested.value);
+  init();
 }
 
 const sortByName = computed(() => {
@@ -100,7 +96,13 @@ const sortByName = computed(() => {
 
 function init() {
   loadingIndicator.value.setLoading();
-  getNotes(props.searchTerm)
+  getNotes(
+    props.searchTerm,
+    undefined,
+    undefined,
+    undefined,
+    includeNested.value,
+  )
     .then((data) => {
       results.value = sortResults(data);
       if (results.value.length > 0) {

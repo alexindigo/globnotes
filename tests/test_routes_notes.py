@@ -64,3 +64,42 @@ class TestNoteRoutes:
         response = client.get("/_/api/note-index")
         assert response.status_code == 200
         assert sorted(response.json()) == ["a/b", "c"]
+
+    def test_search_nested_filter(self, client):
+        client.post(
+            "/_/api/notes",
+            json={"title": "root-note", "content": "needle"},
+        )
+        client.post(
+            "/_/api/notes",
+            json={"title": "sub/nested-note", "content": "needle"},
+        )
+        everything = client.get(
+            "/_/api/search", params={"term": "needle"}
+        ).json()
+        assert len(everything) == 2
+        flat = client.get(
+            "/_/api/search", params={"term": "needle", "nested": "false"}
+        ).json()
+        assert [r["title"] for r in flat] == ["root-note"]
+
+    def test_search_nested_filter_applies_before_limit(self, client):
+        client.post(
+            "/_/api/notes", json={"title": "z-root", "content": "needle"}
+        )
+        for i in range(3):
+            client.post(
+                "/_/api/notes",
+                json={"title": f"sub/n{i}", "content": "needle"},
+            )
+        response = client.get(
+            "/_/api/search",
+            params={
+                "term": "needle",
+                "nested": "false",
+                "limit": 1,
+                "sort": "title",
+            },
+        ).json()
+        assert len(response) == 1
+        assert response[0]["title"] == "z-root"

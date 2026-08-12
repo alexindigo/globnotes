@@ -127,8 +127,10 @@ class FileSystemNotes(BaseNotes):
         sort: Literal["score", "title", "last_modified"] = "score",
         order: Literal["asc", "desc"] = "desc",
         limit: int = None,
+        nested: bool = True,
     ) -> Tuple[SearchResult, ...]:
-        """Search the index for the given term."""
+        """Search the index for the given term. When nested is False, only
+        root-level notes are included."""
         self._sync_index_with_retry()
         term = self._pre_process_search_term(term)
         with self.index.searcher() as searcher:
@@ -156,14 +158,24 @@ class FileSystemNotes(BaseNotes):
                 reverse = not reverse
 
             # Run Search
+            # When filtering to root-level notes, fetch without a limit and
+            # apply the limit after filtering.
+            fetch_limit = limit if nested else None
             results = searcher.search(
                 query,
                 sortedby=sort,
                 reverse=reverse,
-                limit=limit,
+                limit=fetch_limit,
                 terms=True,
             )
-            return tuple(self._search_result_from_hit(hit) for hit in results)
+            hits = [
+                hit
+                for hit in results
+                if nested or "/" not in hit["filename"]
+            ]
+            if limit is not None:
+                hits = hits[:limit]
+            return tuple(self._search_result_from_hit(hit) for hit in hits)
 
     def get_tags(self) -> list[str]:
         """Return a list of all indexed tags. Note: Tags no longer in use will

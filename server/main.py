@@ -275,11 +275,15 @@ def search(
     sort: Literal["score", "title", "lastModified"] = "score",
     order: Literal["asc", "desc"] = "desc",
     limit: int = None,
+    nested: bool = True,
 ):
-    """Perform a full text search on all notes."""
+    """Perform a full text search on all notes. When nested is false, only
+    root-level notes are included."""
     if sort == "lastModified":
         sort = "last_modified"
-    return note_storage.search(term, sort=sort, order=order, limit=limit)
+    return note_storage.search(
+        term, sort=sort, order=order, limit=limit, nested=nested
+    )
 
 
 @router.get(
