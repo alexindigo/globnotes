@@ -34,6 +34,7 @@ const router = createRouter({
       props: (route) => ({
         searchTerm: route.query[constants.params.searchTerm],
         sortBy: Number(route.query[constants.params.sortBy]) || undefined,
+        folder: route.query[constants.params.folder] || undefined,
       }),
     },
     {

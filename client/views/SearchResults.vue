@@ -65,6 +65,7 @@ import SearchInput from "../partials/SearchInput.vue";
 
 const props = defineProps({
   searchTerm: String,
+  folder: String,
   sortBy: {
     type: Number,
     default: searchSortOptions.score,
@@ -102,6 +103,7 @@ function init() {
     undefined,
     undefined,
     includeNested.value,
+    props.folder,
   )
     .then((data) => {
       results.value = sortResults(data);

@@ -4,6 +4,7 @@ export const params = {
   redirect: "redirect",
   showHighlights: "showHighlights",
   sortBy: "sortBy",
+  folder: "folder",
 };
 
 export const searchSortOptions = {
