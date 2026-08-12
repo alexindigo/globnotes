@@ -101,8 +101,6 @@ design:
 
 - The **Obsidian** community, whose vault conventions (wiki-links, callouts,
   embeds, per-vault attachments) globnotes adopts.
-- The **Syncthing** and **git** communities — the sync-and-backup workflows
-  globnotes is designed to fit into.
 
 ### License
 
