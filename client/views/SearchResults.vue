@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-full flex-col">
     <!-- Sort By -->
-    <div class="-mt-2 flex justify-start">
+    <div class="-mt-3 flex justify-start">
       <CustomButton
         :label="`Sort By: ${sortByName}`"
         :iconPath="mdiSort"
@@ -13,7 +13,7 @@
     </div>
 
     <!-- Search Input -->
-    <SearchInput :initialSearchTerm="props.searchTerm" class="mb-4" />
+    <SearchInput :initialSearchTerm="props.searchTerm" class="mb-6" />
 
     <LoadingIndicator ref="loadingIndicator" class="flex-1">
       <!-- Search Results -->
