@@ -1,12 +1,16 @@
 <template>
   <div class="flex h-full flex-col">
-    <!-- Sort By -->
-    <div class="flex justify-end">
+    <!-- Sort By + Nested toggle -->
+    <div class="mb-1 flex items-center justify-between">
       <CustomButton
         :label="`Sort By: ${sortByName}`"
         :iconPath="mdiSort"
-        class="mb-1"
         @click="toggleSortMenu"
+      />
+      <Toggle
+        label="Include nested folders"
+        :isOn="includeNested"
+        @click="toggleNested"
       />
       <PrimeMenu ref="sortMenu" :model="menuItems" :popup="true" />
     </div>
@@ -17,7 +21,7 @@
     <LoadingIndicator ref="loadingIndicator" class="flex-1">
       <!-- Search Results -->
       <div
-        v-for="result in results"
+        v-for="result in filteredResults"
         class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
       >
         <RouterLink :to="notePath(result.title)">
@@ -54,6 +58,7 @@ import CustomButton from "../components/CustomButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
 import Tag from "../components/Tag.vue";
+import Toggle from "../components/Toggle.vue";
 import { params, searchSortOptions } from "../constants.js";
 import { notePath } from "../notePath.js";
 import SearchInput from "../partials/SearchInput.vue";
@@ -71,6 +76,18 @@ const results = ref([]);
 const router = useRouter();
 const sortMenu = ref();
 const toast = useToast();
+
+const includeNested = ref(localStorage.getItem("includeNested") !== "false");
+const filteredResults = computed(() =>
+  includeNested.value
+    ? results.value
+    : results.value.filter((result) => !result.title.includes("/")),
+);
+
+function toggleNested() {
+  includeNested.value = !includeNested.value;
+  localStorage.setItem("includeNested", includeNested.value);
+}
 
 const sortByName = computed(() => {
   const sortOptionNames = {
