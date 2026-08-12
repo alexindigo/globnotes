@@ -20,7 +20,7 @@ class HealthEndpointFilter(logging.Filter):
         return (
             record.args
             and len(record.args) >= 3
-            and record.args[2] != "/health"
+            and not record.args[2].endswith("/_/api/health")
         )
 
 
