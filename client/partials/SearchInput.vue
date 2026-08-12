@@ -20,6 +20,15 @@
         @keydown.down.prevent
         @keydown.up.prevent
       />
+      <!-- Clear to "list all" -->
+      <button
+        type="button"
+        class="cursor-pointer text-theme-text-muted hover:text-theme-text"
+        title="List all notes"
+        @click="clearToAll"
+      >
+        <SvgIcon type="mdi" :path="mdiClose" size="1.25em" />
+      </button>
       <!-- Note: Default behaviour for up and down keys is prevented to stop cursor moving when tag menu is navigated. -->
     </div>
 
@@ -44,6 +53,8 @@
 </template>
 
 <script setup>
+import SvgIcon from "@jamescoyle/vue-icon";
+import { mdiClose } from "@mdi/js";
 import { mdilMagnify } from "@mdi/light-js";
 import { useToast } from "primevue/usetoast";
 import { ref, watch } from "vue";
@@ -103,6 +114,11 @@ function keydownHandler(event) {
 function tagChosen(tag) {
   replaceWordOnCursor(tag);
   tagMenuVisible.value = false;
+}
+
+function clearToAll() {
+  searchTerm.value = "*";
+  search();
 }
 
 function search() {
