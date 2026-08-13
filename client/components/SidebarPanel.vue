@@ -21,16 +21,13 @@
   >
     <!-- Header -->
     <div class="mb-1 flex items-center justify-between px-2">
-      <span class="text-xs font-bold uppercase text-theme-text-very-muted">
-        Files
-      </span>
+      <CustomButton
+        :iconPath="mdiDockLeft"
+        label=""
+        title="Close sidebar"
+        @click="toggleSidebar"
+      />
       <div class="flex items-center">
-        <CustomButton
-          :iconPath="mdiFilterOutline"
-          label=""
-          title="Filter"
-          @click="toggleFilter"
-        />
         <CustomButton
           :iconPath="mdilUnfoldLessVertical"
           label=""
@@ -39,10 +36,10 @@
           @click="collapseAll"
         />
         <CustomButton
-          :iconPath="mdiClose"
+          :iconPath="mdiFilterOutline"
           label=""
-          title="Close sidebar"
-          @click="toggleSidebar"
+          title="Filter"
+          @click="toggleFilter"
         />
       </div>
     </div>
@@ -93,7 +90,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiClose, mdiDockLeft, mdiFilterOutline } from "@mdi/js";
+import { mdiDockLeft, mdiFilterOutline } from "@mdi/js";
 import {
   mdilChevronDown,
   mdilChevronRight,
