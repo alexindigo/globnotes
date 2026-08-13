@@ -22,8 +22,15 @@
     @reject="closeNote"
   />
 
-  <!-- Draft Modal -->
-  <ConfirmModal
+    <!-- Rename Assets Modal -->
+    <RenameAssetsModal
+      v-model:visible="renameAssetsModalVisible"
+      :refs="renameRefs"
+      @confirm="onRenameDialogConfirm"
+    />
+
+    <!-- Draft Modal -->
+    <ConfirmModal
     v-model="isDraftModalVisible"
     title="Draft Detected"
     message="There is an unsaved draft of this note stored in this browser. Do you want to resume the draft version or delete it?"
@@ -192,12 +199,14 @@ import {
   createNote,
   deleteNote,
   getNote,
+  previewRename,
   updateNote,
   uploadFile,
 } from "../api.js";
 import { Note } from "../classes.js";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import CustomButton from "../components/CustomButton.vue";
+import RenameAssetsModal from "../components/RenameAssetsModal.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Toggle from "../components/Toggle.vue";
 import ToastEditor from "../components/toastui/ToastEditor.vue";
@@ -283,6 +292,9 @@ const newTitle = ref();
 const editBasename = ref("");
 const editFolder = ref("");
 const folderDatalistId = "folder-datalist";
+const renameAssetsModalVisible = ref(false);
+const renameRefs = ref([]);
+let resolveRenameDialog = null;
 const toast = useToast();
 const toastEditor = ref();
 const unsavedChanges = ref(false);
@@ -425,24 +437,65 @@ function saveNew(newTitle, newContent, close = false) {
 }
 
 function saveExisting(newTitle, newContent, close = false) {
-  // Return if no changes
   if (newTitle == note.value.title && newContent == note.value.content) {
     noteSaveSuccess(close);
     return;
   }
 
   const oldTitle = note.value.title;
-  updateNote(oldTitle, newTitle, newContent)
-    .then((data) => {
-      clearDraft();
-      note.value = data;
-      if (oldTitle != data.title) {
-        refreshNoteIndex();
-      }
-      router.replace(notePath(note.value.title));
-      noteSaveSuccess(close);
-    })
-    .catch(noteSaveFailure);
+  const oldDir = directoryFromTitle(oldTitle);
+  const newDir = directoryFromTitle(newTitle);
+  const folderChanged = oldDir !== newDir;
+
+  const doSave = (fileRefs = "none") => {
+    updateNote(oldTitle, newTitle, newContent, fileRefs)
+      .then((data) => {
+        clearDraft();
+        note.value = data;
+        if (oldTitle != data.title) {
+          refreshNoteIndex();
+        }
+        router.replace(notePath(note.value.title));
+        noteSaveSuccess(close);
+
+        if (data.movedFiles && data.movedFiles.length > 0) {
+          const text =
+            data.movedFiles.length === 1
+              ? "1 file moved. Check referencing notes if needed."
+              : `${data.movedFiles.length} files moved. Check referencing notes if needed.`;
+          toast.add(
+            getToastOptions(text, "Files moved", "success"),
+          );
+        }
+      })
+      .catch(noteSaveFailure);
+  };
+
+  if (folderChanged) {
+    previewRename(oldTitle, newTitle)
+      .then((refs) => {
+        if (refs.length > 0) {
+          renameRefs.value = refs;
+          renameAssetsModalVisible.value = true;
+          resolveRenameDialog = (strategy) => {
+            if (strategy) doSave(strategy);
+            resolveRenameDialog = null;
+          };
+        } else {
+          doSave("none");
+        }
+      })
+      .catch(() => doSave("none"));
+  } else {
+    doSave("none");
+  }
+}
+
+function onRenameDialogConfirm(strategy) {
+  renameAssetsModalVisible.value = false;
+  if (resolveRenameDialog) {
+    resolveRenameDialog(strategy);
+  }
 }
 
 function noteSaveFailure(error) {

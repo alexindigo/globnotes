@@ -125,16 +125,43 @@ export async function getNote(title) {
   }
 }
 
-export async function updateNote(title, newTitle, newContent) {
+export async function updateNote(
+  title,
+  newTitle,
+  newContent,
+  fileRefs = "none",
+) {
   try {
-    const response = await api.patch(`notes/${encodeURIComponent(title)}`, {
-      newTitle: newTitle,
-      newContent: newContent,
-    });
+    const response = await api.patch(
+      `notes/${encodeURIComponent(title)}`,
+      {
+        newTitle: newTitle,
+        newContent: newContent,
+      },
+      { params: { file_refs: fileRefs } },
+    );
     return new Note(response.data);
   } catch (response) {
     return Promise.reject(response);
   }
+}
+
+export async function previewRename(title, newTitle) {
+  try {
+    const response = await api.get(
+      `notes/${encodeURIComponent(title)}/rename-preview`,
+      { params: { new_title: newTitle } },
+    );
+    return response.data;
+  } catch (_) {
+    return [];
+  }
+}
+
+export async function rewriteRefs(oldPath, newPath) {
+  await api.post("files/rewrite-refs", null, {
+    params: { old_path: oldPath, new_path: newPath },
+  });
 }
 
 export async function deleteNote(title) {
