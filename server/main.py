@@ -212,10 +212,10 @@ def post_note(note: NoteCreate):
     """Create a new note."""
     try:
         return note_storage.create(note)
-    except ValueError:
+    except ValueError as e:
         raise HTTPException(
             status_code=400,
-            detail=api_messages.invalid_note_title,
+            detail=str(e),
         )
     except FileExistsError:
         raise HTTPException(
@@ -231,10 +231,10 @@ def post_note(note: NoteCreate):
 def patch_note(title: str, data: NoteUpdate):
     try:
         return note_storage.update(title, data)
-    except ValueError:
+    except ValueError as e:
         raise HTTPException(
             status_code=400,
-            detail=api_messages.invalid_note_title,
+            detail=str(e),
         )
     except FileExistsError:
         raise HTTPException(

@@ -171,6 +171,7 @@ import {
 } from "../helpers.js";
 import { refreshNoteIndex } from "../noteIndex.js";
 import { notePath } from "../notePath.js";
+import { noteTitleError } from "../validators.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
 
 const props = defineProps({
@@ -326,17 +327,9 @@ function saveHandler(close = false) {
   // Save Default Editor Mode
   saveDefaultEditorMode();
 
-  // Empty Title Validation
-  if (!newTitle.value) {
-    toast.add(
-      getToastOptions("Cannot save note without a title.", "Invalid", "error"),
-    );
-    return;
-  }
-
-  // Invalid Character Validation
-  if (reservedFilenameCharacters.test(newTitle.value)) {
-    badFilenameToast("Title");
+  const titleError = noteTitleError(newTitle.value);
+  if (titleError) {
+    toast.add(getToastOptions(titleError, "Invalid", "error"));
     return;
   }
 
@@ -388,7 +381,15 @@ function saveExisting(newTitle, newContent, close = false) {
 }
 
 function noteSaveFailure(error) {
-  if (error.response?.status === 409) {
+  if (error.response?.status === 400) {
+    toast.add(
+      getToastOptions(
+        error.response.data?.detail || "Invalid note title.",
+        "Invalid",
+        "error",
+      ),
+    );
+  } else if (error.response?.status === 409) {
     toast.add(
       getToastOptions(
         "A note with this title already exists. Please try again with a new title.",
