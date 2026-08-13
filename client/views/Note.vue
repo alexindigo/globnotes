@@ -39,8 +39,30 @@
   />
 
   <LoadingIndicator ref="loadingIndicator" class="flex h-full flex-col">
+    <!-- 404 / Not Found -->
+    <div
+      v-if="isNoteNotFound"
+      class="flex h-full flex-col items-center justify-center"
+    >
+      <SvgIcon
+        type="mdi"
+        :path="mdiNoteOffOutline"
+        size="4em"
+        class="mb-4 text-theme-brand"
+      />
+      <span class="mb-4 max-w-80 text-center text-lg text-theme-text-muted">
+        Note not found
+      </span>
+      <CustomButton
+        v-if="canModify"
+        :label="createLinkLabel"
+        style="cta"
+        @click="createFromWikilink"
+      />
+    </div>
+
     <!-- Header (sits outside the scrollable content) -->
-    <div>
+    <div v-if="!isNoteNotFound">
       <div class="flex flex-col-reverse md:flex-row md:items-baseline">
         <!-- Title -->
         <div class="min-w-0 grow">
@@ -142,6 +164,7 @@
 <script setup>
 import { mdiNoteOffOutline } from "@mdi/js";
 import { mdilContentSave, mdilDelete } from "@mdi/light-js";
+import SvgIcon from "@jamescoyle/vue-icon";
 import Mousetrap from "mousetrap";
 import { useToast } from "primevue/usetoast";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
@@ -187,7 +210,9 @@ const globalStore = useGlobalStore();
 const isSaveChangesModalVisible = ref(false);
 const isDeleteModalVisible = ref(false);
 const isDraftModalVisible = ref(false);
+const isNoteNotFound = ref(false);
 const isNewNote = computed(() => !props.title);
+const createLinkLabel = computed(() => `Create note '${props.title}'`);
 const loadingIndicator = ref();
 const note = ref({});
 const noteDirName = computed(() =>
@@ -239,6 +264,7 @@ function init() {
   if (props.title && props.title == note.value.title) {
     return;
   }
+  isNoteNotFound.value = false;
   loadingIndicator.value.setLoading();
   if (props.title) {
     getNote(props.title)
@@ -248,7 +274,8 @@ function init() {
       })
       .catch((error) => {
         if (error.response?.status === 404) {
-          loadingIndicator.value.setFailed("Note not found", mdiNoteOffOutline);
+          isNoteNotFound.value = true;
+          loadingIndicator.value.setLoaded();
         } else {
           loadingIndicator.value.setFailed();
           apiErrorHandler(error, toast);
@@ -561,6 +588,10 @@ function keydownHandler(event) {
   if (event.key == "Escape") {
     closeHandler();
   }
+}
+
+function createFromWikilink() {
+  router.push({ name: "new", query: { title: props.title } });
 }
 
 // Helpers
