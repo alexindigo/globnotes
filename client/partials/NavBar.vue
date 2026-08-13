@@ -9,7 +9,7 @@
     </div>
     <div class="flex grow items-start justify-end pr-10 md:pr-4">
       <!-- New Note -->
-      <RouterLink v-if="showNewButton" :to="{ name: 'new' }">
+      <RouterLink v-if="showNewButton" :to="newNoteTarget">
         <CustomButton :iconPath="mdilPlusCircle" label="New Note" />
       </RouterLink>
     </div>
@@ -40,7 +40,7 @@ import {
   mdilPlusCircle,
 } from "@mdi/light-js";
 import { computed, ref } from "vue";
-import { RouterLink, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
@@ -48,13 +48,26 @@ import PrimeMenu from "../components/PrimeMenu.vue";
 import ThemePicker from "../components/ThemePicker.vue";
 import { authTypes, params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
+import { directoryFromTitle } from "../helpers.js";
 import { currentThemeLabel } from "../themes.js";
 import { clearStoredToken } from "../tokenStorage.js";
 
 const globalStore = useGlobalStore();
 const menu = ref();
+const route = useRoute();
 const router = useRouter();
 const themePickerVisible = ref(false);
+
+const newNoteTarget = computed(() => {
+  if (route.name === "search" && route.query[params.folder]) {
+    return { name: "new", query: { folder: route.query[params.folder] } };
+  }
+  if (route.name === "note" && route.params.title) {
+    const folder = directoryFromTitle(route.params.title);
+    return folder ? { name: "new", query: { folder } } : { name: "new" };
+  }
+  return { name: "new" };
+});
 
 defineProps({
   hideLogo: Boolean,

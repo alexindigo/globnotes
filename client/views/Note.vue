@@ -145,7 +145,7 @@ import { mdilContentSave, mdilDelete } from "@mdi/light-js";
 import Mousetrap from "mousetrap";
 import { useToast } from "primevue/usetoast";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 
 import {
   apiErrorHandler,
@@ -164,7 +164,11 @@ import ToastEditor from "../components/toastui/ToastEditor.vue";
 import ToastViewer from "../components/toastui/ToastViewer.vue";
 import { authTypes, params } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
-import { getToastOptions } from "../helpers.js";
+import {
+  directoryFromTitle,
+  getToastOptions,
+  nextUntitledTitle,
+} from "../helpers.js";
 import { refreshNoteIndex } from "../noteIndex.js";
 import { notePath } from "../notePath.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
@@ -222,6 +226,7 @@ function folderTarget(folder) {
   };
 }
 const reservedFilenameCharacters = /[<>:"\\|?*]/;
+const route = useRoute();
 const router = useRouter();
 const newTitle = ref();
 const toast = useToast();
@@ -249,11 +254,19 @@ function init() {
         }
       });
   } else {
-    newTitle.value = "";
-    note.value = new Note();
-    // Set the editMode to false to close any existing editors.
-    // This ensures the editor is cleanly reinitialised in an empty state.
-    // Simple fix for #266 without requiring a full re-work of the logic.
+    const folder = route.query.folder || "";
+    const explicitTitle = route.query.title;
+    let prefillTitle;
+    if (explicitTitle) {
+      prefillTitle = explicitTitle;
+    } else {
+      prefillTitle = nextUntitledTitle(
+        globalStore.noteTitles || [],
+        folder,
+      );
+    }
+    newTitle.value = prefillTitle;
+    note.value = new Note({ title: prefillTitle });
     editMode.value = false;
     nextTick(() => {
       editHandler();
@@ -504,23 +517,29 @@ function contentChangedHandler() {
 function saveDraft() {
   const content = toastEditor.value.getMarkdown();
   const userHasPersistedToken = isCurrentTokenStored();
-  if (content) {
+  const draftKey = newTitle.value;
+  if (content && draftKey) {
     if (userHasPersistedToken) {
-      localStorage.setItem(note.value.title, content);
+      localStorage.setItem(draftKey, content);
     } else {
-      sessionStorage.setItem(note.value.title, content);
+      sessionStorage.setItem(draftKey, content);
     }
   }
 }
 
 function clearDraft() {
-  localStorage.removeItem(note.value.title);
-  sessionStorage.removeItem(note.value.title);
+  const draftKey = newTitle.value;
+  if (draftKey) {
+    localStorage.removeItem(draftKey);
+    sessionStorage.removeItem(draftKey);
+  }
 }
 
 function loadDraft() {
-  const localDraft = localStorage.getItem(note.value.title);
-  const sessionDraft = sessionStorage.getItem(note.value.title);
+  const draftKey = newTitle.value;
+  if (!draftKey) return null;
+  const localDraft = localStorage.getItem(draftKey);
+  const sessionDraft = sessionStorage.getItem(draftKey);
   return localDraft || sessionDraft;
 }
 
@@ -544,11 +563,6 @@ function keydownHandler(event) {
 }
 
 // Helpers
-function directoryFromTitle(title) {
-  const index = title.lastIndexOf("/");
-  return index === -1 ? "" : title.slice(0, index);
-}
-
 function noteDirectory() {
   // The directory of the note being edited (falling back to the note being
   // viewed), so uploads land beside the note.
@@ -607,4 +621,7 @@ function isContentChanged() {
 
 watch(() => props.title, init);
 onMounted(init);
+onBeforeRouteUpdate((to) => {
+  if (!to.params.title) init();
+});
 </script>
