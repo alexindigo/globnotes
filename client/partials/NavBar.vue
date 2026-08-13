@@ -26,6 +26,7 @@
       @click="toggleMenu"
     />
     <PrimeMenu ref="menu" :model="menuItems" :popup="true" />
+    <ThemePicker v-model="themePickerVisible" />
   </div>
 </template>
 
@@ -44,25 +45,22 @@ import { RouterLink, useRouter } from "vue-router";
 import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
+import ThemePicker from "../components/ThemePicker.vue";
 import { authTypes, params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
-import { currentThemeLabel, setTheme, THEMES } from "../themes.js";
+import { currentThemeLabel } from "../themes.js";
 import { clearStoredToken } from "../tokenStorage.js";
 
 const globalStore = useGlobalStore();
 const menu = ref();
 const router = useRouter();
+const themePickerVisible = ref(false);
 
 defineProps({
   hideLogo: Boolean,
 });
 
 const emit = defineEmits(["toggleSearchModal"]);
-
-const themeMenuItems = THEMES.map((theme) => ({
-  label: theme.label,
-  command: () => setTheme(theme.id),
-}));
 
 const menuItems = computed(() => [
   {
@@ -86,7 +84,9 @@ const menuItems = computed(() => [
   {
     label: `Theme: ${currentThemeLabel.value}`,
     icon: mdilMonitor,
-    items: themeMenuItems,
+    command: () => {
+      themePickerVisible.value = true;
+    },
   },
   {
     separator: true,

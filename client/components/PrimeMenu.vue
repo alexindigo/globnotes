@@ -1,5 +1,5 @@
 <template>
-  <TieredMenu ref="menu" :pt="style">
+  <Menu ref="menu" :pt="style">
     <template #item="{ item, props }">
       <a class="flex items-center justify-between" v-bind="props.action">
         <IconLabel :iconPath="item.icon" :label="item.label" />
@@ -10,10 +10,10 @@
         >
       </a>
     </template>
-  </TieredMenu>
+  </Menu>
 </template>
 <script setup>
-import TieredMenu from "primevue/tieredmenu";
+import Menu from "primevue/menu";
 import { ref } from "vue";
 
 import IconLabel from "./IconLabel.vue";
