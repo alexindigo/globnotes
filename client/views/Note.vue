@@ -155,6 +155,22 @@
       <hr v-if="!editMode" class="mt-2 mb-4 border-theme-border" />
     </div>
 
+    <!-- Moved-files banner -->
+    <div
+      v-if="!editMode && lastMovedFiles.length"
+      class="mb-4 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-3"
+    >
+      <p class="mb-2 text-sm text-theme-text-muted">
+        {{ lastMovedFiles.length }} file(s) moved with this note.
+      </p>
+      <RouterLink
+        :to="rewriteScanLink"
+        class="text-sm text-theme-brand hover:underline"
+      >
+        Scan referencing notes &rarr;
+      </RouterLink>
+    </div>
+
     <!-- Content (scrolls internally; the header never moves) -->
     <div class="min-h-0 flex-1 overflow-y-auto print:overflow-visible">
       <ToastViewer
@@ -295,6 +311,13 @@ const folderDatalistId = "folder-datalist";
 const renameAssetsModalVisible = ref(false);
 const renameRefs = ref([]);
 let resolveRenameDialog = null;
+const lastMovedFiles = ref([]);
+const rewriteScanLink = computed(() => {
+  const files = lastMovedFiles.value;
+  if (!files.length) return "";
+  const param = encodeURIComponent(JSON.stringify(files));
+  return `/_/search?${params.searchTerm}=*&rewriteFiles=${param}`;
+});
 const toast = useToast();
 const toastEditor = ref();
 const unsavedChanges = ref(false);
@@ -458,6 +481,7 @@ function saveExisting(newTitle, newContent, close = false) {
         router.replace(notePath(note.value.title));
         noteSaveSuccess(close);
 
+        lastMovedFiles.value = data.movedFiles || [];
         if (data.movedFiles && data.movedFiles.length > 0) {
           const text =
             data.movedFiles.length === 1

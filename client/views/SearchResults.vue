@@ -18,6 +18,43 @@
     <!-- Search Input -->
     <SearchInput :initialSearchTerm="props.searchTerm" class="mb-12" />
 
+    <!-- Rewrite banner (post-move scan page) -->
+    <div
+      v-if="rewriteFiles.length"
+      class="mb-4 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-4"
+    >
+      <div class="mb-2 flex items-center justify-between">
+        <h2 class="text-sm font-medium text-theme-text">
+          Fix broken references
+        </h2>
+        <CustomButton
+          v-if="rewriteFiles.length > 1"
+          label="Fix all"
+          style="cta"
+          @click="fixAllRefs"
+        />
+      </div>
+      <ul class="space-y-1 text-sm">
+        <li
+          v-for="f in rewriteFiles"
+          :key="f.oldPath"
+          class="flex items-center justify-between rounded px-2 py-1 hover:bg-theme-background"
+        >
+          <span class="truncate text-theme-text-muted"
+            ><span class="text-theme-text-very-muted">old:</span>
+            {{ f.oldPath }}
+            <span class="ml-2 text-theme-text-very-muted">→</span>
+            <span class="ml-2">{{ f.newPath }}</span></span
+          >
+          <CustomButton
+            label="Fix"
+            style="ghost"
+            @click="fixSingleRef(f)"
+          />
+        </li>
+      </ul>
+    </div>
+
     <!-- Level up (whenever inside a folder) + folders at this level (when
          not including nested) -->
     <template v-if="props.folder || (!includeNested && currentSubdirs.length)">
@@ -96,12 +133,12 @@
 <script setup>
 import { useToast } from "primevue/usetoast";
 import { computed, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 import SvgIcon from "@jamescoyle/vue-icon";
 import { mdiMagnify, mdiSort } from "@mdi/js";
 import { mdilArrowUp, mdilFolder } from "@mdi/light-js";
-import { apiErrorHandler, getNotes } from "../api.js";
+import { apiErrorHandler, getNotes, rewriteRefs } from "../api.js";
 import CustomButton from "../components/CustomButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
@@ -122,9 +159,53 @@ const props = defineProps({
 
 const loadingIndicator = ref();
 const results = ref([]);
+const route = useRoute();
 const router = useRouter();
 const sortMenu = ref();
 const toast = useToast();
+
+const rewriteFiles = ref(parseRewriteFiles());
+const fixInProgress = ref(false);
+
+function parseRewriteFiles() {
+  try {
+    const raw = route.query.rewriteFiles;
+    if (!raw) return [];
+    return JSON.parse(decodeURIComponent(raw));
+  } catch {
+    return [];
+  }
+}
+
+async function fixSingleRef(file) {
+  fixInProgress.value = true;
+  try {
+    await rewriteRefs(file.oldPath, file.newPath);
+    toast.add({ severity: "success", summary: "Fixed", detail: file.oldPath, life: 3000 });
+    rewriteFiles.value = rewriteFiles.value.filter(
+      (f) => f.oldPath !== file.oldPath,
+    );
+  } catch (e) {
+    apiErrorHandler(e, toast);
+  } finally {
+    fixInProgress.value = false;
+  }
+}
+
+async function fixAllRefs() {
+  fixInProgress.value = true;
+  const files = [...rewriteFiles.value];
+  for (const f of files) {
+    try {
+      await rewriteRefs(f.oldPath, f.newPath);
+    } catch (e) {
+      apiErrorHandler(e, toast);
+    }
+  }
+  toast.add({ severity: "success", summary: "All fixed", detail: `${files.length} references rewritten.`, life: 3000 });
+  rewriteFiles.value = [];
+  fixInProgress.value = false;
+}
 
 const includeNested = ref(localStorage.getItem("includeNested") !== "false");
 
