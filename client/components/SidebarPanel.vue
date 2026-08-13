@@ -157,6 +157,17 @@ function persistExpanded() {
 }
 
 function toggleFolder(path) {
+  if (filterText.value.trim()) {
+    // While filtering, toggle against the forced expansion.
+    if (filterCollapsed.value.has(path)) {
+      filterCollapsed.value.delete(path);
+    } else {
+      filterCollapsed.value.add(path);
+    }
+    // Force reactivity for the Set
+    filterCollapsed.value = new Set(filterCollapsed.value);
+    return;
+  }
   if (expanded.value.has(path)) {
     expanded.value.delete(path);
   } else {
@@ -179,11 +190,21 @@ const canCollapse = computed(() => expanded.value.size > 0);
 
 const filterVisible = ref(false);
 const filterText = ref("");
+// Collapse toggles made while filtering apply to the forced-expanded view
+// only; the persistent expansion state is untouched.
+const filterCollapsed = ref(new Set());
+
+watch(filterText, (text) => {
+  if (!text.trim()) {
+    filterCollapsed.value = new Set();
+  }
+});
 
 function toggleFilter() {
   filterVisible.value = !filterVisible.value;
   if (!filterVisible.value) {
     filterText.value = "";
+    filterCollapsed.value = new Set();
   }
 }
 
@@ -213,8 +234,11 @@ const visibleRows = computed(() => {
       if (filter && !folderHasMatch(folder, filter)) {
         continue;
       }
-      // Filtering forces expansion so matches are visible.
-      const isExpanded = filter ? true : expanded.value.has(folder.path);
+      // Filtering forces expansion so matches are visible, minus any
+      // folders collapsed during the filter.
+      const isExpanded = filter
+        ? !filterCollapsed.value.has(folder.path)
+        : expanded.value.has(folder.path);
       rows.push({
         key: "f:" + folder.path,
         type: "folder",
