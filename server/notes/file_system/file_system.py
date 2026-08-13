@@ -83,36 +83,276 @@ class FileSystemNotes(BaseNotes):
             last_modified=os.path.getmtime(filepath),
         )
 
-    def update(self, title: str, data: NoteUpdate) -> Note:
+    _LOCAL_REF_MD = re.compile(r"(!?\[[^\]]*\])\(\s*([^)\s]+)\s*\)")
+    _LOCAL_REF_HTML = re.compile(r'src="([^"]+)"')
+
+    def _classify_ref(
+        self, url, old_dir, out, *, check_existence=True
+    ):
+        if url.startswith(("http://", "https://", "//", "#")):
+            return
+        root = self.storage_path
+        if url.startswith("/"):
+            rel = url.lstrip("/")
+            kind = "absolute"
+        elif url.startswith("../") or url.startswith("./"):
+            old_rel = os.path.relpath(old_dir, root).replace("\\", "/")
+            rel = (
+                old_rel + "/"
+                if old_rel != "."
+                else ""
+            ) + url
+            rel = os.path.normpath(rel).replace("\\", "/")
+            kind = "relative"
+        else:
+            old_rel = os.path.relpath(old_dir, root).replace("\\", "/")
+            rel = (old_rel + "/" + url) if old_rel != "." else url
+            kind = "same-folder"
+        if check_existence:
+            try:
+                resolved = resolve_in_root(root, rel)
+            except ValueError:
+                return
+            if not os.path.isfile(resolved):
+                return
+        out.append({"url": url, "path": rel, "kind": kind})
+
+    def _scan_local_refs(
+        self, content, old_dir, *, check_existence=True
+    ):
+        refs = []
+        for m in self._LOCAL_REF_MD.finditer(content):
+            self._classify_ref(
+                m.group(2), old_dir, refs,
+                check_existence=check_existence,
+            )
+        for m in self._LOCAL_REF_HTML.finditer(content):
+            self._classify_ref(
+                m.group(1), old_dir, refs,
+                check_existence=check_existence,
+            )
+        return refs
+
+    @staticmethod
+    def _rebase_url(url, old_dir, new_dir, moved_files):
+        if url.startswith(("http://", "https://", "//", "#")):
+            return url
+
+        if url.startswith("/"):
+            target = url.lstrip("/")
+        elif url.startswith("../") or url.startswith("./"):
+            target = os.path.normpath(
+                os.path.join(
+                    "" if old_dir == "." else old_dir, url
+                )
+            ).replace("\\", "/")
+        else:
+            target = (old_dir + "/" + url) if old_dir else url
+
+        target = moved_files.get(target, target)
+
+        if not new_dir:
+            return "/" + target if target else url
+        new_parts = new_dir.split("/")
+        target_parts = target.split("/")
+        i = 0
+        while (
+            i < min(len(target_parts), len(new_parts))
+            and target_parts[i] == new_parts[i]
+        ):
+            i += 1
+        up = len(new_parts) - i
+        rest = "/".join(target_parts[i:])
+        if up == 0:
+            return "./" + rest if rest and "/" not in rest else rest
+        return "../" * up + rest
+
+    @staticmethod
+    def _resolve_ref_url(url, note_dir):
+        if url.startswith("/"):
+            return url.lstrip("/")
+        if url.startswith("../") or url.startswith("./"):
+            rel = os.path.normpath(
+                os.path.join(note_dir.replace("\\", "/"), url)
+            ).replace("\\", "/")
+            return rel
+        return (
+            note_dir.replace("\\", "/") + "/" + url
+            if note_dir != "."
+            else url
+        )
+
+    def update(
+        self, title: str, data: NoteUpdate, file_refs: str = "none"
+    ) -> Note:
         """Update a specific note."""
         is_valid_note_path(title)
         filepath = self._path_from_title(title)
-        if data.new_title is not None:
+        old_dir = os.path.dirname(filepath)
+        moved_files = {}
+
+        if data.new_title is not None and data.new_title != title:
             new_filepath = self._path_from_title(data.new_title)
+            new_dir = os.path.dirname(new_filepath)
+
             if filepath != new_filepath and os.path.isfile(new_filepath):
                 raise FileExistsError(
                     f"Failed to rename. '{data.new_title}' already exists."
                 )
+
+            action_refs = file_refs in ("move", "relink")
+            if action_refs:
+                current_content = (
+                    data.new_content
+                    if data.new_content is not None
+                    else self._read_file(filepath)
+                )
+                refs = self._scan_local_refs(current_content, old_dir)
+
+                if refs:
+                    old_rel_dir = os.path.relpath(old_dir, self.storage_path).replace("\\", "/")
+                    new_rel_dir = os.path.relpath(new_dir, self.storage_path).replace("\\", "/")
+                    if old_rel_dir == ".":
+                        old_rel_dir = ""
+                    if new_rel_dir == ".":
+                        new_rel_dir = ""
+
+                    if file_refs == "move":
+                        for r in refs:
+                            if r["kind"] != "same-folder" and (
+                                r["kind"] != "absolute"
+                                or not r["path"].startswith(old_rel_dir + "/" if old_rel_dir else "")
+                            ):
+                                continue
+                            old_file = os.path.join(
+                                self.storage_path, r["path"]
+                            )
+                            fname = r["path"].rsplit("/", 1)[-1]
+                            new_rel = (
+                                new_rel_dir + "/" + fname
+                                if new_rel_dir
+                                else fname
+                            )
+                            new_file = os.path.join(
+                                self.storage_path, new_rel
+                            )
+                            try:
+                                os.makedirs(os.path.dirname(new_file), exist_ok=True)
+                                shutil.move(old_file, new_file)
+                                moved_files[r["path"]] = new_rel
+                            except OSError:
+                                continue
+
+                    content_written = current_content
+                    for r in refs:
+                        new_url = self._rebase_url(
+                            r["url"], old_rel_dir, new_rel_dir, moved_files
+                        )
+                        if new_url == r["url"]:
+                            continue
+                        content_written = re.sub(
+                            r"(!?\[[^\]]*\])\(\s*"
+                            + re.escape(r["url"])
+                            + r"\s*\)",
+                            r"\1(" + new_url + ")",
+                            content_written,
+                        )
+                        content_written = re.sub(
+                            r'src="' + re.escape(r["url"]) + r'"',
+                            f'src="{new_url}"',
+                            content_written,
+                        )
+                    if data.new_content is not None:
+                        data.new_content = content_written
+                    else:
+                        current_content = content_written
+
             try:
-                os.makedirs(os.path.dirname(new_filepath), exist_ok=True)
+                os.makedirs(new_dir, exist_ok=True)
                 os.rename(filepath, new_filepath)
             except (NotADirectoryError, IsADirectoryError) as e:
                 raise FileExistsError(
                     f"Failed to rename to '{data.new_title}': {e.strerror}"
                 )
-            self._prune_empty_parents(os.path.dirname(filepath))
+            self._prune_empty_parents(old_dir)
+            if action_refs and refs:
+                self._write_file(
+                    new_filepath, current_content, overwrite=True
+                )
             title = data.new_title
             filepath = new_filepath
+
         if data.new_content is not None:
             self._write_file(filepath, data.new_content, overwrite=True)
             content = data.new_content
         else:
             content = self._read_file(filepath)
+
+        moved = [
+            {"oldPath": old, "newPath": new}
+            for old, new in moved_files.items()
+        ]
         return Note(
             title=title,
             content=content,
             last_modified=os.path.getmtime(filepath),
+            moved_files=moved,
         )
+
+    def preview_rename(
+        self, title: str, new_title: str
+    ) -> list[dict]:
+        is_valid_note_path(title)
+        is_valid_note_path(new_title)
+        filepath = self._path_from_title(title)
+        old_dir = os.path.dirname(filepath)
+        content = self._read_file(filepath)
+        return self._scan_local_refs(content, old_dir)
+
+    def rewrite_refs(self, old_path: str, new_path: str):
+        root = self.storage_path
+        fname = old_path.rsplit("/", 1)[-1]
+
+        for filepath in glob.iglob(
+            os.path.join(glob.escape(root), "**", "*.md"), recursive=True
+        ):
+            content = self._read_file(filepath)
+            if fname not in content:
+                continue
+
+            note_dir = os.path.dirname(filepath)
+            refs = self._scan_local_refs(
+                content, note_dir, check_existence=False
+            )
+            changed = False
+            note_rel = os.path.relpath(note_dir, root).replace("\\", "/")
+            for r in refs:
+                if r["path"] != old_path:
+                    continue
+                new_url = self._rebase_url(
+                    r["url"],
+                    note_rel,
+                    note_rel,
+                    {old_path: new_path},
+                )
+                if new_url == r["url"]:
+                    continue
+                content = re.sub(
+                    r"(!?\[[^\]]*\])\(\s*"
+                    + re.escape(r["url"])
+                    + r"\s*\)",
+                    r"\1(" + new_url + ")",
+                    content,
+                )
+                content = re.sub(
+                    r'src="' + re.escape(r["url"]) + r'"',
+                    f'src="{new_url}"',
+                    content,
+                )
+                changed = True
+
+            if changed:
+                self._write_file(filepath, content, overwrite=True)
 
     def delete(self, title: str) -> None:
         """Delete a specific note."""

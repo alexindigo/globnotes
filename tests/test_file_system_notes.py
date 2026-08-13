@@ -135,3 +135,86 @@ class TestIndexAndSearch:
     def test_tags_still_work(self, notes):
         notes.create(NoteCreate(title="a/b", content="has #taggy inside"))
         assert "taggy" in notes.get_tags()
+
+
+class TestRenameStrategies:
+    @pytest.fixture
+    def note_with_images(self, notes):
+        old_dir = os.path.join(notes.storage_path, "recipes")
+        os.makedirs(old_dir, exist_ok=True)
+        img = os.path.join(old_dir, "soup.png")
+        with open(img, "w") as f:
+            f.write("image1")
+        shared = os.path.join(old_dir, "shared.png")
+        with open(shared, "w") as f:
+            f.write("image2")
+        content = "look at the soup ![soup](soup.png) and also [shared](shared.png)"
+        notes.create(NoteCreate(title="recipes/soup", content=content))
+        return notes
+
+    def test_preview_rename(self, note_with_images):
+        refs = note_with_images.preview_rename(
+            "recipes/soup", "cooking/soup"
+        )
+        assert len(refs) == 2
+        kinds = {r["kind"] for r in refs}
+        assert kinds == {"same-folder"}
+
+    def test_move_strategy(self, note_with_images):
+        note = note_with_images.update(
+            "recipes/soup",
+            NoteUpdate(new_title="cooking/soup"),
+            file_refs="move",
+        )
+        assert note.moved_files
+        old_img = os.path.join(
+            note_with_images.storage_path, "recipes", "soup.png"
+        )
+        new_img = os.path.join(
+            note_with_images.storage_path, "cooking", "soup.png"
+        )
+        assert not os.path.isfile(old_img)
+        assert os.path.isfile(new_img)
+        assert "soup.png" in note.content
+        assert "shared.png" in note.content
+
+    def test_relink_strategy(self, note_with_images):
+        note = note_with_images.update(
+            "recipes/soup",
+            NoteUpdate(new_title="cooking/soup"),
+            file_refs="relink",
+        )
+        old_img = os.path.join(
+            note_with_images.storage_path, "recipes", "soup.png"
+        )
+        assert os.path.isfile(old_img)
+        assert "../recipes/soup.png" in note.content
+        assert "../recipes/shared.png" in note.content
+
+    def test_none_strategy(self, note_with_images):
+        note = note_with_images.update(
+            "recipes/soup",
+            NoteUpdate(new_title="cooking/soup"),
+            file_refs="none",
+        )
+        assert "soup.png" in note.content
+        assert "shared.png" in note.content
+
+    def test_rewrite_refs(self, note_with_images):
+        note_with_images.create(
+            NoteCreate(
+                title="other/page",
+                content="links to old ![soup](/recipes/soup.png)",
+            )
+        )
+        note_with_images.update(
+            "recipes/soup",
+            NoteUpdate(new_title="cooking/soup"),
+            file_refs="move",
+        )
+        note_with_images.rewrite_refs(
+            "recipes/soup.png", "cooking/soup.png"
+        )
+        other = note_with_images.get("other/page")
+        assert "/recipes/soup.png" not in other.content
+        assert "cooking/soup.png" in other.content

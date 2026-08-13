@@ -16,13 +16,27 @@ class BaseNotes(ABC):
         pass
 
     @abstractmethod
-    def update(self, title: str, new_data: NoteUpdate) -> Note:
+    def update(
+        self, title: str, new_data: NoteUpdate, file_refs: str = "none"
+    ) -> Note:
         """Update a specific note."""
         pass
 
     @abstractmethod
+    def preview_rename(
+        self, title: str, new_title: str
+    ) -> list[dict]:
+        """Scan refs that would be affected by a rename."""
+        pass
+
+    @abstractmethod
+    def rewrite_refs(self, old_path: str, new_path: str) -> None:
+        """Rewrite stale file references across all notes."""
+        pass
+
+    @abstractmethod
     def delete(self, title: str) -> None:
-        """Delete a specific note.""" ""
+        """Delete a specific note."""
         pass
 
     @abstractmethod

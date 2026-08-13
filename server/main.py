@@ -228,9 +228,9 @@ def post_note(note: NoteCreate):
     dependencies=auth_deps,
     response_model=Note,
 )
-def patch_note(title: str, data: NoteUpdate):
+def patch_note(title: str, data: NoteUpdate, file_refs: str = "none"):
     try:
-        return note_storage.update(title, data)
+        return note_storage.update(title, data, file_refs=file_refs)
     except ValueError as e:
         raise HTTPException(
             status_code=400,
@@ -242,6 +242,34 @@ def patch_note(title: str, data: NoteUpdate):
         )
     except FileNotFoundError:
         raise HTTPException(404, api_messages.note_not_found)
+
+# Preview Rename
+@router.get(
+    "/_/api/notes/{title:path}/rename-preview",
+    dependencies=auth_deps,
+)
+def rename_preview(title: str, new_title: str):
+    try:
+        return note_storage.preview_rename(title, new_title)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, api_messages.note_not_found)
+
+
+# Rewrite File References
+@router.post(
+    "/_/api/files/rewrite-refs",
+    dependencies=auth_deps,
+)
+def rewrite_refs(
+    old_path: str, new_path: str, note_title: str = None
+):
+    try:
+        note_storage.rewrite_refs(old_path, new_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Delete Note
 @router.delete(

@@ -24,6 +24,7 @@ class Note(CustomBaseModel):
     title: str
     content: Optional[str] = Field(None)
     last_modified: float
+    moved_files: list[dict] = Field(default_factory=list)
 
 
 class NoteUpdate(CustomBaseModel):
