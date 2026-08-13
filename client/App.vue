@@ -41,7 +41,7 @@ import PrimeToast from "./components/PrimeToast.vue";
 import SetupModal from "./components/SetupModal.vue";
 import SidebarPanel from "./components/SidebarPanel.vue";
 import { useGlobalStore } from "./globalStore.js";
-import { loadTheme } from "./helpers.js";
+import { initTheme } from "./themes.js";
 import { refreshNoteIndex } from "./noteIndex.js";
 import NavBar from "./partials/NavBar.vue";
 import SearchModal from "./partials/SearchModal.vue";
@@ -107,5 +107,5 @@ function setupCompleted() {
   window.location.reload();
 }
 
-loadTheme();
+initTheme();
 </script>

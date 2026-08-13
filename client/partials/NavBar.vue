@@ -46,7 +46,7 @@ import Logo from "../components/Logo.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
 import { authTypes, params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
-import { toggleTheme } from "../helpers.js";
+import { currentThemeLabel, setTheme, THEMES } from "../themes.js";
 import { clearStoredToken } from "../tokenStorage.js";
 
 const globalStore = useGlobalStore();
@@ -59,7 +59,12 @@ defineProps({
 
 const emit = defineEmits(["toggleSearchModal"]);
 
-const menuItems = [
+const themeMenuItems = THEMES.map((theme) => ({
+  label: theme.label,
+  command: () => setTheme(theme.id),
+}));
+
+const menuItems = computed(() => [
   {
     label: "Search",
     icon: mdilMagnify,
@@ -79,9 +84,9 @@ const menuItems = [
       }),
   },
   {
-    label: "Toggle Theme",
+    label: `Theme: ${currentThemeLabel.value}`,
     icon: mdilMonitor,
-    command: toggleTheme,
+    items: themeMenuItems,
   },
   {
     separator: true,
@@ -93,7 +98,7 @@ const menuItems = [
     command: logOut,
     visible: showLogOutButton,
   },
-];
+]);
 
 const showNewButton = computed(() => {
   return globalStore.config.authType !== authTypes.readOnly;

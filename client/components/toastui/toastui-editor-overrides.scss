@@ -283,6 +283,60 @@
   color: rgb(var(--theme-text));
 }
 
+// Code token colors follow the active theme (Prism defaults overridden).
+.toastui-editor-contents {
+  .token.comment,
+  .token.prolog,
+  .token.doctype,
+  .token.cdata {
+    color: rgb(var(--theme-code-comment));
+  }
+
+  .token.keyword,
+  .token.important {
+    color: rgb(var(--theme-code-keyword));
+  }
+
+  .token.string,
+  .token.char {
+    color: rgb(var(--theme-code-string));
+  }
+
+  .token.function,
+  .token.function-name {
+    color: rgb(var(--theme-code-function));
+  }
+
+  .token.number,
+  .token.boolean,
+  .token.constant {
+    color: rgb(var(--theme-code-number));
+  }
+
+  .token.operator,
+  .token.entity,
+  .token.url,
+  .token.important,
+  .token.regex,
+  .token.variable,
+  .token.template-string {
+    color: rgb(var(--theme-code-operator));
+  }
+
+  .token.tag {
+    color: rgb(var(--theme-code-tag));
+  }
+
+  .token.attr-name,
+  .token.property {
+    color: rgb(var(--theme-code-attr));
+  }
+
+  .token.punctuation {
+    color: rgb(var(--theme-code-punctuation));
+  }
+}
+
 // Callouts (Obsidian-style > [!type] blocks)
 .toastui-editor-contents blockquote.callout {
   border-left: 4px solid rgb(var(--theme-brand, #38bdf8));
