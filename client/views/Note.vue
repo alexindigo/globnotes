@@ -72,7 +72,8 @@
             }}</span>
             <input
               v-show="editMode"
-              v-model.trim="newTitle"
+              v-model.trim="editBasename"
+              @input="syncTitle"
               class="w-full bg-theme-background outline-none"
               placeholder="Title"
             />
@@ -91,6 +92,22 @@
                 >{{ crumb.label }}/</RouterLink
               >
             </template>
+          </div>
+          <div v-show="editMode" class="flex pt-1">
+            <input
+              v-model="editFolder"
+              @input="syncTitle"
+              :list="folderDatalistId"
+              class="min-w-0 grow bg-theme-background text-sm text-theme-text-muted outline-none"
+              placeholder="Folder (root)"
+            />
+            <datalist :id="folderDatalistId">
+              <option
+                v-for="d in folderDatalistOptions"
+                :value="d"
+                :key="d"
+              />
+            </datalist>
           </div>
         </div>
 
@@ -213,6 +230,14 @@ const isDraftModalVisible = ref(false);
 const isNoteNotFound = ref(false);
 const isNewNote = computed(() => !props.title);
 const createLinkLabel = computed(() => `Create note '${props.title}'`);
+const folderDatalistOptions = computed(() => {
+  const dirs = new Set();
+  for (const t of globalStore.noteTitles || []) {
+    const d = directoryFromTitle(t);
+    if (d) dirs.add(d);
+  }
+  return [...dirs].sort();
+});
 const loadingIndicator = ref();
 const note = ref({});
 const noteDirName = computed(() =>
@@ -255,6 +280,9 @@ const reservedFilenameCharacters = /[<>:"\\|?*]/;
 const route = useRoute();
 const router = useRouter();
 const newTitle = ref();
+const editBasename = ref("");
+const editFolder = ref("");
+const folderDatalistId = "folder-datalist";
 const toast = useToast();
 const toastEditor = ref();
 const unsavedChanges = ref(false);
@@ -323,8 +351,18 @@ function editHandler() {
 
 function setEditMode() {
   newTitle.value = note.value.title;
+  editBasename.value = newTitle.value
+    ? newTitle.value.slice(newTitle.value.lastIndexOf("/") + 1)
+    : "";
+  editFolder.value = directoryFromTitle(newTitle.value);
   unsavedChanges.value = false;
   editMode.value = true;
+}
+
+function syncTitle() {
+  newTitle.value = editFolder.value
+    ? editFolder.value + "/" + editBasename.value
+    : editBasename.value;
 }
 
 function getInitialEditorValue() {

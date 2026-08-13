@@ -65,19 +65,36 @@
       class="truncate rounded px-1"
     >
       <!-- Folder row -->
-      <button
+      <div
         v-if="row.type === 'folder'"
-        class="flex w-full cursor-pointer items-center rounded px-1 py-0.5 text-theme-text-muted hover:bg-theme-background-elevated"
-        @click="toggleFolder(row.folder.path)"
+        class="group flex w-full cursor-pointer items-center rounded px-1 py-0.5 text-theme-text-muted hover:bg-theme-background-elevated"
       >
-        <SvgIcon
-          type="mdi"
-          :path="row.expanded ? mdilChevronDown : mdilChevronRight"
-          size="1em"
-          class="mr-1 shrink-0"
-        />
-        <span class="truncate">{{ row.folder.name }}</span>
-      </button>
+        <button
+          class="flex min-w-0 grow items-center"
+          @click="toggleFolder(row.folder.path)"
+        >
+          <SvgIcon
+            type="mdi"
+            :path="row.expanded ? mdilChevronDown : mdilChevronRight"
+            size="1em"
+            class="mr-1 shrink-0"
+          />
+          <span class="truncate">{{ row.folder.name }}</span>
+        </button>
+        <RouterLink
+          :to="folderPage(row.folder.path)"
+          class="ml-1 shrink-0 opacity-0 group-hover:opacity-100"
+          title="Open folder"
+          @click.stop
+        >
+          <SvgIcon
+            type="mdi"
+            :path="mdilChevronRight"
+            size="1em"
+            class="text-theme-text-very-muted hover:text-theme-text"
+          />
+        </RouterLink>
+      </div>
       <!-- Note row -->
       <RouterLink
         v-else
@@ -100,7 +117,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 
 import SvgIcon from "@jamescoyle/vue-icon";
 import { mdiClose, mdiDockLeft, mdiFilterOutline, mdiLanguageMarkdownOutline } from "@mdi/js";
@@ -113,9 +130,17 @@ import CustomButton from "../components/CustomButton.vue";
 import TextInput from "../components/TextInput.vue";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
+import { params } from "../constants.js";
 
 const globalStore = useGlobalStore();
 const route = useRoute();
+
+function folderPage(path) {
+  return {
+    name: "search",
+    query: { [params.searchTerm]: "*", [params.folder]: path },
+  };
+}
 
 // -- Tree ------------------------------------------------------------------
 
