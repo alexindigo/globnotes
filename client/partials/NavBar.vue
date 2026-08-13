@@ -7,7 +7,7 @@
         <Logo responsive></Logo>
       </RouterLink>
     </div>
-    <div class="flex grow items-start justify-end pr-10 md:pr-0">
+    <div class="flex grow items-start justify-end pr-10 md:pr-4">
       <!-- New Note -->
       <RouterLink v-if="showNewButton" :to="{ name: 'new' }">
         <CustomButton :iconPath="mdilPlusCircle" label="New Note" />

@@ -11,9 +11,9 @@
     <template v-else>
       <SearchModal v-model="isSearchModalVisible" />
       <SidebarPanel />
-      <!-- Navbar and content share this scroller's box, so their edges
-           align structurally (same padding, same scrollbar gutter). -->
-      <div class="min-w-0 flex-1 overflow-y-auto pr-2">
+      <!-- Shared content column: navbar and content scroller live beside
+           each other in it, so their edges align by construction. -->
+      <div class="flex min-h-0 flex-1 flex-col">
         <NavBar
           v-if="showNavBar"
           ref="navBar"
@@ -21,7 +21,9 @@
           :hide-logo="!showNavBarLogo"
           @toggleSearchModal="toggleSearchModal"
         />
-        <RouterView />
+        <div class="min-w-0 flex-1 overflow-y-auto pr-2">
+          <RouterView />
+        </div>
       </div>
     </template>
   </LoadingIndicator>
