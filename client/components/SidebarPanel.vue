@@ -82,12 +82,17 @@
       <RouterLink
         v-else
         :to="notePath(row.note.title)"
-        class="block truncate rounded px-1 py-0.5 hover:bg-theme-background-elevated"
+        class="flex items-center truncate rounded px-1 py-0.5 hover:bg-theme-background-elevated"
         :class="{
           'bg-theme-background-elevated text-theme-text':
             row.note.title === activeTitle,
         }"
-        >{{ row.note.name }}</RouterLink
+        ><SvgIcon
+          type="mdi"
+          :path="mdiLanguageMarkdownOutline"
+          size="1em"
+          class="mr-1 shrink-0 text-theme-text-very-muted"
+        /><span class="truncate">{{ row.note.name }}</span></RouterLink
       >
     </div>
   </aside>
@@ -98,7 +103,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiClose, mdiDockLeft, mdiFilterOutline } from "@mdi/js";
+import { mdiClose, mdiDockLeft, mdiFilterOutline, mdiLanguageMarkdownOutline } from "@mdi/js";
 import {
   mdilChevronDown,
   mdilChevronRight,
