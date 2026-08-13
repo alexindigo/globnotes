@@ -40,6 +40,8 @@ def is_valid_note_path(value):
     255 bytes."""
     if not value:
         raise ValueError("title cannot be empty")
+    if value.split("/")[0] == "_":
+        raise ValueError("title cannot start with '_/' (reserved for app URLs)")
     for segment in value.split("/"):
         if not segment:
             raise ValueError("title cannot contain empty path segments")

@@ -16,6 +16,11 @@ class TestIsValidNotePath:
             "dad/recipes/soup",
             "émojis🎉/ok",
             " spaces ok /inside ",
+            "_foo",
+            "_notes/todo",
+            "foo/_",
+            "_foo/bar/baz",
+            "__drafts",
         ],
     )
     def test_valid(self, title):
@@ -25,6 +30,10 @@ class TestIsValidNotePath:
         "title",
         [
             "",
+            "_",
+            "_/something",
+            "_/a/b",
+            "_/_",
             "a//b",
             "/a",
             "a/",
