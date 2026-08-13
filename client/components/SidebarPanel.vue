@@ -26,6 +26,12 @@
       </span>
       <div class="flex items-center">
         <CustomButton
+          :iconPath="mdiFilterOutline"
+          label=""
+          title="Filter"
+          @click="toggleFilter"
+        />
+        <CustomButton
           :iconPath="mdilUnfoldLessVertical"
           label=""
           title="Collapse all"
@@ -39,6 +45,11 @@
           @click="toggleSidebar"
         />
       </div>
+    </div>
+
+    <!-- Filter input -->
+    <div v-if="filterVisible" class="mb-1 px-2">
+      <TextInput v-model="filterText" placeholder="Filter..." v-focus />
     </div>
 
     <!-- Tree -->
@@ -82,13 +93,14 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiClose, mdiDockLeft } from "@mdi/js";
+import { mdiClose, mdiDockLeft, mdiFilterOutline } from "@mdi/js";
 import {
   mdilChevronDown,
   mdilChevronRight,
   mdilUnfoldLessVertical,
 } from "@mdi/light-js";
 import CustomButton from "../components/CustomButton.vue";
+import TextInput from "../components/TextInput.vue";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
 
@@ -153,16 +165,46 @@ function collapseAll() {
 // Whether there is anything left to collapse.
 const canCollapse = computed(() => expanded.value.size > 0);
 
+// -- Filter -----------------------------------------------------------------
+
+const filterVisible = ref(false);
+const filterText = ref("");
+
+function toggleFilter() {
+  filterVisible.value = !filterVisible.value;
+  if (!filterVisible.value) {
+    filterText.value = "";
+  }
+}
+
+// A folder matches if it or any descendant has a matching note.
+function folderHasMatch(folder, filter) {
+  if (folder.notes.some((note) => note.title.toLowerCase().includes(filter))) {
+    return true;
+  }
+  for (const sub of folder.folders.values()) {
+    if (folderHasMatch(sub, filter)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // -- Visible rows (flattened, depth-first, folders before notes) ------------
 
 const visibleRows = computed(() => {
   const rows = [];
+  const filter = filterText.value.trim().toLowerCase();
   const walk = (node, depth) => {
     const folders = [...node.folders.values()].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
     for (const folder of folders) {
-      const isExpanded = expanded.value.has(folder.path);
+      if (filter && !folderHasMatch(folder, filter)) {
+        continue;
+      }
+      // Filtering forces expansion so matches are visible.
+      const isExpanded = filter ? true : expanded.value.has(folder.path);
       rows.push({
         key: "f:" + folder.path,
         type: "folder",
@@ -176,6 +218,9 @@ const visibleRows = computed(() => {
     }
     const notes = [...node.notes].sort((a, b) => a.name.localeCompare(b.name));
     for (const note of notes) {
+      if (filter && !note.title.toLowerCase().includes(filter)) {
+        continue;
+      }
       rows.push({
         key: "n:" + note.title,
         type: "note",
