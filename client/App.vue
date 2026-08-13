@@ -10,15 +10,17 @@
     />
     <template v-else>
       <SearchModal v-model="isSearchModalVisible" />
-      <NavBar
-        v-if="showNavBar"
-        ref="navBar"
-        :class="{ 'print:hidden': route.name == 'note' }"
-        :hide-logo="!showNavBarLogo"
-        @toggleSearchModal="toggleSearchModal"
-      />
       <SidebarPanel />
+      <!-- Navbar and content share this scroller's box, so their edges
+           align structurally (same padding, same scrollbar gutter). -->
       <div class="min-w-0 flex-1 overflow-y-auto pr-2">
+        <NavBar
+          v-if="showNavBar"
+          ref="navBar"
+          :class="{ 'print:hidden': route.name == 'note' }"
+          :hide-logo="!showNavBarLogo"
+          @toggleSearchModal="toggleSearchModal"
+        />
         <RouterView />
       </div>
     </template>
