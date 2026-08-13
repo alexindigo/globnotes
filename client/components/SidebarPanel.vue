@@ -20,7 +20,7 @@
     class="fixed inset-y-0 left-0 z-40 w-64 overflow-y-auto border-r border-theme-border bg-theme-background py-2 shadow-lg"
   >
     <!-- Header -->
-    <div class="mb-1 flex items-center justify-between px-2">
+    <div class="mb-1 flex items-center justify-between px-4 pt-2">
       <CustomButton
         :iconPath="mdiDockLeft"
         label=""
@@ -45,8 +45,16 @@
     </div>
 
     <!-- Filter input -->
-    <div v-if="filterVisible" class="mb-1 px-2">
+    <div v-if="filterVisible" class="relative mb-1 px-2">
       <TextInput v-model="filterText" placeholder="Filter..." v-focus />
+      <button
+        type="button"
+        class="absolute top-1/2 right-4 -translate-y-1/2 cursor-pointer text-theme-text-muted hover:text-theme-text"
+        title="Reset filter"
+        @click="filterText = ''"
+      >
+        <SvgIcon type="mdi" :path="mdiClose" size="1.25em" />
+      </button>
     </div>
 
     <!-- Tree -->
@@ -90,7 +98,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiDockLeft, mdiFilterOutline } from "@mdi/js";
+import { mdiClose, mdiDockLeft, mdiFilterOutline } from "@mdi/js";
 import {
   mdilChevronDown,
   mdilChevronRight,
