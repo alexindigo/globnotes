@@ -30,8 +30,12 @@ Folders are never "managed": creating `a/b/c` makes the directories, renaming `a
 
 - **Real-path notes** — the URL path IS the vault path: `/dad/recipes/soup` is the note, `/dad/assets/broth.jpg` is its image. Relative links (`![](broth.jpg)`, `[x](../other.md)`) work exactly like in Obsidian — no rewriting, no magic.
 - **Obsidian-flavored rendering** — `[[wiki-links]]` (with `|alias` and `#heading`), `![[image embeds]]`, `==highlights==`, `> [!callouts]`, `%%comments%%`, YAML frontmatter, mermaid diagrams, KaTeX math.
-- **Full-text search and `#tags`** across the whole tree (searching a path segment like `school` finds everything under it).
-- **First-run setup wizard** — no auth env vars? globnotes asks on first launch: create a password or explicitly disable auth. Open deployments are always a deliberate choice.
+- **Sidebar folder tree** — Obsidian-style nested tree with expand/collapse, active-note highlight, filter textbox, and hover shortcuts to folder views.
+- **16 themes** — light, dark, system auto-detect, Catppuccin, Dracula, Gruvbox, Nord, Solarized, Tokyo Night, and more. Pick one in the menu, preview it behind the panel, no page reload.
+- **Full-text search and `#tags`** across the whole tree, scoped to a folder or recursive, with real-time filtering.
+- **New-note flow** — `Untitled N` prefills in the current folder context; dead wiki-links offer a one-click "Create note" affordance.
+- **Attachment-aware renames** — moving a note across folders prompts you to move its referenced files along too, or just fix the links.
+- **First-run setup wizard** — no auth env vars? globnotes asks on first launch: set a password or explicitly disable auth. Each choice is deliberate.
 - **Agent-friendly** — raw markdown and files over plain HTTP (see below).
 
 ## Getting started
@@ -128,13 +132,17 @@ See [FutureDevelopment.md](FutureDevelopment.md) — note transclusion, unresolv
 ## Development
 
 ```bash
-# Backend tests (requires uv)
-uv run pytest
+# Python backend & tests
+.venv/bin/python -m pip install -r requirements-dev.txt  # includes pytest, fonttools
+.venv/bin/python -m pytest tests/ -q
 
-# Client dev server / build
+# Client build & tests
 npm ci
-npm run dev
 npm run build
+npx vitest run
+
+# Client dev server
+npm run dev
 ```
 
 ## Credit
