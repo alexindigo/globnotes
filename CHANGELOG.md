@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.1 (2026-08-15)
+
+### 2026-08-15
+
+#### Fix
+
+The outlined brand SVGs shipped in v1.0.0 contained invalid path data
+(`d="MM…"` — a duplicated moveto command from the outline generator's
+contour splitter), which broke the logo render on the GitHub README and
+any strict SVG pipeline. The splitter is removed (multi-contour glyph
+output is valid as a single `d` attribute), all three SVGs and the favicon
+rasters were regenerated, and the renders are now pixel-content verified.
+
+- fix: valid path data in outlined brand SVGs (`9bf13df`)
+
 ## v1.0.0 (2026-08-15)
 
 The first globnotes release. globnotes is a hard fork of
