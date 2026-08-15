@@ -1,0 +1,231 @@
+# Changelog
+
+## v1.0.0 (2026-08-15)
+
+The first globnotes release. globnotes is a hard fork of
+[flatnotes](https://github.com/dullage/flatnotes) that keeps its spirit —
+database-less, single-container, distraction-free — and changes the storage
+model: **a note's title is its path**, so notes live in nested directories
+like an Obsidian vault. Everything below is the delta from upstream v5.5.4.
+
+### 2026-08-13
+
+#### Feature
+
+The note-creation flow was audited end-to-end and its loose ends tied up.
+New notes prefill as `Untitled N` in the current folder context and are only
+written on save (no stray files from misclicks). Dead wiki-links no longer
+dead-end: the 404 page offers a one-click "Create note" affordance. The
+title editor splits into basename plus an editable folder field with a
+native datalist of existing directories, and sidebar folder rows gained a
+hover shortcut to their folder view. Cross-folder renames now detect
+referenced attachments and offer move / relink / leave strategies, with a
+post-move scan page to repair other notes' links. Brand assets were
+finalized for publication: all SVGs converted to self-contained glyph paths
+(zero font dependency), favicons regenerated, PWA manifest added, README
+polished.
+
+- feat: new notes prefill as Untitled N in the current folder context (`5de2e82`)
+- feat: create missing notes from dead wikilinks (`ad66286`)
+- feat: editable folder field with datalist and sidebar go-to (`6651d24`)
+- feat: attachment-aware note moves (server-side) (`62fe605`)
+- feat: attachment-aware rename dialog (client-side) (`8f91c2f`)
+- feat: post-move scan page with per-file Fix and Fix-all (`30ac1e6`)
+- feat: outlined brand assets, regenerated favicons, polished README (`9ce1964`)
+
+#### Fix
+
+Two title-handling correctness gaps closed. Titles starting with the
+reserved `_` segment — which would shadow the app's `/_/` URL namespace and
+be unreachable — are now rejected. The client mirrors the server's full
+path-validation rules and shows the specific reason (empty segments,
+dot-segments, forbidden characters, length) instead of a generic error.
+
+- fix: reject '_' as first title segment (reserved URL namespace) (`aade9a2`)
+- fix: client title validation mirrors server rules with specific messages (`9eb0594`)
+
+#### Chore
+
+- chore: consolidate logo assets, drop stale docs/ dupes (`2dc85c3`)
+
+### 2026-08-12
+
+#### Feature
+
+Search grew into a folder-aware browser: a `folder` param scopes results to
+a subtree with segment-aware prefix matching, an include-nested toggle
+switches between recursive and current-level views, directory rows and a
+`..` level-up row make folders traversable, and note paths render as
+breadcrumbs linking to their folder views. The sidebar became an
+Obsidian-style overlay drawer with a nested folder tree — expand/collapse,
+active-note highlight, filter textbox, markdown icons, collapse-all with a
+disabled state. Theming landed: 16 named color schemes with a menu picker
+and a persistent preview panel that applies themes live behind it.
+Supporting UI work: sticky navbar and note header, themed thin scrollbars
+with stable gutters, floating corner buttons.
+
+- feat: include-nested-folders toggle on the search page (`39ac50b`)
+- feat: server-side nested filter for search (`0ad0707`)
+- feat: folder param for search (segment-aware path prefix scoping) (`47f568b`)
+- feat: wire the folder query param through the search page (`1360e55`)
+- feat: subdirectory links for traversal when nested is off (`184e5a1`)
+- feat: level-up link when traversing folders (`195f00c`)
+- feat: strip the current folder prefix from result titles (`aec01a9`)
+- feat: directories listed one per line like files, '..' row above them (`224aa37`)
+- feat: note path is a breadcrumb - each section links to its folder view (`659b013`)
+- feat: clear-to-list-all x button on the search bar (`25f94df`)
+- feat: sidebar with obsidian-style folder tree (`67881bf`)
+- feat: theme-styled thin scrollbars (`fcfa465`)
+- feat: sticky top navbar (`d13451d`)
+- feat: sticky note header (title, path, edit controls) above scrolling content (`1eeb893`)
+- feat: sidebar is an overlay drawer on all viewports (`9822637`)
+- feat: floating corner buttons - sidebar toggle top-left, menu top-right icon-only (`9a9b86f`)
+- feat: collapse-all button dims when there is nothing to collapse (`9e39699`)
+- feat: stable scrollbar gutters - content doesn't jump when a scrollbar appears (`732e294`)
+- feat: filter textbox in the sidebar (`1818dc0`)
+- feat: markdown icon on sidebar note rows (`54ed767`)
+- feat: themable color schemes with a picker in the menu (`b31ff0d`)
+- feat: theme selection via a persistent preview picker (`392013c`)
+
+#### Fix
+
+Interaction bugs from the same search/sidebar push: search refetches when
+the folder param changes, folders with subdirectories no longer show a bare
+"No Results" panel, the level-up row appears whenever inside a folder,
+query params survive term changes, folder links respect the search term,
+collapse toggles register while the tree is filtered, hover highlights only
+apply to enabled buttons, and the navbar's alignment with the content
+scroller was corrected through several iterations.
+
+- fix: refetch search results when the folder param changes (`180b1de`)
+- fix: no 'No Results' panel when the folder has subdirectories (`1b7018e`)
+- fix: show the '..' level-up row whenever inside a folder (`60fa3c1`)
+- fix: search keeps query params on term change; default title sort for '*' (`d5db287`)
+- fix: filter folder links by the search term (`fda5298`)
+- fix: allowlist THIRD-PARTY-NOTICES.md in .dockerignore (`d11d6bc`)
+- fix: main content gets the same scrollbar breathing room as the sidebar (`054b340`)
+- fix: note header lives outside the scrollable content area (`7da211f`)
+- fix: sidebar affordances - proper collapse-all icon, toggle floats in the page corner (`236db1c`)
+- fix: hover highlight only applies to enabled buttons (`28c6372`)
+- fix: sidebar header label reads Files (`b797b4d`)
+- fix: navbar aligns with content width; corner-button clearance only on small screens (`b2d6e84`)
+- fix: navbar shares the content scroller box so edges align structurally (`e0b0b10`)
+- fix: navbar beside the content scroller in a shared column (`628241b`)
+- fix: sidebar header - dock icon closes from the left, filter right of collapse-all (`9f8d1e0`)
+- fix: sidebar toggle icon position matches the corner button; filter box gets a reset x (`831f4bb`)
+- fix: folder collapse toggles register while the tree is filtered (`9923b87`)
+
+#### Docs
+
+- docs: drop the syncthing/git thanks entry from third-party notices (`7ad717e`)
+
+#### Chore
+
+- chore: untrack .globnotes index dir (tracked before the gitignore) (`5d9669c`)
+
+### 2026-08-11
+
+#### Breaking
+
+The fork itself: flatnotes became globnotes. Environment variables renamed
+`FLATNOTES_*` → `GLOBNOTES_*`, the data dir `.flatnotes` → `.globnotes`,
+and the storage model changed — a note's title is its relative path, so
+`dad/recipes/soup` is a real note at `dad/recipes/soup.md` with directories
+created on demand and pruned git-style. URLs were redesigned around real
+paths: notes and vault files live in the root space (`/dad/recipes/soup`,
+`/dad/assets/broth.jpg`) while app machinery moved under the `/_/`
+namespace (`/_/api/*`, `/_/login`, `/_/new`, `/_/search`, `/_/assets/*`).
+The only reserved top-level segment is `_`.
+
+- chore: fork and rename to globnotes (`34c2a57`)
+- feat: title-as-path note semantics (`eddc545`)
+- refactor: move api and app pages under /_/ prefix (`f60a812`)
+- feat: root-level note urls with native relative links (`9477855`)
+
+#### Feature
+
+Core platform features on the new model: vault-fidelity file serving and
+uploads (files land beside the note being edited), a note-index endpoint
+powering wiki-link resolution, an Obsidian-flavored viewer (wiki-links with
+aliases and headings, image embeds, highlights, callouts, comments,
+frontmatter, mermaid, KaTeX), a first-run auth setup wizard (password /
+read-only / none — an explicit, stored choice), the sky-blue brand theme
+with the Dancing Script `**` logo, split note titles (muted path + basename
+with middle-ellipsis), and search-page layout refinements.
+
+- feat: vault-fidelity file serving and uploads (`3a6ba05`)
+- feat: /api/note-index endpoint (`5ad8f59`)
+- feat: obsidian-flavored viewer (`2003058`)
+- feat: first-run auth setup wizard (`0af20d1`)
+- feat: globnotes branding — sky-blue theme, Dancing Script glob-asterisk logo (`f3c09d5`)
+- feat: read-only mode in the first-run setup wizard (`452245f`)
+- feat: split note title display into muted path prefix and basename (`5ab7797`)
+- feat: move the muted path prefix below the title (`a06001e`)
+- feat: add pt-8 spacing above the note path line (`be3e57d`)
+- feat: buttons rest on the separator; middle-ellipsis for long paths (`6ec8dd8`)
+- feat: keep at least two segments on each side of the path ellipsis (`95e35ce`)
+- feat: quieter, left-aligned sort button on the search page (`dd2e77f`)
+- feat: place the sort button above the search bar (`f7a71ff`)
+
+#### Fix
+
+Follow-ups from the URL redesign and header/search layout passes: the
+health log filter matches the moved endpoint, note links generate real
+slashes, remaining `api/` prefixes dropped from CRUD call paths, and a
+series of spacing and alignment corrections.
+
+- fix: health log filter matches the moved /_/api/health endpoint (`788a62d`)
+- fix: generate note links with real slashes (`fdb1d99`)
+- fix: drop remaining api/ prefixes in note CRUD call paths (`e9237b6`)
+- fix: path line spacing pt-8 -> pt-2 (8px, not 8km) (`1bc6dda`)
+- fix: tighten note header spacing (path 4px under title, hr closer) (`01164db`)
+- fix: nudge note header separator down 4px (`103289e`)
+- fix: let the search page use the full content width (`a65ecf8`)
+- fix: quiet button style - neutral grey at 60% opacity (no blue cast) (`bac2d74`)
+- fix: search page spacing and sort button color to match note path (`65f521a`)
+- fix: bolder search page spacing (sort pull-up 12px, search gap 24px) (`bb756a9`)
+- fix: sort button right-aligned above the search bar (`1800af3`)
+- fix: search page spacing and quiet style that actually register (`8898d9f`)
+- fix: search layout per review (`f2fdde8`)
+
+#### Docs
+
+- docs: seed FutureDevelopment.md with deferred items (`e96113a`)
+- docs: readme, smoke checklist, compose example; ci: docker build and ghcr publish (`67c265c`)
+- docs: add CREDITS.md with full attribution (`7ba9898`)
+- docs: readme heading uses the svg logo (`34f80d2`)
+
+#### Chore
+
+- chore: globnotes entrypoint banner and regenerated uv.lock (`2bf37b6`)
+- chore: gitignore the .globnotes index/config dir (`9d8043f`)
+
+#### CI
+
+- ci: add pytest workflow with smoke test (`5aa85ce`)
+
+### 2026-08-02
+
+#### Refactor
+
+Build tooling modernized ahead of the fork: dependency management switched
+to uv, Python and Node dependencies updated, build and runtime container
+images bumped, devcontainer configuration removed.
+
+- chore: Remove devcontainer configuration files (`91c71c7`)
+- refactor: Switch to uv for dependency management (`790814c`)
+- chore: Update python dependencies (`5d569a8`)
+- chore: Update python version (`71decfd`)
+- chore: Update build container image (`2fda847`)
+- chore: Update runtime container image (`670768c`)
+- chore: Update node dependencies (`1396cb7`)
+
+#### Fix
+
+- fix: Update Tailwind CSS configuration to exclude dist directory from content (`c44787e`)
+
+### 2026-02-17
+
+#### Docs
+
+- docs: Update CONTRIBUTING.md (`0fdd0fd`)
