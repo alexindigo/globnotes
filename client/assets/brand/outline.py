@@ -23,12 +23,9 @@ def glyph_parts(font, glyph_name, upem, font_size, *, hslug=""):
     raw = pen.getCommands()
     if not raw:
         return []
-    # Split multi-contour commands produced by SVGPathPen into separate <path>
-    # elements so we can position each one with a dedicated transform.
-    parts = raw.split(" M")
-    if parts[0].startswith("M"):
-        parts[0] = "M" + parts[0]
-    return [p.strip() for p in parts]
+    # A single glyph's multi-contour output is valid as one `d` attribute
+    # (multiple moveto subpaths); no splitting needed.
+    return [raw]
 
 
 def glyph_advance(font, glyph_name, upem, font_size):
@@ -108,5 +105,32 @@ LOGO_SVG = f"""<svg width="208" height="46" viewBox="0 0 208 46" fill="none" xml
 with open("client/assets/brand/logo.svg", "w") as fh:
     fh.write(LOGO_SVG)
 
+# ── safari-pinned-tab.svg ─────────────────────────────────────────────────
+# Safari mask-icon: black areas get tinted by the link's color attribute.
+# The rounded rect is the silhouette; the asterisks are mask cutouts.
+pinned_mask_paths = ""
+for p in asterisk_parts:
+    pinned_mask_paths += f'      <path transform="translate({x1},{y})" d="{p}" fill="black"/>\n'
+for p in asterisk_parts:
+    pinned_mask_paths += f'      <path transform="translate({x1 + star_adv},{y})" d="{p}" fill="black"/>\n'
+
+PINNED_SVG = f"""<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 20010904//EN"
+ "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="700" viewBox="0 0 36 36">
+  <defs>
+    <mask id="m">
+      <rect width="36" height="36" fill="white" rx="4"/>
+{pinned_mask_paths.rstrip()}
+    </mask>
+  </defs>
+  <rect width="36" height="36" rx="4" fill="black" mask="url(#m)"/>
+</svg>
+"""
+
+with open("client/assets/safari-pinned-tab.svg", "w") as fh:
+    fh.write(PINNED_SVG)
+
 print("icon.svg  :", len(ICON_SVG), "bytes")
 print("logo.svg  :", len(LOGO_SVG), "bytes")
+print("pinned-tab:", len(PINNED_SVG), "bytes")
