@@ -45,7 +45,7 @@ docker run -d \
   --name globnotes \
   -p 8080:8080 \
   -v /path/to/your/notes:/data \
-  ghcr.io/alexindigo/globnotes:latest
+  alexindigo/globnotes:latest
 ```
 
 Open `http://localhost:8080` and complete the first-run setup: create a password, choose read-only (browse and search, no editing), or disable auth entirely (trusted networks only).
@@ -55,7 +55,7 @@ Or with docker compose:
 ```yaml
 services:
   globnotes:
-    image: ghcr.io/alexindigo/globnotes:latest
+    image: alexindigo/globnotes:latest
     container_name: globnotes
     restart: unless-stopped
     ports:
@@ -69,6 +69,8 @@ services:
       # Optional. Leave unset for the first-run setup wizard.
       # GLOBNOTES_AUTH_TYPE: "none"  # trusted home network only!
 ```
+
+The image is published to both [Docker Hub](https://hub.docker.com/r/alexindigo/globnotes) (`alexindigo/globnotes`) and [GHCR](https://github.com/alexindigo/globnotes/pkgs/container/globnotes) (`ghcr.io/alexindigo/globnotes`) — same tags (`latest`, `1.0`, `1.0.1`, …), same content; use whichever registry you prefer.
 
 ## URL model
 
