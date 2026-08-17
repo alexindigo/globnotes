@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.0.3 (2026-08-16)
+
+### 2026-08-16
+
+#### Breaking
+
+The container entrypoint no longer `chown -R`s the vault on startup.
+Upstream flatnotes force-chowned everything under `/data` to the app
+user on every boot — convenient for writes, but it recursively rewrote
+ownership of the user's own tree (slow on large vaults, harmful on
+NAS/NFS/ACL shares, and able to break other apps' access to the same
+files). globnotes now creates and owns only the `.globnotes`
+index/config directory; mounted content keeps its ownership forever.
+**If your vault is owned by a different user than the app, note writes
+will now fail with a permission error instead of the tree being silently
+chowned** — set `PUID`/`PGID` to the vault owner's ids (`id -u` /
+`id -g` on the host). Also fixes a latent bug where the entrypoint used
+`GLOBNOTES_PATH` without a default.
+
+- fix: entrypoint no longer chowns the vault, only the index dir (`b479fdb`)
+
 ## v1.0.2 (2026-08-16)
 
 ### 2026-08-16
