@@ -3,6 +3,7 @@
 [ "$EXEC_TOOL" ] || EXEC_TOOL=gosu
 [ "$GLOBNOTES_HOST" ] || GLOBNOTES_HOST=0.0.0.0
 [ "$GLOBNOTES_PORT" ] || GLOBNOTES_PORT=8080
+[ "$GLOBNOTES_PATH" ] || GLOBNOTES_PATH=/data
 
 set -e
 
@@ -27,8 +28,11 @@ globnotes_command="python -m \
                   --forwarded-allow-ips '*'"
 
 if [ `id -u` -eq 0 ] && [ `id -g` -eq 0 ]; then
-    echo Setting file permissions...
-    chown -R ${PUID}:${PGID} ${GLOBNOTES_PATH}
+    echo Preparing the index/config directory...
+    # Only the app's own directory needs to be owned by the app user.
+    # Mounted vault content is never chowned — it belongs to the user.
+    mkdir -p "${GLOBNOTES_PATH}/.globnotes"
+    chown -R ${PUID}:${PGID} "${GLOBNOTES_PATH}/.globnotes"
 
     echo Starting globnotes as user ${PUID}...
     exec ${EXEC_TOOL} ${PUID}:${PGID} ${globnotes_command}
