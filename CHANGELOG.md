@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.0.2 (2026-08-16)
+
+### 2026-08-16
+
+#### Feature
+
+The container image is now published to Docker Hub
+(`alexindigo/globnotes`) alongside GHCR from the same tag-triggered
+workflow — one build, both registries, identical tags and content. The
+README getting-started examples use the Docker Hub image and document
+both registries.
+
+- feat: publish the container image to Docker Hub alongside GHCR (`5286be8`)
+
 ## v1.0.1 (2026-08-15)
 
 ### 2026-08-15
