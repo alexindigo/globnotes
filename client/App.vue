@@ -11,6 +11,7 @@
     <template v-else>
       <SearchModal v-model="isSearchModalVisible" />
       <SidebarPanel />
+      <SyncBanner />
       <!-- Shared content column: navbar and content scroller live beside
            each other in it, so their edges align by construction. -->
       <div class="flex min-h-0 flex-1 flex-col">
@@ -40,6 +41,7 @@ import { apiErrorHandler, getConfig } from "./api.js";
 import PrimeToast from "./components/PrimeToast.vue";
 import SetupModal from "./components/SetupModal.vue";
 import SidebarPanel from "./components/SidebarPanel.vue";
+import SyncBanner from "./components/SyncBanner.vue";
 import { useGlobalStore } from "./globalStore.js";
 import { initTheme } from "./themes.js";
 import { refreshNoteIndex } from "./noteIndex.js";

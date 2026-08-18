@@ -181,6 +181,15 @@ export async function getTags() {
   }
 }
 
+export async function getIndexStatus() {
+  try {
+    const response = await api.get("index-status");
+    return response.data;
+  } catch (_) {
+    return { syncing: false, initial: false, done: 0, total: 0 };
+  }
+}
+
 export async function getNoteIndex() {
   try {
     const response = await api.get("note-index");

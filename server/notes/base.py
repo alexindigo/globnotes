@@ -61,3 +61,19 @@ class BaseNotes(ABC):
     def get_titles(self) -> list[str]:
         """Get a list of all note titles."""
         pass
+
+    @abstractmethod
+    def sync_index(self) -> None:
+        """Synchronously run an incremental index sync."""
+        pass
+
+    @abstractmethod
+    def start_background_sync(self) -> None:
+        """Run the initial full index sync in the background."""
+        pass
+
+    @property
+    @abstractmethod
+    def index_status(self) -> dict:
+        """Report sync progress for the status endpoint."""
+        pass

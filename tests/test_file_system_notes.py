@@ -1,4 +1,5 @@
 import os
+import time
 
 import pytest
 
@@ -135,6 +136,53 @@ class TestIndexAndSearch:
     def test_tags_still_work(self, notes):
         notes.create(NoteCreate(title="a/b", content="has #taggy inside"))
         assert "taggy" in notes.get_tags()
+
+
+class TestPriorityReindex:
+    def test_create_is_searchable_without_any_sync(self, notes):
+        notes._initial_sync_complete = False
+        notes.create(NoteCreate(title="fresh/note", content="needle"))
+        results = notes.search("needle")
+        assert any(r.title == "fresh/note" for r in results)
+
+    def test_delete_is_unsearchable_without_any_sync(self, notes):
+        notes._initial_sync_complete = False
+        notes.create(NoteCreate(title="gone/note", content="needle"))
+        notes.delete("gone/note")
+        results = notes.search("needle")
+        assert not any(r.title == "gone/note" for r in results)
+
+    def test_rename_removes_old_title_from_index(self, notes):
+        notes._initial_sync_complete = False
+        notes.create(NoteCreate(title="old/name", content="needle"))
+        notes.update("old/name", NoteUpdate(new_title="new/name"))
+        results = notes.search("needle")
+        titles = [r.title for r in results]
+        assert "new/name" in titles
+        assert "old/name" not in titles
+
+
+class TestBackgroundSync:
+    def test_background_sync_completes_and_indexes(self, notes):
+        notes._initial_sync_complete = False
+        # Write a note directly on disk (no API, so no priority reindex)
+        path = os.path.join(notes.storage_path, "ext", "note.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("external needle")
+        notes.start_background_sync()
+        for _ in range(100):
+            if notes._initial_sync_complete:
+                break
+            time.sleep(0.05)
+        assert notes._initial_sync_complete
+        results = notes.search("external needle")
+        assert any(r.title == "ext/note" for r in results)
+
+    def test_index_status_shape(self, notes):
+        status = notes.index_status
+        assert set(status) == {"syncing", "initial", "done", "total"}
+        assert status["initial"] is False  # fixture marks sync complete
 
 
 class TestRenameStrategies:

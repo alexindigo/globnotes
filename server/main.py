@@ -35,6 +35,7 @@ global_config = GlobalConfig()
 # Mutable holder so the first-run setup wizard can attach auth at runtime.
 auth_state = {"auth": global_config.load_auth()}
 note_storage: BaseNotes = global_config.load_note_storage()
+note_storage.start_background_sync()
 file_serving: FileServing = global_config.load_file_serving()
 
 
@@ -415,6 +416,13 @@ def healthcheck() -> str:
     """A lightweight endpoint that simply returns 'OK' to indicate the server
     is running."""
     return "OK"
+
+
+@router.get("/_/api/index-status")
+def index_status() -> dict:
+    """Report index sync progress for the UI sync banner. Counts only, no
+    content — safe to leave unauthenticated like the healthcheck."""
+    return note_storage.index_status
 
 
 # endregion

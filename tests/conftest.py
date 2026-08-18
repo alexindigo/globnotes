@@ -32,7 +32,11 @@ def notes(tmp_path, monkeypatch):
     monkeypatch.setenv("GLOBNOTES_PATH", str(tmp_path))
     from notes.file_system import FileSystemNotes
 
-    return FileSystemNotes()
+    instance = FileSystemNotes()
+    # Tests exercise the post-initial-sync behavior (incremental sync per
+    # search); the background initial sync is covered by its own tests.
+    instance._initial_sync_complete = True
+    return instance
 
 
 @pytest.fixture()

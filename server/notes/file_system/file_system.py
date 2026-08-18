@@ -2,6 +2,7 @@ import glob
 import os
 import re
 import shutil
+import threading
 import time
 from datetime import datetime
 from typing import List, Literal, Set, Tuple
@@ -54,7 +55,125 @@ class FileSystemNotes(BaseNotes):
                 f"'{self.storage_path}' is not a valid directory."
             )
         self.index = self._load_index()
-        self._sync_index_with_retry(optimize=True)
+        self._sync_lock = threading.Lock()
+        self._syncing = False
+        self._initial_sync_complete = False
+        self._sync_done = 0
+        self._sync_total = 0
+
+    @property
+    def index_status(self) -> dict:
+        return {
+            "syncing": self._syncing,
+            "initial": not self._initial_sync_complete,
+            "done": self._sync_done,
+            "total": self._sync_total,
+        }
+
+    def sync_index(self) -> None:
+        """Synchronously run an incremental index sync (tests, manual)."""
+        self._sync_index_with_retry()
+
+    def start_background_sync(self) -> None:
+        """Run the initial full index sync in a daemon thread so the web
+        server can start serving immediately. The sync commits in batches
+        (bounding RAM) and yields the lock between batches so user actions
+        (saves, searches) preempt it."""
+        def _run():
+            self._syncing = True
+            try:
+                self._full_sync_batched()
+                self._initial_sync_complete = True
+                logger.info(
+                    f"Initial index sync complete "
+                    f"({self._sync_total} notes)"
+                )
+            except Exception as e:
+                logger.error(f"Background index sync failed: {e}")
+            finally:
+                self._syncing = False
+
+        threading.Thread(
+            target=_run, daemon=True, name="index-sync"
+        ).start()
+
+    def _full_sync_batched(self) -> None:
+        """Full sync in batches: prune/update phase in one writer, then the
+        add-new phase in committed batches with a delay between them."""
+        batch_size = int(
+            os.environ.get("GLOBNOTES_INDEX_BATCH_SIZE", "200")
+        )
+        batch_delay = float(
+            os.environ.get("GLOBNOTES_INDEX_BATCH_DELAY", "0.1")
+        )
+
+        with self._sync_lock:
+            # Phase 1: prune deleted + update modified (bounded by index size)
+            indexed = set()
+            writer = self.index.writer()
+            with self.index.searcher() as searcher:
+                for idx_note in searcher.all_stored_fields():
+                    idx_filename = idx_note["filename"]
+                    idx_filepath = os.path.join(
+                        self.storage_path, idx_filename
+                    )
+                    if not os.path.exists(idx_filepath):
+                        writer.delete_by_term("filename", idx_filename)
+                    elif (
+                        datetime.fromtimestamp(
+                            os.path.getmtime(idx_filepath)
+                        )
+                        != idx_note["last_modified"]
+                    ):
+                        self._add_note_to_index(
+                            writer, self._get_by_filename(idx_filename)
+                        )
+                    indexed.add(idx_filename)
+            writer.commit()
+
+        # Phase 2: add new in batches, yielding the lock between batches
+        new_files = [
+            f
+            for f in self._list_all_note_filenames()
+            if f not in indexed
+        ]
+        self._sync_total = len(new_files)
+        self._sync_done = 0
+        for i in range(0, len(new_files), batch_size):
+            batch = new_files[i : i + batch_size]
+            with self._sync_lock:
+                writer = self.index.writer()
+                for filename in batch:
+                    self._add_note_to_index(
+                        writer, self._get_by_filename(filename)
+                    )
+                writer.commit()
+            self._sync_done += len(batch)
+            if batch_delay > 0:
+                time.sleep(batch_delay)
+
+    def _reindex_note(self, title: str) -> None:
+        """Immediately (re)index a single note — user saves preempt the
+        background sync. Failures are logged, never raised: the note is
+        already safely on disk and the next sync will catch up."""
+        try:
+            with self._sync_lock:
+                writer = self.index.writer()
+                self._add_note_to_index(
+                    writer, self._get_by_filename(title + MARKDOWN_EXT)
+                )
+                writer.commit()
+        except Exception as e:
+            logger.warning(f"Failed to reindex '{title}': {e}")
+
+    def _delete_from_index(self, title: str) -> None:
+        try:
+            with self._sync_lock:
+                writer = self.index.writer()
+                writer.delete_by_term("filename", title + MARKDOWN_EXT)
+                writer.commit()
+        except Exception as e:
+            logger.warning(f"Failed to delete '{title}' from index: {e}")
 
     def create(self, data: NoteCreate) -> Note:
         """Create a new note."""
@@ -66,6 +185,7 @@ class FileSystemNotes(BaseNotes):
             raise FileExistsError(
                 f"Failed to create '{data.title}': {e.strerror}"
             )
+        self._reindex_note(data.title)
         return Note(
             title=data.title,
             content=data.content,
@@ -187,6 +307,7 @@ class FileSystemNotes(BaseNotes):
     ) -> Note:
         """Update a specific note."""
         is_valid_note_path(title)
+        old_title = title
         filepath = self._path_from_title(title)
         old_dir = os.path.dirname(filepath)
         moved_files = {}
@@ -292,6 +413,9 @@ class FileSystemNotes(BaseNotes):
             {"oldPath": old, "newPath": new}
             for old, new in moved_files.items()
         ]
+        if old_title != title:
+            self._delete_from_index(old_title)
+        self._reindex_note(title)
         return Note(
             title=title,
             content=content,
@@ -360,6 +484,7 @@ class FileSystemNotes(BaseNotes):
         filepath = self._path_from_title(title)
         os.remove(filepath)
         self._prune_empty_parents(os.path.dirname(filepath))
+        self._delete_from_index(title)
 
     def search(
         self,
@@ -373,7 +498,8 @@ class FileSystemNotes(BaseNotes):
         """Search the index for the given term. When nested is False, only
         root-level notes are included. When folder is given, only notes
         under that folder path are included."""
-        self._sync_index_with_retry()
+        if self._initial_sync_complete:
+            self._sync_index_with_retry()
         term = self._pre_process_search_term(term)
         with self.index.searcher() as searcher:
             # Parse Query
@@ -437,7 +563,8 @@ class FileSystemNotes(BaseNotes):
     def get_tags(self) -> list[str]:
         """Return a list of all indexed tags. Note: Tags no longer in use will
         only be cleared when the index is next optimized."""
-        self._sync_index_with_retry()
+        if self._initial_sync_complete:
+            self._sync_index_with_retry()
         with self.index.reader() as reader:
             tags = reader.field_terms("tags")
             return [tag for tag in tags]

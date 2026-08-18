@@ -196,3 +196,14 @@ class TestNoteRoutes:
             "dad/deep/er",
             "dad/direct",
         ]
+
+
+class TestIndexStatusRoute:
+    def test_index_status_returns_shape(self, client):
+        response = client.get("/_/api/index-status")
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {"syncing", "initial", "done", "total"}
+        assert isinstance(body["syncing"], bool)
+        assert isinstance(body["done"], int)
+        assert isinstance(body["total"], int)
