@@ -74,13 +74,11 @@
           @click="toggleFolder(row.folder.path)"
         >
           <SvgIcon
-            v-if="row.folder.hasChildren !== false"
             type="mdi"
             :path="row.expanded ? mdilChevronDown : mdilChevronRight"
             size="1em"
             class="mr-1 shrink-0"
           />
-          <span v-else class="mr-1 w-[1em] shrink-0"></span>
           <span class="truncate">{{ row.folder.name }}</span>
         </button>
         <RouterLink
@@ -362,12 +360,17 @@ const activeTitle = computed(() =>
 );
 
 // Load the root level when the drawer opens (and keep the note-index
-// fresh for wiki-link resolution and the filter box).
+// fresh for wiki-link resolution and the filter box). Persisted expanded
+// folders are hydrated too — otherwise restored expansion shows empty
+// children until the user toggles each folder.
 watch(
   () => globalStore.sidebarVisible,
   (visible) => {
     if (visible) {
       loadLevel("");
+      for (const path of expanded.value) {
+        loadLevel(path);
+      }
       if (!(globalStore.noteTitles || []).length) {
         refreshNoteIndex();
       }

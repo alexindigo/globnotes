@@ -15,11 +15,13 @@ def tree_vault(tmp_path, monkeypatch):
         "beta/four.md",
         "root-note.md",
         ".hidden/secret.md",
+        "empty-dir/.placeholder",
     ]:
         path = os.path.join(tmp_path, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write("# x")
+        if not rel.endswith(".placeholder"):
+            with open(path, "w") as f:
+                f.write("# x")
     import sys
 
     sys.modules.pop("main", None)
@@ -34,8 +36,12 @@ class TestTreeEndpoint:
         response = tree_vault.get("/_/api/tree")
         assert response.status_code == 200
         body = response.json()
-        assert [f["path"] for f in body["folders"]] == ["alpha", "beta"]
-        assert all(f["hasChildren"] for f in body["folders"])
+        assert [
+            f["path"] for f in body["folders"]
+        ] == ["alpha", "beta", "empty-dir"]
+        # Folders carry no expandability hint: folders are expandable
+        # because they are folders, empty or not.
+        assert all("hasChildren" not in f for f in body["folders"])
         assert body["notes"] == ["root-note"]
 
     def test_subfolder_level_returns_its_children(self, tree_vault):
@@ -43,7 +49,6 @@ class TestTreeEndpoint:
         assert response.status_code == 200
         body = response.json()
         assert [f["path"] for f in body["folders"]] == ["alpha/deep"]
-        assert body["folders"][0]["hasChildren"] is True
         assert sorted(body["notes"]) == ["alpha/one", "alpha/two"]
 
     def test_hidden_dirs_are_skipped(self, tree_vault):

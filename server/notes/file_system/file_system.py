@@ -712,21 +712,7 @@ class FileSystemNotes(BaseNotes):
                     child_path = (
                         os.path.join(path, entry.name) if path else entry.name
                     )
-                    has_children = False
-                    try:
-                        with os.scandir(entry.path) as sub:
-                            has_children = any(
-                                not e.name.startswith(".") for e in sub
-                            )
-                    except OSError:
-                        pass
-                    folders.append(
-                        {
-                            "name": entry.name,
-                            "path": child_path,
-                            "hasChildren": has_children,
-                        }
-                    )
+                    folders.append({"name": entry.name, "path": child_path})
                 elif entry.name.endswith(MARKDOWN_EXT):
                     title = entry.name[: -len(MARKDOWN_EXT)]
                     notes.append(
