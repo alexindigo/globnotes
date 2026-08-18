@@ -432,6 +432,59 @@ def index_status() -> dict:
     return note_storage.index_status
 
 
+@router.get("/_/api/debug/report", dependencies=auth_deps)
+def debug_report() -> dict:
+    """Full diagnostic report for troubleshooting without docker logs.
+    Exposes no note content — paths, counts, timings, and a write probe."""
+    report = {
+        "storage_path": note_storage.storage_path,
+        "process_uid": os.getuid(),
+        "process_gid": os.getgid(),
+        "index_status": note_storage.index_status,
+    }
+
+    # Filesystem scan (what note-index serves)
+    t0 = time.monotonic()
+    try:
+        titles = note_storage.get_titles()
+        report["scan"] = {
+            "ok": True,
+            "count": len(titles),
+            "duration_s": round(time.monotonic() - t0, 3),
+            "sample": titles[:5],
+        }
+    except Exception as e:
+        report["scan"] = {"ok": False, "error": str(e)}
+
+    # Whoosh index state
+    try:
+        with note_storage.index.searcher() as searcher:
+            doc_count = searcher.doc_count()
+        report["index"] = {
+            "ok": True,
+            "documents": doc_count,
+            "path": note_storage._index_path,
+            "writable": os.access(note_storage._index_path, os.W_OK),
+        }
+    except Exception as e:
+        report["index"] = {"ok": False, "error": str(e)}
+
+    # Write probe: can the app actually create files in the vault?
+    probe_path = os.path.join(
+        note_storage.storage_path, ".globnotes-write-probe"
+    )
+    try:
+        with open(probe_path, "w") as f:
+            f.write("probe")
+        os.remove(probe_path)
+        report["vault_writable"] = True
+    except Exception as e:
+        report["vault_writable"] = False
+        report["vault_write_error"] = str(e)
+
+    return report
+
+
 # endregion
 
 app.include_router(router, prefix=global_config.path_prefix)
