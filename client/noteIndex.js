@@ -3,12 +3,14 @@ import { useGlobalStore } from "./globalStore.js";
 
 export function refreshNoteIndex() {
   const globalStore = useGlobalStore();
+  console.log("[noteIndex] refresh started");
   return getNoteIndex()
     .then((titles) => {
+      console.log(`[noteIndex] loaded ${titles.length} titles`);
       globalStore.noteTitles = titles;
     })
-    .catch(() => {
-      // A stale or missing index only affects wiki-link resolution.
+    .catch((error) => {
+      console.error("[noteIndex] refresh FAILED", error);
       globalStore.noteTitles = [];
     });
 }

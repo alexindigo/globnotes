@@ -658,13 +658,19 @@ class FileSystemNotes(BaseNotes):
         """Return a list of all note filenames, relative to the storage
         path. Hidden directories (such as the index directory) are
         skipped."""
-        return [
+        t0 = time.monotonic()
+        filenames = [
             os.path.relpath(filepath, self.storage_path)
             for filepath in glob.glob(
                 os.path.join(self.storage_path, "**/*" + MARKDOWN_EXT),
                 recursive=True,
             )
         ]
+        logger.info(
+            f"[scan] found {len(filenames)} markdown files "
+            f"in {time.monotonic() - t0:.3f}s"
+        )
+        return filenames
 
     def _sync_index(self, optimize: bool = False, clean: bool = False) -> None:
         """Synchronize the index with the notes directory.

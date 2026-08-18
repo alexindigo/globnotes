@@ -166,7 +166,19 @@ function buildTree(titles) {
   return root;
 }
 
-const tree = computed(() => buildTree(globalStore.noteTitles || []));
+const tree = computed(() => {
+  const titles = globalStore.noteTitles || [];
+  console.log(`[sidebar] building tree from ${titles.length} titles`);
+  const t = buildTree(titles);
+  let count = 0;
+  const walk = (n) => {
+    count++;
+    n.folders.forEach((f) => walk(f.node));
+  };
+  walk(t);
+  console.log(`[sidebar] tree built: ${count} folder nodes`);
+  return t;
+});
 
 // -- Expansion state --------------------------------------------------------
 

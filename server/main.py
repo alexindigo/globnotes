@@ -1,5 +1,6 @@
 import os
 import secrets
+import time
 from typing import List, Literal
 
 from fastapi import (
@@ -342,7 +343,13 @@ def get_tags():
 def get_note_index():
     """Get a list of all note titles. Used by the client to resolve
     wiki-links."""
-    return note_storage.get_titles()
+    t0 = time.monotonic()
+    titles = note_storage.get_titles()
+    logger.info(
+        f"[note-index] returning {len(titles)} titles "
+        f"in {time.monotonic() - t0:.3f}s"
+    )
+    return titles
 
 
 # endregion
