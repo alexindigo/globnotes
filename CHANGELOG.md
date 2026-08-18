@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.1.0 (2026-08-17)
+
+### 2026-08-17
+
+#### Fix
+
+Two lazy-tree UX corrections on today's v1.0.6 launch. Folders now show
+the expand chevron simply because they are folders — "expandable" is
+part of being a folder, not a property of its contents — and the
+`hasChildren` hint is gone from the tree endpoint (also faster: no
+per-child scandir). Persisted expanded folders hydrate their children
+on sidebar open — previously a restored-expansion folder showed empty
+children until toggled.
+
+- fix: lazy tree UX — always-expandable folders, hydrated restored expansion (`103ac93`)
+
 ## v1.0.6 (2026-08-17)
 
 ### 2026-08-17
