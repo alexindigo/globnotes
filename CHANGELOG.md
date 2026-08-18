@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.0.6 (2026-08-17)
+
+### 2026-08-17
+
+#### Feature
+
+The sidebar no longer needs the full recursive vault scan up front — a
+real cost on large vaults (a ~10s glob on a 17k-file NAS tree). A new
+`GET /_/api/tree` endpoint lists one directory level at a time (folders
+carry a `hasChildren` chevron hint), and the sidebar fetches lazily:
+root on open, a folder's children when expanded — the user's current
+folder is always front of the line. Filter mode keeps the existing
+full-list behavior. The recursive scan itself is now cached briefly
+(`GLOBNOTES_SCAN_CACHE_TTL`, default 15s) with invalidation on our own
+writes. The batched initial sync also indexes breadth-first so
+top-level search becomes useful early.
+
+- feat: lazy sidebar tree via per-level tree endpoint + scan cache (`3f42ec1`)
+
+#### Fix
+
+A sync crash exposed by the scan cache: the "add new" phase could try
+to re-index a file that the prune phase had just detected as externally
+deleted, because the cached scan still listed it. Both sync paths now
+carry the deletion set forward and tolerate mid-sync deletions.
+
+- fix: sync tolerates files deleted mid-sync / present in stale scan cache (`3f42ec1`)
+
 ## v1.0.5 (2026-08-17)
 
 ### 2026-08-17
