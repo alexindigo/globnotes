@@ -1,3 +1,4 @@
+import "./prism-global.js";
 import codeSyntaxHighlight from "@toast-ui/editor-plugin-code-syntax-highlight/dist/toastui-editor-plugin-code-syntax-highlight-all.js";
 
 export function slugifyHeading(text) {

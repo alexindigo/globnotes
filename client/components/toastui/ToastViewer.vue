@@ -27,6 +27,11 @@ onMounted(() => {
     el: viewerElement.value,
     initialValue: preprocessObsidianFlavored(props.initialValue),
   });
+  // customHTMLRenderer (mermaid support) shadows the code-syntax-highlight
+  // plugin's renderer, so highlight code blocks explicitly after mount.
+  if (window.Prism?.highlightAllUnder) {
+    window.Prism.highlightAllUnder(viewerElement.value);
+  }
   mermaid
     .run({ nodes: viewerElement.value.querySelectorAll(".mermaid") })
     .catch((error) => console.error("Mermaid rendering failed", error));
