@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.1.1 (2026-08-17)
+
+### 2026-08-17
+
+#### Fix
+
+Code syntax highlighting was silently broken since the mermaid feature
+landed: nothing imported `prismjs`, so the code-syntax-highlight
+plugin's global was empty, and our `customHTMLRenderer` (mermaid
+support) shadowed the plugin's code-block renderer anyway. Code blocks
+rendered as plain text in every theme — "color schemes don't work at
+all." `prism-global.js` now sets `window.Prism` before the plugin
+bundle evaluates (so its grammars register), and the viewer runs
+`Prism.highlightAllUnder` after mount, independent of the renderer
+chain. Verified headlessly: `.token` spans render and follow the active
+theme; mermaid diagrams still render.
+
+- fix: code syntax highlighting (broken since the mermaid feature) (`f74f92e`)
+
 ## v1.1.0 (2026-08-17)
 
 ### 2026-08-17
