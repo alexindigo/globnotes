@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.0.5 (2026-08-17)
+
+### 2026-08-17
+
+#### Fix
+
+The sidebar could stay permanently empty: the note index was fetched
+exactly once at app mount, and a single failed fetch (a race with a
+still-warming server, or a dropped request on a slow vault) cached an
+empty list forever. `refreshNoteIndex` now retries with backoff and
+keeps previously loaded titles on final failure; opening the sidebar
+with an empty list re-fetches; and the sync banner refreshes the list
+when a background sync completes.
+
+- fix: sidebar no longer stays empty when the note-index fetch fails (`40481c3`)
+
 ## v1.0.4 (2026-08-17)
 
 ### 2026-08-17
