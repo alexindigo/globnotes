@@ -345,6 +345,19 @@ def get_note_index():
     return note_storage.get_titles()
 
 
+@router.get("/_/api/tree", dependencies=auth_deps)
+def get_tree(path: str = ""):
+    """List the immediate children (folders and notes) of one directory
+    level. The sidebar tree is lazily loaded level by level, so it never
+    needs a full recursive scan up front."""
+    try:
+        return note_storage.list_level(path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, api_messages.note_not_found)
+
+
 # endregion
 
 

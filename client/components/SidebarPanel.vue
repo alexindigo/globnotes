@@ -74,11 +74,13 @@
           @click="toggleFolder(row.folder.path)"
         >
           <SvgIcon
+            v-if="row.folder.hasChildren !== false"
             type="mdi"
             :path="row.expanded ? mdilChevronDown : mdilChevronRight"
             size="1em"
             class="mr-1 shrink-0"
           />
+          <span v-else class="mr-1 w-[1em] shrink-0"></span>
           <span class="truncate">{{ row.folder.name }}</span>
         </button>
         <RouterLink
@@ -128,6 +130,7 @@ import {
 } from "@mdi/light-js";
 import CustomButton from "../components/CustomButton.vue";
 import TextInput from "../components/TextInput.vue";
+import { getTree } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
 import { refreshNoteIndex } from "../noteIndex.js";
@@ -143,7 +146,29 @@ function folderPage(path) {
   };
 }
 
-// -- Tree ------------------------------------------------------------------
+// -- Lazy tree --------------------------------------------------------------
+// One directory level per fetch (/_/api/tree?path=...): the sidebar never
+// needs the full recursive scan, and a user-expanded folder is fetched on
+// demand — immediately, ahead of any background indexing.
+
+const levels = ref({});
+
+async function loadLevel(path) {
+  if (levels.value[path]) {
+    return;
+  }
+  try {
+    const data = await getTree(path);
+    levels.value = { ...levels.value, [path]: data };
+  } catch (_) {
+    levels.value = { ...levels.value, [path]: { folders: [], notes: [] } };
+  }
+}
+
+// A tree node synthesized from a loaded level (compatible with buildTree
+// nodes: name, path, folders Map, notes array).
+
+// -- Full tree (filter mode only) -------------------------------------------
 
 function buildTree(titles) {
   const root = { folders: new Map(), notes: [] };
@@ -182,7 +207,7 @@ function persistExpanded() {
   );
 }
 
-function toggleFolder(path) {
+async function toggleFolder(path) {
   if (filterText.value.trim()) {
     // While filtering, toggle against the forced expansion.
     if (filterCollapsed.value.has(path)) {
@@ -197,6 +222,9 @@ function toggleFolder(path) {
   if (expanded.value.has(path)) {
     expanded.value.delete(path);
   } else {
+    // Expanding a folder fetches its children on demand — the user's
+    // current folder is always front of the line.
+    await loadLevel(path);
     expanded.value.add(path);
   }
   // Force reactivity for the Set
@@ -289,7 +317,41 @@ const visibleRows = computed(() => {
       });
     }
   };
-  walk(tree.value, 0);
+  // Browse mode walks lazily-loaded levels; filter mode needs the full tree.
+  if (filter) {
+    walk(tree.value, 0);
+  } else {
+    // Lazy walk: resolve children from on-demand loaded levels.
+    const lazy = (path, depth) => {
+      const level = levels.value[path];
+      if (!level) {
+        return;
+      }
+      const folders = [...level.folders].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      );
+      for (const folder of folders) {
+        const isExpanded = expanded.value.has(folder.path);
+        rows.push({
+          key: "f:" + folder.path,
+          type: "folder",
+          folder,
+          depth,
+          expanded: isExpanded,
+        });
+        if (isExpanded) {
+          lazy(folder.path, depth + 1);
+        }
+      }
+      const notes = [...level.notes]
+        .map((t) => ({ title: t, name: t.split("/").pop() }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const note of notes) {
+        rows.push({ key: "n:" + note.title, type: "note", note, depth });
+      }
+    };
+    lazy("", 0);
+  }
   return rows;
 });
 
@@ -299,37 +361,38 @@ const activeTitle = computed(() =>
   route.name === "note" ? route.params.title : null,
 );
 
-// Re-fetch the note index when the drawer opens to an empty list —
-// covers an early failed fetch (e.g. server still warming up).
+// Load the root level when the drawer opens (and keep the note-index
+// fresh for wiki-link resolution and the filter box).
 watch(
   () => globalStore.sidebarVisible,
   (visible) => {
-    if (visible && !(globalStore.noteTitles || []).length) {
-      refreshNoteIndex();
+    if (visible) {
+      loadLevel("");
+      if (!(globalStore.noteTitles || []).length) {
+        refreshNoteIndex();
+      }
     }
   },
+  { immediate: true },
 );
 
-// Expand the ancestors of the active note so it is visible.
+// Load and expand the ancestors of the active note so it is visible.
 watch(
   activeTitle,
-  (title) => {
+  async (title) => {
     if (!title) {
       return;
     }
     const parts = title.split("/");
-    let changed = false;
     for (let i = 1; i < parts.length; i++) {
       const path = parts.slice(0, i).join("/");
+      await loadLevel(path);
       if (!expanded.value.has(path)) {
         expanded.value.add(path);
-        changed = true;
       }
     }
-    if (changed) {
-      expanded.value = new Set(expanded.value);
-      persistExpanded();
-    }
+    expanded.value = new Set(expanded.value);
+    persistExpanded();
   },
   { immediate: true },
 );

@@ -190,6 +190,11 @@ export async function getIndexStatus() {
   }
 }
 
+export async function getTree(path = "") {
+  const response = await api.get("tree", { params: { path } });
+  return response.data;
+}
+
 export async function getNoteIndex() {
   try {
     const response = await api.get("note-index");

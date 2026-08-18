@@ -60,6 +60,7 @@ class FileSystemNotes(BaseNotes):
         self._initial_sync_complete = False
         self._sync_done = 0
         self._sync_total = 0
+        self._scan_cache = None
 
     @property
     def index_status(self) -> dict:
@@ -110,6 +111,7 @@ class FileSystemNotes(BaseNotes):
         with self._sync_lock:
             # Phase 1: prune deleted + update modified (bounded by index size)
             indexed = set()
+            deleted = set()
             writer = self.index.writer()
             with self.index.searcher() as searcher:
                 for idx_note in searcher.all_stored_fields():
@@ -119,6 +121,7 @@ class FileSystemNotes(BaseNotes):
                     )
                     if not os.path.exists(idx_filepath):
                         writer.delete_by_term("filename", idx_filename)
+                        deleted.add(idx_filename)
                     elif (
                         datetime.fromtimestamp(
                             os.path.getmtime(idx_filepath)
@@ -131,12 +134,16 @@ class FileSystemNotes(BaseNotes):
                     indexed.add(idx_filename)
             writer.commit()
 
-        # Phase 2: add new in batches, yielding the lock between batches
+        # Phase 2: add new in batches, yielding the lock between batches.
+        # Breadth-first: shallow notes are indexed first so top-level
+        # search becomes useful early. Phase 1 deletions and mid-sync
+        # external deletions are skipped.
         new_files = [
             f
             for f in self._list_all_note_filenames()
-            if f not in indexed
+            if f not in indexed and f not in deleted
         ]
+        new_files.sort(key=lambda f: f.count("/"))
         self._sync_total = len(new_files)
         self._sync_done = 0
         for i in range(0, len(new_files), batch_size):
@@ -144,9 +151,12 @@ class FileSystemNotes(BaseNotes):
             with self._sync_lock:
                 writer = self.index.writer()
                 for filename in batch:
-                    self._add_note_to_index(
-                        writer, self._get_by_filename(filename)
-                    )
+                    try:
+                        self._add_note_to_index(
+                            writer, self._get_by_filename(filename)
+                        )
+                    except FileNotFoundError:
+                        continue
                 writer.commit()
             self._sync_done += len(batch)
             if batch_delay > 0:
@@ -186,6 +196,7 @@ class FileSystemNotes(BaseNotes):
                 f"Failed to create '{data.title}': {e.strerror}"
             )
         self._reindex_note(data.title)
+        self._invalidate_scan_cache()
         return Note(
             title=data.title,
             content=data.content,
@@ -416,6 +427,7 @@ class FileSystemNotes(BaseNotes):
         if old_title != title:
             self._delete_from_index(old_title)
         self._reindex_note(title)
+        self._invalidate_scan_cache()
         return Note(
             title=title,
             content=content,
@@ -485,6 +497,7 @@ class FileSystemNotes(BaseNotes):
         os.remove(filepath)
         self._prune_empty_parents(os.path.dirname(filepath))
         self._delete_from_index(title)
+        self._invalidate_scan_cache()
 
     def search(
         self,
@@ -657,19 +670,78 @@ class FileSystemNotes(BaseNotes):
     def _list_all_note_filenames(self) -> List[str]:
         """Return a list of all note filenames, relative to the storage
         path. Hidden directories (such as the index directory) are
-        skipped."""
-        return [
+        skipped. Cached briefly: a full recursive scan is expensive on
+        large vaults; our own writes invalidate immediately."""
+        ttl = float(os.environ.get("GLOBNOTES_SCAN_CACHE_TTL", "15"))
+        now = time.monotonic()
+        if (
+            self._scan_cache is not None
+            and now - self._scan_cache[0] < ttl
+        ):
+            return self._scan_cache[1]
+        filenames = [
             os.path.relpath(filepath, self.storage_path)
             for filepath in glob.glob(
                 os.path.join(self.storage_path, "**/*" + MARKDOWN_EXT),
                 recursive=True,
             )
         ]
+        self._scan_cache = (now, filenames)
+        return filenames
+
+    def _invalidate_scan_cache(self) -> None:
+        self._scan_cache = None
+
+    def list_level(self, path: str = "") -> dict:
+        """List the immediate children (folders and notes) of one directory
+        level — the lazy sidebar tree. One scandir per call: fast even on
+        large vaults, and user-expanded folders are fetched on demand."""
+        if path:
+            is_valid_note_path(path)
+            dirpath = resolve_in_root(self.storage_path, path)
+        else:
+            dirpath = self.storage_path
+        if not os.path.isdir(dirpath):
+            raise FileNotFoundError(f"'{path}' is not a directory")
+        folders, notes = [], []
+        with os.scandir(dirpath) as it:
+            for entry in it:
+                if entry.name.startswith("."):
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    child_path = (
+                        os.path.join(path, entry.name) if path else entry.name
+                    )
+                    has_children = False
+                    try:
+                        with os.scandir(entry.path) as sub:
+                            has_children = any(
+                                not e.name.startswith(".") for e in sub
+                            )
+                    except OSError:
+                        pass
+                    folders.append(
+                        {
+                            "name": entry.name,
+                            "path": child_path,
+                            "hasChildren": has_children,
+                        }
+                    )
+                elif entry.name.endswith(MARKDOWN_EXT):
+                    title = entry.name[: -len(MARKDOWN_EXT)]
+                    notes.append(
+                        os.path.join(path, title) if path else title
+                    )
+        return {
+            "folders": sorted(folders, key=lambda f: f["name"]),
+            "notes": sorted(notes),
+        }
 
     def _sync_index(self, optimize: bool = False, clean: bool = False) -> None:
         """Synchronize the index with the notes directory.
         Specify clean=True to completely rebuild the index"""
         indexed = set()
+        deleted = set()
         writer = self.index.writer()
         if clean:
             writer.mergetype = writing.CLEAR  # Clear the index
@@ -680,6 +752,7 @@ class FileSystemNotes(BaseNotes):
                 # Delete missing
                 if not os.path.exists(idx_filepath):
                     writer.delete_by_term("filename", idx_filename)
+                    deleted.add(idx_filename)
                     logger.info(f"'{idx_filename}' removed from index")
                 # Update modified
                 elif (
@@ -694,13 +767,17 @@ class FileSystemNotes(BaseNotes):
                 # Ignore already indexed
                 else:
                     indexed.add(idx_filename)
-        # Add new
+        # Add new — skip anything phase 1 just deleted (the scan cache may
+        # still list it), and tolerate files deleted mid-sync.
         for filename in self._list_all_note_filenames():
-            if filename not in indexed:
-                self._add_note_to_index(
-                    writer, self._get_by_filename(filename)
-                )
-                logger.info(f"'{filename}' added to index")
+            if filename not in indexed and filename not in deleted:
+                try:
+                    self._add_note_to_index(
+                        writer, self._get_by_filename(filename)
+                    )
+                    logger.info(f"'{filename}' added to index")
+                except FileNotFoundError:
+                    continue
         writer.commit(optimize=optimize)
         logger.info("Index synchronized")
 

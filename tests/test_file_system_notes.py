@@ -185,6 +185,40 @@ class TestBackgroundSync:
         assert status["initial"] is False  # fixture marks sync complete
 
 
+class TestScanCache:
+    def test_consecutive_title_reads_scan_once(self, notes, monkeypatch):
+        import glob as glob_module
+
+        calls = {"n": 0}
+        real_glob = glob_module.glob
+
+        def counting_glob(*args, **kwargs):
+            calls["n"] += 1
+            return real_glob(*args, **kwargs)
+
+        monkeypatch.setattr(glob_module, "glob", counting_glob)
+        notes.get_titles()
+        notes.get_titles()
+        assert calls["n"] == 1
+
+    def test_create_invalidates_the_cache(self, notes, monkeypatch):
+        import glob as glob_module
+
+        calls = {"n": 0}
+        real_glob = glob_module.glob
+
+        def counting_glob(*args, **kwargs):
+            calls["n"] += 1
+            return real_glob(*args, **kwargs)
+
+        monkeypatch.setattr(glob_module, "glob", counting_glob)
+        notes.get_titles()
+        notes.create(NoteCreate(title="new/note", content="x"))
+        titles = notes.get_titles()
+        assert "new/note" in titles
+        assert calls["n"] == 2
+
+
 class TestRenameStrategies:
     @pytest.fixture
     def note_with_images(self, notes):

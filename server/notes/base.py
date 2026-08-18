@@ -63,6 +63,12 @@ class BaseNotes(ABC):
         pass
 
     @abstractmethod
+    def list_level(self, path: str = "") -> dict:
+        """List immediate children (folders and notes) of one directory
+        level for the lazy sidebar tree."""
+        pass
+
+    @abstractmethod
     def sync_index(self) -> None:
         """Synchronously run an incremental index sync."""
         pass
