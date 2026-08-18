@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.0.4 (2026-08-17)
+
+### 2026-08-17
+
+#### Feature
+
+Startup no longer blocks on a full index sync — the failure mode behind
+"server not up for a long time" on large vaults (100%+ CPU, 300MB+ RAM
+on a Synology-sized tree). The initial sync now runs in a background
+daemon thread, committing in batches with a delay between them
+(`GLOBNOTES_INDEX_BATCH_SIZE` 200, `GLOBNOTES_INDEX_BATCH_DELAY` 0.1s)
+to bound CPU and memory, and releases the sync lock between batches so
+user work preempts it. Saves reindex their note immediately — create,
+update, and delete are "front of the queue" instead of waiting for the
+next sync. Search and tags return partial results instantly while the
+initial sync runs instead of blocking. A new `GET /_/api/index-status`
+endpoint reports progress, and the UI shows a small "Indexing notes…"
+banner while the sync runs. The startup index optimize is dropped
+entirely. Verified on a 3000-note vault: health in ~3s (was: the full
+sync duration), search 208ms during sync, save 33ms with the note
+immediately searchable, ~0.4% CPU sampled, 61MB RAM.
+
+- feat: background index sync in batches, priority reindex on save (`416dffd`)
+
 ## v1.0.3 (2026-08-16)
 
 ### 2026-08-16
