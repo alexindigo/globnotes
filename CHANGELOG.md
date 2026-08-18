@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.1.2 (2026-08-18)
+
+### 2026-08-18
+
+#### Fix
+
+Theme surface colors never actually applied: `style.css` duplicated all
+surface vars (background, text, border, code tokens) as static
+`body`/`body.dark` selector defaults, and a body's own declaration beats
+the `<html>` inline theme vars — so every dark theme rendered like
+globnotes-dark and every light theme like globnotes-light, with only
+brand (and, post v1.1.1, code tokens) honoring the chosen theme. The
+duplicates are gone; `initTheme` moved to `index.js` (entry top) so the
+inline vars land before mount. Dracula renders its true
+#282a36/#f8f8f2, Latte its #eff1f5/#4c4f69.
+
+- fix: theme surface colors actually apply (`987e6dc`)
+
 ## v1.1.1 (2026-08-17)
 
 ### 2026-08-17
