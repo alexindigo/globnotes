@@ -42,46 +42,6 @@
         font-display: swap;
         src: url("assets/fonts/DancingScript/DancingScript-Regular.otf");
     }
-
-    body {
-        --theme-brand: 56 189 248;
-        --theme-background: 255 255 255;
-        --theme-background-elevated: 243 244 245;
-        --theme-text: 44 49 57;
-        --theme-text-muted: 136 145 161;
-        --theme-text-very-muted: 193 199 208;
-        --theme-shadow: 236 238 240;
-        --theme-border: 236 238 240;
-        --theme-code-keyword: 37 99 235;
-        --theme-code-string: 22 163 74;
-        --theme-code-function: 2 132 199;
-        --theme-code-comment: 100 116 139;
-        --theme-code-number: 217 119 6;
-        --theme-code-operator: 2 132 199;
-        --theme-code-tag: 37 99 235;
-        --theme-code-attr: 2 132 199;
-        --theme-code-punctuation: 71 85 105;
-    }
-
-    body.dark {
-        /* --theme-brand: 56 189 248; */
-        --theme-background: 34 38 44;
-        --theme-background-elevated: 44 49 57;
-        --theme-text: 193 199 208;
-        --theme-text-muted: 136 145 161;
-        --theme-text-very-muted: 94 107 128;
-        --theme-shadow: none;
-        --theme-border: 94 107 128;
-        --theme-code-keyword: 96 165 250;
-        --theme-code-string: 74 222 128;
-        --theme-code-function: 56 189 248;
-        --theme-code-comment: 148 160 180;
-        --theme-code-number: 251 191 36;
-        --theme-code-operator: 56 189 248;
-        --theme-code-tag: 96 165 250;
-        --theme-code-attr: 56 189 248;
-        --theme-code-punctuation: 148 160 180;
-    }
 }
 
 /* Scrollbars in the app's style: thin and theme-colored */
