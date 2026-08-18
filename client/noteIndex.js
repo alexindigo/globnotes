@@ -1,15 +1,27 @@
 import { getNoteIndex } from "./api.js";
 import { useGlobalStore } from "./globalStore.js";
 
-export function refreshNoteIndex() {
+const RETRY_DELAYS = [1000, 3000, 8000];
+
+export function refreshNoteIndex(attempt = 0) {
   const globalStore = useGlobalStore();
   return getNoteIndex()
     .then((titles) => {
       globalStore.noteTitles = titles;
     })
-    .catch(() => {
-      // A stale or missing index only affects wiki-link resolution.
-      globalStore.noteTitles = [];
+    .catch((error) => {
+      // A failed fetch must not leave the sidebar empty forever:
+      // retry a few times (the server may still be warming up), and
+      // leave any previously-loaded titles in place on final failure.
+      if (attempt < RETRY_DELAYS.length) {
+        return new Promise((resolve) =>
+          setTimeout(resolve, RETRY_DELAYS[attempt]),
+        ).then(() => refreshNoteIndex(attempt + 1));
+      }
+      console.error("[noteIndex] refresh failed after retries", error);
+      if (!globalStore.noteTitles?.length) {
+        globalStore.noteTitles = [];
+      }
     });
 }
 

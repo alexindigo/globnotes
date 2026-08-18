@@ -130,6 +130,7 @@ import CustomButton from "../components/CustomButton.vue";
 import TextInput from "../components/TextInput.vue";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
+import { refreshNoteIndex } from "../noteIndex.js";
 import { params } from "../constants.js";
 
 const globalStore = useGlobalStore();
@@ -296,6 +297,17 @@ const visibleRows = computed(() => {
 
 const activeTitle = computed(() =>
   route.name === "note" ? route.params.title : null,
+);
+
+// Re-fetch the note index when the drawer opens to an empty list —
+// covers an early failed fetch (e.g. server still warming up).
+watch(
+  () => globalStore.sidebarVisible,
+  (visible) => {
+    if (visible && !(globalStore.noteTitles || []).length) {
+      refreshNoteIndex();
+    }
+  },
 );
 
 // Expand the ancestors of the active note so it is visible.

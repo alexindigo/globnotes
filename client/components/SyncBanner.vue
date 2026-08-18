@@ -1,6 +1,7 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { getIndexStatus } from "../api.js";
+import { refreshNoteIndex } from "../noteIndex.js";
 
 const syncing = ref(false);
 const done = ref(0);
@@ -19,6 +20,13 @@ async function poll() {
     timer = null;
   }
 }
+
+// When a sync completes, refresh the sidebar's title list.
+watch(syncing, (now, before) => {
+  if (before && !now) {
+    refreshNoteIndex();
+  }
+});
 
 onMounted(poll);
 onUnmounted(() => {
