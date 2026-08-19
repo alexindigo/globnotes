@@ -5,7 +5,7 @@ import { computed, ref } from "vue";
 // don't define themselves.
 
 export const GLOBNOTES_LIGHT = {
-  brand: "#38bdf8",
+  brand: "#0284c7",
   background: "#ffffff",
   "background-elevated": "#f3f4f5",
   text: "#2c3139",
