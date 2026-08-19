@@ -24,8 +24,10 @@ const customHTMLRenderer = {
     }
     return original;
   },
-  // Style Obsidian-style callouts (> [!note] ...) with per-type classes
-  blockquote(node, { entering, getChildrenText, origin }) {
+  // Style Obsidian-style callouts (> [!note] ...) with per-type classes.
+  // The convertor key is camelCase: blockQuote (matching toastui's base
+  // convertor name — a lowercase key would never be invoked).
+  blockQuote(node, { entering, getChildrenText, origin }) {
     const original = origin();
     if (entering) {
       const match = getChildrenText(node)
@@ -42,25 +44,28 @@ const customHTMLRenderer = {
     return original;
   },
   // ==highlight== and callout marker stripping
+  // Text tokens carry their text at .content (top level), not
+  // .attributes.content — read both to stay compatible.
   text(_, { entering, origin }) {
     const original = origin();
     if (!entering) {
       return original;
     }
-    let content = original.attributes?.content ?? "";
+    const source = original.content ?? original.attributes?.content ?? "";
+    let content = source;
     if (pendingCalloutMarker) {
       pendingCalloutMarker = false;
       content = content.replace(/^\s*\[!\w+\]\s*/, "");
     }
     if (!content.includes("==")) {
-      if (content === original.attributes?.content) {
+      if (content === source) {
         return original;
       }
-      return { ...original, attributes: { ...original.attributes, content } };
+      return { ...original, content };
     }
     const parts = content.split(/(==[^=\n]+==)/g);
     if (parts.length === 1) {
-      return { ...original, attributes: { ...original.attributes, content } };
+      return { ...original, content };
     }
     const tokens = [];
     for (const part of parts) {
@@ -73,13 +78,11 @@ const customHTMLRenderer = {
         tokens.push({
           type: "text",
           attributes: { content: highlight[1] },
+          content: highlight[1],
         });
         tokens.push({ type: "closeTag", tagName: "mark" });
       } else {
-        tokens.push({
-          ...original,
-          attributes: { ...original.attributes, content: part },
-        });
+        tokens.push({ ...original, content: part });
       }
     }
     return tokens;
