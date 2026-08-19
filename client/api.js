@@ -148,10 +148,9 @@ export async function updateNote(
 
 export async function previewRename(title, newTitle) {
   try {
-    const response = await api.get(
-      `notes/${encodeURIComponent(title)}/rename-preview`,
-      { params: { new_title: newTitle } },
-    );
+    const response = await api.get("rename-preview", {
+      params: { title: title, new_title: newTitle },
+    });
     return response.data;
   } catch (_) {
     return [];

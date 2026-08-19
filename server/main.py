@@ -245,8 +245,11 @@ def patch_note(title: str, data: NoteUpdate, file_refs: str = "none"):
         raise HTTPException(404, api_messages.note_not_found)
 
 # Preview Rename
+# NOTE: lives outside /_/api/notes/{title:path} on purpose — the greedy
+# path converter would otherwise swallow the suffix and the preview call
+# would 404 on a note named "<title>/rename-preview".
 @router.get(
-    "/_/api/notes/{title:path}/rename-preview",
+    "/_/api/rename-preview",
     dependencies=auth_deps,
 )
 def rename_preview(title: str, new_title: str):

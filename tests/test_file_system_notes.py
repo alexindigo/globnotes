@@ -282,6 +282,34 @@ class TestRenameStrategies:
         assert "soup.png" in note.content
         assert "shared.png" in note.content
 
+    def test_move_preserves_subdirectory_structure(self, notes):
+        # note references an image in a SUBDIRECTORY of its folder
+        assets = os.path.join(notes.storage_path, "recipes", "assets")
+        os.makedirs(assets, exist_ok=True)
+        with open(os.path.join(assets, "pic.png"), "w") as f:
+            f.write("image")
+        notes.create(
+            NoteCreate(
+                title="recipes/soup", content="![pic](assets/pic.png)"
+            )
+        )
+        note = notes.update(
+            "recipes/soup",
+            NoteUpdate(new_title="cooking/soup"),
+            file_refs="move",
+        )
+        # the file keeps its subpath under the note's new folder
+        assert os.path.isfile(
+            os.path.join(
+                notes.storage_path, "cooking", "assets", "pic.png"
+            )
+        )
+        assert not os.path.exists(
+            os.path.join(notes.storage_path, "recipes", "assets", "pic.png")
+        )
+        # and the link still points at the assets/ subpath
+        assert "assets/pic.png" in note.content
+
     def test_rewrite_refs(self, note_with_images):
         note_with_images.create(
             NoteCreate(

@@ -359,11 +359,15 @@ class FileSystemNotes(BaseNotes):
                             old_file = os.path.join(
                                 self.storage_path, r["path"]
                             )
-                            fname = r["path"].rsplit("/", 1)[-1]
+                            # Preserve the subpath within the note's folder:
+                            # recipes/assets/pic.png -> cooking/assets/pic.png
+                            sub = (
+                                r["path"][len(old_rel_dir) :].lstrip("/")
+                                if old_rel_dir
+                                else r["path"]
+                            )
                             new_rel = (
-                                new_rel_dir + "/" + fname
-                                if new_rel_dir
-                                else fname
+                                new_rel_dir + "/" + sub if new_rel_dir else sub
                             )
                             new_file = os.path.join(
                                 self.storage_path, new_rel
