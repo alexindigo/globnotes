@@ -7,6 +7,16 @@ const page = await browser.newPage();
 const errors = [];
 page.on("pageerror", (err) => errors.push(err.message));
 
+// Ensure the fixture note exists (vaults differ between runs)
+await fetch(`${BASE}/_/api/notes`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    title: "code-test",
+    content: '# Code\n\n```python\ndef hello():\n    return "world"\n```',
+  }),
+}).catch(() => null);
+
 async function tokenColor() {
   await page.goto(`${BASE}/code-test`, { waitUntil: "load" });
   await page.waitForTimeout(800);
