@@ -4,7 +4,11 @@ import { connect } from "./cdp.mjs";
 const BASE = process.env.BASE_URL || "http://localhost:8000";
 const PORT = Number(process.env.CDP_PORT || 9333);
 
-// Fixture via API
+// Fixture via API — idempotent: delete any leftovers from a previous run
+// first so the POST doesn't 409.
+for (const t of ["probe/link-source", "probe/link-target", "probe/link-target-renamed"]) {
+  await fetch(`${BASE}/_/api/notes/${t}`, { method: "DELETE" }).catch(() => null);
+}
 await fetch(`${BASE}/_/api/notes`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
