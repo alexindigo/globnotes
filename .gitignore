@@ -250,3 +250,4 @@ data/
 /notes/
 .envrc
 .globnotes
+.dsh_config
