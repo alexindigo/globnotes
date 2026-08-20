@@ -430,6 +430,7 @@ class FileSystemNotes(BaseNotes):
         ]
         if old_title != title:
             self._delete_from_index(old_title)
+            self._rewrite_wikilinks(old_title, title)
         self._reindex_note(title)
         self._invalidate_scan_cache()
         return Note(
@@ -448,6 +449,33 @@ class FileSystemNotes(BaseNotes):
         old_dir = os.path.dirname(filepath)
         content = self._read_file(filepath)
         return self._scan_local_refs(content, old_dir)
+
+    def _rewrite_wikilinks(self, old_title: str, new_title: str) -> None:
+        """Rewrite [[old_title]] wikilinks across all notes after a rename.
+        Covers aliases and heading anchors; never touches ![[...]] embeds
+        (those are file references) and never touches basename-only links
+        (those keep resolving via basename matching)."""
+        pattern = re.compile(
+            r"(?<!!)\[\[\s*"
+            + re.escape(old_title)
+            + r"(\s*(?:[|#][^\]]*)?)\s*\]\]"
+        )
+
+        def repl(match):
+            return "[[" + new_title + (match.group(1) or "") + "]]"
+
+        for filename in self._list_all_note_filenames():
+            filepath = os.path.join(self.storage_path, filename)
+            try:
+                content = self._read_file(filepath)
+            except FileNotFoundError:
+                continue
+            if old_title not in content:
+                continue
+            new_content = pattern.sub(repl, content)
+            if new_content != content:
+                self._write_file(filepath, new_content, overwrite=True)
+                self._reindex_note(filename[: -len(MARKDOWN_EXT)])
 
     def rewrite_refs(self, old_path: str, new_path: str):
         root = self.storage_path

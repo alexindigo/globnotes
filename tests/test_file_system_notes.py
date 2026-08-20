@@ -328,3 +328,50 @@ class TestRenameStrategies:
         other = note_with_images.get("other/page")
         assert "/recipes/soup.png" not in other.content
         assert "cooking/soup.png" in other.content
+
+
+class TestWikilinksOnRename:
+    def test_wikilinks_update_on_rename(self, notes):
+        notes.create(
+            NoteCreate(
+                title="probe/source",
+                content=(
+                    "see [[target/note]] and [[target/note|the alias]] "
+                    "and [[target/note#Section]]"
+                ),
+            )
+        )
+        notes.create(NoteCreate(title="target/note", content="# T"))
+        notes.update("target/note", NoteUpdate(new_title="target/renamed"))
+        source = notes.get("probe/source")
+        assert "[[target/renamed]]" in source.content
+        assert "[[target/renamed|the alias]]" in source.content
+        assert "[[target/renamed#Section]]" in source.content
+        assert "target/note" not in source.content
+
+    def test_basename_links_untouched_when_basename_unchanged(self, notes):
+        # [[note]] resolves by basename; a folder move keeps it working
+        notes.create(
+            NoteCreate(title="probe/source", content="see [[note]]")
+        )
+        notes.create(NoteCreate(title="target/note", content="# T"))
+        notes.update("target/note", NoteUpdate(new_title="other/note"))
+        source = notes.get("probe/source")
+        assert "[[note]]" in source.content
+
+    def test_embeds_not_rewritten_by_wikilink_logic(self, notes):
+        assets = os.path.join(notes.storage_path, "probe")
+        os.makedirs(assets, exist_ok=True)
+        with open(os.path.join(assets, "pic.png"), "w") as f:
+            f.write("img")
+        notes.create(
+            NoteCreate(
+                title="probe/source",
+                content="![[pic.png]] and [[probe/other]]",
+            )
+        )
+        notes.create(NoteCreate(title="probe/other", content="# O"))
+        notes.update("probe/other", NoteUpdate(new_title="probe/moved"))
+        source = notes.get("probe/source")
+        assert "![[pic.png]]" in source.content
+        assert "[[probe/moved]]" in source.content
