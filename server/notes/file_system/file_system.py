@@ -431,6 +431,7 @@ class FileSystemNotes(BaseNotes):
         if old_title != title:
             self._delete_from_index(old_title)
             self._rewrite_wikilinks(old_title, title)
+            self._rewrite_markdown_links(old_title, title)
         self._reindex_note(title)
         self._invalidate_scan_cache()
         return Note(
@@ -472,6 +473,54 @@ class FileSystemNotes(BaseNotes):
                 continue
             if old_title not in content:
                 continue
+            new_content = pattern.sub(repl, content)
+            if new_content != content:
+                self._write_file(filepath, new_content, overwrite=True)
+                self._reindex_note(filename[: -len(MARKDOWN_EXT)])
+
+    def _rewrite_markdown_links(self, old_title: str, new_title: str) -> None:
+        """Rewrite markdown links pointing at the renamed note across the
+        vault: root-absolute (/path/note.md) and relative (../note.md)
+        forms, resolved against each note's own folder."""
+        old_path = old_title + MARKDOWN_EXT
+        new_path = new_title + MARKDOWN_EXT
+        pattern = re.compile(r"(\[[^\]]*\]\()([^)\s]+)(\))")
+
+        for filename in self._list_all_note_filenames():
+            if filename == new_path:
+                continue
+            filepath = os.path.join(self.storage_path, filename)
+            try:
+                content = self._read_file(filepath)
+            except FileNotFoundError:
+                continue
+            if MARKDOWN_EXT not in content:
+                continue
+            note_dir_rel = os.path.relpath(
+                os.path.dirname(filepath), self.storage_path
+            ).replace("\\", "/")
+            if note_dir_rel == ".":
+                note_dir_rel = ""
+
+            def repl(m):
+                prefix, url, suffix = m.group(1), m.group(2), m.group(3)
+                if url.startswith(("http://", "https://", "//", "#", "mailto:")):
+                    return m.group(0)
+                if url.startswith("/"):
+                    if url.lstrip("/") == old_path:
+                        return prefix + "/" + new_path + suffix
+                    return m.group(0)
+                resolved = os.path.normpath(
+                    os.path.join(note_dir_rel, url)
+                ).replace("\\", "/")
+                if resolved == old_path:
+                    new_url = self._rebase_url(
+                        url, note_dir_rel, note_dir_rel,
+                        {old_path: new_path},
+                    )
+                    return prefix + new_url + suffix
+                return m.group(0)
+
             new_content = pattern.sub(repl, content)
             if new_content != content:
                 self._write_file(filepath, new_content, overwrite=True)

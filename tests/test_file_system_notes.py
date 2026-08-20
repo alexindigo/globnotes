@@ -375,3 +375,42 @@ class TestWikilinksOnRename:
         source = notes.get("probe/source")
         assert "![[pic.png]]" in source.content
         assert "[[probe/moved]]" in source.content
+
+
+class TestMarkdownLinksOnRename:
+    def test_absolute_md_links_update_on_rename(self, notes):
+        notes.create(
+            NoteCreate(
+                title="probe/source",
+                content="see [the target](/target/note.md)",
+            )
+        )
+        notes.create(NoteCreate(title="target/note", content="# T"))
+        notes.update("target/note", NoteUpdate(new_title="target/renamed"))
+        source = notes.get("probe/source")
+        assert "[the target](/target/renamed.md)" in source.content
+        assert "target/note.md" not in source.content
+
+    def test_relative_md_links_update_on_rename(self, notes):
+        notes.create(
+            NoteCreate(
+                title="probe/source",
+                content="see [rel](../target/note.md)",
+            )
+        )
+        notes.create(NoteCreate(title="target/note", content="# T"))
+        notes.update("target/note", NoteUpdate(new_title="target/renamed"))
+        source = notes.get("probe/source")
+        assert "[rel](../target/renamed.md)" in source.content
+
+    def test_md_links_to_other_notes_untouched(self, notes):
+        notes.create(
+            NoteCreate(
+                title="probe/source",
+                content="see [other](/other/note.md)",
+            )
+        )
+        notes.create(NoteCreate(title="target/note", content="# T"))
+        notes.update("target/note", NoteUpdate(new_title="target/renamed"))
+        source = notes.get("probe/source")
+        assert "[other](/other/note.md)" in source.content

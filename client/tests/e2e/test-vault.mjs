@@ -1,7 +1,9 @@
-// Verify each test-vault asset note renders its signature element.
-import { chromium } from "playwright";
+// Test-vault page sweep over CDP: each fixture note renders its signature
+// element with no page exceptions.
+import { connect } from "./cdp.mjs";
 
-const BASE = "http://localhost:8000";
+const BASE = process.env.BASE_URL || "http://localhost:8000";
+const PORT = Number(process.env.CDP_PORT || 9333);
 const PAGES = [
   ["readme", ".toastui-editor-contents a", "wikilinks render"],
   ["rendering/code-blocks", ".token", "prism tokens"],
@@ -16,24 +18,25 @@ const PAGES = [
   ["rename-me/moving-note", "img", "attachment image"],
 ];
 
-const browser = await chromium.launch();
-const page = await browser.newPage();
+const page = await connect({ port: PORT });
 let failures = 0;
 
 for (const [path, selector, label] of PAGES) {
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(`${BASE}/${path}`, { waitUntil: "load" });
-  await page.waitForTimeout(1500);
-  const found = await page.evaluate(
-    (sel) => document.querySelectorAll(sel).length,
-    selector,
+  const before = page.pageErrors.length;
+  await page.goto(`${BASE}/${path}`);
+  await page.poll(
+    `document.querySelector(".toastui-editor-contents") !== null`,
   );
-  const ok = found > 0 && errors.length === 0;
+  const found = await page.evaluate(
+    `document.querySelectorAll(${JSON.stringify(selector)}).length`,
+  );
+  const errs = page.pageErrors.slice(before);
+  const ok = found > 0 && errs.length === 0;
   if (!ok) failures++;
   console.log(
-    `${ok ? "OK  " : "FAIL"} ${path}: ${label} (${found})${errors.length ? " errors=" + errors.join(";") : ""}`,
+    `${ok ? "OK  " : "FAIL"} ${path}: ${label} (${found})${errs.length ? " errors=" + errs.join(";") : ""}`,
   );
 }
 console.log(failures === 0 ? "ALL PAGES OK" : `${failures} FAILURES`);
-await browser.close();
+page.close();
+process.exit(failures ? 1 : 0);
