@@ -2,7 +2,7 @@
 // buttons, text, borders — sampled under multiple themes.
 import { chromium } from "playwright";
 
-const BASE = "http://localhost:8400";
+const BASE = process.env.BASE_URL || "http://localhost:8000";
 const browser = await chromium.launch();
 const page = await browser.newPage();
 const errors = [];

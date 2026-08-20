@@ -2,7 +2,7 @@
 // inline vars on <html> and toggle body.dark appropriately.
 import { chromium } from "playwright";
 
-const BASE = "http://localhost:8400";
+const BASE = process.env.BASE_URL || "http://localhost:8000";
 const THEMES = [
   ["globnotes-light", false],
   ["globnotes-dark", true],

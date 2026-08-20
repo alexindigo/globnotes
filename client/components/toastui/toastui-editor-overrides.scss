@@ -387,3 +387,32 @@
 .toastui-editor-contents blockquote.callout-cite {
   border-left-color: #9e9e9e;
 }
+
+// Copy button on code blocks (bottom-right corner)
+.toastui-editor-contents pre {
+  position: relative;
+
+  .code-copy-btn {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    padding: 4px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    color: rgb(var(--theme-text-very-muted));
+    background: rgb(var(--theme-background));
+    opacity: 0.6;
+    line-height: 0;
+
+    &:hover {
+      opacity: 1;
+      color: rgb(var(--theme-brand));
+    }
+
+    &.copied {
+      color: rgb(var(--theme-brand));
+      opacity: 1;
+    }
+  }
+}
