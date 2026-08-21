@@ -215,6 +215,7 @@ import {
   createNote,
   deleteNote,
   getNote,
+  getNotes,
   previewRename,
   updateNote,
   uploadFile,
@@ -229,6 +230,7 @@ import ToastEditor from "../components/toastui/ToastEditor.vue";
 import ToastViewer from "../components/toastui/ToastViewer.vue";
 import { authTypes, params } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
+import { rewriteRenamedLinks } from "../links.js";
 import {
   directoryFromTitle,
   getToastOptions,
@@ -490,6 +492,13 @@ function saveExisting(newTitle, newContent, close = false) {
         router.replace(notePath(note.value.title));
         noteSaveSuccess(close);
 
+        // Client drives link updates: the server is a pure mechanism.
+        // Find notes referencing the old title and resave them with
+        // rewritten links.
+        if (oldTitle !== data.title) {
+          updateRenamedLinks(oldTitle, data.title);
+        }
+
         lastMovedFiles.value = data.movedFiles || [];
         if (data.movedFiles && data.movedFiles.length > 0) {
           const text =
@@ -503,6 +512,51 @@ function saveExisting(newTitle, newContent, close = false) {
       })
       .catch(noteSaveFailure);
   };
+
+  // After a rename, the client drives link updates across the vault: find
+  // referencing notes via search, rewrite their links client-side, and
+  // resave each via the normal update API. The server stays a pure file
+  // mechanism — it never rewrites other notes as a rename side effect.
+  async function updateRenamedLinks(oldTitle, newTitle) {
+    try {
+      const results = await getNotes(
+        oldTitle,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      const candidates = results
+        .map((r) => r.title)
+        .filter((t) => t !== oldTitle && t !== newTitle);
+      let updated = 0;
+      for (const title of candidates) {
+        const other = await getNote(title);
+        const newContent = rewriteRenamedLinks(
+          other.content,
+          oldTitle,
+          newTitle,
+          title,
+        );
+        if (newContent !== other.content) {
+          await updateNote(title, title, newContent);
+          updated++;
+        }
+      }
+      if (updated > 0) {
+        toast.add(
+          getToastOptions(
+            `Updated links in ${updated} note(s).`,
+            "Links updated",
+            "success",
+          ),
+        );
+      }
+    } catch (e) {
+      // Link updates are best-effort; the rename itself already succeeded.
+      console.error("link update failed", e);
+    }
+  }
 
   if (folderChanged) {
     previewRename(oldTitle, newTitle)

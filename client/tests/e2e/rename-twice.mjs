@@ -1,29 +1,17 @@
 // Two-step rename: move then relink. Verifies server content and what
 // the UI shows after each step.
 import { connect } from "./cdp.mjs";
-import { cpSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import {
+  resetMovingNoteFixture,
+  restoreMovingNoteFixture,
+} from "./fixtures.mjs";
 
 const BASE = process.env.BASE_URL || "http://localhost:8000";
 const PORT = Number(process.env.CDP_PORT || 9333);
-const VAULT = join(homedir(), "globnotes-test-vault");
 
-// Reset fixture to rename-me/moving-note with assets/pic.png, and clear
-// any leftover targets from previous runs (a crashed run leaves them and
-// the next rename 409s).
-rmSync(join(VAULT, "rename-me"), { recursive: true, force: true });
-rmSync(join(VAULT, "archive"), { recursive: true, force: true });
-rmSync(join(VAULT, "archive1"), { recursive: true, force: true });
-mkdirSync(join(VAULT, "rename-me", "assets"), { recursive: true });
-writeFileSync(
-  join(VAULT, "rename-me", "moving-note.md"),
-  "# Moving note\n\n![pic](assets/pic.png)\n",
-);
-cpSync(
-  join(VAULT, "links", "assets", "glob-icon.png"),
-  join(VAULT, "rename-me", "assets", "pic.png"),
-);
+// Clean start, targets included.
+resetMovingNoteFixture("archive");
+resetMovingNoteFixture("archive1");
 
 const page = await connect({ port: PORT });
 await page.addInitScript(`localStorage.setItem("sidebarVisible", "false")`);
@@ -91,4 +79,5 @@ console.log("pageerrors:", page.pageErrors.length ? page.pageErrors : "none");
 // Success: the relinked content is visible in the UI without a reload.
 const relinked = await uiShownSrc();
 console.log(relinked === "../archive/assets/pic.png" ? "TWO-STEP RENAME OK" : "TWO-STEP RENAME BROKEN");
+restoreMovingNoteFixture("archive1");
 page.close();

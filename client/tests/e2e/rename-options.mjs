@@ -1,63 +1,18 @@
 // Rename strategies over CDP: move / relink / none, fixture-managed.
 // Usage: node client/tests/e2e/rename-options.mjs <move|relink|none>
-import { readFileSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { connect } from "./cdp.mjs";
+import {
+  resetMovingNoteFixture,
+  restoreMovingNoteFixture,
+} from "./fixtures.mjs";
 
 const OPTION = process.argv[2] || "move";
 const TARGET =
   OPTION === "move" ? "archive-move" : OPTION === "relink" ? "archive-relink" : "archive-none";
 const BASE = process.env.BASE_URL || "http://localhost:8000";
 const PORT = Number(process.env.CDP_PORT || 9333);
-const VAULT = join(homedir(), "globnotes-test-vault");
 
-const FIXTURE_NOTE = `# Moving note
-
-This note references an image in its own folder:
-
-![pic](assets/pic.png)
-`;
-
-function resetFixture() {
-  rmSync(join(VAULT, TARGET), { recursive: true, force: true });
-  rmSync(join(VAULT, "rename-me"), { recursive: true, force: true });
-  mkdirSync(join(VAULT, "rename-me", "assets"), { recursive: true });
-  writeFileSync(join(VAULT, "rename-me", "moving-note.md"), FIXTURE_NOTE);
-  cpSync(
-    join(VAULT, "links", "assets", "glob-icon.png"),
-    join(VAULT, "rename-me", "assets", "pic.png"),
-  );
-}
-
-function restoreFixture() {
-  // The note always moves to TARGET; copy it back. The asset only moved
-  // under "move".
-  mkdirSync(join(VAULT, "rename-me", "assets"), { recursive: true });
-  try {
-    cpSync(join(VAULT, TARGET, "moving-note.md"), join(VAULT, "rename-me", "moving-note.md"));
-  } catch {}
-  try {
-    cpSync(join(VAULT, TARGET, "assets", "pic.png"), join(VAULT, "rename-me", "assets", "pic.png"));
-  } catch {}
-  rmSync(join(VAULT, TARGET), { recursive: true, force: true });
-  // Undo wikilink rewrites the rename caused in other fixture notes.
-  let files = [];
-  try {
-    files = execSync(`find ${VAULT} -name '*.md' -type f`, { encoding: "utf8" }).split("\n").filter(Boolean);
-  } catch {}
-  for (const f of files) {
-    const c = readFileSync(f, "utf8");
-    const fixed = c.replaceAll(
-      /\[\[archive[^/\]]*\/moving-note/g,
-      "[[rename-me/moving-note",
-    );
-    if (fixed !== c) writeFileSync(f, fixed);
-  }
-}
-
-resetFixture();
+resetMovingNoteFixture(TARGET);
 
 const page = await connect({ port: PORT });
 await page.addInitScript(`localStorage.setItem("sidebarVisible", "false")`);
@@ -122,5 +77,5 @@ console.log(
   }),
 );
 
-restoreFixture();
+restoreMovingNoteFixture(TARGET);
 page.close();

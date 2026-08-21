@@ -330,55 +330,27 @@ class TestRenameStrategies:
         assert "cooking/soup.png" in other.content
 
 
-class TestWikilinksOnRename:
-    def test_wikilinks_update_on_rename(self, notes):
+class TestRenameIsMechanismOnly:
+    """The server is a pure mechanism: a rename moves the note and does NOT
+    rewrite other notes' links. The client drives link updates (finds
+    referencing notes, rewrites, resaves)."""
+
+    def test_wikilinks_untouched_by_server_rename(self, notes):
         notes.create(
             NoteCreate(
                 title="probe/source",
                 content=(
-                    "see [[target/note]] and [[target/note|the alias]] "
-                    "and [[target/note#Section]]"
+                    "see [[target/note]] and [[target/note|the alias]]"
                 ),
             )
         )
         notes.create(NoteCreate(title="target/note", content="# T"))
         notes.update("target/note", NoteUpdate(new_title="target/renamed"))
         source = notes.get("probe/source")
-        assert "[[target/renamed]]" in source.content
-        assert "[[target/renamed|the alias]]" in source.content
-        assert "[[target/renamed#Section]]" in source.content
-        assert "target/note" not in source.content
+        assert "[[target/note]]" in source.content
+        assert "[[target/note|the alias]]" in source.content
 
-    def test_basename_links_untouched_when_basename_unchanged(self, notes):
-        # [[note]] resolves by basename; a folder move keeps it working
-        notes.create(
-            NoteCreate(title="probe/source", content="see [[note]]")
-        )
-        notes.create(NoteCreate(title="target/note", content="# T"))
-        notes.update("target/note", NoteUpdate(new_title="other/note"))
-        source = notes.get("probe/source")
-        assert "[[note]]" in source.content
-
-    def test_embeds_not_rewritten_by_wikilink_logic(self, notes):
-        assets = os.path.join(notes.storage_path, "probe")
-        os.makedirs(assets, exist_ok=True)
-        with open(os.path.join(assets, "pic.png"), "w") as f:
-            f.write("img")
-        notes.create(
-            NoteCreate(
-                title="probe/source",
-                content="![[pic.png]] and [[probe/other]]",
-            )
-        )
-        notes.create(NoteCreate(title="probe/other", content="# O"))
-        notes.update("probe/other", NoteUpdate(new_title="probe/moved"))
-        source = notes.get("probe/source")
-        assert "![[pic.png]]" in source.content
-        assert "[[probe/moved]]" in source.content
-
-
-class TestMarkdownLinksOnRename:
-    def test_absolute_md_links_update_on_rename(self, notes):
+    def test_markdown_links_untouched_by_server_rename(self, notes):
         notes.create(
             NoteCreate(
                 title="probe/source",
@@ -388,29 +360,4 @@ class TestMarkdownLinksOnRename:
         notes.create(NoteCreate(title="target/note", content="# T"))
         notes.update("target/note", NoteUpdate(new_title="target/renamed"))
         source = notes.get("probe/source")
-        assert "[the target](/target/renamed.md)" in source.content
-        assert "target/note.md" not in source.content
-
-    def test_relative_md_links_update_on_rename(self, notes):
-        notes.create(
-            NoteCreate(
-                title="probe/source",
-                content="see [rel](../target/note.md)",
-            )
-        )
-        notes.create(NoteCreate(title="target/note", content="# T"))
-        notes.update("target/note", NoteUpdate(new_title="target/renamed"))
-        source = notes.get("probe/source")
-        assert "[rel](../target/renamed.md)" in source.content
-
-    def test_md_links_to_other_notes_untouched(self, notes):
-        notes.create(
-            NoteCreate(
-                title="probe/source",
-                content="see [other](/other/note.md)",
-            )
-        )
-        notes.create(NoteCreate(title="target/note", content="# T"))
-        notes.update("target/note", NoteUpdate(new_title="target/renamed"))
-        source = notes.get("probe/source")
-        assert "[other](/other/note.md)" in source.content
+        assert "[the target](/target/note.md)" in source.content
