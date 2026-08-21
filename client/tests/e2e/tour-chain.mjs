@@ -21,6 +21,18 @@ const CHAIN = [
 const page = await connect({ port: PORT });
 
 await page.goto(`${BASE}/readme`);
+
+// Fail fast with a clear message if the fixture vault is incomplete.
+// (After goto so the page has the app origin — fetch from about:blank
+// is blocked.)
+const fixtureCheck = await page.evaluate(
+  `(async () => { const r = await fetch("/_/api/note-index"); const d = await r.json(); return d.length; })()`,
+);
+if (fixtureCheck < CHAIN.length) {
+  console.log(`FIXTURE INCOMPLETE: only ${fixtureCheck} notes indexed, need ${CHAIN.length}`);
+  process.exit(2);
+}
+
 await page.poll(`document.querySelector(".toastui-editor-contents") !== null`);
 
 // Close the sidebar drawer if it's covering the page (v-show keeps the
@@ -51,11 +63,20 @@ while (hops < CHAIN.length) {
   await page.evaluate(
     `document.querySelector('.toastui-editor-contents a[href="/${expected}"]').click()`,
   );
-  await page.poll(`location.pathname === "/${expected}"`);
-  // SPA navigation swaps the viewer async — wait for the new content.
-  await page.poll(
-    `document.querySelector(".toastui-editor-contents")?.innerHTML.length > 0`,
-  );
+  await page.poll(`location.pathname === "/${expected}"`, { timeout: 15000 });
+  await page.poll(`document.readyState === "complete"`, { timeout: 15000 });
+  try {
+    await page.poll(
+      `document.querySelector(".toastui-editor-contents")?.innerHTML.length > 0`,
+      { timeout: 15000 },
+    );
+  } catch (e) {
+    const state = await page.evaluate(
+      `({ path: location.pathname, ready: document.readyState, len: document.querySelector(".toastui-editor-contents")?.innerHTML?.length ?? -1, errors: ${page.pageErrors.length} })`,
+    );
+    console.log(`hop ${hops} to ${expected} STUCK:`, JSON.stringify(state));
+    throw e;
+  }
   current = expected;
   hops++;
 }
