@@ -1,5 +1,70 @@
 # Changelog
 
+## v1.2.0 (2026-08-21)
+
+### 2026-08-20
+
+#### Feature
+
+Renaming a note now updates links across the vault — wikilinks and
+markdown links — and the work is client-driven by design: after a rename
+the client finds referencing notes via search, rewrites their links
+client-side (`client/links.js`), and resaves them. The server stays a
+pure file mechanism with no cross-note side effects. A rename is now a
+tor-reliable flow, and the e2e suite runs on a zero-dependency CDP
+driver instead of the playwright npm package.
+
+- feat: wikilinks between notes update on rename (`5ec91c9`)
+- feat: markdown links update on rename; e2e suite ported to zero-dep CDP (`b2f96a9`)
+- refactor: client drives link updates on rename (`3a86782`)
+
+#### Fix
+
+The open editor syncs its content after rename saves — the client
+updates your open text when the links get rewritten (no need to reload
+to see the new links).
+
+- fix: editor shows server-rewritten content after rename saves (`46fe47a`)
+
+#### Test
+
+- test: run.sh orchestrates the CDP suite with a fresh browser per harness (`b690a99`)
+- test: tour-chain fails fast on incomplete fixtures (`af7ab51`)
+
+### 2026-08-19
+
+#### Feature
+
+- feat: copy button on code blocks (`638acf5`)
+- feat: wikilinks between notes update on rename (`5ec91c9`)
+
+#### Test
+
+- test: all three rename strategies verified end-to-end (`9328d32`)
+- test: editor-modes harness + self-contained code-tokens fixture (`1290c30`)
+- test: tour-chain harness + self-restoring rename harness (`3b16232`)
+
+#### Chore
+
+- chore: gitignore .dsh_config (`6771c06`)
+
+### 2026-08-18
+
+#### Fix
+
+The rename flow became honest: the dialog reliably appears (the preview
+endpoint was shadowed by the greedy note route), and moving a note
+preserves attachment subpaths. Highlights and callouts render again
+(they were silently broken in the renderer plumbing). Inline code now
+follows the theme instead of toastui's hardcoded dark mauve.
+
+- fix: rename dialog actually appears; attachment moves preserve subpaths (`9cfd185`)
+- fix: highlights and callouts render again (`33c9f15`)
+- fix: inline code text color follows the theme (`2ae7f21`)
+- style: inline code uses the theme's brand color (`a704165`)
+- style: darker brand in globnotes light theme (`229e129`)
+- test: real-flow rename harness (`339854e`)
+
 ## v1.1.2 (2026-08-18)
 
 ### 2026-08-18
