@@ -46,11 +46,15 @@ function getMarkdown() {
   return toastEditor.getMarkdown();
 }
 
+function setMarkdown(markdown) {
+  toastEditor.setMarkdown(markdown, false);
+}
+
 function isWysiwygMode() {
   return toastEditor.isWysiwygMode();
 }
 
-defineExpose({ getMarkdown, isWysiwygMode });
+defineExpose({ getMarkdown, setMarkdown, isWysiwygMode });
 </script>
 
 <style>

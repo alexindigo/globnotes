@@ -475,6 +475,15 @@ function saveExisting(newTitle, newContent, close = false) {
       .then((data) => {
         clearDraft();
         note.value = data;
+        // The server may have rewritten content during the save (rename
+        // link/attachment strategies) — sync the open editor with it.
+        if (
+          editMode.value &&
+          toastEditor.value &&
+          toastEditor.value.getMarkdown() !== data.content
+        ) {
+          toastEditor.value.setMarkdown(data.content);
+        }
         if (oldTitle != data.title) {
           refreshNoteIndex();
         }
