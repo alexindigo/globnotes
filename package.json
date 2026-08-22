@@ -11,7 +11,7 @@
     "dev": "vite"
   },
   "author": "Adam Dullage",
-  "license": "MIT",
+  "license": "LGPL-3.0-only",
   "dependencies": {
     "@jamescoyle/vue-icon": "0.1.2",
     "@mdi/js": "7.4.47",
