@@ -9,6 +9,7 @@
 
 import { loadEndpoints } from "./api/loader.ts";
 import { LocalAuth } from "./auth/local.ts";
+import { FileSystemNotes } from "./notes/file_system.ts";
 import { requireAuth } from "./auth/middleware.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv } from "./helpers.ts";
@@ -17,11 +18,12 @@ import { Router } from "./router.ts";
 import { initState } from "./state.ts";
 
 const globalConfig = new GlobalConfig();
+const notes = new FileSystemNotes(globalConfig.notesPath);
 const auth = globalConfig.authType === AuthType.PASSWORD ||
     globalConfig.authType === AuthType.TOTP
   ? new LocalAuth(globalConfig)
   : null;
-initState(globalConfig, auth);
+initState(globalConfig, auth, notes);
 
 if (globalConfig.setupRequired) {
   logger.info("First-run setup required. Open the web UI to complete setup.");
