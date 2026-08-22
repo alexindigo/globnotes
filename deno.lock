@@ -1,0 +1,70 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/assert@^1.0.16": "1.0.19",
+    "jsr:@std/fs@^1.0.20": "1.0.24",
+    "jsr:@std/internal@^1.0.12": "1.0.14",
+    "jsr:@std/internal@^1.0.14": "1.0.14",
+    "jsr:@std/path@^1.1.3": "1.1.6",
+    "jsr:@std/path@^1.1.5": "1.1.6"
+  },
+  "jsr": {
+    "@std/assert@1.0.19": {
+      "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.12"
+      ]
+    },
+    "@std/fs@1.0.24": {
+      "integrity": "f3061b45b81673a2bece689da041df32d174be064c89eb6397fb5718d3fb7877",
+      "dependencies": [
+        "jsr:@std/path@^1.1.5"
+      ]
+    },
+    "@std/internal@1.0.14": {
+      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    },
+    "@std/path@1.1.6": {
+      "integrity": "c68485c2a4dfbb5ae3cc74fae4e8c4e5d874cf8a8ed12927917235c758b46cbe",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.14"
+      ]
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "jsr:@std/assert@^1.0.16",
+      "jsr:@std/fs@^1.0.20",
+      "jsr:@std/path@^1.1.3"
+    ],
+    "packageJson": {
+      "dependencies": [
+        "npm:@jamescoyle/vue-icon@0.1.2",
+        "npm:@mdi/js@7.4.47",
+        "npm:@mdi/light-js@0.2.63",
+        "npm:@toast-ui/editor-plugin-code-syntax-highlight@3.1.0",
+        "npm:@toast-ui/editor@3.2.2",
+        "npm:@vitejs/plugin-vue@6.0.8",
+        "npm:@vue/test-utils@^2.4.11",
+        "npm:autoprefixer@10.5.4",
+        "npm:axios@1.19.0",
+        "npm:jsdom@^30.0.1",
+        "npm:katex@~0.18.4",
+        "npm:mermaid@^11.16.1",
+        "npm:mousetrap@1.6.5",
+        "npm:pinia@4.0.2",
+        "npm:postcss@8.5.25",
+        "npm:prettier-plugin-tailwindcss@0.8.1",
+        "npm:prettier@3.9.6",
+        "npm:primevue@3.53.1",
+        "npm:prismjs@^1.30.0",
+        "npm:sass-embedded@1.100.0",
+        "npm:tailwindcss@3.4.19",
+        "npm:vite@8.2.0",
+        "npm:vitest@^4.1.10",
+        "npm:vue-router@5.2.0",
+        "npm:vue@3.5.40"
+      ]
+    }
+  }
+}

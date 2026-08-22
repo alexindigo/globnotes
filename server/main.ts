@@ -8,20 +8,20 @@
  */
 
 import { loadEndpoints } from "./api/loader.ts";
+import { GlobalConfig } from "./config.ts";
+import { getEnv } from "./helpers.ts";
+import { logger } from "./logger.ts";
 import { Router } from "./router.ts";
 
-const hostname = Deno.env.get("GLOBNOTES_HOST") ?? "0.0.0.0";
-const port = Number(Deno.env.get("GLOBNOTES_PORT") ?? "8080");
-const pathPrefix = Deno.env.get("GLOBNOTES_PATH_PREFIX") ?? "";
-if (pathPrefix && (!pathPrefix.startsWith("/") || pathPrefix.endsWith("/"))) {
-  console.error(
-    "Invalid value for GLOBNOTES_PATH_PREFIX. Must start with '/' and not end with '/'.",
-  );
-  Deno.exit(1);
-}
+const globalConfig = new GlobalConfig();
 
-const router = new Router({ prefix: pathPrefix });
+const hostname = getEnv("GLOBNOTES_HOST", { default: "0.0.0.0" });
+const port = Number(getEnv("GLOBNOTES_PORT", { castInt: true, default: 8080 }));
+
+const router = new Router({ prefix: globalConfig.pathPrefix });
 await loadEndpoints(router, new URL("./api/endpoints/", import.meta.url));
 
 Deno.serve({ hostname, port }, (req) => router.handle(req));
-console.log(`globnotes (deno) listening on http://${hostname}:${port}`);
+logger.info(
+  `globnotes listening on http://${hostname}:${port}${globalConfig.pathPrefix}`,
+);

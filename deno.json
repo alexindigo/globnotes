@@ -2,7 +2,7 @@
   "tasks": {
     "dev": "deno run --watch --unstable-worker-options --allow-net --allow-read --allow-write --allow-env server/main.ts",
     "start": "deno run --unstable-worker-options --allow-net --allow-read --allow-write --allow-env server/main.ts",
-    "test": "deno test --unstable-worker-options --allow-read --allow-write --allow-env tests/",
+    "test": "deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run tests/",
     "check": "deno check server/main.ts tests/**/*.ts",
     "lint": "deno lint server/ tests/",
     "fmt": "deno fmt"
