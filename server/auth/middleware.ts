@@ -27,24 +27,28 @@ function tokenFromRequest(req: Request): string | null {
   return null;
 }
 
-export const requireAuth: Middleware = async (ctx, next) => {
-  if (!ctx.authRequired) return next();
+/** The auth rules themselves, usable both by the middleware (gated by
+ * ctx.authRequired) and by the catch-all which serves vault files. */
+export async function enforceAuth(req: Request): Promise<void> {
   if (state.config.setupRequired) {
     throw new HttpError(503, "setup_required");
   }
-  if (
-    state.config.authType === AuthType.READ_ONLY && ctx.req.method !== "GET"
-  ) {
+  if (state.config.authType === AuthType.READ_ONLY && req.method !== "GET") {
     throw new HttpError(403, "read-only mode");
   }
   if (state.auth !== null) {
     try {
-      await state.auth.validateToken(tokenFromRequest(ctx.req));
+      await state.auth.validateToken(tokenFromRequest(req));
     } catch {
       throw new HttpError(401, "Invalid authentication credentials", {
         "WWW-Authenticate": "Bearer",
       });
     }
   }
+}
+
+export const requireAuth: Middleware = async (ctx, next) => {
+  if (!ctx.authRequired) return next();
+  await enforceAuth(ctx.req);
   return next();
 };

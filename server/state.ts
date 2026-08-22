@@ -9,6 +9,7 @@
 
 import type { LocalAuth } from "./auth/local.ts";
 import type { GlobalConfig } from "./config.ts";
+import type { FileServing } from "./files/file_serving.ts";
 import type { FileSystemNotes } from "./notes/file_system.ts";
 import type { SearchResult } from "./notes/models.ts";
 
@@ -41,6 +42,7 @@ export interface ServerState {
   auth: LocalAuth | null;
   notes: FileSystemNotes;
   indexer: Indexer | null;
+  files: FileServing;
 }
 
 // Assigned by initState() before the server starts listening; endpoints only
@@ -52,9 +54,11 @@ export function initState(
   auth: LocalAuth | null,
   notes: FileSystemNotes,
   indexer: Indexer | null,
+  files: FileServing,
 ): void {
   state.config = config;
   state.auth = auth;
   state.notes = notes;
   state.indexer = indexer;
+  state.files = files;
 }

@@ -106,6 +106,11 @@ export class Router {
   private routes: Route[] = [];
   private middleware: Middleware[] = [];
   private prefix: string;
+  /** Runs only when no route matched the path at all, and only for GET —
+   * the vault-file/note-page catch-all (Python's catchall_router). Runs
+   * OUTSIDE the middleware chain: note pages are public, vault files
+   * auth explicitly inside the handler (Python: require_auth(request)). */
+  private fallback: Handler | null = null;
 
   constructor(opts: { prefix?: string } = {}) {
     this.prefix = opts.prefix ?? "";
@@ -113,6 +118,10 @@ export class Router {
 
   use(mw: Middleware): void {
     this.middleware.push(mw);
+  }
+
+  setFallback(handler: Handler): void {
+    this.fallback = handler;
   }
 
   add(
@@ -172,7 +181,17 @@ export class Router {
       const found = this.match(req.method.toUpperCase(), path);
       ctx.authRequired = found !== null && found.route.auth;
       const dispatch = (): Promise<Response> => {
-        if (!found) throw new HttpError(404, "Not Found");
+        if (!found) {
+          if (this.fallback) {
+            // Same path-registration semantics as a catch-all route:
+            // GET hits the handler, every other method is 405.
+            if (req.method !== "GET") {
+              throw new HttpError(405, "Method Not Allowed");
+            }
+            return Promise.resolve(this.fallback(ctx)).then(toResponse);
+          }
+          throw new HttpError(404, "Not Found");
+        }
         ctx.params = found.params;
         return Promise.resolve(found.route.handler(ctx)).then(toResponse);
       };

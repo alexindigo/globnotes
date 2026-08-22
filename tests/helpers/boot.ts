@@ -22,6 +22,7 @@ function freePort(): number {
 
 export async function bootServer(
   env: Record<string, string>,
+  opts: { cwd?: string } = {},
 ): Promise<TestServer> {
   const port = freePort();
   const vault = env.GLOBNOTES_PATH ??
@@ -37,7 +38,7 @@ export async function bootServer(
       "--allow-env",
       SERVER_MAIN,
     ],
-    cwd: REPO_ROOT,
+    cwd: opts.cwd ?? REPO_ROOT,
     env: {
       ...env,
       GLOBNOTES_PATH: vault,

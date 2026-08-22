@@ -172,6 +172,26 @@ export async function verifyPassword(
 
 // endregion
 
+/** Publish the path prefix to the client (meta tag) and point the built
+ * asset references at it when one is configured. Ported from the Python
+ * server's rewrite_index_html. */
+export function rewriteIndexHtml(htmlFile: string, pathPrefix: string): void {
+  let html = Deno.readTextFileSync(htmlFile);
+  if (pathPrefix) {
+    html = html.replaceAll('"/_/', `"${pathPrefix}/_/`);
+  }
+  if (html.includes('name="globnotes-prefix"')) {
+    html = html.replace(
+      /(<meta name="globnotes-prefix" content=")[^"]*/,
+      `$1${pathPrefix}`,
+    );
+  } else {
+    const meta = `<meta name="globnotes-prefix" content="${pathPrefix}">`;
+    html = html.replace("<head>", "<head>\n    " + meta);
+  }
+  Deno.writeTextFileSync(htmlFile, html);
+}
+
 export interface GetEnvOptions {
   mandatory?: boolean;
   default?: string | number | boolean;
