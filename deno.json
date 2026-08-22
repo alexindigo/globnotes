@@ -1,16 +1,22 @@
 {
+  "nodeModulesDir": "auto",
   "tasks": {
     "dev": "deno run --watch --unstable-worker-options --allow-net --allow-read --allow-write --allow-env server/main.ts",
     "start": "deno run --unstable-worker-options --allow-net --allow-read --allow-write --allow-env server/main.ts",
-    "test": "deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run tests/",
+    "test": "deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net tests/",
     "check": "deno check server/main.ts tests/**/*.ts",
     "lint": "deno lint server/ tests/",
     "fmt": "deno fmt"
   },
   "imports": {
+    "@server/": "./server/",
     "@std/assert": "jsr:@std/assert@^1.0.16",
+    "@std/encoding": "jsr:@std/encoding@^1.0.11",
     "@std/fs": "jsr:@std/fs@^1.0.20",
-    "@std/path": "jsr:@std/path@^1.1.3"
+    "@std/path": "jsr:@std/path@^1.1.3",
+    "jose": "npm:jose@^6.0.13",
+    "otplib": "npm:otplib@^12.0.1",
+    "qrcode": "npm:qrcode@^1.5.4"
   },
   "fmt": {
     "include": ["server/", "tests/"]

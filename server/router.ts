@@ -20,6 +20,10 @@ export interface RequestCtx {
   query: URLSearchParams;
   /** URL pathname with any configured path prefix already stripped. */
   path: string;
+  /** Whether the matched route requires authentication. False for routes
+   * that opted out via `export const auth = false` and for unmatched paths
+   * (404s/405s are public, matching the Python server). */
+  authRequired: boolean;
 }
 
 export type HandlerResult =
@@ -50,6 +54,7 @@ interface Route {
   /** Higher wins: literals > params > rest, then longer patterns. */
   specificity: number;
   handler: Handler;
+  auth: boolean;
 }
 
 function parsePattern(pattern: string): Segment[] {
@@ -87,7 +92,7 @@ function errorResponse(err: unknown): Response {
   if (err instanceof HttpError) {
     return new Response(JSON.stringify({ detail: err.detail }), {
       status: err.status,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...err.headers },
     });
   }
   console.error(err);
@@ -110,7 +115,12 @@ export class Router {
     this.middleware.push(mw);
   }
 
-  add(method: string, pattern: string, handler: Handler): void {
+  add(
+    method: string,
+    pattern: string,
+    handler: Handler,
+    opts: { auth?: boolean } = {},
+  ): void {
     const segments = parsePattern(pattern);
     this.routes.push({
       method: method.toUpperCase(),
@@ -118,6 +128,7 @@ export class Router {
       segments,
       specificity: specificityOf(segments),
       handler,
+      auth: opts.auth !== false,
     });
     this.routes.sort((a, b) => b.specificity - a.specificity);
   }
@@ -150,9 +161,16 @@ export class Router {
       }
       path = path.slice(this.prefix.length) || "/";
     }
-    const ctx: RequestCtx = { req, params: {}, query: url.searchParams, path };
+    const ctx: RequestCtx = {
+      req,
+      params: {},
+      query: url.searchParams,
+      path,
+      authRequired: false,
+    };
     try {
       const found = this.match(req.method.toUpperCase(), path);
+      ctx.authRequired = found !== null && found.route.auth;
       const dispatch = (): Promise<Response> => {
         if (!found) throw new HttpError(404, "Not Found");
         ctx.params = found.params;

@@ -139,8 +139,10 @@ export async function hashPassword(
   return `pbkdf2_sha256$${iterations}$${HEX(salt)}$${HEX(digest)}`;
 }
 
-/** Timing-safe equality for hex strings of equal length. */
-function safeEqualHex(a: string, b: string): boolean {
+/** Timing-safe string equality for equal-length strings (compare_digest
+ * equivalent). Length inequality leaks via early false — same trade-off
+ * as Python's hmac.compare_digest. */
+export function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
@@ -162,7 +164,7 @@ export async function verifyPassword(
       return false;
     }
     const digest = await pbkdf2Sha256(password, FROM_HEX(saltHex), iterations);
-    return safeEqualHex(HEX(digest), digestHex);
+    return timingSafeEqual(HEX(digest), digestHex);
   } catch {
     return false;
   }

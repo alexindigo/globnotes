@@ -67,6 +67,8 @@ export async function loadEndpoints(
     if (typeof handler !== "function") {
       throw new Error(`Endpoint ${entry.path} has no default export`);
     }
-    router.add(method, route, handler);
+    // Endpoints default to authenticated; `export const auth = false`
+    // opts out (setup, token, config, health — same as the Python server).
+    router.add(method, route, handler, { auth: mod.auth !== false });
   }
 }
