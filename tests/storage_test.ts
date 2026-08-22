@@ -49,18 +49,21 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
       assertEquals(res.status, 404);
     });
 
-    await t.step("create with invalid title returns 422 (pydantic)", async () => {
-      const bad = await api(server, "/_/api/notes", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: "", content: "" }),
-      });
-      // Python: pydantic NoteCreate validation fires before the route.
-      assertEquals(bad.status, 422);
-      const detail = (await bad.json()).detail;
-      assertEquals(detail[0].type, "value_error");
-      assertEquals(detail[0].loc, ["body", "title"]);
-    });
+    await t.step(
+      "create with invalid title returns 422 (pydantic)",
+      async () => {
+        const bad = await api(server, "/_/api/notes", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "", content: "" }),
+        });
+        // Python: pydantic NoteCreate validation fires before the route.
+        assertEquals(bad.status, 422);
+        const detail = (await bad.json()).detail;
+        assertEquals(detail[0].type, "value_error");
+        assertEquals(detail[0].loc, ["body", "title"]);
+      },
+    );
 
     await t.step("update content", async () => {
       const upd = await api(server, "/_/api/notes/Hello%20World", {

@@ -345,7 +345,7 @@ export class FileSystemNotes {
   }
 
   getTitles(): string[] {
-    return this.#listAllNoteFilenames().map((f) => this.#stripExt(f));
+    return this.listAllNoteFilenames().map((f) => this.#stripExt(f));
   }
 
   // endregion
@@ -411,7 +411,10 @@ export class FileSystemNotes {
     }
   }
 
-  #listAllNoteFilenames(): string[] {
+  /** All note filenames relative to the storage root, including hidden
+   * dirs (Python `_list_all_note_filenames`; public so the indexer can
+   * use it). TTL-cached; invalidated on writes. */
+  listAllNoteFilenames(): string[] {
     const ttl = this.#scanCacheTtl;
     const now = performance.now() / 1000;
     if (this.#scanCache !== null && now - this.#scanCache.ts < ttl) {

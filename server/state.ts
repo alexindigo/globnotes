@@ -10,12 +10,29 @@
 import type { LocalAuth } from "./auth/local.ts";
 import type { GlobalConfig } from "./config.ts";
 import type { FileSystemNotes } from "./notes/file_system.ts";
+import type { SearchResult } from "./notes/models.ts";
 
 /** Implemented by the FTS5 commit; unset until then (storage still works,
  * index hooks are simply skipped). */
 export interface Indexer {
   reindexNote(title: string): void;
   deleteFromIndex(title: string): void;
+  search(
+    term: string,
+    sort?: string,
+    order?: string,
+    limit?: number,
+    nested?: boolean,
+    folder?: string,
+  ): SearchResult[];
+  getTags(): string[];
+  readonly indexStatus: {
+    syncing: boolean;
+    initial: boolean;
+    done: number;
+    total: number;
+  };
+  startBackgroundSync(): void;
 }
 
 export interface ServerState {
@@ -34,9 +51,10 @@ export function initState(
   config: GlobalConfig,
   auth: LocalAuth | null,
   notes: FileSystemNotes,
+  indexer: Indexer | null,
 ): void {
   state.config = config;
   state.auth = auth;
   state.notes = notes;
-  state.indexer = null; // wired in commit 5
+  state.indexer = indexer;
 }
