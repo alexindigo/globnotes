@@ -47,6 +47,9 @@ const FILES = {
   "script.html": "<script>alert(1)</script>",
   "draw.svg": "<svg xmlns='http://www.w3.org/2000/svg'></svg>",
   "folder/img.png": PNG,
+  // NOTE: odd-titled files are NOT in the shared fixture — Python's own
+  // background sync crashes on them (the Deno port fixed that). They get
+  // written at runtime in the divergence section (note GET needs no index).
 };
 
 function makeFixtureVault() {
@@ -103,6 +106,7 @@ async function waitIndexReady(base) {
 
 let pass = 0;
 let fail = 0;
+let diverged = 0;
 const failures = [];
 
 function check(label, ok, detail = "") {
@@ -113,6 +117,19 @@ function check(label, ok, detail = "") {
     fail++;
     failures.push({ label, detail });
     console.log(`FAIL ${label} ${detail}`);
+  }
+}
+
+/** Deliberate divergence between the Python server and the Deno rewrite —
+ * documented here, never a failure. */
+function expectedDivergence(label, ok, detail = "") {
+  if (ok) {
+    diverged++;
+    console.log(`DIVERGES (expected) ${label}`);
+  } else {
+    fail++;
+    failures.push({ label, detail });
+    console.log(`FAIL ${label} (expected divergence did NOT hold) ${detail}`);
   }
 }
 
@@ -451,7 +468,31 @@ try {
     method: "DELETE",
   });
 
-  console.log(`\n== parity: ${pass} passed, ${fail} failed ==`);
+  // -- deliberate divergence: odd titles -------------------------------
+  // The Deno rewrite reads odd-titled notes by filename (Obsidian
+  // parity); the Python server's validator rejects them at read time too.
+  // (Python's background sync even DIES on these files — hence runtime
+  // writes, after every index-dependent check has run.)
+  for (const t of ["odd/what now?", "odd/*TODO"]) {
+    for (const vault of [vaultPy, vaultDeno]) {
+      mkdirSync(join(vault, "odd"), { recursive: true });
+      writeFileSync(join(vault, "odd", t.split("/")[1] + ".md"), "x");
+    }
+    const enc = encodeURIComponent(t);
+    const [py, deno] = await Promise.all([
+      fetch(`http://localhost:${PY_PORT}/_/api/notes/${enc}`),
+      fetch(`http://localhost:${DENO_PORT}/_/api/notes/${enc}`),
+    ]);
+    expectedDivergence(
+      `read odd title '${t}' (py=400, deno=200)`,
+      py.status === 400 && deno.status === 200,
+      `py=${py.status} deno=${deno.status}`,
+    );
+    await py.body?.cancel();
+    await deno.body?.cancel();
+  }
+
+  console.log(`\n== parity: ${pass} passed, ${fail} failed, ${diverged} expected divergences ==`);
   killAll();
   rmSync(vaultPy, { recursive: true, force: true });
   rmSync(vaultDeno, { recursive: true, force: true });

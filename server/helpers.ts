@@ -65,6 +65,40 @@ export function isValidNotePath(value: string): string {
   return value;
 }
 
+/** Read-path validation: the filesystem is the source of truth. Real
+ * vaults contain filenames the create-time validator rejects (`?`, `:`,
+ * `*` …) — Obsidian opens them fine, and reads by filename must too.
+ * Only structural safety is enforced here: no empty/`. `/`..` segments,
+ * no leading-dot segments, no `_`-root (app URL space). */
+export function isReadableNotePath(value: string): string {
+  if (!value) throw new Error("title cannot be empty");
+  if (value.split("/")[0] === "_") {
+    throw new Error("title cannot start with '_/' (reserved for app URLs)");
+  }
+  for (const segment of value.split("/")) {
+    if (!segment) throw new Error("title cannot contain empty path segments");
+    if (segment === "." || segment === "..") {
+      throw new Error("title cannot contain '.' or '..' path segments");
+    }
+    if (segment.startsWith(".")) {
+      throw new Error("title path segments cannot start with '.'");
+    }
+  }
+  return value;
+}
+
+/** resolveInRoot for reads: isReadableNotePath instead of the stricter
+ * create-time isValidNotePath; containment check identical. */
+export function resolveReadableInRoot(root: string, relPath: string): string {
+  isReadableNotePath(relPath);
+  const rootReal = realpathSync(root);
+  const resolved = realpathSync(path.join(rootReal, relPath));
+  if (!isSubpath(rootReal, resolved)) {
+    throw new Error(`'${relPath}' resolves outside the root directory`);
+  }
+  return resolved;
+}
+
 export function resolveInRoot(root: string, relPath: string): string {
   /** Resolve relPath inside root and verify containment.
    * Returns the absolute, symlink-resolved path. Throws if relPath is not a

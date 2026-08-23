@@ -13,7 +13,12 @@ import {
   NoteExistsError,
   NoteNotFoundError,
 } from "./models.ts";
-import { isValidNotePath, resolveInRoot } from "@server/helpers.ts";
+import {
+  isReadableNotePath,
+  isValidNotePath,
+  resolveInRoot,
+  resolveReadableInRoot,
+} from "@server/helpers.ts";
 import { state } from "@server/state.ts";
 import { logger } from "@server/logger.ts";
 import { walk } from "@std/fs/walk";
@@ -69,8 +74,8 @@ export class FileSystemNotes {
   }
 
   get(title: string): Note {
-    this.#validateNotePath(title);
-    const filepath = this.#pathFromTitle(title);
+    this.#validateReadablePath(title);
+    const filepath = this.#readablePath(title);
     try {
       return this.#noteFromFile(title, filepath);
     } catch (e) {
@@ -84,9 +89,9 @@ export class FileSystemNotes {
   }
 
   update(title: string, data: NoteUpdate, fileRefs = "none"): Note {
-    this.#validateNotePath(title);
+    this.#validateReadablePath(title);
     const oldTitle = title;
-    let filepath = this.#pathFromTitle(title);
+    let filepath = this.#readablePath(title);
     const oldDir = path.dirname(filepath);
     const movedFiles: Record<string, string> = {};
     let contentWritten: string | null = null;
@@ -234,9 +239,9 @@ export class FileSystemNotes {
   }
 
   previewRename(title: string, newTitle: string): FileRef[] {
-    this.#validateNotePath(title);
+    this.#validateReadablePath(title);
     this.#validateNotePath(newTitle);
-    const filepath = this.#pathFromTitle(title);
+    const filepath = this.#readablePath(title);
     let content: string;
     try {
       content = this.#readFile(filepath);
@@ -291,8 +296,8 @@ export class FileSystemNotes {
   }
 
   delete(title: string): void {
-    this.#validateNotePath(title);
-    const filepath = this.#pathFromTitle(title);
+    this.#validateReadablePath(title);
+    const filepath = this.#readablePath(title);
     try {
       Deno.removeSync(filepath);
     } catch (e) {
@@ -312,7 +317,7 @@ export class FileSystemNotes {
     folders: { name: string; path: string }[];
     notes: string[];
   } {
-    if (dirPath) this.#validateNotePath(dirPath);
+    if (dirPath) this.#validateReadablePath(dirPath);
     const resolved = dirPath
       ? resolveInRoot(this.storagePath, dirPath)
       : this.storagePath;
@@ -365,6 +370,23 @@ export class FileSystemNotes {
   #validateNotePath(value: string): string {
     try {
       return isValidNotePath(value);
+    } catch (e) {
+      throw new InvalidTitleError((e as Error).message);
+    }
+  }
+
+  /** Read-path: isReadableNotePath — the disk is the source of truth. */
+  #validateReadablePath(value: string): string {
+    try {
+      return isReadableNotePath(value);
+    } catch (e) {
+      throw new InvalidTitleError((e as Error).message);
+    }
+  }
+
+  #readablePath(title: string): string {
+    try {
+      return resolveReadableInRoot(this.storagePath, title + MARKDOWN_EXT);
     } catch (e) {
       throw new InvalidTitleError((e as Error).message);
     }

@@ -123,8 +123,7 @@ export class Fts5Indexer implements Indexer {
   #indexFile(filename: string): void {
     const filepath = path.join(state.config.notesPath, filename);
     const content = Deno.readTextFileSync(filepath);
-    const mtime =
-      (Deno.statSync(filepath).mtime?.getTime() ?? 0) / 1000;
+    const mtime = (Deno.statSync(filepath).mtime?.getTime() ?? 0) / 1000;
     const { contentExTags, tagSet } = extractTags(content);
     this.#upsertNote(
       this.#stripExt(filename),

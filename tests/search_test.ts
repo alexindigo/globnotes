@@ -307,8 +307,14 @@ Deno.test("search: odd-titled files are indexed (Python parity)", async () => {
     assert(titles.includes("*TODO"));
     assert(titles.includes("what now?"));
 
-    // And the note API still refuses them by title (Python: 400).
-    const bad = await api(server, "/_/api/notes/what%20now%3F");
+    // Reads by filename are always allowed (Obsidian parity; the strict
+    // validator only gates create).
+    const ok = await api(server, "/_/api/notes/what%20now%3F");
+    assertEquals(ok.status, 200);
+    assertEquals((await ok.json()).content, "question title needle");
+
+    // …but traversal still 400s.
+    const bad = await api(server, "/_/api/notes/..%2F..%2Fetc%2Fpasswd");
     assertEquals(bad.status, 400);
     await bad.body?.cancel();
   } finally {
