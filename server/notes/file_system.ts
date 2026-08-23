@@ -19,7 +19,11 @@ import {
   resolveInRoot,
   resolveReadableInRoot,
 } from "@server/helpers.ts";
-import { resolveTitleInfo } from "@server/search/titles.ts";
+import {
+  resolveTitleInfo,
+  rewriteFirstH1,
+  sanitizeBasename,
+} from "@server/search/titles.ts";
 import { state } from "@server/state.ts";
 import { logger } from "@server/logger.ts";
 import { walk } from "@std/fs/walk";
@@ -96,6 +100,25 @@ export class FileSystemNotes {
     const oldDir = path.dirname(filepath);
     const movedFiles: Record<string, string> = {};
     let contentWritten: string | null = null;
+
+    // H1 → basename sync: a content-only edit whose first H1 changed
+    // renames the file's basename (folder untouched, front-matter title
+    // opts out). Default-on, Obsidian Filename-Heading-Sync style.
+    if (
+      (data.newTitle === undefined || data.newTitle === null) &&
+      data.newContent !== undefined && data.newContent !== null
+    ) {
+      const oldBase = path.basename(title);
+      const oldH1 = resolveTitleInfo(oldBase, this.#readFile(filepath)).h1;
+      const info = resolveTitleInfo(oldBase, data.newContent);
+      if (!info.fmTitle && info.h1 && info.h1 !== oldH1) {
+        const newBase = sanitizeBasename(info.h1);
+        if (newBase && newBase !== oldBase) {
+          const folder = path.dirname(title);
+          data.newTitle = folder === "." ? newBase : `${folder}/${newBase}`;
+        }
+      }
+    }
 
     if (
       data.newTitle !== undefined &&
@@ -223,6 +246,17 @@ export class FileSystemNotes {
       content = data.newContent;
     } else {
       content = this.#readFile(filepath);
+    }
+
+    // Rename → H1 sync: after a rename, keep the first H1 in step with
+    // the new basename (front-matter title opts out).
+    if (oldTitle !== title) {
+      const newBase = path.basename(title);
+      const info = resolveTitleInfo(path.basename(oldTitle), content);
+      if (!info.fmTitle && info.h1 && info.h1 !== newBase) {
+        content = rewriteFirstH1(content, newBase);
+        this.#writeFile(filepath, content, true);
+      }
     }
 
     const moved = Object.entries(movedFiles).map(([o, n]) => ({

@@ -388,3 +388,82 @@ Deno.test("rename is mechanism only: markdown links untouched", () =>
     const source = notes.get("probe/source");
     assert(source.content?.includes("[the target](/target/note.md)"));
   }));
+
+Deno.test("h1 sync: rename updates the first heading", () =>
+  withState(({ notes }) => {
+    notes.create({ title: "a/b", content: "# Old Heading\n\nbody" });
+    const note = notes.update("a/b", { newTitle: "a/c" });
+    assertEquals(note.content, "# c\n\nbody");
+  }));
+
+Deno.test("h1 sync: rename without an H1 leaves content alone", () =>
+  withState(({ notes }) => {
+    notes.create({ title: "a/b", content: "just body" });
+    const note = notes.update("a/b", { newTitle: "a/c" });
+    assertEquals(note.content, "just body");
+  }));
+
+Deno.test("h1 sync: front-matter title opts out", () =>
+  withState(({ notes }) => {
+    notes.create({
+      title: "a/b",
+      content: "---\ntitle: Fixed Title\n---\n# Old Heading\n",
+    });
+    const note = notes.update("a/b", { newTitle: "a/c" });
+    assert(note.content?.includes("# Old Heading"));
+  }));
+
+Deno.test("h1 sync: editing the first H1 renames the basename", () =>
+  withState(({ notes }) => {
+    notes.create({ title: "folder/old-name", content: "# Old Name\n\nbody" });
+    const note = notes.update("folder/old-name", {
+      newContent: "# New Name\n\nbody",
+    });
+    assertEquals(note.title, "folder/New Name");
+    let err: Error | null = null;
+    try {
+      notes.get("folder/old-name");
+    } catch (e) {
+      err = e as Error;
+    }
+    assert(err instanceof NoteNotFoundError);
+  }));
+
+Deno.test("h1 sync: H1 with invalid chars sanitizes the basename", () =>
+  withState(({ notes }) => {
+    notes.create({ title: "x", content: "# Old\n" });
+    const note = notes.update("x", { newContent: "# what? is: *this*\n" });
+    assertEquals(note.title, "what is this");
+  }));
+
+Deno.test("h1 sync: collision on rename raises", () =>
+  withState(({ notes }) => {
+    notes.create({ title: "taken", content: "# y\n" });
+    notes.create({ title: "free", content: "# Taken\n" });
+    let err: Error | null = null;
+    try {
+      notes.update("free", { newContent: "# taken\n" });
+    } catch (e) {
+      err = e as Error;
+    }
+    assert(err instanceof NoteExistsError);
+  }));
+
+Deno.test("h1 sync: no H1 change → no rename", () =>
+  withState(({ notes }) => {
+    notes.create({ title: "stay", content: "# Stay\nbody" });
+    const note = notes.update("stay", { newContent: "# Stay\nmore body" });
+    assertEquals(note.title, "stay");
+  }));
+
+Deno.test("h1 sync: front-matter title opts out of edit renames", () =>
+  withState(({ notes }) => {
+    notes.create({
+      title: "fixed",
+      content: "---\ntitle: My Title\n---\n# Old\n",
+    });
+    const note = notes.update("fixed", {
+      newContent: "---\ntitle: My Title\n---\n# New\n",
+    });
+    assertEquals(note.title, "fixed");
+  }));

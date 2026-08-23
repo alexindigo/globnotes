@@ -15,6 +15,9 @@ export interface TitleInfo {
   displayTitle: string;
   /** The note's first H1 text, if any (used by the H1↔basename sync). */
   h1: string | null;
+  /** Front-matter `title:` if present (explicit title wins; H1 sync is
+   * off for these notes). */
+  fmTitle: string | null;
   aliases: string[];
 }
 
@@ -97,7 +100,6 @@ function firstH1(content: string): string | null {
   }
   return null;
 }
-
 export function resolveTitleInfo(
   basename: string,
   content: string,
@@ -108,6 +110,37 @@ export function resolveTitleInfo(
   return {
     displayTitle,
     h1,
+    fmTitle: fm.title && fm.title !== "" ? fm.title : null,
     aliases: fm.aliases ?? [],
   };
+}
+
+/** Rewrite the first ATX H1 line to `heading` (rename → H1 sync). */
+export function rewriteFirstH1(content: string, heading: string): string {
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (/^# .+$/.test(lines[i])) {
+      lines[i] = `# ${heading}`;
+      return lines.join("\n");
+    }
+  }
+  return content;
+}
+
+/** Turn H1 text into a filename basename (H1 → rename sync): strip the
+ * create-time invalid chars and anything structural, collapse whitespace,
+ * trim. Returns null when nothing usable remains. */
+export function sanitizeBasename(text: string): string | null {
+  const stripped = text
+    .replace(/[<>:"\\|?/*]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+/, "");
+  if (!stripped) return null;
+  // Segment limit: 255 bytes.
+  const encoded = new TextEncoder().encode(stripped);
+  const cut = encoded.length > 255
+    ? new TextDecoder().decode(encoded.slice(0, 255)).trimEnd()
+    : stripped;
+  return cut || null;
 }
