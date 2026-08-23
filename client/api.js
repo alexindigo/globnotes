@@ -125,6 +125,19 @@ export async function getNote(title) {
   }
 }
 
+// Server-rendered markdown (markdown-it + plugin pipeline). Returns raw
+// HTML — axios must not try to JSON-parse it.
+export async function getRenderedHtml(title) {
+  try {
+    const response = await api.get(`render/${encodeURIComponent(title)}`, {
+      transformResponse: (data) => data,
+    });
+    return response.data;
+  } catch (response) {
+    return Promise.reject(response);
+  }
+}
+
 export async function updateNote(
   title,
   newTitle,

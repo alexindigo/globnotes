@@ -1,23 +1,27 @@
 <template>
-  <div ref="viewerElement"></div>
+  <div
+    ref="viewerElement"
+    class="rendered-markdown"
+    :class="{ 'toastui-editor-contents': loaded }"
+  ></div>
 </template>
 
 <script setup>
-import Viewer from "@toast-ui/editor/dist/toastui-editor-viewer";
-import renderMathInElement from "katex/contrib/auto-render/auto-render.js";
 import { mdiCheck, mdiContentCopy } from "@mdi/js";
+import renderMathInElement from "katex/contrib/auto-render/auto-render.js";
 import mermaid from "mermaid";
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 
-import { preprocessObsidianFlavored } from "../../obsidianFlavored.js";
-import baseOptions from "./baseOptions.js";
-import extendedAutolinks from "./extendedAutolinks.js";
+import { getRenderedHtml } from "../api.js";
 
 const props = defineProps({
-  initialValue: String,
+  title: String,
 });
 
 const viewerElement = ref();
+// The container class appears only when content does — the old viewer
+// rendered both atomically, and e2e/style hooks poll the class.
+const loaded = ref(false);
 
 const COPY_ICON = `<svg viewBox="0 0 24 24" width="1em" height="1em"><path fill="currentColor" d="${mdiContentCopy}"/></svg>`;
 const CHECK_ICON = `<svg viewBox="0 0 24 24" width="1em" height="1em"><path fill="currentColor" d="${mdiCheck}"/></svg>`;
@@ -50,19 +54,24 @@ function addCopyButtons(root) {
 
 mermaid.initialize({ startOnLoad: false });
 
-onMounted(() => {
-  new Viewer({
-    ...baseOptions,
-    extendedAutolinks,
-    el: viewerElement.value,
-    initialValue: preprocessObsidianFlavored(props.initialValue),
-  });
-  // customHTMLRenderer (mermaid support) shadows the code-syntax-highlight
-  // plugin's renderer, so highlight code blocks explicitly after mount.
-  if (window.Prism?.highlightAllUnder) {
-    window.Prism.highlightAllUnder(viewerElement.value);
+// Fetches the server-rendered HTML (markdown-it + plugin pipeline) and
+// mounts it; the container keeps the toastui-editor-contents class so
+// existing content CSS applies unchanged during the transition.
+async function renderNote() {
+  if (!props.title || !viewerElement.value) {
+    return;
+  }
+  try {
+    viewerElement.value.innerHTML = await getRenderedHtml(props.title);
+  } catch (error) {
+    console.error("Note render failed", error);
+    viewerElement.value.innerHTML =
+      '<p class="render-error">Failed to render this note.</p>';
+    loaded.value = true;
+    return;
   }
   addCopyButtons(viewerElement.value);
+  loaded.value = true;
   mermaid
     .run({ nodes: viewerElement.value.querySelectorAll(".mermaid") })
     .catch((error) => console.error("Mermaid rendering failed", error));
@@ -73,12 +82,14 @@ onMounted(() => {
     ],
     throwOnError: false,
   });
-});
+}
+
+onMounted(renderNote);
+watch(() => props.title, renderNote);
 </script>
 
 <style>
 @import "@toast-ui/editor/dist/toastui-editor-viewer.css";
-@import "@toast-ui/editor-plugin-code-syntax-highlight/dist/toastui-editor-plugin-code-syntax-highlight.css";
 @import "katex/dist/katex.min.css";
-@import "./toastui-editor-overrides.scss";
+@import "./toastui/toastui-editor-overrides.scss";
 </style>

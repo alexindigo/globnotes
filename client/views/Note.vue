@@ -173,9 +173,9 @@
 
     <!-- Content (scrolls internally; the header never moves) -->
     <div class="min-h-0 flex-1 overflow-y-auto print:overflow-visible">
-      <ToastViewer
+      <ServerViewer
         v-if="!editMode"
-        :initialValue="note.content"
+        :title="note.title"
         class="toast-viewer pb-4"
       />
       <ToastEditor
@@ -227,7 +227,7 @@ import RenameAssetsModal from "../components/RenameAssetsModal.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Toggle from "../components/Toggle.vue";
 import ToastEditor from "../components/toastui/ToastEditor.vue";
-import ToastViewer from "../components/toastui/ToastViewer.vue";
+import ServerViewer from "../components/ServerViewer.vue";
 import { authTypes, params } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { rewriteRenamedLinks } from "../links.js";
