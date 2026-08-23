@@ -28,6 +28,8 @@ export interface Indexer {
     folder?: string,
   ): SearchResult[];
   getTags(): string[];
+  /** Display titles for a batch of filenames (title + ".md" keys). */
+  displayTitlesFor(filenames: string[]): Record<string, string>;
   readonly indexStatus: {
     syncing: boolean;
     initial: boolean;

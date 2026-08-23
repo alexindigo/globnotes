@@ -342,7 +342,12 @@ const visibleRows = computed(() => {
         }
       }
       const notes = [...level.notes]
-        .map((t) => ({ title: t, name: t.split("/").pop() }))
+        .map((t) => ({
+          title: typeof t === "string" ? t : t.title,
+          name: typeof t === "string"
+            ? t.split("/").pop()
+            : (t.displayTitle ?? t.title.split("/").pop()),
+        }))
         .sort((a, b) => a.name.localeCompare(b.name));
       for (const note of notes) {
         rows.push({ key: "n:" + note.title, type: "note", note, depth });

@@ -133,8 +133,8 @@ function expectedDivergence(label, ok, detail = "") {
   }
 }
 
-function normalize(obj, { stripExtra = false, allowExtra = [] } = {}) {
-  if (Array.isArray(obj)) return obj.map((x) => normalize(x));
+function normalize(obj, { allowExtra = [] } = {}) {
+  if (Array.isArray(obj)) return obj.map((x) => normalize(x, { allowExtra }));
   if (obj && typeof obj === "object") {
     const out = {};
     for (const [k, v] of Object.entries(obj)) {
@@ -142,28 +142,31 @@ function normalize(obj, { stripExtra = false, allowExtra = [] } = {}) {
       if (k === "lastModified") out[k] = 0;
       else if (k === "score") out[k] = v === null ? null : 1;
       else if (k === "titleHighlights" || k === "contentHighlights") {
-        // Whoosh: <strong class="match term0">x</strong>; FTS5: <mark>x</mark>.
+        // Whoosh: <b class="match term0">; FTS5 emits the same markup now.
         // Parity = same field populated (or not).
         out[k] = v === null || v === undefined ? null : Boolean(v);
-      } else out[k] = normalize(v);
+      } else out[k] = normalize(v, { allowExtra });
     }
     return out;
   }
   return obj;
 }
 
-async function jsonOf(res) {
-  return normalize(await res.json());
+async function jsonOf(res, allowExtra = []) {
+  return normalize(await res.json(), { allowExtra });
 }
 
-async function compareJson(label, path, init) {
+async function compareJson(label, path, init, allowExtra = []) {
   const [py, deno] = await Promise.all([
     fetch(`http://localhost:${PY_PORT}${path}`, init),
     fetch(`http://localhost:${DENO_PORT}${path}`, init),
   ]);
   check(`${label} (status)`, py.status === deno.status,
     `py=${py.status} deno=${deno.status}`);
-  const [pyBody, denoBody] = [await jsonOf(py), await jsonOf(deno)];
+  const [pyBody, denoBody] = [
+    await jsonOf(py, allowExtra),
+    await jsonOf(deno, allowExtra),
+  ];
   check(
     `${label} (body)`,
     JSON.stringify(pyBody) === JSON.stringify(denoBody),
@@ -295,7 +298,7 @@ try {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ title: "created/note", content: "new body" }),
-  });
+  }, ["displayTitle"]);
   await compareJson("notes create duplicate", "/_/api/notes", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -306,20 +309,20 @@ try {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ title: "", content: "" }),
   });
-  await compareJson("notes get", "/_/api/notes/note-a");
-  await compareJson("notes get nested", "/_/api/notes/folder%2Fnote-b");
+  await compareJson("notes get", "/_/api/notes/note-a", undefined, ["displayTitle"]);
+  await compareJson("notes get nested", "/_/api/notes/folder%2Fnote-b", undefined, ["displayTitle"]);
   await compareJson("notes get missing", "/_/api/notes/nope");
   await compareJson("notes get traversal", "/_/api/notes/..%2F..%2Fetc");
   await compareJson("notes patch content", "/_/api/notes/note-a", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ newContent: "replaced body" }),
-  });
+  }, ["displayTitle"]);
   await compareJson("notes rename", "/_/api/notes/folder%2Fnote-b", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ newTitle: "folder/note-b-renamed" }),
-  });
+  }, ["displayTitle"]);
   await compareJson("rename-preview", "/_/api/rename-preview?title=created%2Fnote&new_title=moved%2Fnote");
 
   // -- search ------------------------------------------------------------
@@ -329,12 +332,16 @@ try {
     await compareJson(
       `search '${term}'`,
       `/_/api/search?term=${encodeURIComponent(term)}`,
+      undefined,
+      ["displayTitle"],
     );
   }
-  await compareJson("search #taggy", "/_/api/search?term=%23taggy");
+  await compareJson("search #taggy", "/_/api/search?term=%23taggy", undefined, ["displayTitle"]);
   await compareJson(
     "search sort title asc",
     "/_/api/search?term=*&sort=title&order=asc",
+    undefined,
+    ["displayTitle"],
   );
   // lastModified sort: same-second ties break differently per engine
   // (rowid vs docnum). Compare the SET, internal non-increasing order on
@@ -372,13 +379,13 @@ try {
     "/_/api/search?term=*&sort=last_modified",
   );
 
-  async function compareJsonSet(label, path) {
+  async function compareJsonSet(label, path, allowExtra = []) {
     const [py, deno] = await Promise.all([
       fetch(`http://localhost:${PY_PORT}${path}`).then((r) => r.json()),
       fetch(`http://localhost:${DENO_PORT}${path}`).then((r) => r.json()),
     ]);
     const canon = (x) =>
-      JSON.stringify(normalize(x), Object.keys(normalize(x)).sort());
+      JSON.stringify(normalize(x, { allowExtra }), Object.keys(normalize(x, { allowExtra })).sort());
     const pySet = py.map(canon).sort();
     const denoSet = deno.map(canon).sort();
     check(
@@ -387,20 +394,42 @@ try {
       `\n  py:   ${JSON.stringify(py)}\n  deno: ${JSON.stringify(deno)}`,
     );
   }
-  await compareJsonSet("search '*' (order-independent)", "/_/api/search?term=*");
+  await compareJsonSet("search '*' (order-independent)", "/_/api/search?term=*", ["displayTitle"]);
   await compareJsonSet(
     "search nested=false (order-independent)",
     "/_/api/search?term=*&nested=false",
+    ["displayTitle"],
   );
   await compareJson(
     "search folder filter",
     `/_/api/search?term=*&folder=${encodeURIComponent("folder")}`,
+    undefined,
+    ["displayTitle"],
   );
   await compareJson("tags", "/_/api/tags");
   // note-index order is filesystem order on both sides — sets, not arrays.
   await compareJsonSet("note-index (fs-order independent)", "/_/api/note-index");
-  await compareJson("tree root", "/_/api/tree?path=");
-  await compareJson("tree subfolder", "/_/api/tree?path=folder");
+  // Tree notes are {title, displayTitle} objects in Deno (labels) vs
+  // bare strings in Python — compare titles.
+  for (const [label, path] of [
+    ["tree root", "/_/api/tree?path="],
+    ["tree subfolder", "/_/api/tree?path=folder"],
+  ]) {
+    const [py, deno] = await Promise.all([
+      fetch(`http://localhost:${PY_PORT}${path}`).then((r) => r.json()),
+      fetch(`http://localhost:${DENO_PORT}${path}`).then((r) => r.json()),
+    ]);
+    const denoTitles = deno.notes.map((n) => (typeof n === "string" ? n : n.title));
+    check(
+      `${label} (folders + note titles)`,
+      JSON.stringify(normalize(py.folders)) ===
+        JSON.stringify(normalize(deno.folders)) &&
+        JSON.stringify(py.notes) === JSON.stringify(denoTitles),
+      `
+  py:   ${JSON.stringify(py)}
+  deno: ${JSON.stringify(deno)}`,
+    );
+  }
   await compareJson("tree missing", "/_/api/tree?path=nope%2Fnada");
   await compareJson("tree traversal", "/_/api/tree?path=..%2F..");
 

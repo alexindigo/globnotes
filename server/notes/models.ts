@@ -8,6 +8,8 @@ export interface Note {
   title: string;
   content: string | null;
   lastModified: number;
+  /** Display title: front-matter title → first H1 → basename. */
+  displayTitle: string;
   /** Python's Note model serializes this always (default []). */
   movedFiles: { oldPath: string; newPath: string }[];
 }
@@ -24,6 +26,8 @@ export interface NoteUpdate {
 
 export interface SearchResult {
   title: string;
+  /** Display title: front-matter title → first H1 → basename. */
+  displayTitle: string;
   lastModified: number;
   score?: number | null;
   titleHighlights?: string | null;

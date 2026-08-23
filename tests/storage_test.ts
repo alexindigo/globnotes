@@ -142,11 +142,13 @@ Deno.test("storage: note index and tree", async () => {
     assertEquals(root.folders.length, 1);
     assertEquals(root.folders[0].name, "folder");
     assertEquals(root.notes.length, 1);
-    assertEquals(root.notes[0], "alpha");
+    // Tree notes carry {title, displayTitle} for sidebar labels.
+    assertEquals(root.notes[0].title, "alpha");
+    assertEquals(root.notes[0].displayTitle, "alpha");
 
     const subtree = await api(server, "/_/api/tree?path=folder");
     const sub = await subtree.json();
-    assertEquals(sub.notes[0], "folder/beta");
+    assertEquals(sub.notes[0].title, "folder/beta");
 
     // Tree endpoint edge cases (ported from test_tree_endpoint.py):
     // hidden dirs are skipped, missing folder is 404, traversal is 400.
@@ -197,3 +199,53 @@ Deno.test("storage: rename preview", async () => {
     await Deno.remove(server.vault, { recursive: true });
   }
 });
+
+Deno.test("displayTitle: resolution order", async () => {
+  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  try {
+    const create = (title: string, content: string) =>
+      api(server, "/_/api/notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title, content }),
+      });
+    await create("fm-title", "---\ntitle: From Front Matter\n---\n# Heading\n");
+    await create("h1-title", "# From The Heading\n\nbody");
+    await create("plain-name", "no heading here");
+
+    const get = async (t: string) =>
+      (await (await api(server, `/_/api/notes/${t}`)).json()).displayTitle;
+    assertEquals(await get("fm-title"), "From Front Matter");
+    assertEquals(await get("h1-title"), "From The Heading");
+    assertEquals(await get("plain-name"), "plain-name");
+
+    // And the search results carry the same field.
+    await awaitIndexReadyServer(server.baseUrl);
+    const res = await api(server, "/_/api/search?term=*");
+    const byTitle = Object.fromEntries(
+      (await res.json()).map((h: { title: string; displayTitle: string }) => [
+        h.title,
+        h.displayTitle,
+      ]),
+    );
+    assertEquals(byTitle["fm-title"], "From Front Matter");
+    assertEquals(byTitle["h1-title"], "From The Heading");
+    assertEquals(byTitle["plain-name"], "plain-name");
+  } finally {
+    await server.close();
+    await Deno.remove(server.vault, { recursive: true });
+  }
+});
+
+async function awaitIndexReadyServer(baseUrl: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const res = await fetch(`${baseUrl}/_/api/index-status`);
+    if (res.ok) {
+      const s = await res.json();
+      if (!s.syncing && !s.initial) return;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error("index sync did not complete");
+}

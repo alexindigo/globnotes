@@ -9,6 +9,7 @@ import type { SearchResult } from "@server/notes/models.ts";
 import { state } from "@server/state.ts";
 import { translateQuery } from "@server/search/query.ts";
 import { extractTags } from "@server/search/tags.ts";
+import { resolveTitleInfo } from "@server/search/titles.ts";
 
 const MARKDOWN_EXT = ".md";
 const SNIPPET_COLS = 48;
@@ -25,6 +26,8 @@ interface FtsRow {
   score: number | null;
   titleHighlights: string | null;
   contentHighlights: string | null;
+  /** Display title from notes_meta (join); falls back to basename. */
+  displayTitle: string | null;
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -65,12 +68,22 @@ export class Fts5Indexer implements Indexer {
         PRIMARY KEY (filename, tag)
       );
     `);
+    // Display metadata (display title, first H1, aliases). Resolved at
+    // index time from front matter + content; served to clients.
+    this.#db.exec(`
+      CREATE TABLE IF NOT EXISTS notes_meta(
+        filename TEXT PRIMARY KEY,
+        display_title TEXT NOT NULL,
+        h1 TEXT,
+        aliases TEXT NOT NULL DEFAULT '[]'
+      );
+    `);
   }
 
   /** Index is derived data: on schema-version mismatch, wipe and let the
    * background sync rebuild everything from the markdown files. */
   #migrate(): void {
-    const SCHEMA_VERSION = 9;
+    const SCHEMA_VERSION = 10;
     const row = this.#db.prepare("PRAGMA user_version").get() as
       | { user_version: number }
       | undefined;
@@ -80,6 +93,7 @@ export class Fts5Indexer implements Indexer {
       );
       this.#db.exec("DELETE FROM notes_fts");
       this.#db.exec("DELETE FROM notes_tags");
+      this.#db.exec("DELETE FROM notes_meta");
       this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     }
   }
@@ -131,6 +145,7 @@ export class Fts5Indexer implements Indexer {
       tagSet,
       filename,
       mtime,
+      resolveTitleInfo(this.#basename(filename), content),
     );
     this.#notifyPlugins();
   }
@@ -149,13 +164,15 @@ export class Fts5Indexer implements Indexer {
     plugins.syncAll().catch((e) => logger.error(`plugin sync failed: ${e}`));
   }
 
-  /** Insert/replace a note in both the FTS table and the raw-tag table. */
+  /** Insert/replace a note in the FTS table, the raw-tag table, and the
+   * display-metadata table. */
   #upsertNote(
     title: string,
     contentExTags: string,
     tagSet: Set<string>,
     filename: string,
     lastModified: number,
+    titleInfo?: { displayTitle: string; h1: string | null; aliases: string[] },
   ): void {
     this.#deleteByFilename(filename);
     this.#db
@@ -177,6 +194,22 @@ export class Fts5Indexer implements Indexer {
     for (const tag of tagSet) {
       insertTag.run(filename, tag.toLowerCase());
     }
+    const meta = titleInfo ?? {
+      displayTitle: this.#basename(filename),
+      h1: null,
+      aliases: [],
+    };
+    this.#db
+      .prepare(
+        `INSERT INTO notes_meta (filename, display_title, h1, aliases)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(
+        filename,
+        meta.displayTitle,
+        meta.h1,
+        JSON.stringify(meta.aliases),
+      );
   }
 
   #deleteByFilename(filename: string): void {
@@ -185,6 +218,9 @@ export class Fts5Indexer implements Indexer {
       .run(filename);
     this.#db
       .prepare(`DELETE FROM notes_tags WHERE filename = ?`)
+      .run(filename);
+    this.#db
+      .prepare(`DELETE FROM notes_meta WHERE filename = ?`)
       .run(filename);
   }
 
@@ -370,11 +406,12 @@ export class Fts5Indexer implements Indexer {
       : "NULL AS score";
 
     let sql =
-      `SELECT title, filename, tags, last_modified AS lastModified, ${scoreExpr}${
+      `SELECT notes_fts.title, notes_fts.filename, notes_fts.tags, notes_fts.last_modified AS lastModified, meta.display_title AS displayTitle, ${scoreExpr}${
         matchQuery !== null
           ? `, ${highlightExpr} AS titleHighlights, ${snippetExpr} AS contentHighlights`
           : ""
-      } FROM notes_fts`;
+      } FROM notes_fts
+      LEFT JOIN notes_meta meta ON meta.filename = notes_fts.filename`;
 
     const args: (string | number)[] = [];
     if (matchQuery !== null) {
@@ -454,8 +491,10 @@ export class Fts5Indexer implements Indexer {
           tagMatches = matched.map((t) => t.toLowerCase());
         }
       }
+      const title = row.filename.slice(0, -MARKDOWN_EXT.length);
       return {
-        title: row.filename.slice(0, -MARKDOWN_EXT.length),
+        title,
+        displayTitle: row.displayTitle ?? title.split("/").pop() ?? title,
         lastModified: row.lastModified,
         score: row.score,
         titleHighlights: row.titleHighlights?.includes(MARK_OPEN)
@@ -486,5 +525,25 @@ export class Fts5Indexer implements Indexer {
   #stripExt(filename: string): string {
     const idx = filename.lastIndexOf(MARKDOWN_EXT);
     return idx > 0 ? filename.slice(0, idx) : filename;
+  }
+
+  #basename(filename: string): string {
+    const base = filename.split("/").pop() ?? filename;
+    const idx = base.lastIndexOf(MARKDOWN_EXT);
+    return idx > 0 ? base.slice(0, idx) : base;
+  }
+
+  /** Display titles for a batch of filenames (sidebar tree labels). */
+  displayTitlesFor(filenames: string[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    if (filenames.length === 0) return out;
+    const marks = filenames.map(() => "?").join(",");
+    const rows = this.#db
+      .prepare(
+        `SELECT filename, display_title FROM notes_meta WHERE filename IN (${marks})`,
+      )
+      .all(...filenames) as { filename: string; display_title: string }[];
+    for (const r of rows) out[r.filename] = r.display_title;
+    return out;
   }
 }

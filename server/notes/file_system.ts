@@ -19,6 +19,7 @@ import {
   resolveInRoot,
   resolveReadableInRoot,
 } from "@server/helpers.ts";
+import { resolveTitleInfo } from "@server/search/titles.ts";
 import { state } from "@server/state.ts";
 import { logger } from "@server/logger.ts";
 import { walk } from "@std/fs/walk";
@@ -393,9 +394,14 @@ export class FileSystemNotes {
   }
 
   #noteFromFile(title: string, filepath: string): Note {
+    const content = this.#readFile(filepath);
     return {
       title,
-      content: this.#readFile(filepath),
+      content,
+      displayTitle: resolveTitleInfo(
+        path.basename(title),
+        content ?? "",
+      ).displayTitle,
       lastModified: (Deno.statSync(filepath).mtime?.getTime() ?? 0) / 1000,
       movedFiles: [],
     };

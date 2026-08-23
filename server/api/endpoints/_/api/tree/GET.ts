@@ -6,10 +6,22 @@ import { HttpError } from "@server/http_error.ts";
 import type { RequestCtx } from "@server/router.ts";
 import { state } from "@server/state.ts";
 
+/** Tree notes carry displayTitle for the sidebar label; `title` stays
+ * the path (identity). */
 export default function (ctx: RequestCtx) {
   const dirPath = ctx.query.get("path") ?? "";
   try {
-    return state.notes.listLevel(dirPath);
+    const level = state.notes.listLevel(dirPath);
+    const meta = state.indexer?.displayTitlesFor(
+      level.notes.map((t) => t + ".md"),
+    ) ?? {};
+    return {
+      folders: level.folders,
+      notes: level.notes.map((t) => ({
+        title: t,
+        displayTitle: meta[t + ".md"] ?? t.split("/").pop(),
+      })),
+    };
   } catch (e) {
     if (e instanceof InvalidTitleError) throw new HttpError(400, e.message);
     if (e instanceof NoteNotFoundError) {
