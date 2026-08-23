@@ -1,3 +1,3 @@
 #!/bin/sh
 
-curl -f http://localhost:${GLOBNOTES_PORT}${GLOBNOTES_PATH_PREFIX}/_/api/health || exit 1
+wget -q -O /dev/null "http://localhost:${GLOBNOTES_PORT:-8080}${GLOBNOTES_PATH_PREFIX}/_/api/health" || exit 1

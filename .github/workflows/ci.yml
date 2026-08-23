@@ -10,9 +10,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Run tests
-        run: uv run pytest
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: "Install dependencies"
+        run: deno install
+      - name: "Server: lint"
+        run: deno lint server/ tests/
+      - name: "Server: type check"
+        run: deno check server/main.ts tests/**/*.ts
+      - name: "Server: tests"
+        run: >-
+          deno test --unstable-worker-options
+          --allow-read --allow-write --allow-env --allow-run --allow-net
+          tests/
+      - name: "Client: unit tests"
+        run: npx vitest run
+      - name: "Client: build"
+        run: npm run build
 
   docker-build:
     runs-on: ubuntu-latest

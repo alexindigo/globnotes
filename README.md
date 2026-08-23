@@ -94,6 +94,9 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 | `PUID` / `PGID` | `1000` / `1000` | User the app runs as (container). Set to your host user's ids (`id -u` / `id -g`) so note edits can write. **globnotes never `chown`s your vault** — it only creates/owns the `.globnotes` index dir. |
 | `GLOBNOTES_INDEX_BATCH_SIZE` | `200` | Notes indexed per commit batch during the initial background sync. Lower it on very constrained hosts. |
 | `GLOBNOTES_INDEX_BATCH_DELAY` | `0.1` | Seconds to sleep between index batches (CPU throttle). `0` disables. |
+| `GLOBNOTES_SCAN_CACHE_TTL` | `15` | Seconds the vault file listing is cached (large vaults: raise it). |
+| `GLOBNOTES_AUTO_ENABLE_PLUGINS` | `true` | Default for new plugins in the settings UI (per-browser switches override). |
+| `GLOBNOTES_RENDER_WORKERS` | `2` | Sandboxed Deno Workers per plugin for rendering (heartbeats + auto-respawn). |
 | `GLOBNOTES_AUTH_TYPE` | *(unset → first-run wizard)* | `none`, `read_only`, `password` or `totp`. Env always wins over the wizard's stored choice. |
 | `GLOBNOTES_USERNAME` / `GLOBNOTES_PASSWORD` | — | Login credentials (for `password`/`totp`). If unset, taken from the wizard's stored config. |
 | `GLOBNOTES_SECRET_KEY` | — | JWT signing key. If unset, taken from the wizard's stored config. |
@@ -130,16 +133,22 @@ curl -H "Authorization: Bearer $TOKEN" \
 - Your `/data` works as-is: flat notes keep their titles, and the index is rebuilt automatically (`.globnotes` replaces `.flatnotes`; both are hidden and safe to delete).
 - The special `attachments/` directory is gone as a concept — existing `attachments/x.jpg` links keep working (it's now just a directory, served like any other). New uploads land beside the note being edited.
 
+## Plugins
+
+Rendering is a markdown-it pipeline extended by **plugins** — each running in its own permission-narrowed Deno Worker (no network/env/write unless the manifest asks). The built-ins (`globnotes-autolinks`, `-callout`, `-comments`, `-embeds`, `-mark`, `-mermaid`) produce the Obsidian-flavored rendering out of the box; drop your own into `<vault>/.globnotes/plugins/<id>/` and they join the pipeline. Per-plugin switches and the auto-enable default live in the menu → **Plugins** dialog. See [docs/plugins.md](docs/plugins.md) for the authoring guide.
+
 ## Deferred / future work
 
-See [FutureDevelopment.md](FutureDevelopment.md) — note transclusion, unresolved-link styling, backlinks/graph, editor-side Obsidian features, and more.
+See [FutureDevelopment.md](FutureDevelopment.md) — note transclusion, unresolved-link styling, backlinks/graph, compat hats, and more.
 
 ## Development
 
 ```bash
-# Python backend & tests
-.venv/bin/python -m pip install -r requirements-dev.txt  # includes pytest, fonttools
-.venv/bin/python -m pytest tests/ -q
+# Server (Deno) — tests, lint, type check
+deno install
+deno task test    # 108 integration + unit tests
+deno task lint
+deno task check
 
 # Client build & tests
 npm ci

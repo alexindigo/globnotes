@@ -14,10 +14,11 @@ depth cap. Until then, note embeds render as plain links.
 
 ### Unresolved wiki-link styling
 
-Obsidian dims links to notes that don't exist yet. Deferred: the autolinks
-API can't attach CSS classes to generated links; wiki-links need to move
-from `extendedAutolinks` to a custom text-node renderer (which can also
-unify them with embed handling).
+Obsidian dims links to notes that don't exist yet. The renderer move
+happened (the `globnotes-autolinks` server plugin owns wiki-links now);
+what remains is emitting a distinguishing class on unresolved links — the
+plugin knows (it resolves against `ctx.listTitles()`), it just needs to
+add `class="unresolved"` and the client needs the style.
 
 ### Block references (`^id`) and block transclusion
 
@@ -29,20 +30,16 @@ Needs a link index built from resolved wiki-links.
 
 ### Editor-side Obsidian features
 
-Wiki-link autocomplete, live preview of Obsidian syntax in the editor. The
-editor is stock ToastUI for now; serious editing is expected to happen in
-Obsidian.
-
-### Inline-code awareness in preprocessing
-
-The fence-aware preprocessing (embeds, comments) also transforms inside
-inline code spans. Rare in practice; fix by tracking inline code spans per
-line.
+Wiki-link autocomplete, live preview of Obsidian syntax in the editor.
+ToastUI is gone (CodeMirror 6 source + Milkdown WYSIWYG); the path is
+editor halves per plugin — `$remark` syntax + `$node` atom views mounting
+the same HTML the server renderer produces.
 
 ### Mermaid theme awareness
 
 Mermaid renders with its default theme; it should follow the app theme
-(light/dark).
+(light/dark). Now owned by the `globnotes-mermaid` plugin (its editor/
+client half can pass the theme at render time).
 
 ### CSRF Origin allowlist
 
@@ -53,6 +50,14 @@ trusted networks.
 ### TOTP via setup wizard
 
 The first-run wizard offers password or none; TOTP stays env-configured.
+
+### Compat hats (`obsidian-hat-*`)
+
+Ordinary plugins that abstain unless their ecosystem marker is present —
+e.g. an Obsidian hat checks `<vault>/.obsidian/community-plugins.json` via
+`ctx.readFile` and only then renders Obsidian-specific syntax. Hats are how
+globnotes supports ecosystem-flavored content without the core ever hearing
+the word "obsidian."
 
 ### UI revamp (Obsidian-class UI)
 

@@ -74,24 +74,25 @@ design:
 
 ### Backend
 
-- **[FastAPI](https://fastapi.tiangolo.com/)** — the API framework
-- **[Whoosh](https://whoosh.readthedocs.io/)** — full-text search indexing
-- **[uvicorn](https://www.uvicorn.org/)** — ASGI server
-- **[python-jose](https://github.com/mpdavis/python-jose)** — JWT tokens
-- **[pyotp](https://github.com/pyauth/pyotp)** & **[qrcode](https://github.com/lincolnloop/python-qrcode)** — TOTP authentication
-- **[python-multipart](https://github.com/Kludex/python-multipart)** — file uploads
-- **[aiofiles](https://github.com/Tinche/aiofiles)** — async file handling
-- **[uv](https://github.com/astral-sh/uv)** — dependency management
+- **[Deno](https://deno.com/)** — the runtime (server, tests, and the
+  permission-narrowed plugin Workers)
+- **[SQLite FTS5](https://sqlite.org/fts5.html)** via Node's built-in
+  `node:sqlite` — full-text search indexing (porter stemming, BM25)
+- **[markdown-it](https://github.com/markdown-it/markdown-it)** — the
+  markdown parser behind the render pipeline and plugin selectors
+- **[Prism](https://prismjs.com/)** — code syntax highlighting
+- **[jose](https://github.com/panva/jose)** — JWT tokens
+- **[otplib](https://github.com/otplib/otplib)** & **[qrcode](https://github.com/soldair/node-qrcode)** — TOTP authentication
 
 ### Frontend
 
 - **[Vue.js](https://vuejs.org/)** with **[Vue Router](https://router.vuejs.org/)** and **[Pinia](https://pinia.vuejs.org/)** — the application framework
-- **[Toast UI Editor](https://ui.toast.com/tui-editor)** — markdown editing and rendering
+- **[CodeMirror 6](https://codemirror.net/)** — source-mode markdown editing
+- **[Milkdown](https://milkdown.dev/)** — WYSIWYG markdown editing
 - **[PrimeVue](https://primevue.org/)** — UI primitives
 - **[Tailwind CSS](https://tailwindcss.com/)** — styling
 - **[Mermaid](https://mermaid.js.org/)** — diagram rendering
 - **[KaTeX](https://katex.org/)** — math rendering
-- **[Prism](https://prismjs.com/)** — code syntax highlighting
 - **[Material Design Icons](https://pictogrammers.com/)** — icon set
 - **[Mousetrap](https://craig.is/killing/mice)** — keyboard shortcuts
 - **[axios](https://axios-http.com/)** — HTTP client

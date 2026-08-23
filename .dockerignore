@@ -3,17 +3,17 @@
 
 # Include the following
 !.htmlnanorc
-!.python-version
 !client/**
+!deno.json
+!deno.lock
 !entrypoint.sh
 !healthcheck.sh
 !LICENSE
 !THIRD-PARTY-NOTICES.md
 !package-lock.json
 !package.json
+!plugins/**
 !postcss.config.js
-!pyproject.toml
 !server/**
 !tailwind.config.js
-!uv.lock
 !vite.config.js

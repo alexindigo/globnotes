@@ -1,6 +1,6 @@
 #!/bin/sh
 
-[ "$EXEC_TOOL" ] || EXEC_TOOL=gosu
+[ "$EXEC_TOOL" ] || EXEC_TOOL=su-exec
 [ "$GLOBNOTES_HOST" ] || GLOBNOTES_HOST=0.0.0.0
 [ "$GLOBNOTES_PORT" ] || GLOBNOTES_PORT=8080
 [ "$GLOBNOTES_PATH" ] || GLOBNOTES_PATH=/data
@@ -18,14 +18,14 @@ where a note's title is its path.
 ──────────────────────────────────────
 "
 
-globnotes_command="python -m \
-                  uvicorn \
-                  main:app \
-                  --app-dir server \
-                  --host ${GLOBNOTES_HOST} \
-                  --port ${GLOBNOTES_PORT} \
-                  --proxy-headers \
-                  --forwarded-allow-ips '*'"
+globnotes_command="deno run \
+                  --unstable-worker-options \
+                  --cached-only \
+                  --allow-net \
+                  --allow-read \
+                  --allow-write \
+                  --allow-env \
+                  server/main.ts"
 
 if [ `id -u` -eq 0 ] && [ `id -g` -eq 0 ]; then
     echo Preparing the index/config directory...

@@ -1,4 +1,7 @@
 ARG BUILD_DIR=/build
+# Declared so legacy `docker build` accepts --build-arg BUILDPLATFORM=…;
+# BuildKit still supplies its builtin value in CI.
+ARG BUILDPLATFORM
 
 # Build Container
 FROM --platform=$BUILDPLATFORM node:24-alpine AS build
@@ -22,38 +25,38 @@ COPY client ./client
 RUN npm run build
 
 # Runtime Container
-FROM python:3.13-slim-trixie
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+FROM denoland/deno:alpine
 
 ARG BUILD_DIR
 
 ENV PUID=1000
 ENV PGID=1000
-ENV EXEC_TOOL=gosu
+ENV EXEC_TOOL=su-exec
 ENV GLOBNOTES_HOST=0.0.0.0
 ENV GLOBNOTES_PORT=8080
 
 ENV APP_PATH=/app
 ENV GLOBNOTES_PATH=/data
+ENV DENO_DIR=/deno-dir
 
 RUN mkdir -p ${APP_PATH}
 RUN mkdir -p ${GLOBNOTES_PATH}
 
-RUN apt update && apt install -y \
-    curl \
-    gosu \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk update && apk add --no-cache \
+    su-exec \
+    && rm -rf /var/cache/apk/*
 
 WORKDIR ${APP_PATH}
 
-COPY LICENSE THIRD-PARTY-NOTICES.md pyproject.toml .python-version uv.lock ./
-
-ENV UV_NO_MANAGED_PYTHON=1
-ENV UV_PROJECT_ENVIRONMENT=/usr/local
-RUN uv sync --locked --compile-bytecode --no-dev
-
+COPY LICENSE THIRD-PARTY-NOTICES.md deno.json deno.lock package.json ./
 COPY server ./server
-COPY --from=build --chmod=777 ${BUILD_DIR}/client/dist ./client/dist
+COPY plugins ./plugins
+
+# Vendor every runtime dependency (npm + jsr) into the image so the
+# container never fetches at runtime (deno runs with --cached-only).
+RUN deno install && deno cache server/main.ts && chmod -R a+rX ${APP_PATH} ${DENO_DIR}
+
+COPY --from=build ${BUILD_DIR}/client/dist ./client/dist
 
 COPY entrypoint.sh healthcheck.sh /
 RUN chmod +x /entrypoint.sh /healthcheck.sh
