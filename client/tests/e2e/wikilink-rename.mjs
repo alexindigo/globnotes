@@ -55,15 +55,23 @@ await page.fill("input", "link-target-renamed");
 await page.clickText("Save");
 await page.poll(`location.pathname === "/probe/link-target-renamed"`);
 
+// The client-driven link rewrite resaves referencing notes AFTER the
+// rename response — poll until it lands (or time out).
+let content = "";
+for (let i = 0; i < 40; i++) {
+  content = await page.evaluate(`(async () => {
+    const r = await fetch("/_/api/notes/probe/link-source");
+    return (await r.json()).content;
+  })()`);
+  if (content.includes("[[probe/link-target-renamed]]")) break;
+  await page.waitForTimeout(250);
+}
+
 await page.goto(`${BASE}/probe/link-source`);
 await page.poll(`document.querySelector(".toastui-editor-contents") !== null`);
 const link = await page.evaluate(`(() => {
   const a = [...document.querySelectorAll(".toastui-editor-contents a")].find((x) => x.textContent.includes("link"));
   return a ? { text: a.textContent, href: a.getAttribute("href") } : null;
-})()`);
-const content = await page.evaluate(`(async () => {
-  const r = await fetch("/_/api/notes/probe/link-source");
-  return (await r.json()).content;
 })()`);
 console.log("source link:", JSON.stringify(link));
 console.log("source content:", JSON.stringify(content));
