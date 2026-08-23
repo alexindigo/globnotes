@@ -12,6 +12,7 @@ import type { GlobalConfig } from "./config.ts";
 import type { FileServing } from "./files/file_serving.ts";
 import type { FileSystemNotes } from "./notes/file_system.ts";
 import type { SearchResult } from "./notes/models.ts";
+import type { PluginManager } from "./plugins/manager.ts";
 
 /** Implemented by the FTS5 commit; unset until then (storage still works,
  * index hooks are simply skipped). */
@@ -43,6 +44,8 @@ export interface ServerState {
   notes: FileSystemNotes;
   indexer: Indexer | null;
   files: FileServing;
+  /** Plugin manager; null only in unit tests that never start one. */
+  plugins: PluginManager | null;
 }
 
 // Assigned by initState() before the server starts listening; endpoints only
@@ -55,10 +58,12 @@ export function initState(
   notes: FileSystemNotes,
   indexer: Indexer | null,
   files: FileServing,
+  plugins: PluginManager | null = null,
 ): void {
   state.config = config;
   state.auth = auth;
   state.notes = notes;
   state.indexer = indexer;
   state.files = files;
+  state.plugins = plugins;
 }

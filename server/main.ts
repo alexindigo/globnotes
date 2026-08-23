@@ -13,6 +13,7 @@ import { requireAuth } from "./auth/middleware.ts";
 import { catchAll, serveIndex } from "./catchall.ts";
 import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
+import { PluginManager } from "./plugins/manager.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { logger } from "./logger.ts";
@@ -24,12 +25,14 @@ const globalConfig = new GlobalConfig();
 const notes = new FileSystemNotes(globalConfig.notesPath);
 const indexer = new Fts5Indexer(globalConfig.notesPath);
 const fileServing = new FileServing(globalConfig.notesPath);
+const plugins = new PluginManager(globalConfig.notesPath);
 const auth = globalConfig.authType === AuthType.PASSWORD ||
     globalConfig.authType === AuthType.TOTP
   ? new LocalAuth(globalConfig)
   : null;
-initState(globalConfig, auth, notes, indexer, fileServing);
+initState(globalConfig, auth, notes, indexer, fileServing, plugins);
 indexer.startBackgroundSync();
+await plugins.start();
 
 // Publish the path prefix into the built client before serving it
 // (Python: rewrite_index_html at import). Only when the client build
