@@ -44,6 +44,29 @@ export class PluginManager {
       Number(getEnv("GLOBNOTES_RENDER_WORKERS", { castInt: true, default: 2 }));
   }
 
+  /** Manifest-only listing (no worker spawn) for the settings UI. */
+  listPlugins(): { id: string; name: string; version: string }[] {
+    const manifests = new Map<string, ReturnType<typeof readManifest>>();
+    for (
+      const root of [
+        INTERNAL_PLUGINS_DIR,
+        path.join(this.vaultPath, ".globnotes", "plugins"),
+      ]
+    ) {
+      for (const dir of discoverPluginDirs(root)) {
+        try {
+          const manifest = readManifest(dir);
+          manifests.set(manifest.id, manifest);
+        } catch {
+          // Broken plugin: skipped from the listing the same way it is
+          // skipped from spawning.
+        }
+      }
+    }
+    return [...this.#applyPluginsJson([...manifests.values()])]
+      .map((m) => ({ id: m.id, name: m.name, version: m.version }));
+  }
+
   /** Idempotent lazy start — the render pipeline calls this before the
    * first dispatch. */
   ensureStarted(): Promise<void> {

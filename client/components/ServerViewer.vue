@@ -12,7 +12,8 @@ import renderMathInElement from "katex/contrib/auto-render/auto-render.js";
 import mermaid from "mermaid";
 import { onMounted, ref, watch } from "vue";
 
-import { getRenderedHtml } from "../api.js";
+import { getPlugins, getRenderedHtml } from "../api.js";
+import { disabledPluginIds } from "../pluginSettings.js";
 
 const props = defineProps({
   title: String,
@@ -62,7 +63,12 @@ async function renderNote() {
     return;
   }
   try {
-    viewerElement.value.innerHTML = await getRenderedHtml(props.title);
+    const plugins = await getPlugins();
+    const disabled = disabledPluginIds(plugins);
+    viewerElement.value.innerHTML = await getRenderedHtml(
+      props.title,
+      disabled,
+    );
   } catch (error) {
     console.error("Note render failed", error);
     viewerElement.value.innerHTML =

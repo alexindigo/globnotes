@@ -24,6 +24,7 @@ async function loadConfig(
       quickAccessTerm: c.quickAccessTerm,
       quickAccessSort: c.quickAccessSort,
       quickAccessLimit: c.quickAccessLimit,
+      autoEnablePlugins: c.autoEnablePlugins,
     }));
   `;
   const cmd = new Deno.Command(Deno.execPath(), {
@@ -61,6 +62,15 @@ Deno.test("config: defaults", async () => {
   assertEquals(c.quickAccessTerm, "*");
   assertEquals(c.quickAccessSort, "lastModified");
   assertEquals(c.quickAccessLimit, 4);
+  assertEquals(c.autoEnablePlugins, true);
+});
+
+Deno.test("config: auto-enable plugins env off", async () => {
+  const c = await loadConfig({
+    GLOBNOTES_PATH: "/tmp/vault",
+    GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
+  });
+  assertEquals(c.autoEnablePlugins, false);
 });
 
 Deno.test("config: env auth type wins", async () => {

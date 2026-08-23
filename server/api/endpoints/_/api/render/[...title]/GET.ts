@@ -21,7 +21,12 @@ export default async function (ctx: RequestCtx): Promise<Response> {
     }
     throw e;
   }
-  const html = await renderMarkdown(content);
+  const html = await renderMarkdown(content, {
+    disabled: (ctx.query.get("disabled") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  });
   return new Response(html, {
     headers: { "content-type": "text/html; charset=utf-8" },
   });

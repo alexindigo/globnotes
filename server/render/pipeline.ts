@@ -50,13 +50,16 @@ interface LoadedPlugin {
   selectors: SelectorSpec[];
 }
 
-/** Fetch selectors once per render; plugins without selectors are inert. */
-async function loadPlugins(): Promise<LoadedPlugin[]> {
+/** Fetch selectors once per render; plugins without selectors are inert.
+ * Ids in `disabled` are skipped (per-request, from the client's
+ * localStorage switches). */
+async function loadPlugins(disabled?: Set<string>): Promise<LoadedPlugin[]> {
   const manager = state.plugins;
   if (!manager) return [];
   await manager.ensureStarted();
   const out: LoadedPlugin[] = [];
   for (const host of manager.hosts.values()) {
+    if (disabled?.has(host.manifest.id)) continue;
     try {
       const specs = (await host.call("getSelectors", [])) as
         | SelectorSpec[]
@@ -291,9 +294,15 @@ async function renderBlock(
   return html;
 }
 
-/** Render a markdown source string to HTML through the plugin pipeline. */
-export async function renderMarkdown(source: string): Promise<string> {
-  const plugins = await loadPlugins();
+/** Render a markdown source string to HTML through the plugin pipeline.
+ * `disabled` plugin ids are skipped for this call only. */
+export async function renderMarkdown(
+  source: string,
+  opts: { disabled?: string[] } = {},
+): Promise<string> {
+  const plugins = await loadPlugins(
+    opts.disabled?.length ? new Set(opts.disabled) : undefined,
+  );
   const tokens = md.parse(source, {});
   return await renderBlock(tokens, plugins);
 }

@@ -27,6 +27,7 @@
     />
     <PrimeMenu ref="menu" :model="menuItems" :popup="true" />
     <ThemePicker v-model="themePickerVisible" />
+    <PluginSettings v-model="pluginSettingsVisible" />
   </div>
 </template>
 
@@ -44,6 +45,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
+import PluginSettings from "../components/PluginSettings.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
 import ThemePicker from "../components/ThemePicker.vue";
 import { authTypes, params, searchSortOptions } from "../constants.js";
@@ -57,6 +59,7 @@ const menu = ref();
 const route = useRoute();
 const router = useRouter();
 const themePickerVisible = ref(false);
+const pluginSettingsVisible = ref(false);
 
 const newNoteTarget = computed(() => {
   if (route.name === "search" && route.query[params.folder]) {
@@ -99,6 +102,13 @@ const menuItems = computed(() => [
     icon: mdilMonitor,
     command: () => {
       themePickerVisible.value = true;
+    },
+  },
+  {
+    label: "Plugins",
+    icon: mdilMonitor,
+    command: () => {
+      pluginSettingsVisible.value = true;
     },
   },
   {

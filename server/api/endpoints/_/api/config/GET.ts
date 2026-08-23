@@ -17,5 +17,6 @@ export default function (): Record<string, unknown> {
     quickAccessTerm: c.quickAccessTerm,
     quickAccessSort: c.quickAccessSort,
     quickAccessLimit: c.quickAccessLimit,
+    autoEnablePlugins: c.autoEnablePlugins,
   };
 }

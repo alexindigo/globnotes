@@ -35,6 +35,7 @@ export class GlobalConfig {
   readonly quickAccessTerm: string;
   readonly quickAccessSort: string;
   readonly quickAccessLimit: number;
+  readonly autoEnablePlugins: boolean;
 
   constructor() {
     logger.debug("Loading global config...");
@@ -47,6 +48,11 @@ export class GlobalConfig {
     this.quickAccessTerm = this.#quickAccessTerm();
     this.quickAccessSort = this.#quickAccessSort();
     this.quickAccessLimit = this.#quickAccessLimit();
+    this.autoEnablePlugins = getEnv("GLOBNOTES_AUTO_ENABLE_PLUGINS", {
+      castBool: true,
+      default: true,
+    }) ===
+      "true";
     this.pathPrefix = this.#loadPathPrefix();
   }
 

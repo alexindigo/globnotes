@@ -145,6 +145,30 @@ Deno.test("render: default plugins", async (t) => {
           '<a href="/_/search?term=%23docs&amp;sortBy=title">#docs</a>',
         );
       });
+
+      await t.step("per-request disabled skips a plugin", async () => {
+        const html = await renderMarkdown("a ==b== c", {
+          disabled: ["globnotes-mark"],
+        });
+        assert(!html.includes("<mark>"));
+        assertStringIncludes(html, "a ==b== c");
+      });
+
+      await t.step("listPlugins returns the internal plugins", () => {
+        const list = manager.listPlugins().map((p) => p.id);
+        for (
+          const id of [
+            "globnotes-autolinks",
+            "globnotes-callout",
+            "globnotes-comments",
+            "globnotes-embeds",
+            "globnotes-mark",
+            "globnotes-mermaid",
+          ]
+        ) {
+          assert(list.includes(id), `missing ${id}`);
+        }
+      });
     } finally {
       manager.stop();
     }
@@ -233,6 +257,21 @@ Deno.test("render: endpoint end-to-end", async () => {
     const missing = await fetch(`${server.baseUrl}/_/api/render/nope`);
     assertEquals(missing.status, 404);
     await missing.body?.cancel();
+
+    // Settings endpoints: plugin list + disabled query param.
+    const plugins = await fetch(`${server.baseUrl}/_/api/plugins`);
+    assertEquals(plugins.status, 200);
+    const pluginIds = (await plugins.json()).map((p: { id: string }) => p.id);
+    assert(pluginIds.includes("globnotes-mark"));
+
+    const noMark = await fetch(
+      `${server.baseUrl}/_/api/render/page?disabled=globnotes-mark`,
+    );
+    assertEquals(noMark.status, 200);
+    assert(!(await noMark.text()).includes("<mark>"));
+
+    const config = await fetch(`${server.baseUrl}/_/api/config`);
+    assertEquals((await config.json()).autoEnablePlugins, true);
   } finally {
     await server?.close();
     await Deno.remove(vault, { recursive: true });
