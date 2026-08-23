@@ -106,7 +106,12 @@ export function resolveTitleInfo(
 ): TitleInfo {
   const fm = parseFrontMatter(content);
   const h1 = firstH1(content);
-  const displayTitle = fm.title && fm.title !== "" ? fm.title : h1 ?? basename;
+  // Obsidian order: explicit title → aliases[0] → first H1 → basename.
+  const displayTitle = fm.title && fm.title !== ""
+    ? fm.title
+    : fm.aliases && fm.aliases.length > 0
+    ? fm.aliases[0]
+    : h1 ?? basename;
   return {
     displayTitle,
     h1,

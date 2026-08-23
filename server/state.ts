@@ -30,6 +30,8 @@ export interface Indexer {
   getTags(): string[];
   /** Display titles for a batch of filenames (title + ".md" keys). */
   displayTitlesFor(filenames: string[]): Record<string, string>;
+  /** Resolve a front-matter alias to a note title, or null. */
+  resolveAlias(target: string): string | null;
   readonly indexStatus: {
     syncing: boolean;
     initial: boolean;

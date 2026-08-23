@@ -32,6 +32,18 @@ export function pluginRpc(
       case "pathPrefix": {
         return Promise.resolve(state.config.pathPrefix);
       }
+      case "resolveTitle": {
+        // Obsidian resolution order: exact title → basename match → alias.
+        const target = (args[0] as string).trim();
+        const titles = state.notes.getTitles();
+        if (titles.includes(target)) return Promise.resolve(target);
+        const lower = target.toLowerCase();
+        const matches = titles
+          .filter((t) => t.split("/").pop()!.toLowerCase() === lower)
+          .sort();
+        if (matches.length > 0) return Promise.resolve(matches[0]);
+        return Promise.resolve(state.indexer?.resolveAlias(target) ?? target);
+      }
       default:
         return Promise.reject(new Error(`unknown rpc method '${method}'`));
     }

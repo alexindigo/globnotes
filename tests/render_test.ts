@@ -138,6 +138,16 @@ Deno.test("render: default plugins", async (t) => {
         assertStringIncludes(html, '<a href="/links/wiki-links">');
       });
 
+      await t.step("wikilink alias resolution", async () => {
+        const { state } = await import("../server/state.ts");
+        state.notes.create({
+          title: "real/note",
+          content: "---\naliases: [Friendly Alias]\n---\nbody",
+        });
+        const html = await renderMarkdown("see [[Friendly Alias]]");
+        assertStringIncludes(html, '<a href="/real/note">');
+      });
+
       await t.step("tag links go to search", async () => {
         const html = await renderMarkdown("filed under #docs");
         assertStringIncludes(

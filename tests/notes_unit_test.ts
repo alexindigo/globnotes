@@ -467,3 +467,31 @@ Deno.test("h1 sync: front-matter title opts out of edit renames", () =>
     });
     assertEquals(note.title, "fixed");
   }));
+
+Deno.test("aliases: resolveAlias + displayTitle prefers aliases[0]", () =>
+  withState(async ({ notes, indexer }) => {
+    notes.create({
+      title: "deep/real-name",
+      content: "---\naliases: [Real Name, RN]\n---\nbody",
+    });
+    notes.create({ title: "plain", content: "# Heading\n" });
+    indexer.startBackgroundSync();
+    await awaitIndexReady(indexer);
+    assertEquals(indexer.resolveAlias("Real Name"), "deep/real-name");
+    assertEquals(indexer.resolveAlias("rn"), "deep/real-name");
+    assertEquals(indexer.resolveAlias("nope"), null);
+    assertEquals(notes.get("deep/real-name").displayTitle, "Real Name");
+    assertEquals(notes.get("plain").displayTitle, "Heading");
+  }));
+
+Deno.test("aliases: exact-alias search includes the note", () =>
+  withState(async ({ notes, indexer }) => {
+    notes.create({
+      title: "deep/real-name",
+      content: "---\naliases:\n  - Totally Different\n---\nbody",
+    });
+    indexer.startBackgroundSync();
+    await awaitIndexReady(indexer);
+    const hits = indexer.search("Totally Different");
+    assert(hits.some((h) => h.title === "deep/real-name"));
+  }));

@@ -31,6 +31,7 @@ export interface PluginCtx {
   listTitles(): Promise<unknown>;
   readFile(path: string): Promise<unknown>;
   pathPrefix(): Promise<string>;
+  resolveTitle(target: string): Promise<string>;
 }
 
 let plugin: PluginModule | null = null;
@@ -54,6 +55,7 @@ const ctx: PluginCtx = {
   listTitles: () => rpc("listTitles", []),
   readFile: (path) => rpc("readFile", [path]),
   pathPrefix: () => rpc("pathPrefix", []) as Promise<string>,
+  resolveTitle: (target) => rpc("resolveTitle", [target]) as Promise<string>,
 };
 
 // Heartbeat: the host treats silence as a hang.

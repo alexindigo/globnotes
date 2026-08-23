@@ -376,6 +376,30 @@ export class Fts5Indexer implements Indexer {
       nested,
       folder,
     );
+
+    // Alias hits: exact (case-insensitive) alias match on the raw term,
+    // merged in when not already present (Obsidian quick-switcher parity).
+    if (matchQuery !== null) {
+      const aliasTitle = this.resolveAlias(term);
+      if (
+        aliasTitle !== null &&
+        !results.some((r) => this.#stripExt(r.filename) === aliasTitle)
+      ) {
+        const aliasRows = this.#runSearch(
+          null,
+          sort,
+          order,
+          undefined,
+          true,
+          undefined,
+        )
+          .filter((r) => this.#stripExt(r.filename) === aliasTitle);
+        if (aliasRows.length > 0) {
+          aliasRows[0].score = null;
+          results = [...results, ...aliasRows];
+        }
+      }
+    }
     if (limit !== undefined) {
       results = results.slice(0, limit);
     }
@@ -545,5 +569,21 @@ export class Fts5Indexer implements Indexer {
       .all(...filenames) as { filename: string; display_title: string }[];
     for (const r of rows) out[r.filename] = r.display_title;
     return out;
+  }
+
+  /** Resolve an alias to a note title (front-matter aliases, exact
+   * case-insensitive match). Returns null when nothing claims it. */
+  resolveAlias(target: string): string | null {
+    const rows = this.#db
+      .prepare(
+        `SELECT filename FROM notes_meta
+         WHERE EXISTS (
+           SELECT 1 FROM json_each(notes_meta.aliases)
+           WHERE lower(json_each.value) = lower(?)
+         )`,
+      )
+      .all(target.trim()) as { filename: string }[];
+    rows.sort((a, b) => a.filename.localeCompare(b.filename));
+    return rows.length > 0 ? this.#stripExt(rows[0].filename) : null;
   }
 }

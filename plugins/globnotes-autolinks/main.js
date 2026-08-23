@@ -3,8 +3,9 @@
 // Autolinks — parity with the old client's ToastUI extendedAutolinks:
 //   [[target]], [[target|alias]], [[target#heading]] → note links
 //   #tag → search link
-// Title resolution is Obsidian-style: exact path first, then vault-wide
-// basename match, unresolved used as written.
+// Title resolution is Obsidian-style and server-side (ctx.resolveTitle):
+// exact path → vault-wide basename → front-matter alias; unresolved used
+// as written.
 
 function slugifyHeading(text) {
   return text
@@ -18,50 +19,44 @@ function notePath(title) {
   return "/" + title.split("/").map(encodeURIComponent).join("/");
 }
 
-function resolveTitle(target, titles) {
-  const trimmed = target.trim();
-  if (titles.includes(trimmed)) return trimmed;
-  const lower = trimmed.toLowerCase();
-  const matches = titles.filter(
-    (t) => t.split("/").pop().toLowerCase() === lower,
-  );
-  return matches.length > 0 ? matches.sort()[0] : trimmed;
-}
-
 export function getSelectors() {
   return [{ node: "text", params: { hasAny: ["[[", "#"] } }];
 }
+
+const WIKILINK_RE = /\[\[\s*(\S(?:[^\[\]]*?\S)?)\s*\]\]/g;
 
 export async function parseNode(node, ctx) {
   let out = node.content;
   let changed = false;
 
   if (out.includes("[[")) {
-    const [titles, prefix] = await Promise.all([
-      ctx.listTitles(),
-      ctx.pathPrefix(),
-    ]);
-    out = out.replace(
-      /\[\[\s*(\S(?:[^\[\]]*?\S)?)\s*\]\]/g,
-      (m, inner, offset, full) => {
-        // Skip embeds (![[...]]); the embeds plugin owns those.
-        if (offset > 0 && full[offset - 1] === "!") return m;
-        const pipeIndex = inner.indexOf("|");
-        const targetPart =
-          (pipeIndex === -1 ? inner : inner.slice(0, pipeIndex)).trim();
-        const alias =
-          pipeIndex === -1 ? null : inner.slice(pipeIndex + 1).trim();
-        const hashIndex = targetPart.indexOf("#");
-        const target =
-          hashIndex === -1 ? targetPart : targetPart.slice(0, hashIndex);
-        const anchor =
-          hashIndex === -1 ? null : targetPart.slice(hashIndex + 1);
-        let url = prefix + notePath(resolveTitle(target, titles));
-        if (anchor) url += "#" + slugifyHeading(anchor);
-        changed = true;
-        return `[${alias || targetPart}](${url})`;
-      },
+    const prefix = await ctx.pathPrefix();
+    // Collect matches first (replace callbacks can't await), resolve each
+    // target, then splice the replacements in.
+    const matches = [...out.matchAll(WIKILINK_RE)].filter(
+      (m) => !(m.index > 0 && out[m.index - 1] === "!"),
     );
+    const replacements = new Map();
+    for (const m of matches) {
+      const inner = m[1];
+      const pipeIndex = inner.indexOf("|");
+      const targetPart =
+        (pipeIndex === -1 ? inner : inner.slice(0, pipeIndex)).trim();
+      const alias =
+        pipeIndex === -1 ? null : inner.slice(pipeIndex + 1).trim();
+      const hashIndex = targetPart.indexOf("#");
+      const target =
+        hashIndex === -1 ? targetPart : targetPart.slice(0, hashIndex);
+      const anchor =
+        hashIndex === -1 ? null : targetPart.slice(hashIndex + 1);
+      let url = prefix + notePath(await ctx.resolveTitle(target));
+      if (anchor) url += "#" + slugifyHeading(anchor);
+      replacements.set(m[0], `[${alias || targetPart}](${url})`);
+    }
+    if (replacements.size > 0) {
+      out = out.replace(WIKILINK_RE, (m) => replacements.get(m) ?? m);
+      changed = true;
+    }
   }
 
   if (/(?:^|\s)#[a-zA-Z0-9_-]+(?=\s|$)/.test(out)) {
