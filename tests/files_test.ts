@@ -310,6 +310,19 @@ Deno.test("files: catch-all routing", async (t) => {
       },
     );
 
+    await t.step(".md suffix is a note page, not a file download", async () => {
+      await Deno.writeTextFile(path.join(server.vault, "page.md"), "# body");
+      const res = await fetch(`${server.baseUrl}/page.md`);
+      assertEquals(res.status, 200);
+      assertStringIncludes(await res.text(), "INDEX");
+    });
+
+    await t.step("missing note serves index (client 404s it)", async () => {
+      const res = await fetch(`${server.baseUrl}/no/such/note`);
+      assertEquals(res.status, 200);
+      assertStringIncludes(await res.text(), "INDEX");
+    });
+
     await t.step("non-GET on unmatched path → 405", async () => {
       const res = await fetch(`${server.baseUrl}/some/path`, {
         method: "PUT",

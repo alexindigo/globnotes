@@ -147,6 +147,24 @@ Deno.test("storage: note index and tree", async () => {
     const subtree = await api(server, "/_/api/tree?path=folder");
     const sub = await subtree.json();
     assertEquals(sub.notes[0], "folder/beta");
+
+    // Tree endpoint edge cases (ported from test_tree_endpoint.py):
+    // hidden dirs are skipped, missing folder is 404, traversal is 400.
+    await Deno.mkdir(`${server.vault}/.hidden`, { recursive: true });
+    await Deno.writeTextFile(`${server.vault}/.hidden/secret.md`, "s");
+    const treeAgain = await api(server, "/_/api/tree?path=");
+    const rootAgain = await treeAgain.json();
+    assert(
+      !rootAgain.folders.some((f: { name: string }) => f.name === ".hidden"),
+    );
+
+    const missing = await api(server, "/_/api/tree?path=nope/nada");
+    assertEquals(missing.status, 404);
+    await missing.body?.cancel();
+
+    const traversal = await api(server, "/_/api/tree?path=..%2F..");
+    assertEquals(traversal.status, 400);
+    await traversal.body?.cancel();
   } finally {
     await server.close();
     await Deno.remove(server.vault, { recursive: true });

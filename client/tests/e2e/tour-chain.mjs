@@ -1,7 +1,7 @@
 // Tour chain over CDP: walk the Next links through all 12 fixture notes.
 import { connect } from "./cdp.mjs";
 
-const BASE = process.env.BASE_URL || "http://localhost:8000";
+const BASE = process.env.BASE_URL || "http://localhost:8080";
 const PORT = Number(process.env.CDP_PORT || 9333);
 const CHAIN = [
   "readme",

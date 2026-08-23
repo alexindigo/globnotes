@@ -22,7 +22,7 @@ for t in $TESTS; do
   PORT=$((PORT + 1))
   docker rm -f cdp-browser-$PORT >/dev/null 2>&1 || true
   BROWSER=$(node client/tests/e2e/cdp.mjs launch $PORT 2>/dev/null)
-  R=$(CDP_PORT=$PORT BASE_URL=${BASE_URL:-http://localhost:8000} timeout 120 node client/tests/e2e/$t.mjs 2>&1)
+  R=$(CDP_PORT=$PORT BASE_URL=${BASE_URL:-http://localhost:8080} timeout 120 node client/tests/e2e/$t.mjs 2>&1)
   docker rm -f "$BROWSER" >/dev/null 2>&1 || true
   echo "$R" | tail -2
   if echo "$R" | rg -q 'COMPLETE|ALL PAGES OK|ALL THEMES OK|distinct body|FOLLOW THEME: OK|COPY BUTTON OK|back to markdown|WIKILINK RENAME OK|TWO-STEP RENAME OK|CLIENT-DRIVEN LINK UPDATE OK'; then
@@ -37,7 +37,7 @@ for OPT in move relink none; do
   PORT=$((PORT + 1))
   docker rm -f cdp-browser-$PORT >/dev/null 2>&1 || true
   BROWSER=$(node client/tests/e2e/cdp.mjs launch $PORT 2>/dev/null)
-  R=$(CDP_PORT=$PORT BASE_URL=${BASE_URL:-http://localhost:8000} timeout 120 node client/tests/e2e/rename-options.mjs $OPT 2>&1)
+  R=$(CDP_PORT=$PORT BASE_URL=${BASE_URL:-http://localhost:8080} timeout 120 node client/tests/e2e/rename-options.mjs $OPT 2>&1)
   docker rm -f "$BROWSER" >/dev/null 2>&1 || true
   echo "$R" | tail -1
   if echo "$R" | rg -q '"dialogVisible":true'; then

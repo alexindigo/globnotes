@@ -9,7 +9,7 @@ import {
 const OPTION = process.argv[2] || "move";
 const TARGET =
   OPTION === "move" ? "archive-move" : OPTION === "relink" ? "archive-relink" : "archive-none";
-const BASE = process.env.BASE_URL || "http://localhost:8000";
+const BASE = process.env.BASE_URL || "http://localhost:8080";
 const PORT = Number(process.env.CDP_PORT || 9333);
 
 resetMovingNoteFixture(TARGET);

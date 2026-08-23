@@ -89,7 +89,6 @@ watch(() => props.title, renderNote);
 </script>
 
 <style>
-@import "@toast-ui/editor/dist/toastui-editor-viewer.css";
 @import "katex/dist/katex.min.css";
 @import "./toastui/toastui-editor-overrides.scss";
 </style>

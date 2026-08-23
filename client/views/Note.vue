@@ -178,15 +178,50 @@
         :title="note.title"
         class="toast-viewer pb-4"
       />
-      <ToastEditor
-        v-if="editMode"
-        ref="toastEditor"
-        :initialValue="getInitialEditorValue()"
-        :initialEditType="loadDefaultEditorMode()"
-        :addImageBlobHook="addImageBlobHook"
-        @change="startContentChangedTimeout"
-        @keydown="keydownHandler"
-      />
+      <div v-if="editMode" class="flex h-full min-h-0 flex-col">
+        <div class="mb-2 flex gap-2 text-sm">
+          <button
+            type="button"
+            class="rounded px-2 py-1"
+            :class="
+              editorMode === 'markdown'
+                ? 'bg-theme-background-elevated text-theme-text'
+                : 'text-theme-text-muted hover:text-theme-text'
+            "
+            @click="setEditorMode('markdown')"
+          >
+            Source
+          </button>
+          <button
+            type="button"
+            class="rounded px-2 py-1"
+            :class="
+              editorMode === 'wysiwyg'
+                ? 'bg-theme-background-elevated text-theme-text'
+                : 'text-theme-text-muted hover:text-theme-text'
+            "
+            @click="setEditorMode('wysiwyg')"
+          >
+            WYSIWYG
+          </button>
+        </div>
+        <MarkdownEditor
+          v-if="editorMode === 'markdown'"
+          ref="editor"
+          :initialValue="editorInitialValue"
+          :addImageBlobHook="addImageBlobHook"
+          @change="startContentChangedTimeout"
+          @keydown="keydownHandler"
+        />
+        <WysiwygEditor
+          v-else
+          ref="editor"
+          :initialValue="editorInitialValue"
+          :addImageBlobHook="addImageBlobHook"
+          @change="startContentChangedTimeout"
+          @keydown="keydownHandler"
+        />
+      </div>
     </div>
   </LoadingIndicator>
 </template>
@@ -226,7 +261,8 @@ import CustomButton from "../components/CustomButton.vue";
 import RenameAssetsModal from "../components/RenameAssetsModal.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Toggle from "../components/Toggle.vue";
-import ToastEditor from "../components/toastui/ToastEditor.vue";
+import MarkdownEditor from "../components/MarkdownEditor.vue";
+import WysiwygEditor from "../components/WysiwygEditor.vue";
 import ServerViewer from "../components/ServerViewer.vue";
 import { authTypes, params } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
@@ -321,7 +357,19 @@ const rewriteScanLink = computed(() => {
   return `/_/search?${params.searchTerm}=*&rewriteFiles=${param}`;
 });
 const toast = useToast();
-const toastEditor = ref();
+const editor = ref();
+const editorMode = ref(loadDefaultEditorMode());
+const editorInitialValue = ref("");
+
+function setEditorMode(mode) {
+  if (mode === editorMode.value) return;
+  // Transfer content across the remount; persist the pref immediately.
+  if (editor.value) {
+    editorInitialValue.value = editor.value.getMarkdown();
+  }
+  editorMode.value = mode;
+  localStorage.setItem("defaultEditorMode", mode);
+}
 const unsavedChanges = ref(false);
 
 function init() {
@@ -393,6 +441,8 @@ function setEditMode() {
     : "";
   editFolder.value = directoryFromTitle(newTitle.value);
   unsavedChanges.value = false;
+  editorInitialValue.value = getInitialEditorValue();
+  editorMode.value = loadDefaultEditorMode();
   editMode.value = true;
 }
 
@@ -436,7 +486,7 @@ function saveHandler(close = false) {
   }
 
   // Save Note
-  let newContent = toastEditor.value.getMarkdown();
+  let newContent = editor.value.getMarkdown();
   if (isNewNote.value) {
     saveNew(newTitle.value, newContent, close);
   } else {
@@ -481,10 +531,10 @@ function saveExisting(newTitle, newContent, close = false) {
         // link/attachment strategies) — sync the open editor with it.
         if (
           editMode.value &&
-          toastEditor.value &&
-          toastEditor.value.getMarkdown() !== data.content
+          editor.value &&
+          editor.value.getMarkdown() !== data.content
         ) {
-          toastEditor.value.setMarkdown(data.content);
+          editor.value.setMarkdown(data.content);
         }
         if (oldTitle != data.title) {
           refreshNoteIndex();
@@ -639,16 +689,11 @@ function closeNote() {
 
 // Image Upload
 function addImageBlobHook(file, callback) {
-  const altTextInputValue = document.getElementById(
-    "toastuiAltTextInput",
-  )?.value;
-
-  // Upload the image then use the callback to insert the URL into the editor
+  // Upload the image, then the callback inserts the markdown into the
+  // editor (alt text falls back to the uploaded filename).
   postAttachment(file).then(function (data) {
     if (data) {
-      // If the user has entered an alt text, use it. Otherwise, use the filename returned by the API.
-      const altText = altTextInputValue ? altTextInputValue : data.filename;
-      callback(data.url, altText);
+      callback(data.url, data.filename);
     }
   });
 }
@@ -721,7 +766,7 @@ function contentChangedHandler() {
 
 // Drafts
 function saveDraft() {
-  const content = toastEditor.value.getMarkdown();
+  const content = editor.value.getMarkdown();
   const userHasPersistedToken = isCurrentTokenStored();
   const draftKey = newTitle.value;
   if (content && draftKey) {
@@ -810,7 +855,7 @@ function setBeforeUnloadConfirmation(enable = true) {
 }
 
 function saveDefaultEditorMode() {
-  const isWysiwygMode = toastEditor.value.isWysiwygMode();
+  const isWysiwygMode = editor.value.isWysiwygMode();
   localStorage.setItem(
     "defaultEditorMode",
     isWysiwygMode ? "wysiwyg" : "markdown",
@@ -825,7 +870,7 @@ function loadDefaultEditorMode() {
 function isContentChanged() {
   return (
     newTitle.value != note.value.title ||
-    toastEditor.value.getMarkdown() != note.value.content
+    editor.value.getMarkdown() != note.value.content
   );
 }
 

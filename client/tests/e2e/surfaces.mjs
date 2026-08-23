@@ -1,7 +1,7 @@
 // Surface theme check over CDP: navbar/sidebar/text/borders follow the theme.
 import { connect } from "./cdp.mjs";
 
-const BASE = process.env.BASE_URL || "http://localhost:8000";
+const BASE = process.env.BASE_URL || "http://localhost:8080";
 const PORT = Number(process.env.CDP_PORT || 9333);
 
 const page = await connect({ port: PORT });

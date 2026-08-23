@@ -2,7 +2,7 @@
 // element with no page exceptions.
 import { connect } from "./cdp.mjs";
 
-const BASE = process.env.BASE_URL || "http://localhost:8000";
+const BASE = process.env.BASE_URL || "http://localhost:8080";
 const PORT = Number(process.env.CDP_PORT || 9333);
 const PAGES = [
   ["readme", ".toastui-editor-contents a", "wikilinks render"],

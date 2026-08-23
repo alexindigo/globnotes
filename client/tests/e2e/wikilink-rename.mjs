@@ -1,7 +1,20 @@
 // Wikilinks update on rename, via the UI, over CDP.
 import { connect } from "./cdp.mjs";
+// DOM click (not CDP coordinates): immune to post-render layout shifts.
+async function domClick(page, text) {
+  const ok = await page.evaluate(`(() => {
+    const els = [...document.querySelectorAll("button, a")].filter(
+      (e) => e.offsetParent !== null,
+    );
+    const el = els.find((e) => e.textContent.trim() === ${JSON.stringify(text)});
+    if (!el) return false;
+    el.click();
+    return true;
+  })()`);
+  if (!ok) throw new Error("domClick target not found: " + text);
+}
 
-const BASE = process.env.BASE_URL || "http://localhost:8000";
+const BASE = process.env.BASE_URL || "http://localhost:8080";
 const PORT = Number(process.env.CDP_PORT || 9333);
 
 // Fixture via API — idempotent: delete any leftovers from a previous run
@@ -34,7 +47,7 @@ if (drawerOpen) {
   await page.poll(`getComputedStyle(document.querySelector("aside")).display === "none"`);
 }
 
-await page.clickText("Edit");
+await domClick(page, "Edit");
 await page.poll(`!!document.querySelector("input")`);
 
 // The basename field is the first visible input

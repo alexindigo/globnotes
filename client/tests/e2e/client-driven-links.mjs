@@ -8,8 +8,23 @@ import {
   restoreMovingNoteFixture,
 } from "./fixtures.mjs";
 
-const BASE = process.env.BASE_URL || "http://localhost:8000";
+const BASE = process.env.BASE_URL || "http://localhost:8080";
 const PORT = Number(process.env.CDP_PORT || 9333);
+
+// DOM click (not CDP coordinates): immune to post-render layout shifts.
+async function domClick(page, text) {
+  const ok = await page.evaluate(`(() => {
+    const els = [...document.querySelectorAll("button, a")].filter(
+      (e) => e.offsetParent !== null,
+    );
+    const el = els.find((e) => e.textContent.trim() === ${JSON.stringify(text)});
+    if (!el) return false;
+    el.click();
+    return true;
+  })()`);
+  if (!ok) throw new Error("domClick target not found: " + text);
+}
+
 
 // Clean fixture state, target included.
 resetMovingNoteFixture("archive-client");
@@ -27,7 +42,7 @@ const beforeReadme = await page.evaluate(`(async () => {
 console.log("readme links before:", beforeReadme.includes("[[rename-me/moving-note"));
 
 // Rename via the UI: edit, change folder to archive-client, save, move
-await page.clickText("Edit");
+await domClick(page, "Edit");
 await page.waitForTimeout(1000);
 await page.evaluate(`(() => {
   const inputs = [...document.querySelectorAll("input")].filter((i) => i.offsetParent !== null);
