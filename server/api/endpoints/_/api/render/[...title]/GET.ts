@@ -26,6 +26,7 @@ export default async function (ctx: RequestCtx): Promise<Response> {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
+    lineNumbers: (ctx.query.get("lineNumbers") ?? "") === "true",
   });
   return new Response(html, {
     headers: { "content-type": "text/html; charset=utf-8" },

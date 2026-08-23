@@ -2,10 +2,28 @@
 // stays stateless: ServerViewer passes the disabled ids with each render
 // request.
 
+import { ref } from "vue";
+
 import { useGlobalStore } from "./globalStore.js";
 
 const AUTO_KEY = "autoEnablePlugins";
 const SWITCHES_KEY = "pluginSwitches";
+const VIEW_LINE_NUMBERS_KEY = "viewLineNumbers";
+
+/** Reactive line-numbers-in-view-mode flag (default off) so the viewer
+ * re-renders when the menu toggle changes. Mirrored to localStorage. */
+export const viewLineNumbers = ref(
+  localStorage.getItem(VIEW_LINE_NUMBERS_KEY) === "true",
+);
+
+export function loadViewLineNumbers() {
+  return viewLineNumbers.value;
+}
+
+export function saveViewLineNumbers(value) {
+  viewLineNumbers.value = value;
+  localStorage.setItem(VIEW_LINE_NUMBERS_KEY, String(value));
+}
 
 export function loadAutoEnable() {
   const raw = localStorage.getItem(AUTO_KEY);

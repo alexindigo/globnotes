@@ -195,8 +195,12 @@ async function renderInlineToken(
   return out;
 }
 
-/** Default render for a block leaf token (fence, hr, html_block, …). */
-function defaultLeafHtml(t: Token): string {
+/** Default render for a block leaf token (fence, hr, html_block, …).
+ * Fences honour the per-render lineNumbers flag. */
+function defaultLeafHtml(t: Token, lineNumbers = false): string {
+  if (t.type === "fence") {
+    return fenceHtml(t.info, t.content, lineNumbers);
+  }
   const rule = (md.renderer.rules as Record<string, unknown>)[t.type];
   if (typeof rule === "function") {
     return (rule as (...a: unknown[]) => string)(
@@ -213,6 +217,7 @@ function defaultLeafHtml(t: Token): string {
 async function renderBlock(
   tokens: Token[],
   plugins: LoadedPlugin[],
+  lineNumbers = false,
 ): Promise<string> {
   let html = "";
   let i = 0;
@@ -232,7 +237,7 @@ async function renderBlock(
         j++;
       }
       const inner = tokens.slice(i + 1, j);
-      const childrenHtml = await renderBlock(inner, plugins);
+      const childrenHtml = await renderBlock(inner, plugins, lineNumbers);
       const type = t.type.replace(/_open$/, "");
       const node: RenderNode = {
         type,
@@ -282,11 +287,11 @@ async function renderBlock(
       if (pluginHtml !== null) {
         html += pluginHtml;
       } else if (current !== node && current.type === "fence") {
-        html += fenceHtml(current.info, current.content);
+        html += fenceHtml(current.info, current.content, lineNumbers);
       } else if (current !== node) {
         html += escapeHtml(current.content) + "\n";
       } else {
-        html += defaultLeafHtml(t);
+        html += defaultLeafHtml(t, lineNumbers);
       }
       i++;
     }
@@ -295,14 +300,15 @@ async function renderBlock(
 }
 
 /** Render a markdown source string to HTML through the plugin pipeline.
- * `disabled` plugin ids are skipped for this call only. */
+ * `disabled` plugin ids are skipped for this call only; `lineNumbers`
+ * adds a gutter to multi-line code fences. */
 export async function renderMarkdown(
   source: string,
-  opts: { disabled?: string[] } = {},
+  opts: { disabled?: string[]; lineNumbers?: boolean } = {},
 ): Promise<string> {
   const plugins = await loadPlugins(
     opts.disabled?.length ? new Set(opts.disabled) : undefined,
   );
   const tokens = md.parse(source, {});
-  return await renderBlock(tokens, plugins);
+  return await renderBlock(tokens, plugins, opts.lineNumbers ?? false);
 }

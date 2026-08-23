@@ -33,14 +33,34 @@ export function escapeHtml(s: string): string {
 }
 
 /** Prism-highlighted (or escaped) fence HTML — shared by the fence rule
- * and the pipeline's transformed-descriptor fallback. */
-export function fenceHtml(info: string, content: string): string {
+ * and the pipeline's transformed-descriptor fallback. When `lineNumbers`
+ * is set, adds a Prism-style line-numbers gutter. */
+export function fenceHtml(
+  info: string,
+  content: string,
+  lineNumbers = false,
+): string {
   const lang = info.trim().split(/\s+/)[0].toLowerCase();
   const grammar = Prism.languages[lang];
+  // markdown-it preserves a trailing newline; drop it for line-numbers so
+  // the gutter count matches visible lines (no trailing blank line).
+  const codeContent = lineNumbers ? content.replace(/\n$/, "") : content;
   const code = grammar
-    ? Prism.highlight(content, grammar, lang)
-    : escapeHtml(content);
-  const cls = lang ? ` class="language-${lang}"` : "";
+    ? Prism.highlight(codeContent, grammar, lang)
+    : escapeHtml(codeContent);
+  const langCls = lang ? `language-${lang}` : "";
+  const lineCount = codeContent.split("\n").length;
+  if (lineNumbers && lineCount > 1) {
+    const rows = Array.from({ length: lineCount }, () => "<span></span>").join(
+      "",
+    );
+    const preCls = `line-numbers${langCls ? " " + langCls : ""}`;
+    const codeCls = langCls || "";
+    return `<pre class="${preCls}"><code class="${codeCls}">${code}` +
+      `<span class="line-numbers-rows" aria-hidden="true">${rows}</span>` +
+      `</code></pre>\n`;
+  }
+  const cls = langCls ? ` class="${langCls}"` : "";
   return `<pre><code${cls}>${code}</code></pre>\n`;
 }
 
@@ -82,7 +102,8 @@ export function createMarkdown(): MarkdownIt {
     `<div class="front-matter">${escapeHtml(tokens[idx].content)}</div>\n`;
 
   // Fences: Prism highlight when the language is known, escaped otherwise.
-  // (Heading anchor ids are applied by the pipeline's container walk.)
+  // Line-number gutter is applied by the pipeline's defaultLeafHtml (per
+  // render); heading anchor ids come from the pipeline's container walk.
   md.renderer.rules.fence = (tokens, idx) =>
     fenceHtml(tokens[idx].info, tokens[idx].content);
 

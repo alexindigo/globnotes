@@ -128,10 +128,13 @@ export async function getNote(title) {
 // Server-rendered markdown (markdown-it + plugin pipeline). Returns raw
 // HTML — axios must not try to JSON-parse it. `disabled` carries the
 // client's localStorage plugin switches.
-export async function getRenderedHtml(title, disabled = []) {
+export async function getRenderedHtml(title, disabled = [], lineNumbers = false) {
   try {
+    const params = {};
+    if (disabled.length) params.disabled = disabled.join(",");
+    if (lineNumbers) params.lineNumbers = "true";
     const response = await api.get(`render/${encodeURIComponent(title)}`, {
-      params: disabled.length ? { disabled: disabled.join(",") } : {},
+      params,
       transformResponse: (data) => data,
     });
     return response.data;

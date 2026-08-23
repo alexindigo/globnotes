@@ -416,3 +416,52 @@
     }
   }
 }
+
+// Line numbers on code blocks (view mode). Server adds a
+// `.line-numbers` class and a `.line-numbers-rows` gutter (one empty
+// span per line) when the line-numbers setting is on. Numbers are drawn
+// with CSS counters so they align with the highlighted code lines.
+.line-numbers {
+  position: relative;
+  padding-left: 3.4em;
+  counter-reset: linenumber;
+
+  > code {
+    position: relative;
+    white-space: inherit;
+  }
+}
+
+.line-numbers-rows {
+  position: absolute;
+  pointer-events: none;
+  top: 0;
+  left: -3.4em;
+  width: 2.8em;
+  font-size: 100%;
+  letter-spacing: -1px;
+  border-right: 1px solid rgb(var(--theme-border));
+  user-select: none;
+  font-family: inherit;
+  line-height: inherit;
+
+  > span {
+    display: block;
+    counter-increment: linenumber;
+
+    &::before {
+      content: counter(linenumber);
+      color: rgb(var(--theme-text-very-muted));
+      display: block;
+      padding-right: 0.6em;
+      text-align: right;
+    }
+  }
+}
+
+// CodeMirror source-mode line-number gutter follows the theme.
+.cm-editor .cm-gutter.cm-lineNumbers {
+  color: rgb(var(--theme-text-very-muted));
+  border-right: 1px solid rgb(var(--theme-border));
+  padding-right: 6px;
+}

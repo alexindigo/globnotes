@@ -46,11 +46,7 @@
             <span class="ml-2 text-theme-text-very-muted">→</span>
             <span class="ml-2">{{ f.newPath }}</span></span
           >
-          <CustomButton
-            label="Fix"
-            style="ghost"
-            @click="fixSingleRef(f)"
-          />
+          <CustomButton label="Fix" style="ghost" @click="fixSingleRef(f)" />
         </li>
       </ul>
     </div>
@@ -181,7 +177,12 @@ async function fixSingleRef(file) {
   fixInProgress.value = true;
   try {
     await rewriteRefs(file.oldPath, file.newPath);
-    toast.add({ severity: "success", summary: "Fixed", detail: file.oldPath, life: 3000 });
+    toast.add({
+      severity: "success",
+      summary: "Fixed",
+      detail: file.oldPath,
+      life: 3000,
+    });
     rewriteFiles.value = rewriteFiles.value.filter(
       (f) => f.oldPath !== file.oldPath,
     );
@@ -202,7 +203,12 @@ async function fixAllRefs() {
       apiErrorHandler(e, toast);
     }
   }
-  toast.add({ severity: "success", summary: "All fixed", detail: `${files.length} references rewritten.`, life: 3000 });
+  toast.add({
+    severity: "success",
+    summary: "All fixed",
+    detail: `${files.length} references rewritten.`,
+    life: 3000,
+  });
   rewriteFiles.value = [];
   fixInProgress.value = false;
 }

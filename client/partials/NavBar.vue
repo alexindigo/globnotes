@@ -33,6 +33,7 @@
 
 <script setup>
 import {
+  mdilFormatListNumbers,
   mdilLogout,
   mdilMagnify,
   mdilMenu,
@@ -51,6 +52,7 @@ import ThemePicker from "../components/ThemePicker.vue";
 import { authTypes, params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { directoryFromTitle } from "../helpers.js";
+import { saveViewLineNumbers, viewLineNumbers } from "../pluginSettings.js";
 import { currentThemeLabel } from "../themes.js";
 import { clearStoredToken } from "../tokenStorage.js";
 
@@ -112,6 +114,11 @@ const menuItems = computed(() => [
     },
   },
   {
+    label: `Line numbers: ${viewLineNumbers.value ? "on" : "off"}`,
+    icon: mdilFormatListNumbers,
+    command: () => saveViewLineNumbers(!viewLineNumbers.value),
+  },
+  {
     separator: true,
     visible: showLogOutButton,
   },
@@ -138,6 +145,8 @@ function toggleMenu(event) {
 }
 
 function showLogOutButton() {
-  return ![authTypes.none, authTypes.readOnly].includes(globalStore.config.authType);
+  return ![authTypes.none, authTypes.readOnly].includes(
+    globalStore.config.authType,
+  );
 }
 </script>

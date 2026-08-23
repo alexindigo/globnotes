@@ -13,7 +13,7 @@ import mermaid from "mermaid";
 import { onMounted, ref, watch } from "vue";
 
 import { getPlugins, getRenderedHtml } from "../api.js";
-import { disabledPluginIds } from "../pluginSettings.js";
+import { disabledPluginIds, viewLineNumbers } from "../pluginSettings.js";
 
 const props = defineProps({
   title: String,
@@ -68,6 +68,7 @@ async function renderNote() {
     viewerElement.value.innerHTML = await getRenderedHtml(
       props.title,
       disabled,
+      viewLineNumbers.value,
     );
   } catch (error) {
     console.error("Note render failed", error);
@@ -92,6 +93,8 @@ async function renderNote() {
 
 onMounted(renderNote);
 watch(() => props.title, renderNote);
+// Re-render when the line-numbers-in-view-mode toggle changes.
+watch(viewLineNumbers, renderNote);
 </script>
 
 <style>

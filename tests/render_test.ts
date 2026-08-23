@@ -287,3 +287,26 @@ Deno.test("render: endpoint end-to-end", async () => {
     await Deno.remove(vault, { recursive: true });
   }
 });
+
+Deno.test("render: line numbers gutter option", async () => {
+  const multi = "```js\nlet x = 1;\nlet y = 2;\nlet z = 3;\n```";
+
+  // Default: no gutter.
+  const off = await renderMarkdown(multi);
+  assert(!off.includes("line-numbers-rows"));
+  assert(!off.includes("line-numbers"));
+
+  // On: multi-line code blocks gain a line-numbers gutter.
+  const on = await renderMarkdown(multi, { lineNumbers: true });
+  assertStringIncludes(on, "line-numbers-rows");
+  assertStringIncludes(on, 'class="line-numbers language-js"');
+  // 3 code lines → exactly 3 empty gutter spans.
+  const gutterSpans = (on.match(/<span><\/span>/g) ?? []).length;
+  assertEquals(gutterSpans, 3);
+
+  // Single-line code blocks do not get a gutter.
+  const single = await renderMarkdown("```js\nlet x = 1;\n```", {
+    lineNumbers: true,
+  });
+  assert(!single.includes("line-numbers-rows"));
+});

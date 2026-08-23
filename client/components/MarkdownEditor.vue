@@ -8,7 +8,7 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
@@ -98,6 +98,7 @@ onMounted(() => {
         keymap.of([...defaultKeymap, ...historyKeymap]),
         markdown({ base: markdownLanguage, codeLanguages: languages }),
         syntaxHighlighting(highlight),
+        lineNumbers(),
         theme,
         EditorView.lineWrapping,
         EditorView.updateListener.of((update) => {
