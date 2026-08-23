@@ -133,10 +133,21 @@ export class Fts5Indexer implements Indexer {
       filename,
       mtime,
     );
+    this.#notifyPlugins();
   }
 
   deleteFromIndex(title: string): void {
     this.#deleteByFilename(title + MARKDOWN_EXT);
+    this.#notifyPlugins();
+  }
+
+  /** Plan §4: reinstantiate plugins on every sync (state resets; hats
+   * rebuild their detection in onSync). Fire-and-forget; skipped when
+   * the pool was never started (no render has happened yet). */
+  #notifyPlugins(): void {
+    const plugins = state.plugins;
+    if (!plugins || plugins.hosts.size === 0) return;
+    plugins.syncAll().catch((e) => logger.error(`plugin sync failed: ${e}`));
   }
 
   /** Insert/replace a note in both the FTS table and the raw-tag table. */

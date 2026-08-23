@@ -101,10 +101,17 @@ export function workerPermissions(
   const resolvePaths = (paths: string[]): string[] =>
     paths.map((p) => p === "vault" ? vaultPath : path.resolve(vaultPath, p));
   const net = manifest.capabilities.network;
+  // Dynamic import requires read access on the file when read is a
+  // list — internal plugins (outside the vault) need their own dir
+  // explicitly; vault plugins get it via "vault" but listing it is
+  // harmless either way.
+  const readPaths = [
+    ...new Set([manifest.dir, ...resolvePaths(manifest.capabilities.read)]),
+  ];
   return {
     net: net === false ? false : net === true ? true : net,
     import: net === false ? false : net === true ? true : net,
-    read: resolvePaths(manifest.capabilities.read),
+    read: readPaths,
     write: resolvePaths(manifest.capabilities.write),
     env: false,
     ffi: false,
@@ -113,9 +120,8 @@ export function workerPermissions(
   } as unknown as Deno.PermissionOptions;
 }
 
-/** Discover plugin directories under <vault>/.globnotes/plugins/. */
-export function discoverPluginDirs(vaultPath: string): string[] {
-  const root = path.join(vaultPath, ".globnotes", "plugins");
+/** Enumerate plugin directories directly under the given root. */
+export function discoverPluginDirs(root: string): string[] {
   try {
     const dirs: string[] = [];
     for (const entry of Deno.readDirSync(root)) {

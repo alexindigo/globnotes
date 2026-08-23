@@ -30,6 +30,7 @@ export interface PluginCtx {
   readNote(title: string): Promise<unknown>;
   listTitles(): Promise<unknown>;
   readFile(path: string): Promise<unknown>;
+  pathPrefix(): Promise<string>;
 }
 
 let plugin: PluginModule | null = null;
@@ -52,6 +53,7 @@ const ctx: PluginCtx = {
   readNote: (title) => rpc("readNote", [title]),
   listTitles: () => rpc("listTitles", []),
   readFile: (path) => rpc("readFile", [path]),
+  pathPrefix: () => rpc("pathPrefix", []) as Promise<string>,
 };
 
 // Heartbeat: the host treats silence as a hang.
@@ -68,10 +70,8 @@ self.onmessage = async (event: MessageEvent) => {
       self.postMessage({ type: "ready" });
     } catch (e) {
       self.postMessage({
-        type: "result",
-        id: -1,
-        ok: false,
-        value: String(e),
+        type: "initError",
+        value: e instanceof Error ? e.message : String(e),
       });
     }
     return;

@@ -93,7 +93,9 @@ Deno.test("plugins: manifest parsing", async (t) => {
     });
 
     await t.step("discoverPluginDirs finds plugin dirs", () => {
-      const dirs = discoverPluginDirs(vault);
+      const dirs = discoverPluginDirs(
+        path.join(vault, ".globnotes", "plugins"),
+      );
       assert(dirs.some((d) => d.endsWith("alpha")));
     });
   } finally {
@@ -119,7 +121,11 @@ Deno.test("plugins: capability → permission mapping", async () => {
       env: unknown;
     };
     assertEquals(perms.net, ["esm.sh"]);
-    assertEquals(perms.read, [vault, path.join(vault, "data")]);
+    assertEquals(perms.read, [
+      path.join(vault, ".globnotes", "plugins", "caps"),
+      vault,
+      path.join(vault, "data"),
+    ]);
     assertEquals(perms.write, [path.join(vault, "out")]);
     assertEquals(perms.env, false);
   } finally {

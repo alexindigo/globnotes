@@ -32,7 +32,7 @@ const auth = globalConfig.authType === AuthType.PASSWORD ||
   : null;
 initState(globalConfig, auth, notes, indexer, fileServing, plugins);
 indexer.startBackgroundSync();
-await plugins.start();
+// Plugins start lazily on the first render call (manager.ensureStarted).
 
 // Publish the path prefix into the built client before serving it
 // (Python: rewrite_index_html at import). Only when the client build

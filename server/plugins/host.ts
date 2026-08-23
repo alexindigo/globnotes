@@ -205,6 +205,15 @@ export class PluginHost {
         this.#pump();
         return;
       }
+      if (msg.type === "initError") {
+        // Disable the slot; reject every waiter so start() fails instead
+        // of hanging on a permanently broken plugin.
+        logger.error(
+          `plugin '${this.manifest.id}' failed to load: ${msg.value}`,
+        );
+        slot.rejectAll(`plugin failed to load: ${msg.value}`);
+        return;
+      }
       if (msg.type === "result") {
         const p = slot.pending.get(msg.id);
         if (p) {

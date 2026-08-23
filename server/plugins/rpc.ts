@@ -29,6 +29,9 @@ export function pluginRpc(
           body: served.body,
         });
       }
+      case "pathPrefix": {
+        return Promise.resolve(state.config.pathPrefix);
+      }
       default:
         return Promise.reject(new Error(`unknown rpc method '${method}'`));
     }
