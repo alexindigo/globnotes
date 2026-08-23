@@ -1,5 +1,5 @@
 <template>
-  <div ref="editorElement" class="cm-host min-h-0 flex-1"></div>
+  <div ref="editorElement" class="cm-host cm-frame min-h-0 flex-1"></div>
 </template>
 
 <script setup>
@@ -35,6 +35,9 @@ const theme = EditorView.theme({
     fontFamily:
       'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
     caretColor: "rgb(var(--theme-text))",
+    padding: "12px 16px",
+    minHeight: "100%",
+    boxSizing: "border-box",
   },
   ".cm-cursor": { borderLeftColor: "rgb(var(--theme-text))" },
   ".cm-gutters": {
@@ -144,6 +147,13 @@ defineExpose({ getMarkdown, setMarkdown, isWysiwygMode });
 </script>
 
 <style>
+/* Visible editor frame so the edit surface reads as a bounded box. */
+.cm-frame {
+  border: 1px solid rgb(var(--theme-border));
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: rgb(var(--theme-background));
+}
 .cm-host .cm-editor {
   height: 100%;
 }

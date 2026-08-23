@@ -17,6 +17,7 @@ import { commonmark } from "@milkdown/preset-commonmark";
 import { gfm } from "@milkdown/preset-gfm";
 import { replaceAll } from "@milkdown/utils";
 import { Milkdown, useEditor } from "@milkdown/vue";
+import { callCommand, readActive } from "./milkdown-commands.js";
 
 const props = defineProps({
   initialValue: String,
@@ -76,5 +77,33 @@ function setMarkdown(markdownText) {
   getEditor()?.action(replaceAll(markdownText));
 }
 
-defineExpose({ getMarkdown, setMarkdown });
+// Toolbar-facing API: commands + active-state + link insertion.
+function command(name) {
+  return callCommand(getEditor(), name);
+}
+function active() {
+  return readActive(getEditor());
+}
+// Insert (or convert the selection into) a link. Wraps selected text, or
+// inserts placeholder text when the selection is empty.
+function insertLink(href, text) {
+  const editor = getEditor();
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const { state, dispatch } = view;
+    const { from, to, empty } = state.selection;
+    const schema = state.schema;
+    const linkMark = schema.marks.link.create({ href });
+    const label = text && !empty ? state.doc.textBetween(from, to) : text;
+    if (empty || !text) {
+      const node = schema.text(label || "", [linkMark]);
+      dispatch(state.tr.insert(from, node));
+    } else {
+      dispatch(state.tr.addMark(from, to, linkMark));
+    }
+  });
+}
+
+defineExpose({ getMarkdown, setMarkdown, command, active, insertLink });
 </script>

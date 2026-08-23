@@ -1,16 +1,21 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
 <template>
   <div
     ref="wrapper"
-    class="milkdown-host toastui-editor-contents min-h-0 flex-1 overflow-y-auto"
+    class="milkdown-frame toastui-editor-contents min-h-0 flex-1 overflow-hidden flex flex-col"
   >
-    <MilkdownProvider>
-      <WysiwygEditorInner
-        ref="inner"
-        :initialValue="initialValue"
-        :addImageBlobHook="addImageBlobHook"
-        @change="emit('change')"
-      />
-    </MilkdownProvider>
+    <WysiwygToolbar ref="toolbar" :innerRef="inner" />
+    <div class="wysiwyg-scroll min-h-0 flex-1 overflow-y-auto">
+      <MilkdownProvider>
+        <WysiwygEditorInner
+          ref="inner"
+          :initialValue="initialValue"
+          :addImageBlobHook="addImageBlobHook"
+          @change="onChange"
+        />
+      </MilkdownProvider>
+    </div>
   </div>
 </template>
 
@@ -19,6 +24,7 @@ import { MilkdownProvider } from "@milkdown/vue";
 import { onMounted, ref } from "vue";
 
 import WysiwygEditorInner from "./WysiwygEditorInner.vue";
+import WysiwygToolbar from "./WysiwygToolbar.vue";
 
 defineProps({
   initialValue: String,
@@ -29,6 +35,12 @@ const emit = defineEmits(["change", "keydown"]);
 
 const wrapper = ref();
 const inner = ref();
+const toolbar = ref();
+
+function onChange() {
+  emit("change");
+  toolbar.value?.refreshActive();
+}
 
 onMounted(() => {
   // ProseMirror keydown bubbles; forward for the host's shortcuts.
@@ -55,13 +67,22 @@ defineExpose({ getMarkdown, setMarkdown, isWysiwygMode });
 </script>
 
 <style>
+/* Visible editor frame so the edit surface reads as a bounded box. */
+.milkdown-frame {
+  border: 1px solid rgb(var(--theme-border));
+  border-radius: 8px;
+  background-color: rgb(var(--theme-background));
+}
+.wysiwyg-scroll {
+  padding: 12px 16px;
+}
 /* Minimal Milkdown/ProseMirror chrome; content styles come from the
    shared overrides (the editor root also carries the toastui classes). */
-.milkdown-host .ProseMirror {
+.milkdown-frame .ProseMirror {
   outline: none;
   min-height: 100%;
 }
-.milkdown-host .ProseMirror-focused {
+.milkdown-frame .ProseMirror-focused {
   outline: none;
 }
 </style>
