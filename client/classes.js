@@ -3,6 +3,7 @@ import router from "./router.js";
 class Note {
   constructor(note) {
     this.title = note?.title;
+    this.displayTitle = note?.displayTitle;
     this.lastModified = note?.lastModified;
     this.content = note?.content;
   }

@@ -318,6 +318,10 @@ function displayTitle(result) {
   if (result.titleHighlights) {
     return result.titleHighlights;
   }
+  // Display title (front-matter title / alias / H1 label) when present.
+  if (result.displayTitle) {
+    return result.displayTitle;
+  }
   const prefix = props.folder ? props.folder + "/" : "";
   return prefix && result.title.startsWith(prefix)
     ? result.title.slice(prefix.length)
