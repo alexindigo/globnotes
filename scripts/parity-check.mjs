@@ -18,7 +18,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, cpSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, cpSync, mkdirSync, writeFileSync, utimesSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,10 +51,15 @@ const FILES = {
 
 function makeFixtureVault() {
   const dir = mkdtempSync(join(tmpdir(), "globnotes-parity-"));
+  // Stagger mtimes so lastModified sorting is deterministic (a whole
+  // fixture written in one second ties in both engines).
+  let i = 0;
   for (const [rel, content] of Object.entries(FILES)) {
     const p = join(dir, rel);
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, content);
+    const t = new Date(2020, 0, 1, 0, 0, i++);
+    utimesSync(p, t, t);
   }
   return dir;
 }
@@ -194,7 +199,7 @@ async function compareStatusType(label, path) {
 
 const vaultPy = makeFixtureVault();
 const vaultDeno = mkdtempSync(join(tmpdir(), "globnotes-parity-"));
-cpSync(vaultPy, vaultDeno, { recursive: true });
+cpSync(vaultPy, vaultDeno, { recursive: true, preserveTimestamps: true });
 
 try {
   // Python server (main worktree source, venv, temp app dir).
@@ -301,7 +306,9 @@ try {
   await compareJson("rename-preview", "/_/api/rename-preview?title=created%2Fnote&new_title=moved%2Fnote");
 
   // -- search ------------------------------------------------------------
-  for (const term of ["*", "needle", "folder", "careful"]) {
+  // Relevance-tied match-all ordering is index-internal (Whoosh docnum vs
+  // FTS rowid) — compare sets for those, strict order elsewhere.
+  for (const term of ["needle", "folder", "careful"]) {
     await compareJson(
       `search '${term}'`,
       `/_/api/search?term=${encodeURIComponent(term)}`,
@@ -312,8 +319,60 @@ try {
     "search sort title asc",
     "/_/api/search?term=*&sort=title&order=asc",
   );
+  // lastModified sort: same-second ties break differently per engine
+  // (rowid vs docnum). Compare the SET, internal non-increasing order on
+  // each side, and exact mtimes of the untouched fixture files.
+  {
+    const [py, deno] = await Promise.all([
+      fetch(`http://localhost:${PY_PORT}/_/api/search?term=*&sort=lastModified&order=desc`).then((r) => r.json()),
+      fetch(`http://localhost:${DENO_PORT}/_/api/search?term=*&sort=lastModified&order=desc`).then((r) => r.json()),
+    ]);
+    check(
+      "search sort lastModified (title set)",
+      JSON.stringify(py.map((h) => h.title).sort()) ===
+        JSON.stringify(deno.map((h) => h.title).sort()),
+    );
+    for (const [name, hits] of [["py", py], ["deno", deno]]) {
+      const mods = hits.map((h) => h.lastModified);
+      check(
+        `search sort lastModified (${name} internally desc)`,
+        mods.every((v, i) => i === 0 || mods[i - 1] >= v),
+        JSON.stringify(mods),
+      );
+    }
+    const untouched = ["readme", "tags", "folder/inner/note-c"];
+    const pyMap = Object.fromEntries(py.map((h) => [h.title, h.lastModified]));
+    const denoMap = Object.fromEntries(deno.map((h) => [h.title, h.lastModified]));
+    check(
+      "search sort lastModified (untouched mtimes exact)",
+      untouched.every((t) => pyMap[t] === denoMap[t]),
+      `py=${JSON.stringify(pyMap)} deno=${JSON.stringify(denoMap)}`,
+    );
+  }
+  // FastAPI Literal validation: invalid sort/order are 422s on both.
   await compareJson(
-    "search nested=false",
+    "search invalid sort",
+    "/_/api/search?term=*&sort=last_modified",
+  );
+
+  async function compareJsonSet(label, path) {
+    const [py, deno] = await Promise.all([
+      fetch(`http://localhost:${PY_PORT}${path}`).then((r) => r.json()),
+      fetch(`http://localhost:${DENO_PORT}${path}`).then((r) => r.json()),
+    ]);
+    const canon = (x) =>
+      JSON.stringify(normalize(x), Object.keys(normalize(x)).sort());
+    const pySet = py.map(canon).sort();
+    const denoSet = deno.map(canon).sort();
+    check(
+      `${label} (set)`,
+      JSON.stringify(pySet) === JSON.stringify(denoSet),
+      `\n  py:   ${JSON.stringify(py)}\n  deno: ${JSON.stringify(deno)}`,
+    );
+  }
+  await compareJsonSet("search '*' (order-independent)", "/_/api/search?term=*");
+  await compareJsonSet(
+    "search nested=false (order-independent)",
     "/_/api/search?term=*&nested=false",
   );
   await compareJson(
@@ -321,7 +380,8 @@ try {
     `/_/api/search?term=*&folder=${encodeURIComponent("folder")}`,
   );
   await compareJson("tags", "/_/api/tags");
-  await compareJson("note-index", "/_/api/note-index");
+  // note-index order is filesystem order on both sides — sets, not arrays.
+  await compareJsonSet("note-index (fs-order independent)", "/_/api/note-index");
   await compareJson("tree root", "/_/api/tree?path=");
   await compareJson("tree subfolder", "/_/api/tree?path=folder");
   await compareJson("tree missing", "/_/api/tree?path=nope%2Fnada");
