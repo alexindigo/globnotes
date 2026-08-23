@@ -3,9 +3,13 @@
 <template>
   <div
     ref="wrapper"
-    class="milkdown-frame toastui-editor-contents min-h-0 flex-1 overflow-hidden flex flex-col"
+    class="milkdown-frame toastui-editor-contents flex min-h-0 flex-1 flex-col overflow-hidden"
   >
-    <WysiwygToolbar ref="toolbar" :innerRef="inner" :activeState="activeState" />
+    <WysiwygToolbar
+      ref="toolbar"
+      :innerRef="inner"
+      :activeState="activeState"
+    />
     <div class="wysiwyg-scroll min-h-0 flex-1 overflow-y-auto">
       <MilkdownProvider>
         <WysiwygEditorInner
