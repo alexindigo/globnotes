@@ -7,6 +7,7 @@ import {
   defaultValueCtx,
   Editor,
   editorViewCtx,
+  prosePluginsCtx,
   rootCtx,
   serializerCtx,
 } from "@milkdown/core";
@@ -17,14 +18,15 @@ import { commonmark } from "@milkdown/preset-commonmark";
 import { gfm } from "@milkdown/preset-gfm";
 import { replaceAll } from "@milkdown/utils";
 import { Milkdown, useEditor } from "@milkdown/vue";
-import { callCommand, readActive } from "./milkdown-commands.js";
+import { Plugin } from "prosemirror-state";
+import { callCommand, readActive, readLink, removeLinkCommand } from "./milkdown-commands.js";
 
 const props = defineProps({
   initialValue: String,
   addImageBlobHook: Function,
 });
 
-const emit = defineEmits(["change"]);
+const emit = defineEmits(["change", "activeChange"]);
 
 // Milkdown is markdown-native: the document round-trips through the
 // remark parser/serializer, so saving emits source, not lossy HTML→md.
@@ -56,6 +58,27 @@ const { get: getEditor } = useEditor((root) =>
           return nodes;
         },
       }));
+      // ProseMirror plugin: push the active formatting state to the toolbar
+      // whenever the selection moves (live highlighting in WYSIWYG).
+      ctx.update(prosePluginsCtx, (plugins) => [
+        ...plugins,
+        new Plugin({
+          view: () => ({
+            update: (view, prevState) => {
+              if (!prevState) return;
+              // Emit on every state change (doc edit, selection move, mark
+              // toggle). readActive inspects formatting at the cursor so the
+              // toolbar reflects bold/italic/etc as the cursor moves.
+              try {
+                const editor = getEditor();
+                if (editor) emit("activeChange", readActive(editor));
+              } catch {
+                /* never break a ProseMirror update */
+              }
+            },
+          }),
+        }),
+      ]);
     })
     .use(commonmark)
     .use(gfm)
@@ -84,6 +107,12 @@ function command(name) {
 function active() {
   return readActive(getEditor());
 }
+function getLinkAtSelection() {
+  return readLink(getEditor());
+}
+function removeLink() {
+  removeLinkCommand(getEditor());
+}
 // Insert (or convert the selection into) a link. Wraps selected text, or
 // inserts placeholder text when the selection is empty.
 function insertLink(href, text) {
@@ -105,5 +134,13 @@ function insertLink(href, text) {
   });
 }
 
-defineExpose({ getMarkdown, setMarkdown, command, active, insertLink });
+defineExpose({
+  getMarkdown,
+  setMarkdown,
+  command,
+  active,
+  insertLink,
+  getLinkAtSelection,
+  removeLink,
+});
 </script>

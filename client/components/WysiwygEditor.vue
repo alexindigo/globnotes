@@ -5,7 +5,7 @@
     ref="wrapper"
     class="milkdown-frame toastui-editor-contents min-h-0 flex-1 overflow-hidden flex flex-col"
   >
-    <WysiwygToolbar ref="toolbar" :innerRef="inner" />
+    <WysiwygToolbar ref="toolbar" :innerRef="inner" :activeState="activeState" />
     <div class="wysiwyg-scroll min-h-0 flex-1 overflow-y-auto">
       <MilkdownProvider>
         <WysiwygEditorInner
@@ -13,6 +13,7 @@
           :initialValue="initialValue"
           :addImageBlobHook="addImageBlobHook"
           @change="onChange"
+          @activeChange="onActiveChange"
         />
       </MilkdownProvider>
     </div>
@@ -36,10 +37,15 @@ const emit = defineEmits(["change", "keydown"]);
 const wrapper = ref();
 const inner = ref();
 const toolbar = ref();
+const activeState = ref({});
 
 function onChange() {
   emit("change");
   toolbar.value?.refreshActive();
+}
+
+function onActiveChange(payload) {
+  activeState.value = payload ?? {};
 }
 
 onMounted(() => {

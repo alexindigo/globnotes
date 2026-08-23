@@ -79,7 +79,63 @@ export function readActive(editor) {
       bulletList: !!findParent($from, "bulletList"),
       orderedList: !!findParent($from, "orderedList"),
       codeBlock: $from.parent.type.name === "code_block",
+      link: !!findLinkMark(view),
     };
+  });
+}
+
+/** The link mark in the current selection/cursor, or null. Returns the
+ * mark so callers can read `href` for the link popover. */
+function findLinkMark(view) {
+  const { state } = view;
+  const { empty, $from, from, to } = state.selection;
+  const linkType = state.schema.marks.link;
+  if (!linkType) return null;
+  if (empty) {
+    return $from.marks().find((m) => m.type === linkType) ?? null;
+  }
+  let found = null;
+  state.doc.nodesBetween(from, to, (node) => {
+    if (node.isText) {
+      const m = node.marks.find((x) => x.type === linkType);
+      if (m && !found) found = m;
+    }
+  });
+  return found;
+}
+
+/** Link at the cursor/selection as { href, text } for the popover, or
+ * null when the cursor isn't in a link. */
+export function readLink(editor) {
+  if (!editor) return null;
+  return editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const { state } = view;
+    const { empty, from, to } = state.selection;
+    const mark = findLinkMark(view);
+    if (!mark) return null;
+    return {
+      href: mark.attrs.href || "",
+      text: empty ? "" : state.doc.textBetween(from, to),
+    };
+  });
+}
+
+/** Remove the link mark from the current selection/cursor. */
+export function removeLinkCommand(editor) {
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const { state, dispatch } = view;
+    const { empty, $from, from, to } = state.selection;
+    const linkType = state.schema.marks.link;
+    if (!linkType) return;
+    if (empty) {
+      const mark = $from.marks().find((m) => m.type === linkType);
+      if (mark) dispatch(state.tr.removeStoredMark(mark));
+    } else {
+      dispatch(state.tr.removeMark(from, to, linkType));
+    }
   });
 }
 
