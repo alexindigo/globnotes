@@ -5,6 +5,18 @@ intended approach.
 
 ## Deferred from v1
 
+### View-mode line highlight
+
+Clicking a rendered line in view mode should yield a shareable fragment and
+highlight the line(s) in `ServerViewer`. The fragment grammar and its sole
+writer already exist (`client/fragment.js`, landed with edit-mode URLs:
+`#edit` / `#source:L<n>[-<m>]`); this feature plugs into the same delegated
+writer instead of growing a second one. Since bare `#L` links never shipped
+and now parse as unknown, the form is free — a `view` mode segment (e.g.
+`#view:L<n>[-<m>]`) keeps the single grammar intact. Deferred: server-side
+line identity in rendered HTML, click handling, highlight styling, and the
+view-mode landing path for shared line links.
+
 ### Note transclusion (`![[Note]]`)
 
 Embed one note's content inside another, Obsidian-style. Deferred: needs

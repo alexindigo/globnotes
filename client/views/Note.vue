@@ -18,8 +18,9 @@
     confirmButtonStyle="success"
     rejectButtonText="Discard"
     rejectButtonStyle="danger"
-    @confirm="saveHandler((close = true))"
-    @reject="closeNote"
+    @confirm="onSaveChoice('save')"
+    @reject="onSaveChoice('discard')"
+    @cancel="onSaveChoice('cancel')"
   />
 
     <!-- Rename Assets Modal -->
@@ -209,16 +210,18 @@
           v-if="editorMode === 'markdown'"
           ref="editor"
           :initialValue="editorInitialValue"
+          :initialLine="editorInitialLine"
           :addImageBlobHook="addImageBlobHook"
-          @change="startContentChangedTimeout"
+          @change="onEditorInput"
           @keydown="keydownHandler"
+          @selection="onSourceSelection"
         />
         <WysiwygEditor
           v-else
           ref="editor"
           :initialValue="editorInitialValue"
           :addImageBlobHook="addImageBlobHook"
-          @change="startContentChangedTimeout"
+          @change="onEditorInput"
           @keydown="keydownHandler"
         />
       </div>
@@ -242,8 +245,8 @@ import { mdilContentSave, mdilDelete } from "@mdi/light-js";
 import SvgIcon from "@jamescoyle/vue-icon";
 import Mousetrap from "mousetrap";
 import { useToast } from "primevue/usetoast";
-import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 
 import {
   apiErrorHandler,
@@ -272,6 +275,7 @@ import {
   getToastOptions,
   nextUntitledTitle,
 } from "../helpers.js";
+import { parseFragment, serializeFragment } from "../fragment.js";
 import { refreshNoteIndex } from "../noteIndex.js";
 import { notePath } from "../notePath.js";
 import { noteTitleError } from "../validators.js";
@@ -360,17 +364,85 @@ const toast = useToast();
 const editor = ref();
 const editorMode = ref(loadDefaultEditorMode());
 const editorInitialValue = ref("");
+// Fragment-driven entry state: carries through the draft modal so a
+// deep-linked mode/line survives both modal branches.
+let pendingEditorMode = null;
+let pendingInitialLine = null;
+let pendingPush = false;
+const editorInitialLine = ref(null);
+const editorLine = ref(null);
 
-function setEditorMode(mode) {
+function setEditorMode(mode, writeUrl = true) {
   if (mode === editorMode.value) return;
+  clearCaretSyncTimer();
   // Transfer content across the remount; persist the pref immediately.
   if (editor.value) {
     editorInitialValue.value = editor.value.getMarkdown();
   }
   editorMode.value = mode;
   localStorage.setItem("defaultEditorMode", mode);
+  // The caret doesn't transfer across editors; the fresh editor reports
+  // its own selection once the user interacts with it.
+  editorLine.value = null;
+  editorInitialLine.value = null;
+  if (writeUrl) writeFragment(currentFragment(), true);
+}
+
+function currentFragment() {
+  if (!editMode.value) return { mode: null };
+  if (editorMode.value === "wysiwyg") return { mode: "edit" };
+  return { mode: "source", line: editorLine.value };
+}
+
+// Fragment-only URL changes navigate via path STRINGS (which preserve the
+// title's real slashes) rather than hash-only location objects (which make
+// vue-router re-serialize the title param into %2F) or raw history calls
+// (which corrupt vue-router's history.state position bookkeeping). The gate
+// below guards every such navigation.
+function writeFragment(frag, push = false) {
+  // New notes live at /_/new — no note path to attach a fragment to.
+  if (isNewNote.value) return;
+  const hash = serializeFragment(frag);
+  if (window.location.hash === hash) return;
+  const url = window.location.pathname + window.location.search + hash;
+  if (push) router.push(url);
+  else router.replace(url);
+}
+
+// Caret/selection sync is continuous state — always replace in place,
+// never a history entry per keystroke.
+function syncNoteFragment(frag) {
+  writeFragment(frag, false);
+}
+
+function onEditorInput() {
+  noteDirty.value = true;
+  startContentChangedTimeout();
+}
+
+function onSourceSelection(line) {
+  editorLine.value = line;
+  // State now; URL shortly — debounced so typing doesn't churn the router
+  // once per keystroke.
+  if (caretSyncTimer != null) clearTimeout(caretSyncTimer);
+  caretSyncTimer = setTimeout(() => {
+    caretSyncTimer = null;
+    syncNoteFragment(currentFragment());
+  }, 120);
 }
 const unsavedChanges = ref(false);
+// Event-driven dirty state: the WYSIWYG serializer rewrites bytes on every
+// round-trip without the user changing anything, so diffing editor text
+// against the server copy false-positives. Change events are the truth.
+const noteDirty = ref(false);
+let caretSyncTimer = null;
+
+function clearCaretSyncTimer() {
+  if (caretSyncTimer != null) {
+    clearTimeout(caretSyncTimer);
+    caretSyncTimer = null;
+  }
+}
 
 function init() {
   // Return if we already have the note e.g. When we rename a note, the route prop would change but we’d already have the note.
@@ -384,6 +456,7 @@ function init() {
       .then((data) => {
         note.value = data;
         loadingIndicator.value.setLoaded();
+        enterEditFromFragment();
       })
       .catch((error) => {
         if (error.response?.status === 404) {
@@ -421,16 +494,131 @@ function toggleEditModeHandler() {
   if (editMode.value) {
     closeHandler();
   } else {
-    editHandler();
+    editHandler(true);
   }
 }
 
-function editHandler() {
+function editHandler(pushUrl = false) {
+  pendingPush = pushUrl;
+  // Drafts key off newTitle; on a fresh mount it isn't set until
+  // setEditMode, which would make loadDraft miss stored drafts.
+  if (!newTitle.value && note.value.title) newTitle.value = note.value.title;
   const draftContent = loadDraft();
   if (draftContent) {
     isDraftModalVisible.value = true;
   } else {
     setEditMode();
+  }
+}
+
+// Deep links: #edit opens in WYSIWYG, #source[:L...] in source mode.
+// The pending mode/line survive the draft modal (both branches call
+// setEditMode). Window location is the source of truth — route.hash goes
+// stale after our history writes. No history push here: the navigation
+// that carried the fragment into the tab IS the history entry.
+function enterEditFromFragment(frag = parseFragment(window.location.hash)) {
+  if (!frag.mode || !canModify.value) return;
+  pendingEditorMode = frag.mode === "edit" ? "wysiwyg" : "markdown";
+  pendingInitialLine = frag.line || null;
+  editHandler();
+}
+
+// --- Navigation gate ----------------------------------------------------
+// The URL may only leave an edit state once that state change is resolved.
+// Every router-driven navigation (links, back/forward, programmatic) passes
+// through here BEFORE the URL commits: clean exits commit immediately; dirty
+// exits wait on the Save/Discard/Cancel modal; cancel reverts the URL and
+// keeps the session exactly where it was.
+function isStayingInEditState(to) {
+  if (to.name !== "note") return false;
+  if (to.params.title !== note.value.title) return false;
+  return !!parseFragment(to.hash).mode;
+}
+
+async function gateNavigation(to) {
+  if (!editMode.value) {
+    // (Re-)enter edit when the destination URL carries an edit fragment —
+    // forward into an edit entry, or any fragment navigation while viewing.
+    const toFrag = parseFragment(to.hash);
+    if (
+      canModify.value &&
+      to.name === "note" &&
+      to.params.title === note.value.title &&
+      toFrag.mode
+    ) {
+      pendingEditorMode = toFrag.mode === "edit" ? "wysiwyg" : "markdown";
+      pendingInitialLine = toFrag.line || null;
+      editHandler();
+    }
+    return true;
+  }
+  if (isStayingInEditState(to)) {
+    // URL-driven transition between edit states (back/forward across edit
+    // entries, address-bar fragment edits): align the state to the URL —
+    // never write the URL back.
+    const frag = parseFragment(to.hash);
+    const targetMode = frag.mode === "edit" ? "wysiwyg" : "markdown";
+    if (editorMode.value !== targetMode) setEditorMode(targetMode, false);
+    if (frag.mode === "source" && frag.line) {
+      await nextTick();
+      editor.value?.selectLine?.(frag.line);
+    }
+    return true;
+  }
+  if (!isContentChanged()) {
+    exitEditState();
+    return true;
+  }
+  // Dirty exit: stash the destination and block. For a browser pop, the
+  // guard abort makes vue-router revert to the history entry the user was
+  // on — whose URL is exactly the edit fragment, no manual repair needed.
+  // For a push the address never committed. Either way the modal drives
+  // the actual transition; Cancel leaves everything exactly as it was.
+  const navWasPop = window.location.hash === to.hash;
+  pendingNavTarget = { to, pop: navWasPop };
+  isSaveChangesModalVisible.value = true;
+  return false;
+}
+
+// --- Save-changes modal (Save / Discard / Cancel) ------------------------
+// Shown either by the navigation gate (a destination is pending) or by the
+// new-note toggle-off path (no navigation pending).
+let pendingNavTarget = null;
+
+// Commit the gated destination after the edit session ends: pop exits were
+// reverted to the edit entry (vue-router restored the URL), so replace that
+// entry with the target; push exits navigate for real.
+function commitNavTarget(to, pop) {
+  if (pop) router.replace(to.fullPath);
+  else router.push(to.fullPath);
+}
+
+function onSaveChoice(choice) {
+  isSaveChangesModalVisible.value = false;
+  if (pendingNavTarget) {
+    const { to, pop } = pendingNavTarget;
+    pendingNavTarget = null;
+    if (choice === "cancel") return; // pop already reverted: still editing, URL intact
+    const commit = () => {
+      exitEditState();
+      commitNavTarget(to, pop);
+    };
+    if (choice === "save") {
+      saveForNavigation().then((ok) => {
+        if (ok) commit();
+      });
+    } else {
+      clearDraft();
+      commit();
+    }
+    return;
+  }
+  // New-note path: no gated navigation is pending.
+  if (choice === "save") saveHandler(true);
+  else if (choice === "discard") {
+    exitEditState();
+    clearDraft();
+    router.push({ name: "home" });
   }
 }
 
@@ -442,8 +630,17 @@ function setEditMode() {
   editFolder.value = directoryFromTitle(newTitle.value);
   unsavedChanges.value = false;
   editorInitialValue.value = getInitialEditorValue();
-  editorMode.value = loadDefaultEditorMode();
+  // A resumed draft IS unsaved work; a clean load is not.
+  noteDirty.value = editorInitialValue.value != note.value.content;
+  editorMode.value = pendingEditorMode || loadDefaultEditorMode();
+  editorInitialLine.value = pendingInitialLine;
+  editorLine.value = pendingInitialLine || null;
+  pendingEditorMode = null;
+  pendingInitialLine = null;
+  const push = pendingPush;
+  pendingPush = false;
   editMode.value = true;
+  writeFragment(currentFragment(), push);
 }
 
 function syncTitle() {
@@ -466,6 +663,7 @@ function deleteConfirmedHandler() {
   deleteNote(note.value.title)
     .then(() => {
       refreshNoteIndex();
+      exitEditState();
       toast.add(getToastOptions("Note deleted ✓", "Success", "success"));
       router.push({ name: "home" });
     })
@@ -484,6 +682,10 @@ function saveHandler(close = false) {
     toast.add(getToastOptions(titleError, "Invalid", "error"));
     return;
   }
+
+  // Content is on its way out; noteSaveFailure restores the flag if the
+  // save doesn't land.
+  noteDirty.value = false;
 
   // Save Note
   let newContent = editor.value.getMarkdown();
@@ -509,6 +711,45 @@ function saveNew(newTitle, newContent, close = false) {
         });
     })
     .catch(noteSaveFailure);
+}
+
+// After a rename, the client drives link updates across the vault: find
+// referencing notes via search, rewrite their links client-side, and resave
+// each via the normal update API. The server stays a pure file mechanism —
+// it never rewrites other notes as a rename side effect. Best-effort.
+async function updateRenamedLinks(oldTitle, newTitle) {
+  try {
+    const results = await getNotes(oldTitle, undefined, undefined, undefined, true);
+    const candidates = results
+      .map((r) => r.title)
+      .filter((t) => t !== oldTitle && t !== newTitle);
+    let updated = 0;
+    for (const title of candidates) {
+      const other = await getNote(title);
+      const newContent = rewriteRenamedLinks(
+        other.content,
+        oldTitle,
+        newTitle,
+        title,
+      );
+      if (newContent !== other.content) {
+        await updateNote(title, title, newContent);
+        updated++;
+      }
+    }
+    if (updated > 0) {
+      toast.add(
+        getToastOptions(
+          `Updated links in ${updated} note(s).`,
+          "Links updated",
+          "success",
+        ),
+      );
+    }
+  } catch (e) {
+    // Link updates are best-effort; the rename itself already succeeded.
+    console.error("link update failed", e);
+  }
 }
 
 function saveExisting(newTitle, newContent, close = false) {
@@ -539,7 +780,12 @@ function saveExisting(newTitle, newContent, close = false) {
         if (oldTitle != data.title) {
           refreshNoteIndex();
         }
-        router.replace(notePath(note.value.title));
+        // Carry the fragment inside the same navigation so a rename can
+        // neither drop it nor race a follow-up replaceState.
+        router.replace({
+          path: notePath(note.value.title),
+          hash: close ? "" : serializeFragment(currentFragment()),
+        });
         noteSaveSuccess(close);
 
         // Client drives link updates: the server is a pure mechanism.
@@ -562,51 +808,6 @@ function saveExisting(newTitle, newContent, close = false) {
       })
       .catch(noteSaveFailure);
   };
-
-  // After a rename, the client drives link updates across the vault: find
-  // referencing notes via search, rewrite their links client-side, and
-  // resave each via the normal update API. The server stays a pure file
-  // mechanism — it never rewrites other notes as a rename side effect.
-  async function updateRenamedLinks(oldTitle, newTitle) {
-    try {
-      const results = await getNotes(
-        oldTitle,
-        undefined,
-        undefined,
-        undefined,
-        true,
-      );
-      const candidates = results
-        .map((r) => r.title)
-        .filter((t) => t !== oldTitle && t !== newTitle);
-      let updated = 0;
-      for (const title of candidates) {
-        const other = await getNote(title);
-        const newContent = rewriteRenamedLinks(
-          other.content,
-          oldTitle,
-          newTitle,
-          title,
-        );
-        if (newContent !== other.content) {
-          await updateNote(title, title, newContent);
-          updated++;
-        }
-      }
-      if (updated > 0) {
-        toast.add(
-          getToastOptions(
-            `Updated links in ${updated} note(s).`,
-            "Links updated",
-            "success",
-          ),
-        );
-      }
-    } catch (e) {
-      // Link updates are best-effort; the rename itself already succeeded.
-      console.error("link update failed", e);
-    }
-  }
 
   if (folderChanged) {
     previewRename(oldTitle, newTitle)
@@ -636,6 +837,7 @@ function onRenameDialogConfirm(strategy) {
 }
 
 function noteSaveFailure(error) {
+  noteDirty.value = true;
   if (error.response?.status === 400) {
     toast.add(
       getToastOptions(
@@ -661,8 +863,11 @@ function noteSaveFailure(error) {
 
 function noteSaveSuccess(close = false) {
   unsavedChanges.value = false;
+  noteDirty.value = false;
   if (close) {
     closeNote();
+  } else {
+    syncNoteFragment(currentFragment());
   }
   setBeforeUnloadConfirmation(false);
   toast.add(getToastOptions("Note saved successfully ✓", "Success", "success"));
@@ -670,20 +875,94 @@ function noteSaveSuccess(close = false) {
 
 // Note Closure
 function closeHandler() {
-  if (isContentChanged()) {
-    isSaveChangesModalVisible.value = true;
-  } else {
-    closeNote();
+  if (isNewNote.value) {
+    // New notes live at /_/new — no note URL to gate against.
+    if (isContentChanged()) {
+      isSaveChangesModalVisible.value = true;
+    } else {
+      exitEditState();
+      clearDraft();
+      router.push({ name: "home" });
+    }
+    return;
+  }
+  if (window.location.hash === "") {
+    // Defensive: the gate normally never leaves edit state against a
+    // fragment-less URL.
+    exitEditState();
+    return;
+  }
+  // Exit is a navigation to the fragment-less state; the gate decides —
+  // clean exits commit, dirty ones wait on Save/Discard/Cancel, and cancel
+  // reverts the URL without moving anywhere. Path-string push: hash-only
+  // locations re-encode the title's slashes.
+  router.push(window.location.pathname + window.location.search);
+}
+
+// End the edit session in state only. Callers own the URL: either the
+// navigation that triggered the exit commits it (guards), or closeNote
+// writes the fragment-less URL explicitly (toggle/Esc close).
+function exitEditState() {
+  clearContentChangedTimeout();
+  clearCaretSyncTimer();
+  editMode.value = false;
+  editorLine.value = null;
+  editorInitialLine.value = null;
+  noteDirty.value = false;
+  unsavedChanges.value = false;
+  setBeforeUnloadConfirmation(false);
+}
+
+// Persist the work without any navigation of its own — used when a pending
+// navigation is gated on it. The gated navigation commits the URL change.
+async function saveForNavigation() {
+  saveDefaultEditorMode();
+  const titleError = noteTitleError(newTitle.value);
+  if (titleError) {
+    toast.add(getToastOptions(titleError, "Invalid", "error"));
+    return false;
+  }
+  const newContent = editor.value.getMarkdown();
+  try {
+    if (isNewNote.value) {
+      note.value = await createNote(newTitle.value, newContent);
+      refreshNoteIndex();
+    } else {
+      const oldTitle = note.value.title;
+      // "none": the rename-assets dialog cannot stack on the save modal;
+      // attachments stay put and the link rewrite pass still runs below.
+      note.value = await updateNote(
+        oldTitle,
+        newTitle.value,
+        newContent,
+        "none",
+      );
+      if (oldTitle !== note.value.title) {
+        refreshNoteIndex();
+        updateRenamedLinks(oldTitle, note.value.title);
+      }
+    }
+    clearDraft();
+    toast.add(getToastOptions("Note saved successfully ✓", "Success", "success"));
+    return true;
+  } catch (error) {
+    noteSaveFailure(error);
+    return false;
   }
 }
 
 function closeNote() {
+  clearContentChangedTimeout();
   clearDraft();
   editMode.value = false;
   if (isNewNote.value) {
     router.push({ name: "home" });
   } else {
-    editMode.value = false;
+    editorLine.value = null;
+    noteDirty.value = false;
+    unsavedChanges.value = false;
+    setBeforeUnloadConfirmation(false);
+    writeFragment({ mode: null }, true);
   }
 }
 
@@ -766,7 +1045,7 @@ function contentChangedHandler() {
 
 // Drafts
 function saveDraft() {
-  const content = editor.value.getMarkdown();
+  const content = editor.value?.getMarkdown();
   const userHasPersistedToken = isCurrentTokenStored();
   const draftKey = newTitle.value;
   if (content && draftKey) {
@@ -798,7 +1077,7 @@ function loadDraft() {
 // 'e' to edit
 Mousetrap.bind("e", () => {
   if (editMode.value === false && canModify.value) {
-    editHandler();
+    editHandler(true);
   }
 });
 
@@ -868,15 +1147,21 @@ function loadDefaultEditorMode() {
 }
 
 function isContentChanged() {
-  return (
-    newTitle.value != note.value.title ||
-    editor.value.getMarkdown() != note.value.content
-  );
+  return newTitle.value != note.value.title || noteDirty.value;
 }
 
 watch(() => props.title, init);
-onMounted(init);
-onBeforeRouteUpdate((to) => {
+onMounted(() => {
+  init();
+});
+// The content-change debounce can outlive the editor (close/leave within 1s
+// of typing); drop it so the callback never dereferences a dead editor.
+onBeforeUnmount(clearContentChangedTimeout);
+onBeforeRouteUpdate(async (to) => {
+  if (!(await gateNavigation(to))) return false;
   if (!to.params.title) init();
+});
+onBeforeRouteLeave(async (to) => {
+  if (!(await gateNavigation(to))) return false;
 });
 </script>

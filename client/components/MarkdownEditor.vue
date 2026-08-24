@@ -21,9 +21,10 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 const props = defineProps({
   initialValue: String,
   addImageBlobHook: Function,
+  initialLine: Object,
 });
 
-const emit = defineEmits(["change", "keydown"]);
+const emit = defineEmits(["change", "keydown", "selection"]);
 
 const editorElement = ref();
 let view;
@@ -136,32 +137,17 @@ function insertAtCursor(text) {
   view.focus();
 }
 
-// --- Line-link URL fragment (#L123-L345) -------------------------------
-// Keep the URL fragment in sync with the current selection so a link to a
-// line range is always shareable. Uses replaceState to avoid spamming
-// browser history on every caret move.
-function lineFragmentOf(doc, selection) {
-  const from = doc.lineAt(selection.from).number;
-  const to = doc.lineAt(selection.to).number;
-  return from === to ? `#L${from}` : `#L${from}-L${to}`;
-}
-
-function parseLineFragment(hash) {
-  const m = /^#L(\d+)(?:-L?(\d+))?$/.exec(hash || "");
-  if (!m) return null;
-  const from = parseInt(m[1], 10);
-  const to = m[2] !== undefined ? parseInt(m[2], 10) : from;
-  return { from: Math.max(1, Math.min(from, to)), to: Math.max(from, to) };
-}
-
-const lineLinkExtension = EditorView.updateListener.of((update) => {
+// --- Selection reporting -------------------------------------------------
+// The caret/selection is reported to the parent, which owns the URL
+// fragment (via fragment.js — the sole writer). This component never
+// reads from or writes to the URL itself.
+const selectionExtension = EditorView.updateListener.of((update) => {
   if (!update.selectionSet) return;
-  const { state } = update;
-  const fragment = lineFragmentOf(state.doc, state.selection.main);
-  const next = `${window.location.pathname}${window.location.search}${fragment}`;
-  if (window.location.hash !== fragment) {
-    window.history.replaceState(window.history.state, "", next);
-  }
+  const { doc, selection } = update.state;
+  emit("selection", {
+    from: doc.lineAt(selection.main.from).number,
+    to: doc.lineAt(selection.main.to).number,
+  });
 });
 
 // Image paste/drop → upload via the host-provided hook, insert the
@@ -190,7 +176,7 @@ onMounted(() => {
         lineNumbers(),
         highlightActiveLine(),
         highlightActiveLineGutter(),
-        lineLinkExtension,
+        selectionExtension,
         theme,
         EditorView.lineWrapping,
         EditorView.updateListener.of((update) => {
@@ -216,20 +202,27 @@ onMounted(() => {
       ],
     }),
   });
-  restoreLineFragment();
+  restoreInitialLine();
 });
 
-// On mount, if the URL has a #Ln[-Lm] fragment, select + scroll to it.
-function restoreLineFragment() {
-  const frag = parseLineFragment(window.location.hash);
-  if (!frag) return;
+// Select + scroll to a line range (clamped to the doc). Also used by the
+// host to re-apply a line aspect arriving through an external URL change.
+function selectLine(line) {
+  if (!view) return;
   const doc = view.state.doc;
-  const from = Math.min(frag.from, doc.lines);
-  const to = Math.min(frag.to, doc.lines);
+  const from = Math.min(line.from, doc.lines);
+  const to = Math.min(line.to, doc.lines);
   view.dispatch({
     selection: EditorSelection.range(doc.line(from).from, doc.line(to).to),
     scrollIntoView: true,
   });
+}
+
+// On mount, if a line range was passed in, select + scroll to it. The
+// dispatch fires selectionSet, so the parent hears the selection back.
+function restoreInitialLine() {
+  if (!props.initialLine) return;
+  selectLine(props.initialLine);
 }
 
 onBeforeUnmount(() => {
@@ -250,7 +243,7 @@ function isWysiwygMode() {
   return false;
 }
 
-defineExpose({ getMarkdown, setMarkdown, isWysiwygMode });
+defineExpose({ getMarkdown, setMarkdown, isWysiwygMode, selectLine });
 </script>
 
 <style>

@@ -2,7 +2,7 @@
   <Modal
     v-model="isVisible"
     :title="title"
-    :closeHandler="emitClose"
+    :closeHandlerOverride="() => emitClose('cancel')"
     class="px-6 py-4"
   >
     <!-- Title -->

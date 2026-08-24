@@ -53,8 +53,10 @@ const label = {
 await page.clickText(label);
 await page.waitForTimeout(1500);
 
-// Reload: the viewer doesn't re-render on prop change
-await page.reload();
+// Saving without closing keeps the edit-mode fragment in the URL, so a bare
+// reload would re-enter the editor. Toggle edit off first: that returns to
+// the viewer and clears the fragment.
+await page.clickText("Edit");
 await page.poll(`document.querySelector(".toastui-editor-contents") !== null`);
 await page.waitForTimeout(800);
 

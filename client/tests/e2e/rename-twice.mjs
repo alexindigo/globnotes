@@ -68,6 +68,10 @@ console.log("after move: UI shows src:", await uiShownSrc());
 await renameTo("archive1", "Keep files, fix the links");
 _title = "archive1/moving-note";
 console.log("after relink: server content:", JSON.stringify(await serverContent()));
+// Saving without closing leaves the edit-mode fragment in the URL (and the
+// editor open); toggle edit off to clear both before the reload assertion.
+await page.clickText("Edit");
+await page.poll(`document.querySelector(".toastui-editor-contents") !== null`);
 console.log("after relink: UI shows src:", await uiShownSrc());
 console.log("after relink: page reload then UI src:", await (async () => {
   await page.reload();

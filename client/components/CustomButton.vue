@@ -2,6 +2,7 @@
   <button
     class="text-nowrap rounded px-2 py-1"
     :disabled="disabled"
+    :title="title"
     :class="{
       'bg-theme-background text-theme-text-muted enabled:hover:bg-theme-background-elevated':
         style === 'subtle',
@@ -26,6 +27,7 @@ defineProps({
   iconPath: String,
   iconSize: String,
   label: String,
+  title: String,
   disabled: Boolean,
   style: {
     type: String,
