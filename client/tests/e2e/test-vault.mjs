@@ -11,7 +11,7 @@ const PAGES = [
   ["rendering/callouts", ".toastui-editor-contents blockquote", "callout blockquotes"],
   ["rendering/highlights", "mark", "highlight marks"],
   ["rendering/mermaid", ".mermaid svg", "mermaid svg"],
-  ["rendering/frontmatter", ".toastui-editor-contents", "frontmatter note renders"],
+  ["rendering/frontmatter", ".front-matter", "frontmatter properties block"],
   ["links/wiki-links", "a", "links render"],
   ["links/embeds", "img", "embedded image"],
   ["folders/dad/recipes/soup", "h1", "nested note"],
