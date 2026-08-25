@@ -132,6 +132,21 @@
   background-color: rgb(var(--theme-background-elevated));
 }
 
+// Front-matter properties block (YAML at the top of a note). Distinct from
+// body text: elevated surface, monospace, preserves YAML indentation.
+.toastui-editor-contents .front-matter {
+  background-color: rgb(var(--theme-background-elevated));
+  border: 1px solid rgb(var(--theme-border));
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 1em;
+  font-family: Consolas, "Lucida Console", Monaco, "Andale Mono", monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: rgb(var(--theme-text-muted));
+  white-space: pre-wrap;
+}
+
 .dark .toastui-editor-contents pre,
 .dark .toastui-editor-md-code-block-line-background {
   background-color: rgb(var(--theme-background-elevated));
