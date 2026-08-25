@@ -46,38 +46,30 @@ export class PluginManager {
 
   /** Manifest-only listing (no worker spawn) for the settings UI. */
   listPlugins(): { id: string; name: string; version: string }[] {
-    const manifests = new Map<string, ReturnType<typeof readManifest>>();
-    for (
-      const root of [
-        INTERNAL_PLUGINS_DIR,
-        path.join(this.vaultPath, ".globnotes", "plugins"),
-      ]
-    ) {
-      for (const dir of discoverPluginDirs(root)) {
-        try {
-          const manifest = readManifest(dir);
-          manifests.set(manifest.id, manifest);
-        } catch {
-          // Broken plugin: skipped from the listing the same way it is
-          // skipped from spawning.
-        }
-      }
-    }
-    return [...this.#applyPluginsJson([...manifests.values()])]
+    return this.#orderedManifests()
       .map((m) => ({ id: m.id, name: m.name, version: m.version }));
   }
 
-  /** Idempotent lazy start — the render pipeline calls this before the
-   * first dispatch. */
-  ensureStarted(): Promise<void> {
-    if (!this.startPromise) this.startPromise = this.start();
-    return this.startPromise;
+  /** Stylesheets shipped by enabled plugins (Obsidian-style `styles.css`):
+   * read fresh from disk each call so an edit shows without a restart. */
+  getStyleContents(): { id: string; css: string }[] {
+    const out: { id: string; css: string }[] = [];
+    for (const manifest of this.#orderedManifests()) {
+      const file = path.join(manifest.dir, "styles.css");
+      try {
+        if (Deno.statSync(file).isFile) {
+          out.push({ id: manifest.id, css: Deno.readTextFileSync(file) });
+        }
+      } catch {
+        // No styles.css for this plugin — Obsidian's "delete it if unneeded".
+      }
+    }
+    return out;
   }
 
-  /** Discover plugins and spawn their workers. A broken plugin logs and
-   * is skipped — it must never take the server down. */
-  async start(): Promise<void> {
-    // Internal root first; vault plugins override by ID.
+  /** Enabled plugin manifests in order: internal root first, vault plugins
+   * override by ID, then <vault>/.globnotes/plugins.json order/disabled. */
+  #orderedManifests(): ReturnType<typeof readManifest>[] {
     const manifests = new Map<string, ReturnType<typeof readManifest>>();
     for (
       const root of [
@@ -98,9 +90,21 @@ export class PluginManager {
         }
       }
     }
+    return this.#applyPluginsJson([...manifests.values()]);
+  }
 
-    const ordered = this.#applyPluginsJson([...manifests.values()]);
-    for (const manifest of ordered) {
+  /** Idempotent lazy start — the render pipeline calls this before the
+   * first dispatch. */
+  ensureStarted(): Promise<void> {
+    if (!this.startPromise) this.startPromise = this.start();
+    return this.startPromise;
+  }
+
+  /** Discover plugins and spawn their workers. A broken plugin logs and
+   * is skipped — it must never take the server down. */
+  async start(): Promise<void> {
+    // Internal root first; vault plugins override by ID.
+    for (const manifest of this.#orderedManifests()) {
       if (this.hosts.has(manifest.id)) continue;
       try {
         const host = new PluginHost(
