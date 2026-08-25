@@ -34,16 +34,22 @@ const commands = {
 };
 
 /** Dispatch a named command. `h1`/`h2`/`h3` wrap into a heading of that
- * level. Returns false when the editor isn't ready. */
+ * level. Returns false when the editor isn't ready. Refocuses the editor
+ * afterward: real-browser clicks move focus off the contenteditable, which
+ * dims/drops the native selection highlight; state.selection survives, so
+ * refocusing repaints it. */
 export function callCommand(editor, name) {
   if (!editor) return false;
   editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
     if (name === "h1" || name === "h2" || name === "h3") {
       const level = Number(name.slice(1));
-      return ctx.get(commandsCtx).call(wrapInHeadingCommand.key, { level });
+      ctx.get(commandsCtx).call(wrapInHeadingCommand.key, { level });
+    } else {
+      const fn = commands[name];
+      if (fn) fn(ctx);
     }
-    const fn = commands[name];
-    if (fn) return fn(ctx);
+    view.focus();
   });
   return true;
 }
@@ -136,6 +142,7 @@ export function removeLinkCommand(editor) {
     } else {
       dispatch(state.tr.removeMark(from, to, linkType));
     }
+    view.focus();
   });
 }
 

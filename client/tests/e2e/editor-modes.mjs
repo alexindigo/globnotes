@@ -57,6 +57,36 @@ const wyState = await page.evaluate(`({
 })`);
 console.log("wysiwyg mode:", JSON.stringify(wyState));
 
+// Regression: toolbar commands must keep the editor focused and the native
+// selection alive (highlight must not visually drop). Select text, click
+// Bold with a real CDP mouse click, then assert focus + non-collapsed
+// selection.
+await page.evaluate(`(() => {
+  const pm = document.querySelector(".ProseMirror");
+  pm.focus();
+  const it = document.createNodeIterator(pm, NodeFilter.SHOW_TEXT);
+  let n; let target = null;
+  while ((n = it.nextNode())) { if (n.textContent.trim().length > 3) { target = n; break; } }
+  const r = document.createRange(); r.selectNodeContents(target);
+  const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+})()`);
+await page.waitForTimeout(200);
+await page.click('.wysiwyg-toolbar button[title="Bold"]');
+await page.waitForTimeout(400);
+const selState = await page.evaluate(`(() => {
+  const pm = document.querySelector(".ProseMirror");
+  const ae = document.activeElement;
+  const sel = window.getSelection();
+  return {
+    focusInEditor: ae === pm || pm.contains(ae),
+    boldApplied: !!pm.querySelector("strong"),
+    collapsed: sel.isCollapsed,
+    selText: sel.toString().slice(0, 30),
+  };
+})()`);
+console.log("selection after toolbar click:", JSON.stringify(selState));
+const selOk = selState.focusInEditor && selState.boldApplied && !selState.collapsed && selState.selText.length > 0;
+
 // Back to Source
 await page.evaluate(`(() => {
   const el = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Source");
@@ -73,6 +103,7 @@ const ok = mdState.cmPresent &&
   mdState.hasCodeText &&
   wyState.wysiwygContent &&
   wyState.codeBlocksInEditor > 0 &&
-  backState.hasCodeText;
+  backState.hasCodeText &&
+  selOk;
 page.close();
 process.exit(ok ? 0 : 1);

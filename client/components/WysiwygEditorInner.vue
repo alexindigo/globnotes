@@ -113,6 +113,13 @@ function getLinkAtSelection() {
 function removeLink() {
   removeLinkCommand(getEditor());
 }
+// Refocus the editor (toolbar interactions should keep the native selection
+// highlight alive; focus moves off the contenteditable when a real click
+// hits a button or the link popover input).
+function focus() {
+  const editor = getEditor();
+  editor?.action((ctx) => ctx.get(editorViewCtx).focus());
+}
 // Insert (or convert the selection into) a link. Wraps selected text, or
 // inserts placeholder text when the selection is empty.
 function insertLink(href, text) {
@@ -131,6 +138,7 @@ function insertLink(href, text) {
     } else {
       dispatch(state.tr.addMark(from, to, linkMark));
     }
+    view.focus();
   });
 }
 
@@ -142,5 +150,6 @@ defineExpose({
   insertLink,
   getLinkAtSelection,
   removeLink,
+  focus,
 });
 </script>

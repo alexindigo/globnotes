@@ -141,6 +141,7 @@ function openLinkPopover() {
 
 function closeLinkPopover() {
   linkPopoverOpen.value = false;
+  props.innerRef?.focus?.();
 }
 
 function applyLink() {
