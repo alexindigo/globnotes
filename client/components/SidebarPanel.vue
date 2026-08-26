@@ -17,7 +17,7 @@
   />
   <aside
     v-show="globalStore.sidebarVisible"
-    class="fixed inset-y-0 left-0 z-40 w-64 overflow-y-auto border-r border-theme-border bg-theme-background py-2 shadow-lg"
+    class="fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-theme-border bg-theme-background py-2 shadow-lg"
   >
     <!-- Header -->
     <div class="mb-1 flex items-center justify-between px-4 pt-2">
@@ -57,60 +57,107 @@
       </button>
     </div>
 
-    <!-- Tree -->
-    <div
-      v-for="row in visibleRows"
-      :key="row.key"
-      :style="{ paddingLeft: row.depth * 14 + 4 + 'px' }"
-      class="truncate rounded px-1"
-    >
-      <!-- Folder row -->
-      <div
-        v-if="row.type === 'folder'"
-        class="group flex w-full cursor-pointer items-center rounded px-1 py-0.5 text-theme-text-muted hover:bg-theme-background-elevated"
-      >
-        <button
-          class="flex min-w-0 grow items-center"
-          @click="toggleFolder(row.folder.path)"
+    <!-- Scrollable sections -->
+    <div class="min-h-0 flex-1 overflow-y-auto">
+      <!-- Recent notes (toggled via the bottom-row clock) -->
+      <template v-if="recentEnabled">
+        <p
+          v-if="showSectionTitles"
+          class="mb-1 text-xs font-bold uppercase text-theme-text-very-muted"
         >
-          <SvgIcon
-            type="mdi"
-            :path="row.expanded ? mdilChevronDown : mdilChevronRight"
-            size="1em"
-            class="mr-1 shrink-0"
-          />
-          <span class="truncate">{{ row.folder.name }}</span>
-        </button>
+          Recent
+        </p>
         <RouterLink
-          :to="folderPage(row.folder.path)"
-          class="ml-1 shrink-0 opacity-0 group-hover:opacity-100"
-          title="Open folder"
-          @click.stop
-        >
-          <SvgIcon
+          v-for="note in recentNotes"
+          :key="note.title"
+          :to="notePath(note.title)"
+          :title="note.title"
+          class="flex items-center truncate rounded px-1 py-0.5 hover:bg-theme-background-elevated"
+          :class="{
+            'bg-theme-background-elevated text-theme-text':
+              note.title === activeTitle,
+          }"
+          ><SvgIcon
             type="mdi"
-            :path="mdilChevronRight"
+            :path="mdiLanguageMarkdownOutline"
             size="1em"
-            class="text-theme-text-very-muted hover:text-theme-text"
-          />
-        </RouterLink>
-      </div>
-      <!-- Note row -->
-      <RouterLink
-        v-else
-        :to="notePath(row.note.title)"
-        class="flex items-center truncate rounded px-1 py-0.5 hover:bg-theme-background-elevated"
-        :class="{
-          'bg-theme-background-elevated text-theme-text':
-            row.note.title === activeTitle,
-        }"
-        ><SvgIcon
-          type="mdi"
-          :path="mdiLanguageMarkdownOutline"
-          size="1em"
-          class="mr-1 shrink-0 text-theme-text-very-muted"
-        /><span class="truncate">{{ row.note.name }}</span></RouterLink
+            class="mr-1 shrink-0 text-theme-text-very-muted"
+          /><span class="truncate">{{ note.name }}</span></RouterLink
+        >
+      </template>
+
+      <!-- Files (folder tree) -->
+      <p
+        v-if="showSectionTitles"
+        class="mb-1 text-xs font-bold uppercase text-theme-text-very-muted"
       >
+        Files
+      </p>
+      <div
+        v-for="row in visibleRows"
+        :key="row.key"
+        :style="{ paddingLeft: row.depth * 14 + 4 + 'px' }"
+        class="truncate rounded px-1"
+      >
+        <!-- Folder row -->
+        <div
+          v-if="row.type === 'folder'"
+          class="group flex w-full cursor-pointer items-center rounded px-1 py-0.5 text-theme-text-muted hover:bg-theme-background-elevated"
+        >
+          <button
+            class="flex min-w-0 grow items-center"
+            @click="toggleFolder(row.folder.path)"
+          >
+            <SvgIcon
+              type="mdi"
+              :path="row.expanded ? mdilChevronDown : mdilChevronRight"
+              size="1em"
+              class="mr-1 shrink-0"
+            />
+            <span class="truncate">{{ row.folder.name }}</span>
+          </button>
+          <RouterLink
+            :to="folderPage(row.folder.path)"
+            class="ml-1 shrink-0 opacity-0 group-hover:opacity-100"
+            title="Open folder"
+            @click.stop
+          >
+            <SvgIcon
+              type="mdi"
+              :path="mdilChevronRight"
+              size="1em"
+              class="text-theme-text-very-muted hover:text-theme-text"
+            />
+          </RouterLink>
+        </div>
+        <!-- Note row -->
+        <RouterLink
+          v-else
+          :to="notePath(row.note.title)"
+          class="flex items-center truncate rounded px-1 py-0.5 hover:bg-theme-background-elevated"
+          :class="{
+            'bg-theme-background-elevated text-theme-text':
+              row.note.title === activeTitle,
+          }"
+          ><SvgIcon
+            type="mdi"
+            :path="mdiLanguageMarkdownOutline"
+            size="1em"
+            class="mr-1 shrink-0 text-theme-text-very-muted"
+          /><span class="truncate">{{ row.note.name }}</span></RouterLink
+        >
+      </div>
+    </div>
+
+    <!-- Bottom row: section toggles (clock = Recent now; more can be added) -->
+    <div class="flex items-center border-t border-theme-border px-2 pt-1 pb-1">
+      <CustomButton
+        :iconPath="mdilClock"
+        label=""
+        title="Recent notes"
+        :class="{ 'text-theme-brand': recentEnabled }"
+        @click="toggleRecent"
+      />
     </div>
   </aside>
 </template>
@@ -124,11 +171,12 @@ import { mdiClose, mdiDockLeft, mdiFilterOutline, mdiLanguageMarkdownOutline } f
 import {
   mdilChevronDown,
   mdilChevronRight,
+  mdilClock,
   mdilUnfoldLessVertical,
 } from "@mdi/light-js";
 import CustomButton from "../components/CustomButton.vue";
 import TextInput from "../components/TextInput.vue";
-import { getTree } from "../api.js";
+import { getNotes, getTree } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
 import { refreshNoteIndex } from "../noteIndex.js";
@@ -364,6 +412,48 @@ const activeTitle = computed(() =>
   route.name === "note" ? route.params.title : null,
 );
 
+// -- Sections: Recent + Files ------------------------------------------------
+// Sections render as named groups; titles appear only when more than one
+// section is visible. The clock toggle (bottom row) switches Recent on/off,
+// persisted across sessions.
+
+const recentEnabled = ref(localStorage.getItem("sidebarRecent") === "true");
+const recentNotes = ref([]);
+
+// Sections in render order. Recent shows only when its toggle is on; Files is
+// the folder tree, always present.
+const enabledSections = computed(() => {
+  const out = [];
+  if (recentEnabled.value) out.push("recent");
+  out.push("files");
+  return out;
+});
+const showSectionTitles = computed(() => enabledSections.value.length > 1);
+
+function toggleRecent() {
+  recentEnabled.value = !recentEnabled.value;
+  localStorage.setItem("sidebarRecent", recentEnabled.value ? "true" : "false");
+  if (recentEnabled.value) loadRecentNotes();
+}
+
+async function loadRecentNotes() {
+  try {
+    // Sort client-side by lastModified desc (the same approach the search
+    // view uses) — the API's `sort` param expects a literal name, not the
+    // numeric searchSortOptions enum.
+    const results = await getNotes("*", undefined, undefined, undefined);
+    recentNotes.value = [...results]
+      .sort((a, b) => b.lastModified - a.lastModified)
+      .slice(0, 10)
+      .map((n) => ({
+        title: n.title,
+        name: n.title.split("/").pop(),
+      }));
+  } catch {
+    recentNotes.value = [];
+  }
+}
+
 // Load the root level when the drawer opens (and keep the note-index
 // fresh for wiki-link resolution and the filter box). Persisted expanded
 // folders are hydrated too — otherwise restored expansion shows empty
@@ -379,6 +469,7 @@ watch(
       if (!(globalStore.noteTitles || []).length) {
         refreshNoteIndex();
       }
+      if (recentEnabled.value) loadRecentNotes();
     }
   },
   { immediate: true },
