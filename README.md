@@ -4,6 +4,10 @@ A self-hosted, database-less note-taking web app where **a note's title is its p
 
 globnotes is a fork of [flatnotes](https://github.com/dullage/flatnotes) by Adam Dullage. flatnotes deliberately keeps every note in one flat directory; globnotes keeps everything else about its spirit (zero-config, single container, distraction-free) and changes one thing: notes can live in subdirectories, and a note's title *is* its relative path.
 
+<p align="center">
+  <img src="client/assets/screenshot.png" width="800" alt="globnotes — home with sidebar, recent notes, and folder tree" />
+</p>
+
 ```
 data/
 ├── dad/
