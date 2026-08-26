@@ -39,9 +39,17 @@ const clockAtBottom = await page.evaluate(
 if (titles.length !== 2 || !titles.includes("Recent") || !titles.includes("Files")) {
   throw new Error("expected Recent + Files titles: " + JSON.stringify(titles));
 }
-if (count !== 10) throw new Error("expected 10 recent rows, got " + count);
+if (count !== 5) throw new Error("expected 5 recent rows, got " + count);
 if (!clockAtBottom) throw new Error("clock button not in the bottom row");
-console.log("recent on: titles [Recent, Files], 10 rows, clock in bottom row ✓");
+
+// Active section button shows a bottom border (tab indicator).
+const bottomBorder = await page.evaluate(
+  `(() => { const b = document.querySelector('button[title="Recent notes"]'); const cs = getComputedStyle(b); return { style: cs.borderBottomStyle, width: cs.borderBottomWidth }; })()`,
+);
+if (bottomBorder.style !== "solid" || bottomBorder.width === "0px") {
+  throw new Error("expected bottom border on active section button: " + JSON.stringify(bottomBorder));
+}
+console.log("recent on: titles [Recent, Files], 5 rows, clock in bottom row, bottom border ✓");
 
 // Toggle off again.
 await page.evaluate(`document.querySelector('button[title="Recent notes"]')?.click()`);

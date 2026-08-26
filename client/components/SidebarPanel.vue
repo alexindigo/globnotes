@@ -60,7 +60,7 @@
     <!-- Scrollable sections -->
     <div class="min-h-0 flex-1 overflow-y-auto">
       <!-- Recent notes (toggled via the bottom-row clock) -->
-      <template v-if="recentEnabled">
+      <section v-if="recentEnabled" class="mb-4">
         <p
           v-if="showSectionTitles"
           class="mb-1 text-xs font-bold uppercase text-theme-text-very-muted"
@@ -84,15 +84,16 @@
             class="mr-1 shrink-0 text-theme-text-very-muted"
           /><span class="truncate">{{ note.name }}</span></RouterLink
         >
-      </template>
+      </section>
 
       <!-- Files (folder tree) -->
-      <p
-        v-if="showSectionTitles"
-        class="mb-1 text-xs font-bold uppercase text-theme-text-very-muted"
-      >
-        Files
-      </p>
+      <section>
+        <p
+          v-if="showSectionTitles"
+          class="mb-1 text-xs font-bold uppercase text-theme-text-very-muted"
+        >
+          Files
+        </p>
       <div
         v-for="row in visibleRows"
         :key="row.key"
@@ -147,6 +148,7 @@
           /><span class="truncate">{{ row.note.name }}</span></RouterLink
         >
       </div>
+      </section>
     </div>
 
     <!-- Bottom row: section toggles (clock = Recent now; more can be added) -->
@@ -155,7 +157,12 @@
         :iconPath="mdilClock"
         label=""
         title="Recent notes"
-        :class="{ 'text-theme-brand': recentEnabled }"
+        :class="[
+          'rounded-none border-b-2',
+          recentEnabled
+            ? 'text-theme-brand border-theme-brand'
+            : 'border-transparent',
+        ]"
         @click="toggleRecent"
       />
     </div>
@@ -444,7 +451,7 @@ async function loadRecentNotes() {
     const results = await getNotes("*", undefined, undefined, undefined);
     recentNotes.value = [...results]
       .sort((a, b) => b.lastModified - a.lastModified)
-      .slice(0, 10)
+      .slice(0, 5)
       .map((n) => ({
         title: n.title,
         name: n.title.split("/").pop(),
