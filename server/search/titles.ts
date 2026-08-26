@@ -61,7 +61,7 @@ function parseFrontMatter(content: string): {
     const m = line.match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
     if (!m) continue;
     const key = m[1];
-    let value = m[2];
+    const value = m[2];
     if (key === "title") {
       out.title = unquote(value);
     } else if (key === "aliases") {
