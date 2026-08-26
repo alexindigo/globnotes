@@ -14,6 +14,24 @@ data/
 └── ideas.md               →  note at /ideas
 ```
 
+## Obsidian-flavored support
+
+globnotes renders the markdown features Obsidian users rely on — and the set grows over time.
+
+**Supported today:**
+
+- Wikilinks `[[wikilink]]` with `|alias` and `#heading` links
+- Image and file embeds `![[image.png]]`, `![[doc.pdf]]`
+- Callouts `> [!note]`, `> [!warning]`, …
+- Hidden comments `%%comments%%`
+- Highlight `==mark==`
+- Mermaid diagrams
+- YAML frontmatter (title, aliases, and more)
+- KaTeX math
+- Automatic URL linking
+
+**Not yet (roadmap):** note transclusion (`![[Note]]`), block references/transclusion, task lists, footnotes, abbreviations/definition lists/emoji/sub/superscript, Dataview-style queries, and graph view.
+
 ## Why
 
 Markdown is supposed to be app-independent. If your notes already live in folders — an Obsidian vault, a git repo, a Syncthing share — globnotes gives you a clean web view (and editor) over exactly that structure, without flattening anything. Mount whatever you like as subdirectories:
