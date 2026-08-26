@@ -58,7 +58,7 @@
     </div>
 
     <!-- Scrollable sections -->
-    <div class="min-h-0 flex-1 overflow-y-auto">
+    <div class="min-h-0 flex-1 overflow-y-auto pl-4">
       <!-- Recent notes (toggled via the bottom-row clock) -->
       <section v-if="recentEnabled" class="mb-4">
         <p
@@ -152,13 +152,13 @@
     </div>
 
     <!-- Bottom row: section toggles (clock = Recent now; more can be added) -->
-    <div class="flex items-center border-t border-theme-border px-2 pt-1 pb-1">
+    <div class="flex items-center border-t border-theme-border px-4 pt-1 pb-1">
       <CustomButton
         :iconPath="mdilClock"
         label=""
         title="Recent notes"
         :class="[
-          'rounded-none border-b-2',
+          'rounded-none border-t-2',
           recentEnabled
             ? 'text-theme-brand border-theme-brand'
             : 'border-transparent',
