@@ -25,7 +25,13 @@
       title="Menu"
       @click="toggleMenu"
     />
-    <PrimeMenu ref="menu" :model="menuItems" :popup="true" />
+    <PrimeMenu
+      ref="menu"
+      :model="menuItems"
+      :popup="true"
+      @show="publish(TOPICS.SETTINGS_MENU_OPEN, {})"
+      @hide="publish(TOPICS.SETTINGS_MENU_CLOSE, {})"
+    />
     <ThemePicker v-model="themePickerVisible" />
     <PluginSettings v-model="pluginSettingsVisible" />
   </div>
@@ -45,6 +51,7 @@ import {
 import { computed, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
+import { publish, TOPICS } from "../bus/index.js";
 import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
 import PluginSettings from "../components/PluginSettings.vue";

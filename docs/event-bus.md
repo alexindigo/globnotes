@@ -42,13 +42,17 @@ schema enforcement — the topics.js file IS the contract).
 | 7 | `sidepanel:close` | `{}` | `SidebarPanel.vue` toggleSidebar |
 | 8 | `sidepanel:section-show` | `{ section }` | `SidebarPanel.vue` toggleRecent (show) |
 | 9 | `sidepanel:section-hide` | `{ section }` | `SidebarPanel.vue` toggleRecent (hide) |
-| 10 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme |
-| 11 | `plugin:toggle` | `{ id, enabled }` | `pluginSettings.js` saveSwitch |
-| 12 | `plugin:auto-enable` | `{ enabled }` | `pluginSettings.js` saveAutoEnable |
-| 13 | `search:perform` | `{ term }` | `router.js` afterEach |
-| 14 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
-| 15 | `note:edit-start` | `{ title }` | `Note.vue` setEditMode |
-| 16 | `note:edit-end` | `{ title }` | `Note.vue` exitEditState |
+| 10 | `settings-menu:open` | `{}` | `NavBar.vue` PrimeMenu show |
+| 11 | `settings-menu:close` | `{}` | `NavBar.vue` PrimeMenu hide |
+| 12 | `search-menu:open` | `{}` | `SearchResults.vue` sort-menu show |
+| 13 | `search-menu:close` | `{}` | `SearchResults.vue` sort-menu hide |
+| 14 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme |
+| 15 | `plugin:toggle` | `{ id, enabled }` | `pluginSettings.js` saveSwitch |
+| 16 | `plugin:auto-enable` | `{ enabled }` | `pluginSettings.js` saveAutoEnable |
+| 17 | `search:perform` | `{ term }` | `router.js` afterEach |
+| 18 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
+| 19 | `note:edit-start` | `{ title }` | `Note.vue` setEditMode |
+| 20 | `note:edit-end` | `{ title }` | `Note.vue` exitEditState |
 
 ## Built-in consumers
 

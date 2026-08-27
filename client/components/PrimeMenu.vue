@@ -1,5 +1,5 @@
 <template>
-  <Menu ref="menu" :pt="style">
+  <Menu ref="menu" :pt="style" @show="emit('show')" @hide="emit('hide')">
     <template #item="{ item, props }">
       <a class="flex items-center justify-between" v-bind="props.action">
         <IconLabel :iconPath="item.icon" :label="item.label" />
@@ -19,6 +19,8 @@ import { ref } from "vue";
 import IconLabel from "./IconLabel.vue";
 
 const menu = ref();
+
+const emit = defineEmits(["show", "hide"]);
 
 const style = {
   root: "border p-1 rounded border-theme-border bg-theme-background",

@@ -12,7 +12,13 @@
         :isOn="includeNested"
         @click="toggleNested"
       />
-      <PrimeMenu ref="sortMenu" :model="menuItems" :popup="true" />
+      <PrimeMenu
+        ref="sortMenu"
+        :model="menuItems"
+        :popup="true"
+        @show="publish(TOPICS.SEARCH_MENU_OPEN, {})"
+        @hide="publish(TOPICS.SEARCH_MENU_CLOSE, {})"
+      />
     </div>
 
     <!-- Search Input -->
@@ -135,6 +141,7 @@ import SvgIcon from "@jamescoyle/vue-icon";
 import { mdiMagnify, mdiSort } from "@mdi/js";
 import { mdilArrowUp, mdilFolder } from "@mdi/light-js";
 import { apiErrorHandler, getNotes, rewriteRefs } from "../api.js";
+import { publish, TOPICS } from "../bus/index.js";
 import CustomButton from "../components/CustomButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";

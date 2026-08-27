@@ -10,6 +10,11 @@ const TOPICS = {
   SIDEPANEL_SECTION_SHOW: "sidepanel:section-show",
   SIDEPANEL_SECTION_HIDE: "sidepanel:section-hide",
 
+  SETTINGS_MENU_OPEN: "settings-menu:open",
+  SETTINGS_MENU_CLOSE: "settings-menu:close",
+  SEARCH_MENU_OPEN: "search-menu:open",
+  SEARCH_MENU_CLOSE: "search-menu:close",
+
   THEME_CHANGE: "theme:change",
 
   PLUGIN_TOGGLE: "plugin:toggle",
