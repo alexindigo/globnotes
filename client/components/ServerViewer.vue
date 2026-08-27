@@ -13,6 +13,7 @@ import mermaid from "mermaid";
 import { onMounted, ref, watch } from "vue";
 
 import { getPlugins, getRenderedHtml } from "../api.js";
+import { subscribe, TOPICS } from "../bus/index.js";
 import { disabledPluginIds, viewLineNumbers } from "../pluginSettings.js";
 
 const props = defineProps({
@@ -95,6 +96,8 @@ onMounted(renderNote);
 watch(() => props.title, renderNote);
 // Re-render when the line-numbers-in-view-mode toggle changes.
 watch(viewLineNumbers, renderNote);
+subscribe(TOPICS.PLUGIN_TOGGLE, renderNote);
+subscribe(TOPICS.PLUGIN_AUTO_ENABLE, renderNote);
 </script>
 
 <style>

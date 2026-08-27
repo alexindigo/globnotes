@@ -4,6 +4,7 @@
 
 import { ref } from "vue";
 
+import { publish, TOPICS } from "./bus/index.js";
 import { useGlobalStore } from "./globalStore.js";
 
 const AUTO_KEY = "autoEnablePlugins";
@@ -36,6 +37,7 @@ export function loadAutoEnable() {
 
 export function saveAutoEnable(value) {
   localStorage.setItem(AUTO_KEY, String(value));
+  publish(TOPICS.PLUGIN_AUTO_ENABLE, { enabled: value });
 }
 
 /** Per-plugin tri-state: true = on, false = off, missing = follow the
@@ -52,6 +54,7 @@ export function saveSwitch(id, value) {
   const switches = loadSwitches();
   switches[id] = value;
   localStorage.setItem(SWITCHES_KEY, JSON.stringify(switches));
+  publish(TOPICS.PLUGIN_TOGGLE, { id, enabled: value });
 }
 
 export function isPluginEnabled(id) {

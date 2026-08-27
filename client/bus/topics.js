@@ -11,6 +11,9 @@ const TOPICS = {
   SIDEPANEL_SECTION_HIDE: "sidepanel:section-hide",
 
   THEME_CHANGE: "theme:change",
+
+  PLUGIN_TOGGLE: "plugin:toggle",
+  PLUGIN_AUTO_ENABLE: "plugin:auto-enable",
 };
 
 export { TOPICS };
