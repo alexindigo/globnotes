@@ -159,6 +159,10 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 Rendering is a markdown-it pipeline extended by **plugins** — each running in its own permission-narrowed Deno Worker (no network/env/write unless the manifest asks). The built-ins (`globnotes-autolinks`, `-callout`, `-comments`, `-embeds`, `-mark`, `-mermaid`) produce the Obsidian-flavored rendering out of the box; drop your own into `<vault>/.globnotes/plugins/<id>/` and they join the pipeline. Per-plugin switches and the auto-enable default live in the menu → **Plugins** dialog. See [docs/plugins.md](docs/plugins.md) for the authoring guide.
 
+## Event bus
+
+Components communicate over a mitt-based client-side event bus — publishers announce facts like "note renamed" or "theme changed," consumers decide what to refresh. 16 topics cover note lifecycle, sidebar state, themes, plugins, search, and edit sessions. See [docs/event-bus.md](docs/event-bus.md) for the topic registry and usage guide.
+
 ## Deferred / future work
 
 See [FutureDevelopment.md](FutureDevelopment.md) — note transclusion, unresolved-link styling, backlinks/graph, compat hats, and more.
@@ -166,19 +170,20 @@ See [FutureDevelopment.md](FutureDevelopment.md) — note transclusion, unresolv
 ## Development
 
 ```bash
-# Server (Deno) — tests, lint, type check
+# Install everything (Deno workspace: deno.json imports + package.json deps)
 deno install
-deno task test    # 108 integration + unit tests
+
+# Server (Deno) — tests, lint, type check
+deno task test       # 108 integration + unit tests
 deno task lint
 deno task check
 
-# Client build & tests
-npm ci
-npm run build
-npx vitest run
+# Client build & unit tests (via Deno npm compat — no npm/node required)
+deno task build:client
+deno task test:client
 
-# Client dev server
-npm run dev
+# Client dev server (Vite under Deno)
+deno task dev -- npm:vite
 ```
 
 ## Credit
