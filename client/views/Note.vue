@@ -997,6 +997,7 @@ function postAttachment(file) {
   // Upload the attachment
   return uploadFile(file, noteDirectory())
     .then((data) => {
+      publish(TOPICS.FILE_UPLOAD, { name: file.name });
       // Success Toast
       toast.add(
         getToastOptions(

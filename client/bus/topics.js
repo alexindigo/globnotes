@@ -4,6 +4,8 @@ const TOPICS = {
   NOTE_SAVE: "note:save",
   NOTE_RENAME: "note:rename",
   NOTE_DELETE: "note:delete",
+  NOTE_REFS_REWRITTEN: "note:refs-rewritten",
+  FILE_UPLOAD: "file:upload",
 
   SIDEPANEL_OPEN: "sidepanel:open",
   SIDEPANEL_CLOSE: "sidepanel:close",
@@ -20,7 +22,11 @@ const TOPICS = {
   PLUGIN_TOGGLE: "plugin:toggle",
   PLUGIN_AUTO_ENABLE: "plugin:auto-enable",
 
+  SETTINGS_LINE_NUMBERS: "settings:line-numbers",
+
   SEARCH_PERFORM: "search:perform",
+  SEARCH_INCLUDE_NESTED: "search:include-nested",
+
   EDITOR_MODE_CHANGE: "editor:mode-change",
   NOTE_EDIT_START: "note:edit-start",
   NOTE_EDIT_END: "note:edit-end",

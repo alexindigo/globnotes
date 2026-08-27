@@ -24,6 +24,7 @@ export function loadViewLineNumbers() {
 export function saveViewLineNumbers(value) {
   viewLineNumbers.value = value;
   localStorage.setItem(VIEW_LINE_NUMBERS_KEY, String(value));
+  publish(TOPICS.SETTINGS_LINE_NUMBERS, { value });
 }
 
 export function loadAutoEnable() {

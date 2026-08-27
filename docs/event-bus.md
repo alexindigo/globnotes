@@ -38,21 +38,25 @@ schema enforcement — the topics.js file IS the contract).
 | 3 | `note:save` | `{ title }` | `Note.vue` saveExisting / saveNote (content-only) |
 | 4 | `note:rename` | `{ oldTitle, newTitle }` | `Note.vue` saveExisting / saveNote (title changed) |
 | 5 | `note:delete` | `{ title }` | `Note.vue` deleteConfirmedHandler |
-| 6 | `sidepanel:open` | `{}` | `SidebarPanel.vue` openSidebar |
-| 7 | `sidepanel:close` | `{}` | `SidebarPanel.vue` toggleSidebar |
-| 8 | `sidepanel:section-show` | `{ section }` | `SidebarPanel.vue` toggleRecent (show) |
-| 9 | `sidepanel:section-hide` | `{ section }` | `SidebarPanel.vue` toggleRecent (hide) |
-| 10 | `settings-menu:open` | `{}` | `NavBar.vue` PrimeMenu show |
-| 11 | `settings-menu:close` | `{}` | `NavBar.vue` PrimeMenu hide |
-| 12 | `search-menu:open` | `{}` | `SearchResults.vue` sort-menu show |
-| 13 | `search-menu:close` | `{}` | `SearchResults.vue` sort-menu hide |
-| 14 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme |
-| 15 | `plugin:toggle` | `{ id, enabled }` | `pluginSettings.js` saveSwitch |
-| 16 | `plugin:auto-enable` | `{ enabled }` | `pluginSettings.js` saveAutoEnable |
-| 17 | `search:perform` | `{ term }` | `router.js` afterEach |
-| 18 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
-| 19 | `note:edit-start` | `{ title }` | `Note.vue` setEditMode |
-| 20 | `note:edit-end` | `{ title }` | `Note.vue` exitEditState |
+| 6 | `note:refs-rewritten` | `{ oldPath, newPath }` | `SearchResults.vue` fixAllRefs / fixSingleRef |
+| 7 | `file:upload` | `{ name }` | `Note.vue` postAttachment (success) |
+| 8 | `sidepanel:open` | `{}` | `SidebarPanel.vue` openSidebar |
+| 9 | `sidepanel:close` | `{}` | `SidebarPanel.vue` toggleSidebar |
+| 10 | `sidepanel:section-show` | `{ section }` | `SidebarPanel.vue` toggleRecent (show) |
+| 11 | `sidepanel:section-hide` | `{ section }` | `SidebarPanel.vue` toggleRecent (hide) |
+| 12 | `settings-menu:open` | `{}` | `NavBar.vue` PrimeMenu show |
+| 13 | `settings-menu:close` | `{}` | `NavBar.vue` PrimeMenu hide |
+| 14 | `search-menu:open` | `{}` | `SearchResults.vue` sort-menu show |
+| 15 | `search-menu:close` | `{}` | `SearchResults.vue` sort-menu hide |
+| 16 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme |
+| 17 | `plugin:toggle` | `{ id, enabled }` | `pluginSettings.js` saveSwitch |
+| 18 | `plugin:auto-enable` | `{ enabled }` | `pluginSettings.js` saveAutoEnable |
+| 19 | `settings:line-numbers` | `{ value }` | `pluginSettings.js` saveViewLineNumbers |
+| 20 | `search:perform` | `{ term }` | `router.js` afterEach |
+| 21 | `search:include-nested` | `{ value }` | `SearchResults.vue` toggleNested |
+| 22 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
+| 23 | `note:edit-start` | `{ title }` | `Note.vue` setEditMode |
+| 24 | `note:edit-end` | `{ title }` | `Note.vue` exitEditState |
 
 ## Built-in consumers
 

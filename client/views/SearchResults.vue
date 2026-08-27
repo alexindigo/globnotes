@@ -184,6 +184,10 @@ async function fixSingleRef(file) {
   fixInProgress.value = true;
   try {
     await rewriteRefs(file.oldPath, file.newPath);
+    publish(TOPICS.NOTE_REFS_REWRITTEN, {
+      oldPath: file.oldPath,
+      newPath: file.newPath,
+    });
     toast.add({
       severity: "success",
       summary: "Fixed",
@@ -206,6 +210,10 @@ async function fixAllRefs() {
   for (const f of files) {
     try {
       await rewriteRefs(f.oldPath, f.newPath);
+      publish(TOPICS.NOTE_REFS_REWRITTEN, {
+        oldPath: f.oldPath,
+        newPath: f.newPath,
+      });
     } catch (e) {
       apiErrorHandler(e, toast);
     }
@@ -263,6 +271,7 @@ const upTarget = computed(() => {
 function toggleNested() {
   includeNested.value = !includeNested.value;
   localStorage.setItem("includeNested", includeNested.value);
+  publish(TOPICS.SEARCH_INCLUDE_NESTED, { value: includeNested.value });
   init();
 }
 
