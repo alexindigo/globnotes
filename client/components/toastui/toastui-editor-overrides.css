@@ -1,0 +1,478 @@
+/* Typography */
+
+.ProseMirror,
+.toastui-editor-defaultUI .ProseMirror,
+.toastui-editor-md-container .toastui-editor-md-preview {
+  padding: 1rem 0 0 0;
+}
+
+.ProseMirror {
+  height: 100%;
+}
+
+/* Vertically center the bullet point */
+.toastui-editor-contents ul > li::before {
+  margin-top: 0.7rem;
+}
+
+.ProseMirror,
+.toastui-editor-contents {
+  font-family: "Poppins", sans-serif;
+  font-size: 1rem;
+}
+
+.toastui-editor-contents h1,
+.toastui-editor-contents .toastui-editor-md-heading1,
+.toastui-editor-contents h2,
+.toastui-editor-contents .toastui-editor-md-heading2,
+.toastui-editor-contents h3,
+.toastui-editor-contents .toastui-editor-md-heading3,
+.toastui-editor-contents h4,
+.toastui-editor-contents .toastui-editor-md-heading4,
+.toastui-editor-contents h5,
+.toastui-editor-contents .toastui-editor-md-heading5,
+.toastui-editor-contents h6,
+.toastui-editor-contents .toastui-editor-md-heading6,
+.ProseMirror h1,
+.ProseMirror .toastui-editor-md-heading1,
+.ProseMirror h2,
+.ProseMirror .toastui-editor-md-heading2,
+.ProseMirror h3,
+.ProseMirror .toastui-editor-md-heading3,
+.ProseMirror h4,
+.ProseMirror .toastui-editor-md-heading4,
+.ProseMirror h5,
+.ProseMirror .toastui-editor-md-heading5,
+.ProseMirror h6,
+.ProseMirror .toastui-editor-md-heading6 {
+  font-weight: bold;
+  line-height: 1.4;
+  margin: 1em 0 0.5em 0;
+  padding: 0;
+  border-bottom: none;
+}
+
+.toastui-editor-contents h1:first-of-type,
+.toastui-editor-contents .toastui-editor-md-heading1:first-of-type,
+.toastui-editor-contents h2:first-of-type,
+.toastui-editor-contents .toastui-editor-md-heading2:first-of-type,
+.toastui-editor-contents h3:first-of-type,
+.toastui-editor-contents .toastui-editor-md-heading3:first-of-type,
+.toastui-editor-contents h4:first-of-type,
+.toastui-editor-contents .toastui-editor-md-heading4:first-of-type,
+.toastui-editor-contents h5:first-of-type,
+.toastui-editor-contents .toastui-editor-md-heading5:first-of-type,
+.toastui-editor-contents h6:first-of-type,
+.toastui-editor-contents .toastui-editor-md-heading6:first-of-type,
+.ProseMirror h1:first-of-type,
+.ProseMirror .toastui-editor-md-heading1:first-of-type,
+.ProseMirror h2:first-of-type,
+.ProseMirror .toastui-editor-md-heading2:first-of-type,
+.ProseMirror h3:first-of-type,
+.ProseMirror .toastui-editor-md-heading3:first-of-type,
+.ProseMirror h4:first-of-type,
+.ProseMirror .toastui-editor-md-heading4:first-of-type,
+.ProseMirror h5:first-of-type,
+.ProseMirror .toastui-editor-md-heading5:first-of-type,
+.ProseMirror h6:first-of-type,
+.ProseMirror .toastui-editor-md-heading6:first-of-type {
+  margin-top: 0;
+}
+
+.toastui-editor-contents h1,
+.toastui-editor-contents .toastui-editor-md-heading1,
+.ProseMirror h1,
+.ProseMirror .toastui-editor-md-heading1 {
+  font-size: 1.75rem;
+}
+
+.toastui-editor-contents h2,
+.toastui-editor-contents .toastui-editor-md-heading2,
+.ProseMirror h2,
+.ProseMirror .toastui-editor-md-heading2 {
+  font-size: 1.6rem;
+}
+
+.toastui-editor-contents h3,
+.toastui-editor-contents .toastui-editor-md-heading3,
+.ProseMirror h3,
+.ProseMirror .toastui-editor-md-heading3 {
+  font-size: 1.45rem;
+}
+
+.toastui-editor-contents h4,
+.toastui-editor-contents .toastui-editor-md-heading4,
+.ProseMirror h4,
+.ProseMirror .toastui-editor-md-heading4 {
+  font-size: 1.3rem;
+}
+
+.toastui-editor-contents h5,
+.toastui-editor-contents .toastui-editor-md-heading5,
+.ProseMirror h5,
+.ProseMirror .toastui-editor-md-heading5 {
+  font-size: 1.15rem;
+}
+
+.toastui-editor-contents h6,
+.toastui-editor-contents .toastui-editor-md-heading6,
+.ProseMirror h6,
+.ProseMirror .toastui-editor-md-heading6 {
+  font-size: 1rem;
+}
+
+.toastui-editor-contents p,
+.ProseMirror p {
+  line-height: 1.6rem;
+  margin: 0 0 1rem 0;
+}
+
+/* Override the default font-family for code blocks as some of the fallbacks are not monospace */
+.toastui-editor-contents code,
+.toastui-editor-contents pre,
+.toastui-editor-md-code,
+.toastui-editor-md-code-block {
+  font-family: Consolas, "Lucida Console", Monaco, "Andale Mono", monospace;
+}
+
+/* Colours */
+.toastui-editor-defaultUI {
+  border: none;
+}
+
+.toastui-editor-contents h1,
+.toastui-editor-contents h2,
+.toastui-editor-contents h3,
+.toastui-editor-contents h4,
+.toastui-editor-contents h5,
+.toastui-editor-contents h6 {
+  color: rgb(var(--theme-text));
+}
+
+.toastui-editor-contents p {
+  color: rgb(var(--theme-text));
+}
+
+.toastui-editor-contents pre code {
+  color: rgb(var(--theme-text));
+}
+
+.toastui-editor-main {
+  background-color: rgb(var(--theme-background));
+}
+
+.toastui-editor-ww-container {
+  background-color: rgb(var(--theme-background));
+}
+
+.toastui-editor-contents ul,
+.toastui-editor-contents menu,
+.toastui-editor-contents ol,
+.toastui-editor-contents dir {
+  color: rgb(var(--theme-text));
+}
+
+/* Code Block */
+.toastui-editor-contents pre,
+.toastui-editor-md-code-block-line-background {
+  background-color: rgb(var(--theme-background-elevated));
+}
+
+/* Front-matter properties block (YAML at the top of a note). Distinct from
+   body text: elevated surface, monospace, preserves YAML indentation. */
+.toastui-editor-contents .front-matter {
+  background-color: rgb(var(--theme-background-elevated));
+  border: 1px solid rgb(var(--theme-border));
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 1em;
+  font-family: Consolas, "Lucida Console", Monaco, "Andale Mono", monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: rgb(var(--theme-text-muted));
+  white-space: pre-wrap;
+}
+
+.dark .toastui-editor-contents pre,
+.dark .toastui-editor-md-code-block-line-background {
+  background-color: rgb(var(--theme-background-elevated));
+}
+
+.token.operator,
+.token.entity,
+.token.url,
+.language-css .token.string,
+.style .token.string {
+  background: none;
+}
+
+/* Tables */
+.toastui-editor-contents table th {
+  color: rgb(var(--theme-text));
+  background-color: rgb(var(--theme-background-elevated));
+}
+
+.toastui-editor-contents table {
+  color: rgb(var(--theme-text));
+}
+
+.toastui-editor-md-table .toastui-editor-md-table-cell {
+  color: rgb(var(--theme-text));
+}
+
+/* Editor */
+.ProseMirror {
+  color: rgb(var(--theme-text));
+}
+
+/* Toolbar */
+.toastui-editor-defaultUI-toolbar {
+  background-color: rgb(var(--theme-background));
+  border-bottom-color: rgb(var(--theme-border));
+}
+
+.toastui-editor-defaultUI .toastui-editor-md-tab-container {
+  background-color: rgb(var(--theme-background));
+  border-bottom-color: rgb(var(--theme-border));
+}
+
+.toastui-editor-mode-switch {
+  background-color: rgb(var(--theme-background));
+  border-color: rgb(var(--theme-border));
+}
+
+.toastui-editor-defaultUI-toolbar button {
+  border: 1px solid rgb(var(--theme-background));
+}
+
+.toastui-editor-defaultUI .tab-item.active {
+  background-color: rgb(var(--theme-background));
+  color: rgb(var(--theme-text));
+  border-color: rgb(var(--theme-border));
+}
+
+.toastui-editor-defaultUI .tab-item {
+  background-color: rgb(var(--theme-background-elevated));
+  color: rgb(var(--theme-text-muted));
+  border-color: rgb(var(--theme-border));
+}
+
+.toastui-editor-md-tab-container .tab-item.active {
+  border-bottom: none;
+}
+
+.toastui-editor-toolbar-divider {
+  background-color: rgb(var(--theme-text));
+}
+
+/* Standard dark theme buttons are dark grey, this position change makes them white */
+.dark .toastui-editor-toolbar-icons {
+  background-position-y: -49px;
+}
+
+.toastui-editor-defaultUI-toolbar button:not(:disabled):hover {
+  background-color: rgb(var(--theme-background-elevated));
+  border: 1px solid rgb(var(--theme-background));
+}
+
+.toastui-editor-md-block-quote .toastui-editor-md-marked-text {
+  color: rgb(var(--theme-text-muted));
+}
+
+.toastui-editor-md-code,
+.toastui-editor-contents code {
+  color: rgb(var(--theme-brand));
+  background-color: rgb(var(--theme-background-elevated));
+}
+
+.dark .toastui-editor-md-code,
+.dark .toastui-editor-contents code {
+  background-color: rgb(var(--theme-background-elevated));
+}
+
+.toastui-editor-popup {
+  background-color: rgb(var(--theme-background));
+  border: 1px solid rgb(var(--theme-border));
+}
+
+.toastui-editor-popup-body label {
+  color: rgb(var(--theme-text));
+}
+
+.toastui-editor-popup-body input {
+  background-color: rgb(var(--theme-background));
+  border: 1px solid rgb(var(--theme-border));
+}
+
+.toastui-editor-popup-add-table .toastui-editor-table-cell,
+.toastui-editor-popup-add-table .toastui-editor-table-cell.header {
+  background-color: rgb(var(--theme-background));
+  border-color: rgb(var(--theme-border));
+}
+
+.toastui-editor-popup-add-heading ul li:hover {
+  background-color: rgb(var(--theme-background-elevated));
+}
+
+.toastui-editor-popup-add-image .toastui-editor-tabs .tab-item {
+  color: rgb(var(--theme-text));
+  background-color: rgb(var(--theme-background));
+  border-color: rgb(var(--theme-border));
+}
+
+.toastui-editor-popup-add-image .toastui-editor-file-name.has-file {
+  color: rgb(var(--theme-text));
+}
+
+.toastui-editor-popup-body input[type="text"] {
+  color: rgb(var(--theme-text));
+  background-color: rgb(var(--theme-background));
+}
+
+.toastui-editor-dropdown-toolbar {
+  background-color: rgb(var(--theme-background));
+  border-color: rgb(var(--theme-border));
+}
+
+/* Tables */
+.toastui-editor-contents table th,
+.toastui-editor-contents table td {
+  border-color: rgb(var(--theme-border));
+}
+
+.toastui-editor-contents th p {
+  color: rgb(var(--theme-text));
+}
+
+/* Code token colors follow the active theme (Prism defaults overridden). */
+.toastui-editor-contents .token.comment,
+.toastui-editor-contents .token.prolog,
+.toastui-editor-contents .token.doctype,
+.toastui-editor-contents .token.cdata {
+  color: rgb(var(--theme-code-comment));
+}
+
+.toastui-editor-contents .token.keyword,
+.toastui-editor-contents .token.important {
+  color: rgb(var(--theme-code-keyword));
+}
+
+.toastui-editor-contents .token.string,
+.toastui-editor-contents .token.char {
+  color: rgb(var(--theme-code-string));
+}
+
+.toastui-editor-contents .token.function,
+.toastui-editor-contents .token.function-name {
+  color: rgb(var(--theme-code-function));
+}
+
+.toastui-editor-contents .token.number,
+.toastui-editor-contents .token.boolean,
+.toastui-editor-contents .token.constant {
+  color: rgb(var(--theme-code-number));
+}
+
+.toastui-editor-contents .token.operator,
+.toastui-editor-contents .token.entity,
+.toastui-editor-contents .token.url,
+.toastui-editor-contents .token.important,
+.toastui-editor-contents .token.regex,
+.toastui-editor-contents .token.variable,
+.toastui-editor-contents .token.template-string {
+  color: rgb(var(--theme-code-operator));
+}
+
+.toastui-editor-contents .token.tag {
+  color: rgb(var(--theme-code-tag));
+}
+
+.toastui-editor-contents .token.attr-name,
+.toastui-editor-contents .token.property {
+  color: rgb(var(--theme-code-attr));
+}
+
+.toastui-editor-contents .token.punctuation {
+  color: rgb(var(--theme-code-punctuation));
+}
+
+/* Callout styles live in the globnotes-callout plugin's own styles.css
+   (served via /_/plugins.css), not hardcoded in core. */
+
+/* Copy button on code blocks (bottom-right corner) */
+.toastui-editor-contents pre {
+  position: relative;
+}
+
+.toastui-editor-contents pre .code-copy-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 4px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: rgb(var(--theme-text-very-muted));
+  background: rgb(var(--theme-background));
+  opacity: 0.6;
+  line-height: 0;
+}
+
+.toastui-editor-contents pre .code-copy-btn:hover {
+  opacity: 1;
+  color: rgb(var(--theme-brand));
+}
+
+.toastui-editor-contents pre .code-copy-btn.copied {
+  color: rgb(var(--theme-brand));
+  opacity: 1;
+}
+
+/* Line numbers on code blocks (view mode). Server adds a
+   .line-numbers class and a .line-numbers-rows gutter (one empty
+   span per line) when the line-numbers setting is on. Numbers are drawn
+   with CSS counters so they align with the highlighted code lines. */
+.line-numbers {
+  position: relative;
+  padding-left: 3.4em;
+  counter-reset: linenumber;
+}
+
+.line-numbers > code {
+  position: relative;
+  white-space: inherit;
+}
+
+.line-numbers-rows {
+  position: absolute;
+  pointer-events: none;
+  top: 0;
+  left: -3.4em;
+  width: 2.8em;
+  font-size: 100%;
+  letter-spacing: -1px;
+  border-right: 1px solid rgb(var(--theme-border));
+  user-select: none;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.line-numbers-rows > span {
+  display: block;
+  counter-increment: linenumber;
+}
+
+.line-numbers-rows > span::before {
+  content: counter(linenumber);
+  color: rgb(var(--theme-text-very-muted));
+  display: block;
+  padding-right: 0.6em;
+  text-align: right;
+}
+
+/* CodeMirror source-mode line-number gutter follows the theme. */
+.cm-editor .cm-gutter.cm-lineNumbers {
+  color: rgb(var(--theme-text-very-muted));
+  border-right: 1px solid rgb(var(--theme-border));
+  padding-right: 6px;
+}

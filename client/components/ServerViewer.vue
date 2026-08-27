@@ -99,5 +99,5 @@ watch(viewLineNumbers, renderNote);
 
 <style>
 @import "katex/dist/katex.min.css";
-@import "./toastui/toastui-editor-overrides.scss";
+@import "./toastui/toastui-editor-overrides.css";
 </style>
