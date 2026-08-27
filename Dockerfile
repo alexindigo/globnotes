@@ -4,7 +4,7 @@ ARG BUILD_DIR=/build
 ARG BUILDPLATFORM
 
 # Build Container
-FROM --platform=$BUILDPLATFORM node:24-alpine AS build
+FROM --platform=$BUILDPLATFORM denoland/deno:alpine AS build
 
 ARG BUILD_DIR
 
@@ -12,17 +12,18 @@ RUN mkdir ${BUILD_DIR}
 WORKDIR ${BUILD_DIR}
 
 COPY .htmlnanorc \
+    deno.json \
+    deno.lock \
     package.json \
-    package-lock.json \
     postcss.config.js \
     tailwind.config.js \
     vite.config.js \
     ./
 
-RUN npm ci
+RUN deno install --frozen
 
 COPY client ./client
-RUN npm run build
+RUN deno task build:client
 
 # Runtime Container
 FROM denoland/deno:alpine

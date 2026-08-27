@@ -13,9 +13,6 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
       - name: "Install dependencies"
         run: deno install
       - name: "Server: lint"
@@ -28,9 +25,9 @@ jobs:
           --allow-read --allow-write --allow-env --allow-run --allow-net
           tests/
       - name: "Client: unit tests"
-        run: npx vitest run
+        run: deno task test:client
       - name: "Client: build"
-        run: npm run build
+        run: deno task build:client
 
   docker-build:
     runs-on: ubuntu-latest
