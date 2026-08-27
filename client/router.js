@@ -94,6 +94,9 @@ router.afterEach((to) => {
       title = "New Note - " + title;
     }
   }
+  if (to.name === "search" && to.query[constants.params.searchTerm]) {
+    publish(TOPICS.SEARCH_PERFORM, { term: to.query[constants.params.searchTerm] });
+  }
   document.title = title;
 });
 

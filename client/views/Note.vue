@@ -381,6 +381,7 @@ function setEditorMode(mode, writeUrl = true) {
   }
   editorMode.value = mode;
   localStorage.setItem("defaultEditorMode", mode);
+  publish(TOPICS.EDITOR_MODE_CHANGE, { mode });
   // The caret doesn't transfer across editors; the fresh editor reports
   // its own selection once the user interacts with it.
   editorLine.value = null;
@@ -640,6 +641,7 @@ function setEditMode() {
   const push = pendingPush;
   pendingPush = false;
   editMode.value = true;
+  publish(TOPICS.NOTE_EDIT_START, { title: note.value.title });
   writeFragment(currentFragment(), push);
 }
 
@@ -913,6 +915,7 @@ function exitEditState() {
   noteDirty.value = false;
   unsavedChanges.value = false;
   setBeforeUnloadConfirmation(false);
+  publish(TOPICS.NOTE_EDIT_END, { title: note.value.title });
 }
 
 // Persist the work without any navigation of its own — used when a pending

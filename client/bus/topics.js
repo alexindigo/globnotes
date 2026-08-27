@@ -14,6 +14,11 @@ const TOPICS = {
 
   PLUGIN_TOGGLE: "plugin:toggle",
   PLUGIN_AUTO_ENABLE: "plugin:auto-enable",
+
+  SEARCH_PERFORM: "search:perform",
+  EDITOR_MODE_CHANGE: "editor:mode-change",
+  NOTE_EDIT_START: "note:edit-start",
+  NOTE_EDIT_END: "note:edit-end",
 };
 
 export { TOPICS };
