@@ -33,6 +33,7 @@
 
 <script setup>
 import {
+  mdilConsole,
   mdilFormatListNumbers,
   mdilLogout,
   mdilMagnify,
@@ -52,6 +53,7 @@ import ThemePicker from "../components/ThemePicker.vue";
 import { authTypes, params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { directoryFromTitle } from "../helpers.js";
+import { debugEnabled, toggleDebug } from "../debug.js";
 import { saveViewLineNumbers, viewLineNumbers } from "../pluginSettings.js";
 import { currentThemeLabel } from "../themes.js";
 import { clearStoredToken } from "../tokenStorage.js";
@@ -117,6 +119,11 @@ const menuItems = computed(() => [
     label: `Line numbers: ${viewLineNumbers.value ? "on" : "off"}`,
     icon: mdilFormatListNumbers,
     command: () => saveViewLineNumbers(!viewLineNumbers.value),
+  },
+  {
+    label: `Debug: ${debugEnabled.value ? "on" : "off"}`,
+    icon: mdilConsole,
+    command: () => toggleDebug(),
   },
   {
     separator: true,

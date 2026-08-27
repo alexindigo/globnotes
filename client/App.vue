@@ -43,6 +43,7 @@ import SetupModal from "./components/SetupModal.vue";
 import SidebarPanel from "./components/SidebarPanel.vue";
 import SyncBanner from "./components/SyncBanner.vue";
 import { useGlobalStore } from "./globalStore.js";
+import { initDebugNotifications } from "./debug.js";
 import { initTheme } from "./themes.js";
 import { refreshNoteIndex } from "./noteIndex.js";
 import NavBar from "./partials/NavBar.vue";
@@ -56,6 +57,8 @@ const loadingIndicator = ref();
 const navBar = ref();
 const route = useRoute();
 const toast = useToast();
+
+initDebugNotifications(toast);
 
 // '/' to search
 Mousetrap.bind("/", () => {
