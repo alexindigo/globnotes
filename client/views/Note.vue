@@ -276,7 +276,7 @@ import {
   nextUntitledTitle,
 } from "../helpers.js";
 import { parseFragment, serializeFragment } from "../fragment.js";
-import { refreshNoteIndex } from "../noteIndex.js";
+import { publish, TOPICS } from "../bus/index.js";
 import { notePath } from "../notePath.js";
 import { noteTitleError } from "../validators.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
@@ -662,7 +662,7 @@ function deleteHandler() {
 function deleteConfirmedHandler() {
   deleteNote(note.value.title)
     .then(() => {
-      refreshNoteIndex();
+      publish(TOPICS.NOTE_DELETE, { title: note.value.title });
       exitEditState();
       toast.add(getToastOptions("Note deleted ✓", "Success", "success"));
       router.push({ name: "home" });
@@ -701,7 +701,7 @@ function saveNew(newTitle, newContent, close = false) {
     .then((data) => {
       clearDraft();
       note.value = data;
-      refreshNoteIndex();
+      publish(TOPICS.NOTE_CREATE, { title: newTitle });
       router
         .push(notePath(note.value.title))
         .then(() => {
@@ -778,7 +778,9 @@ function saveExisting(newTitle, newContent, close = false) {
           editor.value.setMarkdown(data.content);
         }
         if (oldTitle != data.title) {
-          refreshNoteIndex();
+          publish(TOPICS.NOTE_RENAME, { oldTitle, newTitle: data.title });
+        } else {
+          publish(TOPICS.NOTE_SAVE, { title: data.title });
         }
         // Carry the fragment inside the same navigation so a rename can
         // neither drop it nor race a follow-up replaceState.
@@ -926,7 +928,7 @@ async function saveForNavigation() {
   try {
     if (isNewNote.value) {
       note.value = await createNote(newTitle.value, newContent);
-      refreshNoteIndex();
+      publish(TOPICS.NOTE_CREATE, { title: newTitle.value });
     } else {
       const oldTitle = note.value.title;
       // "none": the rename-assets dialog cannot stack on the save modal;
@@ -938,8 +940,10 @@ async function saveForNavigation() {
         "none",
       );
       if (oldTitle !== note.value.title) {
-        refreshNoteIndex();
+        publish(TOPICS.NOTE_RENAME, { oldTitle, newTitle: note.value.title });
         updateRenamedLinks(oldTitle, note.value.title);
+      } else {
+        publish(TOPICS.NOTE_SAVE, { title: note.value.title });
       }
     }
     clearDraft();

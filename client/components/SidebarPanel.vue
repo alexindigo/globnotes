@@ -185,6 +185,7 @@ import CustomButton from "../components/CustomButton.vue";
 import TextInput from "../components/TextInput.vue";
 import { getNotes, getTree } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
+import { publish, TOPICS } from "../bus/index.js";
 import { notePath } from "../notePath.js";
 import { refreshNoteIndex } from "../noteIndex.js";
 import { params } from "../constants.js";
@@ -440,7 +441,12 @@ const showSectionTitles = computed(() => enabledSections.value.length > 1);
 function toggleRecent() {
   recentEnabled.value = !recentEnabled.value;
   localStorage.setItem("sidebarRecent", recentEnabled.value ? "true" : "false");
-  if (recentEnabled.value) loadRecentNotes();
+  if (recentEnabled.value) {
+    publish(TOPICS.SIDEPANEL_SECTION_SHOW, { section: "recent" });
+    loadRecentNotes();
+  } else {
+    publish(TOPICS.SIDEPANEL_SECTION_HIDE, { section: "recent" });
+  }
 }
 
 async function loadRecentNotes() {
@@ -506,10 +512,12 @@ watch(
 function toggleSidebar() {
   globalStore.sidebarVisible = false;
   localStorage.setItem("sidebarVisible", "false");
+  publish(TOPICS.SIDEPANEL_CLOSE, {});
 }
 
 function openSidebar() {
   globalStore.sidebarVisible = true;
   localStorage.setItem("sidebarVisible", "true");
+  publish(TOPICS.SIDEPANEL_OPEN, {});
 }
 </script>

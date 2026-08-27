@@ -1,4 +1,5 @@
 import { getNoteIndex } from "./api.js";
+import { subscribe, TOPICS } from "./bus/index.js";
 import { useGlobalStore } from "./globalStore.js";
 
 const RETRY_DELAYS = [1000, 3000, 8000];
@@ -44,3 +45,7 @@ export function resolveNoteTitle(linkText) {
   // Unresolved: use as written (the note may be created later)
   return target;
 }
+
+subscribe(TOPICS.NOTE_CREATE, () => refreshNoteIndex());
+subscribe(TOPICS.NOTE_RENAME, () => refreshNoteIndex());
+subscribe(TOPICS.NOTE_DELETE, () => refreshNoteIndex());

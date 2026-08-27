@@ -36,6 +36,7 @@
     "codemirror": "^6.0.1",
     "katex": "^0.18.4",
     "mermaid": "^11.16.1",
+    "mitt": "^3.0.1",
     "mousetrap": "1.6.5",
     "pinia": "4.0.2",
     "primevue": "3.53.1",

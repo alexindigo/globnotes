@@ -4,6 +4,7 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import { authCheck } from "./api.js";
 import { notePath } from "./notePath.js";
+import { publish, TOPICS } from "./bus/index.js";
 
 const pathPrefix =
   document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
@@ -88,6 +89,7 @@ router.afterEach((to) => {
   if (to.name === "note") {
     if (to.params.title) {
       title = `${to.params.title} - ${title}`;
+      publish(TOPICS.NOTE_OPEN, { title: to.params.title });
     } else {
       title = "New Note - " + title;
     }

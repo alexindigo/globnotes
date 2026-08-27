@@ -1,4 +1,5 @@
 import { computed, ref } from "vue";
+import { publish, TOPICS } from "./bus/index.js";
 
 // -- globnotes themes -------------------------------------------------------
 // The default pair. All other themes fall back to these for colors they
@@ -409,6 +410,7 @@ function applyTheme(id) {
   if (meta) {
     meta.content = colors.background;
   }
+  publish(TOPICS.THEME_CHANGE, { id, resolvedId, mode: theme.mode });
 }
 
 let systemListenerBound = false;
