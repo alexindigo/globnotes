@@ -61,6 +61,7 @@ import { ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import { apiErrorHandler, getTags } from "../api.js";
+import { publish, TOPICS } from "../bus/index.js";
 import IconLabel from "../components/IconLabel.vue";
 import * as constants from "../constants.js";
 import { getToastOptions } from "../helpers.js";
@@ -219,4 +220,10 @@ watch(
     searchTerm.value = props.initialSearchTerm;
   },
 );
+
+// The search term is global state — every change (typing, tag insert, clear)
+// publishes a search:change fact.
+watch(searchTerm, (term) => {
+  publish(TOPICS.SEARCH_CHANGE, { term });
+});
 </script>

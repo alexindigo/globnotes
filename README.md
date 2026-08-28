@@ -161,7 +161,7 @@ Rendering is a markdown-it pipeline extended by **plugins** — each running in 
 
 ## Event bus
 
-Components communicate over a mitt-based client-side event bus — publishers announce facts like "note renamed" or "theme changed," consumers decide what to refresh. 24 topics cover note lifecycle, sidebar, menu, and edit sessions, plus themes, plugins, files, and search. See [docs/event-bus.md](docs/event-bus.md) for the topic registry and usage guide.
+Components communicate over a mitt-based client-side event bus — publishers announce facts like "note renamed" or "theme changed," consumers decide what to refresh. 28 topics cover note lifecycle, sidebar, menus and modals, edit sessions, themes, plugins, files, and search. See [docs/event-bus.md](docs/event-bus.md) for the topic registry and usage guide.
 
 ## Deferred / future work
 

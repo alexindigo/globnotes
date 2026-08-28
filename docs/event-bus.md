@@ -48,15 +48,19 @@ schema enforcement — the topics.js file IS the contract).
 | 13 | `settings-menu:close` | `{}` | `NavBar.vue` PrimeMenu hide |
 | 14 | `search-menu:open` | `{}` | `SearchResults.vue` sort-menu show |
 | 15 | `search-menu:close` | `{}` | `SearchResults.vue` sort-menu hide |
-| 16 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme |
-| 17 | `plugin:toggle` | `{ id, enabled }` | `pluginSettings.js` saveSwitch |
-| 18 | `plugin:auto-enable` | `{ enabled }` | `pluginSettings.js` saveAutoEnable |
-| 19 | `settings:line-numbers` | `{ value }` | `pluginSettings.js` saveViewLineNumbers |
-| 20 | `search:perform` | `{ term }` | `router.js` afterEach |
-| 21 | `search:include-nested` | `{ value }` | `SearchResults.vue` toggleNested |
-| 22 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
-| 23 | `note:edit-start` | `{ title }` | `Note.vue` setEditMode |
-| 24 | `note:edit-end` | `{ title }` | `Note.vue` exitEditState |
+| 16 | `modal:open` | `{ name }` | `Modal.vue` visibility watch |
+| 17 | `modal:close` | `{ name }` | `Modal.vue` visibility watch |
+| 18 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme |
+| 19 | `plugin:toggle` | `{ id, enabled }` | `pluginSettings.js` saveSwitch |
+| 20 | `plugin:auto-enable` | `{ enabled }` | `pluginSettings.js` saveAutoEnable |
+| 21 | `settings:line-numbers` | `{ value }` | `pluginSettings.js` saveViewLineNumbers |
+| 22 | `debug:change` | `{ enabled }` | `debug.js` toggleDebug |
+| 23 | `search:perform` | `{ term }` | `router.js` afterEach |
+| 24 | `search:change` | `{ term }` | `SearchInput.vue` searchTerm watch |
+| 25 | `search:include-nested` | `{ value }` | `SearchResults.vue` toggleNested |
+| 26 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
+| 27 | `note:edit-start` | `{ title }` | `Note.vue` setEditMode |
+| 28 | `note:edit-end` | `{ title }` | `Note.vue` exitEditState |
 
 ## Built-in consumers
 

@@ -2,7 +2,7 @@
 // event wiring is instantly visible while developing.
 import { ref, watch } from "vue";
 
-import { subscribe, TOPICS } from "./bus/index.js";
+import { publish, subscribe, TOPICS } from "./bus/index.js";
 
 const STORAGE_KEY = "debug";
 
@@ -11,6 +11,7 @@ export const debugEnabled = ref(localStorage.getItem(STORAGE_KEY) === "true");
 export function toggleDebug() {
   debugEnabled.value = !debugEnabled.value;
   localStorage.setItem(STORAGE_KEY, String(debugEnabled.value));
+  publish(TOPICS.DEBUG_CHANGE, { enabled: debugEnabled.value });
 }
 
 const unsubscribers = [];

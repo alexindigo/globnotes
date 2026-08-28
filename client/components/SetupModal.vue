@@ -1,5 +1,5 @@
 <template>
-  <Modal v-model="isVisible" :closeHandlerOverride="noop" class="p-5">
+  <Modal v-model="isVisible" name="setup" :closeHandlerOverride="noop" class="p-5">
     <h1 class="mb-2 text-2xl">Welcome to globnotes</h1>
     <p class="mb-4 text-theme-text-muted">
       First-run setup: choose how to secure your notes.

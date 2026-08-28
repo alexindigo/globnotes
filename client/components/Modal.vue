@@ -17,14 +17,23 @@
 
 <script setup>
 import Mousetrap from "mousetrap";
+import { watch } from "vue";
+
+import { publish, TOPICS } from "../bus/index.js";
 
 defineOptions({
   inheritAttrs: false,
 });
 const props = defineProps({
   closeHandlerOverride: Function,
+  name: { type: String, default: undefined },
 });
 const isVisible = defineModel({ type: Boolean });
+
+// Modals are global overlays — publish open/close on the bus.
+watch(isVisible, (visible) => {
+  publish(visible ? TOPICS.MODAL_OPEN : TOPICS.MODAL_CLOSE, { name: props.name });
+});
 
 // 'escape' to close
 Mousetrap.bind("esc", () => {

@@ -17,14 +17,19 @@ const TOPICS = {
   SEARCH_MENU_OPEN: "search-menu:open",
   SEARCH_MENU_CLOSE: "search-menu:close",
 
+  MODAL_OPEN: "modal:open",
+  MODAL_CLOSE: "modal:close",
+
   THEME_CHANGE: "theme:change",
 
   PLUGIN_TOGGLE: "plugin:toggle",
   PLUGIN_AUTO_ENABLE: "plugin:auto-enable",
 
   SETTINGS_LINE_NUMBERS: "settings:line-numbers",
+  DEBUG_CHANGE: "debug:change",
 
   SEARCH_PERFORM: "search:perform",
+  SEARCH_CHANGE: "search:change",
   SEARCH_INCLUDE_NESTED: "search:include-nested",
 
   EDITOR_MODE_CHANGE: "editor:mode-change",

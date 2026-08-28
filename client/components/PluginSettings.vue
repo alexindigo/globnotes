@@ -1,5 +1,5 @@
 <template>
-  <Modal v-model="isVisible">
+  <Modal v-model="isVisible" name="plugins">
     <div class="p-4">
       <div class="mb-3 text-lg font-bold text-theme-text">Plugins</div>
       <div class="max-h-96 overflow-y-auto">

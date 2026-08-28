@@ -1,6 +1,7 @@
 <template>
   <Modal
     v-model="isVisible"
+    name="confirm"
     :title="title"
     :closeHandlerOverride="() => emitClose('cancel')"
     class="px-6 py-4"
