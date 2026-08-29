@@ -60,7 +60,7 @@
     <!-- Scrollable sections -->
     <div class="min-h-0 flex-1 overflow-y-auto pl-4">
       <!-- Recent notes (toggled via the bottom-row clock) -->
-      <section v-if="recentEnabled" class="mb-4">
+      <section v-if="recentEnabled" class="mt-4">
         <p
           v-if="showSectionTitles"
           class="mb-1 text-xs font-bold uppercase text-theme-text-very-muted"
@@ -87,7 +87,7 @@
       </section>
 
       <!-- Files (folder tree) -->
-      <section>
+      <section class="mt-4">
         <p
           v-if="showSectionTitles"
           class="mb-1 text-xs font-bold uppercase text-theme-text-very-muted"
