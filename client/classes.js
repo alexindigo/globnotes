@@ -2,8 +2,8 @@ import router from "./router.js";
 
 class Note {
   constructor(note) {
+    this.path = note?.path;
     this.title = note?.title;
-    this.displayTitle = note?.displayTitle;
     this.lastModified = note?.lastModified;
     this.content = note?.content;
   }
@@ -21,18 +21,18 @@ class SearchResult extends Note {
   constructor(searchResult) {
     super(searchResult);
     this.score = searchResult.score;
-    this.titleHighlights = searchResult.titleHighlights;
+    this.pathHighlights = searchResult.pathHighlights;
     this.contentHighlights = searchResult.contentHighlights;
     this.tagMatches = searchResult.tagMatches;
   }
 
-  get titleHighlightsOrTitle() {
-    return this.titleHighlights ? this.titleHighlights : this.title;
+  get pathHighlightsOrPath() {
+    return this.pathHighlights ? this.pathHighlights : this.path;
   }
 
   get includesHighlights() {
     if (
-      this.titleHighlights ||
+      this.pathHighlights ||
       this.contentHighlights ||
       (this.tagMatches != null && this.tagMatches.length)
     ) {

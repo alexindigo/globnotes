@@ -3,7 +3,7 @@
 // Autolinks — parity with the old client's ToastUI extendedAutolinks:
 //   [[target]], [[target|alias]], [[target#heading]] → note links
 //   #tag → search link
-// Title resolution is Obsidian-style and server-side (ctx.resolveTitle):
+// Title resolution is Obsidian-style and server-side (ctx.resolvePath):
 // exact path → vault-wide basename → front-matter alias; unresolved used
 // as written.
 
@@ -49,7 +49,7 @@ export async function parseNode(node, ctx) {
         hashIndex === -1 ? targetPart : targetPart.slice(0, hashIndex);
       const anchor =
         hashIndex === -1 ? null : targetPart.slice(hashIndex + 1);
-      let url = prefix + notePath(await ctx.resolveTitle(target));
+      let url = prefix + notePath(await ctx.resolvePath(target));
       if (anchor) url += "#" + slugifyHeading(anchor);
       replacements.set(m[0], `[${alias || targetPart}](${url})`);
     }
@@ -67,7 +67,7 @@ export async function parseNode(node, ctx) {
         changed = true;
         return `${pre}[${tag}](${prefix}/_/search?term=${
           encodeURIComponent(tag)
-        }&sortBy=title)`;
+        }&sortBy=path)`;
       },
     );
   }

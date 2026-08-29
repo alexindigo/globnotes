@@ -3,5 +3,5 @@
 import { state } from "@server/state.ts";
 
 export default function (): string[] {
-  return state.notes.getTitles();
+  return state.notes.getPaths();
 }

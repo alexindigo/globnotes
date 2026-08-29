@@ -22,11 +22,11 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
       const created = await api(server, "/_/api/notes", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: "Hello World", content: "greetings" }),
+        body: JSON.stringify({ path: "Hello World", content: "greetings" }),
       });
       assertEquals(created.status, 200);
       const note = await created.json();
-      assertEquals(note.title, "Hello World");
+      assertEquals(note.path, "Hello World");
       assertEquals(note.content, "greetings");
       assert(typeof note.lastModified === "number");
 
@@ -39,7 +39,7 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
       const dup = await api(server, "/_/api/notes", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: "Hello World", content: "again" }),
+        body: JSON.stringify({ path: "Hello World", content: "again" }),
       });
       assertEquals(dup.status, 409);
     });
@@ -55,13 +55,13 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
         const bad = await api(server, "/_/api/notes", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ title: "", content: "" }),
+          body: JSON.stringify({ path: "", content: "" }),
         });
         // Python: pydantic NoteCreate validation fires before the route.
         assertEquals(bad.status, 422);
         const detail = (await bad.json()).detail;
         assertEquals(detail[0].type, "value_error");
-        assertEquals(detail[0].loc, ["body", "title"]);
+        assertEquals(detail[0].loc, ["body", "path"]);
       },
     );
 
@@ -81,7 +81,7 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          title: "source",
+          path: "source",
           content: "[ref](Hello%20World)",
         }),
       });
@@ -92,7 +92,7 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ newTitle: "renamed" }),
+          body: JSON.stringify({ newPath: "renamed" }),
         },
       );
       assertEquals(rename.status, 200);
@@ -124,12 +124,12 @@ Deno.test("storage: note index and tree", async () => {
     await api(server, "/_/api/notes", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "alpha", content: "a" }),
+      body: JSON.stringify({ path: "alpha", content: "a" }),
     });
     await api(server, "/_/api/notes", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "folder/beta", content: "b" }),
+      body: JSON.stringify({ path: "folder/beta", content: "b" }),
     });
 
     const titles = await api(server, "/_/api/note-index");
@@ -142,13 +142,13 @@ Deno.test("storage: note index and tree", async () => {
     assertEquals(root.folders.length, 1);
     assertEquals(root.folders[0].name, "folder");
     assertEquals(root.notes.length, 1);
-    // Tree notes carry {title, displayTitle} for sidebar labels.
+    // Tree notes carry {path, title} — path is the identity, title the label.
+    assertEquals(root.notes[0].path, "alpha");
     assertEquals(root.notes[0].title, "alpha");
-    assertEquals(root.notes[0].displayTitle, "alpha");
 
     const subtree = await api(server, "/_/api/tree?path=folder");
     const sub = await subtree.json();
-    assertEquals(sub.notes[0].title, "folder/beta");
+    assertEquals(sub.notes[0].path, "folder/beta");
 
     // Tree endpoint edge cases (ported from test_tree_endpoint.py):
     // hidden dirs are skipped, missing folder is 404, traversal is 400.
@@ -182,14 +182,14 @@ Deno.test("storage: rename preview", async () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        title: "src",
+        path: "src",
         content: "![](pic.png)\n[link](other.png)",
       }),
     });
 
     const preview = await api(
       server,
-      "/_/api/rename-preview?title=src&new_title=dst",
+      "/_/api/rename-preview?path=src&new_path=dst",
     );
     assertEquals(preview.status, 200);
     const refs = await preview.json();
@@ -200,21 +200,21 @@ Deno.test("storage: rename preview", async () => {
   }
 });
 
-Deno.test("displayTitle: resolution order", async () => {
+Deno.test("title: resolution order", async () => {
   const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
   try {
-    const create = (title: string, content: string) =>
+    const create = (path: string, content: string) =>
       api(server, "/_/api/notes", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title, content }),
+        body: JSON.stringify({ path, content }),
       });
     await create("fm-title", "---\ntitle: From Front Matter\n---\n# Heading\n");
     await create("h1-title", "# From The Heading\n\nbody");
     await create("plain-name", "no heading here");
 
     const get = async (t: string) =>
-      (await (await api(server, `/_/api/notes/${t}`)).json()).displayTitle;
+      (await (await api(server, `/_/api/notes/${t}`)).json()).title;
     assertEquals(await get("fm-title"), "From Front Matter");
     assertEquals(await get("h1-title"), "From The Heading");
     assertEquals(await get("plain-name"), "plain-name");
@@ -223,9 +223,9 @@ Deno.test("displayTitle: resolution order", async () => {
     await awaitIndexReadyServer(server.baseUrl);
     const res = await api(server, "/_/api/search?term=*");
     const byTitle = Object.fromEntries(
-      (await res.json()).map((h: { title: string; displayTitle: string }) => [
+      (await res.json()).map((h: { path: string; title: string }) => [
+        h.path,
         h.title,
-        h.displayTitle,
       ]),
     );
     assertEquals(byTitle["fm-title"], "From Front Matter");

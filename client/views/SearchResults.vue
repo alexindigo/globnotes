@@ -109,10 +109,10 @@
         v-for="result in results"
         class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
       >
-        <RouterLink :to="notePath(result.title)">
+        <RouterLink :to="notePath(result.path)">
           <!-- Title and Tags -->
           <div>
-            <span v-html="displayTitle(result)" class="mr-2"></span>
+            <span v-html="title(result)" class="mr-2"></span>
             <Tag v-for="tag in result.tagMatches" :tag="tag" class="mr-1" />
           </div>
           <!-- Last Modified and Content Highlights -->
@@ -239,11 +239,11 @@ const subdirMatches = ref([]);
 const currentSubdirs = computed(() => {
   const prefix = props.folder ? props.folder + "/" : "";
   const dirs = new Set();
-  for (const title of subdirMatches.value) {
-    if (props.folder && !title.startsWith(prefix)) {
+  for (const path of subdirMatches.value) {
+    if (props.folder && !path.startsWith(prefix)) {
       continue;
     }
-    const rest = props.folder ? title.slice(prefix.length) : title;
+    const rest = props.folder ? path.slice(prefix.length) : path;
     const idx = rest.indexOf("/");
     if (idx !== -1) {
       dirs.add((props.folder ? prefix : "") + rest.slice(0, idx));
@@ -280,13 +280,13 @@ const effectiveSortBy = computed(
   () =>
     props.sortBy ??
     (props.searchTerm === "*"
-      ? searchSortOptions.title
+      ? searchSortOptions.path
       : searchSortOptions.score),
 );
 
 const sortByName = computed(() => {
   const sortOptionNames = {
-    [searchSortOptions.title]: "Title",
+    [searchSortOptions.path]: "Path",
     [searchSortOptions.lastModified]: "Last Modified",
     [searchSortOptions.score]: "Score",
   };
@@ -334,24 +334,24 @@ function init() {
     });
 }
 
-function displayTitle(result) {
+function title(result) {
   // Show the title relative to the current folder. Highlighted titles
   // keep their markup intact (the prefix may contain match spans).
-  if (result.titleHighlights) {
-    return result.titleHighlights;
+  if (result.pathHighlights) {
+    return result.pathHighlights;
   }
   // Display title (front-matter title / alias / H1 label) when present.
-  if (result.displayTitle) {
-    return result.displayTitle;
+  if (result.title) {
+    return result.title;
   }
   const prefix = props.folder ? props.folder + "/" : "";
-  return prefix && result.title.startsWith(prefix)
-    ? result.title.slice(prefix.length)
-    : result.title;
+  return prefix && result.path.startsWith(prefix)
+    ? result.path.slice(prefix.length)
+    : result.path;
 }
 function sortResults(results) {
-  if (effectiveSortBy.value === searchSortOptions.title) {
-    return results.sort((a, b) => a.title.localeCompare(b.title));
+  if (effectiveSortBy.value === searchSortOptions.path) {
+    return results.sort((a, b) => a.path.localeCompare(b.path));
   } else if (effectiveSortBy.value === searchSortOptions.lastModified) {
     return results.sort((a, b) => b.lastModified - a.lastModified);
   } else {
@@ -384,7 +384,7 @@ const menuItems = [
   {
     label: "Sort By: Title",
     command: () => {
-      updateSortByParam(searchSortOptions.title);
+      updateSortByParam(searchSortOptions.path);
     },
   },
   {

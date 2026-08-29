@@ -23,7 +23,7 @@ export function isValidFilename(value: string): string {
   for (const c of FILENAME_INVALID_CHARS) {
     if (value.includes(c)) {
       throw new Error(
-        `title cannot include any of the following characters: ${FILENAME_INVALID_CHARS}`,
+        `path cannot include any of the following characters: ${FILENAME_INVALID_CHARS}`,
       );
     }
   }
@@ -37,29 +37,29 @@ export function isValidNotePath(value: string): string {
   /** Throw unless value is a valid note path: POSIX-style relative path,
    * non-empty segments, no '.'/'..' segments, no leading-dot segments, none of
    * <>:"\|?* and no segment over 255 bytes. */
-  if (!value) throw new Error("title cannot be empty");
+  if (!value) throw new Error("path cannot be empty");
   if (value.split("/")[0] === "_") {
-    throw new Error("title cannot start with '_/' (reserved for app URLs)");
+    throw new Error("path cannot start with '_/' (reserved for app URLs)");
   }
   for (const segment of value.split("/")) {
-    if (!segment) throw new Error("title cannot contain empty path segments");
+    if (!segment) throw new Error("path cannot contain empty path segments");
     if (segment === "." || segment === "..") {
-      throw new Error("title cannot contain '.' or '..' path segments");
+      throw new Error("path cannot contain '.' or '..' path segments");
     }
     if (segment.startsWith(".")) {
-      throw new Error("title path segments cannot start with '.'");
+      throw new Error("path path segments cannot start with '.'");
     }
     for (const c of NOTE_PATH_INVALID_CHARS) {
       if (segment.includes(c)) {
         throw new Error(
-          `title cannot include any of the following characters: ${NOTE_PATH_INVALID_CHARS}`,
+          `path cannot include any of the following characters: ${NOTE_PATH_INVALID_CHARS}`,
         );
       }
     }
     if (
       new TextEncoder().encode(segment).length > NOTE_PATH_MAX_SEGMENT_BYTES
     ) {
-      throw new Error("title path segments cannot exceed 255 bytes");
+      throw new Error("path path segments cannot exceed 255 bytes");
     }
   }
   return value;
@@ -71,17 +71,17 @@ export function isValidNotePath(value: string): string {
  * Only structural safety is enforced here: no empty/`. `/`..` segments,
  * no leading-dot segments, no `_`-root (app URL space). */
 export function isReadableNotePath(value: string): string {
-  if (!value) throw new Error("title cannot be empty");
+  if (!value) throw new Error("path cannot be empty");
   if (value.split("/")[0] === "_") {
-    throw new Error("title cannot start with '_/' (reserved for app URLs)");
+    throw new Error("path cannot start with '_/' (reserved for app URLs)");
   }
   for (const segment of value.split("/")) {
-    if (!segment) throw new Error("title cannot contain empty path segments");
+    if (!segment) throw new Error("path cannot contain empty path segments");
     if (segment === "." || segment === "..") {
-      throw new Error("title cannot contain '.' or '..' path segments");
+      throw new Error("path cannot contain '.' or '..' path segments");
     }
     if (segment.startsWith(".")) {
-      throw new Error("title path segments cannot start with '.'");
+      throw new Error("path path segments cannot start with '.'");
     }
   }
   return value;

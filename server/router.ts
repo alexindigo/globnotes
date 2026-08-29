@@ -8,7 +8,7 @@
  * shape (`{"detail": ...}`) so the existing client needs no changes.
  *
  * Pattern syntax:
- *   /_/api/notes/:title   — single-segment param
+ *   /_/api/notes/:path   — single-segment param
  *   /_/api/files/:path*   — greedy rest param (matches remaining segments)
  */
 

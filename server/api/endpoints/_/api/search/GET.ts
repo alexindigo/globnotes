@@ -15,13 +15,13 @@ export default function (ctx: RequestCtx) {
   // the literal_error shape.
   const sortParam = ctx.query.get("sort") ?? "score";
   const orderParam = ctx.query.get("order") ?? "desc";
-  if (!["score", "title", "lastModified"].includes(sortParam)) {
+  if (!["score", "path", "lastModified"].includes(sortParam)) {
     throw new HttpError(422, [{
       type: "literal_error",
       loc: ["query", "sort"],
-      msg: "Input should be 'score', 'title' or 'lastModified'",
+      msg: "Input should be 'score', 'path' or 'lastModified'",
       input: sortParam,
-      ctx: { expected: "'score', 'title' or 'lastModified'" },
+      ctx: { expected: "'score', 'path' or 'lastModified'" },
     }]);
   }
   if (!["asc", "desc"].includes(orderParam)) {
@@ -36,7 +36,7 @@ export default function (ctx: RequestCtx) {
   // Python route maps lastModified → last_modified for the index.
   const sort = (sortParam === "lastModified" ? "last_modified" : sortParam) as
     | "score"
-    | "title"
+    | "path"
     | "last_modified";
   const order = orderParam as "asc" | "desc";
   const limitParam = ctx.query.get("limit");

@@ -12,7 +12,7 @@
  */
 
 export interface TitleInfo {
-  displayTitle: string;
+  title: string;
   /** The note's first H1 text, if any (used by the H1↔basename sync). */
   h1: string | null;
   /** Front-matter `title:` if present (explicit title wins; H1 sync is
@@ -107,13 +107,13 @@ export function resolveTitleInfo(
   const fm = parseFrontMatter(content);
   const h1 = firstH1(content);
   // Obsidian order: explicit title → aliases[0] → first H1 → basename.
-  const displayTitle = fm.title && fm.title !== ""
+  const title = fm.title && fm.title !== ""
     ? fm.title
     : fm.aliases && fm.aliases.length > 0
     ? fm.aliases[0]
     : h1 ?? basename;
   return {
-    displayTitle,
+    title,
     h1,
     fmTitle: fm.title && fm.title !== "" ? fm.title : null,
     aliases: fm.aliases ?? [],

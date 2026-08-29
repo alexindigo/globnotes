@@ -3,7 +3,7 @@
 /**
  * Request-body validation mirroring the Python server's pydantic models
  * (notes/models.py): strip_whitespace + is_valid_note_path as
- * AfterValidators on NoteCreate.title / NoteUpdate.newTitle. Failures
+ * AfterValidators on NoteCreate.path / NoteUpdate.newPath. Failures
  * return FastAPI's 422 shape, not our {detail: string} — the client and
  * the parity harness see the pydantic format.
  */
@@ -30,12 +30,12 @@ function valueErrorDetail(
 }
 
 /** strip_whitespace + is_valid_note_path; throws HttpError(422) with
- * FastAPI's validation-error body on failure. Returns the stripped title. */
-export function validateNoteTitle(value: unknown, field: string): string {
+ * FastAPI's validation-error body on failure. Returns the stripped path. */
+export function validateNotePath(value: unknown, field: string): string {
   const stripped = typeof value === "string" ? value.trim() : value;
   try {
     if (typeof stripped !== "string") {
-      throw new Error("title must be a string");
+      throw new Error("path must be a string");
     }
     return isValidNotePath(stripped);
   } catch (e) {

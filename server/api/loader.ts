@@ -7,8 +7,8 @@
  *   <root>/<route>/<METHOD>.ts   →   <METHOD> /<route>
  *
  * Dynamic segments use bracket directories:
- *   [title]    →  :title     (single-segment param)
- *   [...title] →  :title*    (greedy rest param)
+ *   [path]    →  :path     (single-segment param)
+ *   [...path] →  :path*    (greedy rest param)
  *
  * Two roots exist by design: core endpoints (server/api/endpoints/) and
  * vault plugin endpoints (<vault>/.globnotes/plugins/<id>/endpoints/,

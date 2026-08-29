@@ -9,7 +9,7 @@ export const params = {
 
 export const searchSortOptions = {
   score: 0,
-  title: 1,
+  path: 1,
   lastModified: 2,
 };
 

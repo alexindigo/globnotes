@@ -39,8 +39,8 @@ const router = createRouter({
       }),
     },
     {
-      // Notes live in the root URL space; titles may contain slashes.
-      path: "/:title(.*)",
+      // Notes live in the root URL space; paths may contain slashes.
+      path: "/:path(.*)",
       name: "note",
       component: () => import("./views/Note.vue"),
       props: true,
@@ -48,16 +48,16 @@ const router = createRouter({
   ],
 });
 
-// Normalize note titles: a clicked relative link may carry the .md suffix
+// Normalize note paths: a clicked relative link may carry the .md suffix
 // (e.g. /dad/other.md -> note "dad/other").
 router.beforeEach(async (to) => {
   if (
     to.name === "note" &&
-    typeof to.params.title === "string" &&
-    to.params.title.endsWith(".md")
+    typeof to.params.path === "string" &&
+    to.params.path.endsWith(".md")
   ) {
     return {
-      path: notePath(to.params.title.slice(0, -".md".length)),
+      path: notePath(to.params.path.slice(0, -".md".length)),
       replace: true,
     };
   }
@@ -85,19 +85,19 @@ router.beforeEach(async (to) => {
 });
 
 router.afterEach((to) => {
-  let title = "globnotes";
+  let docTitle = "globnotes";
   if (to.name === "note") {
-    if (to.params.title) {
-      title = `${to.params.title} - ${title}`;
-      publish(TOPICS.NOTE_OPEN, { title: to.params.title });
+    if (to.params.path) {
+      docTitle = `${to.params.path} - ${docTitle}`;
+      publish(TOPICS.NOTE_OPEN, { path: to.params.path });
     } else {
-      title = "New Note - " + title;
+      docTitle = "New Note - " + docTitle;
     }
   }
   if (to.name === "search" && to.query[constants.params.searchTerm]) {
     publish(TOPICS.SEARCH_PERFORM, { term: to.query[constants.params.searchTerm] });
   }
-  document.title = title;
+  document.title = docTitle;
 });
 
 export default router;

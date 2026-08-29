@@ -69,13 +69,13 @@
         </p>
         <RouterLink
           v-for="note in recentNotes"
-          :key="note.title"
-          :to="notePath(note.title)"
-          :title="note.title"
+          :key="note.path"
+          :to="notePath(note.path)"
+          :title="note.path"
           class="flex items-center truncate rounded px-1 py-0.5 hover:bg-theme-background-elevated"
           :class="{
             'bg-theme-background-elevated text-theme-text':
-              note.title === activeTitle,
+              note.path === activePath,
           }"
           ><SvgIcon
             type="mdi"
@@ -134,11 +134,11 @@
         <!-- Note row -->
         <RouterLink
           v-else
-          :to="notePath(row.note.title)"
+          :to="notePath(row.note.path)"
           class="flex items-center truncate rounded px-1 py-0.5 hover:bg-theme-background-elevated"
           :class="{
             'bg-theme-background-elevated text-theme-text':
-              row.note.title === activeTitle,
+              row.note.path === activePath,
           }"
           ><SvgIcon
             type="mdi"
@@ -241,12 +241,12 @@ function buildTree(titles) {
       }
       node = node.folders.get(segment);
     }
-    node.notes.push({ title, name: parts[parts.length - 1] });
+    node.notes.push({ path: title, name: parts[parts.length - 1] });
   }
   return root;
 }
 
-const tree = computed(() => buildTree(globalStore.noteTitles || []));
+const tree = computed(() => buildTree(globalStore.notePaths || []));
 
 // -- Expansion state --------------------------------------------------------
 
@@ -318,7 +318,7 @@ function toggleFilter() {
 
 // A folder matches if it or any descendant has a matching note.
 function folderHasMatch(folder, filter) {
-  if (folder.notes.some((note) => note.title.toLowerCase().includes(filter))) {
+  if (folder.notes.some((note) => note.path.toLowerCase().includes(filter))) {
     return true;
   }
   for (const sub of folder.folders.values()) {
@@ -360,11 +360,11 @@ const visibleRows = computed(() => {
     }
     const notes = [...node.notes].sort((a, b) => a.name.localeCompare(b.name));
     for (const note of notes) {
-      if (filter && !note.title.toLowerCase().includes(filter)) {
+      if (filter && !note.path.toLowerCase().includes(filter)) {
         continue;
       }
       rows.push({
-        key: "n:" + note.title,
+        key: "n:" + note.path,
         type: "note",
         note,
         depth,
@@ -399,14 +399,14 @@ const visibleRows = computed(() => {
       }
       const notes = [...level.notes]
         .map((t) => ({
-          title: typeof t === "string" ? t : t.title,
+          path: typeof t === "string" ? t : t.path,
           name: typeof t === "string"
             ? t.split("/").pop()
-            : (t.displayTitle ?? t.title.split("/").pop()),
+            : (t.title ?? t.path.split("/").pop()),
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
       for (const note of notes) {
-        rows.push({ key: "n:" + note.title, type: "note", note, depth });
+        rows.push({ key: "n:" + note.path, type: "note", note, depth });
       }
     };
     lazy("", 0);
@@ -416,8 +416,8 @@ const visibleRows = computed(() => {
 
 // -- Active note ------------------------------------------------------------
 
-const activeTitle = computed(() =>
-  route.name === "note" ? route.params.title : null,
+const activePath = computed(() =>
+  route.name === "note" ? route.params.path : null,
 );
 
 // -- Sections: Recent + Files ------------------------------------------------
@@ -459,8 +459,8 @@ async function loadRecentNotes() {
       .sort((a, b) => b.lastModified - a.lastModified)
       .slice(0, 5)
       .map((n) => ({
-        title: n.title,
-        name: n.title.split("/").pop(),
+        path: n.path,
+        name: n.path.split("/").pop(),
       }));
   } catch {
     recentNotes.value = [];
@@ -479,7 +479,7 @@ watch(
       for (const path of expanded.value) {
         loadLevel(path);
       }
-      if (!(globalStore.noteTitles || []).length) {
+      if (!(globalStore.notePaths || []).length) {
         refreshNoteIndex();
       }
       if (recentEnabled.value) loadRecentNotes();
@@ -490,7 +490,7 @@ watch(
 
 // Load and expand the ancestors of the active note so it is visible.
 watch(
-  activeTitle,
+  activePath,
   async (title) => {
     if (!title) {
       return;

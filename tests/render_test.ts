@@ -133,7 +133,7 @@ Deno.test("render: default plugins", async (t) => {
 
       await t.step("wikilink basename resolution", async () => {
         const { state } = await import("../server/state.ts");
-        state.notes.create({ title: "links/wiki-links", content: "x" });
+        state.notes.create({ path: "links/wiki-links", content: "x" });
         const html = await renderMarkdown("go to [[wiki-links]]");
         assertStringIncludes(html, '<a href="/links/wiki-links">');
       });
@@ -141,7 +141,7 @@ Deno.test("render: default plugins", async (t) => {
       await t.step("wikilink alias resolution", async () => {
         const { state } = await import("../server/state.ts");
         state.notes.create({
-          title: "real/note",
+          path: "real/note",
           content: "---\naliases: [Friendly Alias]\n---\nbody",
         });
         const html = await renderMarkdown("see [[Friendly Alias]]");
@@ -152,7 +152,7 @@ Deno.test("render: default plugins", async (t) => {
         const html = await renderMarkdown("filed under #docs");
         assertStringIncludes(
           html,
-          '<a href="/_/search?term=%23docs&amp;sortBy=title">#docs</a>',
+          '<a href="/_/search?term=%23docs&amp;sortBy=path">#docs</a>',
         );
       });
 
@@ -250,7 +250,7 @@ Deno.test("render: endpoint end-to-end", async () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        title: "page",
+        path: "page",
         content: "# Hi\n\n==marked== and ![[pic.png]]",
       }),
     });

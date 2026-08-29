@@ -104,10 +104,10 @@ export async function getNotes(term, sort, order, limit, nested, folder) {
   }
 }
 
-export async function createNote(title, content) {
+export async function createNote(path, content) {
   try {
     const response = await api.post("notes", {
-      title: title,
+      path: path,
       content: content,
     });
     return new Note(response.data);
@@ -116,9 +116,9 @@ export async function createNote(title, content) {
   }
 }
 
-export async function getNote(title) {
+export async function getNote(path) {
   try {
-    const response = await api.get(`notes/${encodeURIComponent(title)}`);
+    const response = await api.get(`notes/${encodeURIComponent(path)}`);
     return new Note(response.data);
   } catch (response) {
     return Promise.reject(response);
@@ -128,12 +128,12 @@ export async function getNote(title) {
 // Server-rendered markdown (markdown-it + plugin pipeline). Returns raw
 // HTML — axios must not try to JSON-parse it. `disabled` carries the
 // client's localStorage plugin switches.
-export async function getRenderedHtml(title, disabled = [], lineNumbers = false) {
+export async function getRenderedHtml(path, disabled = [], lineNumbers = false) {
   try {
     const params = {};
     if (disabled.length) params.disabled = disabled.join(",");
     if (lineNumbers) params.lineNumbers = "true";
-    const response = await api.get(`render/${encodeURIComponent(title)}`, {
+    const response = await api.get(`render/${encodeURIComponent(path)}`, {
       params,
       transformResponse: (data) => data,
     });
@@ -153,16 +153,16 @@ export async function getPlugins() {
 }
 
 export async function updateNote(
-  title,
-  newTitle,
+  path,
+  newPath,
   newContent,
   fileRefs = "none",
 ) {
   try {
     const response = await api.patch(
-      `notes/${encodeURIComponent(title)}`,
+      `notes/${encodeURIComponent(path)}`,
       {
-        newTitle: newTitle,
+        newPath: newPath,
         newContent: newContent,
       },
       { params: { file_refs: fileRefs } },
@@ -173,10 +173,10 @@ export async function updateNote(
   }
 }
 
-export async function previewRename(title, newTitle) {
+export async function previewRename(path, newPath) {
   try {
     const response = await api.get("rename-preview", {
-      params: { title: title, new_title: newTitle },
+      params: { path: path, new_path: newPath },
     });
     return response.data;
   } catch (_) {
@@ -190,9 +190,9 @@ export async function rewriteRefs(oldPath, newPath) {
   });
 }
 
-export async function deleteNote(title) {
+export async function deleteNote(path) {
   try {
-    await api.delete(`notes/${encodeURIComponent(title)}`);
+    await api.delete(`notes/${encodeURIComponent(path)}`);
   } catch (response) {
     return Promise.reject(response);
   }

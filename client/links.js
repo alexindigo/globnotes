@@ -6,14 +6,14 @@
 // Wikilinks: [[old]], [[old|alias]], [[old#heading]]. Never ![[embeds]]
 // (file references) and never basename-only links (those keep resolving
 // via basename matching).
-export function rewriteWikilinks(content, oldTitle, newTitle) {
+export function rewriteWikilinks(content, oldPath, newPath) {
   const pattern = new RegExp(
-    String.raw`(?<!!)\[\[\s*` + escapeRe(oldTitle) + String.raw`(\s*(?:[|#][^\]]*)?)\s*\]\]`,
+    String.raw`(?<!!)\[\[\s*` + escapeRe(oldPath) + String.raw`(\s*(?:[|#][^\]]*)?)\s*\]\]`,
     "g",
   );
   return content.replace(
     pattern,
-    (_, suffix) => "[[" + newTitle + (suffix || "") + "]]",
+    (_, suffix) => "[[" + newPath + (suffix || "") + "]]",
   );
 }
 
@@ -21,24 +21,24 @@ export function rewriteWikilinks(content, oldTitle, newTitle) {
 // the referencing note's own folder.
 export function rewriteMarkdownLinks(
   content,
-  oldTitle,
-  newTitle,
-  referencingTitle,
+  oldPath,
+  newPath,
+  referencingPath,
 ) {
-  const oldPath = oldTitle + ".md";
-  const newPath = newTitle + ".md";
-  const noteDir = dirOf(referencingTitle);
+  const oldFile = oldPath + ".md";
+  const newFile = newPath + ".md";
+  const noteDir = dirOf(referencingPath);
   const pattern = /(\[[^\]]*\]\()([^)\s]+)(\))/g;
   return content.replace(pattern, (match, prefix, url, suffix) => {
     if (/^(https?:\/\/|\/\/|#|mailto:)/.test(url)) {
       return match;
     }
     if (url.startsWith("/")) {
-      return url.slice(1) === oldPath ? prefix + "/" + newPath + suffix : match;
+      return url.slice(1) === oldFile ? prefix + "/" + newFile + suffix : match;
     }
     const resolved = normalizePath(joinPath(noteDir, url));
-    if (resolved === oldPath) {
-      return prefix + rebaseUrl(url, noteDir, newPath) + suffix;
+    if (resolved === oldFile) {
+      return prefix + rebaseUrl(url, noteDir, newFile) + suffix;
     }
     return match;
   });
@@ -46,23 +46,23 @@ export function rewriteMarkdownLinks(
 
 export function rewriteRenamedLinks(
   content,
-  oldTitle,
-  newTitle,
-  referencingTitle,
+  oldPath,
+  newPath,
+  referencingPath,
 ) {
   return rewriteMarkdownLinks(
-    rewriteWikilinks(content, oldTitle, newTitle),
-    oldTitle,
-    newTitle,
-    referencingTitle,
+    rewriteWikilinks(content, oldPath, newPath),
+    oldPath,
+    newPath,
+    referencingPath,
   );
 }
 
 // --- path helpers (mirror the server's POSIX-style logic) ---
 
-function dirOf(title) {
-  const i = title.lastIndexOf("/");
-  return i === -1 ? "" : title.slice(0, i);
+function dirOf(path) {
+  const i = path.lastIndexOf("/");
+  return i === -1 ? "" : path.slice(0, i);
 }
 
 function joinPath(dir, rel) {

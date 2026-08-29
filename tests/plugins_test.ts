@@ -160,7 +160,7 @@ Deno.test("plugins: host dispatch + ctx RPC", async (t) => {
     const rpc = (method: string, args: unknown[]) => {
       rpcCalls.push(`${method}:${args[0] ?? ""}`);
       if (method === "readNote" && args[0] === "hello") {
-        return Promise.resolve({ title: "hello", content: "world" });
+        return Promise.resolve({ path: "hello", content: "world" });
       }
       return Promise.reject(new Error("note not found"));
     };
@@ -364,7 +364,7 @@ Deno.test("plugins: pluginRpc resolves against real state", async () => {
     };
     assertEquals(note.content, "hi there");
 
-    const titles = await pluginRpc("listTitles", []);
+    const titles = await pluginRpc("listPaths", []);
     assertEquals(titles, ["hello"]);
 
     const file = await pluginRpc("readFile", ["data.bin"]) as {
@@ -375,9 +375,9 @@ Deno.test("plugins: pluginRpc resolves against real state", async () => {
 
     // Search needs an initial sync; run it synchronously via syncIndex.
     indexer.syncIndex();
-    const hits = await pluginRpc("search", ["hi"]) as { title: string }[];
+    const hits = await pluginRpc("search", ["hi"]) as { path: string }[];
     assertEquals(hits.length, 1);
-    assertEquals(hits[0].title, "hello");
+    assertEquals(hits[0].path, "hello");
 
     assertEquals(config.authType, AuthType.NONE);
   } finally {

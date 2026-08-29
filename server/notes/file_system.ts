@@ -9,7 +9,7 @@
 
 import type { FileRef, Note, NoteCreate, NoteUpdate } from "./models.ts";
 import {
-  InvalidTitleError,
+  InvalidPathError,
   NoteExistsError,
   NoteNotFoundError,
 } from "./models.ts";
@@ -27,7 +27,7 @@ import {
 import { state } from "@server/state.ts";
 import { logger } from "@server/logger.ts";
 import { walk } from "@std/fs/walk";
-import * as path from "@std/path";
+import * as nodePath from "@std/path";
 
 const MARKDOWN_EXT = ".md";
 
@@ -54,12 +54,12 @@ export class FileSystemNotes {
   // region public API
 
   create(data: NoteCreate): Note {
-    const title = (data.title ?? "").trim();
-    if (!title) throw new InvalidTitleError("title cannot be empty");
-    this.#validateNotePath(title);
-    const filepath = this.#pathFromTitle(title);
+    const path = (data.path ?? "").trim();
+    if (!path) throw new InvalidPathError("path cannot be empty");
+    this.#validateNotePath(path);
+    const filepath = this.#pathFromPath(path);
     try {
-      Deno.mkdirSync(path.dirname(filepath), { recursive: true });
+      Deno.mkdirSync(nodePath.dirname(filepath), { recursive: true });
       this.#writeFile(filepath, data.content ?? "", false);
     } catch (e) {
       if (
@@ -68,21 +68,21 @@ export class FileSystemNotes {
         e instanceof Deno.errors.IsADirectory
       ) {
         throw new NoteExistsError(
-          `Failed to create '${title}': ${(e as Error).message}`,
+          `Failed to create '${path}': ${(e as Error).message}`,
         );
       }
       throw e;
     }
-    state.indexer?.reindexNote(title);
+    state.indexer?.reindexNote(path);
     this.#invalidateScanCache();
-    return this.#noteFromFile(title, filepath);
+    return this.#noteFromFile(path, filepath);
   }
 
-  get(title: string): Note {
-    this.#validateReadablePath(title);
-    const filepath = this.#readablePath(title);
+  get(path: string): Note {
+    this.#validateReadablePath(path);
+    const filepath = this.#readablePath(path);
     try {
-      return this.#noteFromFile(title, filepath);
+      return this.#noteFromFile(path, filepath);
     } catch (e) {
       if (e instanceof Deno.errors.NotFound) {
         throw new NoteNotFoundError(
@@ -93,11 +93,11 @@ export class FileSystemNotes {
     }
   }
 
-  update(title: string, data: NoteUpdate, fileRefs = "none"): Note {
-    this.#validateReadablePath(title);
-    const oldTitle = title;
-    let filepath = this.#readablePath(title);
-    const oldDir = path.dirname(filepath);
+  update(path: string, data: NoteUpdate, fileRefs = "none"): Note {
+    this.#validateReadablePath(path);
+    const oldPath = path;
+    let filepath = this.#readablePath(path);
+    const oldDir = nodePath.dirname(filepath);
     const movedFiles: Record<string, string> = {};
     let contentWritten: string | null = null;
 
@@ -105,37 +105,37 @@ export class FileSystemNotes {
     // renames the file's basename (folder untouched, front-matter title
     // opts out). Default-on, Obsidian Filename-Heading-Sync style.
     if (
-      (data.newTitle === undefined || data.newTitle === null) &&
+      (data.newPath === undefined || data.newPath === null) &&
       data.newContent !== undefined && data.newContent !== null
     ) {
-      const oldBase = path.basename(title);
+      const oldBase = nodePath.basename(path);
       const oldH1 = resolveTitleInfo(oldBase, this.#readFile(filepath)).h1;
       const info = resolveTitleInfo(oldBase, data.newContent);
       if (!info.fmTitle && info.h1 && info.h1 !== oldH1) {
         const newBase = sanitizeBasename(info.h1);
         if (newBase && newBase !== oldBase) {
-          const folder = path.dirname(title);
-          data.newTitle = folder === "." ? newBase : `${folder}/${newBase}`;
+          const folder = nodePath.dirname(path);
+          data.newPath = folder === "." ? newBase : `${folder}/${newBase}`;
         }
       }
     }
 
     if (
-      data.newTitle !== undefined &&
-      data.newTitle !== null &&
-      data.newTitle !== title
+      data.newPath !== undefined &&
+      data.newPath !== null &&
+      data.newPath !== path
     ) {
-      const newTitle = data.newTitle.trim();
-      if (!newTitle) throw new InvalidTitleError("title cannot be empty");
-      this.#validateNotePath(newTitle);
-      const newFilepath = this.#pathFromTitle(newTitle);
-      const newDir = path.dirname(newFilepath);
+      const newPath = data.newPath.trim();
+      if (!newPath) throw new InvalidPathError("path cannot be empty");
+      this.#validateNotePath(newPath);
+      const newFilepath = this.#pathFromPath(newPath);
+      const newDir = nodePath.dirname(newFilepath);
 
       if (filepath !== newFilepath) {
         try {
           Deno.statSync(newFilepath);
           throw new NoteExistsError(
-            `Failed to rename. '${newTitle}' already exists.`,
+            `Failed to rename. '${newPath}' already exists.`,
           );
         } catch (e) {
           if (e instanceof NoteExistsError) throw e;
@@ -156,8 +156,8 @@ export class FileSystemNotes {
 
         if (refs.length > 0) {
           const root = this.storagePath;
-          let oldRelDir = path.relative(root, oldDir).replace(/\\/g, "/");
-          let newRelDir = path.relative(root, newDir).replace(/\\/g, "/");
+          let oldRelDir = nodePath.relative(root, oldDir).replace(/\\/g, "/");
+          let newRelDir = nodePath.relative(root, newDir).replace(/\\/g, "/");
           if (oldRelDir === ".") oldRelDir = "";
           if (newRelDir === ".") newRelDir = "";
 
@@ -174,10 +174,10 @@ export class FileSystemNotes {
                 ? r.path.slice(oldRelDir.length).replace(/^\//, "")
                 : r.path;
               const newRel = newRelDir ? newRelDir + "/" + sub : sub;
-              const oldFile = path.join(root, r.path);
-              const newFile = path.join(root, newRel);
+              const oldFile = nodePath.join(root, r.path);
+              const newFile = nodePath.join(root, newRel);
               try {
-                Deno.mkdirSync(path.dirname(newFile), { recursive: true });
+                Deno.mkdirSync(nodePath.dirname(newFile), { recursive: true });
                 Deno.renameSync(oldFile, newFile);
                 movedFiles[r.path] = newRel;
               } catch {
@@ -227,7 +227,7 @@ export class FileSystemNotes {
           e instanceof Deno.errors.IsADirectory
         ) {
           throw new NoteExistsError(
-            `Failed to rename to '${newTitle}': ${(e as Error).message}`,
+            `Failed to rename to '${newPath}': ${(e as Error).message}`,
           );
         }
         throw e;
@@ -236,7 +236,7 @@ export class FileSystemNotes {
       if (actionRefs && contentWritten !== null) {
         this.#writeFile(newFilepath, contentWritten, true);
       }
-      title = newTitle;
+      path = newPath;
       filepath = newFilepath;
     }
 
@@ -250,9 +250,9 @@ export class FileSystemNotes {
 
     // Rename → H1 sync: after a rename, keep the first H1 in step with
     // the new basename (front-matter title opts out).
-    if (oldTitle !== title) {
-      const newBase = path.basename(title);
-      const info = resolveTitleInfo(path.basename(oldTitle), content);
+    if (oldPath !== path) {
+      const newBase = nodePath.basename(path);
+      const info = resolveTitleInfo(nodePath.basename(oldPath), content);
       if (!info.fmTitle && info.h1 && info.h1 !== newBase) {
         content = rewriteFirstH1(content, newBase);
         this.#writeFile(filepath, content, true);
@@ -263,20 +263,20 @@ export class FileSystemNotes {
       oldPath: o,
       newPath: n,
     }));
-    if (oldTitle !== title) state.indexer?.deleteFromIndex(oldTitle);
-    state.indexer?.reindexNote(title);
+    if (oldPath !== path) state.indexer?.deleteFromIndex(oldPath);
+    state.indexer?.reindexNote(path);
     this.#invalidateScanCache();
     return {
-      ...this.#noteFromFile(title, filepath),
+      ...this.#noteFromFile(path, filepath),
       content,
       movedFiles: moved,
     };
   }
 
-  previewRename(title: string, newTitle: string): FileRef[] {
-    this.#validateReadablePath(title);
-    this.#validateNotePath(newTitle);
-    const filepath = this.#readablePath(title);
+  previewRename(path: string, newPath: string): FileRef[] {
+    this.#validateReadablePath(path);
+    this.#validateNotePath(newPath);
+    const filepath = this.#readablePath(path);
     let content: string;
     try {
       content = this.#readFile(filepath);
@@ -288,7 +288,7 @@ export class FileSystemNotes {
       }
       throw e;
     }
-    return this.#scanLocalRefs(content, path.dirname(filepath));
+    return this.#scanLocalRefs(content, nodePath.dirname(filepath));
   }
 
   async rewriteRefs(oldPath: string, newPath: string): Promise<void> {
@@ -299,10 +299,10 @@ export class FileSystemNotes {
     ) {
       let content = this.#readFile(entry.path);
       if (!content.includes(fname)) continue;
-      const noteDir = path.dirname(entry.path);
+      const noteDir = nodePath.dirname(entry.path);
       const refs = this.#scanLocalRefs(content, noteDir, false);
       let changed = false;
-      const noteRel = path.relative(root, noteDir).replace(/\\/g, "/");
+      const noteRel = nodePath.relative(root, noteDir).replace(/\\/g, "/");
       for (const r of refs) {
         if (r.path !== oldPath) continue;
         const newUrl = FileSystemNotes.#rebaseUrl(
@@ -330,9 +330,9 @@ export class FileSystemNotes {
     }
   }
 
-  delete(title: string): void {
-    this.#validateReadablePath(title);
-    const filepath = this.#readablePath(title);
+  delete(path: string): void {
+    this.#validateReadablePath(path);
+    const filepath = this.#readablePath(path);
     try {
       Deno.removeSync(filepath);
     } catch (e) {
@@ -343,8 +343,8 @@ export class FileSystemNotes {
       }
       throw e;
     }
-    this.#pruneEmptyParents(path.dirname(filepath));
-    state.indexer?.deleteFromIndex(title);
+    this.#pruneEmptyParents(nodePath.dirname(filepath));
+    state.indexer?.deleteFromIndex(path);
     this.#invalidateScanCache();
   }
 
@@ -374,8 +374,8 @@ export class FileSystemNotes {
         const childPath = dirPath ? `${dirPath}/${entry.name}` : entry.name;
         folders.push({ name: entry.name, path: childPath });
       } else if (entry.name.endsWith(MARKDOWN_EXT)) {
-        const title = entry.name.slice(0, -MARKDOWN_EXT.length);
-        notes.push(dirPath ? `${dirPath}/${title}` : title);
+        const path = entry.name.slice(0, -MARKDOWN_EXT.length);
+        notes.push(dirPath ? `${dirPath}/${path}` : path);
       }
     }
     return {
@@ -384,7 +384,7 @@ export class FileSystemNotes {
     };
   }
 
-  getTitles(): string[] {
+  getPaths(): string[] {
     return this.listAllNoteFilenames().map((f) => this.#stripExt(f));
   }
 
@@ -392,21 +392,21 @@ export class FileSystemNotes {
 
   // region private helpers
 
-  #pathFromTitle(title: string): string {
+  #pathFromPath(path: string): string {
     try {
-      return resolveInRoot(this.storagePath, title + MARKDOWN_EXT);
+      return resolveInRoot(this.storagePath, path + MARKDOWN_EXT);
     } catch (e) {
-      throw new InvalidTitleError((e as Error).message);
+      throw new InvalidPathError((e as Error).message);
     }
   }
 
   /** isValidNotePath at the storage boundary: helpers throw plain Error,
-   * endpoints map InvalidTitleError → 400 (Python: ValueError). */
+   * endpoints map InvalidPathError → 400 (Python: ValueError). */
   #validateNotePath(value: string): string {
     try {
       return isValidNotePath(value);
     } catch (e) {
-      throw new InvalidTitleError((e as Error).message);
+      throw new InvalidPathError((e as Error).message);
     }
   }
 
@@ -415,27 +415,27 @@ export class FileSystemNotes {
     try {
       return isReadableNotePath(value);
     } catch (e) {
-      throw new InvalidTitleError((e as Error).message);
+      throw new InvalidPathError((e as Error).message);
     }
   }
 
-  #readablePath(title: string): string {
+  #readablePath(path: string): string {
     try {
-      return resolveReadableInRoot(this.storagePath, title + MARKDOWN_EXT);
+      return resolveReadableInRoot(this.storagePath, path + MARKDOWN_EXT);
     } catch (e) {
-      throw new InvalidTitleError((e as Error).message);
+      throw new InvalidPathError((e as Error).message);
     }
   }
 
-  #noteFromFile(title: string, filepath: string): Note {
+  #noteFromFile(path: string, filepath: string): Note {
     const content = this.#readFile(filepath);
     return {
-      title,
+      path,
       content,
-      displayTitle: resolveTitleInfo(
-        path.basename(title),
+      title: resolveTitleInfo(
+        nodePath.basename(path),
         content ?? "",
-      ).displayTitle,
+      ).title,
       lastModified: (Deno.statSync(filepath).mtime?.getTime() ?? 0) / 1000,
       movedFiles: [],
     };
@@ -444,13 +444,13 @@ export class FileSystemNotes {
   #pruneEmptyParents(dirPath: string): void {
     const root = Deno.realPathSync(this.storagePath);
     let d = Deno.realPathSync(dirPath);
-    while (d !== root && path.common([root, d]) === root) {
+    while (d !== root && nodePath.common([root, d]) === root) {
       try {
         Deno.removeSync(d);
       } catch {
         break;
       }
-      d = path.dirname(d);
+      d = nodePath.dirname(d);
     }
   }
 
@@ -484,11 +484,11 @@ export class FileSystemNotes {
     }
     const names: string[] = [];
     const root = this.storagePath;
-    const prefix = root.endsWith(path.SEPARATOR) ? root : root + path.SEPARATOR;
+    const prefix = root.endsWith(nodePath.SEPARATOR) ? root : root + nodePath.SEPARATOR;
 
     function walkDir(dir: string): void {
       for (const entry of Deno.readDirSync(dir)) {
-        const full = path.join(dir, entry.name);
+        const full = nodePath.join(dir, entry.name);
         if (entry.isDirectory) {
           walkDir(full);
         } else if (entry.name.endsWith(MARKDOWN_EXT)) {
@@ -556,12 +556,12 @@ export class FileSystemNotes {
       rel = url.slice(1);
       kind = "absolute";
     } else if (url.startsWith("../") || url.startsWith("./")) {
-      const oldRel = path.relative(root, oldDir).replace(/\\/g, "/");
+      const oldRel = nodePath.relative(root, oldDir).replace(/\\/g, "/");
       rel = (oldRel !== "." && oldRel !== "" ? oldRel + "/" : "") + url;
-      rel = path.normalize(rel).replace(/\\/g, "/");
+      rel = nodePath.normalize(rel).replace(/\\/g, "/");
       kind = "relative";
     } else {
-      const oldRel = path.relative(root, oldDir).replace(/\\/g, "/");
+      const oldRel = nodePath.relative(root, oldDir).replace(/\\/g, "/");
       rel = oldRel !== "." && oldRel !== "" ? oldRel + "/" + url : url;
       kind = "same-folder";
     }
@@ -573,7 +573,7 @@ export class FileSystemNotes {
         return;
       }
       try {
-        Deno.statSync(path.join(root, rel));
+        Deno.statSync(nodePath.join(root, rel));
       } catch {
         return;
       }
@@ -598,8 +598,8 @@ export class FileSystemNotes {
     if (url.startsWith("/")) {
       target = url.slice(1);
     } else if (url.startsWith("../") || url.startsWith("./")) {
-      target = path
-        .normalize(path.join(oldDir || ".", url))
+      target = nodePath
+        .normalize(nodePath.join(oldDir || ".", url))
         .replace(/\\/g, "/");
     } else {
       target = oldDir ? oldDir + "/" + url : url;

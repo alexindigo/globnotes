@@ -27,7 +27,7 @@ describe("refreshNoteIndex", () => {
     await vi.runAllTimersAsync();
     await p;
     expect(getNoteIndex).toHaveBeenCalledTimes(3);
-    expect(store.noteTitles).toEqual(["a/b", "c"]);
+    expect(store.notePaths).toEqual(["a/b", "c"]);
   });
 
   it("gives up after retries and leaves the list empty", async () => {
@@ -38,16 +38,16 @@ describe("refreshNoteIndex", () => {
     await p;
     // initial attempt + 3 retries
     expect(getNoteIndex).toHaveBeenCalledTimes(4);
-    expect(store.noteTitles).toEqual([]);
+    expect(store.notePaths).toEqual([]);
   });
 
   it("keeps previously loaded titles when all retries fail", async () => {
     getNoteIndex.mockRejectedValue(new Error("boom"));
     const store = useGlobalStore();
-    store.noteTitles = ["existing/note"];
+    store.notePaths = ["existing/note"];
     const p = refreshNoteIndex();
     await vi.runAllTimersAsync();
     await p;
-    expect(store.noteTitles).toEqual(["existing/note"]);
+    expect(store.notePaths).toEqual(["existing/note"]);
   });
 });

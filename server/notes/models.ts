@@ -5,32 +5,32 @@
  * it keeps the port legible. */
 
 export interface Note {
-  title: string;
+  path: string;
   content: string | null;
   lastModified: number;
   /** Display title: front-matter title → first H1 → basename. */
-  displayTitle: string;
+  title: string;
   /** Python's Note model serializes this always (default []). */
   movedFiles: { oldPath: string; newPath: string }[];
 }
 
 export interface NoteCreate {
-  title: string;
+  path: string;
   content?: string | null;
 }
 
 export interface NoteUpdate {
-  newTitle?: string | null;
+  newPath?: string | null;
   newContent?: string | null;
 }
 
 export interface SearchResult {
-  title: string;
+  path: string;
   /** Display title: front-matter title → first H1 → basename. */
-  displayTitle: string;
+  title: string;
   lastModified: number;
   score?: number | null;
-  titleHighlights?: string | null;
+  pathHighlights?: string | null;
   contentHighlights?: string | null;
   tagMatches?: string[] | null;
 }
@@ -45,10 +45,10 @@ export interface FileRef {
 /** Storage-layer errors, mapped to HTTP statuses by the endpoints.
  * Mirrors the Python builtins the routes catch (ValueError /
  * FileNotFoundError / FileExistsError). */
-export class InvalidTitleError extends Error {
+export class InvalidPathError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "InvalidTitleError";
+    this.name = "InvalidPathError";
   }
 }
 export class NoteNotFoundError extends Error {

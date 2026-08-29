@@ -3,7 +3,7 @@
   <ConfirmModal
     v-model="isDeleteModalVisible"
     title="Confirm Deletion"
-    :message="`Are you sure you want to delete the note '${note.title}'?`"
+    :message="`Are you sure you want to delete the note '${note.path}'?`"
     confirmButtonText="Delete"
     confirmButtonStyle="danger"
     @confirm="deleteConfirmedHandler"
@@ -75,7 +75,7 @@
         <!-- Title -->
         <div class="min-w-0 grow">
           <div class="truncate text-3xl leading-[1.6em]">
-            <span v-show="!editMode" :title="note.title">{{
+            <span v-show="!editMode" :title="note.path">{{
               noteBasename
             }}</span>
             <input
@@ -89,7 +89,7 @@
           <div
             v-show="!editMode && noteDirName"
             class="truncate pt-1 text-sm text-theme-text-muted"
-            :title="note.title"
+            :title="note.path"
           >
             <template v-for="(crumb, i) in noteDirBreadcrumbs" :key="i">
               <span v-if="crumb.ellipsis">…/</span>
@@ -176,7 +176,7 @@
     <div class="min-h-0 flex-1 overflow-y-auto print:overflow-visible">
       <ServerViewer
         v-if="!editMode"
-        :title="note.title"
+        :title="note.path"
         class="toast-viewer pb-4"
       />
       <div v-if="editMode" class="flex h-full min-h-0 flex-col">
@@ -271,18 +271,18 @@ import { authTypes, params } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { rewriteRenamedLinks } from "../links.js";
 import {
-  directoryFromTitle,
+  directoryFromPath,
   getToastOptions,
-  nextUntitledTitle,
+  nextUntitledPath,
 } from "../helpers.js";
 import { parseFragment, serializeFragment } from "../fragment.js";
 import { publish, TOPICS } from "../bus/index.js";
 import { notePath } from "../notePath.js";
-import { noteTitleError } from "../validators.js";
+import { notePathError } from "../validators.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
 
 const props = defineProps({
-  title: String,
+  path: String,
 });
 
 const canModify = computed(
@@ -295,12 +295,12 @@ const isSaveChangesModalVisible = ref(false);
 const isDeleteModalVisible = ref(false);
 const isDraftModalVisible = ref(false);
 const isNoteNotFound = ref(false);
-const isNewNote = computed(() => !props.title);
-const createLinkLabel = computed(() => `Create note '${props.title}'`);
+const isNewNote = computed(() => !props.path);
+const createLinkLabel = computed(() => `Create note '${props.path}'`);
 const folderDatalistOptions = computed(() => {
   const dirs = new Set();
-  for (const t of globalStore.noteTitles || []) {
-    const d = directoryFromTitle(t);
+  for (const t of globalStore.notePaths || []) {
+    const d = directoryFromPath(t);
     if (d) dirs.add(d);
   }
   return [...dirs].sort();
@@ -308,10 +308,10 @@ const folderDatalistOptions = computed(() => {
 const loadingIndicator = ref();
 const note = ref({});
 const noteDirName = computed(() =>
-  directoryFromTitle(note.value.title || props.title || ""),
+  directoryFromPath(note.value.path || props.path || ""),
 );
 const noteBasename = computed(() => {
-  const title = note.value.title || props.title || "";
+  const title = note.value.path || props.path || "";
   const dir = noteDirName.value;
   return dir ? title.slice(dir.length + 1) : title;
 });
@@ -346,7 +346,7 @@ function folderTarget(folder) {
 const reservedFilenameCharacters = /[<>:"\\|?*]/;
 const route = useRoute();
 const router = useRouter();
-const newTitle = ref();
+const newPath = ref();
 const editBasename = ref("");
 const editFolder = ref("");
 const folderDatalistId = "folder-datalist";
@@ -447,13 +447,13 @@ function clearCaretSyncTimer() {
 
 function init() {
   // Return if we already have the note e.g. When we rename a note, the route prop would change but we’d already have the note.
-  if (props.title && props.title == note.value.title) {
+  if (props.path && props.path == note.value.path) {
     return;
   }
   isNoteNotFound.value = false;
   loadingIndicator.value.setLoading();
-  if (props.title) {
-    getNote(props.title)
+  if (props.path) {
+    getNote(props.path)
       .then((data) => {
         note.value = data;
         loadingIndicator.value.setLoaded();
@@ -470,18 +470,18 @@ function init() {
       });
   } else {
     const folder = route.query.folder || "";
-    const explicitTitle = route.query.title;
+    const explicitTitle = route.query.path;
     let prefillTitle;
     if (explicitTitle) {
       prefillTitle = explicitTitle;
     } else {
-      prefillTitle = nextUntitledTitle(
-        globalStore.noteTitles || [],
+      prefillTitle = nextUntitledPath(
+        globalStore.notePaths || [],
         folder,
       );
     }
-    newTitle.value = prefillTitle;
-    note.value = new Note({ title: prefillTitle });
+    newPath.value = prefillTitle;
+    note.value = new Note({ path: prefillTitle });
     editMode.value = false;
     nextTick(() => {
       editHandler();
@@ -501,9 +501,9 @@ function toggleEditModeHandler() {
 
 function editHandler(pushUrl = false) {
   pendingPush = pushUrl;
-  // Drafts key off newTitle; on a fresh mount it isn't set until
+  // Drafts key off newPath; on a fresh mount it isn't set until
   // setEditMode, which would make loadDraft miss stored drafts.
-  if (!newTitle.value && note.value.title) newTitle.value = note.value.title;
+  if (!newPath.value && note.value.path) newPath.value = note.value.path;
   const draftContent = loadDraft();
   if (draftContent) {
     isDraftModalVisible.value = true;
@@ -532,7 +532,7 @@ function enterEditFromFragment(frag = parseFragment(window.location.hash)) {
 // keeps the session exactly where it was.
 function isStayingInEditState(to) {
   if (to.name !== "note") return false;
-  if (to.params.title !== note.value.title) return false;
+  if (to.params.path !== note.value.path) return false;
   return !!parseFragment(to.hash).mode;
 }
 
@@ -544,7 +544,7 @@ async function gateNavigation(to) {
     if (
       canModify.value &&
       to.name === "note" &&
-      to.params.title === note.value.title &&
+      to.params.path === note.value.path &&
       toFrag.mode
     ) {
       pendingEditorMode = toFrag.mode === "edit" ? "wysiwyg" : "markdown";
@@ -624,11 +624,11 @@ function onSaveChoice(choice) {
 }
 
 function setEditMode() {
-  newTitle.value = note.value.title;
-  editBasename.value = newTitle.value
-    ? newTitle.value.slice(newTitle.value.lastIndexOf("/") + 1)
+  newPath.value = note.value.path;
+  editBasename.value = newPath.value
+    ? newPath.value.slice(newPath.value.lastIndexOf("/") + 1)
     : "";
-  editFolder.value = directoryFromTitle(newTitle.value);
+  editFolder.value = directoryFromPath(newPath.value);
   unsavedChanges.value = false;
   editorInitialValue.value = getInitialEditorValue();
   // A resumed draft IS unsaved work; a clean load is not.
@@ -641,12 +641,12 @@ function setEditMode() {
   const push = pendingPush;
   pendingPush = false;
   editMode.value = true;
-  publish(TOPICS.NOTE_EDIT_START, { title: note.value.title });
+  publish(TOPICS.NOTE_EDIT_START, { path: note.value.path });
   writeFragment(currentFragment(), push);
 }
 
 function syncTitle() {
-  newTitle.value = editFolder.value
+  newPath.value = editFolder.value
     ? editFolder.value + "/" + editBasename.value
     : editBasename.value;
 }
@@ -662,9 +662,9 @@ function deleteHandler() {
 }
 
 function deleteConfirmedHandler() {
-  deleteNote(note.value.title)
+  deleteNote(note.value.path)
     .then(() => {
-      publish(TOPICS.NOTE_DELETE, { title: note.value.title });
+      publish(TOPICS.NOTE_DELETE, { path: note.value.path });
       exitEditState();
       toast.add(getToastOptions("Note deleted ✓", "Success", "success"));
       router.push({ name: "home" });
@@ -679,7 +679,7 @@ function saveHandler(close = false) {
   // Save Default Editor Mode
   saveDefaultEditorMode();
 
-  const titleError = noteTitleError(newTitle.value);
+  const titleError = notePathError(newPath.value);
   if (titleError) {
     toast.add(getToastOptions(titleError, "Invalid", "error"));
     return;
@@ -692,20 +692,20 @@ function saveHandler(close = false) {
   // Save Note
   let newContent = editor.value.getMarkdown();
   if (isNewNote.value) {
-    saveNew(newTitle.value, newContent, close);
+    saveNew(newPath.value, newContent, close);
   } else {
-    saveExisting(newTitle.value, newContent, close);
+    saveExisting(newPath.value, newContent, close);
   }
 }
 
-function saveNew(newTitle, newContent, close = false) {
-  createNote(newTitle, newContent)
+function saveNew(newPath, newContent, close = false) {
+  createNote(newPath, newContent)
     .then((data) => {
       clearDraft();
       note.value = data;
-      publish(TOPICS.NOTE_CREATE, { title: newTitle });
+      publish(TOPICS.NOTE_CREATE, { path: newPath });
       router
-        .push(notePath(note.value.title))
+        .push(notePath(note.value.path))
         .then(() => {
           // Wait for the route to be updated before setting edit mode to false
           // as the route is used to determine the action.
@@ -719,19 +719,19 @@ function saveNew(newTitle, newContent, close = false) {
 // referencing notes via search, rewrite their links client-side, and resave
 // each via the normal update API. The server stays a pure file mechanism —
 // it never rewrites other notes as a rename side effect. Best-effort.
-async function updateRenamedLinks(oldTitle, newTitle) {
+async function updateRenamedLinks(oldPath, newPath) {
   try {
-    const results = await getNotes(oldTitle, undefined, undefined, undefined, true);
+    const results = await getNotes(oldPath, undefined, undefined, undefined, true);
     const candidates = results
-      .map((r) => r.title)
-      .filter((t) => t !== oldTitle && t !== newTitle);
+      .map((r) => r.path)
+      .filter((t) => t !== oldPath && t !== newPath);
     let updated = 0;
     for (const title of candidates) {
       const other = await getNote(title);
       const newContent = rewriteRenamedLinks(
         other.content,
-        oldTitle,
-        newTitle,
+        oldPath,
+        newPath,
         title,
       );
       if (newContent !== other.content) {
@@ -754,19 +754,19 @@ async function updateRenamedLinks(oldTitle, newTitle) {
   }
 }
 
-function saveExisting(newTitle, newContent, close = false) {
-  if (newTitle == note.value.title && newContent == note.value.content) {
+function saveExisting(newPath, newContent, close = false) {
+  if (newPath == note.value.path && newContent == note.value.content) {
     noteSaveSuccess(close);
     return;
   }
 
-  const oldTitle = note.value.title;
-  const oldDir = directoryFromTitle(oldTitle);
-  const newDir = directoryFromTitle(newTitle);
+  const oldPath = note.value.path;
+  const oldDir = directoryFromPath(oldPath);
+  const newDir = directoryFromPath(newPath);
   const folderChanged = oldDir !== newDir;
 
   const doSave = (fileRefs = "none") => {
-    updateNote(oldTitle, newTitle, newContent, fileRefs)
+    updateNote(oldPath, newPath, newContent, fileRefs)
       .then((data) => {
         clearDraft();
         note.value = data;
@@ -779,15 +779,15 @@ function saveExisting(newTitle, newContent, close = false) {
         ) {
           editor.value.setMarkdown(data.content);
         }
-        if (oldTitle != data.title) {
-          publish(TOPICS.NOTE_RENAME, { oldTitle, newTitle: data.title });
+        if (oldPath != data.path) {
+          publish(TOPICS.NOTE_RENAME, { oldPath, newPath: data.path });
         } else {
-          publish(TOPICS.NOTE_SAVE, { title: data.title });
+          publish(TOPICS.NOTE_SAVE, { path: data.path });
         }
         // Carry the fragment inside the same navigation so a rename can
         // neither drop it nor race a follow-up replaceState.
         router.replace({
-          path: notePath(note.value.title),
+          path: notePath(note.value.path),
           hash: close ? "" : serializeFragment(currentFragment()),
         });
         noteSaveSuccess(close);
@@ -795,8 +795,8 @@ function saveExisting(newTitle, newContent, close = false) {
         // Client drives link updates: the server is a pure mechanism.
         // Find notes referencing the old title and resave them with
         // rewritten links.
-        if (oldTitle !== data.title) {
-          updateRenamedLinks(oldTitle, data.title);
+        if (oldPath !== data.path) {
+          updateRenamedLinks(oldPath, data.path);
         }
 
         lastMovedFiles.value = data.movedFiles || [];
@@ -814,7 +814,7 @@ function saveExisting(newTitle, newContent, close = false) {
   };
 
   if (folderChanged) {
-    previewRename(oldTitle, newTitle)
+    previewRename(oldPath, newPath)
       .then((refs) => {
         if (refs.length > 0) {
           renameRefs.value = refs;
@@ -915,14 +915,14 @@ function exitEditState() {
   noteDirty.value = false;
   unsavedChanges.value = false;
   setBeforeUnloadConfirmation(false);
-  publish(TOPICS.NOTE_EDIT_END, { title: note.value.title });
+  publish(TOPICS.NOTE_EDIT_END, { path: note.value.path });
 }
 
 // Persist the work without any navigation of its own — used when a pending
 // navigation is gated on it. The gated navigation commits the URL change.
 async function saveForNavigation() {
   saveDefaultEditorMode();
-  const titleError = noteTitleError(newTitle.value);
+  const titleError = notePathError(newPath.value);
   if (titleError) {
     toast.add(getToastOptions(titleError, "Invalid", "error"));
     return false;
@@ -930,23 +930,23 @@ async function saveForNavigation() {
   const newContent = editor.value.getMarkdown();
   try {
     if (isNewNote.value) {
-      note.value = await createNote(newTitle.value, newContent);
-      publish(TOPICS.NOTE_CREATE, { title: newTitle.value });
+      note.value = await createNote(newPath.value, newContent);
+      publish(TOPICS.NOTE_CREATE, { path: newPath.value });
     } else {
-      const oldTitle = note.value.title;
+      const oldPath = note.value.path;
       // "none": the rename-assets dialog cannot stack on the save modal;
       // attachments stay put and the link rewrite pass still runs below.
       note.value = await updateNote(
-        oldTitle,
-        newTitle.value,
+        oldPath,
+        newPath.value,
         newContent,
         "none",
       );
-      if (oldTitle !== note.value.title) {
-        publish(TOPICS.NOTE_RENAME, { oldTitle, newTitle: note.value.title });
-        updateRenamedLinks(oldTitle, note.value.title);
+      if (oldPath !== note.value.path) {
+        publish(TOPICS.NOTE_RENAME, { oldPath, newPath: note.value.path });
+        updateRenamedLinks(oldPath, note.value.path);
       } else {
-        publish(TOPICS.NOTE_SAVE, { title: note.value.title });
+        publish(TOPICS.NOTE_SAVE, { path: note.value.path });
       }
     }
     clearDraft();
@@ -1055,7 +1055,7 @@ function contentChangedHandler() {
 function saveDraft() {
   const content = editor.value?.getMarkdown();
   const userHasPersistedToken = isCurrentTokenStored();
-  const draftKey = newTitle.value;
+  const draftKey = newPath.value;
   if (content && draftKey) {
     if (userHasPersistedToken) {
       localStorage.setItem(draftKey, content);
@@ -1066,7 +1066,7 @@ function saveDraft() {
 }
 
 function clearDraft() {
-  const draftKey = newTitle.value;
+  const draftKey = newPath.value;
   if (draftKey) {
     localStorage.removeItem(draftKey);
     sessionStorage.removeItem(draftKey);
@@ -1074,7 +1074,7 @@ function clearDraft() {
 }
 
 function loadDraft() {
-  const draftKey = newTitle.value;
+  const draftKey = newPath.value;
   if (!draftKey) return null;
   const localDraft = localStorage.getItem(draftKey);
   const sessionDraft = sessionStorage.getItem(draftKey);
@@ -1101,14 +1101,14 @@ function keydownHandler(event) {
 }
 
 function createFromWikilink() {
-  router.push({ name: "new", query: { title: props.title } });
+  router.push({ name: "new", query: { path: props.path } });
 }
 
 // Helpers
 function noteDirectory() {
   // The directory of the note being edited (falling back to the note being
   // viewed), so uploads land beside the note.
-  return directoryFromTitle(newTitle.value || props.title || "");
+  return directoryFromPath(newPath.value || props.path || "");
 }
 
 function entityTooLargeToast(entityName) {
@@ -1155,10 +1155,10 @@ function loadDefaultEditorMode() {
 }
 
 function isContentChanged() {
-  return newTitle.value != note.value.title || noteDirty.value;
+  return newPath.value != note.value.path || noteDirty.value;
 }
 
-watch(() => props.title, init);
+watch(() => props.path, init);
 onMounted(() => {
   init();
 });
@@ -1167,7 +1167,7 @@ onMounted(() => {
 onBeforeUnmount(clearContentChangedTimeout);
 onBeforeRouteUpdate(async (to) => {
   if (!(await gateNavigation(to))) return false;
-  if (!to.params.title) init();
+  if (!to.params.path) init();
 });
 onBeforeRouteLeave(async (to) => {
   if (!(await gateNavigation(to))) return false;

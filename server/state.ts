@@ -17,8 +17,8 @@ import type { PluginManager } from "./plugins/manager.ts";
 /** Implemented by the FTS5 commit; unset until then (storage still works,
  * index hooks are simply skipped). */
 export interface Indexer {
-  reindexNote(title: string): void;
-  deleteFromIndex(title: string): void;
+  reindexNote(path: string): void;
+  deleteFromIndex(path: string): void;
   search(
     term: string,
     sort?: string,
@@ -28,9 +28,9 @@ export interface Indexer {
     folder?: string,
   ): SearchResult[];
   getTags(): string[];
-  /** Display titles for a batch of filenames (title + ".md" keys). */
-  displayTitlesFor(filenames: string[]): Record<string, string>;
-  /** Resolve a front-matter alias to a note title, or null. */
+  /** Display titles for a batch of paths (path + ".md" keys). */
+  titlesFor(filenames: string[]): Record<string, string>;
+  /** Resolve a front-matter alias to a note path, or null. */
   resolveAlias(target: string): string | null;
   readonly indexStatus: {
     syncing: boolean;

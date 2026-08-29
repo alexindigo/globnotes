@@ -16,10 +16,10 @@
         </p>
         <RouterLink
           v-for="note in notes.slice(0, globalStore.config.quickAccessLimit)"
-          :to="notePath(note.title)"
+          :to="notePath(note.path)"
           class="mb-1"
         >
-          <CustomButton :label="note.title" />
+          <CustomButton :label="note.path" />
         </RouterLink>
         <RouterLink
           v-if="notes.length > globalStore.config.quickAccessLimit"

@@ -32,12 +32,12 @@ Deno.test("search: title and content matches", async () => {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "recipes", content: "soup and stew" }),
+      body: JSON.stringify({ path: "recipes", content: "soup and stew" }),
     });
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "shopping", content: "pick up soup" }),
+      body: JSON.stringify({ path: "shopping", content: "pick up soup" }),
     });
     await awaitIndexReady(server.baseUrl);
 
@@ -45,7 +45,7 @@ Deno.test("search: title and content matches", async () => {
     assertEquals(res.status, 200);
     const hits = await res.json();
     assertEquals(hits.length, 2);
-    const titles = hits.map((h: { title: string }) => h.title);
+    const titles = hits.map((h: { path: string }) => h.path);
     assert(titles.includes("recipes"));
     assert(titles.includes("shopping"));
 
@@ -67,17 +67,17 @@ Deno.test("search: * matches everything", async () => {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "alpha", content: "a" }),
+      body: JSON.stringify({ path: "alpha", content: "a" }),
     });
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "beta", content: "b" }),
+      body: JSON.stringify({ path: "beta", content: "b" }),
     });
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "gamma", content: "g" }),
+      body: JSON.stringify({ path: "gamma", content: "g" }),
     });
     await awaitIndexReady(server.baseUrl);
 
@@ -87,7 +87,7 @@ Deno.test("search: * matches everything", async () => {
     // Every() parity: score 1.0, no highlights on a match-all query.
     for (const hit of hits) {
       assertEquals(hit.score, 1);
-      assertEquals(hit.titleHighlights, null);
+      assertEquals(hit.pathHighlights, null);
       assertEquals(hit.contentHighlights, null);
     }
   } finally {
@@ -103,7 +103,7 @@ Deno.test("search: tags", async () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        title: "tagged note",
+        path: "tagged note",
         content: "stuff #todo #work",
       }),
     });
@@ -124,17 +124,17 @@ Deno.test("search: nested=false and folder filter", async () => {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "root1", content: "a" }),
+      body: JSON.stringify({ path: "root1", content: "a" }),
     });
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "folder/root2", content: "b" }),
+      body: JSON.stringify({ path: "folder/root2", content: "b" }),
     });
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "folder/sub/root3", content: "c" }),
+      body: JSON.stringify({ path: "folder/sub/root3", content: "c" }),
     });
     await awaitIndexReady(server.baseUrl);
 
@@ -142,7 +142,7 @@ Deno.test("search: nested=false and folder filter", async () => {
     const rootOnly = await api(server, "/_/api/search?term=*&nested=false");
     const rootOnlyHits = await rootOnly.json();
     assertEquals(
-      rootOnlyHits.map((h: { title: string }) => h.title).sort(),
+      rootOnlyHits.map((h: { path: string }) => h.path).sort(),
       ["root1"],
     );
 
@@ -150,12 +150,12 @@ Deno.test("search: nested=false and folder filter", async () => {
     const inFolder = await api(server, "/_/api/search?term=*&folder=folder");
     const inFolderHits = await inFolder.json();
     assert(
-      inFolderHits.every((h: { title: string }) =>
-        h.title === "folder" || h.title.startsWith("folder/")
+      inFolderHits.every((h: { path: string }) =>
+        h.path === "folder" || h.path.startsWith("folder/")
       ),
     );
     assert(
-      inFolderHits.map((h: { title: string }) => h.title).includes(
+      inFolderHits.map((h: { path: string }) => h.path).includes(
         "folder/root2",
       ),
     );
@@ -187,21 +187,21 @@ Deno.test("search: explicit sort orders", async () => {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "banana", content: "c" }),
+      body: JSON.stringify({ path: "banana", content: "c" }),
     });
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "apple", content: "a" }),
+      body: JSON.stringify({ path: "apple", content: "a" }),
     });
     await awaitIndexReady(server.baseUrl);
 
     const byTitle = await api(
       server,
-      "/_/api/search?term=*&sort=title&order=asc",
+      "/_/api/search?term=*&sort=path&order=asc",
     );
     const titleBody = await byTitle.json();
-    const titles = titleBody.map((h: { title: string }) => h.title);
+    const titles = titleBody.map((h: { path: string }) => h.path);
     assertEquals(titles, ["apple", "banana"]);
     // Field-sorted hits carry score null (Whoosh: hit.score is the field
     // value, not a float).
@@ -237,7 +237,7 @@ Deno.test("search: terms with syntax chars (slashes, colons)", async () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        title: "probe/link-target",
+        path: "probe/link-target",
         content: "referenced",
       }),
     });
@@ -245,7 +245,7 @@ Deno.test("search: terms with syntax chars (slashes, colons)", async () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        title: "probe/link-source",
+        path: "probe/link-source",
         content: "see [[probe/link-target]]",
       }),
     });
@@ -258,7 +258,7 @@ Deno.test("search: terms with syntax chars (slashes, colons)", async () => {
       }`,
     );
     const hits = await res.json();
-    const titles = hits.map((h: { title: string }) => h.title);
+    const titles = hits.map((h: { path: string }) => h.path);
     assert(titles.includes("probe/link-target"));
     assert(titles.includes("probe/link-source"));
 
@@ -297,13 +297,13 @@ Deno.test("search: odd-titled files are indexed (Python parity)", async () => {
     await api(server, "/_/api/notes", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "normal", content: "ordinary" }),
+      body: JSON.stringify({ path: "normal", content: "ordinary" }),
     });
     await awaitIndexReady(server.baseUrl);
 
     const res = await api(server, "/_/api/search?term=needle");
     assertEquals(res.status, 200);
-    const titles = (await res.json()).map((h: { title: string }) => h.title);
+    const titles = (await res.json()).map((h: { path: string }) => h.path);
     assert(titles.includes("*TODO"));
     assert(titles.includes("what now?"));
 

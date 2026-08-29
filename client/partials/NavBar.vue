@@ -59,7 +59,7 @@ import PrimeMenu from "../components/PrimeMenu.vue";
 import ThemePicker from "../components/ThemePicker.vue";
 import { authTypes, params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
-import { directoryFromTitle } from "../helpers.js";
+import { directoryFromPath } from "../helpers.js";
 import { debugEnabled, toggleDebug } from "../debug.js";
 import { saveViewLineNumbers, viewLineNumbers } from "../pluginSettings.js";
 import { currentThemeLabel } from "../themes.js";
@@ -76,8 +76,8 @@ const newNoteTarget = computed(() => {
   if (route.name === "search" && route.query[params.folder]) {
     return { name: "new", query: { folder: route.query[params.folder] } };
   }
-  if (route.name === "note" && route.params.title) {
-    const folder = directoryFromTitle(route.params.title);
+  if (route.name === "note" && route.params.path) {
+    const folder = directoryFromPath(route.params.path);
     return folder ? { name: "new", query: { folder } } : { name: "new" };
   }
   return { name: "new" };
@@ -104,7 +104,7 @@ const menuItems = computed(() => [
         name: "search",
         query: {
           [params.searchTerm]: "*",
-          [params.sortBy]: searchSortOptions.title,
+          [params.sortBy]: searchSortOptions.path,
         },
       }),
   },

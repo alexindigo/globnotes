@@ -18,16 +18,16 @@ const MARK_OPEN = '<b class="match term0">';
 const MARK_CLOSE = "</b>";
 
 interface FtsRow {
-  title: string;
+  path: string;
   filename: string;
   /** Space-joined raw tags (for tagMatches computation). */
   tags: string;
   lastModified: number;
   score: number | null;
-  titleHighlights: string | null;
+  pathHighlights: string | null;
   contentHighlights: string | null;
   /** Display title from notes_meta (join); falls back to basename. */
-  displayTitle: string | null;
+  title: string | null;
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -126,8 +126,8 @@ export class Fts5Indexer implements Indexer {
     };
   }
 
-  reindexNote(title: string): void {
-    this.#indexFile(title + MARKDOWN_EXT);
+  reindexNote(path: string): void {
+    this.#indexFile(path + MARKDOWN_EXT);
   }
 
   /** Index one file by its vault-relative FILENAME — no title validation.
@@ -150,9 +150,8 @@ export class Fts5Indexer implements Indexer {
     this.#notifyPlugins();
   }
 
-  deleteFromIndex(title: string): void {
-    this.#deleteByFilename(title + MARKDOWN_EXT);
-    this.#notifyPlugins();
+  deleteFromIndex(path: string): void {
+    this.#deleteByFilename(path + MARKDOWN_EXT);
   }
 
   /** Plan §4: reinstantiate plugins on every sync (state resets; hats
@@ -167,12 +166,12 @@ export class Fts5Indexer implements Indexer {
   /** Insert/replace a note in the FTS table, the raw-tag table, and the
    * display-metadata table. */
   #upsertNote(
-    title: string,
+    path: string,
     contentExTags: string,
     tagSet: Set<string>,
     filename: string,
     lastModified: number,
-    titleInfo?: { displayTitle: string; h1: string | null; aliases: string[] },
+    titleInfo?: { title: string; h1: string | null; aliases: string[] },
   ): void {
     this.#deleteByFilename(filename);
     this.#db
@@ -181,7 +180,7 @@ export class Fts5Indexer implements Indexer {
          VALUES (?, ?, ?, ?, ?)`,
       )
       .run(
-        title,
+        path,
         contentExTags,
         [...tagSet].join(" "),
         filename,
@@ -195,7 +194,7 @@ export class Fts5Indexer implements Indexer {
       insertTag.run(filename, tag.toLowerCase());
     }
     const meta = titleInfo ?? {
-      displayTitle: this.#basename(filename),
+      title: this.#basename(filename),
       h1: null,
       aliases: [],
     };
@@ -206,7 +205,7 @@ export class Fts5Indexer implements Indexer {
       )
       .run(
         filename,
-        meta.displayTitle,
+        meta.title,
         meta.h1,
         JSON.stringify(meta.aliases),
       );
@@ -354,7 +353,7 @@ export class Fts5Indexer implements Indexer {
    * done in TS after the SQL fetch (same as Python). */
   search(
     term: string,
-    sort: "score" | "title" | "last_modified" = "score",
+    sort: "score" | "path" | "last_modified" = "score",
     order: "asc" | "desc" = "desc",
     limit?: number,
     nested = true,
@@ -408,7 +407,7 @@ export class Fts5Indexer implements Indexer {
 
   #runSearch(
     matchQuery: string | null,
-    sort: "score" | "title" | "last_modified",
+    sort: "score" | "path" | "last_modified",
     order: "asc" | "desc",
     limit: number | undefined,
     nested: boolean,
@@ -430,9 +429,9 @@ export class Fts5Indexer implements Indexer {
       : "NULL AS score";
 
     let sql =
-      `SELECT notes_fts.title, notes_fts.filename, notes_fts.tags, notes_fts.last_modified AS lastModified, meta.display_title AS displayTitle, ${scoreExpr}${
+      `SELECT notes_fts.title AS path, notes_fts.filename, notes_fts.tags, notes_fts.last_modified AS lastModified, meta.display_title AS title, ${scoreExpr}${
         matchQuery !== null
-          ? `, ${highlightExpr} AS titleHighlights, ${snippetExpr} AS contentHighlights`
+          ? `, ${highlightExpr} AS pathHighlights, ${snippetExpr} AS contentHighlights`
           : ""
       } FROM notes_fts
       LEFT JOIN notes_meta meta ON meta.filename = notes_fts.filename`;
@@ -443,7 +442,7 @@ export class Fts5Indexer implements Indexer {
       args.push(matchQuery);
     }
 
-    if (sort === "title" || sort === "last_modified") {
+    if (sort === "path" || sort === "last_modified") {
       sql += ` ORDER BY ${sort}`;
       sql += order === "desc" ? " DESC" : " ASC";
     } else if (matchQuery !== null) {
@@ -475,12 +474,12 @@ export class Fts5Indexer implements Indexer {
     folder: string | undefined,
     nested: boolean,
   ): boolean {
-    const title = filename.slice(0, -MARKDOWN_EXT.length);
+    const path = filename.slice(0, -MARKDOWN_EXT.length);
     if (folder !== undefined) {
-      if (!(title === folder || title.startsWith(folder + "/"))) return false;
+      if (!(path === folder || path.startsWith(folder + "/"))) return false;
     }
     if (!nested) {
-      const rest = folder ? title.slice(folder.length + 1) : title;
+      const rest = folder ? path.slice(folder.length + 1) : path;
       if (rest.includes("/")) return false;
       return true;
     }
@@ -515,14 +514,14 @@ export class Fts5Indexer implements Indexer {
           tagMatches = matched.map((t) => t.toLowerCase());
         }
       }
-      const title = row.filename.slice(0, -MARKDOWN_EXT.length);
+      const path = row.filename.slice(0, -MARKDOWN_EXT.length);
       return {
-        title,
-        displayTitle: row.displayTitle ?? title.split("/").pop() ?? title,
+        path,
+        title: row.title ?? path.split("/").pop() ?? path,
         lastModified: row.lastModified,
         score: row.score,
-        titleHighlights: row.titleHighlights?.includes(MARK_OPEN)
-          ? row.titleHighlights
+        pathHighlights: row.pathHighlights?.includes(MARK_OPEN)
+          ? row.pathHighlights
           : null,
         contentHighlights: row.contentHighlights?.includes(MARK_OPEN)
           ? row.contentHighlights
@@ -558,7 +557,7 @@ export class Fts5Indexer implements Indexer {
   }
 
   /** Display titles for a batch of filenames (sidebar tree labels). */
-  displayTitlesFor(filenames: string[]): Record<string, string> {
+  titlesFor(filenames: string[]): Record<string, string> {
     const out: Record<string, string> = {};
     if (filenames.length === 0) return out;
     const marks = filenames.map(() => "?").join(",");

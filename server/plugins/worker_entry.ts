@@ -27,11 +27,11 @@ interface PluginModule {
 
 export interface PluginCtx {
   search(term: string): Promise<unknown>;
-  readNote(title: string): Promise<unknown>;
-  listTitles(): Promise<unknown>;
+  readNote(path: string): Promise<unknown>;
+  listPaths(): Promise<unknown>;
   readFile(path: string): Promise<unknown>;
   pathPrefix(): Promise<string>;
-  resolveTitle(target: string): Promise<string>;
+  resolvePath(target: string): Promise<string>;
 }
 
 let plugin: PluginModule | null = null;
@@ -51,11 +51,11 @@ function rpc(method: string, args: unknown[]): Promise<unknown> {
 
 const ctx: PluginCtx = {
   search: (term) => rpc("search", [term]),
-  readNote: (title) => rpc("readNote", [title]),
-  listTitles: () => rpc("listTitles", []),
+  readNote: (path) => rpc("readNote", [path]),
+  listPaths: () => rpc("listPaths", []),
   readFile: (path) => rpc("readFile", [path]),
   pathPrefix: () => rpc("pathPrefix", []) as Promise<string>,
-  resolveTitle: (target) => rpc("resolveTitle", [target]) as Promise<string>,
+  resolvePath: (target) => rpc("resolvePath", [target]) as Promise<string>,
 };
 
 // Heartbeat: the host treats silence as a hang.

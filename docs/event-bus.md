@@ -33,11 +33,11 @@ schema enforcement — the topics.js file IS the contract).
 
 | # | Topic | Payload | Published from |
 |---|---|---|---|
-| 1 | `note:open` | `{ title }` | `router.js` afterEach |
-| 2 | `note:create` | `{ title }` | `Note.vue` saveNew / saveNote |
-| 3 | `note:save` | `{ title }` | `Note.vue` saveExisting / saveNote (content-only) |
-| 4 | `note:rename` | `{ oldTitle, newTitle }` | `Note.vue` saveExisting / saveNote (title changed) |
-| 5 | `note:delete` | `{ title }` | `Note.vue` deleteConfirmedHandler |
+| 1 | `note:open` | `{ path }` | `router.js` afterEach |
+| 2 | `note:create` | `{ path }` | `Note.vue` saveNew / saveNote |
+| 3 | `note:save` | `{ path }` | `Note.vue` saveExisting / saveNote (content-only) |
+| 4 | `note:rename` | `{ oldPath, newPath }` | `Note.vue` saveExisting / saveNote (path changed) |
+| 5 | `note:delete` | `{ path }` | `Note.vue` deleteConfirmedHandler |
 | 6 | `note:refs-rewritten` | `{ oldPath, newPath }` | `SearchResults.vue` fixAllRefs / fixSingleRef |
 | 7 | `file:upload` | `{ name }` | `Note.vue` postAttachment (success) |
 | 8 | `sidepanel:open` | `{}` | `SidebarPanel.vue` openSidebar |
@@ -59,8 +59,8 @@ schema enforcement — the topics.js file IS the contract).
 | 24 | `search:change` | `{ term }` | `SearchInput.vue` searchTerm watch |
 | 25 | `search:include-nested` | `{ value }` | `SearchResults.vue` toggleNested |
 | 26 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
-| 27 | `note:edit-start` | `{ title }` | `Note.vue` setEditMode |
-| 28 | `note:edit-end` | `{ title }` | `Note.vue` exitEditState |
+| 27 | `note:edit-start` | `{ path }` | `Note.vue` setEditMode |
+| 28 | `note:edit-end` | `{ path }` | `Note.vue` exitEditState |
 
 ## Built-in consumers
 
@@ -75,7 +75,7 @@ schema enforcement — the topics.js file IS the contract).
 import { subscribe, TOPICS } from "../bus/index.js";
 
 // In <script setup> or module scope:
-subscribe(TOPICS.NOTE_OPEN, ({ title }) => {
+subscribe(TOPICS.NOTE_OPEN, ({ path }) => {
   console.log("opened:", title);
 });
 ```
@@ -90,7 +90,7 @@ that matches the consumer's lifetime.
 import { publish, TOPICS } from "../bus/index.js";
 
 // After the state transition:
-publish(TOPICS.NOTE_CREATE, { title: "dad/recipes/stew" });
+publish(TOPICS.NOTE_CREATE, { path: "dad/recipes/stew" });
 ```
 
 To add a new topic, extend both `client/bus/topics.js` (constant +

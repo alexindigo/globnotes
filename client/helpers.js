@@ -1,14 +1,14 @@
-export function directoryFromTitle(title) {
-  if (!title) return "";
-  const i = title.lastIndexOf("/");
-  return i === -1 ? "" : title.slice(0, i);
+export function directoryFromPath(path) {
+  if (!path) return "";
+  const i = path.lastIndexOf("/");
+  return i === -1 ? "" : path.slice(0, i);
 }
 
-export function nextUntitledTitle(titles, folder) {
+export function nextUntitledPath(paths, folder) {
   const prefix = folder ? folder + "/" : "";
-  let n = 0;
+  let n = 1;
   let candidate = prefix + "Untitled";
-  while (titles.includes(candidate)) {
+  while (paths.includes(candidate)) {
     n++;
     candidate = prefix + "Untitled " + n;
   }

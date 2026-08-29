@@ -8,7 +8,7 @@ export function refreshNoteIndex(attempt = 0) {
   const globalStore = useGlobalStore();
   return getNoteIndex()
     .then((titles) => {
-      globalStore.noteTitles = titles;
+      globalStore.notePaths = titles;
     })
     .catch((error) => {
       // A failed fetch must not leave the sidebar empty forever:
@@ -20,15 +20,15 @@ export function refreshNoteIndex(attempt = 0) {
         ).then(() => refreshNoteIndex(attempt + 1));
       }
       console.error("[noteIndex] refresh failed after retries", error);
-      if (!globalStore.noteTitles?.length) {
-        globalStore.noteTitles = [];
+      if (!globalStore.notePaths?.length) {
+        globalStore.notePaths = [];
       }
     });
 }
 
-export function resolveNoteTitle(linkText) {
+export function resolveNotePath(linkText) {
   const globalStore = useGlobalStore();
-  const titles = globalStore.noteTitles || [];
+  const titles = globalStore.notePaths || [];
   const target = linkText.trim();
   // Exact title (path) match
   if (titles.includes(target)) {

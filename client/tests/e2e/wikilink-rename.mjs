@@ -25,12 +25,12 @@ for (const t of ["probe/link-source", "probe/link-target", "probe/link-target-re
 await fetch(`${BASE}/_/api/notes`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ title: "probe/link-source", content: "see [[probe/link-target]]" }),
+  body: JSON.stringify({ path: "probe/link-source", content: "see [[probe/link-target]]" }),
 });
 await fetch(`${BASE}/_/api/notes`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ title: "probe/link-target", content: "# Target" }),
+  body: JSON.stringify({ path: "probe/link-target", content: "# Target" }),
 });
 
 const page = await connect({ port: PORT });

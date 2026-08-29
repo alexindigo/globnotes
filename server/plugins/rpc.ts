@@ -19,8 +19,8 @@ export function pluginRpc(
       case "readNote": {
         return Promise.resolve(state.notes.get(args[0] as string));
       }
-      case "listTitles": {
-        return Promise.resolve(state.notes.getTitles());
+      case "listPaths": {
+        return Promise.resolve(state.notes.getPaths());
       }
       case "readFile": {
         const served = state.files.get(args[0] as string);
@@ -32,10 +32,10 @@ export function pluginRpc(
       case "pathPrefix": {
         return Promise.resolve(state.config.pathPrefix);
       }
-      case "resolveTitle": {
+      case "resolvePath": {
         // Obsidian resolution order: exact title → basename match → alias.
         const target = (args[0] as string).trim();
-        const titles = state.notes.getTitles();
+        const titles = state.notes.getPaths();
         if (titles.includes(target)) return Promise.resolve(target);
         const lower = target.toLowerCase();
         const matches = titles
