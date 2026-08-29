@@ -10,6 +10,7 @@
     />
     <template v-else>
       <SearchModal v-model="isSearchModalVisible" />
+      <QuickSwitcher v-model="isQuickSwitcherVisible" />
       <SidebarPanel />
       <SyncBanner />
       <!-- Shared content column: navbar and content scroller live beside
@@ -21,6 +22,7 @@
           :class="{ 'print:hidden': route.name == 'note' }"
           :hide-logo="!showNavBarLogo"
           @toggleSearchModal="toggleSearchModal"
+          @toggleQuickSwitcher="toggleQuickSwitcher"
         />
         <div class="min-w-0 flex-1 overflow-y-auto pr-2">
           <RouterView />
@@ -48,11 +50,13 @@ import { initTheme } from "./themes.js";
 import { refreshNoteIndex } from "./noteIndex.js";
 import NavBar from "./partials/NavBar.vue";
 import SearchModal from "./partials/SearchModal.vue";
+import QuickSwitcher from "./components/QuickSwitcher.vue";
 import LoadingIndicator from "./components/LoadingIndicator.vue";
 import router from "./router.js";
 
 const globalStore = useGlobalStore();
 const isSearchModalVisible = ref(false);
+const isQuickSwitcherVisible = ref(false);
 const loadingIndicator = ref();
 const navBar = ref();
 const route = useRoute();
@@ -105,6 +109,10 @@ const showNavBarLogo = computed(() => {
 
 function toggleSearchModal() {
   isSearchModalVisible.value = !isSearchModalVisible.value;
+}
+
+function toggleQuickSwitcher() {
+  isQuickSwitcherVisible.value = !isQuickSwitcherVisible.value;
 }
 
 function setupCompleted() {

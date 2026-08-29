@@ -40,6 +40,7 @@
 <script setup>
 import {
   mdilConsole,
+  mdilFlash,
   mdilFormatListNumbers,
   mdilLogout,
   mdilMagnify,
@@ -87,7 +88,7 @@ defineProps({
   hideLogo: Boolean,
 });
 
-const emit = defineEmits(["toggleSearchModal"]);
+const emit = defineEmits(["toggleSearchModal", "toggleQuickSwitcher"]);
 
 const menuItems = computed(() => [
   {
@@ -95,6 +96,11 @@ const menuItems = computed(() => [
     icon: mdilMagnify,
     command: () => emit("toggleSearchModal"),
     keyboardShortcut: "/",
+  },
+  {
+    label: "Quick switcher",
+    icon: mdilFlash,
+    command: () => emit("toggleQuickSwitcher"),
   },
   {
     label: "All Notes",

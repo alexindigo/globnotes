@@ -5,11 +5,14 @@ export const useGlobalStore = defineStore("global", () => {
   const config = ref({});
   const notePaths = ref([]);
   const noteMeta = ref([]);
+  // Most-recently-opened note paths this session (fed by note:open on the
+  // bus); the quick switcher shows it when the query is empty.
+  const recentlyOpened = ref([]);
   const sidebarVisible = ref(
     localStorage.getItem("sidebarVisible") !== null
       ? localStorage.getItem("sidebarVisible") === "true"
       : window.innerWidth >= 768,
   );
 
-  return { config, notePaths, noteMeta, sidebarVisible };
+  return { config, notePaths, noteMeta, recentlyOpened, sidebarVisible };
 });

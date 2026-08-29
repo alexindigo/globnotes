@@ -50,3 +50,12 @@ export function resolveNotePath(linkText) {
 subscribe(TOPICS.NOTE_CREATE, () => refreshNoteIndex());
 subscribe(TOPICS.NOTE_RENAME, () => refreshNoteIndex());
 subscribe(TOPICS.NOTE_DELETE, () => refreshNoteIndex());
+
+// Track recently opened notes for the quick switcher's empty-query state.
+subscribe(TOPICS.NOTE_OPEN, ({ path }) => {
+  const store = useGlobalStore();
+  store.recentlyOpened = [
+    path,
+    ...store.recentlyOpened.filter((p) => p !== path),
+  ].slice(0, 10);
+});
