@@ -21,13 +21,17 @@ describe("refreshNoteIndex", () => {
     getNoteIndex
       .mockRejectedValueOnce(new Error("boom"))
       .mockRejectedValueOnce(new Error("boom"))
-      .mockResolvedValueOnce(["a/b", "c"]);
+      .mockResolvedValueOnce([
+        { path: "a/b", title: "b", aliases: [] },
+        { path: "c", title: "c", aliases: [] },
+      ]);
     const store = useGlobalStore();
     const p = refreshNoteIndex();
     await vi.runAllTimersAsync();
     await p;
     expect(getNoteIndex).toHaveBeenCalledTimes(3);
     expect(store.notePaths).toEqual(["a/b", "c"]);
+    expect(store.noteMeta).toHaveLength(2);
   });
 
   it("gives up after retries and leaves the list empty", async () => {

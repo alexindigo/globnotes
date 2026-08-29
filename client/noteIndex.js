@@ -7,8 +7,9 @@ const RETRY_DELAYS = [1000, 3000, 8000];
 export function refreshNoteIndex(attempt = 0) {
   const globalStore = useGlobalStore();
   return getNoteIndex()
-    .then((titles) => {
-      globalStore.notePaths = titles;
+    .then((entries) => {
+      globalStore.notePaths = entries.map((e) => e.path);
+      globalStore.noteMeta = entries;
     })
     .catch((error) => {
       // A failed fetch must not leave the sidebar empty forever:

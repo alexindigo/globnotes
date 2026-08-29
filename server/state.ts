@@ -30,6 +30,8 @@ export interface Indexer {
   getTags(): string[];
   /** Display titles for a batch of paths (path + ".md" keys). */
   titlesFor(filenames: string[]): Record<string, string>;
+  /** Display metadata (title + aliases) for a batch of bare note paths. */
+  noteMetaFor(paths: string[]): Record<string, { title: string; aliases: string[] }>;
   /** Resolve a front-matter alias to a note path, or null. */
   resolveAlias(target: string): string | null;
   readonly indexStatus: {

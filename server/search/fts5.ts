@@ -570,6 +570,32 @@ export class Fts5Indexer implements Indexer {
     return out;
   }
 
+  /** Display metadata (title + aliases) for a batch of bare note paths. */
+  noteMetaFor(paths: string[]): Record<string, { title: string; aliases: string[] }> {
+    const out: Record<string, { title: string; aliases: string[] }> = {};
+    if (paths.length === 0) return out;
+    const filenames = paths.map((p) => p + MARKDOWN_EXT);
+    const marks = filenames.map(() => "?").join(",");
+    const rows = this.#db
+      .prepare(
+        `SELECT filename, display_title, aliases FROM notes_meta WHERE filename IN (${marks})`,
+      )
+      .all(...filenames) as { filename: string; display_title: string; aliases: string }[];
+    for (const r of rows) {
+      let aliases: string[] = [];
+      try {
+        aliases = JSON.parse(r.aliases);
+      } catch {
+        aliases = [];
+      }
+      out[r.filename.slice(0, -MARKDOWN_EXT.length)] = {
+        title: r.display_title,
+        aliases,
+      };
+    }
+    return out;
+  }
+
   /** Resolve an alias to a note title (front-matter aliases, exact
    * case-insensitive match). Returns null when nothing claims it. */
   resolveAlias(target: string): string | null {

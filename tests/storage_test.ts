@@ -132,10 +132,19 @@ Deno.test("storage: note index and tree", async () => {
       body: JSON.stringify({ path: "folder/beta", content: "b" }),
     });
 
-    const titles = await api(server, "/_/api/note-index");
-    const list = await titles.json();
-    assert(list.includes("alpha"));
-    assert(list.includes("folder/beta"));
+    const indexRes = await api(server, "/_/api/note-index");
+    const list = await indexRes.json();
+    const byPath = Object.fromEntries(
+      list.map((n: { path: string; title: string; aliases: string[] }) => [
+        n.path,
+        n,
+      ]),
+    );
+    assert(byPath["alpha"], "note-index has alpha");
+    assert(byPath["folder/beta"], "note-index has folder/beta");
+    assertEquals(byPath["alpha"].title, "alpha");
+    assertEquals(byPath["alpha"].aliases, []);
+    assertEquals(byPath["folder/beta"].title, "beta");
 
     const tree = await api(server, "/_/api/tree?path=");
     const root = await tree.json();
