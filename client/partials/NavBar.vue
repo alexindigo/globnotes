@@ -10,7 +10,7 @@
     <div class="flex grow items-start justify-end pr-10 md:pr-4">
       <!-- Search (unified jump + full-text) -->
       <CustomButton
-        :iconPath="mdilMagnify"
+        :iconPath="mdiMagnify"
         title="Search"
         @click="openSearch"
       />
@@ -44,12 +44,11 @@
 </template>
 
 <script setup>
-import { mdiSquareEditOutline } from "@mdi/js";
+import { mdiMagnify, mdiSquareEditOutline } from "@mdi/js";
 import {
   mdilConsole,
   mdilFormatListNumbers,
   mdilLogout,
-  mdilMagnify,
   mdilMenu,
   mdilMonitor,
   mdilNoteMultiple,
