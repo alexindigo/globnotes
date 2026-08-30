@@ -16,8 +16,7 @@
 </template>
 
 <script setup>
-import Mousetrap from "mousetrap";
-import { watch } from "vue";
+import { onBeforeUnmount, onMounted, watch } from "vue";
 
 import { publish, TOPICS } from "../bus/index.js";
 
@@ -35,12 +34,16 @@ watch(isVisible, (visible) => {
   publish(visible ? TOPICS.MODAL_OPEN : TOPICS.MODAL_CLOSE, { name: props.name });
 });
 
-// 'escape' to close
-Mousetrap.bind("esc", () => {
-  if (isVisible.value) {
+// Escape dismisses the modal: direct document listener guarded by this
+// instance's visibility (Mousetrap's global binding leaked across modals and
+// reached none of them reliably).
+function onEsc(event) {
+  if (event.key === "Escape" && isVisible.value) {
     closeHandler();
   }
-});
+}
+onMounted(() => document.addEventListener("keydown", onEsc));
+onBeforeUnmount(() => document.removeEventListener("keydown", onEsc));
 
 function closeHandler() {
   if (props.closeHandlerOverride) {
