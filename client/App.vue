@@ -9,7 +9,6 @@
       @completed="setupCompleted"
     />
     <template v-else>
-      <SearchModal v-model="isSearchModalVisible" />
       <QuickSwitcher v-model="isQuickSwitcherVisible" />
       <SidebarPanel />
       <SyncBanner />
@@ -21,7 +20,6 @@
           ref="navBar"
           :class="{ 'print:hidden': route.name == 'note' }"
           :hide-logo="!showNavBarLogo"
-          @toggleSearchModal="toggleSearchModal"
           @toggleQuickSwitcher="toggleQuickSwitcher"
         />
         <div class="min-w-0 flex-1 overflow-y-auto pr-2">
@@ -49,13 +47,11 @@ import { initDebugNotifications } from "./debug.js";
 import { initTheme } from "./themes.js";
 import { refreshNoteIndex } from "./noteIndex.js";
 import NavBar from "./partials/NavBar.vue";
-import SearchModal from "./partials/SearchModal.vue";
 import QuickSwitcher from "./components/QuickSwitcher.vue";
 import LoadingIndicator from "./components/LoadingIndicator.vue";
 import router from "./router.js";
 
 const globalStore = useGlobalStore();
-const isSearchModalVisible = ref(false);
 const isQuickSwitcherVisible = ref(false);
 const loadingIndicator = ref();
 const navBar = ref();
@@ -64,10 +60,10 @@ const toast = useToast();
 
 initDebugNotifications(toast);
 
-// '/' to search
+// Quick switcher opens on '/'
 Mousetrap.bind("/", () => {
   if (route.name !== "login") {
-    toggleSearchModal();
+    toggleQuickSwitcher();
     return false;
   }
 });
@@ -106,10 +102,6 @@ const showNavBar = computed(() => {
 const showNavBarLogo = computed(() => {
   return route.name !== "home";
 });
-
-function toggleSearchModal() {
-  isSearchModalVisible.value = !isSearchModalVisible.value;
-}
 
 function toggleQuickSwitcher() {
   isQuickSwitcherVisible.value = !isQuickSwitcherVisible.value;
