@@ -10,7 +10,7 @@
     <div class="flex grow items-start justify-end pr-10 md:pr-4">
       <!-- New Note -->
       <RouterLink v-if="showNewButton" :to="newNoteTarget">
-        <CustomButton :iconPath="mdilPlusCircle" label="New Note" />
+        <CustomButton :iconPath="mdiSquareEditOutline" title="New note" />
       </RouterLink>
     </div>
   </nav>
@@ -38,6 +38,7 @@
 </template>
 
 <script setup>
+import { mdiSquareEditOutline } from "@mdi/js";
 import {
   mdilConsole,
   mdilFormatListNumbers,
@@ -46,7 +47,6 @@ import {
   mdilMenu,
   mdilMonitor,
   mdilNoteMultiple,
-  mdilPlusCircle,
 } from "@mdi/light-js";
 import { computed, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
