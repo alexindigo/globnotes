@@ -8,6 +8,19 @@
       </RouterLink>
     </div>
     <div class="flex grow items-start justify-end pr-10 md:pr-4">
+      <!-- All Notes (browse the whole tree) -->
+      <RouterLink
+        :to="{
+          name: 'search',
+          query: {
+            [params.searchTerm]: '*',
+            [params.sortBy]: searchSortOptions.path,
+          },
+        }"
+        title="All notes"
+      >
+        <CustomButton :iconPath="mdiViewListOutline" title="All notes" />
+      </RouterLink>
       <!-- Search (unified jump + full-text) -->
       <CustomButton
         :iconPath="mdiMagnify"
@@ -44,14 +57,13 @@
 </template>
 
 <script setup>
-import { mdiMagnify, mdiSquareEditOutline } from "@mdi/js";
+import { mdiMagnify, mdiSquareEditOutline, mdiViewListOutline } from "@mdi/js";
 import {
   mdilConsole,
   mdilFormatListNumbers,
   mdilLogout,
   mdilMenu,
   mdilMonitor,
-  mdilNoteMultiple,
 } from "@mdi/light-js";
 import { computed, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
@@ -99,18 +111,6 @@ function openSearch() {
 }
 
 const menuItems = computed(() => [
-  {
-    label: "All Notes",
-    icon: mdilNoteMultiple,
-    command: () =>
-      router.push({
-        name: "search",
-        query: {
-          [params.searchTerm]: "*",
-          [params.sortBy]: searchSortOptions.path,
-        },
-      }),
-  },
   {
     label: `Theme: ${currentThemeLabel.value}`,
     icon: mdilMonitor,
