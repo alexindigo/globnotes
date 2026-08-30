@@ -8,6 +8,12 @@
       </RouterLink>
     </div>
     <div class="flex grow items-start justify-end pr-10 md:pr-4">
+      <!-- Search (unified jump + full-text) -->
+      <CustomButton
+        :iconPath="mdilMagnify"
+        title="Search"
+        @click="openSearch"
+      />
       <!-- New Note -->
       <RouterLink v-if="showNewButton" :to="newNoteTarget">
         <CustomButton :iconPath="mdiSquareEditOutline" title="New note" />
@@ -89,13 +95,11 @@ defineProps({
 
 const emit = defineEmits(["toggleQuickSwitcher"]);
 
+function openSearch() {
+  emit("toggleQuickSwitcher");
+}
+
 const menuItems = computed(() => [
-  {
-    label: "Search",
-    icon: mdilMagnify,
-    command: () => emit("toggleQuickSwitcher"),
-    keyboardShortcut: "/",
-  },
   {
     label: "All Notes",
     icon: mdilNoteMultiple,

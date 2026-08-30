@@ -12,7 +12,7 @@
   <!-- Backdrop -->
   <div
     v-if="globalStore.sidebarVisible"
-    class="fixed inset-0 z-30 bg-slate-950/40"
+    class="fixed inset-0 z-10 bg-slate-950/40"
     @click="toggleSidebar"
   />
   <aside

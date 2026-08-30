@@ -8,9 +8,8 @@ const PORT = Number(process.env.CDP_PORT || 9333);
 const PLACEHOLDER = "Search or switch to note…";
 
 async function openSwitcher(page) {
-  await page.click('button[title="Menu"]');
-  await page.poll(`[...document.querySelectorAll("a")].some((a) => a.textContent.includes("Search"))`);
-  await page.evaluate(`(() => { const el=[...document.querySelectorAll("a")].find((a)=>a.textContent.includes("Search")); el.click(); })()`);
+  // Search is now a top-level icon button in the navbar (no menu round-trip).
+  await page.click('button[title="Search"]');
   await page.poll(`document.querySelector('input[placeholder="${PLACEHOLDER}"]') !== null`);
 }
 

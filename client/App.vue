@@ -60,14 +60,6 @@ const toast = useToast();
 
 initDebugNotifications(toast);
 
-// Quick switcher opens on '/'
-Mousetrap.bind("/", () => {
-  if (route.name !== "login") {
-    toggleQuickSwitcher();
-    return false;
-  }
-});
-
 // 'CTRL + ALT/OPT + N' to create new note
 Mousetrap.bindGlobal("ctrl+alt+n", () => {
   if (route.name !== "login") {
