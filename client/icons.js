@@ -6,6 +6,7 @@ export const ICON_PATHS = {
   tabEdit: ["M7 7h-1a2 2 0 0 0 -2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2 -2v-1","M20.385 6.585a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3l8.385 -8.415","M16 5l3 3"],
   tabViewList: ["M13 5h8","M13 9h5","M13 15h8","M13 19h5","M3 5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -4","M3 15a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -4"],
   tabMenu: ["M4 6l16 0","M4 12l16 0","M4 18l16 0"],
+  tabPlug: ["M9.785 6l8.215 8.215l-2.054 2.054a5.81 5.81 0 1 1 -8.215 -8.215l2.054 -2.054","M4 20l3.5 -3.5","M15 4l-3.5 3.5","M20 9l-3.5 3.5"],
   tabDockLeft: ["M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12","M9 4l0 16"],
   tabClock: ["M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0","M12 7v5l3 3"],
   tabFilter: ["M4 4h16v2.172a2 2 0 0 1 -.586 1.414l-4.414 4.414v7l-6 2v-8.5l-4.48 -4.928a2 2 0 0 1 -.52 -1.345v-2.227"],
@@ -48,6 +49,7 @@ export const tabSearch = ICON_PATHS.tabSearch;
 export const tabEdit = ICON_PATHS.tabEdit;
 export const tabViewList = ICON_PATHS.tabViewList;
 export const tabMenu = ICON_PATHS.tabMenu;
+export const tabPlug = ICON_PATHS.tabPlug;
 export const tabDockLeft = ICON_PATHS.tabDockLeft;
 export const tabClock = ICON_PATHS.tabClock;
 export const tabFilter = ICON_PATHS.tabFilter;

@@ -64,6 +64,7 @@ import {
   tabLogout,
   tabMenu,
   tabDeviceDesktop,
+  tabPlug,
 } from "../icons.js";
 import { computed, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
@@ -120,7 +121,7 @@ const menuItems = computed(() => [
   },
   {
     label: "Plugins",
-    icon: tabDeviceDesktop,
+    icon: tabPlug,
     command: () => {
       pluginSettingsVisible.value = true;
     },
