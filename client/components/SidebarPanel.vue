@@ -2,7 +2,7 @@
   <!-- Floating open button (top-left corner of the page, when sidebar is closed) -->
   <CustomButton
     v-if="!globalStore.sidebarVisible"
-    :iconPath="mdiDockLeft"
+    :iconPath="tabDockLeft"
     label=""
     title="Open sidebar"
     style="cta"
@@ -22,21 +22,21 @@
     <!-- Header -->
     <div class="mb-1 flex items-center justify-between px-4 pt-2">
       <CustomButton
-        :iconPath="mdiDockLeft"
+        :iconPath="tabDockLeft"
         label=""
         title="Close sidebar"
         @click="toggleSidebar"
       />
       <div class="flex items-center">
         <CustomButton
-          :iconPath="mdilUnfoldLessVertical"
+          :iconPath="tabFold"
           label=""
           title="Collapse all"
           :disabled="!canCollapse"
           @click="collapseAll"
         />
         <CustomButton
-          :iconPath="mdiFilterOutline"
+          :iconPath="tabFilter"
           label=""
           title="Filter"
           @click="toggleFilter"
@@ -53,7 +53,7 @@
         title="Reset filter"
         @click="filterText = ''"
       >
-        <SvgIcon type="mdi" :path="mdiClose" size="1.25em" />
+        <Icon icon="tabClose" size="1.25em" />
       </button>
     </div>
 
@@ -77,9 +77,9 @@
             'bg-theme-background-elevated text-theme-text':
               note.path === activePath,
           }"
-          ><SvgIcon
-            type="mdi"
-            :path="mdiLanguageMarkdownOutline"
+          ><Icon
+           
+            icon="tabMarkdown"
             size="1em"
             class="mr-1 shrink-0 text-theme-text-very-muted"
           /><span class="truncate">{{ note.name }}</span></RouterLink
@@ -109,9 +109,9 @@
             class="flex min-w-0 grow items-center"
             @click="toggleFolder(row.folder.path)"
           >
-            <SvgIcon
-              type="mdi"
-              :path="row.expanded ? mdilChevronDown : mdilChevronRight"
+            <Icon
+             
+              :icon="row.expanded ? tabChevronDown : tabChevronRight"
               size="1em"
               class="mr-1 shrink-0"
             />
@@ -123,9 +123,9 @@
             title="Open folder"
             @click.stop
           >
-            <SvgIcon
-              type="mdi"
-              :path="mdilChevronRight"
+            <Icon
+             
+              icon="tabChevronRight"
               size="1em"
               class="text-theme-text-very-muted hover:text-theme-text"
             />
@@ -140,9 +140,9 @@
             'bg-theme-background-elevated text-theme-text':
               row.note.path === activePath,
           }"
-          ><SvgIcon
-            type="mdi"
-            :path="mdiLanguageMarkdownOutline"
+          ><Icon
+           
+            icon="tabMarkdown"
             size="1em"
             class="mr-1 shrink-0 text-theme-text-very-muted"
           /><span class="truncate">{{ row.note.name }}</span></RouterLink
@@ -154,7 +154,7 @@
     <!-- Bottom row: section toggles (clock = Recent now; more can be added) -->
     <div class="flex items-center border-t border-theme-border px-4 pt-1 pb-1">
       <CustomButton
-        :iconPath="mdilClock"
+        :iconPath="tabClock"
         label=""
         title="Recent notes"
         :class="[
@@ -173,14 +173,17 @@
 import { computed, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 
-import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiClose, mdiDockLeft, mdiFilterOutline, mdiLanguageMarkdownOutline } from "@mdi/js";
+import Icon from "../components/Icon.vue";
 import {
-  mdilChevronDown,
-  mdilChevronRight,
-  mdilClock,
-  mdilUnfoldLessVertical,
-} from "@mdi/light-js";
+  tabChevronDown,
+  tabChevronRight,
+  tabClose,
+  tabClock,
+  tabDockLeft,
+  tabFilter,
+  tabFold,
+  tabMarkdown,
+} from "../icons.js";
 import CustomButton from "../components/CustomButton.vue";
 import TextInput from "../components/TextInput.vue";
 import { getNotes, getTree } from "../api.js";

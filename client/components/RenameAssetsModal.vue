@@ -1,6 +1,6 @@
 <script setup>
-import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiAlertOutline, mdiFileMoveOutline } from "@mdi/js";
+import Icon from "../components/Icon.vue";
+import { tabAlertCircle, tabFileExport } from "../icons.js";
 import CustomButton from "./CustomButton.vue";
 
 const props = defineProps({
@@ -56,9 +56,9 @@ function close() {
             class="flex w-full items-center rounded border border-theme-brand/20 px-3 py-2 text-left text-sm hover:bg-theme-background-elevated"
             @click="confirm('move')"
           >
-            <SvgIcon
-              type="mdi"
-              :path="mdiFileMoveOutline"
+            <Icon
+             
+              icon="tabFileExport"
               size="1em"
               class="mr-2 shrink-0 text-theme-brand"
             />
@@ -107,9 +107,9 @@ function close() {
         </div>
 
         <div class="mt-4 rounded border border-theme-border bg-theme-background-elevated p-2 text-xs text-theme-text-very-muted">
-          <SvgIcon
-            type="mdi"
-            :path="mdiAlertOutline"
+          <Icon
+           
+            icon="tabAlertCircle"
             size="1em"
             class="mr-1 inline-block align-text-bottom"
           />

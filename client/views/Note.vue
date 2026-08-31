@@ -52,9 +52,9 @@
       v-if="isNoteNotFound"
       class="flex h-full flex-col items-center justify-center"
     >
-      <SvgIcon
-        type="mdi"
-        :path="mdiNoteOffOutline"
+      <Icon
+       
+        icon="tabNotesOff"
         size="4em"
         class="mb-4 text-theme-brand"
       />
@@ -125,14 +125,14 @@
           <CustomButton
             v-show="canModify && !isNewNote"
             label="Delete"
-            :iconPath="mdilDelete"
+            :iconPath="tabTrash"
             @click="deleteHandler"
           />
           <!-- Save Button -->
           <CustomButton
             v-show="editMode"
             label="Save"
-            :iconPath="mdilContentSave"
+            :iconPath="tabSave"
             @click="saveHandler((close = false))"
             class="relative ml-1"
           >
@@ -240,9 +240,9 @@
 </style>
 
 <script setup>
-import { mdiNoteOffOutline } from "@mdi/js";
-import { mdilContentSave, mdilDelete } from "@mdi/light-js";
-import SvgIcon from "@jamescoyle/vue-icon";
+import { tabNotesOff } from "../icons.js";
+import { tabSave, tabTrash } from "../icons.js";
+import Icon from "../components/Icon.vue";
 import Mousetrap from "mousetrap";
 import { useToast } from "primevue/usetoast";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";

@@ -31,7 +31,7 @@
             },
           }"
           title="Show more"
-          ><CustomButton :iconPath="mdiDotsHorizontal"
+          ><CustomButton :iconPath="tabDots"
         /></RouterLink>
       </LoadingIndicator>
     </div>
@@ -39,7 +39,7 @@
 </template>
 
 <script setup>
-import { mdiDotsHorizontal } from "@mdi/js";
+import { tabDots } from "../icons.js";
 import { useToast } from "primevue/usetoast";
 import { onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";

@@ -1,18 +1,17 @@
 <template>
   <div class="flex items-center">
-    <SvgIcon
+    <Icon
       v-if="iconPath"
-      type="mdi"
-      :path="iconPath"
+      :icon="iconPath"
       :size="iconSize"
       :class="{ 'mr-1': label }"
-    ></SvgIcon>
+    ></Icon>
     <span v-if="label">{{ label }}</span>
   </div>
 </template>
 
 <script setup>
-import SvgIcon from "@jamescoyle/vue-icon";
+import Icon from "../components/Icon.vue";
 
 defineProps({
   iconPath: String,

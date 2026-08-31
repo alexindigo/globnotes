@@ -11,8 +11,8 @@
       v-else-if="loadSuccessful === false"
       class="flex flex-col items-center"
     >
-      <SvgIcon
-        type="mdi"
+      <Icon
+       
         :path="failedIconPath"
         size="4em"
         class="mb-4 text-theme-brand"
@@ -28,8 +28,8 @@
 </template>
 
 <script setup>
-import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiTrafficCone } from "@mdi/js";
+import Icon from "../components/Icon.vue";
+import { tabTrafficCone } from "../icons.js";
 import { ref, onMounted } from "vue";
 
 const props = defineProps({ hideLoader: Boolean });
@@ -58,7 +58,7 @@ function setLoading() {
 
 function setFailed(message, iconPath) {
   failedMessage.value = message || "Loading Failed";
-  failedIconPath.value = iconPath || mdiTrafficCone;
+  failedIconPath.value = iconPath || tabTrafficCone;
   loadSuccessful.value = false;
 }
 

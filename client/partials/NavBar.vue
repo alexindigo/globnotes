@@ -19,17 +19,17 @@
         }"
         title="All notes"
       >
-        <CustomButton :iconPath="mdiViewListOutline" title="All notes" />
+        <CustomButton :iconPath="tabViewList" title="All notes" />
       </RouterLink>
       <!-- Search (unified jump + full-text) -->
       <CustomButton
-        :iconPath="mdiMagnify"
+        :iconPath="tabSearch"
         title="Search"
         @click="openSearch"
       />
       <!-- New Note -->
       <RouterLink v-if="showNewButton" :to="newNoteTarget">
-        <CustomButton :iconPath="mdiSquareEditOutline" title="New note" />
+        <CustomButton :iconPath="tabEdit" title="New note" />
       </RouterLink>
     </div>
   </nav>
@@ -37,7 +37,7 @@
   <!-- Floating corner menu (matches the sidebar toggle treatment) -->
   <div class="fixed right-4 top-4 z-30">
     <CustomButton
-      :iconPath="mdilMenu"
+      :iconPath="tabMenu"
       label=""
       style="cta"
       class="shadow-md"
@@ -57,14 +57,14 @@
 </template>
 
 <script setup>
-import { mdiMagnify, mdiSquareEditOutline, mdiViewListOutline } from "@mdi/js";
+import { tabSearch, tabEdit, tabViewList } from "../icons.js";
 import {
-  mdilConsole,
-  mdilFormatListNumbers,
-  mdilLogout,
-  mdilMenu,
-  mdilMonitor,
-} from "@mdi/light-js";
+  tabConsole,
+  tabListNumbers,
+  tabLogout,
+  tabMenu,
+  tabDeviceDesktop,
+} from "../icons.js";
 import { computed, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
@@ -113,26 +113,26 @@ function openSearch() {
 const menuItems = computed(() => [
   {
     label: `Theme: ${currentThemeLabel.value}`,
-    icon: mdilMonitor,
+    icon: tabDeviceDesktop,
     command: () => {
       themePickerVisible.value = true;
     },
   },
   {
     label: "Plugins",
-    icon: mdilMonitor,
+    icon: tabDeviceDesktop,
     command: () => {
       pluginSettingsVisible.value = true;
     },
   },
   {
     label: `Line numbers: ${viewLineNumbers.value ? "on" : "off"}`,
-    icon: mdilFormatListNumbers,
+    icon: tabListNumbers,
     command: () => saveViewLineNumbers(!viewLineNumbers.value),
   },
   {
     label: `Debug: ${debugEnabled.value ? "on" : "off"}`,
-    icon: mdilConsole,
+    icon: tabConsole,
     command: () => toggleDebug(),
   },
   {
@@ -141,7 +141,7 @@ const menuItems = computed(() => [
   },
   {
     label: "Log Out",
-    icon: mdilLogout,
+    icon: tabLogout,
     command: logOut,
     visible: showLogOutButton,
   },

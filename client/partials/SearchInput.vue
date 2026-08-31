@@ -5,7 +5,7 @@
       class="flex w-full rounded-md border border-theme-border bg-theme-background dark:bg-theme-background-elevated"
       :class="{ 'px-3 py-2': !large, 'px-5 py-4': large }"
     >
-      <IconLabel :iconPath="mdilMagnify" class="mr-2" />
+      <IconLabel :iconPath="tabSearch" class="mr-2" />
       <input
         type="text"
         ref="input"
@@ -27,7 +27,7 @@
         title="List all notes"
         @click="clearToAll"
       >
-        <SvgIcon type="mdi" :path="mdiClose" size="1.25em" />
+        <Icon icon="tabClose" size="1.25em" />
       </button>
       <!-- Note: Default behaviour for up and down keys is prevented to stop cursor moving when tag menu is navigated. -->
     </div>
@@ -53,9 +53,9 @@
 </template>
 
 <script setup>
-import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiClose } from "@mdi/js";
-import { mdilMagnify } from "@mdi/light-js";
+import Icon from "../components/Icon.vue";
+import { tabClose } from "../icons.js";
+import { tabSearch } from "../icons.js";
 import { useToast } from "primevue/usetoast";
 import { ref, watch } from "vue";
 import { useRouter } from "vue-router";

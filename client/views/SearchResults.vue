@@ -4,7 +4,7 @@
     <div class="mb-1 flex items-center justify-between">
       <CustomButton
         :label="`Sort By: ${sortByName}`"
-        :iconPath="mdiSort"
+        :iconPath="tabSort"
         @click="toggleSortMenu"
       />
       <Toggle
@@ -65,9 +65,9 @@
         class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated"
       >
         <RouterLink :to="upTarget" class="flex items-center">
-          <SvgIcon
-            type="mdi"
-            :path="mdilArrowUp"
+          <Icon
+           
+            icon="tabArrowUp"
             size="1.25em"
             class="mr-2 text-theme-text-muted"
           />
@@ -91,9 +91,9 @@
             }"
             class="flex items-center"
           >
-            <SvgIcon
-              type="mdi"
-              :path="mdilFolder"
+            <Icon
+             
+              icon="tabFolder"
               size="1.25em"
               class="mr-2 text-theme-text-muted"
             />
@@ -137,9 +137,9 @@ import { useToast } from "primevue/usetoast";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import SvgIcon from "@jamescoyle/vue-icon";
-import { mdiMagnify, mdiSort } from "@mdi/js";
-import { mdilArrowUp, mdilFolder } from "@mdi/light-js";
+import Icon from "../components/Icon.vue";
+import { tabSearch, tabSort } from "../icons.js";
+import { tabArrowUp, tabFolder } from "../icons.js";
 import { apiErrorHandler, getNotes, rewriteRefs } from "../api.js";
 import { publish, TOPICS } from "../bus/index.js";
 import CustomButton from "../components/CustomButton.vue";
@@ -325,7 +325,7 @@ function init() {
         // Content to show: direct notes and/or subdirectories.
         loadingIndicator.value.setLoaded();
       } else {
-        loadingIndicator.value.setFailed("No Results", mdiMagnify);
+        loadingIndicator.value.setFailed("No Results", tabSearch);
       }
     })
     .catch((error) => {

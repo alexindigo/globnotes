@@ -16,7 +16,7 @@
         @mousedown.prevent
         @click="apply(btn)"
       >
-        <SvgIcon v-if="btn.icon" type="mdi" :path="btn.icon" width="16" height="16" />
+        <Icon v-if="btn.icon" icon="btn.icon" size="16" />
         <span v-else>{{ btn.label }}</span>
       </button>
 
@@ -36,13 +36,13 @@
         />
         <div class="link-pop-actions flex items-center gap-1">
           <button type="button" class="toolbar-btn" title="Apply link" @click="applyLink">
-            <SvgIcon type="mdi" :path="mdiCheckIcon" width="16" height="16" aria-label="Apply" />
+            <Icon icon="tabCheck" size="16" aria-label="Apply" />
           </button>
           <button type="button" class="toolbar-btn" title="Remove link" @click="applyRemoveLink">
-            <SvgIcon type="mdi" :path="mdiLinkOffIcon" width="16" height="16" aria-label="Remove link" />
+            <Icon icon="tabLinkOff" size="16" aria-label="Remove link" />
           </button>
           <button type="button" class="toolbar-btn" title="Cancel" @click="closeLinkPopover">
-            <SvgIcon type="mdi" :path="mdiCloseIcon" width="16" height="16" aria-label="Cancel" />
+            <Icon icon="tabClose" size="16" aria-label="Cancel" />
           </button>
         </div>
       </div>
@@ -51,27 +51,22 @@
 </template>
 
 <script setup>
-import SvgIcon from "@jamescoyle/vue-icon";
+import Icon from "../components/Icon.vue";
 import {
-  mdiCheck,
-  mdiClose,
-  mdiCodeBraces,
-  mdiCodeTags,
-  mdiFormatBold,
-  mdiFormatItalic,
-  mdiFormatListBulleted,
-  mdiFormatListNumbered,
-  mdiFormatQuoteClose,
-  mdiFormatStrikethrough,
-  mdiLink,
-  mdiLinkOff,
-} from "@mdi/js";
+  tabCheck,
+  tabClose,
+  tabBraces,
+  tabCode,
+  tabBold,
+  tabItalic,
+  tabList,
+  tabListNumbers,
+  tabQuote,
+  tabStrikethrough,
+  tabLink,
+  tabLinkOff,
+} from "../icons.js";
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-
-const mdiCheckIcon = mdiCheck;
-const mdiCloseIcon = mdiClose;
-const mdiLinkOffIcon = mdiLinkOff;
-const mdiLinkIcon = mdiLink;
 
 const props = defineProps({
   /** Reference to WysiwygEditorInner (exposes command/active/link APIs). */
@@ -89,18 +84,18 @@ const linkText = ref("");
 const linkHrefInput = ref();
 
 const buttons = [
-  { name: "bold", title: "Bold", icon: mdiFormatBold },
-  { name: "italic", title: "Italic", icon: mdiFormatItalic },
-  { name: "strike", title: "Strikethrough", icon: mdiFormatStrikethrough },
-  { name: "inlineCode", title: "Inline code", icon: mdiCodeTags },
-  { name: "link", title: "Link", icon: mdiLinkIcon },
+  { name: "bold", title: "Bold", icon: tabBold },
+  { name: "italic", title: "Italic", icon: tabItalic },
+  { name: "strike", title: "Strikethrough", icon: tabStrikethrough },
+  { name: "inlineCode", title: "Inline code", icon: tabCode },
+  { name: "link", title: "Link", icon: tabLink },
   { name: "h1", title: "Heading 1", label: "H1" },
   { name: "h2", title: "Heading 2", label: "H2" },
   { name: "h3", title: "Heading 3", label: "H3" },
-  { name: "bulletList", title: "Bullet list", icon: mdiFormatListBulleted },
-  { name: "orderedList", title: "Ordered list", icon: mdiFormatListNumbered },
-  { name: "blockquote", title: "Quote", icon: mdiFormatQuoteClose },
-  { name: "codeBlock", title: "Code block", icon: mdiCodeBraces },
+  { name: "bulletList", title: "Bullet list", icon: tabList },
+  { name: "orderedList", title: "Ordered list", icon: tabListNumbers },
+  { name: "blockquote", title: "Quote", icon: tabQuote },
+  { name: "codeBlock", title: "Code block", icon: tabBraces },
 ];
 
 function isActive(btn) {

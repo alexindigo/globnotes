@@ -7,7 +7,7 @@
 </template>
 
 <script setup>
-import { mdiCheck, mdiContentCopy } from "@mdi/js";
+import { tabCheck, tabCopy } from "../icons.js";
 import renderMathInElement from "katex/contrib/auto-render/auto-render.js";
 import mermaid from "mermaid";
 import { onMounted, ref, watch } from "vue";
@@ -25,8 +25,15 @@ const viewerElement = ref();
 // rendered both atomically, and e2e/style hooks poll the class.
 const loaded = ref(false);
 
-const COPY_ICON = `<svg viewBox="0 0 24 24" width="1em" height="1em"><path fill="currentColor" d="${mdiContentCopy}"/></svg>`;
-const CHECK_ICON = `<svg viewBox="0 0 24 24" width="1em" height="1em"><path fill="currentColor" d="${mdiCheck}"/></svg>`;
+// Tabler icons are stroke-based multi-path; render them inline for the
+// dynamically-created copy buttons (no Vue component available there).
+function tablerSvg(paths) {
+  return `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths
+    .map((d) => `<path d="${d}"/>`)
+    .join("")}</svg>`;
+}
+const COPY_ICON = tablerSvg(tabCopy);
+const CHECK_ICON = tablerSvg(tabCheck);
 
 // Copy button on every code block (skipping mermaid sources).
 function addCopyButtons(root) {

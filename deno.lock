@@ -14,10 +14,7 @@
     "npm:@codemirror/language@^6.11.0": "6.12.4",
     "npm:@codemirror/state@^6.5.2": "6.7.1",
     "npm:@codemirror/view@^6.36.8": "6.43.9",
-    "npm:@jamescoyle/vue-icon@0.1.2": "0.1.2",
     "npm:@lezer/highlight@^1.2.1": "1.2.3",
-    "npm:@mdi/js@7.4.47": "7.4.47",
-    "npm:@mdi/light-js@0.2.63": "0.2.63",
     "npm:@milkdown/core@^7.10.3": "7.22.1",
     "npm:@milkdown/ctx@^7.10.3": "7.22.1",
     "npm:@milkdown/plugin-history@^7.10.3": "7.22.1",
@@ -27,6 +24,7 @@
     "npm:@milkdown/preset-gfm@^7.10.3": "7.22.1",
     "npm:@milkdown/utils@^7.10.3": "7.22.1",
     "npm:@milkdown/vue@^7.10.3": "7.22.1_vue@3.5.40_prosemirror-state@1.4.4",
+    "npm:@tabler/icons@3.46.0": "3.46.0",
     "npm:@types/markdown-it@^14.1.2": "14.2.0",
     "npm:@vitejs/plugin-vue@6.0.8": "6.0.8_vite@8.2.0__sass-embedded@1.100.0__yaml@2.9.0_vue@3.5.40_sass-embedded@1.100.0",
     "npm:@vue/test-utils@^2.4.11": "2.4.11_@vue+compiler-dom@3.5.40_vue@3.5.40",
@@ -577,9 +575,6 @@
         "wrap-ansi-cjs@npm:wrap-ansi@7.0.0"
       ]
     },
-    "@jamescoyle/vue-icon@0.1.2": {
-      "integrity": "sha512-KFrImXx5TKIi6iQXlnyLEBl4rNosNKbTeRnr70ucTdUaciVmd9qK9d/pZAaKt1Ob/8xNnX2GMp8LisyHdKtEgw=="
-    },
     "@jridgewell/gen-mapping@0.3.13": {
       "integrity": "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==",
       "dependencies": [
@@ -735,12 +730,6 @@
     },
     "@marijn/find-cluster-break@1.0.4": {
       "integrity": "sha512-Wy0V7+SGUjnF9/TkiM1hKVDPj7jKXduPNboMVtHTA8dySMURWqfg/JZ9E2Sq8JgSJmkl7k7Qe9FLeMSrSraWmQ=="
-    },
-    "@mdi/js@7.4.47": {
-      "integrity": "sha512-KPnNOtm5i2pMabqZxpUz7iQf+mfrYZyKCZ8QNz85czgEt7cuHcGorWfdzUMWYA0SD+a6Hn4FmJ+YhzzzjkTZrQ=="
-    },
-    "@mdi/light-js@0.2.63": {
-      "integrity": "sha512-+SUtJIOxvEy6DiVq0wTRPIzVuoPB5fhnubmzaN7e2ew0v3/nvnpC4mqbGCjiTK0diVd3+zvhEQHZzPDErGb1fg=="
     },
     "@mermaid-js/parser@1.2.1": {
       "integrity": "sha512-n12NohV3mrUyUL2o93IgG/ifeW9FTyeJn3zDxkhwa8MJ9Fxg3HQMlA3RiGmD/3UnJvheztkjjQAjA2T4LmUcpw==",
@@ -1263,6 +1252,9 @@
     },
     "@standard-schema/spec@1.1.0": {
       "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="
+    },
+    "@tabler/icons@3.46.0": {
+      "integrity": "sha512-f2RYFl3fzPwj5WO82x6en0dmkjefxEfOm16D1ByM6cj/McNiwOkL4VaPUoP9VVIrXAD9WnTSVFr70px703b//A=="
     },
     "@types/chai@5.2.3": {
       "integrity": "sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==",
@@ -4495,10 +4487,7 @@
         "npm:@codemirror/language@^6.11.0",
         "npm:@codemirror/state@^6.5.2",
         "npm:@codemirror/view@^6.36.8",
-        "npm:@jamescoyle/vue-icon@0.1.2",
         "npm:@lezer/highlight@^1.2.1",
-        "npm:@mdi/js@7.4.47",
-        "npm:@mdi/light-js@0.2.63",
         "npm:@milkdown/core@^7.10.3",
         "npm:@milkdown/ctx@^7.10.3",
         "npm:@milkdown/plugin-history@^7.10.3",
@@ -4508,6 +4497,7 @@
         "npm:@milkdown/preset-gfm@^7.10.3",
         "npm:@milkdown/utils@^7.10.3",
         "npm:@milkdown/vue@^7.10.3",
+        "npm:@tabler/icons@3.46.0",
         "npm:@vitejs/plugin-vue@6.0.8",
         "npm:@vue/test-utils@^2.4.11",
         "npm:autoprefixer@10.5.4",

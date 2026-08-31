@@ -12,7 +12,7 @@
           Theme
         </span>
         <CustomButton
-          :iconPath="mdiClose"
+          :iconPath="tabClose"
           label=""
           title="Close"
           @click="close"
@@ -43,7 +43,7 @@
 <script setup>
 import { onUnmounted, ref, watch } from "vue";
 
-import { mdiClose } from "@mdi/js";
+import { tabClose } from "../icons.js";
 import CustomButton from "./CustomButton.vue";
 import {
   currentTheme,
