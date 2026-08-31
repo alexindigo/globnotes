@@ -1,9 +1,9 @@
 <template>
   <svg
     xmlns="http://www.w3.org/2000/svg"
-    :width="size"
-    :height="size"
-    viewBox="0 0 24 24"
+    :width="width"
+    :height="height"
+    :viewBox="viewBox"
     fill="none"
     stroke="currentColor"
     stroke-width="2"
@@ -23,10 +23,18 @@ const props = defineProps({
   /** Icon path data (array of <path d> strings) from icons.js. */
   icon: { type: [Array, String], default: () => [] },
   size: { type: String, default: "1.25em" },
+  width: { type: String, default: undefined },
+  height: { type: String, default: undefined },
+  viewBox: { type: String, default: "0 0 24 24" },
 });
 
 // Accept either the path array (imported constant) or a key string.
 const paths = computed(() =>
   Array.isArray(props.icon) ? props.icon : (ICON_PATHS[props.icon] ?? []),
 );
+
+// width/height default to `size`; override with width/height for
+// non-square crops (e.g. the toggle pill).
+const width = computed(() => props.width ?? props.size);
+const height = computed(() => props.height ?? props.size);
 </script>

@@ -4,8 +4,7 @@
   >
     <span v-if="label" class="mr-2 text-theme-text-muted">{{ label }}</span>
     <Icon
-     
-      :path="isOn ? tabToggleRight : tabToggleLeft"
+      :icon="isOn ? tabToggleRight : tabToggleLeft"
       :class="{ 'text-theme-brand': isOn, 'text-theme-text-very-muted': !isOn }"
       width="auto"
       height="1em"
