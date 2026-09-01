@@ -25,6 +25,8 @@ async function loadConfig(
       quickAccessSort: c.quickAccessSort,
       quickAccessLimit: c.quickAccessLimit,
       autoEnablePlugins: c.autoEnablePlugins,
+      brandName: c.brandName,
+      brandAccent: c.brandAccent,
     }));
   `;
   const cmd = new Deno.Command(Deno.execPath(), {
@@ -63,6 +65,8 @@ Deno.test("config: defaults", async () => {
   assertEquals(c.quickAccessSort, "lastModified");
   assertEquals(c.quickAccessLimit, 4);
   assertEquals(c.autoEnablePlugins, true);
+  assertEquals(c.brandName, null);
+  assertEquals(c.brandAccent, null);
 });
 
 Deno.test("config: auto-enable plugins env off", async () => {
@@ -157,4 +161,75 @@ Deno.test("config: quick access settings", async () => {
   assertEquals(c.quickAccessTitle, "Pinned");
   assertEquals(c.quickAccessSort, "title");
   assertEquals(c.quickAccessLimit, 9);
+});
+
+Deno.test("config: brand from env", async () => {
+  const c = await loadConfig({
+    GLOBNOTES_PATH: "/tmp/vault",
+    GLOBNOTES_BRAND_NAME: "Acme Notes",
+    GLOBNOTES_BRAND_ACCENT: "#ff6600",
+  });
+  assertEquals(c.brandName, "Acme Notes");
+  assertEquals(c.brandAccent, "#ff6600");
+});
+
+Deno.test("config: brand from stored config when env absent", async () => {
+  const vault = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${vault}/.globnotes`, { recursive: true });
+    await Deno.writeTextFile(
+      `${vault}/.globnotes/config.json`,
+      JSON.stringify({
+        auth_type: "none",
+        brand_name: "Stored Brand",
+        brand_accent: "#00aa55",
+      }),
+    );
+    const c = await loadConfig({ GLOBNOTES_PATH: vault });
+    assertEquals(c.brandName, "Stored Brand");
+    assertEquals(c.brandAccent, "#00aa55");
+  } finally {
+    await Deno.remove(vault, { recursive: true });
+  }
+});
+
+Deno.test("config: brand env wins over stored config", async () => {
+  const vault = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${vault}/.globnotes`, { recursive: true });
+    await Deno.writeTextFile(
+      `${vault}/.globnotes/config.json`,
+      JSON.stringify({
+        auth_type: "none",
+        brand_name: "Stored Brand",
+        brand_accent: "#00aa55",
+      }),
+    );
+    const c = await loadConfig({
+      GLOBNOTES_PATH: vault,
+      GLOBNOTES_BRAND_NAME: "Env Brand",
+    });
+    assertEquals(c.brandName, "Env Brand");
+    assertEquals(c.brandAccent, "#00aa55");
+  } finally {
+    await Deno.remove(vault, { recursive: true });
+  }
+});
+
+Deno.test("config: empty brand env treated as unset", async () => {
+  const vault = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${vault}/.globnotes`, { recursive: true });
+    await Deno.writeTextFile(
+      `${vault}/.globnotes/config.json`,
+      JSON.stringify({ auth_type: "none", brand_name: "Stored Brand" }),
+    );
+    const c = await loadConfig({
+      GLOBNOTES_PATH: vault,
+      GLOBNOTES_BRAND_NAME: "",
+    });
+    assertEquals(c.brandName, "Stored Brand");
+  } finally {
+    await Deno.remove(vault, { recursive: true });
+  }
 });

@@ -38,7 +38,11 @@ indexer.startBackgroundSync();
 // (Python: rewrite_index_html at import). Only when the client build
 // exists — dev checkouts run the server alone.
 try {
-  rewriteIndexHtml("client/dist/index.html", globalConfig.pathPrefix);
+  rewriteIndexHtml(
+    "client/dist/index.html",
+    globalConfig.pathPrefix,
+    globalConfig.brandName,
+  );
 } catch {
   logger.debug("client/dist/index.html not present; skipping rewrite.");
 }

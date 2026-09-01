@@ -22,6 +22,8 @@ export interface StoredConfig {
   username?: string;
   password_hash?: string;
   secret_key?: string;
+  brand_name?: string;
+  brand_accent?: string;
 }
 
 export class GlobalConfig {
@@ -36,6 +38,9 @@ export class GlobalConfig {
   readonly quickAccessSort: string;
   readonly quickAccessLimit: number;
   readonly autoEnablePlugins: boolean;
+  /** White-label branding: env wins over stored config, null when unset. */
+  brandName: string | null;
+  brandAccent: string | null;
 
   constructor() {
     logger.debug("Loading global config...");
@@ -54,6 +59,12 @@ export class GlobalConfig {
     }) ===
       "true";
     this.pathPrefix = this.#loadPathPrefix();
+    // getEnv returns "" for unset vars — `||` treats that (and an
+    // explicitly empty value) as absent, per the env-wins rule.
+    this.brandName = getEnv("GLOBNOTES_BRAND_NAME") ||
+      this.storedConfig?.brand_name || null;
+    this.brandAccent = getEnv("GLOBNOTES_BRAND_ACCENT") ||
+      this.storedConfig?.brand_accent || null;
   }
 
   get configPath(): string {

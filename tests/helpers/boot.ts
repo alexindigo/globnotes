@@ -63,11 +63,13 @@ export async function bootServer(
     .catch(() => {});
 
   const baseUrl = `http://127.0.0.1:${port}`;
+  // With a path prefix the router only answers under it.
+  const prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
   const deadline = Date.now() + 15_000;
   let up = false;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${baseUrl}/_/api/health`);
+      const res = await fetch(`${baseUrl}${prefix}/_/api/health`);
       await res.body?.cancel();
       if (res.ok) {
         up = true;

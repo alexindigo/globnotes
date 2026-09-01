@@ -3,6 +3,7 @@
 /** GET /_/api/config — server-side config the UI needs at boot.
  * Public by design (the client learns the auth type from it). */
 
+import { brandBlock } from "@server/brand.ts";
 import { state } from "@server/state.ts";
 
 export const auth = false;
@@ -18,5 +19,6 @@ export default function (): Record<string, unknown> {
     quickAccessSort: c.quickAccessSort,
     quickAccessLimit: c.quickAccessLimit,
     autoEnablePlugins: c.autoEnablePlugins,
+    brand: brandBlock(c),
   };
 }

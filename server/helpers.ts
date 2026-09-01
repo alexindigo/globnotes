@@ -207,12 +207,23 @@ export async function verifyPassword(
 // endregion
 
 /** Publish the path prefix to the client (meta tag) and point the built
- * asset references at it when one is configured. Ported from the Python
+ * asset references at it when one is configured. With a brand name set,
+ * the <title> is swapped too so first paint is already branded (the
+ * client re-titles per-route afterwards). Ported from the Python
  * server's rewrite_index_html. */
-export function rewriteIndexHtml(htmlFile: string, pathPrefix: string): void {
+export function rewriteIndexHtml(
+  htmlFile: string,
+  pathPrefix: string,
+  brandName?: string | null,
+): void {
   let html = Deno.readTextFileSync(htmlFile);
   if (pathPrefix) {
     html = html.replaceAll('"/_/', `"${pathPrefix}/_/`);
+  }
+  if (brandName) {
+    const escaped = brandName.replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    html = html.replace(/<title>[^<]*<\/title>/, `<title>${escaped}</title>`);
   }
   if (html.includes('name="globnotes-prefix"')) {
     html = html.replace(
