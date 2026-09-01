@@ -5,7 +5,6 @@
       class="flex w-full rounded-md border border-theme-border bg-theme-background dark:bg-theme-background-elevated"
       :class="{ 'px-3 py-2': !large, 'px-5 py-4': large }"
     >
-      <IconLabel :iconPath="tabSearch" class="mr-2" />
       <input
         type="text"
         ref="input"
@@ -55,14 +54,12 @@
 <script setup>
 import Icon from "../components/Icon.vue";
 import { tabClose } from "../icons.js";
-import { tabSearch } from "../icons.js";
 import { useToast } from "primevue/usetoast";
 import { ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import { apiErrorHandler, getTags } from "../api.js";
 import { publish, TOPICS } from "../bus/index.js";
-import IconLabel from "../components/IconLabel.vue";
 import * as constants from "../constants.js";
 import { getToastOptions } from "../helpers.js";
 
