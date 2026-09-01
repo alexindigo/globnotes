@@ -171,11 +171,11 @@ See [FutureDevelopment.md](FutureDevelopment.md) — note transclusion, unresolv
 ## Development
 
 ```bash
-# Install everything (Deno workspace: deno.json imports + package.json deps)
+# Install everything (all dependencies resolve from deno.json)
 deno install
 
-# Server (Deno) — tests, lint, type check
-deno task test       # 108 integration + unit tests
+# Server — tests, lint, type check
+deno task test       # 121 integration + unit tests
 deno task lint
 deno task check
 
@@ -184,7 +184,7 @@ deno task build:client
 deno task test:client
 
 # Client dev server (Vite under Deno)
-deno task dev -- npm:vite
+deno task dev:client
 ```
 
 ## Credit

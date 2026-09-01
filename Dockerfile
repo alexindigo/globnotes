@@ -11,11 +11,8 @@ ARG BUILD_DIR
 RUN mkdir ${BUILD_DIR}
 WORKDIR ${BUILD_DIR}
 
-COPY .htmlnanorc \
-    deno.json \
+COPY deno.json \
     deno.lock \
-    package.json \
-    postcss.config.js \
     tailwind.config.js \
     vite.config.js \
     ./
@@ -49,7 +46,7 @@ RUN apk update && apk add --no-cache \
 
 WORKDIR ${APP_PATH}
 
-COPY LICENSE THIRD-PARTY-NOTICES.md deno.json deno.lock package.json ./
+COPY LICENSE THIRD-PARTY-NOTICES.md deno.json deno.lock ./
 COPY server ./server
 COPY plugins ./plugins
 
