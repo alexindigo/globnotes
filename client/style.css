@@ -72,3 +72,12 @@
 .overflow-y-auto {
     scrollbar-gutter: stable;
 }
+
+@layer base {
+    :root {
+        /* Static upward shift for center-anchored surfaces — the search
+           modal and Home's search box both derive their position from the
+           page center minus this lift. One number, one place. */
+        --switcher-lift: 140px;
+    }
+}

@@ -1,8 +1,16 @@
 <template>
   <div class="flex h-full justify-center">
-    <div class="flex max-w-[500px] flex-1 flex-col items-center pt-[25vh]">
-      <Logo class="mb-5" />
-      <SearchInput class="mb-5 shadow-[0_0_20px] shadow-theme-shadow" />
+    <!-- Center-anchored hero: the input's top edge pins at page-center minus
+         --switcher-lift — the same formula the search modal runs. The logo
+         floats above without touching the anchor; quick access flows below
+         the input in normal flow and never affects the position. -->
+    <div class="absolute left-1/2 top-[calc(50%-var(--switcher-lift))] flex w-full max-w-[500px] -translate-x-1/2 flex-col items-center">
+      <Logo class="absolute bottom-full left-1/2 mb-5 -translate-x-1/2" />
+      <SwitcherInput
+        v-model="searchTerm"
+        class="mb-5 shadow-[0_0_20px] shadow-theme-shadow"
+        @submit="submitSearch"
+      />
       <LoadingIndicator
         ref="loadingIndicator"
         class="flex min-h-56 flex-col items-center"
@@ -42,7 +50,7 @@
 import { tabDots } from "../icons.js";
 import { useToast } from "primevue/usetoast";
 import { onMounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 
 import { apiErrorHandler, getNotes } from "../api.js";
 import CustomButton from "../components/CustomButton.vue";
@@ -51,12 +59,21 @@ import Logo from "../components/Logo.vue";
 import { searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
-import SearchInput from "../partials/SearchInput.vue";
+import SwitcherInput from "../components/SwitcherInput.vue";
 
 const globalStore = useGlobalStore();
 const loadingIndicator = ref();
 const notes = ref([]);
 const toast = useToast();
+const router = useRouter();
+const searchTerm = ref("");
+
+// Home's search box is the switcher's bare input — the full-search page is
+// the only destination here.
+function submitSearch() {
+  const term = searchTerm.value.trim();
+  if (term) router.push({ name: "search", query: { term } });
+}
 
 function init() {
   if (globalStore.config.quickAccessHide) {

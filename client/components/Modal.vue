@@ -6,9 +6,18 @@
     @click.self="closeHandler"
   >
     <!-- Modal -->
+    <!-- anchor="top" (default): legacy 30vh top anchor. anchor="center":
+         box top edge pins at page-center minus --switcher-lift minus the
+         content wrapper's 12px inset (p-3), so the framed input lands on
+         the same line as Home's bare input; the box grows downward. -->
     <div
-      class="relative mx-2 mt-[30vh] max-w-[500px] grow rounded-lg border border-theme-border bg-theme-background shadow-lg"
-      :class="$attrs.class"
+      class="rounded-lg border border-theme-border bg-theme-background shadow-lg"
+      :class="[
+        anchor === 'center'
+          ? 'absolute left-1/2 top-[calc(50%-var(--switcher-lift)-12px)] w-[calc(100%-1rem)] max-w-[524px] -translate-x-1/2 max-h-[calc(50dvh+var(--switcher-lift)-1rem)]'
+          : 'relative mx-2 mt-[30vh] max-w-[500px] grow',
+        $attrs.class,
+      ]"
     >
       <slot></slot>
     </div>
@@ -26,6 +35,7 @@ defineOptions({
 const props = defineProps({
   closeHandlerOverride: Function,
   name: { type: String, default: undefined },
+  anchor: { type: String, default: "top" },
 });
 const isVisible = defineModel({ type: Boolean });
 

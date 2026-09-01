@@ -1,7 +1,7 @@
 <template>
   <LoadingIndicator
     ref="loadingIndicator"
-    class="container mx-auto flex h-screen flex-col px-2 py-4 print:max-w-full"
+    class="container relative mx-auto flex h-dvh flex-col px-2 py-4 print:max-w-full"
   >
     <PrimeToast />
     <SetupModal
