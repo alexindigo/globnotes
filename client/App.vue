@@ -9,7 +9,11 @@
       @completed="setupCompleted"
     />
     <template v-else>
-      <QuickSwitcher v-model="isQuickSwitcherVisible" />
+      <QuickSwitcher
+        v-model="isQuickSwitcherVisible"
+        :initial-focus-event="quickSwitcherFocusEvent"
+        @opened="quickSwitcherFocusEvent = null"
+      />
       <SidebarPanel />
       <SyncBanner />
       <!-- Shared content column: navbar and content scroller live beside
@@ -38,6 +42,7 @@ import { computed, ref } from "vue";
 import { RouterView, useRoute } from "vue-router";
 
 import { apiErrorHandler, getConfig } from "./api.js";
+import { subscribe, TOPICS } from "./bus/index.js";
 import PrimeToast from "./components/PrimeToast.vue";
 import SetupModal from "./components/SetupModal.vue";
 import SidebarPanel from "./components/SidebarPanel.vue";
@@ -57,6 +62,11 @@ const loadingIndicator = ref();
 const navBar = ref();
 const route = useRoute();
 const toast = useToast();
+// The focus event that opened the modal — consumed by QuickSwitcher to place
+// a thin caret inside its own input, so a click on Home's search box hands
+// over visibly instead of feeling unfocused. Cleared as soon as the panel
+// reports the handoff complete.
+const quickSwitcherFocusEvent = ref(null);
 
 initDebugNotifications(toast);
 
@@ -98,6 +108,13 @@ const showNavBarLogo = computed(() => {
 function toggleQuickSwitcher() {
   isQuickSwitcherVisible.value = !isQuickSwitcherVisible.value;
 }
+
+subscribe(TOPICS.HOME_SEARCH_FOCUS, (event) => {
+  if (showNavBar.value) {
+    isQuickSwitcherVisible.value = true;
+    quickSwitcherFocusEvent.value = event ?? null;
+  }
+});
 
 function setupCompleted() {
   // Reload so the app boots fresh with the new auth state.

@@ -3,13 +3,13 @@
     <input
       ref="input"
       v-model="term"
-      v-focus
       type="text"
       class="w-full rounded-md border border-theme-border bg-theme-background px-4 py-3 text-theme-text focus:outline-none"
       :placeholder="placeholder"
       @keydown="keydownHandler"
       @keyup="stateChangeHandler"
       @click="stateChangeHandler"
+      @focus="$emit('focus')"
       @blur="tagMenuVisible = false"
       @keydown.down.prevent
       @keydown.up.prevent
@@ -47,7 +47,7 @@ const props = defineProps({
   modelValue: { type: String, default: "" },
   placeholder: { type: String, default: "Search…" },
 });
-const emit = defineEmits(["update:modelValue", "submit", "navigate"]);
+const emit = defineEmits(["update:modelValue", "submit", "navigate", "focus"]);
 
 const toast = useToast();
 const input = ref();

@@ -31,6 +31,7 @@ const TOPICS = {
   SEARCH_PERFORM: "search:perform",
   SEARCH_CHANGE: "search:change",
   SEARCH_INCLUDE_NESTED: "search:include-nested",
+  HOME_SEARCH_FOCUS: "search:home-focus",
 
   EDITOR_MODE_CHANGE: "editor:mode-change",
   NOTE_EDIT_START: "note:edit-start",

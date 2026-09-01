@@ -1,6 +1,7 @@
 <template>
   <div class="w-full">
     <SwitcherInput
+      ref="input"
       v-model="query"
       :placeholder="placeholder"
       @submit="openSelected"
@@ -49,6 +50,13 @@ const router = useRouter();
 const globalStore = useGlobalStore();
 const query = ref("");
 const index = ref(0);
+const input = ref();
+
+// Focus is caller-driven — the component never self-focuses (a plain render
+// like Home must not grab the keyboard). Pass the original FocusEvent to
+// preserve caret position across the modal handoff, or nothing for a plain
+// focus.
+defineExpose({ focus: (event) => input.value?.focus?.(event) });
 
 function basename(path) {
   return path.split("/").pop() ?? path;

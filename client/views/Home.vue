@@ -10,6 +10,7 @@
         v-model="searchTerm"
         class="mb-5 shadow-[0_0_20px] shadow-theme-shadow"
         @submit="submitSearch"
+        @focus="openSwitcher"
       />
       <LoadingIndicator
         ref="loadingIndicator"
@@ -53,6 +54,7 @@ import { onMounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 
 import { apiErrorHandler, getNotes } from "../api.js";
+import { publish, TOPICS } from "../bus/index.js";
 import CustomButton from "../components/CustomButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Logo from "../components/Logo.vue";
@@ -68,8 +70,13 @@ const toast = useToast();
 const router = useRouter();
 const searchTerm = ref("");
 
-// Home's search box is the switcher's bare input — the full-search page is
-// the only destination here.
+// Home's search box is the switcher's bare input. One early hint, then the
+// modal takes over — the focus event carries the browser's native Event so
+// the modal can place a thin caret exactly where the user clicked.
+function openSwitcher(event) {
+  publish(TOPICS.HOME_SEARCH_FOCUS, event);
+}
+
 function submitSearch() {
   const term = searchTerm.value.trim();
   if (term) router.push({ name: "search", query: { term } });
