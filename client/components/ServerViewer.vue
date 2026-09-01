@@ -61,7 +61,17 @@ function addCopyButtons(root) {
   });
 }
 
-mermaid.initialize({ startOnLoad: false });
+// Mermaid follows the app's light/dark mode: the theme engine maintains
+// body.dark as the source of truth, so diagrams re-initialize per render
+// with the matching built-in mermaid theme. Label spans inherit the app's
+// text color, which keeps them readable once the themes agree.
+function initMermaid() {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: document.body.classList.contains("dark") ? "dark" : "default",
+    themeVariables: { background: "transparent" },
+  });
+}
 
 // Fetches the server-rendered HTML (markdown-it + plugin pipeline) and
 // mounts it; the container keeps the toastui-editor-contents class so
@@ -87,6 +97,7 @@ async function renderNote() {
   }
   addCopyButtons(viewerElement.value);
   loaded.value = true;
+  initMermaid();
   mermaid
     .run({ nodes: viewerElement.value.querySelectorAll(".mermaid") })
     .catch((error) => console.error("Mermaid rendering failed", error));
@@ -105,6 +116,8 @@ watch(() => props.title, renderNote);
 watch(viewLineNumbers, renderNote);
 subscribe(TOPICS.PLUGIN_TOGGLE, renderNote);
 subscribe(TOPICS.PLUGIN_AUTO_ENABLE, renderNote);
+// Re-render on theme switch so mermaid picks up the new mode's theme.
+subscribe(TOPICS.THEME_CHANGE, renderNote);
 </script>
 
 <style>

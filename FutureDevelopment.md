@@ -47,11 +47,13 @@ ToastUI is gone (CodeMirror 6 source + Milkdown WYSIWYG); the path is
 editor halves per plugin — `$remark` syntax + `$node` atom views mounting
 the same HTML the server renderer produces.
 
-### Mermaid theme awareness
+### Mermaid per-theme palettes
 
-Mermaid renders with its default theme; it should follow the app theme
-(light/dark). Now owned by the `globnotes-mermaid` plugin (its editor/
-client half can pass the theme at render time).
+Mermaid follows the app's light/dark mode (ServerViewer initializes the
+matching built-in mermaid theme and re-renders on `theme:change`). What
+remains is mapping each of the 16 app themes to a mermaid palette via the
+`--theme-*` CSS vars (`themeVariables` at init time), so diagrams pick up
+the actual accent/background colors rather than the two built-ins.
 
 ### CSRF Origin allowlist
 
