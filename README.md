@@ -128,6 +128,7 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 | `GLOBNOTES_HOST` / `GLOBNOTES_PORT` | `0.0.0.0` / `8080` | Listen address (container). |
 | `GLOBNOTES_PATH_PREFIX` | — | Serve under a sub-path, e.g. `/mom` (multi-instance reverse proxies). |
 | `GLOBNOTES_QUICK_ACCESS_*` | — | `HIDE`, `TITLE`, `TERM`, `SORT`, `LIMIT` for the home page quick-access section. |
+| `GLOBNOTES_BRAND_NAME` / `GLOBNOTES_BRAND_ACCENT` | — | White-label branding (see [Branding](#branding)). Env wins over the Branding dialog's stored values. |
 
 ### Home network deployment
 
@@ -163,6 +164,26 @@ Rendering is a markdown-it pipeline extended by **plugins** — each running in 
 ## Event bus
 
 Components communicate over a mitt-based client-side event bus — publishers announce facts like "note renamed" or "theme changed," consumers decide what to refresh. 28 topics cover note lifecycle, sidebar, menus and modals, edit sessions, themes, plugins, files, and search. See [docs/event-bus.md](docs/event-bus.md) for the topic registry and usage guide.
+
+## Branding
+
+Make an instance yours without touching code: **navbar menu → Branding** sets the brand **name**, an **accent color**, and uploads **logo.svg / icon.svg** (SVG only). Everything lives inside the vault — name and accent in `.globnotes/config.json`, files in `.globnotes/brand/` — so branding travels with the vault like everything else.
+
+- The accent recolors the Globnotes Light/Dark themes; themes with a brand color of their own keep it.
+- The brand name replaces "globnotes" in the browser tab, the web manifest, and the navbar wordmark.
+- A custom `icon.svg` doubles as the browser-tab favicon; drop dedicated favicon files to go further.
+
+Favicon files are file-drop only — no dialog fields. Drop them into `<vault>/.globnotes/brand/`:
+
+| File | Replaces |
+|---|---|
+| `favicon.ico` | the shortcut icon |
+| `favicon-16x16.png` / `favicon-32x32.png` | tab favicons |
+| `apple-touch-icon.png` | iOS home-screen icon |
+| `safari-pinned-tab.svg` | Safari pinned tab |
+| `site.webmanifest` | the PWA manifest (generated from the brand config when absent) |
+
+`GLOBNOTES_BRAND_NAME` / `GLOBNOTES_BRAND_ACCENT` (`#rrggbb`) are the env equivalents; env always wins over the dialog.
 
 ## Deferred / future work
 
