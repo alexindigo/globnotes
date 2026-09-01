@@ -42,6 +42,7 @@ import { computed, ref } from "vue";
 import { RouterView, useRoute } from "vue-router";
 
 import { apiErrorHandler, getConfig } from "./api.js";
+import { applyBrandToDocument } from "./brand.js";
 import { subscribe, TOPICS } from "./bus/index.js";
 import PrimeToast from "./components/PrimeToast.vue";
 import SetupModal from "./components/SetupModal.vue";
@@ -89,6 +90,7 @@ Mousetrap.bindGlobal("ctrl+alt+h", () => {
 getConfig()
   .then((data) => {
     globalStore.config = data;
+    applyBrandToDocument(data.brand);
     loadingIndicator.value.setLoaded();
     refreshNoteIndex();
   })

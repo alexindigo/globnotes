@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import { createApp, nextTick } from "vue";
 import { createPinia } from "pinia";
 import PrimeVue from "primevue/config";
+import ToastService from "primevue/toastservice";
 import NavBar from "../partials/NavBar.vue";
 import router from "../router";
 import { THEMES } from "../themes.js";
@@ -21,6 +22,9 @@ describe("theme picker flow", () => {
     app.use(createPinia());
     app.use(router);
     app.use(PrimeVue);
+    // BrandingSettings (mounted by the navbar) resolves the toast service
+    // in its setup.
+    app.use(ToastService);
     app.mount(mountEl);
     await nextTick();
 

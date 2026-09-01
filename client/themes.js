@@ -51,7 +51,12 @@ export const GLOBNOTES_DARK = {
 
 export const THEMES = [
   { id: "system", label: "System (follows OS)" },
-  { id: "globnotes-light", label: "Globnotes Light", mode: "light", colors: {} },
+  {
+    id: "globnotes-light",
+    label: "Globnotes Light",
+    mode: "light",
+    colors: {},
+  },
   { id: "globnotes-dark", label: "Globnotes Dark", mode: "dark", colors: {} },
 
   {
@@ -364,6 +369,17 @@ export const THEMES = [
 
 const STORAGE_KEY = "globnotes-theme";
 
+// Instance brand accent (hex or null), fed from the server config and
+// kept live by brand:change. Module-level: themes apply outside components.
+let brandAccent = null;
+
+export function setBrandAccent(accent) {
+  brandAccent = accent || null;
+  // Re-stamp with the accent folded in (idempotent; re-publishes
+  // theme:change). Clearing restores the theme's own brand.
+  applyTheme(currentTheme.value);
+}
+
 export const currentTheme = ref(localStorage.getItem(STORAGE_KEY) || "system");
 export const currentThemeLabel = computed(() => {
   if (currentTheme.value === "system") {
@@ -401,6 +417,12 @@ function applyTheme(id) {
       `--theme-${name}`,
       value.startsWith("#") ? hexToRgbTriplet(value) : value,
     );
+  }
+  // Instance branding: the accent replaces the default pair's brand while
+  // the theme doesn't define its own (globnotes-light/dark never do —
+  // themes with an explicit brand keep their identity).
+  if (brandAccent && !theme.colors.brand) {
+    root.style.setProperty("--theme-brand", hexToRgbTriplet(brandAccent));
   }
   // The .dark class drives the handful of class-based overrides.
   document.body.classList.toggle("dark", theme.mode === "dark");

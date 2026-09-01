@@ -21,6 +21,7 @@ const TOPICS = {
   MODAL_CLOSE: "modal:close",
 
   THEME_CHANGE: "theme:change",
+  BRAND_CHANGE: "brand:change",
 
   PLUGIN_TOGGLE: "plugin:toggle",
   PLUGIN_AUTO_ENABLE: "plugin:auto-enable",

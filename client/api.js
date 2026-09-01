@@ -128,7 +128,11 @@ export async function getNote(path) {
 // Server-rendered markdown (markdown-it + plugin pipeline). Returns raw
 // HTML — axios must not try to JSON-parse it. `disabled` carries the
 // client's localStorage plugin switches.
-export async function getRenderedHtml(path, disabled = [], lineNumbers = false) {
+export async function getRenderedHtml(
+  path,
+  disabled = [],
+  lineNumbers = false,
+) {
   try {
     const params = {};
     if (disabled.length) params.disabled = disabled.join(",");
@@ -152,12 +156,7 @@ export async function getPlugins() {
   }
 }
 
-export async function updateNote(
-  path,
-  newPath,
-  newContent,
-  fileRefs = "none",
-) {
+export async function updateNote(path, newPath, newContent, fileRefs = "none") {
   try {
     const response = await api.patch(
       `notes/${encodeURIComponent(path)}`,
@@ -236,6 +235,19 @@ export async function uploadFile(file, directory) {
     formData.append("file", file);
     formData.append("directory", directory || "");
     const response = await api.post("files", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+    return response.data;
+  } catch (response) {
+    return Promise.reject(response);
+  }
+}
+
+export async function postBrand(formData) {
+  try {
+    const response = await api.post("brand", formData, {
       headers: {
         "Content-Type": "multipart/form-data",
       },

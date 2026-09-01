@@ -5,7 +5,7 @@
          floats above without touching the anchor; quick access flows below
          the input in normal flow and never affects the position. -->
     <div class="absolute left-1/2 top-[calc(50%-var(--switcher-lift))] flex w-full max-w-[500px] -translate-x-1/2 flex-col items-center">
-      <Logo class="absolute bottom-full left-1/2 mb-5 -translate-x-1/2" />
+      <Logo class="absolute inset-x-0 bottom-full mb-5 flex justify-center" />
       <SwitcherInput
         v-model="searchTerm"
         class="mb-5 shadow-[0_0_20px] shadow-theme-shadow"

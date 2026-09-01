@@ -22,11 +22,7 @@
         <CustomButton :iconPath="allNotesIcon" title="All notes" />
       </RouterLink>
       <!-- Search (unified jump + full-text) -->
-      <CustomButton
-        :iconPath="tabSearch"
-        title="Search"
-        @click="openSearch"
-      />
+      <CustomButton :iconPath="tabSearch" title="Search" @click="openSearch" />
       <!-- New Note -->
       <RouterLink v-if="showNewButton" :to="newNoteTarget">
         <CustomButton :iconPath="tabEdit" title="New note" />
@@ -53,6 +49,7 @@
     />
     <ThemePicker v-model="themePickerVisible" />
     <PluginSettings v-model="pluginSettingsVisible" />
+    <BrandingSettings v-model="brandingVisible" />
   </div>
 </template>
 
@@ -64,12 +61,14 @@ import {
   tabLogout,
   tabMenu,
   tabDeviceDesktop,
+  tabPalette,
   tabPlug,
 } from "../icons.js";
 import { computed, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { publish, TOPICS } from "../bus/index.js";
+import BrandingSettings from "../components/BrandingSettings.vue";
 import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
 import PluginSettings from "../components/PluginSettings.vue";
@@ -94,13 +93,14 @@ const allNotesIcon = computed(() =>
     ? "tabNumber100Small"
     : noteCount.value > 0
       ? `tabNumber${noteCount.value}Small`
-      : "tabViewList"
+      : "tabViewList",
 );
 const menu = ref();
 const route = useRoute();
 const router = useRouter();
 const themePickerVisible = ref(false);
 const pluginSettingsVisible = ref(false);
+const brandingVisible = ref(false);
 
 const newNoteTarget = computed(() => {
   if (route.name === "search" && route.query[params.folder]) {
@@ -137,6 +137,15 @@ const menuItems = computed(() => [
     command: () => {
       pluginSettingsVisible.value = true;
     },
+  },
+  {
+    label: "Branding",
+    icon: tabPalette,
+    command: () => {
+      brandingVisible.value = true;
+    },
+    // Read-only deployments have nothing to brand — no dead affordance.
+    visible: canModify,
   },
   {
     label: `Line numbers: ${viewLineNumbers.value ? "on" : "off"}`,
@@ -178,5 +187,9 @@ function showLogOutButton() {
   return ![authTypes.none, authTypes.readOnly].includes(
     globalStore.config.authType,
   );
+}
+
+function canModify() {
+  return globalStore.config.authType !== authTypes.readOnly;
 }
 </script>
