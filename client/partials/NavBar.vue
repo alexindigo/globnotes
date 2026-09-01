@@ -19,7 +19,7 @@
         }"
         title="All notes"
       >
-        <CustomButton :iconPath="tabViewList" title="All notes" />
+        <CustomButton :iconPath="allNotesIcon" title="All notes" />
       </RouterLink>
       <!-- Search (unified jump + full-text) -->
       <CustomButton
@@ -57,7 +57,7 @@
 </template>
 
 <script setup>
-import { tabSearch, tabEdit, tabViewList } from "../icons.js";
+import { tabSearch, tabEdit } from "../icons.js";
 import {
   tabConsole,
   tabListNumbers,
@@ -84,6 +84,18 @@ import { currentThemeLabel } from "../themes.js";
 import { clearStoredToken } from "../tokenStorage.js";
 
 const globalStore = useGlobalStore();
+
+// The All Notes badge: a live vault count rendered from the note index, with
+// the list-details glyph as fallback before the index loads (or in an empty
+// vault). Key-string lookup into ICON_PATHS's number-*-small family.
+const noteCount = computed(() => globalStore.noteMeta.length);
+const allNotesIcon = computed(() =>
+  noteCount.value >= 100
+    ? "tabNumber100Small"
+    : noteCount.value > 0
+      ? `tabNumber${noteCount.value}Small`
+      : "tabViewList"
+);
 const menu = ref();
 const route = useRoute();
 const router = useRouter();
