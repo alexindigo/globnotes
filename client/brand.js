@@ -41,13 +41,17 @@ export function applyBrandToDocument(brand) {
       link.href = `${pathPrefix}/_/brand/${file}?v=${brandVersion.value}`;
     }
   }
-  // No dropped favicon files: the icon chain falls back — custom
-  // icon.svg → accent-tinted bundled glob (same recolor as the navbar
-  // logo), so one accent upload brands the tab too.
+  // No dropped favicon files: the icon chain falls back — custom icon
+  // upload → custom logo upload → accent-tinted bundled glob (same
+  // recolor as the navbar logo).
   if (!files.some((file) => FAVICON_FILES.has(file))) {
+    const customIcon = files.find((f) => f.startsWith("icon."));
+    const customLogo = files.find((f) => f.startsWith("logo."));
     let href = null;
-    if (files.includes("icon.svg")) {
-      href = `${pathPrefix}/_/brand/icon.svg?v=${brandVersion.value}`;
+    if (customIcon) {
+      href = `${pathPrefix}/_/brand/${customIcon}?v=${brandVersion.value}`;
+    } else if (customLogo) {
+      href = `${pathPrefix}/_/brand/${customLogo}?v=${brandVersion.value}`;
     } else if (brand?.accent) {
       const tinted = iconSvg.replaceAll("#38BDF8", brand.accent);
       href = `data:image/svg+xml,${encodeURIComponent(tinted)}`;

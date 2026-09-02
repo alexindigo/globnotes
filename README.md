@@ -167,7 +167,7 @@ Components communicate over a mitt-based client-side event bus — publishers an
 
 ## Branding
 
-Make an instance yours without touching code: **navbar menu → Branding** sets the brand **name**, an **accent color**, and uploads **logo.svg / icon.svg** (SVG only). Everything lives inside the vault — name and accent in `.globnotes/config.json`, files in `.globnotes/brand/` — so branding travels with the vault like everything else.
+Make an instance yours without touching code: **navbar menu → Branding** sets the brand **name**, an **accent color**, and uploads a **logo / icon** (SVG, PNG, JPG, WebP, GIF or ICO). Everything lives inside the vault — name and accent in `.globnotes/config.json`, files in `.globnotes/brand/` — so branding travels with the vault like everything else.
 
 - The accent recolors the Globnotes Light/Dark themes; themes with a brand color of their own keep it.
 - The brand name replaces "globnotes" in the browser tab, the web manifest, and the navbar wordmark.

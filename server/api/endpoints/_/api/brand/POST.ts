@@ -19,6 +19,35 @@ import type { RequestCtx } from "@server/router.ts";
 import { state } from "@server/state.ts";
 
 const ACCENT_RE = /^#[0-9a-fA-F]{6}$/;
+const IMAGE_EXTS = new Set([
+  ".svg",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".ico",
+]);
+
+/** Remove every brand file for a slot (logo.* / icon.*), whatever its
+ * extension. Missing files are fine — removal is idempotent. */
+function clearSlotFiles(dir: string, slot: string): void {
+  let entries: string[];
+  try {
+    entries = [...Deno.readDirSync(dir)].map((e) => e.name);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (name.startsWith(`${slot}.`)) {
+      try {
+        Deno.removeSync(path.join(dir, name));
+      } catch {
+        // race or already gone
+      }
+    }
+  }
+}
 
 /** Merge brand keys into the stored setup config and persist it. The
  * stored config is the single file the setup wizard writes — the merge
@@ -74,23 +103,23 @@ export default async function (ctx: RequestCtx) {
   for (const slot of ["logo", "icon"] as const) {
     const file = form.get(slot);
     if (file instanceof File) {
-      if (!file.name.toLowerCase().endsWith(".svg")) {
-        throw new HttpError(400, `${slot} must be an .svg file`);
+      const ext = path.extname(file.name).toLowerCase();
+      if (!IMAGE_EXTS.has(ext)) {
+        throw new HttpError(400, `${slot} must be an image file`);
       }
       Deno.mkdirSync(dir, { recursive: true });
+      // Replace: a slot keeps only its newest upload, so an earlier
+      // different-extension upload goes away.
+      clearSlotFiles(dir, slot);
       Deno.writeFileSync(
-        path.join(dir, `${slot}.svg`),
+        path.join(dir, `${slot}${ext}`),
         new Uint8Array(await file.arrayBuffer()),
       );
       changed = true;
     }
     const remove = form.get(`remove${slot === "logo" ? "Logo" : "Icon"}`);
     if (remove !== null && String(remove) !== "") {
-      try {
-        Deno.removeSync(path.join(dir, `${slot}.svg`));
-      } catch {
-        // already absent — removal is idempotent
-      }
+      clearSlotFiles(dir, slot);
       changed = true;
     }
   }

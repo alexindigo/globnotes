@@ -118,9 +118,24 @@ Deno.test("brand: POST round-trip", async (t) => {
       }
     });
 
-    await t.step("non-svg upload is rejected", async () => {
+    await t.step("png upload accepted, svg→png replaces", async () => {
+      const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
       const res = await postBrand(server.baseUrl, {
-        logo: new File(["png"], "logo.png", { type: "image/png" }),
+        logo: new File([png], "logo.png", { type: "image/png" }),
+      });
+      assertEquals(res.status, 200);
+      assertEquals((await res.json()).files, ["icon.svg", "logo.png"]);
+      // The prior logo.svg is gone — a slot keeps only its newest upload.
+      const res2 = await fetch(`${server.baseUrl}/_/brand/logo.svg`);
+      assertEquals(res2.status, 404);
+      const res3 = await fetch(`${server.baseUrl}/_/brand/logo.png`);
+      assertEquals(res3.status, 200);
+      assertEquals(res3.headers.get("content-type"), "image/png");
+    });
+
+    await t.step("non-image upload is rejected", async () => {
+      const res = await postBrand(server.baseUrl, {
+        logo: new File(["plain text"], "logo.txt", { type: "text/plain" }),
       });
       assertEquals(res.status, 400);
     });
@@ -137,7 +152,7 @@ Deno.test("brand: POST round-trip", async (t) => {
       });
       assertEquals(res.status, 200);
       assertEquals((await res.json()).files, []);
-      const res2 = await fetch(`${server.baseUrl}/_/brand/logo.svg`);
+      const res2 = await fetch(`${server.baseUrl}/_/brand/logo.png`);
       assertEquals(res2.status, 404);
     });
 
@@ -229,7 +244,6 @@ Deno.test("brand: generated web manifest", async (t) => {
       assertEquals(manifest.icons, [{
         src: "/_/brand/icon.svg",
         sizes: "any",
-        type: "image/svg+xml",
       }]);
     } finally {
       await server.close();

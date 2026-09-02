@@ -58,18 +58,15 @@ export function brandBlock(config: GlobalConfig): BrandBlock {
 }
 
 /** The web manifest served at /_/brand/site.webmanifest when the vault
- * has no custom one. Custom icon.svg wins; otherwise the bundled icons
- * (prefixed with the configured path prefix) are advertised. */
+ * has no custom one. A custom icon file wins; otherwise the bundled
+ * icons (prefixed with the configured path prefix) are advertised. */
 export function generateWebManifest(config: GlobalConfig): string {
   const prefix = config.pathPrefix;
   const name = config.brandName ?? DEFAULT_NAME;
-  const customIcon = listBrandFiles(config.notesPath).includes("icon.svg");
+  const customIcon = listBrandFiles(config.notesPath)
+    .find((f) => f.startsWith("icon."));
   const icons = customIcon
-    ? [{
-      src: `${prefix}/_/brand/icon.svg`,
-      sizes: "any",
-      type: "image/svg+xml",
-    }]
+    ? [{ src: `${prefix}/_/brand/${customIcon}`, sizes: "any" }]
     : BUNDLED_MANIFEST_ICONS.map((icon) => ({
       ...icon,
       src: `${prefix}${icon.src}`,

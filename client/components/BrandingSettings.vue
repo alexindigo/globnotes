@@ -62,7 +62,9 @@
           />
           <div>
             <div class="capitalize text-theme-text">{{ slot }}</div>
-            <div class="text-sm text-theme-text-muted">SVG only</div>
+            <div class="text-sm text-theme-text-muted">
+              SVG, PNG, JPG, WebP, GIF, ICO
+            </div>
           </div>
         </div>
         <div class="flex items-center gap-2">
@@ -88,7 +90,7 @@
           <input
             :ref="(el) => (fileInputs[slot] = el)"
             type="file"
-            accept=".svg,image/svg+xml"
+            accept=".svg,.png,.jpg,.jpeg,.webp,.gif,.ico"
             class="hidden"
             @change="pick(slot, $event)"
           />
@@ -152,14 +154,17 @@ const reloadedAt = ref(0);
 const brand = computed(() => globalStore.config.brand ?? {});
 const brandFiles = computed(() => brand.value.files ?? []);
 
+function customFile(slot) {
+  return brandFiles.value.find((f) => f.startsWith(`${slot}.`));
+}
 function customPresent(slot) {
-  return brandFiles.value.includes(`${slot}.svg`);
+  return Boolean(customFile(slot));
 }
 
 function previewSrc(slot) {
   if (pickedUrls[slot]) return pickedUrls[slot];
   if (customPresent(slot) && !removeRequested[slot]) {
-    return `/_/brand/${slot}.svg?v=${reloadedAt.value}`;
+    return `/_/brand/${customFile(slot)}?v=${reloadedAt.value}`;
   }
   return null;
 }
