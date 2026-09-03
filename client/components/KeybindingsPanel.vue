@@ -158,9 +158,10 @@ const groupedBindings = computed(() => {
 });
 
 function displayBinding(binding) {
-  const primary = binding.mac === binding.other
-    ? binding.other
-    : `${binding.other} / ${binding.mac}`;
+  // The platform is known: show only the keys that work on this machine
+  // (the data still carries both — the dispatcher/editor keymaps resolve
+  // per-platform at bind time).
+  const primary = isMac() ? binding.mac : binding.other;
   return binding.alias
     ? `${primary} or ${displayBinding(binding.alias)}`
     : primary;
