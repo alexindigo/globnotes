@@ -1,6 +1,7 @@
 // Click-through test for the keybindings panel flow:
-// menu button → "Keybindings:" item → cheat-sheet panel → Custom layer →
-// remap a binding → override persisted under globnotes-keybindings-custom.
+// menu button → "Keybindings:" item → rail + cheat-sheet panel → rail row →
+// Custom layer → remap a binding → override persisted under
+// globnotes-keybindings-custom.
 import { describe, it, expect, beforeEach } from "vitest";
 import { createApp, nextTick } from "vue";
 import { createPinia } from "pinia";
@@ -18,7 +19,7 @@ describe("keybindings panel flow", () => {
     localStorage.clear();
   });
 
-  it("opens the panel, switches to Custom, remaps a binding", async () => {
+  it("opens the panel, switches to Custom via the rail, remaps a binding", async () => {
     const overlayHost = document.createElement("div");
     overlayHost.id = "overlay-host";
     document.body.appendChild(overlayHost);
@@ -32,7 +33,7 @@ describe("keybindings panel flow", () => {
     app.mount(mountEl);
     await nextTick();
 
-    // Menu → Keybindings item → panel opens with the layer picker.
+    // Menu → Keybindings item → panel opens with the layer rail.
     document.querySelector('[title="Menu"]').click();
     await sleep(80);
     const keybindingItem = Array.from(document.querySelectorAll("a")).find(
@@ -42,19 +43,42 @@ describe("keybindings panel flow", () => {
     keybindingItem.click();
     await sleep(80);
 
-    const panel = Array.from(document.querySelectorAll("div")).find((d) =>
-      d.textContent.includes("Layer") &&
-      d.textContent.includes("Save note"),
+    const panel = Array.from(document.querySelectorAll("div")).find(
+      (d) =>
+        d.textContent.includes("Legacy Flatnotes") &&
+        d.textContent.includes("Save note"),
     );
     expect(panel, "keybindings panel").toBeTruthy();
     expect(localStorage.getItem("globnotes-keybindings")).toBe(null);
 
-    // Switch to the Custom layer.
-    const customChip = Array.from(panel.querySelectorAll("button")).find(
-      (b) => b.textContent.trim() === "Custom",
+    // The rail lists all six layers as rows, in order.
+    const railLabels = [
+      "Legacy Flatnotes",
+      "Obsidian",
+      "Notion",
+      "Typora",
+      "VS Code-lite",
+      "Custom",
+    ];
+    const railRows = Array.from(panel.querySelectorAll("button")).filter(
+      (b) => railLabels.includes(b.textContent.trim()),
     );
-    expect(customChip, "custom chip").toBeTruthy();
-    customChip.click();
+    expect(
+      railRows.map((b) => b.textContent.trim()),
+      "rail rows",
+    ).toEqual(railLabels);
+
+    // Clicking a rail row switches the active layer.
+    const notionRow = railRows.find((b) => b.textContent.trim() === "Notion");
+    expect(notionRow, "notion rail row").toBeTruthy();
+    notionRow.click();
+    await sleep(80);
+    expect(localStorage.getItem("globnotes-keybindings")).toBe("notion");
+
+    // Switch to the Custom layer (last rail row).
+    const customRow = railRows.find((b) => b.textContent.trim() === "Custom");
+    expect(customRow, "custom rail row").toBeTruthy();
+    customRow.click();
     await sleep(80);
     expect(localStorage.getItem("globnotes-keybindings")).toBe("custom");
 

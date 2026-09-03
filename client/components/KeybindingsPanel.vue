@@ -3,7 +3,7 @@
     <!-- Invisible click-catcher: no dimming, so the app stays previewable -->
     <div class="fixed inset-0 z-40" @click="close" />
     <div
-      class="fixed right-4 top-16 z-50 flex max-h-[70vh] w-96 flex-col rounded-lg border border-theme-border bg-theme-background shadow-lg"
+      class="fixed right-4 top-16 z-50 flex max-h-[70vh] w-[35rem] flex-col rounded-lg border border-theme-border bg-theme-background shadow-lg"
     >
       <div
         class="flex items-center justify-between border-b border-theme-border px-3 py-2"
@@ -19,74 +19,72 @@
         />
       </div>
 
-      <!-- Layer selection (five named layers + Custom) -->
-      <div class="border-b border-theme-border px-3 py-2">
+      <!-- Rail (layers) + cheat-sheet content -->
+      <div class="flex min-h-0 flex-1">
         <div
-          class="mb-1 text-[10px] font-bold uppercase text-theme-text-very-muted"
+          class="w-44 shrink-0 overflow-y-auto border-r border-theme-border p-2"
         >
-          Layer
+          <KeybindingPicker />
         </div>
-        <KeybindingPicker />
-        <p class="mt-2 text-xs text-theme-text-very-muted">
-          {{ activeLayerMeta.description }}
-        </p>
-      </div>
-
-      <div
-        v-if="isCustomLayer()"
-        class="border-b border-theme-border px-3 py-2 text-xs text-theme-text-very-muted"
-      >
-        Click a binding to remap it (press Escape to cancel). Changes are
-        stored in this browser.
-      </div>
-
-      <!-- Cheat sheet for the active layer, grouped by action kind -->
-      <div class="overflow-y-auto p-2">
-        <section v-for="group in groupedBindings" :key="group.name">
+        <div class="min-w-0 flex-1 overflow-y-auto p-2">
+          <p class="px-1 pb-2 text-xs text-theme-text-very-muted">
+            {{ activeLayerMeta.description }}
+          </p>
           <div
-            class="px-1 pb-1 pt-2 text-[10px] font-bold uppercase text-theme-text-very-muted"
+            v-if="isCustomLayer()"
+            class="px-1 pb-2 text-xs text-theme-text-very-muted"
           >
-            {{ group.name }}
+            Click a binding to remap it (press Escape to cancel). Changes are
+            stored in this browser.
           </div>
-          <div
-            v-for="row in group.rows"
-            :key="row.action"
-            class="flex items-center justify-between rounded px-1 py-0.5 hover:bg-theme-background-elevated"
-          >
-            <span class="text-xs text-theme-text">{{ row.label }}</span>
-            <span class="flex items-center gap-1">
-              <span
-                v-if="row.modified"
-                class="h-1.5 w-1.5 rounded-full bg-theme-brand"
-                title="Modified in Custom"
-              />
-              <button
-                v-if="isCustomLayer()"
-                type="button"
-                class="rounded border border-theme-border bg-theme-background px-1.5 py-0.5 font-mono text-[10px] text-theme-text hover:border-theme-brand"
-                :title="capturing === row.action ? 'Press a key…' : 'Click to remap'"
-                @click="startCapture(row.action)"
-              >
-                {{ capturing === row.action ? "Press a key…" : row.display }}
-              </button>
-              <span
-                v-else
-                class="rounded border border-theme-border bg-theme-background px-1.5 py-0.5 font-mono text-[10px] text-theme-text"
-              >
-                {{ row.display }}
+
+          <!-- Cheat sheet for the active layer, grouped by action kind -->
+          <section v-for="group in groupedBindings" :key="group.name">
+            <div
+              class="px-1 pb-1 pt-2 text-[10px] font-bold uppercase text-theme-text-very-muted"
+            >
+              {{ group.name }}
+            </div>
+            <div
+              v-for="row in group.rows"
+              :key="row.action"
+              class="flex items-center justify-between rounded px-1 py-0.5 hover:bg-theme-background-elevated"
+            >
+              <span class="text-xs text-theme-text">{{ row.label }}</span>
+              <span class="flex items-center gap-1">
+                <span
+                  v-if="row.modified"
+                  class="h-1.5 w-1.5 rounded-full bg-theme-brand"
+                  title="Modified in Custom"
+                />
+                <button
+                  v-if="isCustomLayer()"
+                  type="button"
+                  class="rounded border border-theme-border bg-theme-background px-1.5 py-0.5 font-mono text-[10px] text-theme-text hover:border-theme-brand"
+                  :title="capturing === row.action ? 'Press a key…' : 'Click to remap'"
+                  @click="startCapture(row.action)"
+                >
+                  {{ capturing === row.action ? "Press a key…" : row.display }}
+                </button>
+                <span
+                  v-else
+                  class="rounded border border-theme-border bg-theme-background px-1.5 py-0.5 font-mono text-[10px] text-theme-text"
+                >
+                  {{ row.display }}
+                </span>
+                <button
+                  v-if="isCustomLayer() && row.modified"
+                  type="button"
+                  class="px-1 text-theme-text-muted hover:text-theme-text"
+                  title="Reset to base binding"
+                  @click="resetBinding(row.action)"
+                >
+                  ↺
+                </button>
               </span>
-              <button
-                v-if="isCustomLayer() && row.modified"
-                type="button"
-                class="px-1 text-theme-text-muted hover:text-theme-text"
-                title="Reset to base binding"
-                @click="resetBinding(row.action)"
-              >
-                ↺
-              </button>
-            </span>
-          </div>
-        </section>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   </template>

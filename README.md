@@ -167,7 +167,7 @@ Components communicate over a mitt-based client-side event bus — publishers an
 
 ## Keybindings
 
-Keyboard shortcuts are a **switchable layer** — **navbar menu → Keybindings** picks one of five named layers (**Legacy Flatnotes**, **Obsidian**, **Notion**, **Typora**, **VS Code-lite**) plus a **Custom** layer, and shows a cheat sheet of the active layer's bindings.
+Keyboard shortcuts are a **switchable layer** — **navbar menu → Keybindings** opens a panel whose left rail picks one of five named layers (**Legacy Flatnotes**, **Obsidian**, **Notion**, **Typora**, **VS Code-lite**) plus a **Custom** layer, with a cheat sheet of the active layer's bindings beside it.
 
 - **Cross-layer constants:** `Ctrl+Alt+N` (new note) and `Ctrl+Alt+H` (home) work everywhere — every app's own new-note key is browser-reserved.
 - **Save:** Legacy keeps `Ctrl/Cmd+Enter`; the other layers use `Mod+S` with `Ctrl/Cmd+Enter` kept as an alias. Legacy also restores Flatnotes' `/` for the quick switcher.
