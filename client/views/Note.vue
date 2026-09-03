@@ -213,16 +213,18 @@
           :initialLine="editorInitialLine"
           :addImageBlobHook="addImageBlobHook"
           @change="onEditorInput"
-          @keydown="keydownHandler"
           @selection="onSourceSelection"
         />
+        <!-- Keyed by the active keybinding layer: Milkdown keymaps bake
+             in at editor creation, so a layer switch recreates the editor.
+             The watcher below transfers content across the remount. -->
         <WysiwygEditor
           v-else
           ref="editor"
+          :key="currentLayerId"
           :initialValue="editorInitialValue"
           :addImageBlobHook="addImageBlobHook"
           @change="onEditorInput"
-          @keydown="keydownHandler"
         />
       </div>
     </div>
@@ -276,6 +278,7 @@ import {
 } from "../helpers.js";
 import { parseFragment, serializeFragment } from "../fragment.js";
 import { publish, subscribe, TOPICS } from "../bus/index.js";
+import { currentLayerId } from "../keybindings/store.js";
 import { notePath } from "../notePath.js";
 import { notePathError } from "../validators.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
@@ -1107,17 +1110,6 @@ onMounted(() => {
   ];
 });
 
-function keydownHandler(event) {
-  // Ctrl + Enter to save
-  if ((event.ctrlKey || event.metaKey) && event.key == "Enter") {
-    saveHandler((close = false));
-  }
-  // Escape to exit edit mode
-  if (event.key == "Escape") {
-    closeHandler();
-  }
-}
-
 function createFromWikilink() {
   router.push({ name: "new", query: { path: props.path } });
 }
@@ -1177,6 +1169,14 @@ function isContentChanged() {
 }
 
 watch(() => props.path, init);
+// A keybinding-layer switch recreates the WYSIWYG editor (:key above).
+// Capture the current content first so the remount keeps the user's work
+// (pre-flush: runs before Vue re-renders with the new key).
+watch(currentLayerId, () => {
+  if (editMode.value && editorMode.value === "wysiwyg" && editor.value) {
+    editorInitialValue.value = editor.value.getMarkdown();
+  }
+});
 onMounted(() => {
   init();
 });

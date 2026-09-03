@@ -7,7 +7,7 @@ import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { EditorSelection, EditorState } from "@codemirror/state";
+import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -19,6 +19,7 @@ import { tags } from "@lezer/highlight";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
 import { subscribe, TOPICS } from "../bus/index.js";
+import { cm6LayerKeymap } from "../keybindings/editor-keymap.js";
 import * as sourceActions from "../keybindings/source-actions.js";
 
 const props = defineProps({
@@ -27,11 +28,16 @@ const props = defineProps({
   initialLine: Object,
 });
 
-const emit = defineEmits(["change", "keydown", "selection"]);
+const emit = defineEmits(["change", "selection"]);
 
 const editorElement = ref();
 let view;
 let actionUnsubs = [];
+
+// The active keybinding layer's keymap, reconfigurable on layer change.
+// It must stay the FIRST keymap so the layer's editor:save binding wins
+// the Mod-Enter precedence conflict against defaultKeymap.
+const layerKeymapCompartment = new Compartment();
 
 // Wired to the globnotes theme vars (RGB triplets) so the editor follows
 // theme changes without a remount.
@@ -201,6 +207,7 @@ onMounted(() => {
     state: EditorState.create({
       doc: props.initialValue ?? "",
       extensions: [
+        layerKeymapCompartment.of(cm6LayerKeymap()),
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         markdown({ base: markdownLanguage, codeLanguages: languages }),
@@ -217,9 +224,6 @@ onMounted(() => {
           }
         }),
         EditorView.domEventHandlers({
-          keydown: (event) => {
-            emit("keydown", event);
-          },
           paste: (event) => {
             if (handleFiles(event.clipboardData?.files)) {
               event.preventDefault();
@@ -241,6 +245,15 @@ onMounted(() => {
     subscribe(topic, () => {
       if (view) run(view);
     }));
+  // Reconfigure the layer keymap when the active layer (or a Custom-layer
+  // override) changes.
+  actionUnsubs.push(
+    subscribe(TOPICS.KEYBINDINGS_CHANGE, () => {
+      view?.dispatch({
+        effects: layerKeymapCompartment.reconfigure(cm6LayerKeymap()),
+      });
+    }),
+  );
 });
 
 // Select + scroll to a line range (clamped to the doc). Also used by the

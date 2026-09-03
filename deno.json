@@ -56,6 +56,7 @@
     "primevue": "npm:primevue@3.53.1",
     "prismjs": "npm:prismjs@^1.30.0",
     "prosemirror-state": "npm:prosemirror-state@^1.4.4",
+    "prosemirror-keymap": "npm:prosemirror-keymap@^1.2.3",
     "qrcode": "npm:qrcode@^1.5.4",
     "tailwindcss": "npm:tailwindcss@3.4.19",
     "vite": "npm:vite@8.2.0",

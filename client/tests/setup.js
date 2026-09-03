@@ -20,3 +20,18 @@ Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   writable: true,
 });
+
+// jsdom's Range lacks the client-rect APIs CodeMirror 6's async
+// measurement cycle touches; stub them with empty geometry so measure
+// is a no-op in tests that mount a real EditorView.
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [];
+  Range.prototype.getBoundingClientRect = () => ({
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 0,
+    height: 0,
+  });
+}

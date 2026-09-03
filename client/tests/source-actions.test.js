@@ -20,20 +20,6 @@ import {
   undoAction,
 } from "../keybindings/source-actions.js";
 
-// jsdom's Range lacks the client-rect APIs CM6's async measurement cycle
-// touches; stub them with empty geometry so measure is a no-op.
-if (!Range.prototype.getClientRects) {
-  Range.prototype.getClientRects = () => [];
-  Range.prototype.getBoundingClientRect = () => ({
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    width: 0,
-    height: 0,
-  });
-}
-
 function makeView(doc, from, to) {
   const view = new EditorView({
     parent: document.body,

@@ -22,6 +22,7 @@ import { onBeforeUnmount, onMounted } from "vue";
 import { Plugin } from "prosemirror-state";
 
 import { subscribe, TOPICS } from "../bus/index.js";
+import { milkdownLayerKeymap } from "../keybindings/editor-keymap.js";
 import { callCommand, readActive, readLink, removeLinkCommand } from "./milkdown-commands.js";
 
 const props = defineProps({
@@ -63,7 +64,11 @@ const { get: getEditor } = useEditor((root) =>
       }));
       // ProseMirror plugin: push the active formatting state to the toolbar
       // whenever the selection moves (live highlighting in WYSIWYG).
+      // The layer keymap is PREPENDED so it wins over the preset keymaps
+      // (the priority tie breaks by registration order); the host
+      // recreates the editor on layer switch.
       ctx.update(prosePluginsCtx, (plugins) => [
+        milkdownLayerKeymap(),
         ...plugins,
         new Plugin({
           view: () => ({

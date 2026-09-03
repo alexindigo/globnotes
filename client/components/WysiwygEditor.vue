@@ -37,7 +37,7 @@ defineProps({
   addImageBlobHook: Function,
 });
 
-const emit = defineEmits(["change", "keydown"]);
+const emit = defineEmits(["change"]);
 
 const wrapper = ref();
 const inner = ref();
@@ -60,12 +60,6 @@ function onActiveChange(payload) {
 }
 
 onMounted(() => {
-  // ProseMirror keydown bubbles; forward for the host's shortcuts.
-  wrapper.value?.addEventListener(
-    "keydown",
-    (event) => emit("keydown", event),
-    true,
-  );
   // The wrapper owns the toolbar, so editor:insert-link lands here: open
   // the link popover (prefilled from any link at the selection).
   actionUnsubs.push(
