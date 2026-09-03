@@ -163,7 +163,17 @@ Rendering is a markdown-it pipeline extended by **plugins** — each running in 
 
 ## Event bus
 
-Components communicate over a mitt-based client-side event bus — publishers announce facts like "note renamed" or "theme changed," consumers decide what to refresh. 28 topics cover note lifecycle, sidebar, menus and modals, edit sessions, themes, plugins, files, and search. See [docs/event-bus.md](docs/event-bus.md) for the topic registry and usage guide.
+Components communicate over a mitt-based client-side event bus — publishers announce facts like "note renamed" or "theme changed," consumers decide what to refresh. 59 topics cover note lifecycle, sidebar, menus and modals, edit sessions, themes, plugins, files, search, and the editor action channel (`editor:*` / `app:*`). See [docs/event-bus.md](docs/event-bus.md) for the topic registry and usage guide.
+
+## Keybindings
+
+Keyboard shortcuts are a **switchable layer** — **navbar menu → Keybindings** picks one of five named layers (**Legacy Flatnotes**, **Obsidian**, **Notion**, **Typora**, **VS Code-lite**) plus a **Custom** layer, and shows a cheat sheet of the active layer's bindings.
+
+- **Cross-layer constants:** `Ctrl+Alt+N` (new note) and `Ctrl+Alt+H` (home) work everywhere — every app's own new-note key is browser-reserved.
+- **Save:** Legacy keeps `Ctrl/Cmd+Enter`; the other layers use `Mod+S` with `Ctrl/Cmd+Enter` kept as an alias. Legacy also restores Flatnotes' `/` for the quick switcher.
+- **Honest no-ops:** layers only remap actions globnotes has — Notion's `/` (slash menu) or Obsidian's `Mod+P` (command palette) are bound but do nothing.
+- **Both editors, one channel:** keys reach the editors as `editor:*` actions on the event bus, so source mode and WYSIWYG handle the same layer — formatting actions that WYSIWYG applies natively are applied in source mode as markdown-syntax edits (Typora-style). The layer also fixes latent keymap conflicts: `Mod+Enter` saves instead of inserting a blank line, `Mod+I` toggles italic, and Escape collapses a multi-cursor selection before exiting.
+- **Custom layer:** starts as a copy of Legacy; in the cheat sheet, click any binding and press a new key to remap it (marked entries reset with ↺). Overrides are stored per-browser in `localStorage`, same as the theme choice.
 
 ## Branding
 
