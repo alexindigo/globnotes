@@ -48,6 +48,7 @@
       @hide="publish(TOPICS.SETTINGS_MENU_CLOSE, {})"
     />
     <ThemePicker v-model="themePickerVisible" />
+    <KeybindingsPanel v-model="keybindingsVisible" />
     <PluginSettings v-model="pluginSettingsVisible" />
     <BrandingSettings v-model="brandingVisible" />
   </div>
@@ -61,6 +62,7 @@ import {
   tabLogout,
   tabMenu,
   tabDeviceDesktop,
+  tabKeyboard,
   tabPalette,
   tabPlug,
 } from "../icons.js";
@@ -71,6 +73,7 @@ import { publish, TOPICS } from "../bus/index.js";
 import BrandingSettings from "../components/BrandingSettings.vue";
 import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
+import KeybindingsPanel from "../components/KeybindingsPanel.vue";
 import PluginSettings from "../components/PluginSettings.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
 import ThemePicker from "../components/ThemePicker.vue";
@@ -79,6 +82,7 @@ import { useGlobalStore } from "../globalStore.js";
 import { directoryFromPath } from "../helpers.js";
 import { debugEnabled, toggleDebug } from "../debug.js";
 import { saveViewLineNumbers, viewLineNumbers } from "../pluginSettings.js";
+import { currentLayer } from "../keybindings/store.js";
 import { currentThemeLabel } from "../themes.js";
 import { clearStoredToken } from "../tokenStorage.js";
 
@@ -99,6 +103,7 @@ const menu = ref();
 const route = useRoute();
 const router = useRouter();
 const themePickerVisible = ref(false);
+const keybindingsVisible = ref(false);
 const pluginSettingsVisible = ref(false);
 const brandingVisible = ref(false);
 
@@ -129,6 +134,13 @@ const menuItems = computed(() => [
     icon: tabDeviceDesktop,
     command: () => {
       themePickerVisible.value = true;
+    },
+  },
+  {
+    label: `Keybindings: ${currentLayer().label}`,
+    icon: tabKeyboard,
+    command: () => {
+      keybindingsVisible.value = true;
     },
   },
   {

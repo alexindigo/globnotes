@@ -433,6 +433,16 @@ export const ICON_PATHS = {
     "M9 16v4",
     "M15 16v4",
   ],
+  tabKeyboard: [
+    "M2 8a2 2 0 0 1 2 -2h16a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-16a2 2 0 0 1 -2 -2l0 -8",
+    "M6 10l0 .01",
+    "M10 10l0 .01",
+    "M14 10l0 .01",
+    "M18 10l0 .01",
+    "M6 14l0 .01",
+    "M18 14l0 .01",
+    "M10 14l4 .01",
+  ],
   tabLogin: [
     "M15 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2",
     "M21 12h-13l3 -3",
@@ -562,6 +572,7 @@ export const tabTrash = ICON_PATHS.tabTrash;
 export const tabSave = ICON_PATHS.tabSave;
 export const tabConsole = ICON_PATHS.tabConsole;
 export const tabDeviceDesktop = ICON_PATHS.tabDeviceDesktop;
+export const tabKeyboard = ICON_PATHS.tabKeyboard;
 export const tabLogin = ICON_PATHS.tabLogin;
 export const tabLogout = ICON_PATHS.tabLogout;
 export const tabListNumbers = ICON_PATHS.tabListNumbers;
