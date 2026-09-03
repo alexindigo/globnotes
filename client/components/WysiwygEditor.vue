@@ -26,8 +26,9 @@
 
 <script setup>
 import { MilkdownProvider } from "@milkdown/vue";
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 
+import { subscribe, TOPICS } from "../bus/index.js";
 import WysiwygEditorInner from "./WysiwygEditorInner.vue";
 import WysiwygToolbar from "./WysiwygToolbar.vue";
 
@@ -42,6 +43,12 @@ const wrapper = ref();
 const inner = ref();
 const toolbar = ref();
 const activeState = ref({});
+let actionUnsubs = [];
+
+onBeforeUnmount(() => {
+  actionUnsubs.forEach((fn) => fn());
+  actionUnsubs = [];
+});
 
 function onChange() {
   emit("change");
@@ -58,6 +65,13 @@ onMounted(() => {
     "keydown",
     (event) => emit("keydown", event),
     true,
+  );
+  // The wrapper owns the toolbar, so editor:insert-link lands here: open
+  // the link popover (prefilled from any link at the selection).
+  actionUnsubs.push(
+    subscribe(TOPICS.EDITOR_INSERT_LINK, () => {
+      toolbar.value?.openLinkPopover?.();
+    }),
   );
 });
 

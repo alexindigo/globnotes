@@ -18,6 +18,9 @@ import {
 import { tags } from "@lezer/highlight";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
+import { subscribe, TOPICS } from "../bus/index.js";
+import * as sourceActions from "../keybindings/source-actions.js";
+
 const props = defineProps({
   initialValue: String,
   addImageBlobHook: Function,
@@ -28,6 +31,7 @@ const emit = defineEmits(["change", "keydown", "selection"]);
 
 const editorElement = ref();
 let view;
+let actionUnsubs = [];
 
 // Wired to the globnotes theme vars (RGB triplets) so the editor follows
 // theme changes without a remount.
@@ -163,6 +167,34 @@ function handleFiles(files) {
   return true;
 }
 
+// Editor action channel: handle the formatting/structure actions this
+// source editor supports (as markdown-syntax edits) and decline the rest
+// (no subscriber → silent no-op). Save/exit/toggle-edit belong to Note.vue.
+const sourceActionMap = {
+  [TOPICS.EDITOR_TOGGLE_BOLD]: (v) => sourceActions.toggleWrap(v, "**"),
+  [TOPICS.EDITOR_TOGGLE_ITALIC]: (v) => sourceActions.toggleWrap(v, "*"),
+  [TOPICS.EDITOR_TOGGLE_STRIKETHROUGH]: (v) => sourceActions.toggleWrap(v, "~~"),
+  [TOPICS.EDITOR_TOGGLE_INLINE_CODE]: (v) => sourceActions.toggleWrap(v, "`"),
+  [TOPICS.EDITOR_INSERT_LINK]: sourceActions.insertLink,
+  [TOPICS.EDITOR_HEADING_1]: (v) => sourceActions.setHeading(v, 1),
+  [TOPICS.EDITOR_HEADING_2]: (v) => sourceActions.setHeading(v, 2),
+  [TOPICS.EDITOR_HEADING_3]: (v) => sourceActions.setHeading(v, 3),
+  [TOPICS.EDITOR_HEADING_4]: (v) => sourceActions.setHeading(v, 4),
+  [TOPICS.EDITOR_HEADING_5]: (v) => sourceActions.setHeading(v, 5),
+  [TOPICS.EDITOR_HEADING_6]: (v) => sourceActions.setHeading(v, 6),
+  [TOPICS.EDITOR_PARAGRAPH]: (v) => sourceActions.setHeading(v, 0),
+  [TOPICS.EDITOR_BULLET_LIST]: sourceActions.toggleBulletList,
+  [TOPICS.EDITOR_ORDERED_LIST]: sourceActions.toggleOrderedList,
+  [TOPICS.EDITOR_CHECKLIST_TOGGLE]: sourceActions.toggleChecklist,
+  [TOPICS.EDITOR_CODE_BLOCK]: sourceActions.toggleCodeBlock,
+  [TOPICS.EDITOR_BLOCKQUOTE]: sourceActions.toggleBlockquote,
+  [TOPICS.EDITOR_UNDO]: sourceActions.undoAction,
+  [TOPICS.EDITOR_REDO]: sourceActions.redoAction,
+  [TOPICS.EDITOR_HARD_BREAK]: sourceActions.insertHardBreak,
+  [TOPICS.EDITOR_LIST_INDENT]: sourceActions.indentLines,
+  [TOPICS.EDITOR_LIST_OUTDENT]: sourceActions.outdentLines,
+};
+
 onMounted(() => {
   view = new EditorView({
     parent: editorElement.value,
@@ -203,6 +235,12 @@ onMounted(() => {
     }),
   });
   restoreInitialLine();
+
+  // Subscribe to the editor action channel; unsubscribed on teardown below.
+  actionUnsubs = Object.entries(sourceActionMap).map(([topic, run]) =>
+    subscribe(topic, () => {
+      if (view) run(view);
+    }));
 });
 
 // Select + scroll to a line range (clamped to the doc). Also used by the
@@ -226,6 +264,8 @@ function restoreInitialLine() {
 }
 
 onBeforeUnmount(() => {
+  actionUnsubs.forEach((fn) => fn());
+  actionUnsubs = [];
   view?.destroy();
 });
 

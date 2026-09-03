@@ -18,7 +18,10 @@ import { commonmark } from "@milkdown/preset-commonmark";
 import { gfm } from "@milkdown/preset-gfm";
 import { replaceAll } from "@milkdown/utils";
 import { Milkdown, useEditor } from "@milkdown/vue";
+import { onBeforeUnmount, onMounted } from "vue";
 import { Plugin } from "prosemirror-state";
+
+import { subscribe, TOPICS } from "../bus/index.js";
 import { callCommand, readActive, readLink, removeLinkCommand } from "./milkdown-commands.js";
 
 const props = defineProps({
@@ -151,5 +154,45 @@ defineExpose({
   getLinkAtSelection,
   removeLink,
   focus,
+});
+
+// Editor action channel: handle the actions this WYSIWYG editor supports
+// via the shared command map and decline the rest (no subscriber → silent
+// no-op). Save/exit/toggle-edit belong to Note.vue; insert-link belongs to
+// the wrapper, which owns the toolbar popover.
+const wysiwygCommandMap = {
+  [TOPICS.EDITOR_TOGGLE_BOLD]: "bold",
+  [TOPICS.EDITOR_TOGGLE_ITALIC]: "italic",
+  [TOPICS.EDITOR_TOGGLE_STRIKETHROUGH]: "strike",
+  [TOPICS.EDITOR_TOGGLE_INLINE_CODE]: "inlineCode",
+  [TOPICS.EDITOR_HEADING_1]: "h1",
+  [TOPICS.EDITOR_HEADING_2]: "h2",
+  [TOPICS.EDITOR_HEADING_3]: "h3",
+  [TOPICS.EDITOR_HEADING_4]: "h4",
+  [TOPICS.EDITOR_HEADING_5]: "h5",
+  [TOPICS.EDITOR_HEADING_6]: "h6",
+  [TOPICS.EDITOR_PARAGRAPH]: "paragraph",
+  [TOPICS.EDITOR_BULLET_LIST]: "bulletList",
+  [TOPICS.EDITOR_ORDERED_LIST]: "orderedList",
+  [TOPICS.EDITOR_CHECKLIST_TOGGLE]: "checklist",
+  [TOPICS.EDITOR_CODE_BLOCK]: "codeBlock",
+  [TOPICS.EDITOR_BLOCKQUOTE]: "blockquote",
+  [TOPICS.EDITOR_UNDO]: "undo",
+  [TOPICS.EDITOR_REDO]: "redo",
+  [TOPICS.EDITOR_HARD_BREAK]: "hardBreak",
+  [TOPICS.EDITOR_LIST_INDENT]: "listIndent",
+  [TOPICS.EDITOR_LIST_OUTDENT]: "listOutdent",
+};
+
+let actionUnsubs = [];
+
+onMounted(() => {
+  actionUnsubs = Object.entries(wysiwygCommandMap).map(([topic, name]) =>
+    subscribe(topic, () => callCommand(getEditor(), name)));
+});
+
+onBeforeUnmount(() => {
+  actionUnsubs.forEach((fn) => fn());
+  actionUnsubs = [];
 });
 </script>

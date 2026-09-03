@@ -87,6 +87,26 @@ Mousetrap.bindGlobal("ctrl+alt+h", () => {
   }
 });
 
+// App-level action channel: input sources publish app:* topics, this root
+// component owns the routing effects. The keybinding dispatcher is the
+// primary publisher (per-layer keys); the hardcoded Mousetrap binds above
+// are replaced by it in the keybinding-layers feature.
+subscribe(TOPICS.APP_NEW_NOTE, () => {
+  if (route.name !== "login") {
+    router.push({ name: "new" });
+  }
+});
+subscribe(TOPICS.APP_GO_HOME, () => {
+  if (route.name !== "login") {
+    router.push({ name: "home" });
+  }
+});
+subscribe(TOPICS.APP_OPEN_SWITCHER, () => {
+  if (showNavBar.value) {
+    isQuickSwitcherVisible.value = true;
+  }
+});
+
 getConfig()
   .then((data) => {
     globalStore.config = data;

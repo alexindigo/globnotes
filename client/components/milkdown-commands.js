@@ -6,11 +6,16 @@
  * buttons. Kept framework-free (plain functions over the editor). */
 
 import { commandsCtx, editorViewCtx } from "@milkdown/core";
+import { redoCommand, undoCommand } from "@milkdown/plugin-history";
 import {
   createCodeBlockCommand,
+  insertHardbreakCommand,
+  liftListItemCommand,
+  sinkListItemCommand,
   toggleEmphasisCommand,
   toggleInlineCodeCommand,
   toggleStrongCommand,
+  turnIntoTextCommand,
   wrapInBlockquoteCommand,
   wrapInBulletListCommand,
   wrapInHeadingCommand,
@@ -31,9 +36,39 @@ const commands = {
   orderedList: (ctx) =>
     ctx.get(commandsCtx).call(wrapInOrderedListCommand.key),
   codeBlock: (ctx) => ctx.get(commandsCtx).call(createCodeBlockCommand.key),
+  paragraph: (ctx) => ctx.get(commandsCtx).call(turnIntoTextCommand.key),
+  hardBreak: (ctx) => ctx.get(commandsCtx).call(insertHardbreakCommand.key),
+  listIndent: (ctx) => ctx.get(commandsCtx).call(sinkListItemCommand.key),
+  listOutdent: (ctx) => ctx.get(commandsCtx).call(liftListItemCommand.key),
+  undo: (ctx) => ctx.get(commandsCtx).call(undoCommand.key),
+  redo: (ctx) => ctx.get(commandsCtx).call(redoCommand.key),
+  checklist: toggleTaskListItem,
 };
 
-/** Dispatch a named command. `h1`/`h2`/`h3` wrap into a heading of that
+/** Toggle the checklist state at the selection: a task item flips its
+ * checkbox, a plain list item becomes an unchecked task item. */
+function toggleTaskListItem(ctx) {
+  const view = ctx.get(editorViewCtx);
+  const { state, dispatch } = view;
+  const { $from } = state.selection;
+  for (let d = $from.depth; d > 0; d--) {
+    const node = $from.node(d);
+    if (node.type.name === "list_item" && "checked" in node.attrs) {
+      const checked = node.attrs.checked === null
+        ? false
+        : !node.attrs.checked;
+      dispatch(
+        state.tr.setNodeMarkup($from.before(d), null, {
+          ...node.attrs,
+          checked,
+        }),
+      );
+      return;
+    }
+  }
+}
+
+/** Dispatch a named command. `h1`..`h6` wrap into a heading of that
  * level. Returns false when the editor isn't ready. Refocuses the editor
  * afterward: real-browser clicks move focus off the contenteditable, which
  * dims/drops the native selection highlight; state.selection survives, so
@@ -42,7 +77,7 @@ export function callCommand(editor, name) {
   if (!editor) return false;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    if (name === "h1" || name === "h2" || name === "h3") {
+    if (/^h[1-6]$/.test(name)) {
       const level = Number(name.slice(1));
       ctx.get(commandsCtx).call(wrapInHeadingCommand.key, { level });
     } else {

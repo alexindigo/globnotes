@@ -177,7 +177,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("selectionchange", onSelectionChange);
 });
 
-defineExpose({ refreshActive });
+defineExpose({ refreshActive, openLinkPopover });
 </script>
 
 <style>

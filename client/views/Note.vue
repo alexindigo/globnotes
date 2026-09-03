@@ -276,7 +276,7 @@ import {
   nextUntitledPath,
 } from "../helpers.js";
 import { parseFragment, serializeFragment } from "../fragment.js";
-import { publish, TOPICS } from "../bus/index.js";
+import { publish, subscribe, TOPICS } from "../bus/index.js";
 import { notePath } from "../notePath.js";
 import { notePathError } from "../validators.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
@@ -1089,6 +1089,25 @@ Mousetrap.bind("e", () => {
   }
 });
 
+// Editor action channel: this view owns save/exit/toggle-edit (they drive
+// note state, not editor state). Input sources — keybinding layers today,
+// command palette later — publish the topics; the handlers live here.
+let editorActionUnsubs = [];
+onMounted(() => {
+  editorActionUnsubs = [
+    subscribe(TOPICS.EDITOR_SAVE, () => saveHandler(false)),
+    subscribe(TOPICS.EDITOR_SAVE_CLOSE, () => saveHandler(true)),
+    subscribe(TOPICS.EDITOR_EXIT_EDIT, () => closeHandler()),
+    subscribe(TOPICS.EDITOR_TOGGLE_EDIT, () => {
+      if (editMode.value) {
+        closeHandler();
+      } else if (canModify.value) {
+        editHandler(true);
+      }
+    }),
+  ];
+});
+
 function keydownHandler(event) {
   // Ctrl + Enter to save
   if ((event.ctrlKey || event.metaKey) && event.key == "Enter") {
@@ -1164,7 +1183,11 @@ onMounted(() => {
 });
 // The content-change debounce can outlive the editor (close/leave within 1s
 // of typing); drop it so the callback never dereferences a dead editor.
-onBeforeUnmount(clearContentChangedTimeout);
+onBeforeUnmount(() => {
+  clearContentChangedTimeout();
+  editorActionUnsubs.forEach((fn) => fn());
+  editorActionUnsubs = [];
+});
 onBeforeRouteUpdate(async (to) => {
   if (!(await gateNavigation(to))) return false;
   if (!to.params.path) init();
