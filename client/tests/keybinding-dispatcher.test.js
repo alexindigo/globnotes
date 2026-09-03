@@ -75,6 +75,14 @@ describe("dispatcher", () => {
     expect(toggle).toHaveLength(1);
   });
 
+  it("the legacy layer opens the switcher on /", () => {
+    // The regression fix: '/' re-opens the quick switcher. Bare key,
+    // bound (not globally) so typing '/' in an editor never triggers it.
+    const switcher = collect(TOPICS.APP_OPEN_SWITCHER);
+    pressKey("/".charCodeAt(0));
+    expect(switcher).toHaveLength(1);
+  });
+
   it("rebinds when the layer changes", async () => {
     const switcher = collect(TOPICS.APP_OPEN_SWITCHER);
     const toggle = collect(TOPICS.EDITOR_TOGGLE_EDIT);

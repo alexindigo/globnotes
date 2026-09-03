@@ -37,6 +37,10 @@ const legacyBindings = {
   ...CROSS_LAYER,
   [TOPICS.EDITOR_TOGGLE_EDIT]: same("E"),
   [TOPICS.EDITOR_SAVE]: mod("Enter"),
+  // The rewrite dropped the Flatnotes/upstream quick-switcher key;
+  // Legacy restores it. Bare key → Mousetrap plain bind, so it never
+  // fires while typing in the editors or search inputs.
+  [TOPICS.APP_OPEN_SWITCHER]: same("/"),
 };
 
 export const LAYERS = {

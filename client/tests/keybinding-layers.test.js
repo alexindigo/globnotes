@@ -87,6 +87,18 @@ describe("keybinding layer matrix", () => {
       other: "E",
     });
   });
+
+  it("the legacy layer restores / for the quick switcher", () => {
+    // The regression fix: the rewrite dropped the Flatnotes/upstream
+    // quick-switcher key.
+    expect(LAYERS[LEGACY_LAYER_ID].bindings[TOPICS.APP_OPEN_SWITCHER]).toEqual({
+      mac: "/",
+      other: "/",
+    });
+    // It is a bare key, so the dispatcher binds it (not globally) and it
+    // never fires while typing.
+    expect(isBareKey(LAYERS[LEGACY_LAYER_ID].bindings[TOPICS.APP_OPEN_SWITCHER].other)).toBe(true);
+  });
 });
 
 describe("key notation converters", () => {
