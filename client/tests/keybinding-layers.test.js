@@ -81,6 +81,18 @@ describe("keybinding layer matrix", () => {
     });
   });
 
+  it("descriptions resolve the Mod token per platform", () => {
+    // Module-load resolution: jsdom reports a non-mac platform, so the
+    // prose reads Ctrl (mac builds interpolate Cmd).
+    for (const layer of Object.values(LAYERS)) {
+      expect(layer.description, `${layer.id} description`).not.toContain(
+        "Mod+",
+      );
+    }
+    expect(LAYERS[LEGACY_LAYER_ID].description).toContain("Ctrl+Enter");
+    expect(LAYERS.obsidian.description).toContain("Ctrl+E toggles edit/view");
+  });
+
   it("the legacy layer binds E to toggle edit", () => {
     expect(LAYERS[LEGACY_LAYER_ID].bindings[TOPICS.EDITOR_TOGGLE_EDIT]).toEqual({
       mac: "E",

@@ -13,6 +13,7 @@
  */
 
 import { TOPICS } from "../bus/index.js";
+import { isMac } from "./keys.js";
 
 // Shorthands. `mod(key)` = Cmd on macOS / Ctrl on Win+Linux (the
 // standard editor convention). `same(key)` = identical on all platforms.
@@ -20,6 +21,10 @@ import { TOPICS } from "../bus/index.js";
 const mod = (key) => ({ mac: `Cmd+${key}`, other: `Ctrl+${key}` });
 const same = (key) => ({ mac: key, other: key });
 const ctrl = (key) => ({ mac: `Ctrl+${key}`, other: `Ctrl+${key}` });
+
+// The platform modifier name for prose descriptions: `MOD` interpolates
+// into the description templates so they read natively on every platform.
+const MOD = isMac() ? "Cmd" : "Ctrl";
 
 // Cross-layer constants: every other app's new-note key is
 // browser-reserved, so globnotes' stable core is Ctrl+Alt+N / Ctrl+Alt+H
@@ -48,18 +53,18 @@ export const LAYERS = {
     id: "legacy",
     label: "Legacy Flatnotes",
     description:
-      "The original Flatnotes keymap: E to edit, Ctrl/Cmd+Enter to save, " +
-      "/ for the quick switcher.",
+      `The original Flatnotes keymap: E to edit, ${MOD}+Enter to save, ` +
+      `/ for the quick switcher.`,
     bindings: legacyBindings,
   },
   obsidian: {
     id: "obsidian",
     label: "Obsidian",
     description:
-      "Mod+E toggles edit/view, Mod+O the switcher, Mod+K link, " +
-      "Mod+Alt+1..6 headings. Inline code loses its WYSIWYG Mod+E default " +
-      "(Obsidian doesn't bind inline code). Actions globnotes lacks " +
-      "(Mod+P palette) are no-ops.",
+      `${MOD}+E toggles edit/view, ${MOD}+O the switcher, ${MOD}+K link, ` +
+      `${MOD}+Alt+1..6 headings. Inline code loses its WYSIWYG ${MOD}+E ` +
+      `default (Obsidian doesn't bind inline code). Actions globnotes ` +
+      `lacks (${MOD}+P palette) are no-ops.`,
     bindings: {
       ...CROSS_LAYER,
       [TOPICS.EDITOR_SAVE]: { ...mod("S"), alias: mod("Enter") },
@@ -80,10 +85,10 @@ export const LAYERS = {
     id: "notion",
     label: "Notion",
     description:
-      "Mod+P opens the switcher (Mod+K inserts a link with a selection, " +
-      "switcher otherwise), Mod+E inline code, Mod+Shift+S strikethrough, " +
-      "Tab/Shift+Tab block indent. / (slash menu) is a no-op — globnotes " +
-      "has no slash menu.",
+      `${MOD}+P opens the switcher (${MOD}+K inserts a link with a ` +
+      `selection, switcher otherwise), ${MOD}+E inline code, ` +
+      `${MOD}+Shift+S strikethrough, Tab/Shift+Tab block indent. ` +
+      `/ (slash menu) is a no-op — globnotes has no slash menu.`,
     bindings: {
       ...CROSS_LAYER,
       [TOPICS.EDITOR_SAVE]: { ...mod("S"), alias: mod("Enter") },
@@ -106,10 +111,10 @@ export const LAYERS = {
     id: "typora",
     label: "Typora",
     description:
-      "Mod+S saves, Mod+1..6 headings, Mod+Shift+K code fence, " +
-      "Mod+Shift+Q quote, Mod+Shift+` inline code, Mod+K link, Mod+/ " +
-      "toggles source mode. Browser-reserved keys (Mod+N/T/W) fall back " +
-      "to the cross-layer Ctrl+Alt+N/H constants.",
+      `${MOD}+S saves, ${MOD}+1..6 headings, ${MOD}+Shift+K code fence, ` +
+      `${MOD}+Shift+Q quote, ${MOD}+Shift+\` inline code, ${MOD}+K link, ` +
+      `${MOD}+/ toggles source mode. Browser-reserved keys (${MOD}+N/T/W) ` +
+      `fall back to the cross-layer Ctrl+Alt+N/H constants.`,
     bindings: {
       ...CROSS_LAYER,
       [TOPICS.EDITOR_SAVE]: { ...mod("S"), alias: mod("Enter") },
@@ -130,9 +135,9 @@ export const LAYERS = {
     id: "vscode-lite",
     label: "VS Code-lite",
     description:
-      "Mod+S saves, Mod+P quick open, Mod+B/I bold/italic, Alt+S " +
-      "strikethrough, Alt+C checklist toggle. Line operations keep the " +
-      "source editor defaults.",
+      `${MOD}+S saves, ${MOD}+P quick open, ${MOD}+B/I bold/italic, Alt+S ` +
+      `strikethrough, Alt+C checklist toggle. Line operations keep the ` +
+      `source editor defaults.`,
     bindings: {
       ...CROSS_LAYER,
       [TOPICS.EDITOR_SAVE]: { ...mod("S"), alias: mod("Enter") },
