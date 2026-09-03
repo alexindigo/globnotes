@@ -243,7 +243,6 @@
 import { tabNotesOff } from "../icons.js";
 import { tabSave, tabTrash } from "../icons.js";
 import Icon from "../components/Icon.vue";
-import Mousetrap from "mousetrap";
 import { useToast } from "primevue/usetoast";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
@@ -1081,17 +1080,10 @@ function loadDraft() {
   return localDraft || sessionDraft;
 }
 
-// Keyboard Shortcuts
-// 'e' to edit
-Mousetrap.bind("e", () => {
-  if (editMode.value === false && canModify.value) {
-    editHandler(true);
-  }
-});
-
-// Editor action channel: this view owns save/exit/toggle-edit (they drive
-// note state, not editor state). Input sources — keybinding layers today,
-// command palette later — publish the topics; the handlers live here.
+// Editor action channel: this view owns save/exit/toggle-edit/source-mode
+// (they drive note state, not editor state). Input sources — keybinding
+// layers today, command palette later — publish the topics; the handlers
+// live here.
 let editorActionUnsubs = [];
 onMounted(() => {
   editorActionUnsubs = [
@@ -1103,6 +1095,13 @@ onMounted(() => {
         closeHandler();
       } else if (canModify.value) {
         editHandler(true);
+      }
+    }),
+    subscribe(TOPICS.EDITOR_TOGGLE_SOURCE_MODE, () => {
+      if (editMode.value) {
+        setEditorMode(
+          editorMode.value === "markdown" ? "wysiwyg" : "markdown",
+        );
       }
     }),
   ];

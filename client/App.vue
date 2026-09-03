@@ -51,6 +51,7 @@ import SyncBanner from "./components/SyncBanner.vue";
 import { useGlobalStore } from "./globalStore.js";
 import { initDebugNotifications } from "./debug.js";
 import { initTheme } from "./themes.js";
+import { initDispatcher } from "./keybindings/dispatcher.js";
 import { refreshNoteIndex } from "./noteIndex.js";
 import NavBar from "./partials/NavBar.vue";
 import QuickSwitcher from "./components/QuickSwitcher.vue";
@@ -71,26 +72,13 @@ const quickSwitcherFocusEvent = ref(null);
 
 initDebugNotifications(toast);
 
-// 'CTRL + ALT/OPT + N' to create new note
-Mousetrap.bindGlobal("ctrl+alt+n", () => {
-  if (route.name !== "login") {
-    router.push({ name: "new" });
-    return false;
-  }
-});
-
-// 'CTRL + ALT/OPT + H' to go to home
-Mousetrap.bindGlobal("ctrl+alt+h", () => {
-  if (route.name !== "login") {
-    router.push({ name: "home" });
-    return false;
-  }
-});
+// Keyboard input: app-level keys are bound by the keybinding dispatcher
+// from the active layer (legacy Flatnotes restores Ctrl+Alt+N/H and adds
+// per-layer keys); this root component owns the routing effects.
+initDispatcher();
 
 // App-level action channel: input sources publish app:* topics, this root
-// component owns the routing effects. The keybinding dispatcher is the
-// primary publisher (per-layer keys); the hardcoded Mousetrap binds above
-// are replaced by it in the keybinding-layers feature.
+// component owns the routing effects.
 subscribe(TOPICS.APP_NEW_NOTE, () => {
   if (route.name !== "login") {
     router.push({ name: "new" });

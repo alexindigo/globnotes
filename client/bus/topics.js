@@ -22,6 +22,7 @@ const TOPICS = {
 
   THEME_CHANGE: "theme:change",
   BRAND_CHANGE: "brand:change",
+  KEYBINDINGS_CHANGE: "keybindings:change",
 
   PLUGIN_TOGGLE: "plugin:toggle",
   PLUGIN_AUTO_ENABLE: "plugin:auto-enable",
@@ -49,6 +50,7 @@ const TOPICS = {
   EDITOR_SAVE_CLOSE: "editor:save-close",
   EDITOR_EXIT_EDIT: "editor:exit-edit",
   EDITOR_TOGGLE_EDIT: "editor:toggle-edit",
+  EDITOR_TOGGLE_SOURCE_MODE: "editor:toggle-source-mode",
 
   EDITOR_TOGGLE_BOLD: "editor:toggle-bold",
   EDITOR_TOGGLE_ITALIC: "editor:toggle-italic",
