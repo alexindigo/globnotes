@@ -62,7 +62,10 @@ function basename(path) {
   return path.split("/").pop() ?? path;
 }
 function matchText(note) {
-  return [note.title, ...(note.aliases || []), basename(note.path)];
+  // Title/aliases first (display signal); the full vault path last so
+  // folder-name matches surface (parity with the full search page — the
+  // scorer boosts word-starts after "/", so folder hits rank naturally).
+  return [note.title, ...(note.aliases || []), note.path];
 }
 function kind(item) {
   return item.search ? "srch:" + item.term : item.path;

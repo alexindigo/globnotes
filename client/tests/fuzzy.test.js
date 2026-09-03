@@ -33,7 +33,9 @@ describe("fuzzyFilter", () => {
     { path: "folders/dad/recipes/soup", title: "Soup", aliases: ["broth"] },
     { path: "ideas", title: "Ideas", aliases: [] },
   ];
-  const matchText = (n) => [n.title, ...(n.aliases || []), n.path.split("/").pop()];
+  // Mirrors SwitcherPanel's matchText: title, aliases, full vault path
+  // (folder-name matching parity with the full search page).
+  const matchText = (n) => [n.title, ...(n.aliases || []), n.path];
 
   it("matches on title, alias, or basename", () => {
     expect(fuzzyFilter("soup", items, matchText).map((r) => r.item.path)).toEqual([
@@ -45,6 +47,28 @@ describe("fuzzyFilter", () => {
     expect(fuzzyFilter("ideas", items, matchText).map((r) => r.item.path)).toEqual([
       "ideas",
     ]);
+  });
+
+  it("matches folder segments of the path", () => {
+    expect(fuzzyFilter("recipes", items, matchText).map((r) => r.item.path)).toEqual([
+      "folders/dad/recipes/soup",
+    ]);
+    expect(fuzzyFilter("dad", items, matchText).map((r) => r.item.path)).toEqual([
+      "folders/dad/recipes/soup",
+    ]);
+    expect(fuzzyFilter("folders", items, matchText).map((r) => r.item.path)).toEqual([
+      "folders/dad/recipes/soup",
+    ]);
+  });
+
+  it("ranks a title hit above a folder-only hit", () => {
+    const ranked = [
+      { path: "stories/recipes-book", title: "Recipes Book", aliases: [] },
+      ...items,
+    ];
+    expect(
+      fuzzyFilter("recipes", ranked, matchText).map((r) => r.item.path),
+    ).toEqual(["stories/recipes-book", "folders/dad/recipes/soup"]);
   });
 
   it("returns items in order for empty query", () => {
