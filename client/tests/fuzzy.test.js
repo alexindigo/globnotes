@@ -28,6 +28,25 @@ describe("fuzzyScore", () => {
     expect(short).toBeGreaterThan(long);
   });
 
+  it("penalizes spread: contiguous beats scattered at equal length", () => {
+    const contiguous = fuzzyScore("abc", "abc").score;
+    const scattered = fuzzyScore("abc", "axbxc").score;
+    expect(contiguous).toBeGreaterThan(scattered);
+  });
+
+  it("penalizes wider spreads more than tighter ones", () => {
+    const tight = fuzzyScore("abc", "axxbc").score;
+    const wide = fuzzyScore("abc", "axxxbxxxc").score;
+    expect(tight).toBeGreaterThan(wide);
+  });
+
+  it("leaves single-character queries at gap 0 (no spread penalty)", () => {
+    // A one-char match always spans exactly one character — gap 0 — so the
+    // score is base + word-start + early bonus with no distance deduction.
+    expect(fuzzyScore("a", "a").score).toBe(14); // 1 + word-start 3 + early 10
+    expect(fuzzyScore("a", "xa").score).toBeCloseTo(10.49); // no gap deduction
+  });
+
   it("returns empty positions for empty query", () => {
     expect(fuzzyScore("", "anything")).toEqual({ score: 0, positions: [] });
   });

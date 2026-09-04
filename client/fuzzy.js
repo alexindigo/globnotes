@@ -7,8 +7,12 @@
  * or null when it isn't a subsequence.
  *
  * Scoring rewards: consecutive runs, word starts (after space or /-_:.),
- * exact/prefix matches, and earlier matches; penalizes longer targets.
+ * exact/prefix matches, and earlier matches; penalizes longer targets and
+ * the spread of the match (gap penalty — a scattered subsequence loses to
+ * a contiguous one, which is simply gap 0).
  */
+const GAP_PENALTY = 1;
+
 export function fuzzyScore(query, target) {
   if (!query) return { score: 0, positions: [] };
   const q = query.toLowerCase();
@@ -37,6 +41,11 @@ export function fuzzyScore(query, target) {
   }
   score += Math.max(0, 10 - (positions[0] ?? 0) * 0.5); // earlier first match
   score -= (t.length - q.length) * 0.01; // prefer shorter targets
+  // Distance penalty: the wider the spread of matched characters, the
+  // weaker the hit. Contiguous matches have gap 0 and are untouched.
+  const gap =
+    positions[positions.length - 1] - positions[0] + 1 - q.length;
+  score -= gap * GAP_PENALTY;
   return { score, positions };
 }
 
