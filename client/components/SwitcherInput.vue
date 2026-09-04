@@ -36,7 +36,9 @@
 <script setup>
 // Shared search input — the bare input + tag completion used by the
 // switcher panel (modal and home page). Emits: update:modelValue (live
-// term), submit (Enter), and navigate (arrow-driven result movement).
+// term), submit (Enter), navigate (arrow-driven result movement), jump
+// (Ctrl/Cmd+1–9 → result N), and search (Ctrl+Enter → full search page).
+// Modal-local shortcuts, like ↑↓/Enter — not keybinding-layer actions.
 import { computed, ref, watch } from "vue";
 import { useToast } from "primevue/usetoast";
 
@@ -47,7 +49,14 @@ const props = defineProps({
   modelValue: { type: String, default: "" },
   placeholder: { type: String, default: "Search…" },
 });
-const emit = defineEmits(["update:modelValue", "submit", "navigate", "focus"]);
+const emit = defineEmits([
+  "update:modelValue",
+  "submit",
+  "navigate",
+  "focus",
+  "jump",
+  "search",
+]);
 
 const toast = useToast();
 const input = ref();
@@ -111,6 +120,17 @@ function tagChosen(tag) {
 }
 
 function keydownHandler(event) {
+  // Result shortcuts (Ctrl/Cmd family — bare digits must keep typing).
+  if ((event.ctrlKey || event.metaKey) && /^[1-9]$/.test(event.key)) {
+    emit("jump", Number(event.key));
+    event.preventDefault();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    emit("search");
+    event.preventDefault();
+    return;
+  }
   if (tagMenuVisible.value) {
     if (event.key === "ArrowDown") {
       tagMenuIndex.value = Math.min(tagMenuIndex.value + 1, tagMatches.value.length - 1);

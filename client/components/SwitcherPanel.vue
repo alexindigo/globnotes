@@ -6,6 +6,8 @@
       :placeholder="placeholder"
       @submit="openSelected"
       @navigate="move"
+      @jump="jumpTo"
+      @search="goToSearch"
     />
     <ul class="mt-2 max-h-80 overflow-y-auto">
       <li
@@ -19,12 +21,18 @@
         <template v-if="entry.item.search">
           <span class="truncate text-theme-text">Search for “{{ entry.item.term }}”…</span>
           <span class="ml-3 text-xs text-theme-text-very-muted">full search</span>
+          <span class="key-tag shrink-0" title="Open the full search page">{{ shortcutLabel("Enter") }}</span>
         </template>
         <template v-else>
           <div class="min-w-0 flex-1">
             <div class="flex items-baseline justify-between gap-3">
               <span class="truncate text-theme-text">{{ entry.item.title }}</span>
               <span class="ml-3 shrink-0 truncate text-xs text-theme-text-very-muted">{{ entry.item.path }}</span>
+              <span
+                v-if="i < 9"
+                class="key-tag shrink-0"
+                :title="'Open result ' + (i + 1)"
+              >{{ shortcutLabel(String(i + 1)) }}</span>
             </div>
             <!-- Uniform "what matched" annotation: kind + the matched
                  candidate with its matched characters accented. -->
@@ -57,6 +65,7 @@ import HighlightedText from "./HighlightedText.vue";
 import { fuzzyFilter, windowAroundMatch } from "../fuzzy.js";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
+import { isMac } from "../keybindings/keys.js";
 
 // The switcher shows at most this many note rows (the pinned full-search
 // row is additional).
@@ -168,4 +177,36 @@ function open(item) {
   if (item.search) router.push({ name: "search", query: { term: item.term } });
   else router.push(notePath(item.path));
 }
+// Ctrl/Cmd+N jumps to result N (no-op beyond the row count); Ctrl+Enter
+// opens the full search page with the current query — same as the pinned
+// row's action.
+function jumpTo(n) {
+  const entry = results.value[n - 1];
+  if (entry) open(entry.item);
+}
+function goToSearch() {
+  emit("opened");
+  router.push({ name: "search", query: { term: query.value.trim() } });
+}
+const isMacPlatform = isMac();
+function shortcutLabel(key) {
+  return (isMacPlatform ? "\u2318" : "Ctrl+") + key;
+}
 </script>
+
+<style scoped>
+/* Result shortcut hints — same visual language as the keybindings
+   cheat-sheet key tags (mono, bordered, muted). */
+.key-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid rgb(var(--theme-border));
+  border-radius: 4px;
+  background-color: rgb(var(--theme-background));
+  color: rgb(var(--theme-text-very-muted));
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+</style>

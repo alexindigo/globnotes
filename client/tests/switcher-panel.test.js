@@ -3,7 +3,7 @@
 // matched characters highlighted; long candidates window around the first
 // match; the list is capped at 10 note rows (+ the pinned full-search row),
 // and filename hits outrank folder-segment hits.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createApp, nextTick } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import PrimeVue from "primevue/config";
@@ -126,6 +126,59 @@ describe("switcher panel match annotations", () => {
     const rows = document.querySelectorAll("ul > li");
     expect(rows.length).toBe(11); // 10 capped note rows + pinned full-search row
     expect([...rows].at(-1).textContent).toContain("Search for");
+
+    // --- Shortcut hints: Ctrl+N on note rows (jsdom → non-mac), Ctrl+Enter
+    // on the pinned search row.
+    expect(rows[0].textContent).toContain("Ctrl+1");
+    expect(rows[1].textContent).toContain("Ctrl+2");
+    expect([...rows].at(-1).textContent).toContain("Ctrl+Enter");
+    expect([...rows].at(-1).textContent).not.toContain("Ctrl+1");
+
+    // --- Ctrl+N jumps to result N; no-op beyond the row count.
+    typeQuery("mom");
+    await sleep(30);
+    const pushSpy = vi.spyOn(router, "push").mockResolvedValue();
+    const input = document.querySelector("input");
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "2",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await sleep(30);
+    expect(pushSpy).toHaveBeenCalledWith("/notes/mom/readme");
+    // Beyond the row count (5 rows: 4 notes + pinned): no navigation.
+    pushSpy.mockClear();
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "9",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await sleep(30);
+    expect(pushSpy).not.toHaveBeenCalled();
+
+    // --- Ctrl+Enter goes to the full search page with the query.
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await sleep(30);
+    expect(pushSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "search",
+        query: expect.objectContaining({ term: "mom" }),
+      }),
+    );
+    pushSpy.mockRestore();
 
     app.unmount();
     mountEl.remove();
