@@ -21,8 +21,22 @@
           <span class="ml-3 text-xs text-theme-text-very-muted">full search</span>
         </template>
         <template v-else>
-          <span class="truncate text-theme-text">{{ entry.item.title }}</span>
-          <span class="ml-3 truncate text-xs text-theme-text-very-muted">{{ entry.item.path }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-baseline justify-between gap-3">
+              <span class="truncate text-theme-text">{{ entry.item.title }}</span>
+              <span class="ml-3 shrink-0 truncate text-xs text-theme-text-very-muted">{{ entry.item.path }}</span>
+            </div>
+            <!-- Uniform "what matched" annotation: kind + the matched
+                 candidate with its matched characters accented. -->
+            <div v-if="matchKind(entry)" class="mt-0.5 truncate text-xs">
+              <span class="text-theme-text-very-muted">{{ matchKind(entry) }}: </span>
+              <HighlightedText
+                class="text-theme-text-very-muted"
+                :text="annotation(entry).text"
+                :positions="annotation(entry).positions"
+              />
+            </div>
+          </div>
         </template>
       </li>
       <li v-if="showEmptyMessage" class="px-3 py-2 text-theme-text-muted">No matching notes.</li>
@@ -39,9 +53,14 @@ import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import SwitcherInput from "./SwitcherInput.vue";
-import { fuzzyFilter } from "../fuzzy.js";
+import HighlightedText from "./HighlightedText.vue";
+import { fuzzyFilter, windowAroundMatch } from "../fuzzy.js";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
+
+// The switcher shows at most this many note rows (the pinned full-search
+// row is additional).
+const MAX_RESULTS = 10;
 
 defineProps({ placeholder: { type: String, default: "Search or switch to note…" } });
 const emit = defineEmits(["opened"]);
@@ -62,10 +81,21 @@ function basename(path) {
   return path.split("/").pop() ?? path;
 }
 function matchText(note) {
-  // Title/aliases first (display signal); the full vault path last so
-  // folder-name matches surface (parity with the full search page — the
-  // scorer boosts word-starts after "/", so folder hits rank naturally).
-  return [note.title, ...(note.aliases || []), note.path];
+  // Weighted, kind-tagged candidates: title outranks alias outranks
+  // filename outranks folder. The full path stays a candidate so
+  // cross-segment queries (e.g. "recipes/soup") keep working. The
+  // basename is its own candidate so notes stay findable by filename
+  // even when their display title diverges from it.
+  return [
+    { text: note.title, weight: 1.5, kind: "title" },
+    ...(note.aliases || []).map((alias) => ({
+      text: alias,
+      weight: 1.4,
+      kind: "alias",
+    })),
+    { text: basename(note.path), weight: 1.3, kind: "file" },
+    { text: note.path, weight: 1, kind: "path" },
+  ];
 }
 function kind(item) {
   return item.search ? "srch:" + item.term : item.path;
@@ -85,12 +115,41 @@ const results = computed(() => {
     const metaByPath = new Map(globalStore.noteMeta.map((n) => [n.path, n]));
     ranked = globalStore.recentlyOpened
       .map((path) => metaByPath.get(path) ?? { path, title: basename(path), aliases: [] })
-      .map((item) => ({ item, score: 0, positions: [] }));
+      .map((item) => ({ item, score: 0, positions: [], matchedText: null, matchedKind: null }));
   }
-  const rows = [...ranked];
+  const rows = ranked.slice(0, MAX_RESULTS);
   if (showSearchRow.value) rows.push({ item: { search: true, term } });
   return rows;
 });
+
+// What matched, for the annotation line: a basename-fallback title is the
+// filename (no explicit title exists), so it reads as "file".
+function matchKind(entry) {
+  if (!entry.matchedKind) return null;
+  if (entry.matchedKind === "title" && entry.item.title === basename(entry.item.path)) {
+    return "file";
+  }
+  return entry.matchedKind;
+}
+
+// Annotation payload for a match row: the matched text (the full path for
+// file/path hits, so context survives) windowed around the first match.
+function annotation(entry) {
+  const kind = matchKind(entry);
+  if (kind === "title" || kind === "alias") {
+    return windowAroundMatch(entry.matchedText, entry.positions);
+  }
+  const path = entry.item.path;
+  if (kind === "path") {
+    return windowAroundMatch(path, entry.positions);
+  }
+  // file: basename positions offset into the full path.
+  const offset = path.length - entry.matchedText.length;
+  return windowAroundMatch(
+    path,
+    entry.positions.map((p) => p + offset),
+  );
+}
 
 watch(query, () => {
   index.value = 0;
