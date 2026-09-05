@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full">
+  <div class="flex min-h-0 w-full flex-col">
     <SwitcherInput
       ref="input"
       v-model="query"
@@ -9,46 +9,77 @@
       @jump="jumpTo"
       @search="goToSearch"
     />
-    <ul class="mt-2 max-h-80 overflow-y-auto">
-      <li
-        v-for="(entry, i) in results"
-        :key="kind(entry.item)"
-        class="flex cursor-pointer items-center justify-between rounded px-3 py-2"
-        :class="{ 'bg-theme-background-elevated': i === index }"
-        @click="open(entry.item)"
-        @mousemove="index = i"
-      >
-        <template v-if="entry.item.search">
-          <span class="truncate text-theme-text">Search for “{{ entry.item.term }}”…</span>
-          <span class="ml-3 text-xs text-theme-text-very-muted">full search</span>
-          <span class="key-tag shrink-0" title="Open the full search page">{{ shortcutLabel("Enter") }}</span>
-        </template>
-        <template v-else>
+    <div class="mt-2 flex min-h-0 flex-1 flex-col">
+      <ul class="switcher-results min-h-0 flex-1 overflow-y-auto">
+        <li
+          v-for="(entry, i) in results"
+          :key="kind(entry.item)"
+          class="flex cursor-pointer items-center justify-between gap-3 rounded px-3 py-2"
+          :class="{ 'bg-theme-background-elevated': i === index }"
+          @click="open(entry.item)"
+          @mousemove="index = i"
+        >
           <div class="min-w-0 flex-1">
             <div class="flex items-baseline justify-between gap-3">
-              <span class="truncate text-theme-text">{{ entry.item.title }}</span>
-              <span class="ml-3 shrink-0 truncate text-xs text-theme-text-very-muted">{{ entry.item.path }}</span>
-              <span
-                v-if="i < 9"
-                class="key-tag shrink-0"
-                :title="'Open result ' + (i + 1)"
-              >{{ shortcutLabel(String(i + 1)) }}</span>
+              <span class="truncate text-theme-text">
+                <template v-if="matchKind(entry) === 'title'">
+                  <HighlightedText
+                    :text="annotation(entry).text"
+                    :positions="annotation(entry).positions"
+                  />
+                </template>
+                <template v-else>{{ entry.item.title }}</template>
+              </span>
             </div>
-            <!-- Uniform "what matched" annotation: kind + the matched
-                 candidate with its matched characters accented. -->
-            <div v-if="matchKind(entry)" class="mt-0.5 truncate text-xs">
-              <span class="text-theme-text-very-muted">{{ matchKind(entry) }}: </span>
+            <!-- Line 2, uniform for every kind: the path with the matched
+                 characters accented (plain for title hits — the highlight
+                 is in the title), or the matched alias with a muted
+                 alias: prefix. -->
+            <div class="mt-0.5 truncate text-xs text-theme-text-very-muted">
+              <template v-if="matchKind(entry) === 'alias'">
+                <span>alias: </span>
+                <HighlightedText
+                  :text="annotation(entry).text"
+                  :positions="annotation(entry).positions"
+                />
+              </template>
               <HighlightedText
-                class="text-theme-text-very-muted"
+                v-else-if="matchKind(entry) && matchKind(entry) !== 'title'"
                 :text="annotation(entry).text"
                 :positions="annotation(entry).positions"
               />
+              <template v-else>{{ entry.item.path }}</template>
             </div>
           </div>
-        </template>
-      </li>
-      <li v-if="showEmptyMessage" class="px-3 py-2 text-theme-text-muted">No matching notes.</li>
-    </ul>
+          <span
+            class="key-tag shrink-0"
+            :title="'Open result ' + (i + 1)"
+          >{{ shortcutLabel(String(i + 1)) }}</span>
+        </li>
+        <li v-if="showEmptyMessage" class="px-3 py-2 text-theme-text-muted">No matching notes.</li>
+      </ul>
+      <div
+        v-if="showSearchRow"
+        class="shrink-0"
+      >
+        <div
+          class="flex cursor-pointer items-center justify-between gap-3 rounded px-3 py-2"
+          :class="{ 'bg-theme-background-elevated': index === results.length }"
+          @click="goToSearch()"
+          @mousemove="index = results.length"
+        >
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-theme-text">Search for “{{ query.trim() }}”…</div>
+            <!-- Line 2 mirrors the result rows' path line: same muted style,
+                 same position under the title. -->
+            <div class="mt-0.5 truncate text-xs text-theme-text-very-muted">
+              full search
+            </div>
+          </div>
+          <span class="key-tag shrink-0" title="Open the full search page">{{ shortcutLabel("Enter") }}</span>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -69,7 +100,7 @@ import { isMac } from "../keybindings/keys.js";
 
 // The switcher shows at most this many note rows (the pinned full-search
 // row is additional).
-const MAX_RESULTS = 10;
+const MAX_RESULTS = 9;
 
 defineProps({ placeholder: { type: String, default: "Search or switch to note…" } });
 const emit = defineEmits(["opened"]);
@@ -112,8 +143,9 @@ function kind(item) {
 
 const showSearchRow = computed(() => Boolean(query.value.trim()));
 // The empty message is meaningful only after the user typed something that
-// matched nothing — never on an untouched/empty query.
-const showEmptyMessage = computed(() => showSearchRow.value && results.value.length === 1);
+// matched no notes — never on an untouched/empty query. (results now holds
+// note rows only; the pinned search row is a separate footer.)
+const showEmptyMessage = computed(() => showSearchRow.value && results.value.length === 0);
 const results = computed(() => {
   const term = query.value.trim();
   const matchQuery = term.startsWith("#") ? term.slice(1) : term;
@@ -126,13 +158,12 @@ const results = computed(() => {
       .map((path) => metaByPath.get(path) ?? { path, title: basename(path), aliases: [] })
       .map((item) => ({ item, score: 0, positions: [], matchedText: null, matchedKind: null }));
   }
-  const rows = ranked.slice(0, MAX_RESULTS);
-  if (showSearchRow.value) rows.push({ item: { search: true, term } });
-  return rows;
+  return ranked.slice(0, MAX_RESULTS);
 });
 
-// What matched, for the annotation line: a basename-fallback title is the
-// filename (no explicit title exists), so it reads as "file".
+// What matched — only alias/file/path get a second line; title hits
+// highlight inline in the title itself. A basename-fallback title is the
+// filename, so it reads as "file".
 function matchKind(entry) {
   if (!entry.matchedKind) return null;
   if (entry.matchedKind === "title" && entry.item.title === basename(entry.item.path)) {

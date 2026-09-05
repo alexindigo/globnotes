@@ -1,6 +1,6 @@
 <template>
   <Modal v-model="isVisible" name="search" anchor="center" class="border-none">
-    <div class="p-3">
+    <div class="flex min-h-0 w-full flex-1 flex-col p-3">
       <SwitcherPanel ref="panel" @opened="onPanelOpened" />
     </div>
   </Modal>

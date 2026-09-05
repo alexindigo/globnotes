@@ -14,7 +14,7 @@
       class="rounded-lg border border-theme-border bg-theme-background shadow-lg"
       :class="[
         anchor === 'center'
-          ? 'absolute left-1/2 top-[calc(50%-var(--switcher-lift)-12px)] w-[calc(100%-1rem)] max-w-[524px] -translate-x-1/2 max-h-[calc(50dvh+var(--switcher-lift)-1rem)]'
+          ? 'absolute left-1/2 top-[calc(50%-var(--switcher-lift)-12px)] flex w-[calc(100%-1rem)] max-w-[524px] -translate-x-1/2 flex-col overflow-hidden max-h-[calc(50dvh+var(--switcher-lift)-1rem)]'
           : 'relative mx-2 mt-[30vh] max-w-[500px] grow',
         $attrs.class,
       ]"
