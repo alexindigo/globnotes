@@ -8,8 +8,7 @@
  */
 
 import { AuthType } from "../config.ts";
-import { HttpError } from "../http_error.ts";
-import type { Middleware } from "../router.ts";
+import { HttpError } from "@pathfinder/pathfinder";
 import { state } from "../state.ts";
 
 function tokenFromRequest(req: Request): string | null {
@@ -47,8 +46,3 @@ export async function enforceAuth(req: Request): Promise<void> {
   }
 }
 
-export const requireAuth: Middleware = async (ctx, next) => {
-  if (!ctx.authRequired) return next();
-  await enforceAuth(ctx.req);
-  return next();
-};

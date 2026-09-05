@@ -12,6 +12,7 @@
     "test:client": "vitest run"
   },
   "imports": {
+    "@pathfinder/pathfinder": "jsr:@pathfinder/pathfinder@^0.1.1",
     "@server/": "./server/",
     "@codemirror/commands": "npm:@codemirror/commands@^6.8.0",
     "@codemirror/lang-markdown": "npm:@codemirror/lang-markdown@^6.3.2",

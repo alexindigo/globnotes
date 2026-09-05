@@ -9,7 +9,7 @@
  */
 
 import { isValidNotePath } from "../helpers.ts";
-import { HttpError } from "../http_error.ts";
+import { HttpError } from "@pathfinder/pathfinder";
 
 /** FastAPI/pydantic value-error detail array (pydantic 2.13.4 shape,
  * matching the Python server's exact JSON). */

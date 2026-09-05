@@ -3,21 +3,21 @@
 /**
  * globnotes server entry point (Deno/TypeScript).
  *
- * Bare Deno.serve with an owned router and a file-based endpoint loader;
- * no framework sits between the loader and the handlers.
+ * @pathfinder/pathfinder owns routing: filesystem-routed endpoints
+ * (server/api/endpoints/), an app-wide auth middleware (_/00-auth.ts),
+ * a root crossing-rest catch-all for vault files and note pages, and a
+ * package-owned /_status ops face. A thin wrapper re-homes the configured
+ * path prefix onto each Request before the app sees it.
  */
 
-import { loadEndpoints } from "./api/loader.ts";
+import { pathfinder } from "@pathfinder/pathfinder";
 import { LocalAuth } from "./auth/local.ts";
-import { requireAuth } from "./auth/middleware.ts";
-import { catchAll, serveIndex } from "./catchall.ts";
 import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
 import { PluginManager } from "./plugins/manager.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { logger } from "./logger.ts";
-import { Router } from "./router.ts";
 import { initState } from "./state.ts";
 import { Fts5Indexer } from "./search/fts5.ts";
 
@@ -77,22 +77,21 @@ if (auth?.isTotpEnabled) {
 
 const hostname = getEnv("GLOBNOTES_HOST", { default: "0.0.0.0" });
 const port = Number(getEnv("GLOBNOTES_PORT", { castInt: true, default: 8080 }));
+const prefix = globalConfig.pathPrefix;
 
-const router = new Router({ prefix: globalConfig.pathPrefix });
-router.use(requireAuth);
-await loadEndpoints(router, new URL("./api/endpoints/", import.meta.url));
+const app = await pathfinder({
+  roots: [new URL("./api/endpoints/", import.meta.url)],
+});
 
-// UI page routes (Python's serve_index routes) — always public; the
-// client handles its own auth flow.
-for (const page of ["/", "/_/login", "/_/search", "/_/new"]) {
-  router.add("GET", page, () => serveIndex(), { auth: false });
-}
-
-// Vault files and note pages live in the root URL space: anything not
-// claimed above (API, app pages, built assets) lands here.
-router.setFallback(catchAll);
-
-Deno.serve({ hostname, port }, (req) => router.handle(req));
+Deno.serve({ hostname, port }, (req, info) => {
+  if (!prefix) return app(req, info);
+  const url = new URL(req.url);
+  if (!url.pathname.startsWith(prefix)) {
+    return Response.json({ detail: "Not Found" }, { status: 404 });
+  }
+  const stripped = url.pathname.slice(prefix.length) || "/";
+  return app(new Request(new URL(stripped, url.origin), req), info);
+});
 logger.info(
   `globnotes listening on http://${hostname}:${port}${globalConfig.pathPrefix}`,
 );
