@@ -16,7 +16,7 @@
         @mousedown.prevent
         @click="apply(btn)"
       >
-        <Icon v-if="btn.icon" icon="btn.icon" size="16" />
+        <Icon v-if="btn.icon" :icon="btn.icon" size="16" />
         <span v-else>{{ btn.label }}</span>
       </button>
 
