@@ -127,3 +127,73 @@ render request.
 - Permissions are real: `Deno.env`, `Deno.readFileSync` outside the
   declared paths, and network calls (without the capability) all throw
   `PermissionDenied` inside the Worker.
+
+## Dual-mode plugins (editor half)
+
+A plugin can ship a **client.js** next to `main.js` and take part in the
+WYSIWYG editor, not just the server render. One plugin, two halves:
+
+| Half | Runs in | Loaded via |
+|---|---|---|
+| `main.js` | sandboxed Deno Worker | render pipeline dispatch |
+| `client.js` | the browser, inside the Milkdown editor | `/api/plugins` flag → dynamic `import()` |
+
+```
+plugins/my-plugin/
+├── manifest.json
+├── main.js
+├── client.js        ← optional editor half (default name)
+└── styles.css       ← one stylesheet serves BOTH modes
+```
+
+- The entry name defaults to `client.js`; override with
+  `"client": { "entry": "panel.js" }` in the manifest. The file's
+  presence on disk decides whether the plugin is dual-mode — `/api/plugins`
+  flags those with `client: true`.
+- `client.js` is served fresh from disk by
+  `GET /_/plugins/<id>/client.js` (same no-restart behavior as
+  `styles.css`) and dynamic-imported by the editor for every enabled
+  dual-mode plugin. Disabling the plugin skips the import — the editor
+  falls back to whatever core renders.
+
+### The client module contract
+
+`client.js` default-exports an **array of Milkdown plugin factories**
+(`$remark` / `$node` / `$view` / `$prose` from `@milkdown/utils`):
+
+```js
+import { $view } from "@milkdown/utils";
+
+export default [
+  $view(someNode, () => (node) => ({ dom, contentDOM: null })),
+];
+```
+
+The factories are spread into the editor **after** the core plugins, so a
+plugin's `$view` on a core-defined node overrides core's own view for that
+node. Toggle changes remount the editor (the same keyed-remount pattern as
+keybinding-layer switches).
+
+Bare imports in `client.js` resolve against the **host module registry** —
+an import map the app injects, pointing at a `plugin-sdk` chunk that
+re-exports the host-owned packages (`@milkdown/core`, `@milkdown/ctx`,
+`@milkdown/utils`, `prosemirror-state`, `prosemirror-view`, plus the
+`@globnotes/frontmatter*` shared halves). Import from those specifiers
+directly — never bundle your own copy of host packages, or the plugin's
+factories would operate on different ctx slices than the editor. (This is
+the browser-native equivalent of Grafana's AMD registry and Obsidian's
+host-provided `obsidian` module.)
+
+Reference implementation: `plugins/globnotes-properties/` — the
+Properties panel. Its server half claims the `front_matter` token and
+emits structured markup; its client half overrides the core frontmatter
+node's read-only fallback view with the interactive panel (inline key and
+value editing, chip lists with vault-tag autocomplete, `+ Add property`,
+and an empty-state affordance that creates the block at position 0). One
+`styles.css` styles both halves — the WYSIWYG wrapper carries the same
+`.toastui-editor-contents` class as view mode.
+
+Core owns file-format integrity: the frontmatter node (schema,
+position-0 parser, YAML serializer) lives in the editor core, NOT in the
+plugin, so a disabled plugin degrades the editor to a framed read-only
+view and never corrupts the file.
