@@ -12,7 +12,15 @@ const repoRoot = path.dirname(fileURLToPath(import.meta.url));
 // contract). Production resolves them through the plugin-sdk entry chunk
 // + import map; dev serves plugin modules through vite's own transform
 // pipeline so they hit the same prebundled dep URLs the app uses.
-const SDK_PACKAGES = ["@milkdown/core", "@milkdown/ctx", "@milkdown/utils"];
+const SDK_PACKAGES = [
+  "@milkdown/core",
+  "@milkdown/ctx",
+  "@milkdown/utils",
+  "prosemirror-state",
+  "prosemirror-view",
+  "@globnotes/frontmatter-node",
+  "@globnotes/frontmatter",
+];
 
 // Dual-mode plugin client modules in dev: served fresh from disk on every
 // request, but TRANSFORMED by vite (rewrite URL into /@fs and let the
@@ -73,6 +81,21 @@ export default defineConfig({
   plugins: [vue(), pluginClientModules()],
   root: "client",
   base: "/_/",
+  // The @globnotes/* specifiers are the host-owned shared halves a plugin
+  // client module imports (frontmatter node + YAML subset); they resolve
+  // to the same files the app itself imports, so module instances dedupe.
+  resolve: {
+    alias: [
+      {
+        find: /^@globnotes\/frontmatter-node$/,
+        replacement: path.resolve(repoRoot, "client/frontmatter-node.js"),
+      },
+      {
+        find: /^@globnotes\/frontmatter$/,
+        replacement: path.resolve(repoRoot, "shared/frontmatter.ts"),
+      },
+    ],
+  },
   build: {
     rollupOptions: {
       input: {

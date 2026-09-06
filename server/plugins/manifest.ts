@@ -100,13 +100,28 @@ export function readManifest(dir: string): PluginManifest {
   };
 }
 
+/** The host's shared/ module directory — internal (image) plugins import
+ * the shared YAML subset from it. Vault-shipped plugins don't have one
+ * (../../shared from their dir doesn't exist), so the path is omitted. */
+function hostSharedDir(pluginDir: string): string | null {
+  const shared = path.resolve(pluginDir, "../../shared");
+  try {
+    if (Deno.statSync(shared).isDirectory) return shared;
+  } catch {
+    // No host shared directory for this plugin.
+  }
+  return null;
+}
+
 /** Resolve "vault" and relative read/write paths against the vault root;
  * everything maps onto the Deno Worker permissions shape.
  *
  * `import` follows the network capability: Deno's import permission is
  * host-scoped (local file imports are always allowed — that's how the
  * plugin entry itself loads), so it only gates remote module fetching,
- * which is exactly the network capability's job. */
+ * which is exactly the network capability's job. Local imports outside
+ * the plugin dir (the host's shared/ modules) still need read grants,
+ * which hostSharedDir provides. */
 export function workerPermissions(
   manifest: PluginManifest,
   vaultPath: string,
@@ -119,7 +134,11 @@ export function workerPermissions(
   // explicitly; vault plugins get it via "vault" but listing it is
   // harmless either way.
   const readPaths = [
-    ...new Set([manifest.dir, ...resolvePaths(manifest.capabilities.read)]),
+    ...new Set([
+      manifest.dir,
+      ...resolvePaths(manifest.capabilities.read),
+      ...(hostSharedDir(manifest.dir) ? [hostSharedDir(manifest.dir)!] : []),
+    ]),
   ];
   return {
     net: net === false ? false : net === true ? true : net,

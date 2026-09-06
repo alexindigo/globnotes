@@ -26,10 +26,10 @@
     "npm:@milkdown/preset-commonmark@^7.10.3": "7.22.1",
     "npm:@milkdown/preset-gfm@^7.10.3": "7.22.1",
     "npm:@milkdown/utils@^7.10.3": "7.22.1",
-    "npm:@milkdown/vue@^7.10.3": "7.22.1_vue@3.5.40_prosemirror-state@1.4.4",
+    "npm:@milkdown/vue@^7.10.3": "7.22.1_vue@3.5.40_prosemirror-view@1.42.2",
     "npm:@tabler/icons@3.46.0": "3.46.0",
     "npm:@types/markdown-it@^14.1.2": "14.2.0",
-    "npm:@vitejs/plugin-vue@6.0.8": "6.0.8_vite@8.2.0__sass-embedded@1.100.0__yaml@2.9.0_vue@3.5.40_sass-embedded@1.100.0",
+    "npm:@vitejs/plugin-vue@6.0.8": "6.0.8_vite@8.2.0_vue@3.5.40_sass-embedded@1.100.0",
     "npm:@vue/test-utils@^2.4.11": "2.4.11_@vue+compiler-dom@3.5.40_vue@3.5.40",
     "npm:autoprefixer@10.5.4": "10.5.4_postcss@8.5.25",
     "npm:axios@1.19.0": "1.19.0",
@@ -51,11 +51,12 @@
     "npm:prismjs@^1.30.0": "1.30.0",
     "npm:prosemirror-keymap@^1.2.3": "1.2.3",
     "npm:prosemirror-state@^1.4.4": "1.4.4",
+    "npm:prosemirror-view@^1.42.2": "1.42.2",
     "npm:qrcode@^1.5.4": "1.5.4",
     "npm:tailwindcss@3.4.19": "3.4.19",
     "npm:vite@8.2.0": "8.2.0_sass-embedded@1.100.0_yaml@2.9.0",
-    "npm:vitest@^4.1.10": "4.1.11_jsdom@30.0.1_vite@8.2.0__sass-embedded@1.100.0__yaml@2.9.0_sass-embedded@1.100.0",
-    "npm:vue-router@5.2.0": "5.2.0_pinia@4.0.2__@vue+devtools-api@8.2.1__vue@3.5.40_vite@8.2.0__sass-embedded@1.100.0__yaml@2.9.0_vue@3.5.40_sass-embedded@1.100.0",
+    "npm:vitest@^4.1.10": "4.1.11_jsdom@30.0.1_vite@8.2.0_sass-embedded@1.100.0",
+    "npm:vue-router@5.2.0": "5.2.0_pinia@4.0.2_vite@8.2.0_vue@3.5.40_sass-embedded@1.100.0",
     "npm:vue@3.5.40": "3.5.40"
   },
   "jsr": {
@@ -511,14 +512,14 @@
     "@csstools/color-helpers@6.1.1": {
       "integrity": "sha512-gLNsunvwf3mCi5u5o46/Z/JcJMnhbHSaZ69rkgPzNM3J4s8hWwpPUQB6/tt0EDFyCiWzxANlx+2LJwpYj4zS1w=="
     },
-    "@csstools/css-calc@3.3.0_@csstools+css-parser-algorithms@4.0.0__@csstools+css-tokenizer@4.0.0_@csstools+css-tokenizer@4.0.0": {
+    "@csstools/css-calc@3.3.0_@csstools+css-parser-algorithms@4.0.0_@csstools+css-tokenizer@4.0.0": {
       "integrity": "sha512-c5ihYsPkdG6JCkU2zTMm4+k6r7RXuGxtWYhu5DHMIiF1FHzrfmHL5so11AoFpUv/tu61xfcmT4AmKoFfMPoqdQ==",
       "dependencies": [
         "@csstools/css-parser-algorithms",
         "@csstools/css-tokenizer"
       ]
     },
-    "@csstools/css-color-parser@4.2.0_@csstools+css-parser-algorithms@4.0.0__@csstools+css-tokenizer@4.0.0_@csstools+css-tokenizer@4.0.0": {
+    "@csstools/css-color-parser@4.2.0_@csstools+css-parser-algorithms@4.0.0_@csstools+css-tokenizer@4.0.0": {
       "integrity": "sha512-5+5LEmFuY1AjXdYhmgjTJogtQnP1evJ1zrBZGUNZ0thkpwnnmKxcHdAMn/OtFjAb25zA+jKDVYVRl+5G7rjv1A==",
       "dependencies": [
         "@csstools/color-helpers",
@@ -789,7 +790,7 @@
         "unified"
       ]
     },
-    "@milkdown/crepe@7.22.1_prosemirror-state@1.4.4": {
+    "@milkdown/crepe@7.22.1_prosemirror-view@1.42.2": {
       "integrity": "sha512-0BZTGBRV8lnlKsA3vmPK5Qyomjqd952493AIzfnbhiYwzHpluX03iMtOgHC6E2UcpMXP86P5CXhPUWjzDu+JZQ==",
       "dependencies": [
         "@codemirror/commands",
@@ -1030,7 +1031,7 @@
         "nanoid@6.0.1"
       ]
     },
-    "@milkdown/vue@7.22.1_vue@3.5.40_prosemirror-state@1.4.4": {
+    "@milkdown/vue@7.22.1_vue@3.5.40_prosemirror-view@1.42.2": {
       "integrity": "sha512-9A8BoRzIzQvl7kJaLvPW1OlT7puxNDOabZlHbz/+4hVfG+bhOrK/x7jec7pqxpvvc0Cjm+8h3LU+bJaHlgmszg==",
       "dependencies": [
         "@milkdown/crepe",
@@ -1508,7 +1509,7 @@
         "d3-transition"
       ]
     },
-    "@vitejs/plugin-vue@6.0.8_vite@8.2.0__sass-embedded@1.100.0__yaml@2.9.0_vue@3.5.40_sass-embedded@1.100.0": {
+    "@vitejs/plugin-vue@6.0.8_vite@8.2.0_vue@3.5.40_sass-embedded@1.100.0": {
       "integrity": "sha512-0ZjgOg7oO6farnNGup7yvoM/YXZV84OZxHAwtflItNa/6zzQyVb5LNxyea3FEKEX2XlagIKzrlH7wwxkKgtiew==",
       "dependencies": [
         "@rolldown/pluginutils",
@@ -1527,7 +1528,7 @@
         "tinyrainbow"
       ]
     },
-    "@vitest/mocker@4.1.11_vite@8.2.0__sass-embedded@1.100.0__yaml@2.9.0_sass-embedded@1.100.0": {
+    "@vitest/mocker@4.1.11_vite@8.2.0_sass-embedded@1.100.0": {
       "integrity": "sha512-2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ==",
       "dependencies": [
         "@vitest/spy",
@@ -3633,13 +3634,15 @@
         "prosemirror-transform"
       ]
     },
-    "prosemirror-virtual-cursor@0.4.2_prosemirror-state@1.4.4": {
+    "prosemirror-virtual-cursor@0.4.2_prosemirror-state@1.4.4_prosemirror-view@1.42.2": {
       "integrity": "sha512-pUMKnIuOhhnMcgIJUjhIQTVJruBEGxfMBVQSrK0g2qhGPDm1i12KdsVaFw15dYk+29tZcxjMeR7P5VDKwmbwJg==",
       "dependencies": [
-        "prosemirror-state"
+        "prosemirror-state",
+        "prosemirror-view"
       ],
       "optionalPeers": [
-        "prosemirror-state"
+        "prosemirror-state",
+        "prosemirror-view"
       ]
     },
     "proto-list@1.2.4": {
@@ -4226,7 +4229,7 @@
         "picomatch@4.0.5"
       ]
     },
-    "unplugin@3.3.0_vite@8.2.0__sass-embedded@1.100.0__yaml@2.9.0_sass-embedded@1.100.0_yaml@2.9.0": {
+    "unplugin@3.3.0_vite@8.2.0_sass-embedded@1.100.0_yaml@2.9.0": {
       "integrity": "sha512-qa66K+crbfyE6JK10GjvbJeRrOsuC/JpbnHctfyp/i4oBTxWOzJfRZyDiOk1PtErMFRu8JhsU/wPvOdBNWe5Rg==",
       "dependencies": [
         "@jridgewell/remapping",
@@ -4291,7 +4294,7 @@
       ],
       "bin": true
     },
-    "vitest@4.1.11_jsdom@30.0.1_vite@8.2.0__sass-embedded@1.100.0__yaml@2.9.0_sass-embedded@1.100.0": {
+    "vitest@4.1.11_jsdom@30.0.1_vite@8.2.0_sass-embedded@1.100.0": {
       "integrity": "sha512-fhACrNXUidIbGSBr5FlbuBkO7VWC1ZyLl0DO4CU2DrQoAPxX84Ysxs+HeGQpii5lZWV1Q4gBZTTu49mF+A6Edw==",
       "dependencies": [
         "@vitest/expect",
@@ -4324,7 +4327,7 @@
     "vue-component-type-helpers@3.3.10": {
       "integrity": "sha512-t7IQivQ3oD4D01b7s7a9AWzHAcr3DGBIa/1jZREsFQJcFgSL92gqUkqNiHTYgzTt7QDuJa0I9wCeDwEtZICoBQ=="
     },
-    "vue-router@5.2.0_pinia@4.0.2__@vue+devtools-api@8.2.1__vue@3.5.40_vite@8.2.0__sass-embedded@1.100.0__yaml@2.9.0_vue@3.5.40_sass-embedded@1.100.0": {
+    "vue-router@5.2.0_pinia@4.0.2_vite@8.2.0_vue@3.5.40_sass-embedded@1.100.0": {
       "integrity": "sha512-QAC5i0LEb1GLG0LXDQmHu8L7FX12j0KwU/JTKmLQUJMrn04gQdKP6Du+p0QwpHb3iy71vBlqnHQ8WAfOSAWhqw==",
       "dependencies": [
         "@babel/generator",
@@ -4527,6 +4530,7 @@
       "npm:prismjs@^1.30.0",
       "npm:prosemirror-keymap@^1.2.3",
       "npm:prosemirror-state@^1.4.4",
+      "npm:prosemirror-view@^1.42.2",
       "npm:qrcode@^1.5.4",
       "npm:tailwindcss@3.4.19",
       "npm:vite@8.2.0",

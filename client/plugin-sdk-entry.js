@@ -13,3 +13,7 @@
 export * from "@milkdown/core";
 export * from "@milkdown/ctx";
 export * from "@milkdown/utils";
+export * from "prosemirror-state";
+export * from "prosemirror-view";
+export * from "@globnotes/frontmatter-node";
+export * from "@globnotes/frontmatter";

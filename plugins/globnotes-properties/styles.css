@@ -1,0 +1,197 @@
+/* SPDX-License-Identifier: LGPL-3.0-only */
+
+/* globnotes-properties — one stylesheet serves both halves: the server
+   render (view mode) and the client panel (WYSIWYG; the editor wrapper
+   carries .toastui-editor-contents, so the same selectors apply). */
+
+.properties-panel {
+  border: 1px solid rgb(var(--theme-border));
+  border-radius: 8px;
+  background-color: rgb(var(--theme-background-elevated));
+  padding: 8px 10px;
+  margin-bottom: 1em;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.properties-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.properties-row .properties-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: rgb(var(--theme-text-very-muted));
+}
+
+.properties-key {
+  flex: none;
+  min-width: 76px;
+  max-width: 40%;
+  font-family: Consolas, "Lucida Console", Monaco, "Andale Mono", monospace;
+  font-size: 0.8rem;
+  color: rgb(var(--theme-text-muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.properties-value {
+  min-width: 0;
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: rgb(var(--theme-text));
+  font-size: 0.9rem;
+}
+
+.properties-value-raw {
+  font-family: Consolas, "Lucida Console", Monaco, "Andale Mono", monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  color: rgb(var(--theme-text-muted));
+}
+
+.properties-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--theme-border));
+  background-color: rgb(var(--theme-background));
+  font-size: 0.8rem;
+  color: rgb(var(--theme-text));
+}
+
+/* Client-half interactive bits (absent in the server render). */
+
+.properties-key-input,
+.properties-value-input,
+.properties-chip-input {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background-color: transparent;
+  color: rgb(var(--theme-text));
+  font-size: 0.9rem;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.properties-key-input {
+  flex: none;
+  width: 76px;
+  max-width: 40%;
+  font-family: Consolas, "Lucida Console", Monaco, "Andale Mono", monospace;
+  font-size: 0.8rem;
+  color: rgb(var(--theme-text-muted));
+}
+
+.properties-value-input {
+  flex: 1;
+}
+
+.properties-value-raw {
+  resize: vertical;
+}
+
+.properties-key-input:hover,
+.properties-value-input:hover,
+.properties-chip-input:hover {
+  border-color: rgb(var(--theme-border));
+}
+
+.properties-key-input:focus,
+.properties-value-input:focus,
+.properties-chip-input:focus {
+  border-color: rgb(var(--theme-brand));
+  background-color: rgb(var(--theme-background));
+}
+
+.properties-value-input.properties-value-raw {
+  width: 100%;
+}
+
+.properties-chip-input {
+  width: 64px;
+  font-size: 0.8rem;
+}
+
+.properties-chip-remove {
+  border: none;
+  background: none;
+  color: rgb(var(--theme-text-very-muted));
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0 1px;
+}
+
+.properties-chip-remove:hover {
+  color: rgb(var(--theme-brand));
+}
+
+.properties-add-wrap {
+  position: relative;
+  margin-top: 4px;
+}
+
+.properties-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px dashed rgb(var(--theme-border));
+  border-radius: 6px;
+  background: none;
+  color: rgb(var(--theme-text-muted));
+  font-size: 0.8rem;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.properties-add:hover {
+  color: rgb(var(--theme-brand));
+  border-color: rgb(var(--theme-brand));
+}
+
+.properties-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 160px;
+  border: 1px solid rgb(var(--theme-border));
+  border-radius: 6px;
+  background-color: rgb(var(--theme-background-elevated));
+  box-shadow: 0 6px 18px rgb(var(--theme-shadow));
+  padding: 4px;
+}
+
+.properties-menu-item {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: rgb(var(--theme-text));
+  cursor: pointer;
+}
+
+.properties-menu-item:hover {
+  background-color: rgb(var(--theme-shadow));
+  color: rgb(var(--theme-brand));
+}
+
+.properties-selected {
+  outline: 1px solid rgb(var(--theme-brand) / 0.4);
+}
+
+.properties-empty {
+  padding: 2px 0 6px;
+}

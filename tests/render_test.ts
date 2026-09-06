@@ -112,6 +112,30 @@ Deno.test("render: default plugins", async (t) => {
         assert(!html.includes("callout"));
       });
 
+      await t.step("front matter → Properties panel markup", async () => {
+        const html = await renderMarkdown(
+          "---\ntitle: Doc\ntags: [a, b]\nmeta:\n  nested: true\n---\nbody",
+        );
+        assertStringIncludes(html, 'class="properties-panel"');
+        assertStringIncludes(html, 'data-key="title"');
+        assertStringIncludes(html, ">Doc</span>");
+        // List values render as chips.
+        assertStringIncludes(html, 'class="properties-chip">a</span>');
+        assertStringIncludes(html, 'class="properties-chip">b</span>');
+        // Complex values pass through verbatim (raw kind).
+        assertStringIncludes(html, "nested: true");
+        // The raw YAML block itself never leaks as a plain box.
+        assert(!html.includes('class="front-matter"'));
+      });
+
+      await t.step("properties disabled → safe framed fallback", async () => {
+        const html = await renderMarkdown("---\ntitle: Doc\n---\nbody", {
+          disabled: ["globnotes-properties"],
+        });
+        assertStringIncludes(html, 'class="front-matter"');
+        assertStringIncludes(html, "title: Doc");
+      });
+
       await t.step("mermaid", async () => {
         const html = await renderMarkdown("```mermaid\ngraph TD; A-->B;\n```");
         assertStringIncludes(html, '<pre class="mermaid">');
