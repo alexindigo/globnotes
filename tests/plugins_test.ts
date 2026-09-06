@@ -343,6 +343,114 @@ Deno.test("plugins: server boots with a plugin in the vault", async () => {
   }
 });
 
+Deno.test("plugins: dual-mode manifest client entry", async () => {
+  const vault = await Deno.makeTempDir();
+  try {
+    // Default client entry is the Obsidian-style client.js.
+    writePlugin(vault, "default-client", "");
+    const m1 = readManifest(
+      path.join(vault, ".globnotes", "plugins", "default-client"),
+    );
+    assertEquals(m1.clientEntry, "client.js");
+    // Override via manifest "client": { "entry": ... }.
+    writePlugin(vault, "override-client", "", {
+      client: { entry: "panel.js" },
+    });
+    const m2 = readManifest(
+      path.join(vault, ".globnotes", "plugins", "override-client"),
+    );
+    assertEquals(m2.clientEntry, "panel.js");
+    // A vault-writable manifest cannot point the client endpoint outside
+    // the plugin directory.
+    writePlugin(vault, "escape-client", "", {
+      client: { entry: "../escape.js" },
+    });
+    const m3 = readManifest(
+      path.join(vault, ".globnotes", "plugins", "escape-client"),
+    );
+    assertEquals(m3.clientEntry, "escape.js");
+  } finally {
+    await Deno.remove(vault, { recursive: true });
+  }
+});
+
+Deno.test("plugins: listPlugins flags dual-mode plugins", async () => {
+  const vault = await Deno.makeTempDir();
+  try {
+    writePlugin(vault, "dual", "");
+    Deno.writeTextFileSync(
+      path.join(vault, ".globnotes", "plugins", "dual", "client.js"),
+      "export default [];",
+    );
+    writePlugin(vault, "single", "");
+    Deno.writeTextFileSync(
+      path.join(vault, ".globnotes", "plugins.json"),
+      JSON.stringify({ disabled: ["single"] }),
+    );
+
+    const manager = new PluginManager(vault, nullRpc, 0);
+    const listed = manager.listPlugins();
+    assertEquals(
+      listed.find((p) => p.id === "dual"),
+      { id: "dual", name: "dual", version: "0.0.0", client: true },
+    );
+    // Disabled plugins are excluded entirely (same as before).
+    assert(!listed.some((p) => p.id === "single"));
+  } finally {
+    await Deno.remove(vault, { recursive: true });
+  }
+});
+
+Deno.test("plugins: client module endpoint serves fresh from disk", async () => {
+  const vault = await Deno.makeTempDir();
+  try {
+    const clientFile = path.join(
+      vault,
+      ".globnotes",
+      "plugins",
+      "dualplug",
+      "client.js",
+    );
+    writePlugin(vault, "dualplug", "");
+    Deno.writeTextFileSync(clientFile, "export default [];");
+    writePlugin(vault, "plainplug", "");
+
+    const server = await bootServer({
+      GLOBNOTES_AUTH_TYPE: "none",
+      GLOBNOTES_PATH: vault,
+    });
+    try {
+      const url = `${server.baseUrl}/_/plugins/dualplug/client.js`;
+      const res = await fetch(url);
+      assertEquals(res.status, 200);
+      assertEquals(
+        res.headers.get("content-type"),
+        "text/javascript; charset=utf-8",
+      );
+      assertEquals(await res.text(), "export default [];");
+      // Fresh from disk: an edit shows without a restart.
+      Deno.writeTextFileSync(clientFile, "export default [1];");
+      const res2 = await fetch(url);
+      assertEquals(await res2.text(), "export default [1];");
+      // Unknown id and single-mode plugin are 404s.
+      assertEquals(
+        (await fetch(`${server.baseUrl}/_/plugins/unknown/client.js`)).status,
+        404,
+      );
+      assertEquals(
+        (
+          await fetch(`${server.baseUrl}/_/plugins/plainplug/client.js`)
+        ).status,
+        404,
+      );
+    } finally {
+      await server.close();
+    }
+  } finally {
+    await Deno.remove(vault, { recursive: true });
+  }
+});
+
 Deno.test("plugins: pluginRpc resolves against real state", async () => {
   const vault = await Deno.makeTempDir();
   const prevPath = Deno.env.get("GLOBNOTES_PATH");

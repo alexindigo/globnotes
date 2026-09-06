@@ -44,10 +44,46 @@ export class PluginManager {
       Number(getEnv("GLOBNOTES_RENDER_WORKERS", { castInt: true, default: 2 }));
   }
 
-  /** Manifest-only listing (no worker spawn) for the settings UI. */
-  listPlugins(): { id: string; name: string; version: string }[] {
-    return this.#orderedManifests()
-      .map((m) => ({ id: m.id, name: m.name, version: m.version }));
+  /** Manifest-only listing (no worker spawn) for the settings UI. The
+   * `client` flag marks dual-mode plugins (editor-half entry exists on
+   * disk — stat-check, like getStyleContents). */
+  listPlugins(): {
+    id: string;
+    name: string;
+    version: string;
+    client: boolean;
+  }[] {
+    return this.#orderedManifests().map((m) => ({
+      id: m.id,
+      name: m.name,
+      version: m.version,
+      client: this.#hasClientModule(m),
+    }));
+  }
+
+  /** The plugin's editor-half client module, read fresh from disk each
+   * call so an edit shows without a restart. Null when the plugin has no
+   * client entry (single-mode) or is unknown. */
+  getClientModule(id: string): string | null {
+    const manifest = this.#orderedManifests().find((m) => m.id === id);
+    if (!manifest) return null;
+    const file = path.join(manifest.dir, manifest.clientEntry);
+    try {
+      if (!Deno.statSync(file).isFile) return null;
+      return Deno.readTextFileSync(file);
+    } catch {
+      return null;
+    }
+  }
+
+  #hasClientModule(manifest: ReturnType<typeof readManifest>): boolean {
+    try {
+      return Deno.statSync(
+        path.join(manifest.dir, manifest.clientEntry),
+      ).isFile;
+    } catch {
+      return false;
+    }
   }
 
   /** Stylesheets shipped by enabled plugins (Obsidian-style `styles.css`):

@@ -215,13 +215,14 @@
           @change="onEditorInput"
           @selection="onSourceSelection"
         />
-        <!-- Keyed by the active keybinding layer: Milkdown keymaps bake
-             in at editor creation, so a layer switch recreates the editor.
-             The watcher below transfers content across the remount. -->
+        <!-- Keyed by the active keybinding layer AND the client-plugin
+             epoch: Milkdown keymaps and client plugin factories bake in at
+             editor creation, so either switch recreates the editor. The
+             watchers below transfer content across the remount. -->
         <WysiwygEditor
           v-else
           ref="editor"
-          :key="currentLayerId"
+          :key="editorKey"
           :initialValue="editorInitialValue"
           :addImageBlobHook="addImageBlobHook"
           @change="onEditorInput"
@@ -279,6 +280,7 @@ import {
 import { parseFragment, serializeFragment } from "../fragment.js";
 import { publish, subscribe, TOPICS } from "../bus/index.js";
 import { currentLayerId } from "../keybindings/store.js";
+import { clientPluginEpoch } from "../pluginLoader.js";
 import { notePath } from "../notePath.js";
 import { notePathError } from "../validators.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
@@ -364,6 +366,9 @@ const rewriteScanLink = computed(() => {
 });
 const toast = useToast();
 const editor = ref();
+const editorKey = computed(
+  () => `${currentLayerId.value}:${clientPluginEpoch.value}`,
+);
 const editorMode = ref(loadDefaultEditorMode());
 const editorInitialValue = ref("");
 // Fragment-driven entry state: carries through the draft modal so a
@@ -1169,10 +1174,11 @@ function isContentChanged() {
 }
 
 watch(() => props.path, init);
-// A keybinding-layer switch recreates the WYSIWYG editor (:key above).
-// Capture the current content first so the remount keeps the user's work
-// (pre-flush: runs before Vue re-renders with the new key).
-watch(currentLayerId, () => {
+// A keybinding-layer switch or a client-plugin toggle recreates the
+// WYSIWYG editor (:key above). Capture the current content first so the
+// remount keeps the user's work (pre-flush: runs before Vue re-renders
+// with the new key).
+watch([currentLayerId, clientPluginEpoch], () => {
   if (editMode.value && editorMode.value === "wysiwyg" && editor.value) {
     editorInitialValue.value = editor.value.getMarkdown();
   }

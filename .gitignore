@@ -251,3 +251,4 @@ data/
 .envrc
 .globnotes
 .dsh_config
+client/.vite/

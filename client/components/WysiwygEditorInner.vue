@@ -1,5 +1,7 @@
 <template>
-  <Milkdown />
+  <!-- The editor mounts only once the client plugin factories resolved:
+       the factory below reads the array synchronously at mount. -->
+  <Milkdown v-if="clientPluginsResolved" />
 </template>
 
 <script setup>
@@ -18,10 +20,14 @@ import { commonmark } from "@milkdown/preset-commonmark";
 import { gfm } from "@milkdown/preset-gfm";
 import { replaceAll } from "@milkdown/utils";
 import { Milkdown, useEditor } from "@milkdown/vue";
-import { onBeforeUnmount, onMounted } from "vue";
+import { shallowRef, onMounted, onBeforeUnmount } from "vue";
 import { Plugin } from "prosemirror-state";
 
 import { subscribe, TOPICS } from "../bus/index.js";
+// Client plugin modules (dual-mode contract) load before the editor is
+// created and spread in after gfm — their $view overrides the core
+// frontmatter fallback view.
+import { loadClientPlugins } from "../pluginLoader.js";
 // Core frontmatter node — file-format integrity lives in core, not in a
 // plugin (see frontmatter-node.js).
 import {
@@ -39,6 +45,13 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["change", "activeChange"]);
+
+// Resolved Milkdown plugin factories from the enabled dual-mode plugins
+// (null = still loading — the template gates the editor on it).
+const clientPluginsResolved = shallowRef(null);
+loadClientPlugins().then((factories) => {
+  clientPluginsResolved.value = factories;
+});
 
 // Milkdown is markdown-native: the document round-trips through the
 // remark parser/serializer, so saving emits source, not lossy HTML→md.
@@ -100,12 +113,14 @@ const { get: getEditor } = useEditor((root) =>
     .use(gfm)
     // Frontmatter integrity: remark slice + node schema + doc content
     // override (`frontmatter? block+`) + framed read-only fallback view.
-    // Plugin client modules are spread after gfm below and may override
-    // the fallback view with an interactive one.
     .use(frontmatterRemark)
     .use(frontmatterSchema)
     .use(frontmatterDocSchema)
     .use(frontmatterFallbackView)
+    // Dual-mode plugin client modules LAST: their $view on the core
+    // frontmatter node must register after the fallback view so the
+    // later registration overrides it (the contract).
+    .use(clientPluginsResolved.value ?? [])
     .use(listener)
     .use(history)
     .use(upload)

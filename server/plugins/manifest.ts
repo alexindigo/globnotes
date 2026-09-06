@@ -30,6 +30,11 @@ export interface PluginManifest {
   source?: string;
   license?: string;
   entry: string;
+  /** Editor-half entry filename (dual-mode contract). Overridable via
+   * manifest.json `"client": { "entry": "..." }`; defaults to the
+   * Obsidian-style `client.js`. The file's presence (stat) decides whether
+   * the plugin is dual-mode — absence is the normal single-mode case. */
+  clientEntry: string;
   capabilities: PluginCapabilities;
   /** Absolute path to the plugin directory. */
   dir: string;
@@ -62,6 +67,13 @@ export function readManifest(dir: string): PluginManifest {
     );
   }
   const entry = (raw.entry as string | undefined) ?? "main.js";
+  // Dual-mode contract: the editor-half entry. Basename-only so a
+  // vault-writable manifest cannot point the client endpoint outside the
+  // plugin directory.
+  const clientEntry = path.basename(
+    ((raw.client as { entry?: string } | undefined)?.entry as string) ??
+      "client.js",
+  );
   const caps = (raw.capabilities ?? {}) as Partial<PluginCapabilities>;
   const capabilities: PluginCapabilities = {
     network: caps.network ?? DEFAULT_CAPABILITIES.network,
@@ -82,6 +94,7 @@ export function readManifest(dir: string): PluginManifest {
     source: raw.source as string | undefined,
     license: raw.license as string | undefined,
     entry,
+    clientEntry,
     capabilities,
     dir,
   };
