@@ -22,6 +22,14 @@ import { onBeforeUnmount, onMounted } from "vue";
 import { Plugin } from "prosemirror-state";
 
 import { subscribe, TOPICS } from "../bus/index.js";
+// Core frontmatter node — file-format integrity lives in core, not in a
+// plugin (see frontmatter-node.js).
+import {
+  frontmatterDocSchema,
+  frontmatterFallbackView,
+  frontmatterRemark,
+  frontmatterSchema,
+} from "../frontmatter-node.js";
 import { milkdownLayerKeymap } from "../keybindings/editor-keymap.js";
 import { callCommand, readActive, readLink, removeLinkCommand } from "./milkdown-commands.js";
 
@@ -90,6 +98,14 @@ const { get: getEditor } = useEditor((root) =>
     })
     .use(commonmark)
     .use(gfm)
+    // Frontmatter integrity: remark slice + node schema + doc content
+    // override (`frontmatter? block+`) + framed read-only fallback view.
+    // Plugin client modules are spread after gfm below and may override
+    // the fallback view with an interactive one.
+    .use(frontmatterRemark)
+    .use(frontmatterSchema)
+    .use(frontmatterDocSchema)
+    .use(frontmatterFallbackView)
     .use(listener)
     .use(history)
     .use(upload)

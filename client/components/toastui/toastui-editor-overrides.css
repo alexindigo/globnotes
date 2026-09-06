@@ -193,6 +193,30 @@
   white-space: pre-wrap;
 }
 
+/* Same framed read-only block inside the WYSIWYG editor: the core
+   frontmatter node's fallback view (shown when the Properties plugin is
+   disabled). The editor root carries .toastui-editor-contents, so one
+   selector set covers view and edit modes. */
+.toastui-editor-contents .frontmatter-fallback {
+  background-color: rgb(var(--theme-background-elevated));
+  border: 1px solid rgb(var(--theme-border));
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 1em;
+}
+
+.toastui-editor-contents .frontmatter-fallback pre {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: Consolas, "Lucida Console", Monaco, "Andale Mono", monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: rgb(var(--theme-text-muted));
+  white-space: pre-wrap;
+}
+
 .dark .toastui-editor-contents pre,
 .dark .toastui-editor-md-code-block-line-background {
   background-color: rgb(var(--theme-background-elevated));
