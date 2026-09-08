@@ -1,5 +1,280 @@
 # Changelog
 
+## v2.0.0 (2026-09-07)
+
+The server is rewritten in Deno — the Python original is gone — and
+routing now runs on the published [@pathfinder/pathfinder](https://jsr.io/@pathfinder/pathfinder)
+framework. The user-facing contract is unchanged: same environment
+variables, same vault format, same ports, same `/data` volume. **v1 users
+can pull the new image directly and keep their `/data` as-is.** On top of
+the rewrite, this release lands white-label branding, keybinding layers,
+a dual-mode plugin contract with the Properties panel, a reworked quick
+switcher, Tabler icons, and a wave of search/sidebar/render polish.
+
+### 2026-09-06
+
+#### Feature
+
+The dual-mode plugin batch ships its pilot: the Properties panel renders
+frontmatter as an interactive editor in WYSIWYG and as structured markup
+in view mode, backed by a plugin contract that lets any plugin ship both
+a server half and an editor half. File-format integrity lives in core, so
+disabling the plugin degrades to a safe framed view — frontmatter can no
+longer be corrupted by the WYSIWYG editor at all.
+
+- feat: globnotes-properties plugin — interactive Properties panel (`bf01264`)
+- docs: dual-mode plugin contract (`bd27c8e`)
+
+### 2026-09-05
+
+#### Refactor
+
+Routing moved from the in-house matcher to the published
+`@pathfinder/pathfinder` framework — 656 lines of router, loader, and
+fixture code deleted, with the route table now expressed as plain
+filesystem convention (`#param` segments, method files).
+
+- refactor: migrate routing to @pathfinder/pathfinder (`dd39eb0`)
+
+#### Fix
+
+Two WYSIWYG fixes: the toolbar's icon binding was a static string, so
+every icon button rendered empty and only the H1/H2/H3 labels showed; and
+saving from WYSIWYG corrupted frontmatter (`---` turned into `***`, YAML
+became a setext heading, brackets got escaped). The toolbar renders its
+icons again, and frontmatter is parsed, displayed, and re-serialized
+verbatim — a core frontmatter node owns the file format, independent of
+any plugin toggle.
+
+- fix: WYSIWYG toolbar icon binding (`aa6dfc7`)
+- fix: frontmatter survives WYSIWYG (`ec62c7b`)
+
+#### Feature
+
+The dual-mode plugin contract: a plugin can ship a `client.js` editor
+half alongside its server half. `/api/plugins` flags dual-mode plugins, a
+fresh-from-disk endpoint serves the client module, and the editor loads
+enabled modules with bare imports resolved through a build-injected
+import map plus a `plugin-sdk` chunk (the browser-native equivalent of
+Grafana's AMD registry). A shared YAML subset backs the frontmatter node
+and the panel.
+
+- feat: dual-mode plugin wiring — client module contract (`8da048a`)
+
+### 2026-09-04
+
+#### Feature
+
+The switcher rows got their final shape: the note path under the title,
+the matched letters highlighted inline, and the search row sticky at the
+top of the list.
+
+- feat: switcher rows — path under title, inline match highlights, sticky search row (`157ec47`)
+
+### 2026-09-03
+
+#### Feature
+
+The switcher became a real launcher: rows show *what* matched (fuzzy
+highlights), results support `Ctrl/Cmd+1-9` direct jumps and
+`Ctrl+Enter` to open the full search, keys render platform-resolved
+(`⌘` on macOS) in the cheat sheet and layer descriptions, and folder
+names participate in matching.
+
+- feat: platform-resolved keys in the keybindings cheat sheet (`e306278`)
+- feat: platform-resolved Mod in layer descriptions (`711398c`)
+- feat: quick switcher shows what matched (`5f4a000`)
+- feat: switcher result shortcuts — Ctrl/Cmd+1-9 jump, Ctrl+Enter to search, row hints (`413d57b`)
+
+#### Fix
+
+Switcher matching and ranking tightened: folder names match, and
+scattered subsequence matches now rank below contiguous ones via a
+gap-penalized score.
+
+- fix: quick switcher matches folder names (`e03a872`)
+- fix: switcher ranking — gap-penalized scoring (`9f6e0e6`)
+
+### 2026-09-02
+
+#### Feature
+
+Keybinding layers landed: layered key maps (with a Legacy layer) backed
+by a store, an editor action channel on the event bus, a settings-menu
+entry with picker and cheat-sheet panel, a rail rework for the panel, and
+a restore/quick-switcher binding in the Legacy layer.
+
+- feat: editor action channel on the bus (`face1ed`)
+- feat: keybinding layers data + store (`4e21840`)
+- feat: restore / quick-switcher binding in Legacy layer (`bc98d5f`)
+- feat: keybindings menu item, picker, and cheat-sheet panel (`117419d`)
+- feat: keybindings panel rail rework (`d6dce2d`)
+
+#### Docs
+
+The README documents the keybinding system.
+
+- docs: keybindings section in README (`e7702ce`)
+
+### 2026-09-01
+
+#### Feature
+
+White-label branding: configure the instance name, accent color, and
+logo/icon (svg/png/jpg/webp/gif/ico uploads) from a settings dialog —
+backed by brand config endpoints and a manifest slot; the navbar gains a
+live All Notes count badge.
+
+- feat: All Notes badge — live vault count in the navbar (`7d41549`)
+- feat: brand config and endpoints — name, accent, logo/icon files, manifest (`349ecf3`)
+- feat: branding dialog — name, logo, icon, accent in the settings menu (`38ae7e4`)
+- feat: image uploads for branding logo/icon — svg, png, jpg, webp, gif, ico (`4d50c85`)
+
+#### Refactor
+
+`package.json` is gone — every npm dependency resolves via `deno.json`,
+and prettier resolves through `deno.lock` for ad-hoc formatting.
+
+- chore: drop package.json — all npm deps resolve via deno.json (`ab36820`)
+- chore: resolve prettier in deno.lock for ad-hoc deno-run formatting (`c258fc1`)
+
+#### Docs
+
+The README documents the branding feature.
+
+- docs: branding section in README (`42fe836`)
+
+### 2026-08-31
+
+#### Feature
+
+The switcher panel was extracted into a shared component (one input +
+harness reused by the unified search modal), the search box moved to a
+center-anchored position shared by the Home hero and the modal (one
+`--switcher-lift` constant), mermaid diagrams follow the app's light/dark
+theme, and focusing Home's search box hands the caret straight into the
+modal.
+
+- feat: extract the switcher panel — shared input + harness for the unified search modal (`89f4c05`)
+- feat: center-anchored searchbox — modal anchor prop, Home hero anchor, shared --switcher-lift (`24b3ab6`)
+- feat: mermaid follows the app's light/dark mode (`0d12872`)
+- feat: focus handoff — Home's search box opens the modal with the caret moving with it (`a3967bb`)
+
+### 2026-08-30
+
+#### Feature
+
+The navbar was consolidated (search and All Notes as icon buttons, plugin
+menu item gets the plug icon), Search and the quick switcher unified into
+one modal, and the icon system switched from MDI to Tabler.
+
+- feat: unify Search and quick switcher into one modal (`4f41614`)
+- feat: search icon button in navbar, drop the hardcoded `/` shortcut (`c766b52`)
+- feat: All Notes moves to the navbar as an icon button (`2253764`)
+- feat: switch the icon system from MDI to Tabler (`511a5cd`)
+- feat: plugins menu item uses the plug icon (`8f82c64`)
+
+#### Fix
+
+Modal dismissal and icon fallout from the consolidation: every modal
+dismisses on Escape, navbar action icons share one standard icon set,
+and the Toggle pill renders its full glyph after the Tabler swap.
+
+- fix: dismiss every modal on Escape (`9f1f18e`)
+- fix: navbar action icons share the standard @mdi/js icon set (`7c6af0f`)
+- fix: Toggle icons render again after the Tabler swap (`04db5c6`)
+
+#### Style
+
+The new-note button uses a pencil-in-box icon with the label moved to a
+tooltip.
+
+- style: new-note button uses pencil-in-box icon, label moves to tooltip (`3701000`)
+
+### 2026-08-29
+
+#### Style
+
+Sidebar sections get a uniform empty line above each for consistent
+rhythm.
+
+- style: uniform empty line above each sidebar section (`7c7eaa7`)
+
+### 2026-08-28
+
+#### Refactor
+
+The note vocabulary was swapped everywhere: `path` is the path, `title`
+is the display title — a prerequisite for the title-based switcher and
+index work below.
+
+- refactor: swap note vocabulary — path is the path, title is the display title (`ee2955a`)
+
+#### Feature
+
+The note index gained display titles and aliases, and the quick switcher
+arrived: fuzzy-jump to any note by title, alias, or path.
+
+- feat: enrich note-index with display title and aliases (`9a8db3b`)
+- feat: quick switcher — fuzzy-jump to a note by title, alias, or path (`7192a80`)
+
+### 2026-08-27
+
+#### Feature
+
+The event bus kept expanding its coverage: settings-menu and search-menu
+open/close, file ops, search scope, ref-rewrite, line numbers, modal
+lifecycle, debug toggle, and live-search facts are all published for
+plugins and UI panels.
+
+- feat: debug toggle surfaces bus events as toasts (`82fbcae`)
+- feat: publish settings-menu and search-menu open/close events (`253eefc`)
+- feat: publish file, search-scope, ref-rewrite, and line-number facts (`d6b31db`)
+- feat: publish modal lifecycle, debug-toggle, and live-search facts (`77646c7`)
+
+### 2026-08-26
+
+#### Build
+
+The client build and test suite now run under Deno — npm is dropped from
+the build pipeline entirely (the package-lock.json deletion alone removes
+9187 lines).
+
+- build: run client build and tests under Deno, drop npm (`6a0403c`)
+
+#### Refactor
+
+SCSS overrides replaced with plain CSS; the sass-embedded dependency is
+gone.
+
+- refactor: replace SCSS overrides with plain CSS, drop sass-embedded (`e043e57`)
+
+#### Feature
+
+A client-side event bus arrived, and the note index stays fresh via
+lifecycle events; search, editor-mode, and edit-session facts publish
+onto it for downstream features.
+
+- feat: client event bus; note index stays fresh via lifecycle events (`a1b524a`)
+- feat: publish search, editor-mode, and edit-session facts on the bus (`521c270`)
+
+#### Fix
+
+The open note re-renders when plugin settings change; a prefer-const
+cleanup in the search titles parser.
+
+- fix: re-render open note when plugin settings change (`23ed046`)
+- fix: prefer-const in search titles parser (`1ec6914`)
+
+#### Docs
+
+README gained an Obsidian-flavored support section and an app
+screenshot; the event bus is documented and the Development section
+corrected.
+
+- docs: add Obsidian-flavored support section to README (`9788b89`)
+- docs: add app screenshot to README (`067b515`)
+- docs: document event bus and fix Development section (`e3ac724`)
 ## v1.2.0 (2026-08-21)
 
 ### 2026-08-20
