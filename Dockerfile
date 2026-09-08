@@ -17,7 +17,7 @@ COPY deno.json \
     vite.config.js \
     ./
 
-RUN deno install --frozen --allow-scripts=npm:@rolldown/binding-linux-x64-musl
+RUN deno install --frozen --allow-scripts
 
 COPY client ./client
 RUN deno task build:client
