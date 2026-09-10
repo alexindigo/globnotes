@@ -4,7 +4,7 @@ ARG BUILD_DIR=/build
 ARG BUILDPLATFORM
 
 # Build Container
-FROM --platform=$BUILDPLATFORM denoland/deno:alpine AS build
+FROM --platform=$BUILDPLATFORM denoland/deno:2.9.6 AS build
 
 ARG BUILD_DIR
 
@@ -17,8 +17,9 @@ COPY deno.json \
     vite.config.js \
     ./
 
-RUN deno install --frozen --allow-scripts
+RUN deno install --frozen
 
+COPY shared ./shared
 COPY client ./client
 RUN deno task build:client
 

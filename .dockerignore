@@ -10,6 +10,7 @@
 !healthcheck.sh
 !LICENSE
 !THIRD-PARTY-NOTICES.md
+!shared/**
 !plugins/**
 !postcss.config.js
 !server/**
