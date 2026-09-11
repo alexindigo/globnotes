@@ -103,7 +103,7 @@
           style="danger"
           :disabled="!hasBranding"
           title="Clear name, accent, and uploaded logo/icon"
-          @click="reset"
+          @click="askReset"
         />
         <div class="flex gap-2">
           <CustomButton label="Cancel" @click="isVisible = false" />
@@ -115,6 +115,18 @@
           />
         </div>
       </div>
+
+      <!-- Reset confirmation: names exactly what will be wiped. -->
+      <ConfirmModal
+        v-model="resetVisible"
+        title="Reset branding?"
+        :message="resetMessage"
+        confirm-button-text="Reset"
+        confirm-button-style="danger"
+        cancel-button-text="Cancel"
+        @confirm="reset"
+        @cancel="resetVisible = false"
+      />
     </div>
   </Modal>
 </template>
@@ -130,6 +142,7 @@ import { tabClose, tabFileExport, tabTrash } from "../icons.js";
 import { useGlobalStore } from "../globalStore.js";
 import { getToastOptions } from "../helpers.js";
 import CustomButton from "./CustomButton.vue";
+import ConfirmModal from "./ConfirmModal.vue";
 import Modal from "./Modal.vue";
 import TextInput from "./TextInput.vue";
 
@@ -267,7 +280,25 @@ async function save() {
   }
 }
 
+const resetVisible = ref(false);
+const resetMessage = computed(() => {
+  const parts = [];
+  if (brand.value.name) parts.push(`name "${brand.value.name}"`);
+  if (brand.value.accent) parts.push(`accent ${brand.value.accent}`);
+  if (brandFiles.value.length) {
+    parts.push(
+      `${brandFiles.value.length} uploaded file${brandFiles.value.length > 1 ? "s" : ""} (${brandFiles.value.join(", ")})`,
+    );
+  }
+  return `This clears ${parts.join(", ")}. The instance returns to the default globnotes branding.`;
+});
+
+function askReset() {
+  resetVisible.value = true;
+}
+
 async function reset() {
+  resetVisible.value = false;
   const form = new FormData();
   form.append("name", "");
   form.append("accent", "");
