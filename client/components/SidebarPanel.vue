@@ -58,7 +58,7 @@
       <TextInput v-model="filterText" placeholder="Filter..." v-focus />
       <button
         type="button"
-        class="absolute top-1/2 right-4 -translate-y-1/2 cursor-pointer text-theme-text-muted hover:text-theme-text"
+        class="absolute top-1/2 right-4 -translate-y-1/2 cursor-pointer text-theme-text-muted hover:text-theme-brand"
         title="Reset filter"
         @click="filterText = ''"
       >
@@ -81,7 +81,7 @@
           :key="note.path"
           :to="notePath(note.path)"
           :title="note.path"
-          class="flex items-center truncate rounded px-1 py-0.5 hover:bg-theme-background-elevated"
+          class="flex items-center truncate rounded px-1 py-0.5 hover:text-theme-brand"
           :class="{
             'bg-theme-background-elevated text-theme-text':
               note.path === activePath,
@@ -112,7 +112,7 @@
         <!-- Folder row -->
         <div
           v-if="row.type === 'folder'"
-          class="group flex w-full cursor-pointer items-center rounded px-1 py-0.5 text-theme-text-muted hover:bg-theme-background-elevated"
+          class="group flex w-full cursor-pointer items-center rounded px-1 py-0.5 text-theme-text-muted hover:text-theme-brand"
         >
           <button
             class="flex min-w-0 grow items-center"
@@ -136,7 +136,7 @@
              
               icon="tabChevronRight"
               size="1em"
-              class="text-theme-text-very-muted hover:text-theme-text"
+              class="text-theme-text-very-muted hover:text-theme-brand"
             />
           </RouterLink>
         </div>
@@ -144,7 +144,7 @@
         <RouterLink
           v-else
           :to="notePath(row.note.path)"
-          class="flex items-center truncate rounded px-1 py-0.5 hover:bg-theme-background-elevated"
+          class="flex items-center truncate rounded px-1 py-0.5 hover:text-theme-brand"
           :class="{
             'bg-theme-background-elevated text-theme-text':
               row.note.path === activePath,

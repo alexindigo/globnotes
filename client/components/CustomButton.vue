@@ -4,9 +4,9 @@
     :disabled="disabled"
     :title="title"
     :class="{
-      'bg-theme-background text-theme-text-muted enabled:hover:bg-theme-background-elevated':
+      'bg-theme-background text-theme-text-muted enabled:hover:text-theme-brand':
         style === 'subtle',
-      'border bg-theme-background enabled:hover:bg-theme-background-elevated':
+      'border bg-theme-background text-theme-text enabled:hover:text-theme-brand enabled:hover:border-theme-brand':
         style === 'cta',
       'border border-theme-danger text-theme-danger enabled:hover:bg-theme-danger/10':
         style === 'danger',

@@ -96,7 +96,7 @@
               <RouterLink
                 v-else
                 :to="folderTarget(crumb.folder)"
-                class="hover:text-theme-text hover:underline"
+                class="hover:text-theme-brand hover:underline"
                 >{{ crumb.label }}/</RouterLink
               >
             </template>
@@ -188,7 +188,7 @@
             :class="
               editorMode === 'markdown'
                 ? 'bg-theme-background-elevated text-theme-text'
-                : 'text-theme-text-muted hover:text-theme-text'
+                : 'text-theme-text-muted hover:text-theme-brand'
             "
             @click="setEditorMode('markdown')"
           >
@@ -200,7 +200,7 @@
             :class="
               editorMode === 'wysiwyg'
                 ? 'bg-theme-background-elevated text-theme-text'
-                : 'text-theme-text-muted hover:text-theme-text'
+                : 'text-theme-text-muted hover:text-theme-brand'
             "
             @click="setEditorMode('wysiwyg')"
           >
@@ -212,7 +212,7 @@
             :class="
               editorMode === 'preview'
                 ? 'bg-theme-background-elevated text-theme-text'
-                : 'text-theme-text-muted hover:text-theme-text'
+                : 'text-theme-text-muted hover:text-theme-brand'
             "
             @click="setEditorMode('preview')"
           >

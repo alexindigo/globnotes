@@ -15,7 +15,7 @@
           v-for="(entry, i) in results"
           :key="kind(entry.item)"
           class="flex cursor-pointer items-center justify-between gap-3 rounded px-3 py-2"
-          :class="{ 'bg-theme-background-elevated': i === index }"
+          :class="{ 'bg-theme-background-elevated': i === index, 'key-tag-active': i === index }"
           @click="open(entry.item)"
           @mousemove="index = i"
         >
@@ -239,5 +239,11 @@ function shortcutLabel(key) {
     monospace;
   font-size: 10px;
   white-space: nowrap;
+}
+/* The active row's key pill plays the role of an icon — it follows the
+   icon-hover convention (brand text + brand border). */
+.key-tag-active .key-tag {
+  border-color: rgb(var(--theme-brand));
+  color: rgb(var(--theme-brand));
 }
 </style>

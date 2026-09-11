@@ -8,7 +8,7 @@
       :class="{
         'bg-theme-background-elevated text-theme-text':
           layer.id === currentLayerId,
-        'text-theme-text-muted hover:bg-theme-background-elevated/60 hover:text-theme-text':
+        'text-theme-text-muted hover:text-theme-brand':
           layer.id !== currentLayerId,
       }"
       :title="layer.description"
