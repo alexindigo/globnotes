@@ -177,6 +177,7 @@
       <ServerViewer
         v-if="!editMode"
         :title="note.path"
+        :line="viewLine"
         class="toast-viewer pb-4"
       />
       <div v-if="editMode" class="flex h-full min-h-0 flex-col">
@@ -205,6 +206,18 @@
           >
             WYSIWYG
           </button>
+          <button
+            type="button"
+            class="rounded px-2 py-1"
+            :class="
+              editorMode === 'preview'
+                ? 'bg-theme-background-elevated text-theme-text'
+                : 'text-theme-text-muted hover:text-theme-text'
+            "
+            @click="setEditorMode('preview')"
+          >
+            Preview
+          </button>
         </div>
         <MarkdownEditor
           v-if="editorMode === 'markdown'"
@@ -220,13 +233,21 @@
              editor creation, so either switch recreates the editor. The
              watchers below transfer content across the remount. -->
         <WysiwygEditor
-          v-else
+          v-else-if="editorMode === 'wysiwyg'"
           ref="editor"
           :key="editorKey"
           :initialValue="editorInitialValue"
           :addImageBlobHook="addImageBlobHook"
           @change="onEditorInput"
         />
+        <!-- Preview: the UNSAVED buffer rendered server-side (plugins +
+             disabled switches honored like the GET path), debounced. -->
+        <div v-else class="min-h-0 flex-1 overflow-y-auto">
+          <div
+            class="toastui-editor-contents rendered-markdown preview-buffer"
+            v-html="previewHtml"
+          />
+        </div>
       </div>
     </div>
   </LoadingIndicator>
@@ -256,10 +277,13 @@ import {
   deleteNote,
   getNote,
   getNotes,
+  getPlugins,
   previewRename,
+  renderBuffer,
   updateNote,
   uploadFile,
 } from "../api.js";
+import { disabledPluginIds } from "../pluginSettings.js";
 import { Note } from "../classes.js";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import CustomButton from "../components/CustomButton.vue";
@@ -378,6 +402,11 @@ let pendingInitialLine = null;
 let pendingPush = false;
 const editorInitialLine = ref(null);
 const editorLine = ref(null);
+// Preview tab state: the server-rendered buffer HTML.
+const previewHtml = ref("");
+// View-mode line-link target (from the #view:L fragment) — read by
+// ServerViewer's highlight.
+const viewLine = ref(null);
 
 function setEditorMode(mode, writeUrl = true) {
   if (mode === editorMode.value) return;
@@ -387,17 +416,21 @@ function setEditorMode(mode, writeUrl = true) {
     editorInitialValue.value = editor.value.getMarkdown();
   }
   editorMode.value = mode;
-  localStorage.setItem("defaultEditorMode", mode);
+  if (mode !== "preview") {
+    // Preview is a view over the buffer, not a persisted editor pref.
+    localStorage.setItem("defaultEditorMode", mode);
+  }
   publish(TOPICS.EDITOR_MODE_CHANGE, { mode });
   // The caret doesn't transfer across editors; the fresh editor reports
   // its own selection once the user interacts with it.
   editorLine.value = null;
   editorInitialLine.value = null;
   if (writeUrl) writeFragment(currentFragment(), true);
+  if (mode === "preview") schedulePreviewRefresh();
 }
 
 function currentFragment() {
-  if (!editMode.value) return { mode: null };
+  if (!editMode.value) return { mode: "view", line: viewLine.value };
   if (editorMode.value === "wysiwyg") return { mode: "edit" };
   return { mode: "source", line: editorLine.value };
 }
@@ -426,6 +459,31 @@ function syncNoteFragment(frag) {
 function onEditorInput() {
   noteDirty.value = true;
   startContentChangedTimeout();
+  schedulePreviewRefresh();
+}
+
+// Preview refresh: debounced server render of the UNSAVED buffer. The
+// rendered HTML reflects the editor exactly (plugins + disabled switches
+// honored like the GET path) — the preview never lies about unsaved work.
+let previewTimer = null;
+async function schedulePreviewRefresh() {
+  if (editorMode.value !== "preview") return;
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    previewTimer = null;
+    if (editorMode.value !== "preview") return;
+    // The buffer was captured into editorInitialValue at switch time —
+    // the editor is unmounted while the preview is up.
+    try {
+      const plugins = await getPlugins();
+      previewHtml.value = await renderBuffer(
+        editorInitialValue.value,
+        disabledPluginIds(plugins),
+      );
+    } catch (e) {
+      previewHtml.value = '<p class="render-error">Preview render failed.</p>';
+    }
+  }, 400);
 }
 
 function onSourceSelection(line) {
@@ -465,6 +523,9 @@ function init() {
         note.value = data;
         loadingIndicator.value.setLoaded();
         enterEditFromFragment();
+        // View-mode line links: #view:L highlights the rendered lines.
+        const frag = parseFragment(window.location.hash);
+        viewLine.value = frag.mode === "view" ? frag.line : null;
       })
       .catch((error) => {
         if (error.response?.status === 404) {
@@ -552,11 +613,15 @@ async function gateNavigation(to) {
       canModify.value &&
       to.name === "note" &&
       to.params.path === note.value.path &&
-      toFrag.mode
+      toFrag.mode &&
+      toFrag.mode !== "view"
     ) {
       pendingEditorMode = toFrag.mode === "edit" ? "wysiwyg" : "markdown";
       pendingInitialLine = toFrag.line || null;
       editHandler();
+    } else if (toFrag.mode === "view") {
+      // View-mode line link: highlight, no edit entry.
+      viewLine.value = toFrag.line;
     }
     return true;
   }
@@ -1174,6 +1239,17 @@ function isContentChanged() {
 }
 
 watch(() => props.path, init);
+// URL-driven #view:L navigation while already viewing (same note): the
+// route update path doesn't reload the note, so pick up the highlight here.
+watch(
+  () => route.hash,
+  (hash) => {
+    if (editMode.value) return;
+    const frag = parseFragment(hash);
+    if (frag.mode === "view") viewLine.value = frag.line;
+    else if (!frag.mode) viewLine.value = null;
+  },
+);
 // A keybinding-layer switch or a client-plugin toggle recreates the
 // WYSIWYG editor (:key above). Capture the current content first so the
 // remount keeps the user's work (pre-flush: runs before Vue re-renders

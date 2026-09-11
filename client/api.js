@@ -147,6 +147,19 @@ export async function getRenderedHtml(
   }
 }
 
+/** Render an unsaved markdown buffer through the full pipeline (plugins
+ * active, disabled switches honored) — the Preview tab's data source. */
+export async function renderBuffer(markdown, disabled = []) {
+  const params = {};
+  if (disabled.length) params.disabled = disabled.join(",");
+  const response = await api.post("render", markdown, {
+    params,
+    headers: { "content-type": "text/markdown" },
+    transformResponse: (data) => data,
+  });
+  return response.data;
+}
+
 export async function getPlugins() {
   try {
     const response = await api.get("plugins");
