@@ -18,13 +18,15 @@ import { disabledPluginIds, viewLineNumbers } from "../pluginSettings.js";
 
 const props = defineProps({
   title: String,
+  // View-mode line-link fragment: { from, to } source-line range to
+  // highlight after render (from the #view:L aspect).
+  line: Object,
 });
 
 const viewerElement = ref();
 // The container class appears only when content does — the old viewer
 // rendered both atomically, and e2e/style hooks poll the class.
 const loaded = ref(false);
-
 // Tabler icons are stroke-based multi-path; render them inline for the
 // dynamically-created copy buttons (no Vue component available there).
 function tablerSvg(paths) {
@@ -163,6 +165,20 @@ function initMermaid() {
 // Fetches the server-rendered HTML (markdown-it + plugin pipeline) and
 // mounts it; the container keeps the toastui-editor-contents class so
 // existing content CSS applies unchanged during the transition.
+
+function highlightLines() {
+  if (!props.line || !viewerElement.value) return;
+  viewerElement.value
+    .querySelectorAll("[data-source-line].line-highlight")
+    .forEach((el) => el.classList.remove("line-highlight"));
+  const from = Math.max(1, props.line.from);
+  const to = Math.max(from, props.line.to);
+  for (const el of viewerElement.value.querySelectorAll("[data-source-line]")) {
+    const n = parseInt(el.getAttribute("data-source-line"), 10) + 1;
+    if (n >= from && n <= to) el.classList.add("line-highlight");
+  }
+}
+
 async function renderNote() {
   if (!props.title || !viewerElement.value) {
     return;
@@ -195,12 +211,15 @@ async function renderNote() {
     ],
     throwOnError: false,
   });
+  highlightLines();
 }
 
 onMounted(renderNote);
 watch(() => props.title, renderNote);
 // Re-render when the line-numbers-in-view-mode toggle changes.
 watch(viewLineNumbers, renderNote);
+// Re-highlight when the #view:L fragment changes (no re-render needed).
+watch(() => props.line, highlightLines);
 subscribe(TOPICS.PLUGIN_TOGGLE, renderNote);
 subscribe(TOPICS.PLUGIN_AUTO_ENABLE, renderNote);
 // Re-render on theme switch so mermaid picks up the new mode's theme.

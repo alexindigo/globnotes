@@ -46,8 +46,19 @@ describe("parseFragment", () => {
   it("rejects unknown modes — bare line links included", () => {
     expect(parseFragment("#L12")).toEqual({ mode: null, line: null });
     expect(parseFragment("#L12-34")).toEqual({ mode: null, line: null });
-    expect(parseFragment("#view:L5")).toEqual({ mode: null, line: null });
     expect(parseFragment("#bogus")).toEqual({ mode: null, line: null });
+  });
+
+  it("parses the view mode with its line aspect", () => {
+    expect(parseFragment("#view")).toEqual({ mode: "view", line: null });
+    expect(parseFragment("#view:L5")).toEqual({
+      mode: "view",
+      line: { from: 5, to: 5 },
+    });
+    expect(parseFragment("#view:L5-34")).toEqual({
+      mode: "view",
+      line: { from: 5, to: 34 },
+    });
   });
 
   it("keeps a valid mode when the line aspect is malformed", () => {

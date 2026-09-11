@@ -218,9 +218,19 @@ async function renderBlock(
   tokens: Token[],
   plugins: LoadedPlugin[],
   lineNumbers = false,
+  lineIdentity?: Map<number, number>,
 ): Promise<string> {
   let html = "";
   let i = 0;
+  const tagLine = (startLine: number | undefined, html: string): string => {
+    if (!lineIdentity || startLine === undefined) return html;
+    const line = lineIdentity.get(startLine);
+    if (line === undefined) return html;
+    return html.replace(
+      /^<([a-z0-9]+)/,
+      `<$1 data-source-line="${startLine}" data-line="L${line}"`,
+    );
+  };
   while (i < tokens.length) {
     const t = tokens[i];
     if (t.nesting === 1) {
@@ -261,9 +271,12 @@ async function renderBlock(
       if (pluginHtml !== null) {
         html += pluginHtml;
       } else {
-        html += `<${current.tag}${attrsToHtml(current.attrs)}>` +
-          current.childrenHtml +
-          `</${current.tag}>\n`;
+        html += tagLine(
+          t.map?.[0],
+          `<${current.tag}${attrsToHtml(current.attrs)}>` +
+            current.childrenHtml +
+            `</${current.tag}>\n`,
+        );
       }
       i = j + 1;
     } else if (t.type === "inline") {
@@ -291,7 +304,7 @@ async function renderBlock(
       } else if (current !== node) {
         html += escapeHtml(current.content) + "\n";
       } else {
-        html += defaultLeafHtml(t, lineNumbers);
+        html += tagLine(t.map?.[0], defaultLeafHtml(t, lineNumbers));
       }
       i++;
     }
@@ -310,5 +323,24 @@ export async function renderMarkdown(
     opts.disabled?.length ? new Set(opts.disabled) : undefined,
   );
   const tokens = md.parse(source, {});
-  return await renderBlock(tokens, plugins, opts.lineNumbers ?? false);
+  return await renderBlock(
+    tokens,
+    plugins,
+    opts.lineNumbers ?? false,
+    lineIdentity(source),
+  );
+}
+
+/** Map rendered line → source line: the markdown-it token stream carries
+ * each token's `map` ([startLine, endLine)); the first block token that
+ * STARTS at a source line claims it. View-mode line links tag rendered
+ * lines with these identities so #view:L links highlight the right
+ * rendered element. */
+function lineIdentity(source: string): Map<number, number> {
+  const tokens = md.parse(source, {});
+  const map = new Map<number, number>();
+  for (const t of tokens) {
+    if (t.map && !map.has(t.map[0])) map.set(t.map[0], t.map[0] + 1);
+  }
+  return map;
 }

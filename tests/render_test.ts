@@ -36,9 +36,13 @@ Deno.test("render: default markdown-it output (no plugins)", async () => {
   try {
     setupState(vault, null);
 
+    // Rendered lines carry view-mode line identities: data-source-line
+    // (rendered-line → source-line map) + data-line (the L link form).
+    // For headings the id attribute is injected before the line tags.
     assertEquals(
       await renderMarkdown("# Hello World\n\nSome *text*."),
-      `<h1 id="hello-world">Hello World</h1>\n<p>Some <em>text</em>.</p>\n`,
+      `<h1 data-source-line="0" data-line="L1" id="hello-world">Hello World</h1>\n` +
+        `<p data-source-line="2" data-line="L3">Some <em>text</em>.</p>\n`,
     );
 
     // Prism highlight for known languages.
@@ -54,7 +58,7 @@ Deno.test("render: default markdown-it output (no plugins)", async () => {
     const fm = await renderMarkdown("---\ntitle: Doc\n---\nbody");
     assertStringIncludes(fm, `<div class="front-matter">`);
     assertStringIncludes(fm, "title: Doc");
-    assertStringIncludes(fm, "<p>body</p>");
+    assertStringIncludes(fm, '<p data-source-line="3" data-line="L4">body</p>');
 
     // Raw HTML passes through; linkify on.
     assertStringIncludes(
@@ -108,7 +112,7 @@ Deno.test("render: default plugins", async (t) => {
 
       await t.step("non-callout blockquote stays default", async () => {
         const html = await renderMarkdown("> plain quote");
-        assertStringIncludes(html, "<blockquote>");
+        assertStringIncludes(html, "<blockquote data-source-line=");
         assert(!html.includes("callout"));
       });
 
@@ -291,7 +295,10 @@ Deno.test("render: endpoint end-to-end", async () => {
     assertEquals(res.status, 200);
     assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
     const html = await res.text();
-    assertStringIncludes(html, '<h1 id="hi">Hi</h1>');
+    assertStringIncludes(
+      html,
+      '<h1 data-source-line="0" data-line="L1" id="hi">',
+    );
     assertStringIncludes(html, "<mark>marked</mark>");
     assertStringIncludes(html, '<img src="pic.png"');
 

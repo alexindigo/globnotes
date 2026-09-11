@@ -500,3 +500,10 @@
   border-right: 1px solid rgb(var(--theme-border));
   padding-right: 6px;
 }
+
+/* View-mode line-link highlight (#view:L) — a soft brand wash over the
+   tagged rendered line, spanning its full block width. */
+.toastui-editor-contents [data-source-line].line-highlight {
+  background-color: rgb(var(--theme-brand) / 0.12);
+  box-shadow: inset 2px 0 0 rgb(var(--theme-brand));
+}
