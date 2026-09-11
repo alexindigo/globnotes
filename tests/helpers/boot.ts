@@ -7,6 +7,22 @@ const SERVER_MAIN = new URL("../../server/main.ts", import.meta.url).pathname;
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
 const DENO = Deno.execPath();
 
+/** Auto-created vault dirs, swept at test-process unload so a test that
+ * forgets to clean up still leaves no /tmp/globnotes-test-vault-*
+ * leftovers. Vaults passed in via GLOBNOTES_PATH are caller-owned and
+ * never tracked (restart-style tests reuse them across close()s). */
+const trackedVaults = new Set<string>();
+globalThis.addEventListener?.("unload", () => {
+  for (const vault of trackedVaults) {
+    try {
+      Deno.removeSync(vault, { recursive: true });
+    } catch {
+      // already removed (explicit cleanup) or gone
+    }
+  }
+  trackedVaults.clear();
+});
+
 export interface TestServer {
   baseUrl: string;
   vault: string;
@@ -25,8 +41,10 @@ export async function bootServer(
   opts: { cwd?: string } = {},
 ): Promise<TestServer> {
   const port = freePort();
+  const ownsVault = !env.GLOBNOTES_PATH;
   const vault = env.GLOBNOTES_PATH ??
     (await Deno.makeTempDir({ prefix: "globnotes-test-vault-" }));
+  if (ownsVault) trackedVaults.add(vault);
   let stderrText = "";
   const child = new Deno.Command(DENO, {
     args: [
@@ -96,6 +114,10 @@ export async function bootServer(
       } catch {
         // already gone
       }
+      // The vault is deliberately NOT removed here: restart-style tests
+      // reuse the same vault across close()s. Auto-created vault paths
+      // are tracked instead and swept at process unload (below), so
+      // /tmp never accumulates globnotes-test-vault-* leftovers.
     },
   };
 }

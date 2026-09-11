@@ -210,29 +210,53 @@ export async function verifyPassword(
  * asset references at it when one is configured. With a brand name set,
  * the <title> is swapped too so first paint is already branded (the
  * client re-titles per-route afterwards). Ported from the Python
- * server's rewrite_index_html. */
+ * server's rewrite_index_html.
+ *
+ * Idempotent across boots with changing prefixes: the meta tag records
+ * the currently-stamped prefix. Re-stamping strips the old URL prefix
+ * before applying the new one, so prefixed → plain → prefixed boot
+ * sequences never compound (/notes/notes/…) — the hazard that bit the
+ * v2.0.0 publish twice. A fresh vite build (no meta) just gets stamped. */
 export function rewriteIndexHtml(
   htmlFile: string,
   pathPrefix: string,
   brandName?: string | null,
 ): void {
   let html = Deno.readTextFileSync(htmlFile);
+  const stampedPrefix = /<meta name="globnotes-prefix" content="([^"]*)"/
+    .exec(html)?.[1];
+
+  if (stampedPrefix !== undefined && stampedPrefix === pathPrefix) {
+    // Same prefix — only the brand title can change between boots.
+    if (brandName) {
+      const escaped = brandName.replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      html = html.replace(/<title>[^<]*<\/title>/, `<title>${escaped}</title>`);
+      Deno.writeTextFileSync(htmlFile, html);
+    }
+    return;
+  }
+
+  // Strip a previously-stamped URL prefix (prefixed → plain / other).
+  if (stampedPrefix) {
+    html = html.replaceAll(`"${stampedPrefix}/_/`, '"/_/');
+  }
   if (pathPrefix) {
     html = html.replaceAll('"/_/', `"${pathPrefix}/_/`);
+  }
+  if (stampedPrefix === undefined) {
+    const meta = `<meta name="globnotes-prefix" content="${pathPrefix}">`;
+    html = html.replace("<head>", `<head>\n    ${meta}`);
+  } else {
+    html = html.replace(
+      /(<meta name="globnotes-prefix" content=")[^"]*/,
+      `$1${pathPrefix}`,
+    );
   }
   if (brandName) {
     const escaped = brandName.replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;").replaceAll(">", "&gt;");
     html = html.replace(/<title>[^<]*<\/title>/, `<title>${escaped}</title>`);
-  }
-  if (html.includes('name="globnotes-prefix"')) {
-    html = html.replace(
-      /(<meta name="globnotes-prefix" content=")[^"]*/,
-      `$1${pathPrefix}`,
-    );
-  } else {
-    const meta = `<meta name="globnotes-prefix" content="${pathPrefix}">`;
-    html = html.replace("<head>", "<head>\n    " + meta);
   }
   Deno.writeTextFileSync(htmlFile, html);
 }

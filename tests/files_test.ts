@@ -41,8 +41,10 @@ async function cleanup(
   server: TestServer & { appDir?: string },
 ): Promise<void> {
   await server.close();
-  await Deno.remove(server.vault, { recursive: true });
-  if (server.appDir) await Deno.remove(server.appDir, { recursive: true });
+  await Deno.remove(server.vault, { recursive: true }).catch(() => {});
+  if (server.appDir) {
+    await Deno.remove(server.appDir, { recursive: true }).catch(() => {});
+  }
 }
 
 Deno.test("files: API get", async (t) => {
@@ -375,8 +377,8 @@ Deno.test("files: catch-all requires auth for vault files", async () => {
   } finally {
     await server.close();
     await Promise.all([
-      Deno.remove(vault, { recursive: true }),
-      Deno.remove(appDir, { recursive: true }),
+      Deno.remove(vault, { recursive: true }).catch(() => {}),
+      Deno.remove(appDir, { recursive: true }).catch(() => {}),
     ]);
   }
 });
@@ -402,6 +404,45 @@ Deno.test("files: rewriteIndexHtml", async () => {
     const html = await Deno.readTextFile(file);
     assertStringIncludes(html, 'content="/base"');
     assertStringIncludes(html, 'src="/base/_/assets/app.js"');
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("files: rewriteIndexHtml is idempotent (prefix stamp-sting)", async () => {
+  // The exact stamp-sting scenario that bit the v2.0.0 publish twice:
+  // prefixed boot → plain boot → prefixed boot against one dist. A plain
+  // boot serves at /_ so it reverts the stamped URLs; a prefixed boot
+  // re-stamps. Neither compounds (/notes/notes/…) nor corrupts the meta.
+  const dir = await Deno.makeTempDir();
+  try {
+    const file = path.join(dir, "index.html");
+    const pristine = `<html><head><title>globnotes</title></head>` +
+      `<body><script type="module" src="/_/assets/index-X.js"></script>` +
+      `<link href="/_/assets/index-Y.css"></body></html>`;
+
+    // 1. prefixed boot: URLs gain the prefix.
+    await Deno.writeTextFile(file, pristine);
+    rewriteIndexHtml(file, "/notes");
+    const once = await Deno.readTextFile(file);
+    assertStringIncludes(once, '"/notes/_/assets/index-X.js"');
+    assertStringIncludes(once, '"/notes/_/assets/index-Y.css"');
+    assertStringIncludes(
+      once,
+      '<meta name="globnotes-prefix" content="/notes">',
+    );
+
+    // 2. plain boot: serves at /_ — stamped URLs revert (a stamped
+    //    /notes/_/ URL would 404 on a prefix-less server).
+    rewriteIndexHtml(file, "");
+    const plain = await Deno.readTextFile(file);
+    assertStringIncludes(plain, '"/_/assets/index-X.js"');
+    assertStringIncludes(plain, '<meta name="globnotes-prefix" content="">');
+    assert(!plain.includes("/notes/_/"));
+
+    // 3. prefixed boot again: re-stamped — and byte-identical to step 1.
+    rewriteIndexHtml(file, "/notes");
+    assertEquals(await Deno.readTextFile(file), once);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
