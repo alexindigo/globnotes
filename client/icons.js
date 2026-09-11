@@ -405,6 +405,8 @@ export const ICON_PATHS = {
     "M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12",
     "M9 4l0 16",
   ],
+  tabPin: ["M12 4l4 4-1 5 3 3-8 4-2-2 2-6-4-4z", "M9 15l-4 4"],
+  tabPinOff: ["M12 4l4 4-1 5 3 3-8 4-2-2 2-6-4-4z", "M9 15l-4 4", "M3 3l18 18"],
   tabClock: ["M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0", "M12 7v5l3 3"],
   tabFilter: [
     "M4 4h16v2.172a2 2 0 0 1 -.586 1.414l-4.414 4.414v7l-6 2v-8.5l-4.48 -4.928a2 2 0 0 1 -.52 -1.345v-2.227",
@@ -602,3 +604,5 @@ export const tabCode = ICON_PATHS.tabCode;
 export const tabBraces = ICON_PATHS.tabBraces;
 export const tabFold = ICON_PATHS.tabFold;
 export const tabPalette = ICON_PATHS.tabPalette;
+export const tabPin = ICON_PATHS.tabPin;
+export const tabPinOff = ICON_PATHS.tabPinOff;

@@ -9,25 +9,34 @@
     class="fixed left-4 top-4 z-30 shadow-md"
     @click="openSidebar"
   />
-  <!-- Backdrop -->
+  <!-- Backdrop: overlay mode only (unpinned) -->
   <div
-    v-if="globalStore.sidebarVisible"
+    v-if="globalStore.sidebarVisible && !globalStore.sidebarPinned"
     class="fixed inset-0 z-10 bg-slate-950/40"
     @click="toggleSidebar"
   />
   <aside
     v-show="globalStore.sidebarVisible"
-    class="fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-theme-border bg-theme-background py-2 shadow-lg"
+    :class="globalStore.sidebarPinned
+      ? 'relative z-0 h-full w-64 shrink-0 border-r border-theme-border bg-theme-background py-2'
+      : 'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-theme-border bg-theme-background py-2 shadow-lg'"
+    class="flex flex-col"
   >
     <!-- Header -->
     <div class="mb-1 flex items-center justify-between px-4 pt-2">
       <CustomButton
         :iconPath="tabDockLeft"
         label=""
-        title="Close sidebar"
+        :title="globalStore.sidebarPinned ? 'Close sidebar' : 'Close sidebar'"
         @click="toggleSidebar"
       />
       <div class="flex items-center">
+        <CustomButton
+          :iconPath="globalStore.sidebarPinned ? tabPin : tabPinOff"
+          label=""
+          :title="globalStore.sidebarPinned ? 'Unpin sidebar' : 'Pin sidebar'"
+          @click="togglePin"
+        />
         <CustomButton
           :iconPath="tabFold"
           label=""
@@ -180,6 +189,8 @@ import {
   tabClose,
   tabClock,
   tabDockLeft,
+  tabPin,
+  tabPinOff,
   tabFilter,
   tabFold,
   tabMarkdown,
@@ -516,6 +527,11 @@ function toggleSidebar() {
   globalStore.sidebarVisible = false;
   localStorage.setItem("sidebarVisible", "false");
   publish(TOPICS.SIDEPANEL_CLOSE, {});
+}
+
+function togglePin() {
+  globalStore.sidebarPinned = !globalStore.sidebarPinned;
+  localStorage.setItem("sidebarPinned", String(globalStore.sidebarPinned));
 }
 
 function openSidebar() {

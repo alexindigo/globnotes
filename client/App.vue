@@ -14,11 +14,14 @@
         :initial-focus-event="quickSwitcherFocusEvent"
         @opened="quickSwitcherFocusEvent = null"
       />
-      <SidebarPanel />
-      <SyncBanner />
-      <!-- Shared content column: navbar and content scroller live beside
-           each other in it, so their edges align by construction. -->
-      <div class="flex min-h-0 flex-1 flex-col">
+      <!-- Pinned sidebar + content share this row; the overlay (unpinned)
+           sidebar is fixed-positioned, so out of flow and unaffected. -->
+      <div class="flex min-h-0 flex-1 flex-row">
+        <SidebarPanel />
+        <SyncBanner />
+        <!-- Shared content column: navbar and content scroller live beside
+             each other in it, so their edges align by construction. -->
+        <div class="flex min-h-0 flex-1 flex-col">
         <NavBar
           v-if="showNavBar"
           ref="navBar"
@@ -29,6 +32,7 @@
         <div class="min-w-0 flex-1 overflow-y-auto pr-2">
           <RouterView />
         </div>
+      </div>
       </div>
     </template>
   </LoadingIndicator>

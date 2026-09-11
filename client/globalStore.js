@@ -11,8 +11,16 @@ export const useGlobalStore = defineStore("global", () => {
   const sidebarVisible = ref(
     localStorage.getItem("sidebarVisible") !== null
       ? localStorage.getItem("sidebarVisible") === "true"
-      : window.innerWidth >= 768,
+      : false
   );
+  const sidebarPinned = ref(localStorage.getItem("sidebarPinned") === "true");
 
-  return { config, notePaths, noteMeta, recentlyOpened, sidebarVisible };
+  return {
+    config,
+    notePaths,
+    noteMeta,
+    recentlyOpened,
+    sidebarVisible,
+    sidebarPinned,
+  };
 });
