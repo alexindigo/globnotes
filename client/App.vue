@@ -14,6 +14,7 @@
         :initial-focus-event="quickSwitcherFocusEvent"
         @opened="quickSwitcherFocusEvent = null"
       />
+      <CommandPalette v-model="isCommandPaletteVisible" />
       <!-- Pinned sidebar + content share this row; the overlay (unpinned)
            sidebar is fixed-positioned, so out of flow and unaffected. -->
       <div class="flex min-h-0 flex-1 flex-row">
@@ -59,11 +60,13 @@ import { initDispatcher } from "./keybindings/dispatcher.js";
 import { refreshNoteIndex } from "./noteIndex.js";
 import NavBar from "./partials/NavBar.vue";
 import QuickSwitcher from "./components/QuickSwitcher.vue";
+import CommandPalette from "./components/CommandPalette.vue";
 import LoadingIndicator from "./components/LoadingIndicator.vue";
 import router from "./router.js";
 
 const globalStore = useGlobalStore();
 const isQuickSwitcherVisible = ref(false);
+const isCommandPaletteVisible = ref(false);
 const loadingIndicator = ref();
 const navBar = ref();
 const route = useRoute();
@@ -122,6 +125,10 @@ const showNavBarLogo = computed(() => {
 function toggleQuickSwitcher() {
   isQuickSwitcherVisible.value = !isQuickSwitcherVisible.value;
 }
+
+subscribe(TOPICS.APP_OPEN_PALETTE, () => {
+  isCommandPaletteVisible.value = true;
+});
 
 subscribe(TOPICS.HOME_SEARCH_FOCUS, (event) => {
   if (showNavBar.value) {

@@ -3,7 +3,7 @@
 /** Keybinding layer definitions — pure data. Nothing here imports an
  * editor or the dispatcher; layers only name actions from the editor
  * action channel (the editor:* and app:* topics). Actions globnotes
- * lacks (Notion slash-menu, command palette) are no-ops in every layer.
+ * lacks (Notion slash-menu) is a no-op in every layer.
  *
  * Binding shape: `{ mac, other }` with explicit platform keys (see
  * keys.js). Optional `alias` = secondary key for the same action
@@ -64,13 +64,12 @@ export const LAYERS = {
       `${MOD}+E toggles edit/view, ${MOD}+O the switcher, ${MOD}+K link, ` +
       `${MOD}+Alt+1..6 headings. Inline code loses its WYSIWYG ${MOD}+E ` +
       `default (Obsidian doesn't bind inline code). Actions globnotes ` +
-      `lacks (${MOD}+P palette) are no-ops.`,
+      `lacks the slash menu.`,
     bindings: {
       ...CROSS_LAYER,
       [TOPICS.EDITOR_SAVE]: { ...mod("S"), alias: mod("Enter") },
       [TOPICS.EDITOR_TOGGLE_EDIT]: mod("E"),
       [TOPICS.APP_OPEN_SWITCHER]: mod("O"),
-      // No command palette exists; the key is reserved, the action no-ops.
       [TOPICS.APP_OPEN_PALETTE]: mod("P"),
       [TOPICS.EDITOR_INSERT_LINK]: mod("K"),
       [TOPICS.EDITOR_HEADING_1]: mod("Alt+1"),
@@ -142,7 +141,6 @@ export const LAYERS = {
       ...CROSS_LAYER,
       [TOPICS.EDITOR_SAVE]: { ...mod("S"), alias: mod("Enter") },
       [TOPICS.APP_OPEN_SWITCHER]: mod("P"),
-      // No command palette exists; the key is reserved, the action no-ops.
       [TOPICS.APP_OPEN_PALETTE]: mod("Shift+P"),
       [TOPICS.EDITOR_TOGGLE_BOLD]: mod("B"),
       [TOPICS.EDITOR_TOGGLE_ITALIC]: mod("I"),
@@ -171,7 +169,11 @@ export const LAYER_ORDER = [
  * mechanism resolves the key ("app" = dispatcher/Mousetrap, "editor" =
  * the mounted editor's keymap), and cheat-sheet group. */
 export const ACTIONS = {
-  [TOPICS.EDITOR_SAVE]: { label: "Save note", binding: "editor", group: "Editing" },
+  [TOPICS.EDITOR_SAVE]: {
+    label: "Save note",
+    binding: "editor",
+    group: "Editing",
+  },
   [TOPICS.EDITOR_SAVE_CLOSE]: {
     label: "Save and close",
     binding: "editor",
@@ -221,13 +223,41 @@ export const ACTIONS = {
     binding: "app",
     group: "Formatting",
   },
-  [TOPICS.EDITOR_HEADING_1]: { label: "Heading 1", binding: "editor", group: "Formatting" },
-  [TOPICS.EDITOR_HEADING_2]: { label: "Heading 2", binding: "editor", group: "Formatting" },
-  [TOPICS.EDITOR_HEADING_3]: { label: "Heading 3", binding: "editor", group: "Formatting" },
-  [TOPICS.EDITOR_HEADING_4]: { label: "Heading 4", binding: "editor", group: "Formatting" },
-  [TOPICS.EDITOR_HEADING_5]: { label: "Heading 5", binding: "editor", group: "Formatting" },
-  [TOPICS.EDITOR_HEADING_6]: { label: "Heading 6", binding: "editor", group: "Formatting" },
-  [TOPICS.EDITOR_PARAGRAPH]: { label: "Paragraph", binding: "editor", group: "Formatting" },
+  [TOPICS.EDITOR_HEADING_1]: {
+    label: "Heading 1",
+    binding: "editor",
+    group: "Formatting",
+  },
+  [TOPICS.EDITOR_HEADING_2]: {
+    label: "Heading 2",
+    binding: "editor",
+    group: "Formatting",
+  },
+  [TOPICS.EDITOR_HEADING_3]: {
+    label: "Heading 3",
+    binding: "editor",
+    group: "Formatting",
+  },
+  [TOPICS.EDITOR_HEADING_4]: {
+    label: "Heading 4",
+    binding: "editor",
+    group: "Formatting",
+  },
+  [TOPICS.EDITOR_HEADING_5]: {
+    label: "Heading 5",
+    binding: "editor",
+    group: "Formatting",
+  },
+  [TOPICS.EDITOR_HEADING_6]: {
+    label: "Heading 6",
+    binding: "editor",
+    group: "Formatting",
+  },
+  [TOPICS.EDITOR_PARAGRAPH]: {
+    label: "Paragraph",
+    binding: "editor",
+    group: "Formatting",
+  },
   [TOPICS.EDITOR_BULLET_LIST]: {
     label: "Bullet list",
     binding: "editor",
@@ -253,8 +283,16 @@ export const ACTIONS = {
     binding: "editor",
     group: "Formatting",
   },
-  [TOPICS.EDITOR_UNDO]: { label: "Undo", binding: "editor", group: "Formatting" },
-  [TOPICS.EDITOR_REDO]: { label: "Redo", binding: "editor", group: "Formatting" },
+  [TOPICS.EDITOR_UNDO]: {
+    label: "Undo",
+    binding: "editor",
+    group: "Formatting",
+  },
+  [TOPICS.EDITOR_REDO]: {
+    label: "Redo",
+    binding: "editor",
+    group: "Formatting",
+  },
   [TOPICS.EDITOR_HARD_BREAK]: {
     label: "Hard line break",
     binding: "editor",
@@ -279,7 +317,7 @@ export const ACTIONS = {
     group: "App",
   },
   [TOPICS.APP_OPEN_PALETTE]: {
-    label: "Command palette (not yet available)",
+    label: "Command palette",
     binding: "app",
     group: "App",
   },
