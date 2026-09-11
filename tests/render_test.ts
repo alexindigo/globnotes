@@ -143,16 +143,23 @@ Deno.test("render: default plugins", async (t) => {
       });
 
       await t.step("wikilinks", async () => {
+        const { state } = await import("../server/state.ts");
+        state.notes.create({ path: "rendering/math", content: "x" });
         const html = await renderMarkdown(
           "see [[rendering/math|Math]] and [[missing note]]",
         );
+        // The resolved target renders as a plain link.
         assertStringIncludes(
           html,
           '<a href="/rendering/math">Math</a>',
         );
         // Unresolved wikilinks link the title as written (may be created
-        // later).
-        assertStringIncludes(html, '<a href="/missing%20note">');
+        // later) and carry the unresolved class for client-side dimming.
+        assertStringIncludes(
+          html,
+          '<a href="/missing%20note" class="unresolved">',
+        );
+        assert(!html.includes('href="/rendering/math" class="unresolved"'));
       });
 
       await t.step("wikilink basename resolution", async () => {

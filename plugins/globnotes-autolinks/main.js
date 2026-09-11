@@ -25,12 +25,18 @@ export function getSelectors() {
 
 const WIKILINK_RE = /\[\[\s*(\S(?:[^\[\]]*?\S)?)\s*\]\]/g;
 
+function anchorIndex(url) {
+  const i = url.indexOf("#");
+  return i === -1 ? url.length : i;
+}
+
 export async function parseNode(node, ctx) {
   let out = node.content;
   let changed = false;
 
   if (out.includes("[[")) {
     const prefix = await ctx.pathPrefix();
+    const paths = await ctx.listPaths();
     // Collect matches first (replace callbacks can't await), resolve each
     // target, then splice the replacements in.
     const matches = [...out.matchAll(WIKILINK_RE)].filter(
@@ -51,7 +57,31 @@ export async function parseNode(node, ctx) {
         hashIndex === -1 ? null : targetPart.slice(hashIndex + 1);
       let url = prefix + notePath(await ctx.resolvePath(target));
       if (anchor) url += "#" + slugifyHeading(anchor);
-      replacements.set(m[0], `[${alias || targetPart}](${url})`);
+      // Obsidian resolution returns the target as-written when nothing
+      // matches — check the resolved path against the vault's real paths
+      // and flag non-existent targets so the client styles them dim.
+      // Raw HTML (not markdown + attr suffix): the pipeline re-renders
+      // inline content with core markdown-it, which has no attr syntax.
+      const resolved = url.slice(prefix.length, anchorIndex(url));
+      const unresolved = !paths.includes(decodeURIComponent(
+        resolved.replace(/^\//, "").replaceAll("%2F", "/"),
+      )) && !paths.includes(decodeURIComponent(resolved.replace(/^\//, "")));
+      if (unresolved) {
+        const esc = (s) =>
+          s.replaceAll("&", "&amp;").replaceAll('"', "&quot;")
+            .replaceAll("<", "&lt;");
+        replacements.set(
+          m[0],
+          `<a href="${esc(url)}" class="unresolved">${
+            esc(alias || targetPart)
+          }</a>`,
+        );
+      } else {
+        replacements.set(
+          m[0],
+          `[${alias || targetPart}](${url})`,
+        );
+      }
     }
     if (replacements.size > 0) {
       out = out.replace(WIKILINK_RE, (m) => replacements.get(m) ?? m);

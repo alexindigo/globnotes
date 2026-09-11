@@ -81,3 +81,16 @@
         --switcher-lift: 140px;
     }
 }
+
+/* Unresolved wikilinks (globnotes-autolinks tags targets that don't
+   resolve against the vault) — dimmed, Obsidian-style. The lock only
+   mutes the link color: hover still gets the accent for affordance. */
+.toastui-editor-contents a.unresolved,
+.ProseMirror a.unresolved {
+    color: rgb(var(--theme-text-very-muted));
+    text-decoration-style: dotted;
+}
+.toastui-editor-contents a.unresolved:hover,
+.ProseMirror a.unresolved:hover {
+    color: rgb(var(--theme-brand));
+}
