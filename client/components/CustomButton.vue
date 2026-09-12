@@ -4,14 +4,14 @@
     :disabled="disabled"
     :title="title"
     :class="{
-      'bg-theme-background text-theme-text-muted enabled:hover:text-theme-brand':
-        style === 'subtle',
-      'border bg-theme-background text-theme-text enabled:hover:text-theme-brand enabled:hover:border-theme-brand':
-        style === 'cta',
+'bg-theme-background text-theme-text-muted enabled:hover:bg-theme-background-elevated enabled:hover:text-theme-brand':
+        variant === 'subtle',
+      'bg-theme-background enabled:hover:bg-theme-background-elevated enabled:hover:text-theme-brand':
+        variant === 'cta',
       'border border-theme-danger text-theme-danger enabled:hover:bg-theme-danger/10':
-        style === 'danger',
+        variant === 'danger',
       'border border-theme-success text-theme-success enabled:hover:bg-theme-success/10':
-        style === 'success',
+        variant === 'success',
       'opacity-40': disabled,
     }"
   >
@@ -29,7 +29,9 @@ defineProps({
   label: String,
   title: String,
   disabled: Boolean,
-  style: {
+  // NOTE: must not be named `style` — Vue reserves that attr and the
+  // variant never reached the props (everything rendered default).
+  variant: {
     type: String,
     default: "subtle",
     validator: (value) => {

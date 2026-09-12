@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-only -->
+
 <template>
   <div class="flex min-h-0 w-full flex-col">
     <SwitcherInput
@@ -11,74 +13,61 @@
     />
     <div class="mt-2 flex min-h-0 flex-1 flex-col">
       <ul class="switcher-results min-h-0 flex-1 overflow-y-auto">
-        <li
+        <!-- Every item renders through the one shared SwitcherRow template;
+             the search row is just another item (as a second hand-maintained
+             copy it once drifted and missed the active-pill highlight). -->
+        <switcher-row
           v-for="(entry, i) in results"
           :key="kind(entry.item)"
-          class="flex cursor-pointer items-center justify-between gap-3 rounded px-3 py-2"
-          :class="{ 'bg-theme-background-elevated': i === index, 'key-tag-active': i === index }"
-          @click="open(entry.item)"
-          @mousemove="index = i"
+          :title="rowTitle(entry)"
+          :subtitle="rowSubtitle(entry)"
+          :shortcut="shortcutLabel(String(i + 1))"
+          :hint-title="'Open result ' + (i + 1)"
+          :active="i === index"
+          @activate="open(entry.item)"
+          @point="index = i"
         >
-          <div class="min-w-0 flex-1">
-            <div class="flex items-baseline justify-between gap-3">
-              <span class="truncate text-theme-text">
-                <template v-if="matchKind(entry) === 'title'">
-                  <HighlightedText
-                    :text="annotation(entry).text"
-                    :positions="annotation(entry).positions"
-                  />
-                </template>
-                <template v-else>{{ entry.item.title }}</template>
-              </span>
-            </div>
-            <!-- Line 2, uniform for every kind: the path with the matched
-                 characters accented (plain for title hits — the highlight
-                 is in the title), or the matched alias with a muted
-                 alias: prefix. -->
-            <div class="mt-0.5 truncate text-xs text-theme-text-very-muted">
-              <template v-if="matchKind(entry) === 'alias'">
-                <span>alias: </span>
-                <HighlightedText
-                  :text="annotation(entry).text"
-                  :positions="annotation(entry).positions"
-                />
-              </template>
+          <template #title>
+            <span v-if="matchKind(entry) === 'title'">
               <HighlightedText
-                v-else-if="matchKind(entry) && matchKind(entry) !== 'title'"
                 :text="annotation(entry).text"
                 :positions="annotation(entry).positions"
               />
-              <template v-else>{{ entry.item.path }}</template>
-            </div>
-          </div>
-          <span
-            class="key-tag shrink-0"
-            :title="'Open result ' + (i + 1)"
-          >{{ shortcutLabel(String(i + 1)) }}</span>
-        </li>
+            </span>
+            <template v-else>{{ entry.item.title }}</template>
+          </template>
+          <template #subtitle>
+            <template v-if="matchKind(entry) === 'alias'">
+              <span>alias: </span>
+              <HighlightedText
+                :text="annotation(entry).text"
+                :positions="annotation(entry).positions"
+              />
+            </template>
+            <HighlightedText
+              v-else-if="matchKind(entry) && matchKind(entry) !== 'title'"
+              :text="annotation(entry).text"
+              :positions="annotation(entry).positions"
+            />
+            <template v-else>{{ entry.item.path }}</template>
+          </template>
+        </switcher-row>
         <li v-if="showEmptyMessage" class="px-3 py-2 text-theme-text-muted">No matching notes.</li>
-      </ul>
-      <div
-        v-if="showSearchRow"
-        class="shrink-0"
-      >
-        <div
-          class="flex cursor-pointer items-center justify-between gap-3 rounded px-3 py-2"
-          :class="{ 'bg-theme-background-elevated': index === results.length }"
-          @click="goToSearch()"
-          @mousemove="index = results.length"
+        <switcher-row
+          v-if="showSearchRow"
+          title="Search"
+          subtitle="full search"
+          :shortcut="shortcutLabel('Enter')"
+          hint-title="Open the full search page"
+          :active="index === results.length"
+          @activate="goToSearch()"
+          @point="index = results.length"
         >
-          <div class="min-w-0 flex-1">
-            <div class="truncate text-theme-text">Search for “{{ query.trim() }}”…</div>
-            <!-- Line 2 mirrors the result rows' path line: same muted style,
-                 same position under the title. -->
-            <div class="mt-0.5 truncate text-xs text-theme-text-very-muted">
-              full search
-            </div>
-          </div>
-          <span class="key-tag shrink-0" title="Open the full search page">{{ shortcutLabel("Enter") }}</span>
-        </div>
-      </div>
+          <template #title>
+            Search for “{{ query.trim() }}”…
+          </template>
+        </switcher-row>
+      </ul>
     </div>
   </div>
 </template>
@@ -92,6 +81,7 @@ import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import SwitcherInput from "./SwitcherInput.vue";
+import SwitcherRow from "./SwitcherRow.vue";
 import HighlightedText from "./HighlightedText.vue";
 import { fuzzyFilter, windowAroundMatch } from "../fuzzy.js";
 import { useGlobalStore } from "../globalStore.js";
@@ -143,8 +133,8 @@ function kind(item) {
 
 const showSearchRow = computed(() => Boolean(query.value.trim()));
 // The empty message is meaningful only after the user typed something that
-// matched no notes — never on an untouched/empty query. (results now holds
-// note rows only; the pinned search row is a separate footer.)
+// matched no notes — never on an untouched/empty query. (results holds
+// note rows only; the pinned search row is its own item.)
 const showEmptyMessage = computed(() => showSearchRow.value && results.value.length === 0);
 const results = computed(() => {
   const term = query.value.trim();
@@ -191,13 +181,20 @@ function annotation(entry) {
   );
 }
 
+function rowTitle(entry) {
+  return entry.item.title;
+}
+function rowSubtitle(entry) {
+  return entry.item.path;
+}
+
 watch(query, () => {
   index.value = 0;
 });
 
 function move(delta) {
   if (!results.value.length) return;
-  index.value = (index.value + delta + results.value.length) % results.value.length;
+  index.value = (index.value + delta + results.value.length + 1) % (results.value.length + 1);
 }
 function openSelected() {
   const entry = results.value[index.value];
@@ -224,26 +221,3 @@ function shortcutLabel(key) {
   return (isMacPlatform ? "\u2318" : "Ctrl+") + key;
 }
 </script>
-
-<style scoped>
-/* Result shortcut hints — same visual language as the keybindings
-   cheat-sheet key tags (mono, bordered, muted). */
-.key-tag {
-  display: inline-block;
-  padding: 1px 6px;
-  border: 1px solid rgb(var(--theme-border));
-  border-radius: 4px;
-  background-color: rgb(var(--theme-background));
-  color: rgb(var(--theme-text-very-muted));
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    monospace;
-  font-size: 10px;
-  white-space: nowrap;
-}
-/* The active row's key pill plays the role of an icon — it follows the
-   icon-hover convention (brand text + brand border). */
-.key-tag-active .key-tag {
-  border-color: rgb(var(--theme-brand));
-  color: rgb(var(--theme-brand));
-}
-</style>

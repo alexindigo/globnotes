@@ -100,7 +100,7 @@
       <div class="mt-3 flex justify-between gap-2">
         <CustomButton
           label="Reset"
-          style="danger"
+          variant="danger"
           :disabled="!hasBranding"
           title="Clear name, accent, and uploaded logo/icon"
           @click="askReset"
@@ -109,7 +109,7 @@
           <CustomButton label="Cancel" @click="isVisible = false" />
           <CustomButton
             label="Save"
-            style="cta"
+            variant="cta"
             :disabled="!dirty"
             @click="save"
           />

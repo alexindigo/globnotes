@@ -48,7 +48,7 @@
             <div
               v-for="row in group.rows"
               :key="row.action"
-              class="flex items-center justify-between rounded px-1 py-0.5 hover:text-theme-brand"
+              class="flex items-center justify-between rounded px-1 py-0.5 hover:bg-theme-background-elevated hover:text-theme-brand"
             >
               <span class="text-xs text-theme-text">{{ row.label }}</span>
               <span class="flex items-center gap-1">
@@ -75,7 +75,7 @@
                 <button
                   v-if="isCustomLayer() && row.modified"
                   type="button"
-                  class="px-1 text-theme-text-muted hover:text-theme-brand"
+                  class="px-1 text-theme-text-muted hover:bg-theme-background-elevated hover:text-theme-brand"
                   title="Reset to base binding"
                   @click="resetBinding(row.action)"
                 >

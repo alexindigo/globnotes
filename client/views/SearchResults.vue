@@ -36,7 +36,7 @@
         <CustomButton
           v-if="rewriteFiles.length > 1"
           label="Fix all"
-          style="cta"
+          variant="cta"
           @click="fixAllRefs"
         />
       </div>
@@ -44,7 +44,7 @@
         <li
           v-for="f in rewriteFiles"
           :key="f.oldPath"
-          class="flex items-center justify-between rounded px-2 py-1 hover:text-theme-brand"
+          class="flex items-center justify-between rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
         >
           <span class="truncate text-theme-text-muted"
             ><span class="text-theme-text-very-muted">old:</span>
@@ -62,7 +62,7 @@
     <template v-if="props.folder || (!includeNested && currentSubdirs.length)">
       <div
         v-if="props.folder"
-        class="mb-4 cursor-pointer rounded px-2 py-1 hover:text-theme-brand"
+        class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
       >
         <RouterLink :to="upTarget" class="flex items-center">
           <Icon
@@ -78,7 +78,7 @@
         <div
           v-for="dir in currentSubdirs"
           :key="dir"
-          class="mb-4 cursor-pointer rounded px-2 py-1 hover:text-theme-brand"
+          class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
         >
           <RouterLink
             :to="{
@@ -107,7 +107,7 @@
       <!-- Search Results -->
       <div
         v-for="result in results"
-        class="mb-4 cursor-pointer rounded px-2 py-1 hover:text-theme-brand"
+        class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
       >
         <RouterLink :to="notePath(result.path)">
           <!-- Title and Tags -->

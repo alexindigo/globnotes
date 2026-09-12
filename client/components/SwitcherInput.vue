@@ -22,7 +22,7 @@
         v-for="(tag, i) in tagMatches"
         ref="tagMenuItems"
         :key="tag"
-        class="cursor-pointer rounded px-2 py-1 hover:text-theme-brand"
+        class="cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
         :class="{ 'bg-theme-background-elevated': i === tagMenuIndex }"
         @click="tagChosen(tag)"
         @mousedown.prevent

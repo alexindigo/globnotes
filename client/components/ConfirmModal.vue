@@ -14,21 +14,21 @@
     <div class="flex justify-end">
       <CustomButton
         :label="cancelButtonText"
-        :style="cancelButtonStyle"
+        :variant="cancelButtonStyle"
         @click="emitClose('cancel')"
         class="mr-2"
       />
       <CustomButton
         v-if="rejectButtonText"
         :label="rejectButtonText"
-        :style="rejectButtonStyle"
+        :variant="rejectButtonStyle"
         @click="emitClose('reject')"
         class="mr-2"
       />
       <CustomButton
         v-focus
         :label="confirmButtonText"
-        :style="confirmButtonStyle"
+        :variant="confirmButtonStyle"
         @click="emitClose('confirm')"
       />
     </div>

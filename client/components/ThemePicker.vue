@@ -22,7 +22,7 @@
         <button
           v-for="theme in THEMES"
           :key="theme.id"
-          class="flex w-full cursor-pointer items-center rounded px-2 py-1 text-left text-theme-text-muted hover:text-theme-brand"
+          class="flex w-full cursor-pointer items-center rounded px-2 py-1 text-left text-theme-text-muted hover:bg-theme-background-elevated hover:text-theme-brand"
           :class="{
             'bg-theme-background-elevated text-theme-text':
               theme.id === currentTheme,

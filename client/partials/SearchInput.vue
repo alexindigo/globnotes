@@ -22,7 +22,7 @@
       <!-- Clear to "list all" -->
       <button
         type="button"
-        class="cursor-pointer text-theme-text-muted hover:text-theme-brand"
+        class="cursor-pointer text-theme-text-muted hover:bg-theme-background-elevated hover:text-theme-brand"
         title="List all notes"
         @click="clearToAll"
       >
@@ -39,7 +39,7 @@
       <p
         v-for="(tag, index) in tagMatches"
         ref="tagMenuItems"
-        class="cursor-pointer rounded px-2 py-1 hover:text-theme-brand"
+        class="cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
         :class="{ 'bg-theme-background-elevated': index === tagMenuIndex }"
         @click="tagChosen(tag)"
         @mousedown.prevent

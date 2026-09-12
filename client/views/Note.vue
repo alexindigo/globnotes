@@ -64,7 +64,7 @@
       <CustomButton
         v-if="canModify"
         :label="createLinkLabel"
-        style="cta"
+        variant="cta"
         @click="createFromWikilink"
       />
     </div>

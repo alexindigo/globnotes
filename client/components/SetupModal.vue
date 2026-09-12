@@ -21,7 +21,7 @@
         autocomplete="new-password"
         required
       />
-      <CustomButton label="Create Password" style="cta" />
+      <CustomButton label="Create Password" variant="cta" />
     </form>
 
     <hr class="mb-4 border-theme-border" />
@@ -32,12 +32,12 @@
     <div class="flex gap-2">
       <CustomButton
         label="Read-Only"
-        style="cta"
+        variant="cta"
         @click="chooseReadOnly"
       />
       <CustomButton
         label="Disable Authentication"
-        style="danger"
+        variant="danger"
         @click="disableAuth"
       />
     </div>

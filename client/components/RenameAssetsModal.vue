@@ -53,7 +53,7 @@ function close() {
 
         <div class="space-y-2">
           <button
-            class="flex w-full items-center rounded border border-theme-brand/20 px-3 py-2 text-left text-sm hover:text-theme-brand"
+            class="flex w-full items-center rounded border border-theme-brand/20 px-3 py-2 text-left text-sm hover:bg-theme-background-elevated hover:text-theme-brand"
             @click="confirm('move')"
           >
             <Icon
@@ -72,7 +72,7 @@ function close() {
           </button>
 
           <button
-            class="flex w-full items-center rounded border border-theme-border px-3 py-2 text-left text-sm hover:text-theme-brand"
+            class="flex w-full items-center rounded border border-theme-border px-3 py-2 text-left text-sm hover:bg-theme-background-elevated hover:text-theme-brand"
             @click="confirm('relink')"
           >
             <svg
@@ -94,7 +94,7 @@ function close() {
           </button>
 
           <button
-            class="flex w-full items-center rounded border border-theme-border px-3 py-2 text-left text-sm hover:text-theme-brand"
+            class="flex w-full items-center rounded border border-theme-border px-3 py-2 text-left text-sm hover:bg-theme-background-elevated hover:text-theme-brand"
             @click="confirm('none')"
           >
             <div class="ml-6">
