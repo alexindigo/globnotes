@@ -1,7 +1,7 @@
 <template>
   <LoadingIndicator
     ref="loadingIndicator"
-    class="container relative mx-auto flex h-dvh flex-col px-2 py-4 print:max-w-full"
+    class="relative flex h-dvh w-screen flex-col overflow-hidden print:max-w-full"
   >
     <PrimeToast />
     <SetupModal
@@ -15,25 +15,32 @@
         @opened="quickSwitcherFocusEvent = null"
       />
       <CommandPalette v-model="isCommandPaletteVisible" />
-      <!-- Pinned sidebar + content share this row; the overlay (unpinned)
-           sidebar is fixed-positioned, so out of flow and unaffected. -->
-      <div class="flex min-h-0 flex-1 flex-row">
-        <SidebarPanel />
-        <SyncBanner />
-        <!-- Shared content column: navbar and content scroller live beside
-             each other in it, so their edges align by construction. -->
-        <div class="flex min-h-0 flex-1 flex-col">
+      <!-- Sidebar chrome (open button, backdrop, drawer/docked panel)
+           positions itself — fixed, outside the page column. -->
+      <SidebarPanel />
+      <SyncBanner />
+      <!-- Page column: the old centered container geometry (see
+           style.css). The header lives INSIDE it, so header and content
+           share the column's edges by construction; the column centers
+           on the window and yields to the pinned sidebar. -->
+      <div
+        class="content-column flex min-h-0 flex-1 flex-col print:max-w-full"
+        :class="{
+          'content-column--pinned':
+            globalStore.sidebarVisible && globalStore.sidebarPinned,
+        }"
+      >
         <NavBar
           v-if="showNavBar"
           ref="navBar"
+          class="shrink-0"
           :class="{ 'print:hidden': route.name == 'note' }"
           :hide-logo="!showNavBarLogo"
           @toggleQuickSwitcher="toggleQuickSwitcher"
         />
-        <div class="min-w-0 flex-1 overflow-y-auto pr-2">
+        <div class="min-w-0 flex-1 overflow-y-auto py-4">
           <RouterView />
         </div>
-      </div>
       </div>
     </template>
   </LoadingIndicator>

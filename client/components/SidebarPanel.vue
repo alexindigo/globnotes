@@ -1,12 +1,15 @@
 <template>
-  <!-- Floating open button (top-left corner of the page, when sidebar is closed) -->
+  <!-- Floating open button (top-left corner of the page, when the
+       sidebar is closed). Sits exactly where this panel's close button
+       lands once open (aside py-2 + header pt-2, px-4) — the toggle
+       never jumps. -->
   <CustomButton
     v-if="!globalStore.sidebarVisible"
     :iconPath="tabDockLeft"
     label=""
     title="Open sidebar"
     variant="cta"
-    class="fixed left-4 top-4 z-30 shadow-md"
+    class="fixed left-4 top-4 z-30 shadow-md print:hidden"
     @click="openSidebar"
   />
   <!-- Backdrop: overlay mode only (unpinned) -->
@@ -18,25 +21,28 @@
   <aside
     v-show="globalStore.sidebarVisible"
     :class="globalStore.sidebarPinned
-      ? 'relative z-0 h-full w-64 shrink-0 border-r border-theme-border bg-theme-background py-2'
+      ? 'fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-theme-border bg-theme-background py-2'
       : 'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-theme-border bg-theme-background py-2 shadow-lg'"
     class="flex flex-col"
   >
     <!-- Header -->
     <div class="mb-1 flex items-center justify-between px-4 pt-2">
-      <CustomButton
-        :iconPath="tabDockLeft"
-        label=""
-        :title="globalStore.sidebarPinned ? 'Close sidebar' : 'Close sidebar'"
-        @click="toggleSidebar"
-      />
+      <!-- Sidebar behavior: close and pin belong together -->
       <div class="flex items-center">
         <CustomButton
-          :iconPath="globalStore.sidebarPinned ? tabPin : tabPinOff"
+          :iconPath="tabDockLeft"
+          label=""
+          :title="globalStore.sidebarPinned ? 'Close sidebar' : 'Close sidebar'"
+          @click="toggleSidebar"
+        />
+        <CustomButton
+          :iconPath="globalStore.sidebarPinned ? tabPinnedOff : tabPinned"
           label=""
           :title="globalStore.sidebarPinned ? 'Unpin sidebar' : 'Pin sidebar'"
           @click="togglePin"
         />
+      </div>
+      <div class="flex items-center">
         <CustomButton
           :iconPath="tabFold"
           label=""
@@ -67,7 +73,7 @@
     </div>
 
     <!-- Scrollable sections -->
-    <div class="min-h-0 flex-1 overflow-y-auto pl-4">
+    <div class="min-h-0 flex-1 overflow-y-auto pr-2 pl-4">
       <!-- Recent notes (toggled via the bottom-row clock) -->
       <section v-if="recentEnabled" class="mt-4">
         <p
@@ -189,8 +195,8 @@ import {
   tabClose,
   tabClock,
   tabDockLeft,
-  tabPin,
-  tabPinOff,
+  tabPinned,
+  tabPinnedOff,
   tabFilter,
   tabFold,
   tabMarkdown,
@@ -529,14 +535,14 @@ function toggleSidebar() {
   publish(TOPICS.SIDEPANEL_CLOSE, {});
 }
 
+function openSidebar() {
+  globalStore.sidebarVisible = true;
+  localStorage.setItem("sidebarVisible", "true");
+}
+
 function togglePin() {
   globalStore.sidebarPinned = !globalStore.sidebarPinned;
   localStorage.setItem("sidebarPinned", String(globalStore.sidebarPinned));
 }
 
-function openSidebar() {
-  globalStore.sidebarVisible = true;
-  localStorage.setItem("sidebarVisible", "true");
-  publish(TOPICS.SIDEPANEL_OPEN, {});
-}
 </script>

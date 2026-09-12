@@ -94,3 +94,40 @@
 .ProseMirror a.unresolved:hover {
     color: rgb(var(--theme-brand));
 }
+
+/* The page column: the old centered container's geometry (centered,
+   capped, px-2) keyed off AVAILABLE width, not the viewport — Tailwind's
+   `container` is viewport-keyed, and that mismatch is the pinned-sidebar
+   bug's parent. The width rule also reserves both corner zones, so the
+   fixed corner buttons can never overlap the column by construction —
+   no hand-kept clearance padding. */
+.content-column {
+  /* 1024 — the old container (lg) cap */
+  --col-cap: 64rem;
+  /* corner zone: the 2.25rem icon button + 2×1rem of screen-edge air */
+  --corner-w: 4.25rem;
+  /* 256 — must equal SidebarPanel's w-64 */
+  --sidebar-w: 16rem;
+  /* breathing room between a docked sidebar and the column */
+  --sidebar-gap: 1rem;
+  width: min(100%, calc(100% - 2 * var(--corner-w)));
+  max-width: var(--col-cap);
+  margin-inline: auto;
+  padding-inline: 0.5rem;
+}
+
+/* Pinned sidebar docked at the screen's left edge: the column still
+   tries to center on the window, but never touches the sidebar — it
+   butts against it when pushed, and shrinks only when it can't fit
+   between the sidebar and the menu's corner zone. */
+.content-column--pinned {
+  width: min(
+    calc(100% - var(--sidebar-w) - var(--sidebar-gap) - var(--corner-w)),
+    var(--col-cap)
+  );
+  margin-left: max(
+    calc(var(--sidebar-w) + var(--sidebar-gap)),
+    calc((100% - var(--col-cap)) / 2)
+  );
+  margin-right: auto;
+}

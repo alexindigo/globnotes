@@ -1,13 +1,17 @@
 <template>
+  <!-- No z-index on the band: the overlay backdrop (z-10) must dim it
+       exactly like the body, and the drawer (z-40) still covers it.
+       (The old z-20 served the sticky nav above a scrolling page — the
+       scroller lives inside the page column now.) -->
   <nav
-    class="sticky top-0 z-20 mb-2 flex justify-between bg-theme-background align-top md:mb-6"
+    class="flex w-full items-start justify-between bg-theme-background pt-4 align-top"
   >
-    <div class="flex items-start pl-10 md:pl-0">
+    <div class="flex items-start">
       <RouterLink :to="{ name: 'home' }" v-if="!hideLogo">
         <Logo responsive></Logo>
       </RouterLink>
     </div>
-    <div class="flex grow items-start justify-end pr-10 md:pr-4">
+    <div class="flex grow items-start justify-end">
       <!-- All Notes (browse the whole tree) -->
       <RouterLink
         :to="{
@@ -30,7 +34,10 @@
     </div>
   </nav>
 
-  <!-- Floating corner menu (matches the sidebar toggle treatment) -->
+  <!-- Floating corner menu (matches the sidebar toggle treatment): the
+       old right-4 top-4 spot. It can never collide with the page
+       column — the column's width rule reserves the corner zones (see
+       style.css). -->
   <div class="fixed right-4 top-4 z-30">
     <CustomButton
       :iconPath="tabMenu"
@@ -40,18 +47,19 @@
       title="Menu"
       @click="toggleMenu"
     />
-    <PrimeMenu
-      ref="menu"
-      :model="menuItems"
-      :popup="true"
-      @show="publish(TOPICS.SETTINGS_MENU_OPEN, {})"
-      @hide="publish(TOPICS.SETTINGS_MENU_CLOSE, {})"
-    />
-    <ThemePicker v-model="themePickerVisible" />
-    <KeybindingsPanel v-model="keybindingsVisible" />
-    <PluginSettings v-model="pluginSettingsVisible" />
-    <BrandingSettings v-model="brandingVisible" />
   </div>
+
+  <PrimeMenu
+    ref="menu"
+    :model="menuItems"
+    :popup="true"
+    @show="publish(TOPICS.SETTINGS_MENU_OPEN, {})"
+    @hide="publish(TOPICS.SETTINGS_MENU_CLOSE, {})"
+  />
+  <ThemePicker v-model="themePickerVisible" />
+  <KeybindingsPanel v-model="keybindingsVisible" />
+  <PluginSettings v-model="pluginSettingsVisible" />
+  <BrandingSettings v-model="brandingVisible" />
 </template>
 
 <script setup>
