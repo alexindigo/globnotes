@@ -1,0 +1,34 @@
+{
+  "name": "globnotes (deno)",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  // Mandatory resource caps (devcontainer Rule 1). Verify after up with:
+  // docker inspect <c> --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}} {{.HostConfig.NanoCpus}}'
+  "runArgs": ["--memory=8g", "--memory-swap=8g", "--pids-limit=256", "--cpus=4"],
+  "remoteUser": "vscode",
+  // The manual review server: the host's test vault, served fresh on 8002.
+  "mounts": [
+    "source=/home/user/globnotes-test-vault,target=/vault,type=bind"
+  ],
+  "containerEnv": {
+    "GLOBNOTES_PATH": "/vault",
+    "GLOBNOTES_AUTH_TYPE": "none",
+    "GLOBNOTES_PORT": "8002"
+  },
+  // Host-published port (what makes :8002 reachable without VS Code);
+  // forwardPorts stays as the VS Code hint.
+  "appPort": ["8002:8002"],
+  "forwardPorts": [8002],
+  // Build the client bundle once at creation.
+  "postCreateCommand": "deno task build:client",
+  // postStartCommand never fires with this CLI — start the review server
+  // deterministically instead:
+  //   docker exec <container> bash -lc 'cd /workspaces/globnotes-v21 && nohup deno task start >/tmp/server.log 2>&1 &'
+  "customizations": {
+    "vscode": {
+      "extensions": ["denoland.vscode-deno"]
+    }
+  }
+}
