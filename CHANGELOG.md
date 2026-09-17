@@ -1,5 +1,80 @@
 # Changelog
 
+## v2.1.0 (2026-09-17)
+
+The app shell gets its structural rework: the shell owns the viewport, one
+centered page column carries the header and the content, the sidebar lives
+below the header band, and the corner buttons (sidebar toggle, menu) are
+fixed chrome whose non-overlap with the column is guaranteed by the column's
+width rule — not by hand-kept padding. The sidebar can now pin as a docked,
+in-flow panel that the column yields to. On top of the shell: a command
+palette, a preview tab for the rendered unsaved buffer, shareable line
+highlights in view mode, a confirmed branding reset, a hover contrast
+restyle, theme-following mermaid diagrams, and dimmed unresolved wikilinks.
+The repo also gains a resource-capped deno devcontainer serving a review
+instance on :8002.
+
+### 2026-09-16
+
+#### Feature
+
+Development gains a proper devcontainer: deno 2.9.6 (the same version the
+production image builds with), hard cgroup caps (8g memory, 256 pids,
+4 cpus), the test vault bind-mounted, and the review server published
+on :8002.
+
+- feat: deno devcontainer — runArgs-capped, review server on :8002 (`6748ef6`)
+
+### 2026-09-11
+
+#### Feature
+
+The command palette lands — app commands flow through the action channel
+into a palette panel — and resetting the branding now asks before wiping
+it, with tests covering the confirmation flow.
+
+- feat: command palette — commands through the action channel (`9c46a90`)
+- feat: branding reset asks before wiping (`b55a8ed`)
+
+#### Fix
+
+Hover polish round two restores background hovers and fixes the
+CustomButton variant prop. The app-shell rework makes the shell own the
+viewport: the header lives inside the centered page column, the sidebar
+exists only below the header band (its border can no longer cross the
+header), pinned mode docks the sidebar at the screen's left edge with the
+column yielding then shrinking, and the overlay scrim dims header and
+body uniformly.
+
+- fix: hover round 2 — restore bg hovers, fix CustomButton variant prop (`2c5a012`)
+- fix: app shell layout — shell owns the viewport, header is one band (`15460a3`)
+
+### 2026-09-10
+
+#### Feature
+
+The sidebar can pin as a docked in-flow panel. Notes gain a preview tab
+rendering the unsaved buffer (via a server-side render endpoint), and view
+mode gets shareable rendered-line highlights. Hover styling shifts to the
+brand color for contrast across buttons and panels, mermaid diagrams follow
+every theme's palette, and unresolved wikilinks render dimmed,
+Obsidian-style, via the autolinks plugin.
+
+- feat: sidebar pin — docked in-flow mode (`eafa83f`)
+- feat: preview tab — the rendered unsaved buffer (`38d9e97`)
+- feat: view-mode line links — shareable rendered-line highlights (`68cf7b6`)
+- feat: hover restyle — brand color shift for contrast (AX) (`a11cae4`)
+- feat: mermaid diagrams follow every theme's palette (`a9fced7`)
+- feat: unresolved wikilinks — class + dimmed style (`da6bf26`)
+
+#### Fix
+
+Dist stamping becomes idempotent (a fresh build no longer double-stamps),
+the plugins doc's rpc drift is corrected, and test-vault cleanup is tidied
+with new boot helpers.
+
+- fix: dist stamp idempotency, docs rpc drift, test-vault cleanup (`5c024e2`)
+
 ## v2.0.0 (2026-09-07)
 
 The server is rewritten in Deno — the Python original is gone — and
