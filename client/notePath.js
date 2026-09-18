@@ -1,5 +1,6 @@
+import { basePath } from "./vault.js";
+
 export function notePath(path) {
-  // Notes live in the root url space; encode per segment so slashes stay
-  // real (named-route params would percent-encode them).
-  return "/" + path.split("/").map(encodeURIComponent).join("/");
+  const prefix = basePath();
+  return prefix + "/" + path.split("/").map(encodeURIComponent).join("/");
 }

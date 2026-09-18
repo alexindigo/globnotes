@@ -5,6 +5,16 @@
       First-run setup: choose how to secure your notes.
     </p>
 
+    <p v-if="namespaced" class="mb-4 text-sm">
+      Access:
+      <select v-model="access" class="ml-2 border border-theme-border bg-theme-background">
+        <option value="public">Public</option>
+        <option value="private">Private</option>
+        <option value="hidden">Hidden</option>
+        <option value="secret">Secret</option>
+      </select>
+    </p>
+
     <form @submit.prevent="createPassword" class="mb-4 flex flex-col">
       <TextInput
         v-model="username"
@@ -55,6 +65,7 @@ import { useToast } from "primevue/usetoast";
 import { ref } from "vue";
 
 import { postSetup } from "../api.js";
+import { namespaced } from "../vault.js";
 import CustomButton from "./CustomButton.vue";
 import Modal from "./Modal.vue";
 import TextInput from "./TextInput.vue";
@@ -65,29 +76,34 @@ const emit = defineEmits(["completed"]);
 const isVisible = ref(true);
 const username = ref("");
 const password = ref("");
+const access = ref("private");
 const toast = useToast();
 
 // The modal cannot be dismissed: setup must be completed.
 function noop() {}
 
+function payload(extra) {
+  return namespaced ? { access: access.value, ...extra } : extra;
+}
+
 function createPassword() {
-  postSetup({
+  postSetup(payload({
     mode: "password",
     username: username.value,
     password: password.value,
-  })
+  }))
     .then(() => emit("completed"))
     .catch(setupFailed);
 }
 
 function chooseReadOnly() {
-  postSetup({ mode: "read_only" })
+  postSetup(payload({ mode: "read_only" }))
     .then(() => emit("completed"))
     .catch(setupFailed);
 }
 
 function disableAuth() {
-  postSetup({ mode: "none" })
+  postSetup(payload({ mode: "none" }))
     .then(() => emit("completed"))
     .catch(setupFailed);
 }

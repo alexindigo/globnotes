@@ -6,11 +6,14 @@ import axios from "axios";
 import { getStoredToken } from "./tokenStorage.js";
 import { getToastOptions } from "./helpers.js";
 import router from "./router.js";
+import { basePath, getInstancePrefix } from "./vault.js";
+import { subscribe, TOPICS } from "./bus/index.js";
 
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+const api = axios.create({ baseURL: `${basePath()}/_/api` });
 
-const api = axios.create({ baseURL: `${pathPrefix}/_/api` });
+subscribe(TOPICS.VAULT_CHANGE, () => {
+  api.defaults.baseURL = `${basePath()}/_/api`;
+});
 
 api.interceptors.request.use(
   // If the request is not for the token endpoint, add the token to the headers.
@@ -54,6 +57,13 @@ export async function getConfig() {
   } catch (response) {
     return Promise.reject(response);
   }
+}
+
+export async function getVaults() {
+  const prefix = getInstancePrefix();
+  const res = await fetch(`${prefix}/_/api/vaults`);
+  if (!res.ok) throw new Error("vaults");
+  return res.json();
 }
 
 export async function postSetup(data) {
