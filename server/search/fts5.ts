@@ -6,7 +6,8 @@ import type { Indexer } from "@server/state.ts";
 import { isValidNotePath } from "@server/helpers.ts";
 import { logger } from "@server/logger.ts";
 import type { SearchResult } from "@server/notes/models.ts";
-import { state } from "@server/state.ts";
+import type { FileSystemNotes } from "@server/notes/file_system.ts";
+import type { PluginManager } from "@server/plugins/manager.ts";
 import { translateQuery } from "@server/search/query.ts";
 import { extractTags } from "@server/search/tags.ts";
 import { resolveTitleInfo } from "@server/search/titles.ts";
@@ -35,9 +36,13 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class Fts5Indexer implements Indexer {
   #db: DatabaseSync;
   #indexPath: string;
+  #storagePath: string;
+  #notes: FileSystemNotes | null = null;
+  #plugins: PluginManager | null = null;
   #status = { syncing: false, initial: false, done: 0, total: 0 };
 
   constructor(storagePath: string) {
+    this.#storagePath = storagePath;
     const indexDir = path.join(storagePath, ".globnotes");
     Deno.mkdirSync(indexDir, { recursive: true });
     this.#indexPath = path.join(indexDir, "index.sqlite");
@@ -46,6 +51,21 @@ export class Fts5Indexer implements Indexer {
     this.#initSchema();
     this.#migrate();
     this.#probeFts5();
+  }
+
+  bindNotes(notes: FileSystemNotes): void {
+    this.#notes = notes;
+  }
+
+  bindPlugins(plugins: PluginManager | null): void {
+    this.#plugins = plugins;
+  }
+
+  #requireNotes(): FileSystemNotes {
+    if (!this.#notes) {
+      throw new Error("Fts5Indexer.bindNotes() was not called");
+    }
+    return this.#notes;
   }
 
   #initSchema(): void {
@@ -135,7 +155,7 @@ export class Fts5Indexer implements Indexer {
    * note API can't address (`?`, `:`, `*`…), and Python indexes them just
    * the same (its sync reads by filename, not via the validated path). */
   #indexFile(filename: string): void {
-    const filepath = path.join(state.config.notesPath, filename);
+    const filepath = path.join(this.#storagePath, filename);
     const content = Deno.readTextFileSync(filepath);
     const mtime = (Deno.statSync(filepath).mtime?.getTime() ?? 0) / 1000;
     const { contentExTags, tagSet } = extractTags(content);
@@ -158,7 +178,7 @@ export class Fts5Indexer implements Indexer {
    * rebuild their detection in onSync). Fire-and-forget; skipped when
    * the pool was never started (no render has happened yet). */
   #notifyPlugins(): void {
-    const plugins = state.plugins;
+    const plugins = this.#plugins;
     if (!plugins || plugins.hosts.size === 0) return;
     plugins.syncAll().catch((e) => logger.error(`plugin sync failed: ${e}`));
   }
@@ -225,7 +245,7 @@ export class Fts5Indexer implements Indexer {
 
   #fileExists(filename: string): boolean {
     try {
-      return Deno.statSync(path.join(state.config.notesPath, filename))
+      return Deno.statSync(path.join(this.#storagePath, filename))
         .isFile;
     } catch {
       return false;
@@ -242,12 +262,12 @@ export class Fts5Indexer implements Indexer {
   async #runBackgroundSync(): Promise<void> {
     this.#status = { syncing: true, initial: false, done: 0, total: 0 };
     try {
-      const fsFiles = new Set(state.notes.listAllNoteFilenames());
+      const fsFiles = new Set(this.#requireNotes().listAllNoteFilenames());
       const indexed = this.#allIndexedFilenames();
       // Full-precision mtimes (Python compares datetimes exactly; floored
       // seconds miss same-second external writes).
       const fsMtime = (filename: string) =>
-        (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
+        (Deno.statSync(path.join(this.#storagePath, filename)).mtime
           ?.getTime() ?? 0) / 1000;
 
       // Prune deleted; update modified. Python stats each INDEXED file
@@ -308,7 +328,7 @@ export class Fts5Indexer implements Indexer {
    * removes deleted, updates modified. */
   syncIndex(): void {
     const indexed = this.#allIndexedFilenames();
-    const fsFiles = state.notes.listAllNoteFilenames();
+    const fsFiles = this.#requireNotes().listAllNoteFilenames();
     const indexedSet = new Set(indexed);
     const deleted = new Set<string>();
     for (const filename of indexedSet) {
@@ -331,7 +351,7 @@ export class Fts5Indexer implements Indexer {
         }
       } else {
         const fsMtime =
-          (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
+          (Deno.statSync(path.join(this.#storagePath, filename)).mtime
             ?.getTime() ?? 0) / 1000;
         if (fsMtime !== this.#indexedMtime(filename)) {
           this.#indexFile(filename);

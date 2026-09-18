@@ -15,6 +15,7 @@ import { LocalAuth } from "./auth/local.ts";
 import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
 import { PluginManager } from "./plugins/manager.ts";
+import { makePluginRpc } from "./plugins/rpc.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { logger } from "./logger.ts";
@@ -24,8 +25,19 @@ import { Fts5Indexer } from "./search/fts5.ts";
 const globalConfig = new GlobalConfig();
 const notes = new FileSystemNotes(globalConfig.notesPath);
 const indexer = new Fts5Indexer(globalConfig.notesPath);
+notes.setIndexer(indexer);
+indexer.bindNotes(notes);
 const fileServing = new FileServing(globalConfig.notesPath);
-const plugins = new PluginManager(globalConfig.notesPath);
+const plugins = new PluginManager(
+  globalConfig.notesPath,
+  makePluginRpc({
+    notes,
+    indexer,
+    files: fileServing,
+    basePath: globalConfig.pathPrefix,
+  }),
+);
+indexer.bindPlugins(plugins);
 const auth = globalConfig.authType === AuthType.PASSWORD ||
     globalConfig.authType === AuthType.TOTP
   ? new LocalAuth(globalConfig)

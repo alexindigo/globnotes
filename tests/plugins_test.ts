@@ -19,7 +19,7 @@ import {
 } from "../server/plugins/manifest.ts";
 import { PluginHost } from "../server/plugins/host.ts";
 import { PluginManager } from "../server/plugins/manager.ts";
-import { pluginRpc } from "../server/plugins/rpc.ts";
+import { makePluginRpc } from "../server/plugins/rpc.ts";
 import { initState } from "../server/state.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { bootServer } from "./helpers/boot.ts";
@@ -451,7 +451,7 @@ Deno.test("plugins: client module endpoint serves fresh from disk", async () => 
   }
 });
 
-Deno.test("plugins: pluginRpc resolves against real state", async () => {
+Deno.test("plugins: pluginRpc resolves against injected deps", async () => {
   const vault = await Deno.makeTempDir();
   const prevPath = Deno.env.get("GLOBNOTES_PATH");
   const prevAuth = Deno.env.get("GLOBNOTES_AUTH_TYPE");
@@ -464,26 +464,33 @@ Deno.test("plugins: pluginRpc resolves against real state", async () => {
     const config = new GlobalConfig();
     const notes = new FileSystemNotes(vault);
     const indexer = new Fts5Indexer(vault);
+    notes.setIndexer(indexer);
+    indexer.bindNotes(notes);
     const files = new FileServing(vault);
     initState(config, null, notes, indexer, files);
+    const rpc = makePluginRpc({
+      notes,
+      indexer,
+      files,
+      basePath: config.pathPrefix,
+    });
 
-    const note = await pluginRpc("readNote", ["hello"]) as {
+    const note = await rpc("readNote", ["hello"]) as {
       content: string;
     };
     assertEquals(note.content, "hi there");
 
-    const titles = await pluginRpc("listPaths", []);
+    const titles = await rpc("listPaths", []);
     assertEquals(titles, ["hello"]);
 
-    const file = await pluginRpc("readFile", ["data.bin"]) as {
+    const file = await rpc("readFile", ["data.bin"]) as {
       mediaType: string;
       body: Uint8Array;
     };
     assertEquals(new TextDecoder().decode(file.body), "bytes");
 
-    // Search needs an initial sync; run it synchronously via syncIndex.
     indexer.syncIndex();
-    const hits = await pluginRpc("search", ["hi"]) as { path: string }[];
+    const hits = await rpc("search", ["hi"]) as { path: string }[];
     assertEquals(hits.length, 1);
     assertEquals(hits[0].path, "hello");
 

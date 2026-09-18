@@ -4,7 +4,7 @@
  * File-system notes storage, ported line-for-line from the Python
  * FileSystemNotes (server/notes/file_system/file_system.py).
  * Index hooks (reindex / delete-from-index / sync) are forwarded
- * through the optional `state.indexer` — a no-op until commit 5.
+ * through the optional injected indexer.
  */
 
 import type { FileRef, Note, NoteCreate, NoteUpdate } from "./models.ts";
@@ -24,7 +24,7 @@ import {
   rewriteFirstH1,
   sanitizeBasename,
 } from "@server/search/titles.ts";
-import { state } from "@server/state.ts";
+import type { Indexer } from "@server/state.ts";
 import { logger } from "@server/logger.ts";
 import { walk } from "@std/fs/walk";
 import * as nodePath from "@std/path";
@@ -41,14 +41,20 @@ function escapeRegex(s: string): string {
 
 export class FileSystemNotes {
   readonly storagePath: string;
+  #indexer: Indexer | null;
   #scanCache: { ts: number; names: string[] } | null = null;
   #scanCacheTtl: number;
 
-  constructor(storagePath: string) {
+  constructor(storagePath: string, indexer: Indexer | null = null) {
     this.storagePath = storagePath;
+    this.#indexer = indexer;
     this.#scanCacheTtl = Number(
       Deno.env.get("GLOBNOTES_SCAN_CACHE_TTL") ?? "15",
     );
+  }
+
+  setIndexer(indexer: Indexer | null): void {
+    this.#indexer = indexer;
   }
 
   // region public API
@@ -73,7 +79,7 @@ export class FileSystemNotes {
       }
       throw e;
     }
-    state.indexer?.reindexNote(path);
+    this.#indexer?.reindexNote(path);
     this.#invalidateScanCache();
     return this.#noteFromFile(path, filepath);
   }
@@ -263,8 +269,8 @@ export class FileSystemNotes {
       oldPath: o,
       newPath: n,
     }));
-    if (oldPath !== path) state.indexer?.deleteFromIndex(oldPath);
-    state.indexer?.reindexNote(path);
+    if (oldPath !== path) this.#indexer?.deleteFromIndex(oldPath);
+    this.#indexer?.reindexNote(path);
     this.#invalidateScanCache();
     return {
       ...this.#noteFromFile(path, filepath),
@@ -344,7 +350,7 @@ export class FileSystemNotes {
       throw e;
     }
     this.#pruneEmptyParents(nodePath.dirname(filepath));
-    state.indexer?.deleteFromIndex(path);
+    this.#indexer?.deleteFromIndex(path);
     this.#invalidateScanCache();
   }
 

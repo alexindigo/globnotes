@@ -21,14 +21,19 @@ function setupState(vault: string, plugins: PluginManager | null): void {
   Deno.env.set("GLOBNOTES_PATH", vault);
   Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
   const config = new GlobalConfig();
+  const notes = new FileSystemNotes(vault);
+  const indexer = new Fts5Indexer(vault);
+  notes.setIndexer(indexer);
+  indexer.bindNotes(notes);
   initState(
     config,
     null,
-    new FileSystemNotes(vault),
-    new Fts5Indexer(vault),
+    notes,
+    indexer,
     new FileServing(vault),
     plugins,
   );
+  indexer.bindPlugins(plugins);
 }
 
 Deno.test("render: default markdown-it output (no plugins)", async () => {
