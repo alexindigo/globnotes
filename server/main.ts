@@ -15,7 +15,7 @@ import { AuthType } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import { initState } from "./state.ts";
-import { runWithVault, tryCreateVault, type Vault } from "./vault.ts";
+import { runWithVault, setRegistry, tryCreateVault, type Vault, isNamespaced, registry } from "./vault.ts";
 import {
   bootSpecs,
   childExcludePrefixes,
@@ -62,6 +62,7 @@ if (vaults.length === 0) {
   logger.error("No vaults could be opened.");
   Deno.exit(1);
 }
+setRegistry(vaults);
 
 const primary = vaults.find((v) => v.slug === "") ?? vaults[0];
 initState(
@@ -79,6 +80,7 @@ try {
     "client/dist/index.html",
     primary.config.pathPrefix,
     primary.config.brandName,
+    isNamespaced(),
   );
 } catch {
   logger.debug("client/dist/index.html not present; skipping rewrite.");
@@ -122,15 +124,50 @@ const app = await pathfinder({
   roots: [new URL("./api/endpoints/", import.meta.url)],
 });
 
+function isInstancePath(pathname: string): boolean {
+  if (pathname === "/" || pathname === "") return true;
+  return pathname === "/_" || pathname.startsWith("/_/");
+}
+
+function isBareInstanceApi(pathname: string): boolean {
+  return pathname === "/_/api/health" || pathname === "/_/api/vaults";
+}
+
 Deno.serve({ hostname, port }, (req, info) => {
-  const dispatch = (r: Request) => runWithVault(primary, () => app(r, info));
-  if (!prefix) return dispatch(req);
-  const url = new URL(req.url);
-  if (!url.pathname.startsWith(prefix)) {
+  const afterPrefix = (() => {
+    if (!prefix) return req;
+    const url = new URL(req.url);
+    if (!url.pathname.startsWith(prefix)) return null;
+    const stripped = url.pathname.slice(prefix.length) || "/";
+    return new Request(new URL(stripped + url.search, url.origin), req);
+  })();
+  if (afterPrefix === null) {
     return Response.json({ detail: "Not Found" }, { status: 404 });
   }
-  const stripped = url.pathname.slice(prefix.length) || "/";
-  return dispatch(new Request(new URL(stripped, url.origin), req));
+  const namespaced = isNamespaced();
+  if (!namespaced) {
+    return runWithVault(primary, () => app(afterPrefix, info));
+  }
+  const url = new URL(afterPrefix.url);
+  if (isInstancePath(url.pathname)) {
+    if (
+      url.pathname.startsWith("/_/api/") && !isBareInstanceApi(url.pathname)
+    ) {
+      return Response.json({ detail: "Not Found" }, { status: 404 });
+    }
+    return app(afterPrefix, info);
+  }
+  const segs = url.pathname.split("/").filter(Boolean);
+  const vault = registry.get(segs[0] ?? "");
+  if (!vault) {
+    return Response.json({ detail: "Not Found" }, { status: 404 });
+  }
+  const rest = "/" + segs.slice(1).join("/") || "/";
+  const rewritten = new Request(
+    new URL(rest + url.search, url.origin),
+    afterPrefix,
+  );
+  return runWithVault(vault, () => app(rewritten, info));
 });
 logger.info(
   `globnotes listening on http://${hostname}:${port}${primary.config.pathPrefix}`,

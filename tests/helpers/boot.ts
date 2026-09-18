@@ -41,9 +41,12 @@ export async function bootServer(
   opts: { cwd?: string } = {},
 ): Promise<TestServer> {
   const port = freePort();
-  const ownsVault = !env.GLOBNOTES_PATH;
-  const vault = env.GLOBNOTES_PATH ??
-    (await Deno.makeTempDir({ prefix: "globnotes-test-vault-" }));
+  const injectPath = !(env.GLOBNOTES_VAULTS && !env.GLOBNOTES_PATH);
+  const ownsVault = injectPath && !env.GLOBNOTES_PATH;
+  const vault = injectPath
+    ? (env.GLOBNOTES_PATH ??
+      (await Deno.makeTempDir({ prefix: "globnotes-test-vault-" })))
+    : "";
   if (ownsVault) trackedVaults.add(vault);
   let stderrText = "";
   const child = new Deno.Command(DENO, {
@@ -59,7 +62,7 @@ export async function bootServer(
     cwd: opts.cwd ?? REPO_ROOT,
     env: {
       ...env,
-      GLOBNOTES_PATH: vault,
+      ...(injectPath ? { GLOBNOTES_PATH: vault } : {}),
       GLOBNOTES_PORT: String(port),
       GLOBNOTES_HOST: "127.0.0.1",
       NO_COLOR: "1",

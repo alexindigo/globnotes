@@ -13,6 +13,7 @@ import type { FileServing } from "./files/file_serving.ts";
 import type { FileSystemNotes } from "./notes/file_system.ts";
 import type { SearchResult } from "./notes/models.ts";
 import type { PluginManager } from "./plugins/manager.ts";
+import { boundVault } from "./vault.ts";
 
 /** Implemented by the FTS5 commit; unset until then (storage still works,
  * index hooks are simply skipped). */
@@ -56,7 +57,21 @@ export interface ServerState {
 
 // Assigned by initState() before the server starts listening; endpoints only
 // run after that, so the assertion is safe.
-export const state: ServerState = {} as ServerState;
+let fallback: ServerState = {} as ServerState;
+
+function source(): ServerState {
+  const v = boundVault();
+  return v ? v as unknown as ServerState : fallback;
+}
+
+export const state: ServerState = new Proxy({} as ServerState, {
+  get(_t, prop) {
+    return Reflect.get(source(), prop);
+  },
+  set(_t, prop, value) {
+    return Reflect.set(source(), prop, value);
+  },
+});
 
 export function initState(
   config: GlobalConfig,
@@ -66,10 +81,5 @@ export function initState(
   files: FileServing,
   plugins: PluginManager | null = null,
 ): void {
-  state.config = config;
-  state.auth = auth;
-  state.notes = notes;
-  state.indexer = indexer;
-  state.files = files;
-  state.plugins = plugins;
+  fallback = { config, auth, notes, indexer, files, plugins };
 }

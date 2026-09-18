@@ -61,6 +61,24 @@ export class Vault {
 
 const als = new AsyncLocalStorage<Vault>();
 
+export const registry = new Map<string, Vault>();
+
+export function setRegistry(vaults: Vault[]): void {
+  registry.clear();
+  for (const v of vaults) registry.set(v.slug, v);
+}
+
+export function isNamespaced(): boolean {
+  for (const slug of registry.keys()) {
+    if (slug !== "") return true;
+  }
+  return false;
+}
+
+export function boundVault(): Vault | undefined {
+  return als.getStore();
+}
+
 export function currentVault(): Vault {
   const v = als.getStore();
   if (!v) throw new Error("no vault bound");

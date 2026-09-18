@@ -24,6 +24,7 @@ export interface StoredConfig {
   secret_key?: string;
   brand_name?: string;
   brand_accent?: string;
+  access?: string;
 }
 
 export interface GlobalConfigOpts {
