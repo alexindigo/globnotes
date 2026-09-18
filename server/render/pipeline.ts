@@ -19,6 +19,7 @@ import type MarkdownIt from "markdown-it";
 import type { PluginHost } from "../plugins/host.ts";
 import { logger } from "../logger.ts";
 import { state } from "../state.ts";
+import { boundVault } from "../vault.ts";
 import {
   createMarkdown,
   escapeHtml,
@@ -323,11 +324,24 @@ export async function renderMarkdown(
     opts.disabled?.length ? new Set(opts.disabled) : undefined,
   );
   const tokens = md.parse(source, {});
-  return await renderBlock(
+  const html = await renderBlock(
     tokens,
     plugins,
     opts.lineNumbers ?? false,
     lineIdentity(source),
+  );
+  const basePath = boundVault()?.basePath;
+  return basePath ? prefixRootUrls(html, basePath) : html;
+}
+
+function prefixRootUrls(html: string, basePath: string): string {
+  return html.replace(
+    /(href|src)="(\/[^"]*)"/g,
+    (match, attr: string, url: string) => {
+      if (url.startsWith("//")) return match;
+      if (url === basePath || url.startsWith(basePath + "/")) return match;
+      return `${attr}="${basePath}${url}"`;
+    },
   );
 }
 

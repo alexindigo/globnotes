@@ -3,9 +3,7 @@ import { ref } from "vue";
 import iconSvg from "./assets/brand/icon.svg?raw";
 import { subscribe, TOPICS } from "./bus/index.js";
 import { setBrandAccent } from "./themes.js";
-
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+import { basePath } from "./vault.js";
 
 // favicon rel → the dropped brand file that replaces it.
 const FAVICON_MAP = [
@@ -38,7 +36,7 @@ export function applyBrandToDocument(brand) {
   for (const { selector, file } of FAVICON_MAP) {
     const link = document.querySelector(selector);
     if (link && files.includes(file)) {
-      link.href = `${pathPrefix}/_/brand/${file}?v=${brandVersion.value}`;
+      link.href = `${basePath()}/_/brand/${file}?v=${brandVersion.value}`;
     }
   }
   // No dropped favicon files: the icon chain falls back — custom icon
@@ -49,9 +47,9 @@ export function applyBrandToDocument(brand) {
     const customLogo = files.find((f) => f.startsWith("logo."));
     let href = null;
     if (customIcon) {
-      href = `${pathPrefix}/_/brand/${customIcon}?v=${brandVersion.value}`;
+      href = `${basePath()}/_/brand/${customIcon}?v=${brandVersion.value}`;
     } else if (customLogo) {
-      href = `${pathPrefix}/_/brand/${customLogo}?v=${brandVersion.value}`;
+      href = `${basePath()}/_/brand/${customLogo}?v=${brandVersion.value}`;
     } else if (brand?.accent) {
       const tinted = iconSvg.replaceAll("#38BDF8", brand.accent);
       href = `data:image/svg+xml,${encodeURIComponent(tinted)}`;
@@ -66,7 +64,7 @@ export function applyBrandToDocument(brand) {
   // The endpoint generates the manifest from the brand config when the
   // vault has none, so this rewrite is always safe.
   const manifest = document.querySelector('link[rel="manifest"]');
-  if (manifest) manifest.href = `${pathPrefix}/_/brand/site.webmanifest`;
+  if (manifest) manifest.href = `${basePath()}/_/brand/site.webmanifest`;
 
   // setBrandAccent re-applies the theme, which stamps theme-color from
   // the background — set the meta afterwards so the accent wins.

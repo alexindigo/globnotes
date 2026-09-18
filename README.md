@@ -109,11 +109,32 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 
 `GLOBNOTES_PATH_PREFIX` is respected for multi-instance deployments (e.g. one instance at `/dad/` and another at `/mom/` behind one host) — note pages, files, API and assets all live under the prefix, and relative links keep working.
 
+## Multiple vaults
+
+One process can serve several independent vaults (each with its own `.globnotes`, index, plugins, brand, and auth). Set `GLOBNOTES_VAULTS`:
+
+```yaml
+volumes:
+  - /srv/dad-notes:/vaults/dad
+  - /srv/mom-notes:/vaults/mom
+environment:
+  GLOBNOTES_VAULTS: "dad:/vaults/dad,mom:/vaults/mom"
+  GLOBNOTES_AUTH_TYPE_dad: "none"
+  GLOBNOTES_AUTH_TYPE_mom: "none"
+```
+
+Notes live at `/dad/recipes/soup`. Disk markdown stays Obsidian-relative; globnotes prepends the slug to hrefs at render time. `/` is a vault picker (Public and Private vaults). Hidden and Secret vaults are omitted from the picker but reachable by URL.
+
+`GLOBNOTES_PATH` alone is still today's single vault (no slug). If both PATH and VAULTS are set, PATH becomes the `globnotes` vault at `/globnotes/…`. Per-vault env uses the slug as written: `GLOBNOTES_AUTH_TYPE_dad`, `GLOBNOTES_PASSWORD_dad`, …
+
+Mounting extra trees as subfolders of `/data` without `GLOBNOTES_VAULTS` remains one vault (shared index). Use VAULTS for isolation.
+
 ## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `GLOBNOTES_PATH` | `/data` (in container) | Root directory of the notes tree. **Required** outside docker. |
+| `GLOBNOTES_PATH` | `/data` (in container) | Root directory of the notes tree. Required when `GLOBNOTES_VAULTS` is unset. |
+| `GLOBNOTES_VAULTS` | — | Named vaults `slug:root,…` (e.g. `dad:/data/dad,mom:/data/mom`). Turns on URL namespacing. |
 | `PUID` / `PGID` | `1000` / `1000` | User the app runs as (container). Set to your host user's ids (`id -u` / `id -g`) so note edits can write. **globnotes never `chown`s your vault** — it only creates/owns the `.globnotes` index dir. |
 | `GLOBNOTES_INDEX_BATCH_SIZE` | `200` | Notes indexed per commit batch during the initial background sync. Lower it on very constrained hosts. |
 | `GLOBNOTES_INDEX_BATCH_DELAY` | `0.1` | Seconds to sleep between index batches (CPU throttle). `0` disables. |

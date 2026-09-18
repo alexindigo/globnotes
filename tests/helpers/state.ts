@@ -25,8 +25,11 @@ export function setupState(
   const config = new GlobalConfig();
   const notes = new FileSystemNotes(vault);
   const indexer = new Fts5Indexer(vault);
+  notes.setIndexer(indexer);
+  indexer.bindNotes(notes);
   const files = new FileServing(vault);
   initState(config, null, notes, indexer, files, plugins);
+  indexer.bindPlugins(plugins);
   return { config, notes, indexer, files };
 }
 

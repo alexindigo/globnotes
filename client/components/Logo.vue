@@ -49,6 +49,7 @@ import { brandVersion } from "../brand.js";
 import iconSvg from "../assets/brand/icon.svg?raw";
 import logoSvg from "../assets/brand/logo.svg?raw";
 import { useGlobalStore } from "../globalStore.js";
+import { basePath } from "../vault.js";
 
 const props = defineProps({
   responsive: {
@@ -58,8 +59,6 @@ const props = defineProps({
 });
 
 const globalStore = useGlobalStore();
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
 
 const brand = computed(() => globalStore.config.brand ?? {});
 const brandFiles = computed(() => brand.value.files ?? []);
@@ -84,6 +83,6 @@ const iconSvgTinted = computed(() => tinted(iconSvg));
 
 function brandUrl(file) {
   // Cache-buster: a just-uploaded file must replace the old one on screen.
-  return `${pathPrefix}/_/brand/${file}?v=${brandVersion.value}`;
+  return `${basePath()}/_/brand/${file}?v=${brandVersion.value}`;
 }
 </script>

@@ -1,46 +1,46 @@
-const tokenStorageKey = "token";
+import { basePath, currentSlug } from "./vault.js";
 
-function getBasePath() {
-  // This relies on the fact that flanotes always has a correctly formatted relative path set in <base> tag
-  return document.querySelector('base').getAttribute('href')
+function tokenKey() {
+  const slug = currentSlug();
+  return slug ? `token:${slug}` : "token";
 }
 
 function getCookieString(token) {
-  const basePath = getBasePath();
-  return `${tokenStorageKey}=${token}; Path=${basePath}; SameSite=Strict`;
+  const path = (basePath() || "") + "/" || "/";
+  return `${tokenKey()}=${token}; Path=${path}; SameSite=Strict`;
 }
 
 export function storeToken(token, persist = false) {
   document.cookie = getCookieString(token);
-  sessionStorage.setItem(tokenStorageKey, token);
+  sessionStorage.setItem(tokenKey(), token);
   if (persist === true) {
-    localStorage.setItem(tokenStorageKey, token);
+    localStorage.setItem(tokenKey(), token);
   }
 }
 
 export function getStoredToken() {
-  return sessionStorage.getItem(tokenStorageKey);
+  return sessionStorage.getItem(tokenKey());
 }
 
 export function loadStoredToken() {
-  const token = localStorage.getItem(tokenStorageKey);
+  const token = localStorage.getItem(tokenKey());
   if (token != null) {
     storeToken(token, false);
   }
 }
 
 export function clearStoredToken() {
-  sessionStorage.removeItem(tokenStorageKey);
-  localStorage.removeItem(tokenStorageKey);
+  sessionStorage.removeItem(tokenKey());
+  localStorage.removeItem(tokenKey());
   document.cookie =
     getCookieString() + "; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 }
 
 export function isCurrentTokenStored() {
-  const localToken = localStorage.getItem(tokenStorageKey);
+  const localToken = localStorage.getItem(tokenKey());
   if (localToken == null) {
     return false;
   }
-  const sessionToken = sessionStorage.getItem(tokenStorageKey);
+  const sessionToken = sessionStorage.getItem(tokenKey());
   return localToken === sessionToken;
 }

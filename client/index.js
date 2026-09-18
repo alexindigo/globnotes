@@ -5,6 +5,8 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import { initTheme } from "./themes.js";
 import { loadStoredToken } from "./tokenStorage.js";
+import { basePath } from "./vault.js";
+import { subscribe, TOPICS } from "./bus/index.js";
 import router from "/router.js";
 
 // Theme vars are stamped on <html> before mount so every surface is
@@ -15,12 +17,13 @@ initTheme();
 // combined at <prefix>/_/plugins.css. Loaded globally; plugins namespace
 // their own selectors.
 {
-  const prefix =
-    document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
   const pluginStyles = document.createElement("link");
   pluginStyles.rel = "stylesheet";
-  pluginStyles.href = prefix + "/_/plugins.css";
+  pluginStyles.href = basePath() + "/_/plugins.css";
   document.head.appendChild(pluginStyles);
+  subscribe(TOPICS.VAULT_CHANGE, () => {
+    pluginStyles.href = basePath() + "/_/plugins.css";
+  });
 }
 
 const app = createApp(App);

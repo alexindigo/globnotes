@@ -221,23 +221,23 @@ export function rewriteIndexHtml(
   htmlFile: string,
   pathPrefix: string,
   brandName?: string | null,
+  namespaced = false,
 ): void {
   let html = Deno.readTextFileSync(htmlFile);
   const stampedPrefix = /<meta name="globnotes-prefix" content="([^"]*)"/
     .exec(html)?.[1];
 
   if (stampedPrefix !== undefined && stampedPrefix === pathPrefix) {
-    // Same prefix — only the brand title can change between boots.
     if (brandName) {
       const escaped = brandName.replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;").replaceAll(">", "&gt;");
       html = html.replace(/<title>[^<]*<\/title>/, `<title>${escaped}</title>`);
-      Deno.writeTextFileSync(htmlFile, html);
     }
+    html = stampNamespaced(html, namespaced);
+    Deno.writeTextFileSync(htmlFile, html);
     return;
   }
 
-  // Strip a previously-stamped URL prefix (prefixed → plain / other).
   if (stampedPrefix) {
     html = html.replaceAll(`"${stampedPrefix}/_/`, '"/_/');
   }
@@ -258,7 +258,26 @@ export function rewriteIndexHtml(
       .replaceAll("<", "&lt;").replaceAll(">", "&gt;");
     html = html.replace(/<title>[^<]*<\/title>/, `<title>${escaped}</title>`);
   }
+  html = stampNamespaced(html, namespaced);
   Deno.writeTextFileSync(htmlFile, html);
+}
+
+function stampNamespaced(html: string, namespaced: boolean): string {
+  const content = namespaced ? "true" : "false";
+  if (html.includes('name="globnotes-namespaced"')) {
+    return html.replace(
+      /(<meta name="globnotes-namespaced" content=")[^"]*/,
+      `$1${content}`,
+    );
+  }
+  const tag = `<meta name="globnotes-namespaced" content="${content}">`;
+  if (html.includes('name="globnotes-prefix"')) {
+    return html.replace(
+      '<meta name="globnotes-prefix"',
+      `${tag}\n    <meta name="globnotes-prefix"`,
+    );
+  }
+  return html.replace("<head>", `<head>\n    ${tag}`);
 }
 
 export interface GetEnvOptions {

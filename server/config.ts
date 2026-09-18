@@ -24,11 +24,18 @@ export interface StoredConfig {
   secret_key?: string;
   brand_name?: string;
   brand_accent?: string;
+  access?: string;
+}
+
+export interface GlobalConfigOpts {
+  notesPath?: string;
+  envSuffix?: string;
 }
 
 export class GlobalConfig {
   readonly notesPath: string;
   readonly pathPrefix: string;
+  readonly envSuffix: string;
   storedConfig: StoredConfig | null;
   authType: AuthType | null;
   setupRequired: boolean;
@@ -42,9 +49,12 @@ export class GlobalConfig {
   brandName: string | null;
   brandAccent: string | null;
 
-  constructor() {
+  constructor(opts: GlobalConfigOpts = {}) {
     logger.debug("Loading global config...");
-    this.notesPath = getEnv("GLOBNOTES_PATH", { mandatory: true });
+    this.envSuffix = opts.envSuffix ?? "";
+    const vaultsSet = !!(Deno.env.get("GLOBNOTES_VAULTS") ?? "").trim();
+    this.notesPath = opts.notesPath ??
+      getEnv("GLOBNOTES_PATH", { mandatory: !vaultsSet });
     this.storedConfig = this.#loadStoredConfig();
     this.authType = this.#loadAuthType();
     this.setupRequired = this.authType === null;
@@ -59,12 +69,14 @@ export class GlobalConfig {
     }) ===
       "true";
     this.pathPrefix = this.#loadPathPrefix();
-    // getEnv returns "" for unset vars — `||` treats that (and an
-    // explicitly empty value) as absent, per the env-wins rule.
-    this.brandName = getEnv("GLOBNOTES_BRAND_NAME") ||
+    this.brandName = this.#env("GLOBNOTES_BRAND_NAME") ||
       this.storedConfig?.brand_name || null;
-    this.brandAccent = getEnv("GLOBNOTES_BRAND_ACCENT") ||
+    this.brandAccent = this.#env("GLOBNOTES_BRAND_ACCENT") ||
       this.storedConfig?.brand_accent || null;
+  }
+
+  #env(key: string): string {
+    return getEnv(key + this.envSuffix);
   }
 
   get configPath(): string {
@@ -91,7 +103,7 @@ export class GlobalConfig {
   }
 
   #loadAuthType(): AuthType | null {
-    const key = "GLOBNOTES_AUTH_TYPE";
+    const key = "GLOBNOTES_AUTH_TYPE" + this.envSuffix;
     const value = getEnv(key);
     if (value) {
       const authType = Object.values(AuthType).find((t) =>

@@ -5,11 +5,13 @@
 
 import { brandBlock } from "@server/brand.ts";
 import { state } from "@server/state.ts";
+import { boundVault } from "@server/vault.ts";
 
 export const auth = false;
 
 export default function (): Record<string, unknown> {
   const c = state.config;
+  const vault = boundVault();
   return {
     setupRequired: c.setupRequired,
     authType: c.authType,
@@ -20,5 +22,8 @@ export default function (): Record<string, unknown> {
     quickAccessLimit: c.quickAccessLimit,
     autoEnablePlugins: c.autoEnablePlugins,
     brand: brandBlock(c),
+    slug: vault?.slug ?? "",
+    basePath: vault?.basePath ?? c.pathPrefix,
+    access: c.storedConfig?.access ?? null,
   };
 }

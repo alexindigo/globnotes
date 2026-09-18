@@ -52,3 +52,12 @@ printf '# Quick\n\n==highlighted== #taggy\n' > /tmp/globnotes-fixture/dad/quickn
 - [ ] With `GLOBNOTES_PATH_PREFIX=/mom`: notes at `/mom/dad/...`, files at `/mom/dad/assets/...`, API at `/mom/_/api/...`, assets at `/mom/_/assets/...`.
 - [ ] Relative image links render under the prefix.
 - [ ] The container healthcheck passes with the prefix set.
+
+## Multiple vaults
+
+- [ ] `GLOBNOTES_VAULTS=dad:…,mom:…` — `/` is a picker listing Public/Private only.
+- [ ] `/dad/recipes/soup` is dad's note; mom cannot see it at `/mom/…`.
+- [ ] `[[ideas]]` in dad renders `href="/dad/ideas"`; the file on disk is still `[[ideas]]`.
+- [ ] A Hidden/Secret vault is omitted from the picker but `/secret/note` still binds (login if Secret).
+- [ ] A dad bearer token on `/mom/_/api/auth-check` is 401.
+- [ ] PATH-only (no VAULTS) still serves `/recipes/soup` and `/_/api/health`.

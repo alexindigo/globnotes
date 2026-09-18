@@ -29,16 +29,19 @@ export class LocalAuth {
   readonly isTotpEnabled: boolean;
   private totpSecret = "";
   private lastUsedTotp: string | null = null;
+  private readonly vaultSlug: string;
 
-  constructor(globalConfig: GlobalConfig) {
-    // Credentials come from environment variables when set (env always
-    // wins), otherwise from the stored first-run setup config.
+  constructor(globalConfig: GlobalConfig, vaultSlug = "") {
+    const suffix = globalConfig.envSuffix;
     const stored = globalConfig.storedConfig ?? {};
-    this.username = (getEnv("GLOBNOTES_USERNAME") || stored.username || "")
+    this.vaultSlug = vaultSlug;
+    this.username = (getEnv("GLOBNOTES_USERNAME" + suffix) || stored.username ||
+      "")
       .toLowerCase();
-    this.password = getEnv("GLOBNOTES_PASSWORD") || null;
+    this.password = getEnv("GLOBNOTES_PASSWORD" + suffix) || null;
     this.passwordHash = this.password ? null : (stored.password_hash ?? null);
-    this.secretKey = getEnv("GLOBNOTES_SECRET_KEY") || stored.secret_key || "";
+    this.secretKey = getEnv("GLOBNOTES_SECRET_KEY" + suffix) ||
+      stored.secret_key || "";
     if (
       !this.username || !(this.password || this.passwordHash) || !this.secretKey
     ) {
@@ -56,15 +59,18 @@ export class LocalAuth {
     this.isTotpEnabled = false;
     if (globalConfig.authType === AuthType.TOTP) {
       if (!this.password) {
-        logger.error("GLOBNOTES_PASSWORD must be set when using TOTP auth.");
+        logger.error(
+          "GLOBNOTES_PASSWORD" + globalConfig.envSuffix +
+            " must be set when using TOTP auth.",
+        );
         Deno.exit(1);
       }
       this.isTotpEnabled = true;
-      // The env value is raw text; the server base32-encodes it (same as
-      // pyotp's b32encode in the Python server).
       this.totpSecret = encodeBase32(
         new TextEncoder().encode(
-          getEnv("GLOBNOTES_TOTP_KEY", { mandatory: true }),
+          getEnv("GLOBNOTES_TOTP_KEY" + globalConfig.envSuffix, {
+            mandatory: true,
+          }),
         ),
       );
     }
@@ -118,13 +124,16 @@ export class LocalAuth {
     if (!sub || sub.toLowerCase() !== this.username) {
       throw new Error("wrong subject");
     }
+    if ((payload.vault ?? "") !== this.vaultSlug) {
+      throw new Error("wrong vault");
+    }
   }
 
   async #createAccessToken(): Promise<string> {
     const key = new TextEncoder().encode(this.secretKey);
     const exp = Math.floor(Date.now() / 1000) +
       this.sessionExpiryDays * 86_400;
-    return await new SignJWT({ sub: this.username })
+    return await new SignJWT({ sub: this.username, vault: this.vaultSlug })
       .setProtectedHeader({ alg: JWT_ALGORITHM })
       .setExpirationTime(exp)
       .sign(key);

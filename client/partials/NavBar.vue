@@ -93,6 +93,7 @@ import { saveViewLineNumbers, viewLineNumbers } from "../pluginSettings.js";
 import { currentLayer } from "../keybindings/store.js";
 import { currentThemeLabel } from "../themes.js";
 import { clearStoredToken } from "../tokenStorage.js";
+import { namespaced } from "../vault.js";
 
 const globalStore = useGlobalStore();
 
@@ -137,6 +138,12 @@ function openSearch() {
 }
 
 const menuItems = computed(() => [
+  ...(namespaced
+    ? [{
+      label: "All vaults",
+      command: () => router.push({ name: "picker" }),
+    }]
+    : []),
   {
     label: `Theme: ${currentThemeLabel.value}`,
     icon: tabDeviceDesktop,

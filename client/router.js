@@ -6,50 +6,89 @@ import { authCheck } from "./api.js";
 import { currentBrandName } from "./brand.js";
 import { notePath } from "./notePath.js";
 import { publish, TOPICS } from "./bus/index.js";
+import { getInstancePrefix, namespaced, setVault } from "./vault.js";
 
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+const pathPrefix = getInstancePrefix();
+
+const singleRoutes = [
+  {
+    path: "/",
+    name: "home",
+    component: () => import("./views/Home.vue"),
+  },
+  {
+    path: "/_/login",
+    name: "login",
+    component: () => import("./views/LogIn.vue"),
+    props: (route) => ({ redirect: route.query[constants.params.redirect] }),
+  },
+  {
+    path: "/_/new",
+    name: "new",
+    component: () => import("./views/Note.vue"),
+  },
+  {
+    path: "/_/search",
+    name: "search",
+    component: () => import("./views/SearchResults.vue"),
+    props: (route) => ({
+      searchTerm: route.query[constants.params.searchTerm],
+      sortBy: Number(route.query[constants.params.sortBy]) || undefined,
+      folder: route.query[constants.params.folder] || undefined,
+    }),
+  },
+  {
+    path: "/:path(.*)",
+    name: "note",
+    component: () => import("./views/Note.vue"),
+    props: true,
+  },
+];
+
+const multiRoutes = [
+  {
+    path: "/",
+    name: "picker",
+    component: () => import("./views/VaultPicker.vue"),
+  },
+  {
+    path: "/:vault/_/login",
+    name: "login",
+    component: () => import("./views/LogIn.vue"),
+    props: (route) => ({ redirect: route.query[constants.params.redirect] }),
+  },
+  {
+    path: "/:vault/_/new",
+    name: "new",
+    component: () => import("./views/Note.vue"),
+  },
+  {
+    path: "/:vault/_/search",
+    name: "search",
+    component: () => import("./views/SearchResults.vue"),
+    props: (route) => ({
+      searchTerm: route.query[constants.params.searchTerm],
+      sortBy: Number(route.query[constants.params.sortBy]) || undefined,
+      folder: route.query[constants.params.folder] || undefined,
+    }),
+  },
+  {
+    path: "/:vault",
+    name: "home",
+    component: () => import("./views/Home.vue"),
+  },
+  {
+    path: "/:vault/:path(.*)",
+    name: "note",
+    component: () => import("./views/Note.vue"),
+    props: true,
+  },
+];
 
 const router = createRouter({
   history: createWebHistory(pathPrefix + "/"),
-  routes: [
-    {
-      path: "/",
-      name: "home",
-      component: () => import("./views/Home.vue"),
-    },
-    {
-      path: "/_/login",
-      name: "login",
-      component: () => import("./views/LogIn.vue"),
-      props: (route) => ({ redirect: route.query[constants.params.redirect] }),
-    },
-    {
-      path: "/_/new",
-      name: "new",
-      component: () => import("./views/Note.vue"),
-    },
-    {
-      path: "/_/search",
-      name: "search",
-      component: () => import("./views/SearchResults.vue"),
-      props: (route) => ({
-        searchTerm: route.query[constants.params.searchTerm],
-        sortBy: Number(route.query[constants.params.sortBy]) || undefined,
-        folder: route.query[constants.params.folder] || undefined,
-      }),
-    },
-    {
-      // Notes live in the root URL space; paths may contain slashes.
-      path: "/:path(.*)",
-      name: "note",
-      component: () => import("./views/Note.vue"),
-      props: true,
-    },
-  ],
+  routes: namespaced ? multiRoutes : singleRoutes,
 });
-
-// Normalize note paths: a clicked relative link may carry the .md suffix
 // (e.g. /dad/other.md -> note "dad/other").
 router.beforeEach(async (to) => {
   if (
@@ -64,10 +103,14 @@ router.beforeEach(async (to) => {
   }
 });
 
-// Check the user is authenticated on first navigation (unless going to login)
+router.beforeEach((to) => {
+  if (typeof to.params.vault === "string" && to.params.vault) {
+    setVault(to.params.vault);
+  }
+});
 let authChecked = false;
 router.beforeEach(async (to) => {
-  if (authChecked || to.name === "login") {
+  if (authChecked || to.name === "login" || to.name === "picker") {
     return;
   }
   try {

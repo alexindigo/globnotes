@@ -15,9 +15,7 @@ import { ref } from "vue";
 import { getPlugins } from "./api.js";
 import { subscribe, TOPICS } from "./bus/index.js";
 import { isPluginEnabled } from "./pluginSettings.js";
-
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+import { basePath } from "./vault.js";
 
 /** Bumped whenever a dual-mode plugin's enabled state toggles, so the
  * WYSIWYG editor remounts and re-runs loadClientPlugins (the same keyed
@@ -52,7 +50,7 @@ export async function loadClientPlugins() {
   const lists = await Promise.all(
     enabled.map(async (p) => {
       try {
-        const url = `${pathPrefix}/_/plugins/${encodeURIComponent(p.id)}/client.js`;
+        const url = `${basePath()}/_/plugins/${encodeURIComponent(p.id)}/client.js`;
         const mod = await import(/* @vite-ignore */ url);
         return Array.isArray(mod.default) ? mod.default : [];
       } catch (e) {

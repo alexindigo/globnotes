@@ -4,7 +4,7 @@
  * File-system notes storage, ported line-for-line from the Python
  * FileSystemNotes (server/notes/file_system/file_system.py).
  * Index hooks (reindex / delete-from-index / sync) are forwarded
- * through the optional `state.indexer` — a no-op until commit 5.
+ * through the optional injected indexer.
  */
 
 import type { FileRef, Note, NoteCreate, NoteUpdate } from "./models.ts";
@@ -24,7 +24,7 @@ import {
   rewriteFirstH1,
   sanitizeBasename,
 } from "@server/search/titles.ts";
-import { state } from "@server/state.ts";
+import type { Indexer } from "@server/state.ts";
 import { logger } from "@server/logger.ts";
 import { walk } from "@std/fs/walk";
 import * as nodePath from "@std/path";
@@ -41,14 +41,31 @@ function escapeRegex(s: string): string {
 
 export class FileSystemNotes {
   readonly storagePath: string;
+  #indexer: Indexer | null;
+  #excludePrefixes: string[];
   #scanCache: { ts: number; names: string[] } | null = null;
   #scanCacheTtl: number;
 
-  constructor(storagePath: string) {
+  constructor(
+    storagePath: string,
+    indexer: Indexer | null = null,
+    excludePrefixes: string[] = [],
+  ) {
     this.storagePath = storagePath;
+    this.#indexer = indexer;
+    this.#excludePrefixes = excludePrefixes;
     this.#scanCacheTtl = Number(
       Deno.env.get("GLOBNOTES_SCAN_CACHE_TTL") ?? "15",
     );
+  }
+
+  setIndexer(indexer: Indexer | null): void {
+    this.#indexer = indexer;
+  }
+
+  #isExcluded(rel: string): boolean {
+    const n = rel.replaceAll("\\", "/");
+    return this.#excludePrefixes.some((p) => n === p || n.startsWith(p + "/"));
   }
 
   // region public API
@@ -73,7 +90,7 @@ export class FileSystemNotes {
       }
       throw e;
     }
-    state.indexer?.reindexNote(path);
+    this.#indexer?.reindexNote(path);
     this.#invalidateScanCache();
     return this.#noteFromFile(path, filepath);
   }
@@ -263,8 +280,8 @@ export class FileSystemNotes {
       oldPath: o,
       newPath: n,
     }));
-    if (oldPath !== path) state.indexer?.deleteFromIndex(oldPath);
-    state.indexer?.reindexNote(path);
+    if (oldPath !== path) this.#indexer?.deleteFromIndex(oldPath);
+    this.#indexer?.reindexNote(path);
     this.#invalidateScanCache();
     return {
       ...this.#noteFromFile(path, filepath),
@@ -344,7 +361,7 @@ export class FileSystemNotes {
       throw e;
     }
     this.#pruneEmptyParents(nodePath.dirname(filepath));
-    state.indexer?.deleteFromIndex(path);
+    this.#indexer?.deleteFromIndex(path);
     this.#invalidateScanCache();
   }
 
@@ -372,6 +389,7 @@ export class FileSystemNotes {
       if (entry.name.startsWith(".")) continue;
       if (entry.isDirectory) {
         const childPath = dirPath ? `${dirPath}/${entry.name}` : entry.name;
+        if (this.#isExcluded(childPath)) continue;
         folders.push({ name: entry.name, path: childPath });
       } else if (entry.name.endsWith(MARKDOWN_EXT)) {
         const path = entry.name.slice(0, -MARKDOWN_EXT.length);
@@ -486,16 +504,20 @@ export class FileSystemNotes {
     const root = this.storagePath;
     const prefix = root.endsWith(nodePath.SEPARATOR) ? root : root + nodePath.SEPARATOR;
 
-    function walkDir(dir: string): void {
+    const isExcluded = (rel: string) => this.#isExcluded(rel);
+    const walkDir = (dir: string): void => {
       for (const entry of Deno.readDirSync(dir)) {
         const full = nodePath.join(dir, entry.name);
+        const rel = full.slice(prefix.length).replaceAll("\\", "/");
         if (entry.isDirectory) {
+          if (isExcluded(rel)) continue;
           walkDir(full);
         } else if (entry.name.endsWith(MARKDOWN_EXT)) {
+          if (isExcluded(rel)) continue;
           names.push(full.slice(prefix.length));
         }
       }
-    }
+    };
     walkDir(root);
     this.#scanCache = { ts: now, names };
     return names;

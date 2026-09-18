@@ -8,6 +8,9 @@
       v-if="globalStore.config.setupRequired"
       @completed="setupCompleted"
     />
+    <template v-else-if="route.name === 'picker'">
+      <RouterView />
+    </template>
     <template v-else>
       <QuickSwitcher
         v-model="isQuickSwitcherVisible"
@@ -50,7 +53,7 @@
 import Mousetrap from "mousetrap";
 import "mousetrap/plugins/global-bind/mousetrap-global-bind";
 import { useToast } from "primevue/usetoast";
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { RouterView, useRoute } from "vue-router";
 
 import { apiErrorHandler, getConfig } from "./api.js";
@@ -65,6 +68,7 @@ import { initDebugNotifications } from "./debug.js";
 import { initTheme } from "./themes.js";
 import { initDispatcher } from "./keybindings/dispatcher.js";
 import { refreshNoteIndex } from "./noteIndex.js";
+import { namespaced, currentSlug } from "./vault.js";
 import NavBar from "./partials/NavBar.vue";
 import QuickSwitcher from "./components/QuickSwitcher.vue";
 import CommandPalette from "./components/CommandPalette.vue";
@@ -100,7 +104,11 @@ subscribe(TOPICS.APP_NEW_NOTE, () => {
 });
 subscribe(TOPICS.APP_GO_HOME, () => {
   if (route.name !== "login") {
-    router.push({ name: "home" });
+    if (namespaced && currentSlug()) {
+      router.push({ name: "home", params: { vault: currentSlug() } });
+    } else {
+      router.push({ name: "home" });
+    }
   }
 });
 subscribe(TOPICS.APP_OPEN_SWITCHER, () => {
@@ -109,20 +117,26 @@ subscribe(TOPICS.APP_OPEN_SWITCHER, () => {
   }
 });
 
-getConfig()
-  .then((data) => {
-    globalStore.config = data;
-    applyBrandToDocument(data.brand);
+onMounted(() => {
+  if (route.name === "picker") {
     loadingIndicator.value.setLoaded();
-    refreshNoteIndex();
-  })
-  .catch((error) => {
-    apiErrorHandler(error, toast);
-    loadingIndicator.value.setFailed();
-  });
+    return;
+  }
+  getConfig()
+    .then((data) => {
+      globalStore.config = data;
+      applyBrandToDocument(data.brand);
+      loadingIndicator.value.setLoaded();
+      refreshNoteIndex();
+    })
+    .catch((error) => {
+      apiErrorHandler(error, toast);
+      loadingIndicator.value.setFailed();
+    });
+});
 
 const showNavBar = computed(() => {
-  return route.name !== "login";
+  return route.name !== "login" && route.name !== "picker";
 });
 
 const showNavBarLogo = computed(() => {

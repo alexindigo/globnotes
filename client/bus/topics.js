@@ -83,6 +83,7 @@ const TOPICS = {
   APP_GO_HOME: "app:go-home",
   APP_OPEN_SWITCHER: "app:open-switcher",
   APP_OPEN_PALETTE: "app:open-palette",
+  VAULT_CHANGE: "vault:change",
 };
 
 export { TOPICS };
