@@ -60,6 +60,49 @@ Deno.test("multi-vault: isolation, picker, unknown slug", async () => {
   }
 });
 
+Deno.test("multi-vault: token does not cross vaults", async () => {
+  const dad = await Deno.makeTempDir();
+  const mom = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${dad}/a.md`, "dad");
+  await Deno.writeTextFile(`${mom}/a.md`, "mom");
+  const server = await bootServer({
+    GLOBNOTES_VAULTS: `dad:${dad},mom:${mom}`,
+    GLOBNOTES_AUTH_TYPE_dad: "password",
+    GLOBNOTES_USERNAME_dad: "admin",
+    GLOBNOTES_PASSWORD_dad: "secret",
+    GLOBNOTES_SECRET_KEY_dad: "k".repeat(32),
+    GLOBNOTES_AUTH_TYPE_mom: "password",
+    GLOBNOTES_USERNAME_mom: "admin",
+    GLOBNOTES_PASSWORD_mom: "other",
+    GLOBNOTES_SECRET_KEY_mom: "m".repeat(32),
+    GLOBNOTES_AUTH_TYPE: "password",
+    GLOBNOTES_USERNAME: "nope",
+    GLOBNOTES_PASSWORD: "nope",
+    GLOBNOTES_SECRET_KEY: "x".repeat(32),
+  });
+  try {
+    const login = await fetch(`${server.baseUrl}/dad/_/api/token`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "secret" }),
+    });
+    assertEquals(login.status, 200);
+    const { access_token } = await login.json();
+    const dadOk = await fetch(`${server.baseUrl}/dad/_/api/auth-check`, {
+      headers: { authorization: `Bearer ${access_token}` },
+    });
+    assertEquals(dadOk.status, 200);
+    const momLeak = await fetch(`${server.baseUrl}/mom/_/api/auth-check`, {
+      headers: { authorization: `Bearer ${access_token}` },
+    });
+    assertEquals(momLeak.status, 401);
+  } finally {
+    await server.close();
+    await Deno.remove(dad, { recursive: true });
+    await Deno.remove(mom, { recursive: true });
+  }
+});
+
 Deno.test("multi-vault: PATH-only URLs unchanged", async () => {
   const vault = await Deno.makeTempDir();
   await Deno.writeTextFile(`${vault}/recipes.md`, "one");

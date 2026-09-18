@@ -54,7 +54,7 @@ export class Vault {
     this.indexer.bindPlugins(this.plugins);
     this.auth = this.config.authType === AuthType.PASSWORD ||
         this.config.authType === AuthType.TOTP
-      ? new LocalAuth(this.config)
+      ? new LocalAuth(this.config, spec.slug)
       : null;
   }
 }

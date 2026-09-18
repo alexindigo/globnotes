@@ -12,6 +12,7 @@ import { hashPassword } from "@server/helpers.ts";
 import { HttpError } from "@pathfinder/pathfinder";
 import { logger } from "@server/logger.ts";
 import { state } from "@server/state.ts";
+import { boundVault, isNamespaced } from "@server/vault.ts";
 
 export const auth = false;
 
@@ -19,7 +20,11 @@ interface SetupRequest {
   mode?: string;
   username?: string;
   password?: string;
+  access?: string;
 }
+
+const OPEN = new Set(["public", "hidden"]);
+const LOCKED = new Set(["private", "secret"]);
 
 export default async function (
   request,
@@ -29,9 +34,24 @@ export default async function (
   }
   const data = (await request.body.json()) as SetupRequest;
   const config = state.config;
+  const namespaced = isNamespaced();
+  if (namespaced) {
+    if (!data.access || (!OPEN.has(data.access) && !LOCKED.has(data.access))) {
+      throw new HttpError(400, "access is required");
+    }
+    if (OPEN.has(data.access) && data.mode !== "none" && data.mode !== "read_only") {
+      throw new HttpError(400, "Public/Hidden access allows none or read_only");
+    }
+    if (
+      LOCKED.has(data.access) && data.mode !== "password"
+    ) {
+      throw new HttpError(400, "Private/Secret access allows password");
+    }
+  }
+  const access = namespaced ? data.access : undefined;
 
   if (data.mode === "none") {
-    config.saveStoredConfig({ auth_type: AuthType.NONE });
+    config.saveStoredConfig({ auth_type: AuthType.NONE, access });
     config.authType = AuthType.NONE;
     config.setupRequired = false;
     logger.warning(
@@ -39,7 +59,7 @@ export default async function (
         "reach this server can read and modify notes.",
     );
   } else if (data.mode === "read_only") {
-    config.saveStoredConfig({ auth_type: AuthType.READ_ONLY });
+    config.saveStoredConfig({ auth_type: AuthType.READ_ONLY, access });
     config.authType = AuthType.READ_ONLY;
     config.setupRequired = false;
     logger.info(
@@ -58,10 +78,11 @@ export default async function (
       username: data.username.toLowerCase(),
       password_hash: await hashPassword(data.password),
       secret_key: secretKey,
+      access,
     });
     config.authType = AuthType.PASSWORD;
     config.setupRequired = false;
-    state.auth = new LocalAuth(config);
+    state.auth = new LocalAuth(config, boundVault()?.slug ?? "");
   } else {
     // FastAPI rejects a non-Literal mode with 422.
     throw new HttpError(422, "Invalid setup mode.");
