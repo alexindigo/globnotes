@@ -42,12 +42,18 @@ function escapeRegex(s: string): string {
 export class FileSystemNotes {
   readonly storagePath: string;
   #indexer: Indexer | null;
+  #excludePrefixes: string[];
   #scanCache: { ts: number; names: string[] } | null = null;
   #scanCacheTtl: number;
 
-  constructor(storagePath: string, indexer: Indexer | null = null) {
+  constructor(
+    storagePath: string,
+    indexer: Indexer | null = null,
+    excludePrefixes: string[] = [],
+  ) {
     this.storagePath = storagePath;
     this.#indexer = indexer;
+    this.#excludePrefixes = excludePrefixes;
     this.#scanCacheTtl = Number(
       Deno.env.get("GLOBNOTES_SCAN_CACHE_TTL") ?? "15",
     );
@@ -55,6 +61,11 @@ export class FileSystemNotes {
 
   setIndexer(indexer: Indexer | null): void {
     this.#indexer = indexer;
+  }
+
+  #isExcluded(rel: string): boolean {
+    const n = rel.replaceAll("\\", "/");
+    return this.#excludePrefixes.some((p) => n === p || n.startsWith(p + "/"));
   }
 
   // region public API
@@ -378,6 +389,7 @@ export class FileSystemNotes {
       if (entry.name.startsWith(".")) continue;
       if (entry.isDirectory) {
         const childPath = dirPath ? `${dirPath}/${entry.name}` : entry.name;
+        if (this.#isExcluded(childPath)) continue;
         folders.push({ name: entry.name, path: childPath });
       } else if (entry.name.endsWith(MARKDOWN_EXT)) {
         const path = entry.name.slice(0, -MARKDOWN_EXT.length);
@@ -492,16 +504,20 @@ export class FileSystemNotes {
     const root = this.storagePath;
     const prefix = root.endsWith(nodePath.SEPARATOR) ? root : root + nodePath.SEPARATOR;
 
-    function walkDir(dir: string): void {
+    const isExcluded = (rel: string) => this.#isExcluded(rel);
+    const walkDir = (dir: string): void => {
       for (const entry of Deno.readDirSync(dir)) {
         const full = nodePath.join(dir, entry.name);
+        const rel = full.slice(prefix.length).replaceAll("\\", "/");
         if (entry.isDirectory) {
+          if (isExcluded(rel)) continue;
           walkDir(full);
         } else if (entry.name.endsWith(MARKDOWN_EXT)) {
+          if (isExcluded(rel)) continue;
           names.push(full.slice(prefix.length));
         }
       }
-    }
+    };
     walkDir(root);
     this.#scanCache = { ts: now, names };
     return names;

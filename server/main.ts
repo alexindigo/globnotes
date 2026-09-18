@@ -11,99 +11,127 @@
  */
 
 import { pathfinder } from "@pathfinder/pathfinder";
-import { LocalAuth } from "./auth/local.ts";
-import { FileServing } from "./files/file_serving.ts";
-import { FileSystemNotes } from "./notes/file_system.ts";
-import { PluginManager } from "./plugins/manager.ts";
-import { makePluginRpc } from "./plugins/rpc.ts";
-import { AuthType, GlobalConfig } from "./config.ts";
+import { AuthType } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import { initState } from "./state.ts";
-import { Fts5Indexer } from "./search/fts5.ts";
+import { runWithVault, tryCreateVault, type Vault } from "./vault.ts";
+import {
+  bootSpecs,
+  childExcludePrefixes,
+  VaultEnvError,
+} from "./vault_env.ts";
 
-const globalConfig = new GlobalConfig();
-const notes = new FileSystemNotes(globalConfig.notesPath);
-const indexer = new Fts5Indexer(globalConfig.notesPath);
-notes.setIndexer(indexer);
-indexer.bindNotes(notes);
-const fileServing = new FileServing(globalConfig.notesPath);
-const plugins = new PluginManager(
-  globalConfig.notesPath,
-  makePluginRpc({
-    notes,
-    indexer,
-    files: fileServing,
-    basePath: globalConfig.pathPrefix,
-  }),
+let specs;
+try {
+  specs = bootSpecs({
+    path: Deno.env.get("GLOBNOTES_PATH"),
+    vaults: Deno.env.get("GLOBNOTES_VAULTS"),
+  });
+} catch (e) {
+  if (e instanceof VaultEnvError) {
+    logger.error(e.message);
+    Deno.exit(1);
+  }
+  throw e;
+}
+
+const instancePrefix = (() => {
+  const key = "GLOBNOTES_PATH_PREFIX";
+  const value = getEnv(key);
+  if (value && (!value.startsWith("/") || value.endsWith("/"))) {
+    logger.error(
+      `Invalid value '${value}' for ${key}. Must start with '/' and not end with '/'.`,
+    );
+    Deno.exit(1);
+  }
+  return value;
+})();
+
+const pathRoot = specs.find((s) => s.slug === "" || s.slug === "globnotes")
+  ?.root;
+const excludes = pathRoot ? childExcludePrefixes(pathRoot, specs) : [];
+
+const vaults: Vault[] = [];
+for (const spec of specs) {
+  const ex = spec.slug === "" || spec.slug === "globnotes" ? excludes : [];
+  const vault = tryCreateVault(spec, instancePrefix, ex);
+  if (vault) vaults.push(vault);
+}
+if (vaults.length === 0) {
+  logger.error("No vaults could be opened.");
+  Deno.exit(1);
+}
+
+const primary = vaults.find((v) => v.slug === "") ?? vaults[0];
+initState(
+  primary.config,
+  primary.auth,
+  primary.notes,
+  primary.indexer,
+  primary.files,
+  primary.plugins,
 );
-indexer.bindPlugins(plugins);
-const auth = globalConfig.authType === AuthType.PASSWORD ||
-    globalConfig.authType === AuthType.TOTP
-  ? new LocalAuth(globalConfig)
-  : null;
-initState(globalConfig, auth, notes, indexer, fileServing, plugins);
-indexer.startBackgroundSync();
-// Plugins start lazily on the first render call (manager.ensureStarted).
+for (const vault of vaults) vault.indexer.startBackgroundSync();
 
-// Publish the path prefix into the built client before serving it
-// (Python: rewrite_index_html at import). Only when the client build
-// exists — dev checkouts run the server alone.
 try {
   rewriteIndexHtml(
     "client/dist/index.html",
-    globalConfig.pathPrefix,
-    globalConfig.brandName,
+    primary.config.pathPrefix,
+    primary.config.brandName,
   );
 } catch {
   logger.debug("client/dist/index.html not present; skipping rewrite.");
 }
 
-// One-time Whoosh → FTS5 migration: old segment files serve no purpose.
-const globDir = `${globalConfig.notesPath}/.globnotes`;
-try {
-  for (const entry of Deno.readDirSync(globDir)) {
-    if (
-      entry.isFile &&
-      (entry.name.endsWith(".seg") || entry.name.endsWith(".toc") ||
-        entry.name === "WRITELOCK")
-    ) {
-      Deno.removeSync(`${globDir}/${entry.name}`);
+function scrubWhoosh(root: string): void {
+  const globDir = `${root}/.globnotes`;
+  try {
+    for (const entry of Deno.readDirSync(globDir)) {
+      if (
+        entry.isFile &&
+        (entry.name.endsWith(".seg") || entry.name.endsWith(".toc") ||
+          entry.name === "WRITELOCK")
+      ) {
+        Deno.removeSync(`${globDir}/${entry.name}`);
+      }
     }
+  } catch {
+    // .globnotes doesn't exist yet — first boot
   }
-} catch {
-  // .globnotes doesn't exist yet — first boot
 }
+for (const vault of vaults) scrubWhoosh(vault.root);
 
-if (globalConfig.setupRequired) {
+if (primary.config.setupRequired) {
   logger.info("First-run setup required. Open the web UI to complete setup.");
-} else if (globalConfig.authType === AuthType.NONE) {
+} else if (primary.config.authType === AuthType.NONE) {
   logger.warning(
     "globnotes is running with NO authentication. Anyone who can " +
       "reach this server can read and modify notes.",
   );
 }
-if (auth?.isTotpEnabled) {
-  await auth.displayTotpEnrolment();
+if (primary.auth?.isTotpEnabled) {
+  await primary.auth.displayTotpEnrolment();
 }
 
 const hostname = getEnv("GLOBNOTES_HOST", { default: "0.0.0.0" });
 const port = Number(getEnv("GLOBNOTES_PORT", { castInt: true, default: 8080 }));
-const prefix = globalConfig.pathPrefix;
+const prefix = primary.config.pathPrefix;
 
 const app = await pathfinder({
   roots: [new URL("./api/endpoints/", import.meta.url)],
 });
 
 Deno.serve({ hostname, port }, (req, info) => {
-  if (!prefix) return app(req, info);
+  const dispatch = (r: Request) => runWithVault(primary, () => app(r, info));
+  if (!prefix) return dispatch(req);
   const url = new URL(req.url);
   if (!url.pathname.startsWith(prefix)) {
     return Response.json({ detail: "Not Found" }, { status: 404 });
   }
   const stripped = url.pathname.slice(prefix.length) || "/";
-  return app(new Request(new URL(stripped, url.origin), req), info);
+  return dispatch(new Request(new URL(stripped, url.origin), req));
 });
 logger.info(
-  `globnotes listening on http://${hostname}:${port}${globalConfig.pathPrefix}`,
+  `globnotes listening on http://${hostname}:${port}${primary.config.pathPrefix}`,
 );
