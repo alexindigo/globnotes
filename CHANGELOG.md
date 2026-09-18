@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+#### Feature
+
+One process can serve several independent vaults (`GLOBNOTES_VAULTS`), each
+with its own index, plugins, brand, and auth. PATH-only installs are unchanged.
+
+- feat: vault registry from GLOBNOTES_VAULTS
+- feat: bind vault from URL slug
+- feat: per-vault auth and access
+- feat: vault picker and namespaced client
+
 ## v2.1.0 (2026-09-17)
 
 The app shell gets its structural rework: the shell owns the viewport, one

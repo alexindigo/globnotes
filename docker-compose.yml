@@ -7,10 +7,13 @@ services:
       - "8080:8080"
     volumes:
       - ./notes:/data
-      # Optional: mount additional sources as subdirectories
-      # - /srv/dad-notes:/data/dad
-      # - /srv/mom-notes:/data/mom
+      # Isolated vaults (own index/plugins/brand/auth) — not subfolders of one tree:
+      # - /srv/dad-notes:/vaults/dad
+      # - /srv/mom-notes:/vaults/mom
     environment:
+      # GLOBNOTES_VAULTS: "dad:/vaults/dad,mom:/vaults/mom"
+      # GLOBNOTES_AUTH_TYPE_dad: "none"
+      # GLOBNOTES_AUTH_TYPE_mom: "none"
       # Optional. Leave unset for the first-run setup wizard, or choose
       # explicitly:
       # GLOBNOTES_AUTH_TYPE: "none"  # trusted home network only!
