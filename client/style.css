@@ -95,6 +95,17 @@
     color: rgb(var(--theme-brand));
 }
 
+.toastui-editor-contents a.tag-link,
+.ProseMirror a.tag-link {
+    color: rgb(var(--theme-brand));
+    text-decoration: none;
+}
+
+.toastui-editor-contents a.tag-link:hover,
+.ProseMirror a.tag-link:hover {
+    text-decoration: underline;
+}
+
 /* The page column: the old centered container's geometry (centered,
    capped, px-2) keyed off AVAILABLE width, not the viewport — Tailwind's
    `container` is viewport-keyed, and that mismatch is the pinned-sidebar

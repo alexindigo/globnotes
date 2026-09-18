@@ -187,7 +187,7 @@ Deno.test("render: default plugins", async (t) => {
         const html = await renderMarkdown("filed under #docs");
         assertStringIncludes(
           html,
-          '<a href="/_/search?term=%23docs&amp;sortBy=path">#docs</a>',
+          '<a href="/_/search?term=%23docs&amp;sortBy=path" class="tag-link">#docs</a>',
         );
       });
 

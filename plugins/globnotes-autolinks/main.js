@@ -91,13 +91,16 @@ export async function parseNode(node, ctx) {
 
   if (/(?:^|\s)#[a-zA-Z0-9_-]+(?=\s|$)/.test(out)) {
     const prefix = await ctx.pathPrefix();
+    const esc = (s) =>
+      s.replaceAll("&", "&amp;").replaceAll('"', "&quot;")
+        .replaceAll("<", "&lt;");
     out = out.replace(
       /(^|\s)(#[a-zA-Z0-9_-]+)(?=\s|$)/g,
       (m, pre, tag) => {
         changed = true;
-        return `${pre}[${tag}](${prefix}/_/search?term=${
-          encodeURIComponent(tag)
-        }&sortBy=path)`;
+        const url =
+          `${prefix}/_/search?term=${encodeURIComponent(tag)}&sortBy=path`;
+        return `${pre}<a href="${esc(url)}" class="tag-link">${esc(tag)}</a>`;
       },
     );
   }
