@@ -1,13 +1,11 @@
 <template>
   <button
-    class="flex cursor-pointer items-center text-nowrap rounded bg-theme-background px-2 py-1"
+    class="group flex cursor-pointer items-center text-nowrap rounded bg-theme-background px-2 py-1 text-theme-text-muted hover:bg-theme-background-elevated hover:text-theme-brand"
   >
-    <span v-if="label" class="mr-2 text-theme-text-muted">{{ label }}</span>
-    <!-- The pill's ink spans x=1..23, y=5..19 (stroke included); the viewBox
-         trims only the empty canvas around it — never the glyph itself. -->
+    <span v-if="label" class="mr-2">{{ label }}</span>
     <Icon
       :icon="isOn ? tabToggleRight : tabToggleLeft"
-      :class="{ 'text-theme-brand': isOn, 'text-theme-text-very-muted': !isOn }"
+      :class="isOn ? 'text-theme-brand' : 'text-theme-text-very-muted group-hover:text-theme-brand'"
       width="auto"
       height="1em"
       viewBox="1 5 22 14"

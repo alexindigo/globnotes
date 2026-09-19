@@ -95,6 +95,12 @@
     color: rgb(var(--theme-brand));
 }
 
+.toastui-editor-contents a:not(.unresolved):not(.tag-link),
+.ProseMirror a:not(.unresolved):not(.tag-link) {
+    color: rgb(var(--theme-brand));
+    text-decoration: underline;
+}
+
 .toastui-editor-contents a.tag-link,
 .ProseMirror a.tag-link {
     color: rgb(var(--theme-brand));
