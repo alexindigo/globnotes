@@ -82,34 +82,30 @@
     }
 }
 
-/* Unresolved wikilinks (globnotes-autolinks tags targets that don't
-   resolve against the vault) — dimmed, Obsidian-style. The lock only
-   mutes the link color: hover still gets the accent for affordance. */
+/* In-body links: brand at rest, underline on hover.
+   Default `a` IS the contract. .tag-link is not a style fork. */
+.toastui-editor-contents a,
+.ProseMirror a {
+    color: rgb(var(--theme-brand));
+    text-decoration: none;
+}
+.toastui-editor-contents a:hover,
+.ProseMirror a:hover {
+    text-decoration: underline;
+}
+
+/* Unresolved wikilinks: dim + dotted underline; hover brand, keep dotted. */
 .toastui-editor-contents a.unresolved,
 .ProseMirror a.unresolved {
     color: rgb(var(--theme-text-very-muted));
+    text-decoration: underline;
     text-decoration-style: dotted;
 }
 .toastui-editor-contents a.unresolved:hover,
 .ProseMirror a.unresolved:hover {
     color: rgb(var(--theme-brand));
-}
-
-.toastui-editor-contents a:not(.unresolved):not(.tag-link),
-.ProseMirror a:not(.unresolved):not(.tag-link) {
-    color: rgb(var(--theme-brand));
     text-decoration: underline;
-}
-
-.toastui-editor-contents a.tag-link,
-.ProseMirror a.tag-link {
-    color: rgb(var(--theme-brand));
-    text-decoration: none;
-}
-
-.toastui-editor-contents a.tag-link:hover,
-.ProseMirror a.tag-link:hover {
-    text-decoration: underline;
+    text-decoration-style: dotted;
 }
 
 /* The page column: the old centered container's geometry (centered,
