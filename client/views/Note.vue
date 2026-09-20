@@ -146,6 +146,7 @@
           <Toggle
             v-if="canModify"
             label="Edit"
+            :iconPath="tabEdit"
             :isOn="editMode"
             class="ml-1"
             @click="toggleEditModeHandler"
@@ -265,7 +266,7 @@
 
 <script setup>
 import { tabNotesOff } from "../icons.js";
-import { tabSave, tabTrash } from "../icons.js";
+import { tabSave, tabTrash, tabEdit } from "../icons.js";
 import Icon from "../components/Icon.vue";
 import { useToast } from "primevue/usetoast";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";

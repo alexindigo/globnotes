@@ -424,15 +424,16 @@
 /* Callout styles live in the globnotes-callout plugin's own styles.css
    (served via /_/plugins.css), not hardcoded in core. */
 
-/* Copy button on code blocks (bottom-right corner) */
+/* Copy button on code blocks (top-right corner, inside the block) */
 .toastui-editor-contents pre {
   position: relative;
+  padding: 10px 14px;
 }
 
 .toastui-editor-contents pre .code-copy-btn {
   position: absolute;
   right: 6px;
-  bottom: 6px;
+  top: 6px;
   padding: 4px;
   border: none;
   border-radius: 4px;
@@ -456,8 +457,10 @@
 /* Line numbers on code blocks (view mode). Server adds a
    .line-numbers class and a .line-numbers-rows gutter (one empty
    span per line) when the line-numbers setting is on. Numbers are drawn
-   with CSS counters so they align with the highlighted code lines. */
-.line-numbers {
+   with CSS counters so they align with the highlighted code lines.
+   Selector must outspecify the generic pre padding above — the gutter
+   carves its own left padding. */
+.toastui-editor-contents pre.line-numbers {
   position: relative;
   padding-left: 3.4em;
   counter-reset: linenumber;
