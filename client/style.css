@@ -79,6 +79,13 @@
            modal and Home's search box both derive their position from the
            page center minus this lift. One number, one place. */
         --switcher-lift: 140px;
+
+        /* Content spacing scale — the single source for vertical rhythm
+           between rendered flow blocks and for framed-block (code,
+           front-matter) inner padding. No per-element margin patches. */
+        --content-flow-gap: 1rem;
+        --content-block-pad-y: 12px;
+        --content-block-pad-x: 16px;
     }
 }
 

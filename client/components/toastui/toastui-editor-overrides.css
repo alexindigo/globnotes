@@ -184,7 +184,7 @@
   background-color: rgb(var(--theme-background-elevated));
   border: 1px solid rgb(var(--theme-border));
   border-radius: 8px;
-  padding: 10px 14px;
+  padding: var(--content-block-pad-y) var(--content-block-pad-x);
   margin-bottom: 1em;
   font-family: Consolas, "Lucida Console", Monaco, "Andale Mono", monospace;
   font-size: 0.85rem;
@@ -201,7 +201,7 @@
   background-color: rgb(var(--theme-background-elevated));
   border: 1px solid rgb(var(--theme-border));
   border-radius: 8px;
-  padding: 10px 14px;
+  padding: var(--content-block-pad-y) var(--content-block-pad-x);
   margin-bottom: 1em;
 }
 
@@ -424,12 +424,22 @@
 /* Callout styles live in the globnotes-callout plugin's own styles.css
    (served via /_/plugins.css), not hardcoded in core. */
 
-/* Copy button on code blocks (top-right corner, inside the block) */
-.toastui-editor-contents pre {
-  position: relative;
-  padding: 10px 14px;
+/* Flow rhythm: ONE bottom-margin gap for every rendered block, taken from
+   the shared content scale (style.css) — preflight zeroes block margins,
+   and per-element patches are how pre, hr and friends jammed into their
+   neighbours. Headings keep their own em rhythm; the editor side is
+   untouched. */
+.toastui-editor-contents :is(p, pre, ul, ol, blockquote, table, hr) {
+  margin: 0 0 var(--content-flow-gap);
 }
 
+/* Framed blocks share the content padding scale (style.css tokens). */
+.toastui-editor-contents pre {
+  position: relative;
+  padding: var(--content-block-pad-y) var(--content-block-pad-x);
+}
+
+/* Copy button on code blocks (top-right corner, inside the block) */
 .toastui-editor-contents pre .code-copy-btn {
   position: absolute;
   right: 6px;
