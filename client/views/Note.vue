@@ -154,7 +154,7 @@
         </div>
       </div>
 
-      <hr v-if="!editMode" class="mt-2 mb-4 border-theme-border" />
+      <hr v-if="!editMode" class="mt-4 mb-6 border-theme-border" />
     </div>
 
     <!-- Moved-files banner -->
