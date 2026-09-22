@@ -65,6 +65,16 @@ export async function postSetup(data) {
   }
 }
 
+// Re-arm first-run setup (menu: Access mode). Auth-required server-side.
+export async function resetSetup() {
+  try {
+    const response = await api.post("setup/reset");
+    return response.data;
+  } catch (response) {
+    return Promise.reject(response);
+  }
+}
+
 export async function getToken(username, password, totp) {
   try {
     const response = await api.post("token", {

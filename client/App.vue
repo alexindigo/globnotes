@@ -5,8 +5,10 @@
   >
     <PrimeToast />
     <SetupModal
-      v-if="globalStore.config.setupRequired"
+      v-if="globalStore.config.setupRequired || globalStore.setupWizardRequested"
+      :dismissible="!globalStore.config.setupRequired"
       @completed="setupCompleted"
+      @dismiss="globalStore.setupWizardRequested = false"
     />
     <template v-else>
       <QuickSwitcher
@@ -60,8 +62,10 @@ import PrimeToast from "./components/PrimeToast.vue";
 import SetupModal from "./components/SetupModal.vue";
 import SidebarPanel from "./components/SidebarPanel.vue";
 import SyncBanner from "./components/SyncBanner.vue";
+import { authTypes } from "./constants.js";
 import { useGlobalStore } from "./globalStore.js";
 import { initDebugNotifications } from "./debug.js";
+import { getToastOptions } from "./helpers.js";
 import { initTheme } from "./themes.js";
 import { initDispatcher } from "./keybindings/dispatcher.js";
 import { refreshNoteIndex } from "./noteIndex.js";
@@ -145,8 +149,28 @@ subscribe(TOPICS.HOME_SEARCH_FOCUS, (event) => {
 });
 
 function setupCompleted() {
-  // Reload so the app boots fresh with the new auth state.
-  window.location.reload();
+  globalStore.setupWizardRequested = false;
+  // No reload: setup flipped auth server-side — re-fetch config and route.
+  getConfig().then((data) => {
+    globalStore.config = data;
+    applyBrandToDocument(data.brand);
+    if (
+      data.authType === authTypes.none ||
+      data.authType === authTypes.readOnly
+    ) {
+      refreshNoteIndex();
+      router.push({ name: "home" });
+    } else {
+      toast.add(
+        getToastOptions(
+          "Password created — sign in with your new credentials.",
+          "Setup complete",
+          "success",
+        ),
+      );
+      router.push({ name: "login" });
+    }
+  });
 }
 
 initTheme();

@@ -67,6 +67,7 @@ import { tabSearch, tabEdit } from "../icons.js";
 import {
   tabConsole,
   tabListNumbers,
+  tabLogin,
   tabLogout,
   tabMenu,
   tabDeviceDesktop,
@@ -168,6 +169,13 @@ const menuItems = computed(() => [
     visible: canModify,
   },
   {
+    label: "Access mode",
+    icon: tabLogin,
+    command: openAccessMode,
+    // Read-only mode cannot reset auth (GET-only enforcement server-side).
+    visible: canModify,
+  },
+  {
     label: `Line numbers: ${viewLineNumbers.value ? "on" : "off"}`,
     icon: tabListNumbers,
     command: () => saveViewLineNumbers(!viewLineNumbers.value),
@@ -197,6 +205,13 @@ function logOut() {
   clearStoredToken();
   localStorage.clear();
   router.push({ name: "login" });
+}
+
+// Access mode: open the wizard dismissibly, purely client-side. The
+// server reset happens only if the user actually finishes (SetupModal
+// chains resetSetup + postSetup); dismissing changes nothing.
+function openAccessMode() {
+  globalStore.setupWizardRequested = true;
 }
 
 function toggleMenu(event) {
