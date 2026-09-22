@@ -6,7 +6,10 @@
          the input in normal flow and never affects the position. -->
     <div class="absolute left-1/2 top-[calc(50%-var(--switcher-lift))] flex w-full max-w-[500px] -translate-x-1/2 flex-col items-center">
       <Logo class="absolute inset-x-0 bottom-full mb-5 flex justify-center" />
+      <!-- Empty vault: search and the quick switcher are meaningless with
+           zero notes — the greeting takes the hero slot instead. -->
       <SwitcherInput
+        v-if="!(loaded && notes.length === 0)"
         v-model="searchTerm"
         class="mb-5 shadow-[0_0_20px] shadow-theme-shadow"
         @submit="submitSearch"
@@ -42,6 +45,34 @@
           title="Show more"
           ><CustomButton :iconPath="tabDots"
         /></RouterLink>
+        <!-- Empty vault greeting: say where notes live, offer the two ways
+             to fill it (bind existing notes at the path, or create one) —
+             creation only where the mode allows it. -->
+        <div
+          v-if="loaded && notes.length === 0"
+          class="flex flex-col items-center"
+        >
+          <p class="mb-4 mt-8 text-center text-lg text-theme-text-muted">
+            No notes yet
+          </p>
+          <p class="mb-6 max-w-96 text-center text-sm text-theme-text-muted">
+            globnotes serves the files from your notes vault at
+            <code
+              class="rounded bg-theme-background-elevated px-1.5 py-0.5 text-theme-text"
+              >{{ globalStore.config.notesPath }}</code
+            >, which is currently empty. Point it at your existing notes{{
+              globalStore.config.authType !== authTypes.readOnly
+                ? ", or create your first note here"
+                : ""
+            }}.
+          </p>
+          <RouterLink
+            v-if="globalStore.config.authType !== authTypes.readOnly"
+            :to="{ name: 'new' }"
+          >
+            <CtaButton label="Create new note" />
+          </RouterLink>
+        </div>
       </LoadingIndicator>
     </div>
   </div>
@@ -56,9 +87,10 @@ import { RouterLink, useRouter } from "vue-router";
 import { apiErrorHandler, getNotes } from "../api.js";
 import { publish, TOPICS } from "../bus/index.js";
 import CustomButton from "../components/CustomButton.vue";
+import CtaButton from "../components/CtaButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Logo from "../components/Logo.vue";
-import { searchSortOptions } from "../constants.js";
+import { authTypes, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
 import SwitcherInput from "../components/SwitcherInput.vue";
@@ -66,6 +98,7 @@ import SwitcherInput from "../components/SwitcherInput.vue";
 const globalStore = useGlobalStore();
 const loadingIndicator = ref();
 const notes = ref([]);
+const loaded = ref(false);
 const toast = useToast();
 const router = useRouter();
 const searchTerm = ref("");
@@ -98,9 +131,11 @@ function init() {
   )
     .then((data) => {
       notes.value = data;
+      loaded.value = true;
       loadingIndicator.value.setLoaded();
     })
     .catch((error) => {
+      loaded.value = true;
       loadingIndicator.value.setFailed();
       apiErrorHandler(error, toast);
     });
