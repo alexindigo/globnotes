@@ -11,6 +11,7 @@ import { login_failed } from "@server/api_messages.ts";
 import type { Login, Token } from "@server/auth/models.ts";
 import { AuthType } from "@server/config.ts";
 import { HttpError } from "@pathfinder/pathfinder";
+import { logger } from "@server/logger.ts";
 import { state } from "@server/state.ts";
 
 export const auth = false;
@@ -27,8 +28,13 @@ export default async function (request): Promise<Token> {
   }
   const data = (await request.body.json()) as Login;
   try {
-    return await state.auth.login(data);
-  } catch {
+    const token = await state.auth.login(data);
+    logger.info(`Login succeeded for username '${data.username ?? ""}'`);
+    return token;
+  } catch (err) {
+    logger.warning(
+      `Login failed for username '${data.username ?? ""}': ${err}`,
+    );
     throw new HttpError(401, login_failed);
   }
 }

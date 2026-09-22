@@ -97,6 +97,12 @@ export class LocalAuth {
       !(usernameCorrect && passwordCorrect &&
         (!this.isTotpEnabled || currentTotp !== this.lastUsedTotp))
     ) {
+      logger.warning(
+        `Login rejected: usernameCorrect=${usernameCorrect} ` +
+          `passwordCorrect=${passwordCorrect} ` +
+          `isTotpEnabled=${this.isTotpEnabled} ` +
+          `passwordLength=${(data.password ?? "").length}`,
+      );
       throw new Error("Incorrect login credentials.");
     }
     if (this.isTotpEnabled) {
