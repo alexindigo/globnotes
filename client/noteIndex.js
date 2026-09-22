@@ -10,6 +10,14 @@ export function refreshNoteIndex(attempt = 0) {
     .then((entries) => {
       globalStore.notePaths = entries.map((e) => e.path);
       globalStore.noteMeta = entries;
+      // Recents must not outlive the note — reconcile against the fresh
+      // index here, so in-app deletes AND external deletions (Obsidian,
+      // git, another tab — any path the SyncBanner rescans) all get pruned
+      // by the same fetch, with no extra requests.
+      const paths = new Set(globalStore.notePaths);
+      globalStore.recentlyOpened = globalStore.recentlyOpened.filter((p) =>
+        paths.has(p)
+      );
     })
     .catch((error) => {
       // A failed fetch must not leave the sidebar empty forever:
@@ -57,5 +65,17 @@ subscribe(TOPICS.NOTE_OPEN, ({ path }) => {
   store.recentlyOpened = [
     path,
     ...store.recentlyOpened.filter((p) => p !== path),
+  ].slice(0, 10);
+});
+
+// Recents follow renames by bumping to the front: renaming is fresh
+// activity on the note, so it lands at the top (like a NOTE_OPEN),
+// bounded and de-duplicated — present entries only.
+subscribe(TOPICS.NOTE_RENAME, ({ oldPath, newPath }) => {
+  const store = useGlobalStore();
+  if (!store.recentlyOpened.includes(oldPath)) return;
+  store.recentlyOpened = [
+    newPath,
+    ...store.recentlyOpened.filter((p) => p !== oldPath && p !== newPath),
   ].slice(0, 10);
 });

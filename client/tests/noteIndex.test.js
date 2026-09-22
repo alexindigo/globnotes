@@ -7,6 +7,7 @@ vi.mock("../api.js", () => ({
 
 import { createPinia, setActivePinia } from "pinia";
 import { getNoteIndex } from "../api.js";
+import { publish, TOPICS } from "../bus/index.js";
 import { useGlobalStore } from "../globalStore.js";
 import { refreshNoteIndex } from "../noteIndex.js";
 
@@ -53,5 +54,32 @@ describe("refreshNoteIndex", () => {
     await vi.runAllTimersAsync();
     await p;
     expect(store.notePaths).toEqual(["existing/note"]);
+  });
+
+  it("prunes recents against the fresh index on refresh (delete path)", async () => {
+    getNoteIndex.mockResolvedValue([
+      { path: "a", title: "a", aliases: [] },
+      { path: "c", title: "c", aliases: [] },
+    ]);
+    const store = useGlobalStore();
+    store.recentlyOpened = ["a", "b", "c"];
+    await refreshNoteIndex();
+    expect(store.recentlyOpened).toEqual(["a", "c"]);
+  });
+
+  it("bumps renames to the front of recentlyOpened", () => {
+    getNoteIndex.mockResolvedValue([]);
+    const store = useGlobalStore();
+    store.recentlyOpened = ["a", "b", "c"];
+    publish(TOPICS.NOTE_RENAME, { oldPath: "b", newPath: "b2" });
+    expect(store.recentlyOpened).toEqual(["b2", "a", "c"]);
+  });
+
+  it("ignores renames of notes not in recents", () => {
+    getNoteIndex.mockResolvedValue([]);
+    const store = useGlobalStore();
+    store.recentlyOpened = ["a", "c"];
+    publish(TOPICS.NOTE_RENAME, { oldPath: "b", newPath: "b2" });
+    expect(store.recentlyOpened).toEqual(["a", "c"]);
   });
 });
