@@ -105,14 +105,9 @@
           title="Clear name, accent, and uploaded logo/icon"
           @click="askReset"
         />
-        <div class="flex gap-2">
-          <CustomButton label="Cancel" @click="isVisible = false" />
-          <CustomButton
-            label="Save"
-            variant="cta"
-            :disabled="!dirty"
-            @click="save"
-          />
+        <div class="grid grid-cols-2 gap-2">
+          <CustomButton label="Cancel" class="w-full" @click="isVisible = false" />
+          <CtaButton label="Save" :disabled="!dirty" :callback="save" />
         </div>
       </div>
 
@@ -142,6 +137,7 @@ import { tabClose, tabFileExport, tabTrash } from "../icons.js";
 import { useGlobalStore } from "../globalStore.js";
 import { getToastOptions } from "../helpers.js";
 import CustomButton from "./CustomButton.vue";
+import CtaButton from "./CtaButton.vue";
 import ConfirmModal from "./ConfirmModal.vue";
 import Modal from "./Modal.vue";
 import TextInput from "./TextInput.vue";

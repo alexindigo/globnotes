@@ -61,12 +61,9 @@
       <span class="mb-4 max-w-80 text-center text-lg text-theme-text-muted">
         Note not found
       </span>
-      <CustomButton
-        v-if="canModify"
-        :label="createLinkLabel"
-        variant="cta"
-        @click="createFromWikilink"
-      />
+      <div v-if="canModify" class="w-full max-w-80">
+        <CtaButton label="Create note 'New note'" :callback="createFromWikilink" />
+      </div>
     </div>
 
     <!-- Header (sits outside the scrollable content) -->
@@ -288,6 +285,7 @@ import { disabledPluginIds } from "../pluginSettings.js";
 import { Note } from "../classes.js";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import CustomButton from "../components/CustomButton.vue";
+import CtaButton from "../components/CtaButton.vue";
 import RenameAssetsModal from "../components/RenameAssetsModal.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Toggle from "../components/Toggle.vue";
@@ -325,7 +323,6 @@ const isDeleteModalVisible = ref(false);
 const isDraftModalVisible = ref(false);
 const isNoteNotFound = ref(false);
 const isNewNote = computed(() => !props.path);
-const createLinkLabel = computed(() => `Create note '${props.path}'`);
 const folderDatalistOptions = computed(() => {
   const dirs = new Set();
   for (const t of globalStore.notePaths || []) {

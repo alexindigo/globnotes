@@ -29,15 +29,14 @@
       v-if="rewriteFiles.length"
       class="mb-4 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-4"
     >
-      <div class="mb-2 flex items-center justify-between">
-        <h2 class="text-sm font-medium text-theme-text">
+      <div class="mb-2">
+        <h2 class="mb-2 text-sm font-medium text-theme-text">
           Fix broken references
         </h2>
-        <CustomButton
+        <CtaButton
           v-if="rewriteFiles.length > 1"
           label="Fix all"
-          variant="cta"
-          @click="fixAllRefs"
+          :callback="fixAllRefs"
         />
       </div>
       <ul class="space-y-1 text-sm">
@@ -143,6 +142,7 @@ import { tabArrowUp, tabFolder } from "../icons.js";
 import { apiErrorHandler, getNotes, rewriteRefs } from "../api.js";
 import { publish, TOPICS } from "../bus/index.js";
 import CustomButton from "../components/CustomButton.vue";
+import CtaButton from "../components/CtaButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
 import Tag from "../components/Tag.vue";

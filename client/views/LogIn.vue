@@ -37,19 +37,18 @@
         />
         <label for="remember-me">Remember Me</label>
       </div>
-      <CustomButton :iconPath="tabLogin" label="Log In" />
+      <CtaButton label="Log In" />
     </form>
   </div>
 </template>
 
 <script setup>
-import { tabLogin } from "../icons.js";
 import { useToast } from "primevue/usetoast";
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 
 import { apiErrorHandler, getToken } from "../api.js";
-import CustomButton from "../components/CustomButton.vue";
+import CtaButton from "../components/CtaButton.vue";
 import Logo from "../components/Logo.vue";
 import TextInput from "../components/TextInput.vue";
 import { authTypes } from "../constants.js";

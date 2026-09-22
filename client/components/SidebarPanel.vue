@@ -8,7 +8,6 @@
     :iconPath="tabDockLeft"
     label=""
     title="Open sidebar"
-    variant="cta"
     class="fixed left-4 top-4 z-30 shadow-md print:hidden"
     @click="openSidebar"
   />

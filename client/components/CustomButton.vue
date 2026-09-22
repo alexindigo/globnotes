@@ -1,19 +1,22 @@
 <template>
   <button
-    class="text-nowrap rounded px-2 py-1"
+    class="flex items-center justify-center text-nowrap rounded"
     :disabled="disabled"
     :title="title"
-    :class="{
-'bg-theme-background text-theme-text-muted enabled:hover:bg-theme-background-elevated enabled:hover:text-theme-brand':
-        variant === 'subtle',
-      'bg-theme-background enabled:hover:bg-theme-background-elevated enabled:hover:text-theme-brand':
-        variant === 'cta',
-      'border border-theme-danger text-theme-danger enabled:hover:bg-theme-danger/10':
-        variant === 'danger',
-      'border border-theme-success text-theme-success enabled:hover:bg-theme-success/10':
-        variant === 'success',
-      'opacity-40': disabled,
-    }"
+    :class="[
+      variant === 'cta' ? 'px-4 py-2.5 font-semibold' : 'px-2 py-1',
+      {
+        'bg-theme-background text-theme-text-muted enabled:hover:bg-theme-background-elevated enabled:hover:text-theme-brand':
+          variant === 'subtle',
+        'bg-theme-brand text-white [-webkit-text-stroke:1.5px_rgb(75_85_99)] [paint-order:stroke_fill] enabled:hover:opacity-90':
+          variant === 'cta',
+        'border border-theme-danger text-theme-danger enabled:hover:bg-theme-danger/10':
+          variant === 'danger',
+        'border border-theme-success text-theme-success enabled:hover:bg-theme-success/10':
+          variant === 'success',
+        'opacity-40': disabled,
+      },
+    ]"
   >
     <slot></slot>
     <IconLabel :iconPath="iconPath" :iconSize="iconSize" :label="label" />

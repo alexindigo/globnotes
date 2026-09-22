@@ -42,7 +42,6 @@
     <CustomButton
       :iconPath="tabMenu"
       label=""
-      variant="cta"
       class="shadow-md"
       title="Menu"
       @click="toggleMenu"
