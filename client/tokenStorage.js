@@ -1,8 +1,11 @@
 const tokenStorageKey = "token";
 
 function getBasePath() {
-  // This relies on the fact that flanotes always has a correctly formatted relative path set in <base> tag
-  return document.querySelector('base').getAttribute('href')
+  // Cookie scope: the app root — the path prefix when served under a
+  // sub-path, "/" otherwise. flatnotes read this from a <base> tag;
+  // globnotes has no <base> and publishes the prefix in a meta tag instead.
+  return document.querySelector('meta[name="globnotes-prefix"]')?.content ||
+    "/";
 }
 
 function getCookieString(token) {
