@@ -205,7 +205,7 @@ import CustomButton from "../components/CustomButton.vue";
 import TextInput from "../components/TextInput.vue";
 import { getNotes, getTree } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
-import { publish, TOPICS } from "../bus/index.js";
+import { publish, subscribe, TOPICS } from "../bus/index.js";
 import { notePath } from "../notePath.js";
 import { refreshNoteIndex } from "../noteIndex.js";
 import { params } from "../constants.js";
@@ -486,6 +486,21 @@ async function loadRecentNotes() {
     recentNotes.value = [];
   }
 }
+
+// Tree invalidation: `levels` is a read-through cache with no TTL, so note
+// changes must drop and reload the visible levels (root + expanded) —
+// same event sources noteIndex.js uses. Expansion state is preserved.
+function invalidateTree() {
+  levels.value = {};
+  loadLevel("");
+  for (const path of expanded.value) {
+    loadLevel(path);
+  }
+  if (recentEnabled.value) loadRecentNotes();
+}
+subscribe(TOPICS.NOTE_CREATE, invalidateTree);
+subscribe(TOPICS.NOTE_RENAME, invalidateTree);
+subscribe(TOPICS.NOTE_DELETE, invalidateTree);
 
 // Load the root level when the drawer opens (and keep the note-index
 // fresh for wiki-link resolution and the filter box). Persisted expanded
