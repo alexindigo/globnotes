@@ -1,5 +1,83 @@
 # Changelog
 
+## v2.1.1 (2026-09-22)
+
+The first-run experience is rebuilt: a redesigned setup wizard with
+access-mode management, an empty-vault home greeting that shows the vault
+path, and one shared CTA component behind every call to action. Deployments
+gain `GLOBNOTES_INDEX_PATH` — the state dir (config, index, plugins) can now
+live apart from the vault — and container ownership that follows the vault
+owner via PUID/PGID. The editor gains an in-editor find panel on Ctrl+F,
+in-page anchors stop hijacking note history, and long lines wrap in both
+view and preview. Rounding it out, a visual polish pass unifies link
+contracts, tag colors, block padding, and code block chrome.
+
+### 2026-09-22
+
+#### Feature
+
+First-run and deployment work lands together: the setup wizard is redesigned
+around explicit access-mode management with setup/login observability, an
+empty vault now greets from the home page with the vault path, and all CTAs
+share the single CtaButton component. On the deployment side,
+`GLOBNOTES_INDEX_PATH` relocates the state dir away from the vault, and the
+editor gains an in-editor find panel bound to Ctrl+F in source mode.
+
+- feat: setup and login observability (`b211619`)
+- feat: first-run wizard redesign and access-mode management (`5c3fa5c`)
+- feat: CtaButton — the single shared CTA component (`15b848d`)
+- feat: empty-vault home greeting with the vault path (`a280610`)
+- feat: GLOBNOTES_INDEX_PATH — the state dir can live apart from the vault (`6313cb4`)
+- feat: Ctrl+F opens an in-editor find panel in source mode (`e1f6efc`)
+
+#### Fix
+
+A quirks pass from dogfooding the new flows: the auth token cookie reads
+the path prefix from the meta tag so login works behind a prefixed proxy,
+the sidebar tree live-refreshes on note changes, quick-switcher recents
+prune on delete and follow renames, container ownership follows the vault
+owner (PUID/PGID), in-page anchors no longer hijack note history, and view
+and preview both wrap long lines.
+
+- fix: token cookie reads the path prefix from the meta tag (`49b5525`)
+- fix: sidebar tree live-refreshes on note changes (`4c17f10`)
+- fix: quick-switcher recents prune on delete and follow renames (`9d5466b`)
+- fix: container ownership follows the vault owner (PUID/PGID) (`cb86bae`)
+- fix: in-page anchors no longer hijack note history (`f66d397`)
+- fix: view and preview wrap long lines (`67141d8`)
+
+### 2026-09-20
+
+#### Fix
+
+The note page settles into one content-flow rhythm: block padding across
+elements derives from a single shared scale, the padding around the note
+header rule is corrected, and code blocks get proper chrome — padding, the
+copy button moved to the top, and an icon on the Edit toggle.
+
+- fix: one content-flow rhythm + shared block-padding scale (`7ece4b7`)
+- fix: padding around the note header rule (`5468c31`)
+- fix: code block chrome — padding, copy at top; Edit toggle icon (`9c37aea`)
+
+### 2026-09-19
+
+#### Fix
+
+In-body links now share a single rest/hover contract instead of per-context
+styling.
+
+- fix: in-body links share rest/hover contract (`7a54b15`)
+
+### 2026-09-18
+
+#### Fix
+
+Tag links pick up the theme brand color, and the tag underline, code color,
+and Edit hover states are aligned with it.
+
+- fix: tag links use theme brand color (`c2bb062`)
+- fix: tag underline, code color, Edit hover (`3dcc0bd`)
+
 ## v2.1.0 (2026-09-17)
 
 The app shell gets its structural rework: the shell owns the viewport, one
