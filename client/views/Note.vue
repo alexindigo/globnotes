@@ -244,6 +244,7 @@
           <div
             class="toastui-editor-contents rendered-markdown preview-buffer"
             v-html="previewHtml"
+            @click="handleAnchorClick"
           />
         </div>
       </div>
@@ -291,7 +292,9 @@ import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Toggle from "../components/Toggle.vue";
 import MarkdownEditor from "../components/MarkdownEditor.vue";
 import WysiwygEditor from "../components/WysiwygEditor.vue";
-import ServerViewer from "../components/ServerViewer.vue";
+import ServerViewer, {
+  handleAnchorClick,
+} from "../components/ServerViewer.vue";
 import { authTypes, params } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { rewriteRenamedLinks } from "../links.js";
@@ -579,12 +582,13 @@ function editHandler(pushUrl = false) {
 }
 
 // Deep links: #edit opens in WYSIWYG, #source[:L...] in source mode.
+// #view[:L...] is a VIEW-mode link — highlight only, never an edit entry.
 // The pending mode/line survive the draft modal (both branches call
 // setEditMode). Window location is the source of truth — route.hash goes
 // stale after our history writes. No history push here: the navigation
 // that carried the fragment into the tab IS the history entry.
 function enterEditFromFragment(frag = parseFragment(window.location.hash)) {
-  if (!frag.mode || !canModify.value) return;
+  if (!frag.mode || frag.mode === "view" || !canModify.value) return;
   pendingEditorMode = frag.mode === "edit" ? "wysiwyg" : "markdown";
   pendingInitialLine = frag.line || null;
   editHandler();
@@ -629,7 +633,11 @@ async function gateNavigation(to) {
     // never write the URL back.
     const frag = parseFragment(to.hash);
     const targetMode = frag.mode === "edit" ? "wysiwyg" : "markdown";
-    if (editorMode.value !== targetMode) setEditorMode(targetMode, false);
+    // Preview's URL stays #source by design — a #source fragment while
+    // previewing must not yank the user back into the source editor.
+    if (!(frag.mode === "source" && editorMode.value === "preview")) {
+      if (editorMode.value !== targetMode) setEditorMode(targetMode, false);
+    }
     if (frag.mode === "source" && frag.line) {
       await nextTick();
       editor.value?.selectLine?.(frag.line);
