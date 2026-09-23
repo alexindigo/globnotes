@@ -521,3 +521,11 @@
   background-color: rgb(var(--theme-brand) / 0.12);
   box-shadow: inset 2px 0 0 rgb(var(--theme-brand));
 }
+
+/* Long unbroken tokens wrap like they do in both editors. */
+.rendered-markdown { overflow-wrap: break-word; }
+
+/* Code blocks keep their lines; the block scrolls, not the column.
+   (No white-space:pre-wrap here — the line-numbers gutter is one span
+   per source line and wrapped visual lines would desync it.) */
+.rendered-markdown pre { overflow-x: auto; }
