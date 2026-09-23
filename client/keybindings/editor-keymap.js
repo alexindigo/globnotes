@@ -18,6 +18,7 @@
  */
 
 import { simplifySelection } from "@codemirror/commands";
+import { closeSearchPanel } from "@codemirror/search";
 import { keymap } from "@codemirror/view";
 import { keymap as pmKeymap } from "prosemirror-keymap";
 
@@ -64,6 +65,9 @@ export function cm6LayerKeymap() {
   bindings.push({
     key: "Escape",
     run: (view) => {
+      // The find panel owns Esc first (close it, stay in edit), then a
+      // multi-cursor selection collapses, then we exit edit.
+      if (closeSearchPanel(view)) return true;
       if (view.state.selection.ranges.length > 1) {
         simplifySelection(view);
         return true;

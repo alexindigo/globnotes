@@ -36,6 +36,10 @@ const CROSS_LAYER = {
   // editors collapse a multi-cursor selection first — see the Esc
   // ordering note in the layer plan).
   [TOPICS.EDITOR_EXIT_EDIT]: same("Escape"),
+  // Source-mode find opens the in-editor panel (CM6 searches the whole
+  // document, not the viewport DOM). binding:"editor" via ACTIONS — never
+  // "app": native browser find stays correct in the other modes.
+  [TOPICS.EDITOR_FIND]: mod("F"),
 };
 
 const legacyBindings = {
@@ -181,6 +185,11 @@ export const ACTIONS = {
   },
   [TOPICS.EDITOR_EXIT_EDIT]: {
     label: "Exit edit mode",
+    binding: "editor",
+    group: "Editing",
+  },
+  [TOPICS.EDITOR_FIND]: {
+    label: "Find in note",
     binding: "editor",
     group: "Editing",
   },

@@ -8,6 +8,7 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
+import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import {
   EditorView,
   keymap,
@@ -76,6 +77,18 @@ const theme = EditorView.theme({
   ".cm-activeLineGutter": {
     backgroundColor: "rgb(var(--theme-shadow) / 0.5)",
     color: "rgb(var(--theme-text))",
+  },
+  // The find panel follows the theme (CM6 ships light-only defaults).
+  ".cm-panels": {
+    backgroundColor: "rgb(var(--theme-background-elevated))",
+    color: "rgb(var(--theme-text))",
+    borderTop: "1px solid rgb(var(--theme-border))",
+  },
+  ".cm-panel input, .cm-panel button": {
+    backgroundColor: "rgb(var(--theme-background))",
+    color: "rgb(var(--theme-text))",
+    border: "1px solid rgb(var(--theme-border))",
+    backgroundImage: "none",
   },
 });
 
@@ -208,6 +221,11 @@ onMounted(() => {
       doc: props.initialValue ?? "",
       extensions: [
         layerKeymapCompartment.of(cm6LayerKeymap()),
+        // In-editor find: CM6 searches state.doc, not the viewport DOM —
+        // off-screen matches work (browser find can't see them). The layer
+        // keymap keeps precedence for the layer's own Mod-F binding.
+        search({}),
+        keymap.of(searchKeymap),
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         markdown({ base: markdownLanguage, codeLanguages: languages }),
@@ -245,6 +263,13 @@ onMounted(() => {
     subscribe(topic, () => {
       if (view) run(view);
     }));
+  // The layer's Mod-F binding publishes editor:find; open the panel even
+  // when the keypress didn't come from the editor's own keymap.
+  actionUnsubs.push(
+    subscribe(TOPICS.EDITOR_FIND, () => {
+      if (view) openSearchPanel(view);
+    }),
+  );
   // Reconfigure the layer keymap when the active layer (or a Custom-layer
   // override) changes.
   actionUnsubs.push(
