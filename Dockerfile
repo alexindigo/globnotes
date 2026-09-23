@@ -24,12 +24,10 @@ COPY client ./client
 RUN deno task build:client
 
 # Runtime Container
-FROM denoland/deno:alpine
+FROM denoland/deno:alpine-2.9.6
 
 ARG BUILD_DIR
 
-ENV PUID=1000
-ENV PGID=1000
 ENV EXEC_TOOL=su-exec
 ENV GLOBNOTES_HOST=0.0.0.0
 ENV GLOBNOTES_PORT=8080

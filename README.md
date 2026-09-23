@@ -115,7 +115,7 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 |---|---|---|
 | `GLOBNOTES_PATH` | `/data` (in container) | Root directory of the notes tree. **Required** outside docker. |
 | `GLOBNOTES_INDEX_PATH` | `<vault>/.globnotes` | State dir (search index, wizard config, branding, plugins). The value IS the directory (not a parent). Set it to keep the vault pure notes — e.g. for backup jobs that should only see markdown. On first boot with it set and a legacy vault, the exact `mv` command is logged; state is never auto-copied. |
-| `PUID` / `PGID` | `1000` / `1000` | User the app runs as (container). Set to your host user's ids (`id -u` / `id -g`) so note edits can write. **globnotes never `chown`s your vault** — it only creates/owns the `.globnotes` index dir. |
+| `PUID` / `PGID` | vault owner | User the app runs as (container). Defaults to the notes vault's owner (so an Unraid `nobody:users` share needs zero configuration); set explicit ids to override. **globnotes never `chown`s your vault** — it only re-owns the state dir at boot (by design; failure-tolerant on root-squashed mounts). |
 | `GLOBNOTES_INDEX_BATCH_SIZE` | `200` | Notes indexed per commit batch during the initial background sync. Lower it on very constrained hosts. |
 | `GLOBNOTES_INDEX_BATCH_DELAY` | `0.1` | Seconds to sleep between index batches (CPU throttle). `0` disables. |
 | `GLOBNOTES_SCAN_CACHE_TTL` | `15` | Seconds the vault file listing is cached (large vaults: raise it). |
