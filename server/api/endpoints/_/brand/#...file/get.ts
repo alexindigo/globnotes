@@ -23,7 +23,7 @@ export default function (request): Response {
   if (!rel || rel.includes("..")) {
     throw new HttpError(404, "Not Found");
   }
-  const dir = brandDirPath(state.config.notesPath);
+  const dir = brandDirPath(state.config.statePath);
   const resolved = path.resolve(dir, rel);
   if (resolved !== dir && !resolved.startsWith(dir + path.SEPARATOR)) {
     throw new HttpError(404, "Not Found");

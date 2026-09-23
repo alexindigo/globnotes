@@ -29,10 +29,11 @@ globnotes_command="deno run \
 
 if [ `id -u` -eq 0 ] && [ `id -g` -eq 0 ]; then
     echo Preparing the index/config directory...
-    # Only the app's own directory needs to be owned by the app user.
+    # Only the app's own state dir needs to be owned by the app user.
     # Mounted vault content is never chowned — it belongs to the user.
-    mkdir -p "${GLOBNOTES_PATH}/.globnotes"
-    chown -R ${PUID}:${PGID} "${GLOBNOTES_PATH}/.globnotes"
+    STATE_DIR="${GLOBNOTES_INDEX_PATH:-${GLOBNOTES_PATH}/.globnotes}"
+    mkdir -p "${STATE_DIR}"
+    chown -R ${PUID}:${PGID} "${STATE_DIR}"
 
     echo Starting globnotes as user ${PUID}...
     exec ${EXEC_TOOL} ${PUID}:${PGID} ${globnotes_command}

@@ -37,10 +37,11 @@ export class Fts5Indexer implements Indexer {
   #indexPath: string;
   #status = { syncing: false, initial: false, done: 0, total: 0 };
 
-  constructor(storagePath: string) {
-    const indexDir = path.join(storagePath, ".globnotes");
-    Deno.mkdirSync(indexDir, { recursive: true });
-    this.#indexPath = path.join(indexDir, "index.sqlite");
+  constructor(stateDir: string) {
+    // The arg IS the state dir (index.sqlite's home) — no join; the
+    // caller resolves GLOBNOTES_INDEX_PATH vs <vault>/.globnotes.
+    Deno.mkdirSync(stateDir, { recursive: true });
+    this.#indexPath = path.join(stateDir, "index.sqlite");
     this.#db = new DatabaseSync(this.#indexPath);
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#initSchema();

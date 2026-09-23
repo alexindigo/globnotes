@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
- * Brand file side: the per-vault brand directory
- * (<vault>/.globnotes/brand/), its listing, and the generated web
- * manifest. Name/accent resolution itself lives in GlobalConfig —
- * this module only deals with what's on disk.
+ * Brand file side: the brand directory (<state dir>/brand/), its
+ * listing, and the generated web manifest. Name/accent resolution itself
+ * lives in GlobalConfig — this module only deals with what's on disk.
  */
 
 import * as path from "@std/path";
@@ -25,14 +24,14 @@ const BUNDLED_MANIFEST_ICONS = [
   },
 ];
 
-export function brandDirPath(notesPath: string): string {
-  return path.join(notesPath, ".globnotes", "brand");
+export function brandDirPath(statePath: string): string {
+  return path.join(statePath, "brand");
 }
 
 /** Sorted file names in the brand directory, [] when it doesn't exist. */
-export function listBrandFiles(notesPath: string): string[] {
+export function listBrandFiles(statePath: string): string[] {
   try {
-    return [...Deno.readDirSync(brandDirPath(notesPath))]
+    return [...Deno.readDirSync(brandDirPath(statePath))]
       .filter((e) => e.isFile)
       .map((e) => e.name)
       .sort();
@@ -53,7 +52,7 @@ export function brandBlock(config: GlobalConfig): BrandBlock {
   return {
     name: config.brandName,
     accent: config.brandAccent,
-    files: listBrandFiles(config.notesPath),
+    files: listBrandFiles(config.statePath),
   };
 }
 
@@ -63,7 +62,7 @@ export function brandBlock(config: GlobalConfig): BrandBlock {
 export function generateWebManifest(config: GlobalConfig): string {
   const prefix = config.pathPrefix;
   const name = config.brandName ?? DEFAULT_NAME;
-  const customIcon = listBrandFiles(config.notesPath)
+  const customIcon = listBrandFiles(config.statePath)
     .find((f) => f.startsWith("icon."));
   const icons = customIcon
     ? [{ src: `${prefix}/_/brand/${customIcon}`, sizes: "any" }]

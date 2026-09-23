@@ -7,10 +7,15 @@ services:
       - "8080:8080"
     volumes:
       - ./notes:/data
+      # Optional: keep the state dir (index, config, branding, plugins)
+      # out of the notes tree — e.g. so backups see only markdown:
+      # - ./state:/state
       # Optional: mount additional sources as subdirectories
       # - /srv/dad-notes:/data/dad
       # - /srv/mom-notes:/data/mom
     environment:
+      # Optional. Pairs with the ./state mount above:
+      # GLOBNOTES_INDEX_PATH: "/state"
       # Optional. Leave unset for the first-run setup wizard, or choose
       # explicitly:
       # GLOBNOTES_AUTH_TYPE: "none"  # trusted home network only!

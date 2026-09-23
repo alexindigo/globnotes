@@ -28,6 +28,9 @@ export interface StoredConfig {
 
 export class GlobalConfig {
   readonly notesPath: string;
+  /** State dir (index, config, brand, plugins). GLOBNOTES_INDEX_PATH IS
+   * the dir (not a parent); unset ⇒ the vault's .globnotes. */
+  readonly statePath: string;
   readonly pathPrefix: string;
   storedConfig: StoredConfig | null;
   authType: AuthType | null;
@@ -45,6 +48,10 @@ export class GlobalConfig {
   constructor() {
     logger.debug("Loading global config...");
     this.notesPath = getEnv("GLOBNOTES_PATH", { mandatory: true });
+    // getEnv returns "" for unset vars — `||` treats that (and an
+    // explicitly empty value) as absent, per the env-wins rule.
+    this.statePath = getEnv("GLOBNOTES_INDEX_PATH") ||
+      path.join(this.notesPath, ".globnotes");
     this.storedConfig = this.#loadStoredConfig();
     this.authType = this.#loadAuthType();
     this.setupRequired = this.authType === null;
@@ -68,7 +75,7 @@ export class GlobalConfig {
   }
 
   get configPath(): string {
-    return path.join(this.notesPath, ".globnotes", "config.json");
+    return path.join(this.statePath, "config.json");
   }
 
   #loadStoredConfig(): StoredConfig | null {

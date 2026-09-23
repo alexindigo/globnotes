@@ -98,7 +98,7 @@ export default async function (request) {
     changed = true;
   }
 
-  const dir = brandDirPath(config.notesPath);
+  const dir = brandDirPath(config.statePath);
   for (const slot of ["logo", "icon"] as const) {
     const file = form.get(slot);
     if (file instanceof File) {

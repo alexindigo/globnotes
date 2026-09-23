@@ -114,6 +114,7 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 | Variable | Default | Description |
 |---|---|---|
 | `GLOBNOTES_PATH` | `/data` (in container) | Root directory of the notes tree. **Required** outside docker. |
+| `GLOBNOTES_INDEX_PATH` | `<vault>/.globnotes` | State dir (search index, wizard config, branding, plugins). The value IS the directory (not a parent). Set it to keep the vault pure notes — e.g. for backup jobs that should only see markdown. On first boot with it set and a legacy vault, the exact `mv` command is logged; state is never auto-copied. |
 | `PUID` / `PGID` | `1000` / `1000` | User the app runs as (container). Set to your host user's ids (`id -u` / `id -g`) so note edits can write. **globnotes never `chown`s your vault** — it only creates/owns the `.globnotes` index dir. |
 | `GLOBNOTES_INDEX_BATCH_SIZE` | `200` | Notes indexed per commit batch during the initial background sync. Lower it on very constrained hosts. |
 | `GLOBNOTES_INDEX_BATCH_DELAY` | `0.1` | Seconds to sleep between index batches (CPU throttle). `0` disables. |
@@ -177,7 +178,7 @@ Keyboard shortcuts are a **switchable layer** — **navbar menu → Keybindings*
 
 ## Branding
 
-Make an instance yours without touching code: **navbar menu → Branding** sets the brand **name**, an **accent color**, and uploads a **logo / icon** (SVG, PNG, JPG, WebP, GIF or ICO). Everything lives inside the vault — name and accent in `.globnotes/config.json`, files in `.globnotes/brand/` — so branding travels with the vault like everything else.
+Make an instance yours without touching code: **navbar menu → Branding** sets the brand **name**, an **accent color**, and uploads a **logo / icon** (SVG, PNG, JPG, WebP, GIF or ICO). Everything lives in the state dir — name and accent in `config.json`, files in `brand/` — so branding travels with the vault like everything else (unless the state dir is relocated with `GLOBNOTES_INDEX_PATH`, in which case it travels with that).
 
 - The accent recolors the Globnotes Light/Dark themes; themes with a brand color of their own keep it.
 - The brand name replaces "globnotes" in the browser tab, the web manifest, and the navbar wordmark.

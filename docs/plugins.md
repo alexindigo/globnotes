@@ -12,6 +12,9 @@ pipeline.
 └── main.js
 ```
 
+(With `GLOBNOTES_INDEX_PATH` set, the state dir replaces `<vault>/.globnotes`
+in every path below.)
+
 Two roots are scanned (internal first, vault overrides by ID):
 
 - `<repo>/plugins/<id>/` — built-ins shipped in the image
@@ -104,7 +107,8 @@ Async RPC to the host (values are structured-cloned):
 
 ## Ordering and disabling
 
-`<vault>/.globnotes/plugins.json`:
+`<vault>/.globnotes/plugins.json` (or `<state dir>/plugins.json` when
+`GLOBNOTES_INDEX_PATH` relocates state):
 
 ```json
 {

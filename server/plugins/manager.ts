@@ -29,6 +29,10 @@ interface PluginsJson {
 export class PluginManager {
   readonly hosts = new Map<string, PluginHost>();
   private readonly vaultPath: string;
+  /** Plugin discovery root + plugins.json live in the state dir;
+   * PluginHost permissions keep the vault path (plugins read notes,
+   * not state). */
+  private readonly statePath: string;
   private readonly workerCount: number;
   private readonly rpc: RpcHandler;
   private startPromise: Promise<void> | null = null;
@@ -37,8 +41,10 @@ export class PluginManager {
     vaultPath: string,
     rpc: RpcHandler = pluginRpc,
     workerCount?: number,
+    statePath?: string,
   ) {
     this.vaultPath = vaultPath;
+    this.statePath = statePath ?? path.join(vaultPath, ".globnotes");
     this.rpc = rpc;
     this.workerCount = workerCount ??
       Number(getEnv("GLOBNOTES_RENDER_WORKERS", { castInt: true, default: 2 }));
@@ -110,7 +116,7 @@ export class PluginManager {
     for (
       const root of [
         INTERNAL_PLUGINS_DIR,
-        path.join(this.vaultPath, ".globnotes", "plugins"),
+        path.join(this.statePath, "plugins"),
       ]
     ) {
       for (const dir of discoverPluginDirs(root)) {
@@ -180,7 +186,7 @@ export class PluginManager {
     }
   }
 
-  /** <vault>/.globnotes/plugins.json: { order, disabled } — listed ids
+  /** <state dir>/plugins.json: { order, disabled } — listed ids
    * first (in listed order), the rest keep discovery order; disabled
    * ids are dropped. */
   #applyPluginsJson(
@@ -190,7 +196,7 @@ export class PluginManager {
     try {
       cfg = JSON.parse(
         Deno.readTextFileSync(
-          path.join(this.vaultPath, ".globnotes", "plugins.json"),
+          path.join(this.statePath, "plugins.json"),
         ),
       ) as PluginsJson;
     } catch {

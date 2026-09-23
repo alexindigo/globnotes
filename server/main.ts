@@ -11,6 +11,7 @@
  */
 
 import { pathfinder } from "@pathfinder/pathfinder";
+import * as path from "@std/path";
 import { LocalAuth } from "./auth/local.ts";
 import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
@@ -21,11 +22,24 @@ import { logger } from "./logger.ts";
 import { initState } from "./state.ts";
 import { Fts5Indexer } from "./search/fts5.ts";
 
+function fileExists(p: string): boolean {
+  try {
+    return Deno.statSync(p).isFile;
+  } catch {
+    return false;
+  }
+}
+
 const globalConfig = new GlobalConfig();
 const notes = new FileSystemNotes(globalConfig.notesPath);
-const indexer = new Fts5Indexer(globalConfig.notesPath);
+const indexer = new Fts5Indexer(globalConfig.statePath);
 const fileServing = new FileServing(globalConfig.notesPath);
-const plugins = new PluginManager(globalConfig.notesPath);
+const plugins = new PluginManager(
+  globalConfig.notesPath,
+  undefined,
+  undefined,
+  globalConfig.statePath,
+);
 const auth = globalConfig.authType === AuthType.PASSWORD ||
     globalConfig.authType === AuthType.TOTP
   ? new LocalAuth(globalConfig)
@@ -48,7 +62,7 @@ try {
 }
 
 // One-time Whoosh → FTS5 migration: old segment files serve no purpose.
-const globDir = `${globalConfig.notesPath}/.globnotes`;
+const globDir = globalConfig.statePath;
 try {
   for (const entry of Deno.readDirSync(globDir)) {
     if (
@@ -61,6 +75,22 @@ try {
   }
 } catch {
   // .globnotes doesn't exist yet — first boot
+}
+
+// Relocated state dir but a legacy vault: warn loudly with the exact
+// move; never auto-copy (partial cross-filesystem copies of credentials
+// are the failure mode).
+if (
+  getEnv("GLOBNOTES_INDEX_PATH") &&
+  !fileExists(path.join(globalConfig.statePath, "config.json")) &&
+  fileExists(path.join(globalConfig.notesPath, ".globnotes", "config.json"))
+) {
+  logger.warning(
+    "GLOBNOTES_INDEX_PATH is set but the state dir has no config.json — " +
+      "the vault still holds it. Move the existing state with:\n" +
+      `  mv ${path.join(globalConfig.notesPath, ".globnotes")}/* ` +
+      `${globalConfig.statePath}/`,
+  );
 }
 
 if (globalConfig.setupRequired) {
