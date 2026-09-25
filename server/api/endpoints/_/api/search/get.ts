@@ -39,7 +39,15 @@ export default function (request) {
     | "last_modified";
   const order = orderParam as "asc" | "desc";
   const limitParam = request.query.get("limit");
-  const limit = limitParam ? Number(limitParam) : undefined;
+  const limitNum = limitParam ? Number(limitParam) : undefined;
+  if (limitParam && !Number.isInteger(limitNum)) {
+    throw new HttpError(422, [{
+      type: "int_parsing",
+      loc: ["query", "limit"],
+      msg: "Input should be a valid integer",
+    }]);
+  }
+  const limit = limitNum;
   const nested = request.query.get("nested") !== "false";
   const folder = request.query.get("folder") ?? undefined;
 

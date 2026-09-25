@@ -165,8 +165,18 @@ Deno.test("search: nested=false and folder filter", async () => {
   }
 });
 
-Deno.test("search: invalid folder path returns 400", async () => {
+Deno.test("search: non-integer limit returns 422, not a 500", async () => {
   const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  try {
+    await awaitIndexReady(server.baseUrl);
+    const res = await api(server, "/_/api/search?term=*&limit=NaN");
+    assertEquals(res.status, 422);
+  } finally {
+    await server.close();
+  }
+});
+
+Deno.test("search: invalid folder path returns 400", async () => {  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
   try {
     await awaitIndexReady(server.baseUrl);
     const res = await api(server, "/_/api/search?term=*&folder=_");
