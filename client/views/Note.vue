@@ -409,6 +409,12 @@ const previewHtml = ref("");
 // ServerViewer's highlight.
 const viewLine = ref(null);
 
+/** The live editor buffer. In preview the editor is unmounted, so the
+ * buffer lives in editorInitialValue (transferred on mode switch). */
+function currentBuffer() {
+  return editor.value ? editor.value.getMarkdown() : editorInitialValue.value;
+}
+
 function setEditorMode(mode, writeUrl = true) {
   if (mode === editorMode.value) return;
   clearCaretSyncTimer();
@@ -768,12 +774,12 @@ function saveHandler(close = false) {
   noteDirty.value = false;
 
   // Save Note
-  let newContent = editor.value.getMarkdown();
+  let newContent = currentBuffer();
   if (isNewNote.value) {
     saveNew(newPath.value, newContent, close);
   } else {
     saveExisting(newPath.value, newContent, close);
-  }
+}
 }
 
 function saveNew(newPath, newContent, close = false) {
@@ -1005,7 +1011,7 @@ async function saveForNavigation() {
     toast.add(getToastOptions(titleError, "Invalid", "error"));
     return false;
   }
-  const newContent = editor.value.getMarkdown();
+  const newContent = currentBuffer();
   try {
     if (isNewNote.value) {
       note.value = await createNote(newPath.value, newContent);
@@ -1228,6 +1234,9 @@ function setBeforeUnloadConfirmation(enable = true) {
 }
 
 function saveDefaultEditorMode() {
+  // Preview unmounts the editor — nothing new to persist (the pref was
+  // already written when the user switched into preview).
+  if (!editor.value) return;
   const isWysiwygMode = editor.value.isWysiwygMode();
   localStorage.setItem(
     "defaultEditorMode",
