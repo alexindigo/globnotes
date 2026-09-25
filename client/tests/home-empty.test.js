@@ -61,4 +61,25 @@ describe("Home empty vault", () => {
     expect(wrapper.text()).toContain("No notes yet");
     expect(wrapper.text()).not.toContain("Create new note");
   });
+
+  it("waits for config before the quick-access fetch (no NaN limit)", async () => {
+    const { getNotes } = await import("../api.js");
+    getNotes.mockClear();
+    setActivePinia(createPinia());
+    const store = useGlobalStore();
+    store.config = {}; // config fetch hasn't landed yet
+    mount(Home, { global: { plugins: [router] } });
+    await flushPromises();
+    expect(getNotes).not.toHaveBeenCalled();
+
+    store.config = {
+      authType: "none",
+      notesPath: "/vault",
+      quickAccessLimit: 4,
+      quickAccessSort: "lastModified",
+      quickAccessTerm: "*",
+    };
+    await flushPromises();
+    expect(getNotes).toHaveBeenCalledWith("*", "lastModified", "desc", 5);
+  });
 });

@@ -116,6 +116,9 @@ function submitSearch() {
 }
 
 function init() {
+  // Config may not have landed yet (delayed fetch) — the watcher refires
+  // when quickAccessLimit appears. Firing early would send limit=NaN.
+  if (globalStore.config.quickAccessLimit === undefined) return;
   if (globalStore.config.quickAccessHide) {
     return;
   }
@@ -142,6 +145,6 @@ function init() {
 }
 
 // Watch to allow for delayed config load.
-watch(() => globalStore.config.hideRecentlyModified, init);
+watch(() => globalStore.config.quickAccessLimit, init);
 onMounted(init);
 </script>
