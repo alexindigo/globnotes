@@ -130,15 +130,10 @@
             v-show="editMode"
             label="Save"
             :iconPath="tabSave"
+            :iconClass="unsavedChanges ? 'text-theme-brand' : ''"
             @click="saveHandler((close = false))"
-            class="relative ml-1"
-          >
-            <!-- Unsaved Changes Indicator -->
-            <div
-              v-show="unsavedChanges"
-              class="absolute right-1 h-1.5 w-1.5 rounded-full bg-theme-brand"
-            ></div>
-          </CustomButton>
+            class="ml-1"
+          />
           <!-- Edit Toggle -->
           <Toggle
             v-if="canModify"

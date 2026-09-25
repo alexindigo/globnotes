@@ -19,7 +19,12 @@
     ]"
   >
     <slot></slot>
-    <IconLabel :iconPath="iconPath" :iconSize="iconSize" :label="label" />
+    <IconLabel
+      :iconPath="iconPath"
+      :iconSize="iconSize"
+      :iconClass="iconClass"
+      :label="label"
+    />
   </button>
 </template>
 
@@ -29,6 +34,10 @@ import IconLabel from "./IconLabel.vue";
 defineProps({
   iconPath: String,
   iconSize: String,
+  iconClass: {
+    type: [String, Array, Object],
+    default: "",
+  },
   label: String,
   title: String,
   disabled: Boolean,
