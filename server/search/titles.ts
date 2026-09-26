@@ -132,20 +132,5 @@ export function rewriteFirstH1(content: string, heading: string): string {
   return content;
 }
 
-/** Turn H1 text into a filename basename (H1 → rename sync): strip the
- * create-time invalid chars and anything structural, collapse whitespace,
- * trim. Returns null when nothing usable remains. */
-export function sanitizeBasename(text: string): string | null {
-  const stripped = text
-    .replace(/[<>:"\\|?/*]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^\.+/, "");
-  if (!stripped) return null;
-  // Segment limit: 255 bytes.
-  const encoded = new TextEncoder().encode(stripped);
-  const cut = encoded.length > 255
-    ? new TextDecoder().decode(encoded.slice(0, 255)).trimEnd()
-    : stripped;
-  return cut || null;
-}
+// The rule moved to shared/names.ts so the client follows it live.
+export { sanitizeBasename } from "../../shared/names.ts";

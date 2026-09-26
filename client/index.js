@@ -4,12 +4,14 @@ import ToastService from "primevue/toastservice";
 import { createApp } from "vue";
 import { createPinia } from "pinia";
 import { initTheme } from "./themes.js";
+import { initDocTitle } from "./title.js";
 import { loadStoredToken } from "./tokenStorage.js";
 import router from "/router.js";
 
 // Theme vars are stamped on <html> before mount so every surface is
 // themed from the first paint (style.css carries no duplicate defaults).
 initTheme();
+initDocTitle();
 
 // Plugin stylesheets — Obsidian-style styles.css per plugin, served
 // combined at <prefix>/_/plugins.css. Loaded globally; plugins namespace

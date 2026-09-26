@@ -1,5 +1,6 @@
 const TOPICS = {
   NOTE_OPEN: "note:open",
+  NOTE_TITLE_CHANGED: "note:title-changed",
   NOTE_CREATE: "note:create",
   NOTE_SAVE: "note:save",
   NOTE_RENAME: "note:rename",

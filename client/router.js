@@ -3,9 +3,9 @@ import * as constants from "./constants.js";
 import { createRouter, createWebHistory } from "vue-router";
 
 import { authCheck } from "./api.js";
-import { currentBrandName } from "./brand.js";
 import { notePath } from "./notePath.js";
 import { publish, TOPICS } from "./bus/index.js";
+import { setDocTitleBase } from "./title.js";
 
 const pathPrefix =
   document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
@@ -86,21 +86,17 @@ router.beforeEach(async (to) => {
 });
 
 router.afterEach((to) => {
-  let docTitle = currentBrandName();
-  if (to.name === "note") {
-    if (to.params.path) {
-      docTitle = `${to.params.path} - ${docTitle}`;
-      publish(TOPICS.NOTE_OPEN, { path: to.params.path });
-    } else {
-      docTitle = "New Note - " + docTitle;
-    }
+  // The tab's title: the bare brand for non-note pages; an open note's
+  // live title arrives via NOTE_TITLE_CHANGED (title.js owns the tab).
+  setDocTitleBase();
+  if (to.name === "note" && to.params.path) {
+    publish(TOPICS.NOTE_OPEN, { path: to.params.path });
   }
   if (to.name === "search" && to.query[constants.params.searchTerm]) {
     publish(TOPICS.SEARCH_PERFORM, {
       term: to.query[constants.params.searchTerm],
     });
   }
-  document.title = docTitle;
 });
 
 export default router;

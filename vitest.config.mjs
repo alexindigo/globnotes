@@ -17,6 +17,10 @@ export default defineConfig({
         find: /^@globnotes\/frontmatter$/,
         replacement: path.resolve(repoRoot, "shared/frontmatter.ts"),
       },
+      {
+        find: /^@globnotes\/names$/,
+        replacement: path.resolve(repoRoot, "shared/names.ts"),
+      },
     ],
   },
   test: {

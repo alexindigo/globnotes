@@ -78,7 +78,7 @@
             <input
               v-show="editMode"
               v-model.trim="editBasename"
-              @input="syncTitle"
+              @input="onTitleInput"
               class="w-full bg-theme-background outline-none"
               placeholder="Title"
             />
@@ -278,6 +278,8 @@ import {
 } from "../api.js";
 import { disabledPluginIds } from "../pluginSettings.js";
 import { Note } from "../classes.js";
+import { sanitizeBasename } from "@globnotes/names";
+import { bufferTitleOf, firstH1Of, frontmatterTitleOf } from "../noteTitle.js";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import CustomButton from "../components/CustomButton.vue";
 import CtaButton from "../components/CtaButton.vue";
@@ -372,6 +374,9 @@ const router = useRouter();
 const newPath = ref();
 const editBasename = ref("");
 const editFolder = ref("");
+// New-note title follow: while the title field is untouched, the filename
+// follows the buffer's first H1 (debounced). First user edit stops it.
+const titleTouched = ref(false);
 const folderDatalistId = "folder-datalist";
 const renameAssetsModalVisible = ref(false);
 const renameRefs = ref([]);
@@ -461,6 +466,8 @@ function onEditorInput() {
   noteDirty.value = true;
   startContentChangedTimeout();
   schedulePreviewRefresh();
+  scheduleTitleFollow();
+  publishTitle();
 }
 
 // Preview refresh: debounced server render of the UNSAVED buffer. The
@@ -523,6 +530,7 @@ function init() {
       .then((data) => {
         note.value = data;
         loadingIndicator.value.setLoaded();
+        publishTitle();
         enterEditFromFragment();
         // View-mode line links: #view:L highlights the rendered lines.
         const frag = parseFragment(window.location.hash);
@@ -552,9 +560,12 @@ function init() {
     newPath.value = prefillTitle;
     note.value = new Note({ path: prefillTitle });
     editMode.value = false;
+    // A fresh new-note page re-arms the title follow.
+    titleTouched.value = false;
     nextTick(() => {
       editHandler();
       loadingIndicator.value.setLoaded();
+      publishTitle();
     });
   }
 }
@@ -729,6 +740,47 @@ function syncTitle() {
     : editBasename.value;
 }
 
+// -- Title follow + the live tab title ------------------------------------
+// The note knows its own title: frontmatter `title:` → first H1 →
+// basename. The tab follows the live buffer, even before save.
+
+/** The note's display title, live. */
+function currentTitle() {
+  const source = editMode.value
+    ? (editor.value ? editor.value.getMarkdown() : editorInitialValue.value)
+    : (note.value.content ?? "");
+  return bufferTitleOf(source) || noteBasename.value || "Untitled";
+}
+
+function publishTitle() {
+  publish(TOPICS.NOTE_TITLE_CHANGED, { title: currentTitle() });
+}
+
+let titleFollowTimer = null;
+/** Untouched new-note filename follows the buffer's first H1 (debounced). */
+function scheduleTitleFollow() {
+  if (!isNewNote.value || titleTouched.value) return;
+  if (titleFollowTimer) clearTimeout(titleFollowTimer);
+  titleFollowTimer = setTimeout(() => {
+    titleFollowTimer = null;
+    if (!isNewNote.value || titleTouched.value) return;
+    const buffer = editor.value?.getMarkdown() ?? "";
+    if (frontmatterTitleOf(buffer)) return;
+    const h1 = firstH1Of(buffer);
+    const sanitized = h1 ? sanitizeBasename(h1) : null;
+    if (sanitized && sanitized !== editBasename.value) {
+      editBasename.value = sanitized;
+      syncTitle();
+    }
+  }, 300);
+}
+
+/** Title field typed by hand — the follow stops for good. */
+function onTitleInput() {
+  titleTouched.value = true;
+  syncTitle();
+}
+
 function getInitialEditorValue() {
   const draftContent = loadDraft();
   return draftContent ? draftContent : note.value.content;
@@ -781,6 +833,7 @@ function saveNew(newPath, newContent, close = false) {
     .then((data) => {
       clearDraft();
       note.value = data;
+      publishTitle();
       publish(TOPICS.NOTE_CREATE, { path: newPath });
       router
         .push(notePath(note.value.path))
@@ -848,6 +901,7 @@ function saveExisting(newPath, newContent, close = false) {
       .then((data) => {
         clearDraft();
         note.value = data;
+        publishTitle();
         // The server may have rewritten content during the save (rename
         // link/attachment strategies) — sync the open editor with it.
         if (
@@ -1274,6 +1328,7 @@ onMounted(() => {
 // The content-change debounce can outlive the editor (close/leave within 1s
 // of typing); drop it so the callback never dereferences a dead editor.
 onBeforeUnmount(() => {
+  if (titleFollowTimer) clearTimeout(titleFollowTimer);
   clearContentChangedTimeout();
   editorActionUnsubs.forEach((fn) => fn());
   editorActionUnsubs = [];

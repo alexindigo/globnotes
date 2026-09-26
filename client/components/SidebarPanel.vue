@@ -417,12 +417,12 @@ const visibleRows = computed(() => {
         }
       }
       const notes = [...level.notes]
-        .map((t) => ({
-          path: typeof t === "string" ? t : t.path,
-          name: typeof t === "string"
-            ? t.split("/").pop()
-            : (t.title ?? t.path.split("/").pop()),
-        }))
+        .map((t) => {
+          // The sidebar shows the filename, like Obsidian's file
+          // explorer — never the display title.
+          const path = typeof t === "string" ? t : t.path;
+          return { path, name: path.split("/").pop() };
+        })
         .sort((a, b) => a.name.localeCompare(b.name));
       for (const note of notes) {
         rows.push({ key: "n:" + note.path, type: "note", note, depth });
