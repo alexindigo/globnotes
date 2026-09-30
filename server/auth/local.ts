@@ -28,6 +28,7 @@ export class LocalAuth {
   private readonly sessionExpiryDays: number;
   readonly isTotpEnabled: boolean;
   private totpSecret = "";
+  private unpaddedTotpSecret = "";
   private lastUsedTotp: string | null = null;
 
   constructor(globalConfig: GlobalConfig) {
@@ -67,6 +68,13 @@ export class LocalAuth {
           getEnv("GLOBNOTES_TOTP_KEY", { mandatory: true }),
         ),
       );
+      // Authenticators enrol the UNPADDED form (the QR/manual key strips
+      // padding) — check against the same string, stripped once here.
+      this.unpaddedTotpSecret = this.totpSecret.replace(/=+$/, "");
+      // ±1 step: an authenticator a step behind/ahead (clock skew, slow
+      // typing) is not wrong credentials. (Setter-merged — totp.create
+      // would reset the plugin wiring.)
+      totp.options = { ...totp.options, window: 1 };
     }
   }
 
@@ -77,13 +85,16 @@ export class LocalAuth {
     );
 
     let passwordCorrect: boolean;
-    let currentTotp: string | null = null;
+    let submittedTotp: string | null = null;
     if (this.isTotpEnabled) {
-      currentTotp = totp.generate(this.totpSecret);
-      passwordCorrect = timingSafeEqual(
-        this.password + currentTotp,
-        data.password ?? "",
-      );
+      // The client appends the 6-digit code to the password — verify them
+      // separately (a shared string compare would couple a code typo to a
+      // password failure and vice versa).
+      const submitted = data.password ?? "";
+      submittedTotp = submitted.slice(-6);
+      const pass = submitted.slice(0, -6);
+      const codeOk = totp.check(submittedTotp, this.unpaddedTotpSecret);
+      passwordCorrect = timingSafeEqual(this.password!, pass) && codeOk;
     } else if (this.password !== null) {
       passwordCorrect = timingSafeEqual(this.password, data.password ?? "");
     } else {
@@ -95,7 +106,7 @@ export class LocalAuth {
 
     if (
       !(usernameCorrect && passwordCorrect &&
-        (!this.isTotpEnabled || currentTotp !== this.lastUsedTotp))
+        (!this.isTotpEnabled || submittedTotp !== this.lastUsedTotp))
     ) {
       logger.warning(
         `Login rejected: usernameCorrect=${usernameCorrect} ` +
@@ -106,7 +117,9 @@ export class LocalAuth {
       throw new Error("Incorrect login credentials.");
     }
     if (this.isTotpEnabled) {
-      this.lastUsedTotp = currentTotp;
+      // Single-use: an immediate replay of the accepted code is rejected
+      // (one slot deep — a double-submit guard, per the Python server).
+      this.lastUsedTotp = submittedTotp;
     }
 
     return {
@@ -139,7 +152,7 @@ export class LocalAuth {
   /** Print the TOTP enrolment QR code + manual key at startup
    * (same as the Python server). Call after construction. */
   async displayTotpEnrolment(): Promise<void> {
-    const unpaddedSecret = this.totpSecret.replace(/=+$/, "");
+    const unpaddedSecret = this.unpaddedTotpSecret;
     const uri =
       `otpauth://totp/globnotes:${encodeURIComponent(this.username)}` +
       `?secret=${unpaddedSecret}&issuer=globnotes`;

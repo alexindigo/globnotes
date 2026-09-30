@@ -93,21 +93,42 @@ Deno.test("LocalAuth: TOTP login and single-use enforcement", async () => {
   const auth = authFor(await makeConfig(env), env);
   assert(auth.isTotpEnabled);
 
-  // The client sends password + current code concatenated.
-  const secret = encodeBase32(new TextEncoder().encode(totpKey));
-  const code = totp.generate(secret);
-  const token = await auth.login({
-    username: "alice",
-    password: `secret${code}`,
-  });
-  assert(typeof token.access_token === "string");
+  // The client sends password + code concatenated. Codes are generated
+  // from the UNPADDED secret — what an authenticator enrols via the
+  // QR/manual key (padded and unpadded decode differently in otplib,
+  // which is exactly the issue-#6 trap).
+  const secret = encodeBase32(new TextEncoder().encode(totpKey))
+    .replace(/=+$/, "");
+  const stepMs = 30_000;
+  const now = Date.now();
+  // Codes for a given epoch: clone keeps the shared instance's options
+  // (and plugin wiring) untouched.
+  const codeAt = (epochMs: number): string =>
+    totp.clone({ epoch: epochMs }).generate(secret);
+  const code = codeAt(now);
+  const prevCode = codeAt(now - stepMs);
+  const nextCode = codeAt(now + stepMs);
 
-  // Same code again → rejected (single-use).
+  // Current step, previous step, next step — all accepted (window ±1:
+  // clock skew and slow typing are not wrong credentials). The replay
+  // check follows immediately: lastUsedTotp guards the double-submit.
+  for (const c of [code, prevCode, nextCode]) {
+    const token = await auth.login({
+      username: "alice",
+      password: `secret${c}`,
+    });
+    assert(typeof token.access_token === "string");
+    // Same code right away → rejected (single-use, on the accepted code).
+    await assertRejects(() =>
+      auth.login({ username: "alice", password: `secret${c}` })
+    );
+  }
+
+  // A code outside the window, and password alone → rejected.
+  const farCode = codeAt(now - 10 * stepMs);
   await assertRejects(() =>
-    auth.login({ username: "alice", password: `secret${code}` })
+    auth.login({ username: "alice", password: `secret${farCode}` })
   );
-
-  // Code alone, password alone, wrong code → all rejected.
   await assertRejects(() =>
     auth.login({ username: "alice", password: "secret" })
   );
