@@ -65,6 +65,17 @@ export async function postSetup(data) {
   }
 }
 
+// Mint a TOTP enrolment bundle for the setup wizard (key, uri, qr,
+// secret). Nothing is stored server-side until setup completes.
+export async function postTotpEnrolment(username) {
+  try {
+    const response = await api.post("setup/totp-enrolment", { username });
+    return response.data;
+  } catch (response) {
+    return Promise.reject(response);
+  }
+}
+
 // Re-arm first-run setup (menu: Access mode). Auth-required server-side.
 export async function resetSetup() {
   try {

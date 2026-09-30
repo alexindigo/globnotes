@@ -117,6 +117,73 @@
                 </button>
               </div>
             </div>
+            <div>
+              <label
+                for="setup-totp"
+                class="flex cursor-pointer items-start gap-2 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  id="setup-totp"
+                  v-model="totpEnabled"
+                  :disabled="pending || mode !== 'password'"
+                  class="mt-0.5 h-4 w-4 shrink-0 accent-theme-brand"
+                />
+                <span>
+                  <span class="font-semibold"
+                    >Require an authenticator code (TOTP)</span
+                  >
+                  <span class="mt-0.5 block text-theme-text-muted">
+                    Two-factor sign-in with an app like Authy or Google
+                    Authenticator.
+                  </span>
+                </span>
+              </label>
+            </div>
+            <div
+              v-if="totpEnabled"
+              class="flex flex-col gap-2 rounded-md border border-theme-border p-3"
+            >
+              <template v-if="totpSecret">
+                <p class="text-sm text-theme-text-muted">
+                  Scan with your authenticator app, or enter the key
+                  manually, then type the 6-digit code it shows you.
+                </p>
+                <img
+                  :src="totpQr"
+                  alt="TOTP enrolment QR code"
+                  class="h-36 w-36 self-center"
+                />
+                <p class="text-center text-sm">
+                  <code
+                    class="select-all font-mono text-theme-text"
+                    data-testid="totp-secret"
+                    >{{ totpSecret }}</code
+                  >
+                </p>
+                <div>
+                  <label
+                    for="setup-totp-code"
+                    class="mb-1 block text-sm font-semibold"
+                    >Current code</label
+                  >
+                  <TextInput
+                    id="setup-totp-code"
+                    ref="totpCodeInput"
+                    v-model="totpCode"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxlength="6"
+                    placeholder="123456"
+                    :disabled="pending || mode !== 'password'"
+                    :aria-invalid="missingTotp ? 'true' : undefined"
+                  />
+                </div>
+              </template>
+              <p v-else class="text-sm text-theme-text-muted">
+                Generating enrolment key…
+              </p>
+            </div>
             <p class="text-sm text-theme-text-muted">
               You'll sign in with these details after setup.
             </p>
@@ -155,6 +222,7 @@
             <label class="mt-3 flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
+                id="setup-ack"
                 ref="ackCheckbox"
                 v-model="acked"
                 :disabled="pending || mode !== 'none'"
@@ -191,7 +259,7 @@
 <script setup>
 import { nextTick, onMounted, ref, watch } from "vue";
 
-import { postSetup, resetSetup } from "../api.js";
+import { postSetup, postTotpEnrolment, resetSetup } from "../api.js";
 import { tabClose, tabEye, tabEyeOff } from "../icons.js";
 import CtaButton from "./CtaButton.vue";
 import Icon from "./Icon.vue";
@@ -243,9 +311,44 @@ const missingUsername = ref(false);
 const missingPassword = ref(false);
 const missingAck = ref(false);
 
+// TOTP enrolment: the bundle is minted once per toggle-on and echoed
+// back at submit; the entered code proves the user recorded the key.
+const totpEnabled = ref(false);
+const totpKey = ref("");
+const totpSecret = ref("");
+const totpQr = ref("");
+const totpCode = ref("");
+const missingTotp = ref(false);
+
 const usernameInput = ref(null);
 const passwordInput = ref(null);
 const ackCheckbox = ref(null);
+const totpCodeInput = ref(null);
+
+// Mint a fresh bundle each time the toggle comes on; a fetch failure
+// rolls the toggle back off with feedback.
+watch(totpEnabled, async (enabled) => {
+  missingTotp.value = false;
+  totpCode.value = "";
+  if (!enabled) {
+    totpKey.value = "";
+    totpSecret.value = "";
+    totpQr.value = "";
+    return;
+  }
+  try {
+    const bundle = await postTotpEnrolment(username.value);
+    totpKey.value = bundle.key;
+    totpSecret.value = bundle.secret;
+    totpQr.value = bundle.qr;
+  } catch {
+    totpKey.value = "";
+    totpSecret.value = "";
+    totpQr.value = "";
+    feedback.value = "Could not start TOTP enrolment. Please try again.";
+    totpEnabled.value = false;
+  }
+});
 
 // The modal cannot be dismissed: setup must be completed.
 function noop() {}
@@ -276,12 +379,17 @@ function finish() {
   if (mode.value === "password") {
     missingUsername.value = !username.value;
     missingPassword.value = !password.value;
-    if (missingUsername.value || missingPassword.value) {
-      feedback.value = "Enter a username and password.";
+    missingTotp.value = totpEnabled.value && !/^\d{6}$/.test(totpCode.value);
+    if (missingUsername.value || missingPassword.value || missingTotp.value) {
+      feedback.value = missingTotp.value
+        ? "Enter the current 6-digit code from your authenticator."
+        : "Enter a username and password.";
       nextTick(() => {
         const target = missingUsername.value
           ? usernameInput.value
-          : passwordInput.value;
+          : missingPassword.value
+          ? passwordInput.value
+          : totpCodeInput.value;
         target?.$el?.focus();
       });
       return;
@@ -295,7 +403,16 @@ function finish() {
 
   pending.value = true;
   const payload = mode.value === "password"
-    ? { mode: "password", username: username.value, password: password.value }
+    ? {
+      mode: "password",
+      username: username.value,
+      password: password.value,
+      // The minted key echoes back; the server persists it only after
+      // the code checks out.
+      ...(totpEnabled.value && totpKey.value
+        ? { totpKey: totpKey.value, totpCode: totpCode.value }
+        : {}),
+    }
     : { mode: mode.value };
 
   const chain = props.dismissible
@@ -317,9 +434,19 @@ function finish() {
       emit("completed");
     })
     .catch((error) => {
+      // A 400 carries the server's reason (e.g. the TOTP code didn't
+      // match) — show it; anything else stays generic.
+      const detail = error.response?.data?.detail;
       feedback.value = error.message === "env-pinned"
         ? "Access mode is pinned by environment configuration."
+        : error.response?.status === 400 && detail
+        ? detail
         : "Setup failed. Please try again.";
+      if (error.response?.status === 400 && totpEnabled.value) {
+        // The code is spent or wrong — clear for a fresh one.
+        totpCode.value = "";
+        nextTick(() => totpCodeInput.value?.$el?.focus());
+      }
       pending.value = false;
     });
 }

@@ -101,7 +101,10 @@ if (globalConfig.setupRequired) {
       "reach this server can read and modify notes.",
   );
 }
-if (auth?.isTotpEnabled) {
+if (auth?.isTotpEnabled && auth.totpKeyFromEnv) {
+  // Env-configured keys enrol via this log line — their only channel.
+  // Wizard-enrolled keys were already recorded in the UI; printing them
+  // here would leave key material in the logs for no reason.
   await auth.displayTotpEnrolment();
 }
 

@@ -8,6 +8,8 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
+import { totp } from "otplib";
+import { totpSecretFromRawKey } from "../server/auth/local.ts";
 import { bootServer } from "./helpers/boot.ts";
 
 Deno.test("auth: setup mode", async (t) => {
@@ -285,4 +287,186 @@ Deno.test("auth: env credentials win over stored config", async () => {
   } finally {
     await Deno.remove(vault, { recursive: true });
   }
+});
+
+Deno.test("auth: password+TOTP wizard flow", async (t) => {
+  // The wizard enrolment path: mint → prove with a live code → persist
+  // as if env-configured. Codes are generated from the UNPADDED secret,
+  // exactly what an authenticator enrols (same as local_auth_test.ts).
+  const stepMs = 30_000;
+  const codeFor = (secret: string, epochMs: number): string =>
+    totp.clone({ epoch: epochMs }).generate(secret);
+
+  const server = await bootServer({});
+  try {
+    let key = "";
+    let secret = "";
+    await t.step(
+      "enrolment mints a bundle while setup is pending",
+      async () => {
+        const res = await fetch(
+          `${server.baseUrl}/_/api/setup/totp-enrolment`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ username: "alice" }),
+          },
+        );
+        assertEquals(res.status, 200);
+        const body = await res.json();
+        assert(typeof body.key === "string" && body.key.length === 20);
+        assert(body.uri.startsWith("otpauth://totp/globnotes:alice"));
+        assert(body.uri.includes("issuer=globnotes"));
+        assert(body.qr.startsWith("data:image/png;base64,"));
+        key = body.key;
+        secret = totpSecretFromRawKey(key);
+        // The manual-entry form is the base32 secret, same as the boot log.
+        assertEquals(body.secret, secret);
+        assert(body.uri.includes(`secret=${secret}`));
+      },
+    );
+
+    await t.step(
+      "a wrong code keeps setup pending and writes nothing",
+      async () => {
+        // Deterministically wrong: whatever the current valid code is,
+        // send a different one (000000 could in principle be valid).
+        const valid = codeFor(secret, Date.now());
+        const wrong = valid === "000000" ? "000001" : "000000";
+        const res = await fetch(`${server.baseUrl}/_/api/setup`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            mode: "password",
+            username: "alice",
+            password: "secret",
+            totpKey: key,
+            totpCode: wrong,
+          }),
+        });
+        assertEquals(res.status, 400);
+        const status = await fetch(`${server.baseUrl}/_/api/setup`);
+        assertEquals((await status.json()).setupRequired, true);
+        const configExists = await Deno.stat(
+          `${server.vault}/.globnotes/config.json`,
+        ).then(() => true).catch(() => false);
+        assertEquals(configExists, false);
+      },
+    );
+
+    let enrolCode = "";
+    await t.step("a valid code completes setup as totp", async () => {
+      enrolCode = codeFor(secret, Date.now());
+      const res = await fetch(`${server.baseUrl}/_/api/setup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mode: "password",
+          username: "Alice",
+          password: "secret",
+          totpKey: key,
+          totpCode: enrolCode,
+        }),
+      });
+      assertEquals(res.status, 200);
+      assertEquals((await res.json()).setupRequired, false);
+
+      const config = JSON.parse(
+        await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
+      );
+      assertEquals(config.auth_type, "totp");
+      assertEquals(config.totp_key, key);
+      assertEquals(config.username, "alice");
+      // Hash only — no plaintext password anywhere in the stored config.
+      assert(config.password_hash.startsWith("pbkdf2_sha256$"));
+      assert(!JSON.stringify(config).includes('"secret"'));
+    });
+
+    const login = (password: string) =>
+      fetch(`${server.baseUrl}/_/api/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "alice", password }),
+      });
+
+    await t.step(
+      "the enrolment code is spent (primed single-use)",
+      async () => {
+        const res = await login(`secret${enrolCode}`);
+        assertEquals(res.status, 401);
+      },
+    );
+
+    let acceptedNext = "";
+    await t.step("previous and next step codes log in", async () => {
+      const now = Date.now();
+      for (const epoch of [now - stepMs, now + stepMs]) {
+        const code = codeFor(secret, epoch);
+        const res = await login(`secret${code}`);
+        assertEquals(res.status, 200);
+        const body = await res.json();
+        assertEquals(body.token_type, "bearer");
+        acceptedNext = code;
+      }
+    });
+
+    await t.step("an accepted code cannot be replayed", async () => {
+      // The last accepted code is the primed/last-used one: within ±1
+      // step it is still window-valid, so the 401 is the replay guard,
+      // not an expiry.
+      const res = await login(`secret${acceptedNext}`);
+      assertEquals(res.status, 401);
+    });
+
+    await t.step(
+      "password alone and far-window codes are rejected",
+      async () => {
+        assertEquals((await login("secret")).status, 401);
+        const far = codeFor(secret, Date.now() - 10 * stepMs);
+        assertEquals((await login(`secret${far}`)).status, 401);
+      },
+    );
+
+    await t.step("enrolment closes once setup is complete", async () => {
+      const res = await fetch(
+        `${server.baseUrl}/_/api/setup/totp-enrolment`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        },
+      );
+      assertEquals(res.status, 409);
+    });
+  } finally {
+    await server.close();
+  }
+
+  await t.step(
+    "stored key survives restart — as if env-configured",
+    async () => {
+      const restarted = await bootServer({ GLOBNOTES_PATH: server.vault });
+      try {
+        const res = await fetch(`${restarted.baseUrl}/_/api/config`);
+        assertEquals((await res.json()).authType, "totp");
+        const code = totpSecretFromRawKey(
+          JSON.parse(
+            await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
+          ).totp_key,
+        );
+        const login = await fetch(`${restarted.baseUrl}/_/api/token`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            username: "alice",
+            password: `secret${codeFor(code, Date.now())}`,
+          }),
+        });
+        assertEquals(login.status, 200);
+      } finally {
+        await restarted.close();
+      }
+      await Deno.remove(server.vault, { recursive: true });
+    },
+  );
 });

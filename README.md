@@ -121,10 +121,10 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 | `GLOBNOTES_SCAN_CACHE_TTL` | `15` | Seconds the vault file listing is cached (large vaults: raise it). |
 | `GLOBNOTES_AUTO_ENABLE_PLUGINS` | `true` | Default for new plugins in the settings UI (per-browser switches override). |
 | `GLOBNOTES_RENDER_WORKERS` | `2` | Sandboxed Deno Workers per plugin for rendering (heartbeats + auto-respawn). |
-| `GLOBNOTES_AUTH_TYPE` | *(unset → first-run wizard)* | `none`, `read_only`, `password` or `totp`. Env always wins over the wizard's stored choice. |
+| `GLOBNOTES_AUTH_TYPE` | *(unset → first-run wizard)* | `none`, `read_only`, `password` or `totp`. Env always wins over the wizard's stored choice. The wizard can also enrol `totp` itself (password mode → authenticator toggle): it mints a key, shows the QR, and requires a valid code before finishing. |
 | `GLOBNOTES_USERNAME` / `GLOBNOTES_PASSWORD` | — | Login credentials (for `password`/`totp`). If unset, taken from the wizard's stored config. |
 | `GLOBNOTES_SECRET_KEY` | — | JWT signing key. If unset, taken from the wizard's stored config. |
-| `GLOBNOTES_TOTP_KEY` | — | TOTP secret (for `totp`). |
+| `GLOBNOTES_TOTP_KEY` | — | TOTP secret (for `totp`). If unset, taken from the wizard's stored config; the boot-log QR is printed only for env-provided keys. |
 | `GLOBNOTES_SESSION_EXPIRY_DAYS` | `30` | Login session length. |
 | `GLOBNOTES_HOST` / `GLOBNOTES_PORT` | `0.0.0.0` / `8080` | Listen address (container). |
 | `GLOBNOTES_PATH_PREFIX` | — | Serve under a sub-path, e.g. `/mom` (multi-instance reverse proxies). |

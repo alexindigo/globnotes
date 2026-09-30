@@ -6,7 +6,11 @@
  * Ported from the Python server's post_setup with identical behavior.
  */
 
-import { LocalAuth } from "@server/auth/local.ts";
+import {
+  checkTotpCode,
+  LocalAuth,
+  totpSecretFromRawKey,
+} from "@server/auth/local.ts";
 import { AuthType } from "@server/config.ts";
 import { hashPassword } from "@server/helpers.ts";
 import { HttpError } from "@pathfinder/pathfinder";
@@ -19,6 +23,10 @@ interface SetupRequest {
   mode?: string;
   username?: string;
   password?: string;
+  /** Wizard TOTP enrolment: the minted key echoed back, plus the current
+   * code proving the user recorded it. Both absent ⇒ plain password. */
+  totpKey?: string;
+  totpCode?: string;
 }
 
 export default async function (
@@ -56,18 +64,43 @@ export default async function (
       if (!data.username || !data.password) {
         throw new HttpError(400, "Username and password are required.");
       }
+      let authType: AuthType = AuthType.PASSWORD;
+      if (data.totpKey !== undefined) {
+        // The code is verified BEFORE anything is persisted — a mismatch
+        // leaves setup pending so the wizard stays open.
+        if (!data.totpCode) {
+          throw new HttpError(
+            400,
+            "A current authenticator code is required to enable TOTP.",
+          );
+        }
+        if (
+          !checkTotpCode(data.totpCode, totpSecretFromRawKey(data.totpKey))
+        ) {
+          throw new HttpError(
+            400,
+            "That code doesn't match this key — wait for a fresh code and try again.",
+          );
+        }
+        authType = AuthType.TOTP;
+      }
       const secretKey = [...crypto.getRandomValues(new Uint8Array(32))]
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
       config.saveStoredConfig({
-        auth_type: AuthType.PASSWORD,
+        auth_type: authType,
         username: data.username.toLowerCase(),
         password_hash: await hashPassword(data.password),
         secret_key: secretKey,
+        ...(data.totpKey !== undefined ? { totp_key: data.totpKey } : {}),
       });
-      config.authType = AuthType.PASSWORD;
+      config.authType = authType;
       config.setupRequired = false;
       state.auth = new LocalAuth(config);
+      if (authType === AuthType.TOTP) {
+        // The enrolment code is spent — don't accept it as a first login.
+        state.auth.markTotpUsed(data.totpCode!);
+      }
     } else {
       // FastAPI rejects a non-Literal mode with 422.
       throw new HttpError(422, "Invalid setup mode.");

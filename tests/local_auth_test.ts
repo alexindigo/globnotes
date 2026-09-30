@@ -6,7 +6,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { totp } from "otplib";
-import { LocalAuth } from "../server/auth/local.ts";
+import { LocalAuth, totpSecretFromRawKey } from "../server/auth/local.ts";
 import { GlobalConfig } from "../server/config.ts";
 
 async function makeConfig(
@@ -165,6 +165,73 @@ Deno.test("LocalAuth: stored-hash login (setup wizard path)", async () => {
   await auth.validateToken(token.access_token);
   await assertRejects(() =>
     auth.login({ username: "carol", password: "nope" })
+  );
+  await Deno.remove(vault, { recursive: true });
+});
+
+Deno.test("LocalAuth: wizard-enrolled TOTP (stored key + password hash)", async () => {
+  // Post-setup state with NO env vars: config.json holds the hash and
+  // the wizard-minted totp_key — the login path must behave exactly as
+  // if TOTP had been env-configured.
+  const totpKey = "wizard-minted-key";
+  const vault = await Deno.makeTempDir();
+  const { hashPassword } = await import("../server/helpers.ts");
+  await Deno.mkdir(`${vault}/.globnotes`, { recursive: true });
+  await Deno.writeTextFile(
+    `${vault}/.globnotes/config.json`,
+    JSON.stringify({
+      auth_type: "totp",
+      username: "dave",
+      password_hash: await hashPassword("hunter2"),
+      secret_key: "storedsecret",
+      totp_key: totpKey,
+    }),
+  );
+  for (
+    const k of [
+      "GLOBNOTES_USERNAME",
+      "GLOBNOTES_PASSWORD",
+      "GLOBNOTES_SECRET_KEY",
+      "GLOBNOTES_AUTH_TYPE",
+      "GLOBNOTES_TOTP_KEY",
+    ]
+  ) {
+    Deno.env.delete(k);
+  }
+  Deno.env.set("GLOBNOTES_PATH", vault);
+  const auth = new LocalAuth(new GlobalConfig());
+  assert(auth.isTotpEnabled);
+  assert(!auth.totpKeyFromEnv);
+
+  const secret = totpSecretFromRawKey(totpKey);
+  const stepMs = 30_000;
+  const now = Date.now();
+  const codeAt = (epochMs: number): string =>
+    totp.clone({ epoch: epochMs }).generate(secret);
+
+  // Current, previous, next — all accepted (window ±1), each single-use.
+  for (const epoch of [now, now - stepMs, now + stepMs]) {
+    const code = codeAt(epoch);
+    const token = await auth.login({
+      username: "dave",
+      password: `hunter2${code}`,
+    });
+    assert(typeof token.access_token === "string");
+    await assertRejects(() =>
+      auth.login({ username: "dave", password: `hunter2${code}` })
+    );
+  }
+
+  // Wrong password with a valid code, and a valid password with a
+  // far-window code — both rejected.
+  await assertRejects(() =>
+    auth.login({ username: "dave", password: `nope${codeAt(Date.now())}` })
+  );
+  await assertRejects(() =>
+    auth.login({
+      username: "dave",
+      password: `hunter2${codeAt(Date.now() - 10 * stepMs)}`,
+    })
   );
   await Deno.remove(vault, { recursive: true });
 });

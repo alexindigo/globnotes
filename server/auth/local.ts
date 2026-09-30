@@ -19,6 +19,21 @@ import type { Login, Token } from "./models.ts";
 
 const JWT_ALGORITHM = "HS256";
 
+/** Raw key (the env-var / storedConfig form) → unpadded base32 secret —
+ * the string an authenticator enrols. Single derivation path so the login
+ * check and the wizard enrolment can never drift apart. */
+export function totpSecretFromRawKey(rawKey: string): string {
+  return encodeBase32(new TextEncoder().encode(rawKey)).replace(/=+$/, "");
+}
+
+/** Check a code with window ±1: an authenticator a step behind/ahead
+ * (clock skew, slow typing) is not wrong credentials. Options are spread
+ * onto the shared instance — cloning would reset the plugin wiring. */
+export function checkTotpCode(code: string, unpaddedSecret: string): boolean {
+  totp.options = { ...totp.options, window: 1 };
+  return totp.check(code, unpaddedSecret);
+}
+
 export class LocalAuth {
   readonly username: string;
   /** Plaintext password from env (takes precedence over the stored hash). */
@@ -27,6 +42,8 @@ export class LocalAuth {
   private readonly secretKey: string;
   private readonly sessionExpiryDays: number;
   readonly isTotpEnabled: boolean;
+  /** True when the TOTP key came from GLOBNOTES_TOTP_KEY (not wizard). */
+  readonly totpKeyFromEnv: boolean;
   private totpSecret = "";
   private unpaddedTotpSecret = "";
   private lastUsedTotp: string | null = null;
@@ -53,28 +70,34 @@ export class LocalAuth {
       getEnv("GLOBNOTES_SESSION_EXPIRY_DAYS", { castInt: true, default: 30 }),
     );
 
-    // TOTP (env-configured only)
+    // TOTP — key from the environment, falling back to the stored
+    // first-run setup config (wizard enrolment persists it there). Env
+    // still wins; the raw value is base32-encoded for use (same as
+    // pyotp's b32encode in the Python server).
     this.isTotpEnabled = false;
+    this.totpKeyFromEnv = false;
     if (globalConfig.authType === AuthType.TOTP) {
-      if (!this.password) {
-        logger.error("GLOBNOTES_PASSWORD must be set when using TOTP auth.");
+      if (!this.password && !this.passwordHash) {
+        logger.error(
+          "TOTP auth requires a password (GLOBNOTES_PASSWORD or " +
+            "the stored first-run setup hash).",
+        );
+        Deno.exit(1);
+      }
+      const envKey = getEnv("GLOBNOTES_TOTP_KEY");
+      const rawKey = envKey || stored.totp_key;
+      if (!rawKey) {
+        logger.error(
+          "TOTP auth requires GLOBNOTES_TOTP_KEY or a wizard-enrolled key.",
+        );
         Deno.exit(1);
       }
       this.isTotpEnabled = true;
-      // The env value is raw text; the server base32-encodes it (same as
-      // pyotp's b32encode in the Python server).
-      this.totpSecret = encodeBase32(
-        new TextEncoder().encode(
-          getEnv("GLOBNOTES_TOTP_KEY", { mandatory: true }),
-        ),
-      );
+      this.totpKeyFromEnv = !!envKey;
+      this.totpSecret = encodeBase32(new TextEncoder().encode(rawKey));
       // Authenticators enrol the UNPADDED form (the QR/manual key strips
       // padding) — check against the same string, stripped once here.
       this.unpaddedTotpSecret = this.totpSecret.replace(/=+$/, "");
-      // ±1 step: an authenticator a step behind/ahead (clock skew, slow
-      // typing) is not wrong credentials. (Setter-merged — totp.create
-      // would reset the plugin wiring.)
-      totp.options = { ...totp.options, window: 1 };
     }
   }
 
@@ -89,12 +112,16 @@ export class LocalAuth {
     if (this.isTotpEnabled) {
       // The client appends the 6-digit code to the password — verify them
       // separately (a shared string compare would couple a code typo to a
-      // password failure and vice versa).
+      // password failure and vice versa). The password half is plaintext
+      // when env-provided, the stored hash when wizard-enrolled.
       const submitted = data.password ?? "";
       submittedTotp = submitted.slice(-6);
       const pass = submitted.slice(0, -6);
-      const codeOk = totp.check(submittedTotp, this.unpaddedTotpSecret);
-      passwordCorrect = timingSafeEqual(this.password!, pass) && codeOk;
+      const codeOk = checkTotpCode(submittedTotp, this.unpaddedTotpSecret);
+      const passOk = this.password !== null
+        ? timingSafeEqual(this.password, pass)
+        : await verifyPassword(pass, this.passwordHash!);
+      passwordCorrect = passOk && codeOk;
     } else if (this.password !== null) {
       passwordCorrect = timingSafeEqual(this.password, data.password ?? "");
     } else {
@@ -147,6 +174,12 @@ export class LocalAuth {
       .setProtectedHeader({ alg: JWT_ALGORITHM })
       .setExpirationTime(exp)
       .sign(key);
+  }
+
+  /** Prime the single-use guard with a code already consumed elsewhere
+   * (wizard enrolment), so it can't be replayed as a first login. */
+  markTotpUsed(code: string): void {
+    if (this.isTotpEnabled) this.lastUsedTotp = code;
   }
 
   /** Print the TOTP enrolment QR code + manual key at startup

@@ -4,10 +4,11 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 
 import SetupModal from "../components/SetupModal.vue";
-import { postSetup, resetSetup } from "../api.js";
+import { postSetup, postTotpEnrolment, resetSetup } from "../api.js";
 
 vi.mock("../api.js", () => ({
   postSetup: vi.fn(),
+  postTotpEnrolment: vi.fn(),
   resetSetup: vi.fn(),
 }));
 
@@ -48,7 +49,7 @@ describe("SetupModal", () => {
     expect(username.exists()).toBe(true);
     expect(username.element.disabled).toBe(false);
     // Hidden panels' inputs are disabled (excluded from validation/focus).
-    expect(wrapper.find("input[type=checkbox]").element.disabled).toBe(true);
+    expect(wrapper.find("#setup-ack").element.disabled).toBe(true);
   });
 
   it("keeps typed credentials in memory while switching modes", async () => {
@@ -122,7 +123,7 @@ describe("SetupModal", () => {
 
     const wrapper2 = mountModal();
     await selectMode(wrapper2, "none");
-    await wrapper2.find("input[type=checkbox]").setValue(true);
+    await wrapper2.find("#setup-ack").setValue(true);
     await wrapper2.find("form").trigger("submit");
     await flushPromises();
     expect(postSetup).toHaveBeenCalledWith({ mode: "none" });
@@ -134,7 +135,7 @@ describe("SetupModal", () => {
     expect(finish().element.disabled).toBe(false);
     await selectMode(wrapper, "none");
     expect(finish().element.disabled).toBe(true);
-    await wrapper.find("input[type=checkbox]").setValue(true);
+    await wrapper.find("#setup-ack").setValue(true);
     expect(finish().element.disabled).toBe(false);
     // Switching away and back resets the acknowledgement — disabled again.
     await selectMode(wrapper, "password");
@@ -152,27 +153,27 @@ describe("SetupModal", () => {
       "Confirm that you understand open access.",
     );
     expect(document.activeElement).toBe(
-      wrapper.find("input[type=checkbox]").element,
+      wrapper.find("#setup-ack").element,
     );
   });
 
   it("resets the acknowledgement when switching away and back", async () => {
     const wrapper = mountModal();
     await selectMode(wrapper, "none");
-    await wrapper.find("input[type=checkbox]").setValue(true);
+    await wrapper.find("#setup-ack").setValue(true);
     await selectMode(wrapper, "read_only");
     await selectMode(wrapper, "none");
-    expect(wrapper.find("input[type=checkbox]").element.checked).toBe(false);
+    expect(wrapper.find("#setup-ack").element.checked).toBe(false);
   });
 
   it("preserves the acknowledgement across a failed submission", async () => {
     postSetup.mockRejectedValue(new Error("boom"));
     const wrapper = mountModal();
     await selectMode(wrapper, "none");
-    await wrapper.find("input[type=checkbox]").setValue(true);
+    await wrapper.find("#setup-ack").setValue(true);
     await wrapper.find("form").trigger("submit");
     await flushPromises();
-    expect(wrapper.find("input[type=checkbox]").element.checked).toBe(true);
+    expect(wrapper.find("#setup-ack").element.checked).toBe(true);
     expect(wrapper.text()).toContain("Setup failed. Please try again.");
   });
 
@@ -296,5 +297,115 @@ describe("SetupModal", () => {
     expect(wrapper.text()).toContain(
       "Access mode is pinned by environment configuration.",
     );
+  });
+
+  it("toggling TOTP mints a bundle and reveals QR, key and code input", async () => {
+    postTotpEnrolment.mockResolvedValue({
+      key: "rawkey",
+      secret: "BASE32SECRET",
+      uri: "otpauth://totp/globnotes:alice?secret=BASE32SECRET",
+      qr: "data:image/png;base64,xxxx",
+    });
+    const wrapper = mountModal();
+    expect(wrapper.find("#setup-totp-code").exists()).toBe(false);
+    await wrapper.find("#setup-username").setValue("alice");
+    await wrapper.find("#setup-totp").setValue(true);
+    await flushPromises();
+    expect(postTotpEnrolment).toHaveBeenCalledWith("alice");
+    expect(wrapper.find('img[alt="TOTP enrolment QR code"]').attributes("src"))
+      .toBe("data:image/png;base64,xxxx");
+    expect(wrapper.find('[data-testid="totp-secret"]').text()).toBe(
+      "BASE32SECRET",
+    );
+    expect(wrapper.find("#setup-totp-code").element.disabled).toBe(false);
+  });
+
+  it("a failed enrolment rolls the toggle back off with feedback", async () => {
+    postTotpEnrolment.mockRejectedValue(new Error("boom"));
+    const wrapper = mountModal();
+    await wrapper.find("#setup-totp").setValue(true);
+    await flushPromises();
+    expect(wrapper.find("#setup-totp").element.checked).toBe(false);
+    expect(wrapper.text()).toContain(
+      "Could not start TOTP enrolment. Please try again.",
+    );
+  });
+
+  it("blocks finish until a 6-digit code is entered", async () => {
+    postTotpEnrolment.mockResolvedValue({
+      key: "rawkey",
+      secret: "BASE32SECRET",
+      uri: "otpauth://x",
+      qr: "data:image/png;base64,xxxx",
+    });
+    const wrapper = mountModal();
+    await wrapper.find("#setup-username").setValue("alice");
+    await wrapper.find("#setup-password").setValue("secret");
+    await wrapper.find("#setup-totp").setValue(true);
+    await flushPromises();
+    await wrapper.find("form").trigger("submit");
+    await nextTick();
+    expect(postSetup).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain(
+      "Enter the current 6-digit code from your authenticator.",
+    );
+    expect(wrapper.find("#setup-totp-code").attributes("aria-invalid")).toBe(
+      "true",
+    );
+    expect(document.activeElement).toBe(
+      wrapper.find("#setup-totp-code").element,
+    );
+  });
+
+  it("submits the TOTP payload with the minted key and entered code", async () => {
+    postTotpEnrolment.mockResolvedValue({
+      key: "rawkey",
+      secret: "BASE32SECRET",
+      uri: "otpauth://x",
+      qr: "data:image/png;base64,xxxx",
+    });
+    postSetup.mockResolvedValue({});
+    const wrapper = mountModal();
+    await wrapper.find("#setup-username").setValue("alice");
+    await wrapper.find("#setup-password").setValue("secret");
+    await wrapper.find("#setup-totp").setValue(true);
+    await flushPromises();
+    await wrapper.find("#setup-totp-code").setValue("123456");
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+    expect(postSetup).toHaveBeenCalledWith({
+      mode: "password",
+      username: "alice",
+      password: "secret",
+      totpKey: "rawkey",
+      totpCode: "123456",
+    });
+    expect(wrapper.emitted("completed")).toHaveLength(1);
+  });
+
+  it("a 400 shows the server's reason and clears the code for a retry", async () => {
+    postTotpEnrolment.mockResolvedValue({
+      key: "rawkey",
+      secret: "BASE32SECRET",
+      uri: "otpauth://x",
+      qr: "data:image/png;base64,xxxx",
+    });
+    postSetup.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { detail: "That code doesn't match this key." },
+      },
+    });
+    const wrapper = mountModal();
+    await wrapper.find("#setup-username").setValue("alice");
+    await wrapper.find("#setup-password").setValue("secret");
+    await wrapper.find("#setup-totp").setValue(true);
+    await flushPromises();
+    await wrapper.find("#setup-totp-code").setValue("123456");
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.text()).toContain("That code doesn't match this key.");
+    expect(wrapper.find("#setup-totp-code").element.value).toBe("");
+    expect(wrapper.emitted("completed")).toBeUndefined();
   });
 });

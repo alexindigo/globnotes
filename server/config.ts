@@ -22,6 +22,8 @@ export interface StoredConfig {
   username?: string;
   password_hash?: string;
   secret_key?: string;
+  /** Wizard-enrolled TOTP key (raw text, same form as GLOBNOTES_TOTP_KEY). */
+  totp_key?: string;
   brand_name?: string;
   brand_accent?: string;
 }
