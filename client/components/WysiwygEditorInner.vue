@@ -14,7 +14,7 @@ import {
   serializerCtx,
 } from "@milkdown/core";
 import { history } from "@milkdown/plugin-history";
-import { listener, listenerCtx } from "@milkdown/plugin-listener";
+import { listener } from "@milkdown/plugin-listener";
 import { upload, uploadConfig } from "@milkdown/plugin-upload";
 import { commonmark } from "@milkdown/preset-commonmark";
 import { gfm } from "@milkdown/preset-gfm";
@@ -45,6 +45,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["change", "activeChange"]);
+let settingMarkdown = false;
 
 // Resolved Milkdown plugin factories from the enabled dual-mode plugins
 // (null = still loading — the template gates the editor on it).
@@ -60,9 +61,6 @@ const { get: getEditor } = useEditor((root) =>
     .config((ctx) => {
       ctx.set(rootCtx, root);
       ctx.set(defaultValueCtx, props.initialValue ?? "");
-      ctx.get(listenerCtx).markdownUpdated(() => {
-        emit("change");
-      });
       ctx.update(uploadConfig.key, (prev) => ({
         ...prev,
         uploader: async (files, schema) => {
@@ -92,6 +90,21 @@ const { get: getEditor } = useEditor((root) =>
         milkdownLayerKeymap(),
         ...plugins,
         new Plugin({
+          state: {
+            init: () => null,
+            apply: (tr, value, oldState) => {
+              // Milkdown's markdownUpdated is debounced and canceled on
+              // unmount. Dirty state must reach Note before a mode switch.
+              if (
+                !settingMarkdown && tr.docChanged &&
+                tr.getMeta("addToHistory") !== false &&
+                !tr.doc.eq(oldState.doc)
+              ) {
+                emit("change");
+              }
+              return value;
+            },
+          },
           view: () => ({
             update: (view, prevState) => {
               if (!prevState) return;
@@ -136,7 +149,12 @@ function getMarkdown() {
 }
 
 function setMarkdown(markdownText) {
-  getEditor()?.action(replaceAll(markdownText));
+  settingMarkdown = true;
+  try {
+    getEditor()?.action(replaceAll(markdownText));
+  } finally {
+    settingMarkdown = false;
+  }
 }
 
 // Toolbar-facing API: commands + active-state + link insertion.

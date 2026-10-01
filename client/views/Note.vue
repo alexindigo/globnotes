@@ -130,20 +130,14 @@
             v-show="editMode"
             label="Save"
             :iconPath="tabSave"
+            :iconClass="unsavedChanges ? 'text-theme-brand' : ''"
             @click="saveHandler((close = false))"
-            class="relative ml-1"
-          >
-            <!-- Unsaved Changes Indicator -->
-            <div
-              v-show="unsavedChanges"
-              class="absolute right-1 h-1.5 w-1.5 rounded-full bg-theme-brand"
-            ></div>
-          </CustomButton>
+            class="ml-1"
+          />
           <!-- Edit Toggle -->
           <Toggle
             v-if="canModify"
             label="Edit"
-            :iconPath="tabEdit"
             :isOn="editMode"
             class="ml-1"
             @click="toggleEditModeHandler"
@@ -264,7 +258,7 @@
 
 <script setup>
 import { tabNotesOff } from "../icons.js";
-import { tabSave, tabTrash, tabEdit } from "../icons.js";
+import { tabSave, tabTrash } from "../icons.js";
 import Icon from "../components/Icon.vue";
 import { useToast } from "primevue/usetoast";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -408,6 +402,12 @@ const previewHtml = ref("");
 // View-mode line-link target (from the #view:L fragment) — read by
 // ServerViewer's highlight.
 const viewLine = ref(null);
+
+/** The live editor buffer. In preview the editor is unmounted, so the
+ * buffer lives in editorInitialValue (transferred on mode switch). */
+function currentBuffer() {
+  return editor.value ? editor.value.getMarkdown() : editorInitialValue.value;
+}
 
 function setEditorMode(mode, writeUrl = true) {
   if (mode === editorMode.value) return;
@@ -768,7 +768,7 @@ function saveHandler(close = false) {
   noteDirty.value = false;
 
   // Save Note
-  let newContent = editor.value.getMarkdown();
+  let newContent = currentBuffer();
   if (isNewNote.value) {
     saveNew(newPath.value, newContent, close);
   } else {
@@ -1005,7 +1005,7 @@ async function saveForNavigation() {
     toast.add(getToastOptions(titleError, "Invalid", "error"));
     return false;
   }
-  const newContent = editor.value.getMarkdown();
+  const newContent = currentBuffer();
   try {
     if (isNewNote.value) {
       note.value = await createNote(newPath.value, newContent);
@@ -1228,6 +1228,9 @@ function setBeforeUnloadConfirmation(enable = true) {
 }
 
 function saveDefaultEditorMode() {
+  // Preview unmounts the editor — nothing new to persist (the pref was
+  // already written when the user switched into preview).
+  if (!editor.value) return;
   const isWysiwygMode = editor.value.isWysiwygMode();
   localStorage.setItem(
     "defaultEditorMode",

@@ -117,76 +117,87 @@
                 </button>
               </div>
             </div>
-            <div>
-              <label
-                for="setup-totp"
-                class="flex cursor-pointer items-start gap-2 text-sm"
-              >
-                <input
-                  type="checkbox"
-                  id="setup-totp"
-                  v-model="totpEnabled"
-                  :disabled="pending || mode !== 'password'"
-                  class="mt-0.5 h-4 w-4 shrink-0 accent-theme-brand"
-                />
-                <span>
-                  <span class="font-semibold"
-                    >Require an authenticator code (TOTP)</span
-                  >
-                  <span class="mt-0.5 block text-theme-text-muted">
-                    Two-factor sign-in with an app like Authy or Google
-                    Authenticator.
-                  </span>
-                </span>
-              </label>
+            <div class="my-2 flex items-center justify-between gap-3 text-sm">
+              <div class="min-w-0">
+                <p id="setup-totp-label" class="font-semibold">
+                  Require an authenticator code
+                </p>
+                <p id="setup-totp-description" class="text-theme-text-muted">
+                  Use your password and authenticator app to sign in.
+                </p>
+              </div>
+              <Toggle
+                id="setup-totp"
+                type="button"
+                role="switch"
+                :isOn="totpEnabled"
+                :aria-checked="totpEnabled"
+                aria-labelledby="setup-totp-label"
+                aria-describedby="setup-totp-description"
+                :disabled="pending || mode !== 'password'"
+                class="shrink-0 text-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-theme-brand disabled:cursor-not-allowed disabled:opacity-50"
+                @click="totpEnabled = !totpEnabled"
+              />
             </div>
             <div
               v-if="totpEnabled"
-              class="flex flex-col gap-2 rounded-md border border-theme-border p-3"
+              class="setup-totp-enrolment grid h-56 grid-cols-[224px_minmax(0,1fr)] items-center gap-4"
             >
               <template v-if="totpSecret">
-                <p class="text-sm text-theme-text-muted">
-                  Scan with your authenticator app, or enter the key
-                  manually, then type the 6-digit code it shows you.
-                </p>
-                <img
-                  :src="totpQr"
-                  alt="TOTP enrolment QR code"
-                  class="h-36 w-36 self-center"
-                />
-                <p class="text-center text-sm">
-                  <code
-                    class="select-all font-mono text-theme-text"
-                    data-testid="totp-secret"
-                    >{{ totpSecret }}</code
+                <div class="relative h-56 w-56">
+                  <button
+                    id="setup-totp-qr"
+                    type="button"
+                    aria-label="Copy authenticator setup key"
+                    :aria-describedby="copyFeedback ? 'setup-totp-copy-feedback' : undefined"
+                    :aria-busy="copying"
+                    :disabled="pending || copying || mode !== 'password'"
+                    class="block h-full w-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-theme-brand disabled:cursor-not-allowed"
+                    @click="copyTotpKey"
+                    @blur="resetCopyConfirmation"
                   >
-                </p>
-                <div>
-                  <label
-                    for="setup-totp-code"
-                    class="mb-1 block text-sm font-semibold"
-                    >Current code</label
-                  >
-                  <TextInput
-                    id="setup-totp-code"
-                    ref="totpCodeInput"
-                    v-model="totpCode"
-                    inputmode="numeric"
-                    autocomplete="one-time-code"
-                    maxlength="6"
-                    placeholder="123456"
-                    :disabled="pending || mode !== 'password'"
-                    :aria-invalid="missingTotp ? 'true' : undefined"
-                  />
+                    <img
+                      :src="totpQr"
+                      alt="TOTP enrolment QR code"
+                      class="block h-full w-full [image-rendering:pixelated]"
+                    />
+                  </button>
+                  <span
+                    v-if="copyFeedback"
+                    id="setup-totp-copy-feedback"
+                    role="tooltip"
+                    aria-live="polite"
+                    class="pointer-events-none absolute left-full top-0 z-10 ml-4 w-max max-w-64 rounded-md border border-theme-border bg-theme-background-elevated px-3 py-2 text-xs text-theme-text shadow-md"
+                  >{{ copyFeedback }}</span>
+                </div>
+                <div class="setup-totp-fields flex min-w-0 flex-col gap-4">
+                  <p class="text-sm text-theme-text-muted">
+                    Scan with your authenticator app, then enter its six-digit code.
+                  </p>
+                  <div>
+                    <label
+                      for="setup-totp-code"
+                      class="mb-1 block text-sm font-semibold"
+                      >Current code</label
+                    >
+                    <TextInput
+                      id="setup-totp-code"
+                      ref="totpCodeInput"
+                      v-model="totpCode"
+                      inputmode="numeric"
+                      autocomplete="one-time-code"
+                      maxlength="6"
+                      placeholder="123456"
+                      :disabled="pending || mode !== 'password'"
+                      :aria-invalid="missingTotp ? 'true' : undefined"
+                    />
+                  </div>
                 </div>
               </template>
-              <p v-else class="text-sm text-theme-text-muted">
+              <p v-else class="col-span-2 text-sm text-theme-text-muted" role="status">
                 Generating enrolment key…
               </p>
             </div>
-            <p class="text-sm text-theme-text-muted">
-              You'll sign in with these details after setup.
-            </p>
           </div>
         </div>
 
@@ -265,6 +276,7 @@ import CtaButton from "./CtaButton.vue";
 import Icon from "./Icon.vue";
 import Modal from "./Modal.vue";
 import TextInput from "./TextInput.vue";
+import Toggle from "./Toggle.vue";
 
 const props = defineProps({
   // First-run setup is mandatory (default); a menu-invoked wizard can be
@@ -319,6 +331,38 @@ const totpSecret = ref("");
 const totpQr = ref("");
 const totpCode = ref("");
 const missingTotp = ref(false);
+const copyArmed = ref(false);
+const copying = ref(false);
+const copyFeedback = ref("");
+
+function resetCopyConfirmation() {
+  copyArmed.value = false;
+  copyFeedback.value = "";
+}
+
+async function copyTotpKey() {
+  if (pending.value || copying.value || !totpSecret.value) return;
+  if (!copyArmed.value) {
+    copyArmed.value = true;
+    copyFeedback.value = "Click again to copy the setup key.";
+    return;
+  }
+  copyArmed.value = false;
+  copying.value = true;
+  const secret = totpSecret.value;
+  try {
+    await navigator.clipboard.writeText(secret);
+    if (totpSecret.value === secret && mode.value === "password") {
+      copyFeedback.value = "Setup key copied.";
+    }
+  } catch {
+    if (totpSecret.value === secret && mode.value === "password") {
+      copyFeedback.value = "Could not copy the setup key. Please try again.";
+    }
+  } finally {
+    copying.value = false;
+  }
+}
 
 const usernameInput = ref(null);
 const passwordInput = ref(null);
@@ -328,6 +372,7 @@ const totpCodeInput = ref(null);
 // Mint a fresh bundle each time the toggle comes on; a fetch failure
 // rolls the toggle back off with feedback.
 watch(totpEnabled, async (enabled) => {
+  resetCopyConfirmation();
   missingTotp.value = false;
   totpCode.value = "";
   if (!enabled) {
@@ -361,6 +406,7 @@ onMounted(() => {
 // Switching modes resets mode-specific state (acknowledgement, masking,
 // stale validation); typed credentials stay in memory.
 watch(mode, () => {
+  resetCopyConfirmation();
   acked.value = false;
   showPassword.value = false;
   feedback.value = "";

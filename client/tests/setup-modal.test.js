@@ -27,9 +27,28 @@ async function selectMode(wrapper, value) {
   await nextTick();
 }
 
+const bundle = {
+  key: "rawkey",
+  secret: "BASE32SECRET",
+  uri: "otpauth://totp/globnotes:alice?secret=BASE32SECRET",
+  qr: "data:image/png;base64,xxxx",
+};
+const writeClipboard = vi.fn();
+
+async function enableTotp(wrapper) {
+  postTotpEnrolment.mockResolvedValue(bundle);
+  await wrapper.find("#setup-totp").trigger("click");
+  await flushPromises();
+}
+
 describe("SetupModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    writeClipboard.mockReset().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: writeClipboard },
+    });
     document.body.innerHTML = "";
   });
 
@@ -86,7 +105,9 @@ describe("SetupModal", () => {
     expect(wrapper.find("#setup-username").attributes("aria-invalid")).toBe(
       "true",
     );
-    expect(document.activeElement).toBe(wrapper.find("#setup-username").element);
+    expect(document.activeElement).toBe(
+      wrapper.find("#setup-username").element,
+    );
   });
 
   it("focuses the password field when only the password is missing", async () => {
@@ -95,7 +116,9 @@ describe("SetupModal", () => {
     await wrapper.find("form").trigger("submit");
     await nextTick();
     expect(postSetup).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(wrapper.find("#setup-password").element);
+    expect(document.activeElement).toBe(
+      wrapper.find("#setup-password").element,
+    );
   });
 
   it("submits the password payload", async () => {
@@ -299,7 +322,7 @@ describe("SetupModal", () => {
     );
   });
 
-  it("toggling TOTP mints a bundle and reveals QR, key and code input", async () => {
+  it("the real switch mints a bundle and shows the QR and code, not the key", async () => {
     postTotpEnrolment.mockResolvedValue({
       key: "rawkey",
       secret: "BASE32SECRET",
@@ -309,23 +332,31 @@ describe("SetupModal", () => {
     const wrapper = mountModal();
     expect(wrapper.find("#setup-totp-code").exists()).toBe(false);
     await wrapper.find("#setup-username").setValue("alice");
-    await wrapper.find("#setup-totp").setValue(true);
+    const toggle = wrapper.find("#setup-totp");
+    expect(toggle.element.tagName).toBe("BUTTON");
+    expect(toggle.attributes("type")).toBe("button");
+    expect(toggle.attributes("role")).toBe("switch");
+    expect(toggle.attributes("aria-checked")).toBe("false");
+    await toggle.trigger("click");
     await flushPromises();
     expect(postTotpEnrolment).toHaveBeenCalledWith("alice");
     expect(wrapper.find('img[alt="TOTP enrolment QR code"]').attributes("src"))
       .toBe("data:image/png;base64,xxxx");
-    expect(wrapper.find('[data-testid="totp-secret"]').text()).toBe(
-      "BASE32SECRET",
-    );
+    expect(toggle.attributes("aria-checked")).toBe("true");
+    expect(wrapper.text()).not.toContain("BASE32SECRET");
+    expect(wrapper.find("#setup-totp-qr").attributes("type")).toBe("button");
     expect(wrapper.find("#setup-totp-code").element.disabled).toBe(false);
+    expect(postSetup).not.toHaveBeenCalled();
   });
 
   it("a failed enrolment rolls the toggle back off with feedback", async () => {
     postTotpEnrolment.mockRejectedValue(new Error("boom"));
     const wrapper = mountModal();
-    await wrapper.find("#setup-totp").setValue(true);
+    await wrapper.find("#setup-totp").trigger("click");
     await flushPromises();
-    expect(wrapper.find("#setup-totp").element.checked).toBe(false);
+    expect(wrapper.find("#setup-totp").attributes("aria-checked")).toBe(
+      "false",
+    );
     expect(wrapper.text()).toContain(
       "Could not start TOTP enrolment. Please try again.",
     );
@@ -341,7 +372,7 @@ describe("SetupModal", () => {
     const wrapper = mountModal();
     await wrapper.find("#setup-username").setValue("alice");
     await wrapper.find("#setup-password").setValue("secret");
-    await wrapper.find("#setup-totp").setValue(true);
+    await wrapper.find("#setup-totp").trigger("click");
     await flushPromises();
     await wrapper.find("form").trigger("submit");
     await nextTick();
@@ -368,7 +399,7 @@ describe("SetupModal", () => {
     const wrapper = mountModal();
     await wrapper.find("#setup-username").setValue("alice");
     await wrapper.find("#setup-password").setValue("secret");
-    await wrapper.find("#setup-totp").setValue(true);
+    await wrapper.find("#setup-totp").trigger("click");
     await flushPromises();
     await wrapper.find("#setup-totp-code").setValue("123456");
     await wrapper.find("form").trigger("submit");
@@ -399,7 +430,7 @@ describe("SetupModal", () => {
     const wrapper = mountModal();
     await wrapper.find("#setup-username").setValue("alice");
     await wrapper.find("#setup-password").setValue("secret");
-    await wrapper.find("#setup-totp").setValue(true);
+    await wrapper.find("#setup-totp").trigger("click");
     await flushPromises();
     await wrapper.find("#setup-totp-code").setValue("123456");
     await wrapper.find("form").trigger("submit");
@@ -407,5 +438,93 @@ describe("SetupModal", () => {
     expect(wrapper.text()).toContain("That code doesn't match this key.");
     expect(wrapper.find("#setup-totp-code").element.value).toBe("");
     expect(wrapper.emitted("completed")).toBeUndefined();
+  });
+
+  it("confirms the first QR click, copies the setup key on the second, then resets", async () => {
+    const wrapper = mountModal();
+    await enableTotp(wrapper);
+    const qr = wrapper.find("#setup-totp-qr");
+    await qr.trigger("click");
+    expect(writeClipboard).not.toHaveBeenCalled();
+    expect(wrapper.find("[role=tooltip]").text()).toBe(
+      "Click again to copy the setup key.",
+    );
+    await qr.trigger("click");
+    await flushPromises();
+    expect(writeClipboard).toHaveBeenCalledExactlyOnceWith("BASE32SECRET");
+    expect(wrapper.find("[role=tooltip]").text()).toBe("Setup key copied.");
+    await qr.trigger("click");
+    expect(writeClipboard).toHaveBeenCalledTimes(1);
+    expect(wrapper.find("[role=tooltip]").text()).toContain("Click again");
+    expect(postSetup).not.toHaveBeenCalled();
+  });
+
+  it("shows a copy failure honestly and requires confirmation again", async () => {
+    writeClipboard.mockRejectedValue(new Error("clipboard denied"));
+    const wrapper = mountModal();
+    await enableTotp(wrapper);
+    const qr = wrapper.find("#setup-totp-qr");
+    await qr.trigger("click");
+    await qr.trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[role=tooltip]").text()).toContain("Could not copy");
+    expect(wrapper.text()).not.toContain("Setup key copied");
+    await qr.trigger("click");
+    expect(writeClipboard).toHaveBeenCalledTimes(1);
+    expect(wrapper.find("[role=tooltip]").text()).toContain("Click again");
+  });
+
+  it("guards additional activations while the clipboard write is pending", async () => {
+    let release;
+    writeClipboard.mockImplementation(() => new Promise((r) => (release = r)));
+    const wrapper = mountModal();
+    await enableTotp(wrapper);
+    const qr = wrapper.find("#setup-totp-qr");
+    await qr.trigger("click");
+    await qr.trigger("click");
+    expect(qr.element.disabled).toBe(true);
+    await qr.trigger("click");
+    expect(writeClipboard).toHaveBeenCalledTimes(1);
+    release();
+    await flushPromises();
+    expect(qr.element.disabled).toBe(false);
+    expect(wrapper.find("[role=tooltip]").text()).toBe("Setup key copied.");
+  });
+
+  it("clears copy confirmation on blur, mode change, and a new enrolment", async () => {
+    const wrapper = mountModal();
+    await enableTotp(wrapper);
+    await wrapper.find("#setup-totp-qr").trigger("click");
+    await wrapper.find("#setup-totp-qr").trigger("blur");
+    expect(wrapper.find("[role=tooltip]").exists()).toBe(false);
+    await wrapper.find("#setup-totp-qr").trigger("click");
+    expect(writeClipboard).not.toHaveBeenCalled();
+    await selectMode(wrapper, "read_only");
+    expect(wrapper.find("#setup-totp").element.disabled).toBe(true);
+    await selectMode(wrapper, "password");
+    expect(wrapper.find("[role=tooltip]").exists()).toBe(false);
+    await wrapper.find("#setup-totp").trigger("click");
+    await enableTotp(wrapper);
+    await wrapper.find("#setup-totp-qr").trigger("click");
+    expect(writeClipboard).not.toHaveBeenCalled();
+    expect(wrapper.find("[role=tooltip]").text()).toContain("Click again");
+  });
+
+  it("disables QR and switch controls during setup without losing the bundle", async () => {
+    let release;
+    postSetup.mockImplementation(() => new Promise((r) => (release = r)));
+    const wrapper = mountModal();
+    await wrapper.find("#setup-username").setValue("alice");
+    await wrapper.find("#setup-password").setValue("secret");
+    await enableTotp(wrapper);
+    await wrapper.find("#setup-totp-code").setValue("123456");
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.find("#setup-totp").element.disabled).toBe(true);
+    expect(wrapper.find("#setup-totp-qr").element.disabled).toBe(true);
+    expect(wrapper.find("#setup-totp-code").element.disabled).toBe(true);
+    release({});
+    await flushPromises();
+    expect(wrapper.emitted("completed")).toHaveLength(1);
   });
 });

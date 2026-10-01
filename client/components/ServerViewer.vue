@@ -51,7 +51,7 @@ export async function handleAnchorClick(event) {
 import { tabCheck, tabCopy } from "../icons.js";
 import renderMathInElement from "katex/contrib/auto-render/auto-render.js";
 import mermaid from "mermaid";
-import { onMounted, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { getPlugins, getRenderedHtml } from "../api.js";
 import { subscribe, TOPICS } from "../bus/index.js";
@@ -224,32 +224,45 @@ function highlightLines() {
   }
 }
 
+let renderVersion = 0;
 async function renderNote() {
-  if (!props.title || !viewerElement.value) {
+  const version = ++renderVersion;
+  const root = viewerElement.value;
+  const title = props.title;
+  if (!title || !root) {
     return;
   }
+  // Async responses belong to one render and one mounted surface only.
+  const isCurrent = () => version === renderVersion &&
+    viewerElement.value === root && props.title === title;
   try {
     const plugins = await getPlugins();
+    if (!isCurrent()) return;
     const disabled = disabledPluginIds(plugins);
-    viewerElement.value.innerHTML = await getRenderedHtml(
-      props.title,
+    const html = await getRenderedHtml(
+      title,
       disabled,
       viewLineNumbers.value,
     );
+    if (!isCurrent()) return;
+    root.innerHTML = html;
   } catch (error) {
+    if (!isCurrent()) return;
     console.error("Note render failed", error);
-    viewerElement.value.innerHTML =
+    root.innerHTML =
       '<p class="render-error">Failed to render this note.</p>';
     loaded.value = true;
     return;
   }
-  addCopyButtons(viewerElement.value);
+  addCopyButtons(root);
   loaded.value = true;
   initMermaid();
   mermaid
-    .run({ nodes: viewerElement.value.querySelectorAll(".mermaid") })
-    .catch((error) => console.error("Mermaid rendering failed", error));
-  renderMathInElement(viewerElement.value, {
+    .run({ nodes: root.querySelectorAll(".mermaid") })
+    .catch((error) => {
+      if (isCurrent()) console.error("Mermaid rendering failed", error);
+    });
+  renderMathInElement(root, {
     delimiters: [
       { left: "$$", right: "$$", display: true },
       { left: "$", right: "$", display: false },
@@ -265,10 +278,16 @@ watch(() => props.title, renderNote);
 watch(viewLineNumbers, renderNote);
 // Re-highlight when the #view:L fragment changes (no re-render needed).
 watch(() => props.line, highlightLines);
-subscribe(TOPICS.PLUGIN_TOGGLE, renderNote);
-subscribe(TOPICS.PLUGIN_AUTO_ENABLE, renderNote);
-// Re-render on theme switch so mermaid picks up the new mode's theme.
-subscribe(TOPICS.THEME_CHANGE, renderNote);
+const unsubscribers = [
+  subscribe(TOPICS.PLUGIN_TOGGLE, renderNote),
+  subscribe(TOPICS.PLUGIN_AUTO_ENABLE, renderNote),
+  // Re-render on theme switch so mermaid picks up the new mode's theme.
+  subscribe(TOPICS.THEME_CHANGE, renderNote),
+];
+onBeforeUnmount(() => {
+  renderVersion++;
+  for (const unsubscribe of unsubscribers) unsubscribe();
+});
 </script>
 
 <style>

@@ -9,7 +9,8 @@
 
 import { jwtVerify, SignJWT } from "jose";
 import { totp } from "otplib";
-import { encodeBase32 } from "@std/encoding/base32";
+import { hotpCreateHmacKey, KeyEncodings } from "otplib/core.js";
+import { decodeBase32, encodeBase32 } from "@std/encoding/base32";
 import QRCode from "qrcode";
 
 import { AuthType, type GlobalConfig } from "../config.ts";
@@ -26,12 +27,23 @@ export function totpSecretFromRawKey(rawKey: string): string {
   return encodeBase32(new TextEncoder().encode(rawKey)).replace(/=+$/, "");
 }
 
-/** Check a code with window ±1: an authenticator a step behind/ahead
- * (clock skew, slow typing) is not wrong credentials. Options are spread
- * onto the shared instance — cloning would reset the plugin wiring. */
+/** Authenticators decode the QR's base32 secret before computing HMAC.
+ * Keep those bytes intact, including short env keys, and accept +/-1 step. */
 export function checkTotpCode(code: string, unpaddedSecret: string): boolean {
-  totp.options = { ...totp.options, window: 1 };
-  return totp.check(code, unpaddedSecret);
+  const verifier = totp.clone();
+  verifier.options = {
+    encoding: KeyEncodings.HEX,
+    window: 1,
+    // TOTP's default repeats short keys; HMAC must use the enrolled bytes.
+    createHmacKey: hotpCreateHmacKey,
+  };
+  const padded = unpaddedSecret.padEnd(
+    Math.ceil(unpaddedSecret.length / 8) * 8,
+    "=",
+  );
+  const key = [...decodeBase32(padded)]
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return verifier.check(code, key);
 }
 
 export class LocalAuth {

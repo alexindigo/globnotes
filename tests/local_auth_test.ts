@@ -5,9 +5,9 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
-import { totp } from "otplib";
 import { LocalAuth, totpSecretFromRawKey } from "../server/auth/local.ts";
 import { GlobalConfig } from "../server/config.ts";
+import { authenticatorCode } from "./helpers/totp.ts";
 
 async function makeConfig(
   env: Record<string, string>,
@@ -94,20 +94,15 @@ Deno.test("LocalAuth: TOTP login and single-use enforcement", async () => {
   assert(auth.isTotpEnabled);
 
   // The client sends password + code concatenated. Codes are generated
-  // from the UNPADDED secret — what an authenticator enrols via the
-  // QR/manual key (padded and unpadded decode differently in otplib,
-  // which is exactly the issue-#6 trap).
+  // independently from the QR secret, with its base32-decoded bytes.
   const secret = encodeBase32(new TextEncoder().encode(totpKey))
     .replace(/=+$/, "");
   const stepMs = 30_000;
   const now = Date.now();
-  // Codes for a given epoch: clone keeps the shared instance's options
-  // (and plugin wiring) untouched.
-  const codeAt = (epochMs: number): string =>
-    totp.clone({ epoch: epochMs }).generate(secret);
-  const code = codeAt(now);
-  const prevCode = codeAt(now - stepMs);
-  const nextCode = codeAt(now + stepMs);
+  const codeAt = (epochMs: number) => authenticatorCode(secret, epochMs);
+  const code = await codeAt(now);
+  const prevCode = await codeAt(now - stepMs);
+  const nextCode = await codeAt(now + stepMs);
 
   // Current step, previous step, next step — all accepted (window ±1:
   // clock skew and slow typing are not wrong credentials). The replay
@@ -125,7 +120,7 @@ Deno.test("LocalAuth: TOTP login and single-use enforcement", async () => {
   }
 
   // A code outside the window, and password alone → rejected.
-  const farCode = codeAt(now - 10 * stepMs);
+  const farCode = await codeAt(now - 10 * stepMs);
   await assertRejects(() =>
     auth.login({ username: "alice", password: `secret${farCode}` })
   );
@@ -206,12 +201,11 @@ Deno.test("LocalAuth: wizard-enrolled TOTP (stored key + password hash)", async 
   const secret = totpSecretFromRawKey(totpKey);
   const stepMs = 30_000;
   const now = Date.now();
-  const codeAt = (epochMs: number): string =>
-    totp.clone({ epoch: epochMs }).generate(secret);
+  const codeAt = (epochMs: number) => authenticatorCode(secret, epochMs);
 
   // Current, previous, next — all accepted (window ±1), each single-use.
   for (const epoch of [now, now - stepMs, now + stepMs]) {
-    const code = codeAt(epoch);
+    const code = await codeAt(epoch);
     const token = await auth.login({
       username: "dave",
       password: `hunter2${code}`,
@@ -224,13 +218,15 @@ Deno.test("LocalAuth: wizard-enrolled TOTP (stored key + password hash)", async 
 
   // Wrong password with a valid code, and a valid password with a
   // far-window code — both rejected.
+  const currentCode = await codeAt(Date.now());
+  const farCode = await codeAt(Date.now() - 10 * stepMs);
   await assertRejects(() =>
-    auth.login({ username: "dave", password: `nope${codeAt(Date.now())}` })
+    auth.login({ username: "dave", password: `nope${currentCode}` })
   );
   await assertRejects(() =>
     auth.login({
       username: "dave",
-      password: `hunter2${codeAt(Date.now() - 10 * stepMs)}`,
+      password: `hunter2${farCode}`,
     })
   );
   await Deno.remove(vault, { recursive: true });

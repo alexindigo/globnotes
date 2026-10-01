@@ -21,13 +21,13 @@ printf '# Quick\n\n==highlighted== #taggy\n' > /tmp/globnotes-fixture/dad/quickn
 
 ## Notes
 
-- [ ] `dad/recipes/soup` and `dad/quicknote` appear in the note list with full paths; their URLs have real slashes (`/dad/quicknote`, not `%2F`).
+- [ ] Notes at `dad/recipes/soup` and `dad/quicknote` resolve display titles from their content; their URLs have real slashes (`/dad/quicknote`, not `%2F`).
 - [ ] Search for `dad` finds both notes (path-segment search).
 - [ ] Deep link / hard refresh on `/dad/recipes/soup` loads the note.
 - [ ] Create note `x/y/z` → directories created on disk.
 - [ ] Rename `x/y/z` → `a/b` → file moved; `x/` pruned from disk.
 - [ ] Delete `a/b` → file gone; `a/` pruned.
-- [ ] Titles with `..`, `//`, leading `.` are rejected with a clean error.
+- [ ] Note paths with `..`, `//`, leading `.` are rejected with a clean error.
 - [ ] A vault folder named `_` would shadow the app — its contents are unreachable (documented).
 
 ## Links and files

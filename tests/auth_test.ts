@@ -8,7 +8,7 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
-import { totp } from "otplib";
+import { authenticatorCode } from "./helpers/totp.ts";
 import { totpSecretFromRawKey } from "../server/auth/local.ts";
 import { bootServer } from "./helpers/boot.ts";
 
@@ -291,11 +291,10 @@ Deno.test("auth: env credentials win over stored config", async () => {
 
 Deno.test("auth: password+TOTP wizard flow", async (t) => {
   // The wizard enrolment path: mint → prove with a live code → persist
-  // as if env-configured. Codes are generated from the UNPADDED secret,
-  // exactly what an authenticator enrols (same as local_auth_test.ts).
+  // as if env-configured. Codes come from an independent standard reference,
+  // not the same OTP implementation that performs verification.
   const stepMs = 30_000;
-  const codeFor = (secret: string, epochMs: number): string =>
-    totp.clone({ epoch: epochMs }).generate(secret);
+  const codeFor = authenticatorCode;
 
   const server = await bootServer({});
   try {
@@ -319,7 +318,8 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
         assert(body.uri.includes("issuer=globnotes"));
         assert(body.qr.startsWith("data:image/png;base64,"));
         key = body.key;
-        secret = totpSecretFromRawKey(key);
+        secret = new URL(body.uri).searchParams.get("secret")!;
+        assertEquals(secret, totpSecretFromRawKey(key));
         // The manual-entry form is the base32 secret, same as the boot log.
         assertEquals(body.secret, secret);
         assert(body.uri.includes(`secret=${secret}`));
@@ -331,7 +331,7 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
       async () => {
         // Deterministically wrong: whatever the current valid code is,
         // send a different one (000000 could in principle be valid).
-        const valid = codeFor(secret, Date.now());
+        const valid = await codeFor(secret, Date.now());
         const wrong = valid === "000000" ? "000001" : "000000";
         const res = await fetch(`${server.baseUrl}/_/api/setup`, {
           method: "POST",
@@ -356,7 +356,7 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
 
     let enrolCode = "";
     await t.step("a valid code completes setup as totp", async () => {
-      enrolCode = codeFor(secret, Date.now());
+      enrolCode = await codeFor(secret, Date.now());
       const res = await fetch(`${server.baseUrl}/_/api/setup`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -401,7 +401,7 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
     await t.step("previous and next step codes log in", async () => {
       const now = Date.now();
       for (const epoch of [now - stepMs, now + stepMs]) {
-        const code = codeFor(secret, epoch);
+        const code = await codeFor(secret, epoch);
         const res = await login(`secret${code}`);
         assertEquals(res.status, 200);
         const body = await res.json();
@@ -422,7 +422,7 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
       "password alone and far-window codes are rejected",
       async () => {
         assertEquals((await login("secret")).status, 401);
-        const far = codeFor(secret, Date.now() - 10 * stepMs);
+        const far = await codeFor(secret, Date.now() - 10 * stepMs);
         assertEquals((await login(`secret${far}`)).status, 401);
       },
     );
@@ -459,7 +459,7 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             username: "alice",
-            password: `secret${codeFor(code, Date.now())}`,
+            password: `secret${await codeFor(code, Date.now())}`,
           }),
         });
         assertEquals(login.status, 200);

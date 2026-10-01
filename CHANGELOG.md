@@ -1,5 +1,61 @@
 # Changelog
 
+## v2.2 (2026-10-01)
+
+TOTP can now be enrolled in the password section of the setup wizard: enable
+the authenticator toggle, scan the QR code, and enter a current code before
+finishing. Verification uses the same base32-decoded key bytes as standard
+authenticator apps, for both environment-configured and wizard-configured
+credentials. Existing enrolled keys do not need to change.
+
+The desktop wizard has a larger QR beside its instructions and code input,
+with two-click copying of the setup key. Button icons retain their proper
+sizes, and unsaved changes tint the Save icon instead of overlaying its label.
+Save works from Preview in both Source and WYSIWYG sessions; quick mode
+switches preserve dirty-state protection, and late render responses cannot
+write into an unmounted or newer note viewer.
+
+### 2026-10-01
+
+#### Fix
+
+Authenticator compatibility is corrected by decoding the enrolled base32
+secret before HMAC calculation, retaining short and UTF-8 keys without
+repeating their bytes. Independent RFC 6238 vectors and authenticator-code
+tests cover environment login, wizard setup, and persistence across restart.
+Preview-safe saving uses the retained editor buffer, WYSIWYG document edits
+notify dirty state synchronously, and viewer requests respect component and
+request lifetime. Desktop QR layout, shared SVG dimensions, the single Edit
+switch, Save-icon tinting, and error icons are corrected together.
+
+#### Docs
+
+Current introductions and the container banner describe Markdown notes in
+folders rather than equating a note's display title with its path. Historical
+changelog entries and license terms are preserved.
+
+### 2026-09-30
+
+#### Feature
+
+The setup wizard can enroll a server-generated authenticator secret and
+requires a valid code before storing it alongside the password hash. The
+environment remains the other configuration path; wizard-enrolled secrets
+are not printed in startup logs.
+
+- feat: setup wizard TOTP enrolment (`756dde5`)
+
+### 2026-09-29
+
+#### Fix
+
+TOTP login separates password and code validation and accepts the adjacent
+30-second steps for clock skew or slow entry. Immediate replay remains
+rejected; the subsequent interoperability correction completes the standard
+authenticator flow.
+
+- fix: TOTP login accepts the previous and next 30s step (`f2b303d`)
+
 ## v2.1.1 (2026-09-22)
 
 The first-run experience is rebuilt: a redesigned setup wizard with

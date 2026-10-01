@@ -1,8 +1,8 @@
 <template>
   <svg
     xmlns="http://www.w3.org/2000/svg"
-    :width="width"
-    :height="height"
+    :style="{ width, height }"
+    class="shrink-0"
     :viewBox="viewBox"
     fill="none"
     stroke="currentColor"
@@ -35,6 +35,11 @@ const paths = computed(() =>
 
 // width/height default to `size`; override with width/height for
 // non-square crops (e.g. the toggle pill).
-const width = computed(() => props.width ?? props.size);
-const height = computed(() => props.height ?? props.size);
+// CSS supports auto sizing; SVG dimension attributes reject it. Preserve
+// existing unitless SVG lengths by giving them their CSS pixel units.
+function cssLength(value) {
+  return /^\d+(?:\.\d+)?$/.test(value) ? `${value}px` : value;
+}
+const width = computed(() => cssLength(props.width ?? props.size));
+const height = computed(() => cssLength(props.height ?? props.size));
 </script>

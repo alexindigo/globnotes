@@ -1,8 +1,8 @@
 # <img src="client/assets/brand/logo.svg" width="300px" alt="globnotes" />
 
-A self-hosted, database-less note-taking web app where **a note's title is its path** — built for Obsidian vaults and nested markdown trees.
+A self-hosted, database-less note-taking web app built for Obsidian vaults and nested Markdown trees.
 
-globnotes is a fork of [flatnotes](https://github.com/dullage/flatnotes) by Adam Dullage. flatnotes deliberately keeps every note in one flat directory; globnotes keeps everything else about its spirit (zero-config, single container, distraction-free) and changes one thing: notes can live in subdirectories, and a note's title *is* its relative path.
+globnotes is a fork of [flatnotes](https://github.com/dullage/flatnotes) by Adam Dullage. flatnotes deliberately keeps every note in one flat directory; globnotes keeps its spirit (zero-config, single container, distraction-free) and adds support for notes in subdirectories. A note's relative path identifies it; its display title can come from its content.
 
 <p align="center">
   <img src="client/assets/screenshot.png" width="800" alt="globnotes — home with sidebar, recent notes, and folder tree" />
