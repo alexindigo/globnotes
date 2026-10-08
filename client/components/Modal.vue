@@ -1,9 +1,13 @@
 <template>
+  <Teleport :to="dialogHost || 'body'" :disabled="!dialogHost">
   <!-- Mask -->
   <div
     v-if="isVisible"
     class="fixed left-0 top-0 z-50 flex h-dvh w-dvw justify-center bg-slate-950/40 backdrop-blur-sm"
     :class="anchor === 'viewport-center' ? 'items-center' : 'items-start'"
+    :inert="ownership && !ownership.topmost.value ? '' : undefined"
+    :data-modal-top="ownership?.topmost.value ? 'true' : 'false'"
+    :style="{ zIndex: 50 + (ownership?.level.value ?? 0) }"
     @click.self="closeHandler"
   >
     <!-- Modal -->
@@ -27,16 +31,19 @@
       :role="labelledby ? 'dialog' : undefined"
       :aria-modal="labelledby ? 'true' : undefined"
       :aria-labelledby="labelledby || undefined"
+      tabindex="-1"
     >
       <slot></slot>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 
 import { publish, TOPICS } from "../bus/index.js";
+import { DIALOG_HOST, registerModal } from "../modalState.js";
 
 defineOptions({
   inheritAttrs: false,
@@ -49,36 +56,62 @@ const props = defineProps({
   labelledby: { type: String, default: undefined },
   // Opt-in Tab containment within the dialog (first-run setup).
   trapFocus: { type: Boolean, default: false },
+  keydownHandler: Function,
 });
 const isVisible = defineModel({ type: Boolean });
 const rootEl = ref(null);
+const dialogHost = inject(DIALOG_HOST, null);
+const ownership = shallowRef(null);
+let opener = null;
+let closing = false;
 
 // Modals are global overlays — publish open/close on the bus.
-watch(isVisible, (visible) => {
-  publish(visible ? TOPICS.MODAL_OPEN : TOPICS.MODAL_CLOSE, { name: props.name });
-});
+function open() {
+  if (ownership.value || !isVisible.value) return;
+  opener = document.activeElement;
+  ownership.value = registerModal({
+    name: props.name, onEscape: closeHandler, onTab: onTab,
+    onKeydown: event => props.keydownHandler?.(event),
+    focusInitial: () => {
+      if (props.trapFocus) {
+        const targets=focusables();
+        if(rootEl.value?.contains(document.activeElement)&&targets.includes(document.activeElement))return;
+        (targets[0] ?? rootEl.value)?.focus();
+      }
+    },
+    restoreFocus: () => nextTick(() => {
+      if (opener?.isConnected && !opener.closest('[inert]')) opener.focus();
+    }),
+  });
+  publish(TOPICS.MODAL_OPEN, { name: props.name });
+  nextTick(() => ownership.value?.focus());
+}
+function release() {
+  if (!ownership.value) return;
+  ownership.value.dispose();
+  ownership.value = null;
+  publish(TOPICS.MODAL_CLOSE, { name: props.name });
+}
+watch(isVisible, visible => visible ? open() : release(), { flush: "post" });
 
 // Direct document listener guarded by this instance's visibility (Mousetrap's
 // global binding leaked across modals and reached none of them reliably).
-function onKeydown(event) {
-  if (!isVisible.value) return;
-  if (event.key === "Escape") {
-    closeHandler();
-    return;
-  }
+function focusables() {
+  return [...(rootEl.value?.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [])]
+    .filter(el => {
+      if(el.matches('input[type="hidden"], :disabled') || el.closest('[hidden], [inert], [aria-hidden="true"]'))return false;
+      for(let node=el;node&&rootEl.value?.contains(node);node=node.parentElement){const style=getComputedStyle(node);if(style.display==='none'||style.visibility==='hidden')return false;}
+      return true;
+    });
+}
+function onTab(event) {
   // Opt-in focus containment: Tab/Shift+Tab cycle the dialog's interactive
   // elements. Exclusions are markup-level (inert / aria-hidden / disabled)
   // rather than layout-level (offsetParent) so hidden panels stay out in
   // both the browser and jsdom.
-  if (event.key === "Tab" && props.trapFocus && rootEl.value) {
-    const focusable = [
-      ...rootEl.value.querySelectorAll(
-        'a[href], button:not([disabled]), input:not([disabled]), ' +
-          "select:not([disabled]), textarea:not([disabled]), " +
-          '[tabindex]:not([tabindex="-1"])',
-      ),
-    ].filter((el) => !el.closest('[inert], [aria-hidden="true"]'));
-    if (!focusable.length) return;
+  if (props.trapFocus && rootEl.value) {
+    const focusable = focusables();
+    if (!focusable.length) { event.preventDefault(); rootEl.value.focus(); return true; }
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     if (!rootEl.value.contains(document.activeElement)) {
@@ -91,16 +124,23 @@ function onKeydown(event) {
       event.preventDefault();
       first.focus();
     }
+    return true;
   }
+  return false;
 }
-onMounted(() => document.addEventListener("keydown", onKeydown));
-onBeforeUnmount(() => document.removeEventListener("keydown", onKeydown));
+onMounted(open);
+onBeforeUnmount(release);
 
-function closeHandler() {
+async function closeHandler() {
+  if (closing || !ownership.value?.topmost.value) return;
+  closing = true;
+  try {
   if (props.closeHandlerOverride) {
-    props.closeHandlerOverride();
+    await props.closeHandlerOverride();
   } else {
     isVisible.value = false;
   }
+  } finally { closing = false; }
 }
+defineExpose({ focus: () => ownership.value?.focus() });
 </script>

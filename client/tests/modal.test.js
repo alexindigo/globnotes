@@ -45,10 +45,10 @@ describe("Modal Esc dismissal", () => {
 
   it("defers to closeHandlerOverride", async () => {
     const override = vi.fn();
-    mount(Modal, {
+    track(mount(Modal, {
       props: { modelValue: true, name: "test", closeHandlerOverride: override },
       slots: { default: "<p>content</p>" },
-    });
+    }));
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     await nextTick();
     expect(override).toHaveBeenCalled();
@@ -131,5 +131,11 @@ describe("Modal opt-in dialog behavior", () => {
     );
     await nextTick();
     expect(document.activeElement).toBe(wrapper.find("#only").element);
+  });
+  it("hidden inputs cannot take initial focus or become the last Tab target", async () => {
+    const wrapper=track(mount(Modal,{attachTo:document.body,props:{modelValue:true,name:'visible',trapFocus:true},slots:{default:'<input type="hidden" id="hidden-first"><button id="visible-first">first</button><button id="visible-last">last</button><input type="hidden" id="hidden-last">'}}));
+    await nextTick(); expect(document.activeElement).toBe(wrapper.find('#visible-first').element);
+    wrapper.find('#visible-last').element.focus(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',cancelable:true})); await nextTick();
+    expect(document.activeElement).toBe(wrapper.find('#visible-first').element);
   });
 });

@@ -1,37 +1,25 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
- * POST /_/api/setup/reset — re-arm first-run setup so the wizard can be
- * re-run from the menu. Auth-required by default (only authorized callers
- * may wipe the auth config). Refuses when the mode is env-pinned, and is a
- * no-op when setup is already pending.
+ * Legacy POST /_/api/setup/reset — configured access is now updated in
+ * place. Reject without deleting configuration or opening a setup gap.
+ * The settings-write gate also prevents public-lock bypass through this URL.
  */
 
 import { HttpError } from "@pathfinder/pathfinder";
-import { getEnv } from "@server/helpers.ts";
-import { logger } from "@server/logger.ts";
+import { settingsWriteGuard } from "@server/auth/middleware.ts";
+import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 
-export default function (): { setupRequired: boolean } {
-  if (getEnv("GLOBNOTES_AUTH_TYPE")) {
-    throw new HttpError(
-      409,
-      "Access mode is pinned by GLOBNOTES_AUTH_TYPE; reset via env instead.",
-    );
-  }
-  const config = state.config;
-  if (config.setupRequired) {
+export default async function (
+  request: PathfinderRequest,
+): Promise<{ setupRequired: boolean }> {
+  if (state.config.setupRequired) {
     return { setupRequired: true };
   }
-  try {
-    Deno.removeSync(config.configPath);
-  } catch {
-    // Already gone — nothing to wipe.
-  }
-  config.storedConfig = null;
-  config.authType = null;
-  config.setupRequired = true;
-  state.auth = null;
-  logger.warning("Access mode reset — first-run setup is required again.");
-  return { setupRequired: true };
+  await settingsWriteGuard(request._raw);
+  throw new HttpError(
+    409,
+    "Configured access is updated in place; reset is unavailable.",
+  );
 }

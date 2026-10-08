@@ -21,9 +21,10 @@ import { gfm } from "@milkdown/preset-gfm";
 import { replaceAll } from "@milkdown/utils";
 import { Milkdown, useEditor } from "@milkdown/vue";
 import { shallowRef, onMounted, onBeforeUnmount } from "vue";
-import { Plugin } from "prosemirror-state";
+import { Plugin, PluginKey } from "prosemirror-state";
 
 import { subscribe, TOPICS } from "../bus/index.js";
+import { isActionAvailable } from "../modalState.js";
 // Client plugin modules (dual-mode contract) load before the editor is
 // created and spread in after gfm — their $view overrides the core
 // frontmatter fallback view.
@@ -46,6 +47,7 @@ const props = defineProps({
 
 const emit = defineEmits(["change", "activeChange"]);
 let settingMarkdown = false;
+const dirtyNotificationKey = new PluginKey("globnotes-dirty-notification");
 
 // Resolved Milkdown plugin factories from the enabled dual-mode plugins
 // (null = still loading — the template gates the editor on it).
@@ -90,17 +92,18 @@ const { get: getEditor } = useEditor((root) =>
         milkdownLayerKeymap(),
         ...plugins,
         new Plugin({
+          key: dirtyNotificationKey,
           state: {
-            init: () => null,
+            init: () => 0,
             apply: (tr, value, oldState) => {
-              // Milkdown's markdownUpdated is debounced and canceled on
-              // unmount. Dirty state must reach Note before a mode switch.
+              // State application may be speculative and precedes view.state.
+              // Keep qualifying edits across every appended transaction.
               if (
                 !settingMarkdown && tr.docChanged &&
                 tr.getMeta("addToHistory") !== false &&
                 !tr.doc.eq(oldState.doc)
               ) {
-                emit("change");
+                return value + 1;
               }
               return value;
             },
@@ -108,6 +111,9 @@ const { get: getEditor } = useEditor((root) =>
           view: () => ({
             update: (view, prevState) => {
               if (!prevState) return;
+              // update runs synchronously after the committed state and DOM
+              // are installed. Note reads that final document inside change.
+              if (dirtyNotificationKey.getState(view.state) > dirtyNotificationKey.getState(prevState) && !view.state.doc.eq(prevState.doc)) emit("change");
               // Emit on every state change (doc edit, selection move, mark
               // toggle). readActive inspects formatting at the cursor so the
               // toolbar reflects bold/italic/etc as the cursor moves.
@@ -146,6 +152,14 @@ function getMarkdown() {
     const view = ctx.get(editorViewCtx);
     return ctx.get(serializerCtx)(view.state.doc);
   });
+}
+
+function getSnapshot() {
+  const editor = getEditor();
+  if (!editor) return { ready: false };
+  // The factory may exist while creation is still awaiting its context slices.
+  try { return { ready: true, content: getMarkdown() }; }
+  catch { return { ready: false }; }
 }
 
 function setMarkdown(markdownText) {
@@ -201,6 +215,7 @@ function insertLink(href, text) {
 
 defineExpose({
   getMarkdown,
+  getSnapshot,
   setMarkdown,
   command,
   active,
@@ -242,7 +257,7 @@ let actionUnsubs = [];
 
 onMounted(() => {
   actionUnsubs = Object.entries(wysiwygCommandMap).map(([topic, name]) =>
-    subscribe(topic, () => callCommand(getEditor(), name)));
+    subscribe(topic, () => { if(isActionAvailable(topic))callCommand(getEditor(), name); }));
 });
 
 onBeforeUnmount(() => {

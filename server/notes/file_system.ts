@@ -39,28 +39,137 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** H1 → basename sync resolution, shared by storage and the guarded
+ * operation facade's preparation step (plan: one helper, never duplicated
+ * endpoint logic). Returns the resolved new path, or null when the update
+ * is content-only. */
+export function resolveH1DerivedPath(
+  path: string,
+  oldContent: string,
+  newContent: string,
+): string | null {
+  const oldBase = nodePath.basename(path);
+  const oldH1 = resolveTitleInfo(oldBase, oldContent).h1;
+  const info = resolveTitleInfo(oldBase, newContent);
+  if (!info.fmTitle && info.h1 && info.h1 !== oldH1) {
+    const newBase = sanitizeBasename(info.h1);
+    if (newBase && newBase !== oldBase) {
+      const folder = nodePath.dirname(path);
+      return folder === "." ? newBase : `${folder}/${newBase}`;
+    }
+  }
+  return null;
+}
+
+/** Optional test/diagnostic probes fired AFTER each low-level effect so
+ * injected failures observe real partial state (guarded-operation tests).
+ * Not used by production composition. */
+export interface StorageProbes {
+  afterWrite?(filePath: string): void;
+  afterRename?(oldFilePath: string, newFilePath: string): void;
+  afterRemove?(filePath: string): void;
+}
+export interface PreparedNoteUpdate {
+  sourcePath: string;
+  targetPath: string;
+  sourceFile: string;
+  targetFile: string;
+  before: Note;
+  content: string;
+  inputContent?: string;
+  saving: boolean;
+  renaming: boolean;
+  fileRefs: string;
+  attachments: {
+    oldPath: string;
+    newPath: string;
+    source: string;
+    destination: string;
+    directory: boolean;
+  }[];
+  requiredPaths: string[];
+  refs: FileRef[];
+}
+export interface PreparedNoteCreate {
+  path: string;
+  filename: string;
+  content: string;
+  requiredPaths: string[];
+}
+export interface StorageEffect {
+  kind: "write" | "rename" | "remove" | "mkdir";
+  path: string;
+  oldPath?: string;
+}
+
+function missingParents(filename: string): string[] {
+  const parents: string[] = [];
+  let parent = nodePath.dirname(filename);
+  while (true) {
+    try {
+      Deno.statSync(parent);
+      break;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    parents.push(parent);
+    const next = nodePath.dirname(parent);
+    if (next === parent) break;
+    parent = next;
+  }
+  return parents;
+}
+
 export class FileSystemNotes {
   readonly storagePath: string;
   #scanCache: { ts: number; names: string[] } | null = null;
   #scanCacheTtl: number;
 
-  constructor(storagePath: string) {
+  constructor(storagePath: string, probes: StorageProbes = {}) {
     this.storagePath = storagePath;
+    this.probes = probes;
     this.#scanCacheTtl = Number(
       Deno.env.get("GLOBNOTES_SCAN_CACHE_TTL") ?? "15",
     );
   }
 
+  private readonly probes: StorageProbes;
+  private recordingEffects: StorageEffect[] | null = null;
+  captureEffects<T>(effects: StorageEffect[], callback: () => T): T {
+    const previous = this.recordingEffects;
+    this.recordingEffects = effects;
+    try {
+      return callback();
+    } finally {
+      this.recordingEffects = previous;
+    }
+  }
+  #recordEffect(effect: StorageEffect): void {
+    this.recordingEffects?.push(effect);
+  }
+
   // region public API
 
   create(data: NoteCreate): Note {
+    return this.commitCreate(this.prepareCreate(data));
+  }
+  prepareCreate(data: NoteCreate): PreparedNoteCreate {
     const path = (data.path ?? "").trim();
     if (!path) throw new InvalidPathError("path cannot be empty");
     this.#validateNotePath(path);
     const filepath = this.#pathFromPath(path);
+    return {
+      path,
+      filename: filepath,
+      content: data.content ?? "",
+      requiredPaths: [filepath, ...missingParents(filepath)],
+    };
+  }
+  commitCreate(prepared: PreparedNoteCreate): Note {
+    const path = prepared.path, filepath = prepared.filename;
     try {
-      Deno.mkdirSync(nodePath.dirname(filepath), { recursive: true });
-      this.#writeFile(filepath, data.content ?? "", false);
+      this.#mkdirParents(filepath);
+      this.#writeFile(filepath, prepared.content, false);
     } catch (e) {
       if (
         e instanceof Deno.errors.AlreadyExists ||
@@ -93,10 +202,150 @@ export class FileSystemNotes {
     }
   }
 
-  update(path: string, data: NoteUpdate, fileRefs = "none"): Note {
+  prepareUpdate(
+    path: string,
+    data: NoteUpdate,
+    fileRefs = "none",
+  ): PreparedNoteUpdate {
+    const before = this.get(path);
+    const saving = data.newContent !== undefined && data.newContent !== null;
+    const derived = data.newPath === undefined || data.newPath === null
+      ? saving
+        ? resolveH1DerivedPath(path, before.content ?? "", data.newContent!)
+        : null
+      : null;
+    const rawTarget = data.newPath ?? derived ?? path;
+    const targetPath = rawTarget !== path ? rawTarget.trim() : path;
+    if (targetPath !== path) this.#validateNotePath(targetPath);
+    const sourceFile = this.#readablePath(path),
+      targetFile = targetPath === path
+        ? sourceFile
+        : this.#pathFromPath(targetPath);
+    const renaming = targetPath !== path;
+    let content = saving ? data.newContent! : before.content ?? "";
+    const attachments: PreparedNoteUpdate["attachments"] = [];
+    let refs: FileRef[] = [];
+    const oldDir = nodePath.dirname(sourceFile),
+      newDir = nodePath.dirname(targetFile);
+    if (renaming && (fileRefs === "move" || fileRefs === "relink")) {
+      refs = this.#scanLocalRefs(content, oldDir);
+      const oldRel = nodePath.relative(this.storagePath, oldDir).replace(
+        /\\/g,
+        "/",
+      );
+      const newRel = nodePath.relative(this.storagePath, newDir).replace(
+        /\\/g,
+        "/",
+      );
+      const predicted: Record<string, string> = {};
+      for (const ref of refs) {
+        if (
+          fileRefs === "move" &&
+          (ref.kind === "same-folder" ||
+            (ref.kind === "absolute" &&
+              ref.path.startsWith(oldRel ? oldRel + "/" : "")))
+        ) {
+          const sub = oldRel
+            ? ref.path.slice(oldRel.length).replace(/^\//, "")
+            : ref.path;
+          const destinationPath = newRel ? newRel + "/" + sub : sub;
+          const source = nodePath.join(this.storagePath, ref.path),
+            destination = nodePath.join(this.storagePath, destinationPath);
+          attachments.push({
+            oldPath: ref.path,
+            newPath: destinationPath,
+            source,
+            destination,
+            directory: Deno.statSync(source).isDirectory,
+          });
+          predicted[ref.path] = destinationPath;
+        }
+      }
+      for (const ref of refs) {
+        const url = FileSystemNotes.#rebaseUrl(
+          ref.url,
+          oldRel,
+          newRel,
+          predicted,
+        );
+        if (url !== ref.url) {
+          content = content.replace(
+            new RegExp(
+              `(!?\\[[^\\]]*\\])\\(\\s*${escapeRegex(ref.url)}\\s*\\)`,
+              "g",
+            ),
+            `$1(${url})`,
+          ).replace(
+            new RegExp(`src="${escapeRegex(ref.url)}"`, "g"),
+            `src="${url}"`,
+          );
+        }
+      }
+    }
+    if (renaming) {
+      const info = resolveTitleInfo(nodePath.basename(path), content);
+      if (
+        !info.fmTitle && info.h1 && info.h1 !== nodePath.basename(targetPath)
+      ) content = rewriteFirstH1(content, nodePath.basename(targetPath));
+    }
+    return {
+      sourcePath: path,
+      targetPath,
+      sourceFile,
+      targetFile,
+      before,
+      content,
+      inputContent: saving ? data.newContent! : undefined,
+      saving,
+      renaming,
+      fileRefs,
+      attachments,
+      refs,
+      requiredPaths: [
+        ...new Set([
+          sourceFile,
+          targetFile,
+          ...missingParents(targetFile),
+          ...attachments.flatMap(
+            (file) => [
+              file.source,
+              file.destination,
+              ...missingParents(file.destination),
+            ],
+          ),
+        ]),
+      ],
+    };
+  }
+
+  createEffects(data: NoteCreate): string[] {
+    return this.prepareCreate(data).requiredPaths;
+  }
+  commitUpdate(
+    prepared: PreparedNoteUpdate,
+    canPrune?: (path: string) => boolean,
+  ): Note {
+    // Consume canonical target from the shared resolver. An explicit equal
+    // target prevents storage from deriving a second, different H1 operation.
+    return this.update(
+      prepared.sourcePath,
+      { newPath: prepared.targetPath, newContent: prepared.inputContent },
+      prepared.fileRefs,
+      canPrune,
+      prepared,
+    );
+  }
+
+  update(
+    path: string,
+    data: NoteUpdate,
+    fileRefs = "none",
+    canPrune?: (path: string) => boolean,
+    prepared?: PreparedNoteUpdate,
+  ): Note {
     this.#validateReadablePath(path);
     const oldPath = path;
-    let filepath = this.#readablePath(path);
+    let filepath = prepared?.sourceFile ?? this.#readablePath(path);
     const oldDir = nodePath.dirname(filepath);
     const movedFiles: Record<string, string> = {};
     let contentWritten: string | null = null;
@@ -108,16 +357,12 @@ export class FileSystemNotes {
       (data.newPath === undefined || data.newPath === null) &&
       data.newContent !== undefined && data.newContent !== null
     ) {
-      const oldBase = nodePath.basename(path);
-      const oldH1 = resolveTitleInfo(oldBase, this.#readFile(filepath)).h1;
-      const info = resolveTitleInfo(oldBase, data.newContent);
-      if (!info.fmTitle && info.h1 && info.h1 !== oldH1) {
-        const newBase = sanitizeBasename(info.h1);
-        if (newBase && newBase !== oldBase) {
-          const folder = nodePath.dirname(path);
-          data.newPath = folder === "." ? newBase : `${folder}/${newBase}`;
-        }
-      }
+      const derived = resolveH1DerivedPath(
+        path,
+        this.#readFile(filepath),
+        data.newContent,
+      );
+      if (derived !== null) data.newPath = derived;
     }
 
     if (
@@ -128,7 +373,7 @@ export class FileSystemNotes {
       const newPath = data.newPath.trim();
       if (!newPath) throw new InvalidPathError("path cannot be empty");
       this.#validateNotePath(newPath);
-      const newFilepath = this.#pathFromPath(newPath);
+      const newFilepath = prepared?.targetFile ?? this.#pathFromPath(newPath);
       const newDir = nodePath.dirname(newFilepath);
 
       if (filepath !== newFilepath) {
@@ -152,7 +397,8 @@ export class FileSystemNotes {
           currentContent = this.#readFile(filepath);
         }
         contentWritten = currentContent;
-        const refs = this.#scanLocalRefs(currentContent, oldDir);
+        const refs = prepared?.refs ??
+          this.#scanLocalRefs(currentContent, oldDir);
 
         if (refs.length > 0) {
           const root = this.storagePath;
@@ -174,11 +420,20 @@ export class FileSystemNotes {
                 ? r.path.slice(oldRelDir.length).replace(/^\//, "")
                 : r.path;
               const newRel = newRelDir ? newRelDir + "/" + sub : sub;
-              const oldFile = nodePath.join(root, r.path);
-              const newFile = nodePath.join(root, newRel);
+              const planned = prepared?.attachments.find((file) =>
+                file.oldPath === r.path
+              );
+              const oldFile = planned?.source ?? nodePath.join(root, r.path);
+              const newFile = planned?.destination ??
+                nodePath.join(root, newRel);
               try {
-                Deno.mkdirSync(nodePath.dirname(newFile), { recursive: true });
+                this.#mkdirParents(newFile);
                 Deno.renameSync(oldFile, newFile);
+                this.#recordEffect({
+                  kind: "rename",
+                  path: newFile,
+                  oldPath: oldFile,
+                });
                 movedFiles[r.path] = newRel;
               } catch {
                 // OSError in Python → silently continue
@@ -218,8 +473,14 @@ export class FileSystemNotes {
       }
 
       try {
-        Deno.mkdirSync(newDir, { recursive: true });
+        this.#mkdirParents(newFilepath);
         Deno.renameSync(filepath, newFilepath);
+        this.#recordEffect({
+          kind: "rename",
+          path: newFilepath,
+          oldPath: filepath,
+        });
+        this.probes.afterRename?.(filepath, newFilepath);
       } catch (e) {
         if (
           e instanceof Deno.errors.AlreadyExists ||
@@ -232,7 +493,7 @@ export class FileSystemNotes {
         }
         throw e;
       }
-      this.#pruneEmptyParents(oldDir);
+      this.#pruneEmptyParents(oldDir, canPrune);
       if (actionRefs && contentWritten !== null) {
         this.#writeFile(newFilepath, contentWritten, true);
       }
@@ -291,9 +552,15 @@ export class FileSystemNotes {
     return this.#scanLocalRefs(content, nodePath.dirname(filepath));
   }
 
-  async rewriteRefs(oldPath: string, newPath: string): Promise<void> {
+  /** Pure preparation of the complete reference-rewrite change set: reads
+   * every candidate note, computes rewritten contents, touches nothing. */
+  async prepareRefsRewrite(
+    oldPath: string,
+    newPath: string,
+  ): Promise<{ path: string; content: string }[]> {
     const root = this.storagePath;
     const fname = oldPath.split("/").pop()!;
+    const changes: { path: string; content: string }[] = [];
     for await (
       const entry of walk(root, { includeDirs: false, exts: [".md"] })
     ) {
@@ -326,15 +593,50 @@ export class FileSystemNotes {
           );
         changed = true;
       }
-      if (changed) this.#writeFile(entry.path, content, true);
+      if (changed) changes.push({ path: entry.path, content });
+    }
+    return changes;
+  }
+
+  /** Sequential per-file application. Truthful accounting: returns the
+   * paths actually written; on a per-file failure it stops and reports the
+   * completed set plus the failing path — never a fabricated aggregate. */
+  applyRefsRewrite(changes: { path: string; content: string }[]): {
+    written: string[];
+    failed?: { path: string; error: string };
+  } {
+    const written: string[] = [];
+    for (const change of changes) {
+      try {
+        this.#writeFile(change.path, change.content, true);
+      } catch (e) {
+        return {
+          written,
+          failed: { path: change.path, error: (e as Error).message },
+        };
+      }
+      written.push(change.path);
+    }
+    return { written };
+  }
+
+  async rewriteRefs(oldPath: string, newPath: string): Promise<void> {
+    const changes = await this.prepareRefsRewrite(oldPath, newPath);
+    const result = this.applyRefsRewrite(changes);
+    if (result.failed) {
+      throw new Error(
+        `reference rewrite failed at '${result.failed.path}': ${result.failed.error}`,
+      );
     }
   }
 
-  delete(path: string): void {
+  delete(path: string, canPrune?: (path: string) => boolean): void {
     this.#validateReadablePath(path);
     const filepath = this.#readablePath(path);
     try {
       Deno.removeSync(filepath);
+      this.#recordEffect({ kind: "remove", path: filepath });
+      this.probes.afterRemove?.(filepath);
     } catch (e) {
       if (e instanceof Deno.errors.NotFound) {
         throw new NoteNotFoundError(
@@ -343,7 +645,7 @@ export class FileSystemNotes {
       }
       throw e;
     }
-    this.#pruneEmptyParents(nodePath.dirname(filepath));
+    this.#pruneEmptyParents(nodePath.dirname(filepath), canPrune);
     state.indexer?.deleteFromIndex(path);
     this.#invalidateScanCache();
   }
@@ -441,12 +743,17 @@ export class FileSystemNotes {
     };
   }
 
-  #pruneEmptyParents(dirPath: string): void {
+  #pruneEmptyParents(
+    dirPath: string,
+    canPrune?: (path: string) => boolean,
+  ): void {
     const root = Deno.realPathSync(this.storagePath);
     let d = Deno.realPathSync(dirPath);
     while (d !== root && nodePath.common([root, d]) === root) {
+      if (canPrune && !canPrune(d)) break;
       try {
         Deno.removeSync(d);
+        this.#recordEffect({ kind: "remove", path: d });
       } catch {
         break;
       }
@@ -471,6 +778,36 @@ export class FileSystemNotes {
         f.close();
       }
     }
+    this.#recordEffect({ kind: "write", path: filePath });
+    this.probes.afterWrite?.(filePath);
+  }
+  #mkdirParents(filename: string): void {
+    for (const directory of missingParents(filename).reverse()) {
+      Deno.mkdirSync(directory);
+      this.#recordEffect({ kind: "mkdir", path: directory });
+    }
+  }
+  reconcileEffects(effects: readonly StorageEffect[]): void {
+    const paths = new Set(
+      effects.flatMap(
+        (effect) => [effect.path, ...(effect.oldPath ? [effect.oldPath] : [])],
+      ),
+    );
+    for (const filename of paths) {
+      if (!filename.endsWith(MARKDOWN_EXT)) continue;
+      const notePath = nodePath.relative(this.storagePath, filename).replace(
+        /\\/g,
+        "/",
+      ).slice(0, -MARKDOWN_EXT.length);
+      try {
+        if (Deno.statSync(filename).isFile) {
+          state.indexer?.reindexNote(notePath);
+        }
+      } catch {
+        state.indexer?.deleteFromIndex(notePath);
+      }
+    }
+    this.#invalidateScanCache();
   }
 
   /** All note filenames relative to the storage root, including hidden
@@ -484,7 +821,9 @@ export class FileSystemNotes {
     }
     const names: string[] = [];
     const root = this.storagePath;
-    const prefix = root.endsWith(nodePath.SEPARATOR) ? root : root + nodePath.SEPARATOR;
+    const prefix = root.endsWith(nodePath.SEPARATOR)
+      ? root
+      : root + nodePath.SEPARATOR;
 
     function walkDir(dir: string): void {
       for (const entry of Deno.readDirSync(dir)) {

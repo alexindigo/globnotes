@@ -7,7 +7,7 @@
  * real Workers (no server boot needed).
  */
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import * as path from "@std/path";
 import { AuthType, GlobalConfig } from "../server/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
@@ -103,7 +103,7 @@ Deno.test("plugins: manifest parsing", async (t) => {
   }
 });
 
-Deno.test("plugins: capability → permission mapping", async () => {
+Deno.test("plugins: declared file grants and consent-gated network permissions", async () => {
   const vault = await Deno.makeTempDir();
   try {
     writePlugin(vault, "caps", "", {
@@ -116,11 +116,18 @@ Deno.test("plugins: capability → permission mapping", async () => {
     const m = readManifest(path.join(vault, ".globnotes", "plugins", "caps"));
     const perms = workerPermissions(m, vault) as unknown as {
       net: unknown;
+      import: unknown;
       read: string[];
       write: string[];
       env: unknown;
     };
-    assertEquals(perms.net, ["esm.sh"]);
+    assertEquals(
+      m.capabilities.network,
+      ["esm.sh"],
+      "manifest retains requested intent",
+    );
+    assertEquals(perms.net, false, "declarations are not operator approvals");
+    assertEquals(perms.import, false, "legacy import intent is not consent");
     assertEquals(perms.read, [
       path.join(vault, ".globnotes", "plugins", "caps"),
       vault,
@@ -280,7 +287,7 @@ Deno.test("plugins: hung worker is killed and respawned", async () => {
       await host.stop();
     }
   } finally {
-    await Deno.remove(vault, { recursive: true });
+    console.log(JSON.stringify({ retainedHungWorkerFixture: vault }));
   }
 });
 
@@ -356,6 +363,10 @@ Deno.test("plugins: dual-mode manifest client entry", async () => {
     writePlugin(vault, "override-client", "", {
       client: { entry: "panel.js" },
     });
+    Deno.writeTextFileSync(
+      path.join(vault, ".globnotes", "plugins", "override-client", "panel.js"),
+      "export default [];",
+    );
     const m2 = readManifest(
       path.join(vault, ".globnotes", "plugins", "override-client"),
     );
@@ -365,10 +376,11 @@ Deno.test("plugins: dual-mode manifest client entry", async () => {
     writePlugin(vault, "escape-client", "", {
       client: { entry: "../escape.js" },
     });
-    const m3 = readManifest(
-      path.join(vault, ".globnotes", "plugins", "escape-client"),
+    assertThrows(() =>
+      readManifest(
+        path.join(vault, ".globnotes", "plugins", "escape-client"),
+      )
     );
-    assertEquals(m3.clientEntry, "escape.js");
   } finally {
     await Deno.remove(vault, { recursive: true });
   }
@@ -441,6 +453,49 @@ Deno.test("plugins: client module endpoint serves fresh from disk", async () => 
         (
           await fetch(`${server.baseUrl}/_/plugins/plainplug/client.js`)
         ).status,
+        404,
+      );
+    } finally {
+      await server.close();
+    }
+  } finally {
+    await Deno.remove(vault, { recursive: true });
+  }
+});
+
+Deno.test("plugins: app.js endpoint serves the browser runtime entry for enabled plugins", async () => {
+  const vault = await Deno.makeTempDir();
+  try {
+    writePlugin(vault, "appmod", "", {
+      runtime: { client: "application.js" },
+    });
+    Deno.writeTextFileSync(
+      path.join(vault, ".globnotes", "plugins", "appmod", "application.js"),
+      "export function activate() {}",
+    );
+    writePlugin(vault, "noapp", "");
+
+    const server = await bootServer({
+      GLOBNOTES_AUTH_TYPE: "none",
+      GLOBNOTES_PATH: vault,
+    });
+    try {
+      const res = await fetch(
+        `${server.baseUrl}/_/plugins/appmod/app.js?v=some-generation`,
+      );
+      assertEquals(res.status, 200);
+      assertEquals(await res.text(), "export function activate() {}");
+      assertEquals(
+        (await fetch(`${server.baseUrl}/_/plugins/noapp/app.js`)).status,
+        404,
+      );
+      // Vault-disabled plugins do not serve modules.
+      Deno.writeTextFileSync(
+        path.join(vault, ".globnotes", "plugins.json"),
+        JSON.stringify({ disabled: ["appmod"] }),
+      );
+      assertEquals(
+        (await fetch(`${server.baseUrl}/_/plugins/appmod/app.js`)).status,
         404,
       );
     } finally {

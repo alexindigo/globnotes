@@ -15,7 +15,7 @@ export const useGlobalStore = defineStore("global", () => {
   );
   const sidebarPinned = ref(localStorage.getItem("sidebarPinned") === "true");
   // Menu-invoked wizard: opens the setup dialog dismissibly, without
-  // touching server state (the reset happens only on Finish).
+  // touching server state (the in-place update happens only on confirmation).
   const setupWizardRequested = ref(false);
 
   return {

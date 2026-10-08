@@ -34,65 +34,17 @@
     </div>
   </nav>
 
-  <!-- Floating corner menu (matches the sidebar toggle treatment): the
-       old right-4 top-4 spot. It can never collide with the page
-       column — the column's width rule reserves the corner zones (see
-       style.css). -->
-  <div class="fixed right-4 top-4 z-30">
-    <CustomButton
-      :iconPath="tabMenu"
-      label=""
-      class="shadow-md"
-      title="Menu"
-      @click="toggleMenu"
-    />
-  </div>
-
-  <PrimeMenu
-    ref="menu"
-    :model="menuItems"
-    :popup="true"
-    @show="publish(TOPICS.SETTINGS_MENU_OPEN, {})"
-    @hide="publish(TOPICS.SETTINGS_MENU_CLOSE, {})"
-  />
-  <ThemePicker v-model="themePickerVisible" />
-  <KeybindingsPanel v-model="keybindingsVisible" />
-  <PluginSettings v-model="pluginSettingsVisible" />
-  <BrandingSettings v-model="brandingVisible" />
 </template>
 
 <script setup>
 import { tabSearch, tabEdit } from "../icons.js";
-import {
-  tabConsole,
-  tabListNumbers,
-  tabLogin,
-  tabLogout,
-  tabMenu,
-  tabDeviceDesktop,
-  tabKeyboard,
-  tabPalette,
-  tabPlug,
-} from "../icons.js";
-import { computed, ref } from "vue";
-import { RouterLink, useRoute, useRouter } from "vue-router";
-
-import { publish, TOPICS } from "../bus/index.js";
-import BrandingSettings from "../components/BrandingSettings.vue";
+import { computed } from "vue";
+import { RouterLink, useRoute } from "vue-router";
 import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
-import KeybindingsPanel from "../components/KeybindingsPanel.vue";
-import PluginSettings from "../components/PluginSettings.vue";
-import PrimeMenu from "../components/PrimeMenu.vue";
-import ThemePicker from "../components/ThemePicker.vue";
 import { authTypes, params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { directoryFromPath } from "../helpers.js";
-import { debugEnabled, toggleDebug } from "../debug.js";
-import { saveViewLineNumbers, viewLineNumbers } from "../pluginSettings.js";
-import { currentLayer } from "../keybindings/store.js";
-import { currentThemeLabel } from "../themes.js";
-import { clearStoredToken } from "../tokenStorage.js";
 
 const globalStore = useGlobalStore();
 
@@ -107,13 +59,7 @@ const allNotesIcon = computed(() =>
       ? `tabNumber${noteCount.value}Small`
       : "tabViewList",
 );
-const menu = ref();
 const route = useRoute();
-const router = useRouter();
-const themePickerVisible = ref(false);
-const keybindingsVisible = ref(false);
-const pluginSettingsVisible = ref(false);
-const brandingVisible = ref(false);
 
 const newNoteTarget = computed(() => {
   if (route.name === "search" && route.query[params.folder]) {
@@ -136,94 +82,8 @@ function openSearch() {
   emit("toggleQuickSwitcher");
 }
 
-const menuItems = computed(() => [
-  {
-    label: `Theme: ${currentThemeLabel.value}`,
-    icon: tabDeviceDesktop,
-    command: () => {
-      themePickerVisible.value = true;
-    },
-  },
-  {
-    label: `Keybindings: ${currentLayer().label}`,
-    icon: tabKeyboard,
-    command: () => {
-      keybindingsVisible.value = true;
-    },
-  },
-  {
-    label: "Plugins",
-    icon: tabPlug,
-    command: () => {
-      pluginSettingsVisible.value = true;
-    },
-  },
-  {
-    label: "Branding",
-    icon: tabPalette,
-    command: () => {
-      brandingVisible.value = true;
-    },
-    // Read-only deployments have nothing to brand — no dead affordance.
-    visible: canModify,
-  },
-  {
-    label: "Access mode",
-    icon: tabLogin,
-    command: openAccessMode,
-    // Read-only mode cannot reset auth (GET-only enforcement server-side).
-    visible: canModify,
-  },
-  {
-    label: `Line numbers: ${viewLineNumbers.value ? "on" : "off"}`,
-    icon: tabListNumbers,
-    command: () => saveViewLineNumbers(!viewLineNumbers.value),
-  },
-  {
-    label: `Debug: ${debugEnabled.value ? "on" : "off"}`,
-    icon: tabConsole,
-    command: () => toggleDebug(),
-  },
-  {
-    separator: true,
-    visible: showLogOutButton,
-  },
-  {
-    label: "Log Out",
-    icon: tabLogout,
-    command: logOut,
-    visible: showLogOutButton,
-  },
-]);
-
 const showNewButton = computed(() => {
   return globalStore.config.authType !== authTypes.readOnly;
 });
 
-function logOut() {
-  clearStoredToken();
-  localStorage.clear();
-  router.push({ name: "login" });
-}
-
-// Access mode: open the wizard dismissibly, purely client-side. The
-// server reset happens only if the user actually finishes (SetupModal
-// chains resetSetup + postSetup); dismissing changes nothing.
-function openAccessMode() {
-  globalStore.setupWizardRequested = true;
-}
-
-function toggleMenu(event) {
-  menu.value.toggle(event);
-}
-
-function showLogOutButton() {
-  return ![authTypes.none, authTypes.readOnly].includes(
-    globalStore.config.authType,
-  );
-}
-
-function canModify() {
-  return globalStore.config.authType !== authTypes.readOnly;
-}
 </script>

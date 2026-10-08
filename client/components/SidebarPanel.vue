@@ -165,8 +165,9 @@
       </section>
     </div>
 
-    <!-- Bottom row: section toggles (clock = Recent now; more can be added) -->
-    <div class="flex items-center border-t border-theme-border px-4 pt-1 pb-1">
+    <!-- Bottom row: section toggles left, Settings gear right — one flex
+         row, shared centerline by construction. -->
+    <div class="flex items-center justify-between border-t border-theme-border px-4 pt-1 pb-1">
       <CustomButton
         :iconPath="tabClock"
         label=""
@@ -178,6 +179,13 @@
             : 'border-transparent',
         ]"
         @click="toggleRecent"
+      />
+      <CustomButton
+        :iconPath="tabSettings"
+        label=""
+        title="Settings"
+        aria-label="Settings"
+        @click="dispatchAction(TOPICS.APP_OPEN_SETTINGS, {})"
       />
     </div>
   </aside>
@@ -193,6 +201,7 @@ import {
   tabChevronRight,
   tabClose,
   tabClock,
+  tabSettings,
   tabDockLeft,
   tabPinned,
   tabPinnedOff,
@@ -205,6 +214,7 @@ import TextInput from "../components/TextInput.vue";
 import { getNotes, getTree } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
 import { publish, subscribe, TOPICS } from "../bus/index.js";
+import { dispatchAction } from "../keybindings/dispatcher.js";
 import { notePath } from "../notePath.js";
 import { refreshNoteIndex } from "../noteIndex.js";
 import { params } from "../constants.js";

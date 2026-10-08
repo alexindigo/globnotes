@@ -1,27 +1,30 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-/**
- * Plugin manifest parsing and capability → Deno Worker permission
- * mapping. Mirrors the plan's manifest contract:
- *
- *   <vault>/.globnotes/plugins/<id>/manifest.json
- *   { id, name, version, author, source, license, entry, capabilities }
- *
- * Capabilities map directly onto the Worker's permission envelope;
- * defaults are the tightest envelope that still lets a renderer work.
- */
-
+/** Strict manifest discovery. Entries are optional contributions of one plugin. */
 import * as path from "@std/path";
+import {
+  HOOK_NAMES,
+  type HookName,
+  pluginId,
+  record,
+  type SettingsPage,
+  text,
+  uniqueStrings,
+} from "./contracts.ts";
+import { validateSettingsPages } from "./settings.ts";
+import {
+  canonicalScopes,
+  type PermissionDeclaration,
+} from "./network_contracts.ts";
+import { delegableScopes, denoScopes } from "./network_permissions.ts";
 
 export interface PluginCapabilities {
-  /** Network access: false (default) or a list of hosts. */
   network: boolean | string[];
-  /** Write paths (absolute or relative to vault). Default: none. */
+  /** Omission preserves legacy network-derived import intent, never consent. */
+  imports?: boolean | string[];
   write: string[];
-  /** Read paths. "vault" expands to the vault root. Default: ["vault"]. */
   read: string[];
 }
-
 export interface PluginManifest {
   id: string;
   name: string;
@@ -29,122 +32,260 @@ export interface PluginManifest {
   author?: string;
   source?: string;
   license?: string;
-  entry: string;
-  /** Editor-half entry filename (dual-mode contract). Overridable via
-   * manifest.json `"client": { "entry": "..." }`; defaults to the
-   * Obsidian-style `client.js`. The file's presence (stat) decides whether
-   * the plugin is dual-mode — absence is the normal single-mode case. */
+  /** Absent when no legacy rendering entry exists. */
+  entry?: string;
   clientEntry: string;
+  hasClient: boolean;
+  runtime: { server?: string; client?: string };
+  hooks: HookName[];
+  settings: SettingsPage[];
+  hasEndpoints: boolean;
   capabilities: PluginCapabilities;
-  /** Absolute path to the plugin directory. */
   dir: string;
 }
 
-const DEFAULT_CAPABILITIES: PluginCapabilities = {
-  network: false,
-  write: [],
-  read: ["vault"],
-};
+/** Resolve existing code below the plugin directory, including symlinks. */
+export function pluginCodePath(dir: string, relative: string): string {
+  const root = Deno.realPathSync(dir);
+  const result = Deno.realPathSync(path.join(root, relative));
+  const rel = path.relative(root, result);
+  if (
+    path.isAbsolute(rel) || rel === ".." ||
+    rel.startsWith(`..${path.SEPARATOR}`)
+  ) {
+    throw new Error(`plugin code '${relative}' resolves outside its directory`);
+  }
+  return result;
+}
+function basename(value: unknown, label: string): string {
+  const name = text(value, label);
+  if (
+    name === "." || name === ".." || name.startsWith(".") ||
+    name.includes("/") || name.includes("\\") || name.includes("\0")
+  ) {
+    throw new Error(`${label} must be a basename module filename`);
+  }
+  if (!/\.(?:js|mjs|ts)$/.test(name)) {
+    throw new Error(`${label} must be a module filename`);
+  }
+  return name;
+}
+function entryExists(dir: string, name: string, required: boolean): boolean {
+  try {
+    const file = pluginCodePath(dir, name);
+    if (!Deno.statSync(file).isFile) {
+      throw new Error(`entry '${name}' is not a file`);
+    }
+    return true;
+  } catch (error) {
+    if (!required && error instanceof Deno.errors.NotFound) return false;
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error(`entry '${name}' not found in ${dir}`);
+    }
+    throw error;
+  }
+}
+function metadata(
+  raw: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  if (raw[key] === undefined) return undefined;
+  return text(raw[key], key);
+}
 
-/** Read + validate a manifest.json inside a plugin directory. Throws
- * Error with a human-readable message on any problem. */
 export function readManifest(dir: string): PluginManifest {
-  const manifestPath = path.join(dir, "manifest.json");
+  const manifestPath = pluginCodePath(dir, "manifest.json");
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(Deno.readTextFileSync(manifestPath));
-  } catch (e) {
-    throw new Error(`cannot read manifest at ${manifestPath}: ${e}`);
+    raw = record(JSON.parse(Deno.readTextFileSync(manifestPath)), "manifest");
+  } catch (error) {
+    throw new Error(
+      `cannot read manifest at ${manifestPath}: ${
+        error instanceof Error ? error.message : "invalid JSON"
+      }`,
+    );
   }
+  const id = pluginId(raw.id);
   const dirName = path.basename(dir);
-  const id = raw.id as string | undefined;
-  if (!id || typeof id !== "string") {
-    throw new Error(`manifest at ${manifestPath} has no valid "id"`);
-  }
   if (id !== dirName) {
     throw new Error(
       `manifest id '${id}' does not match directory name '${dirName}'`,
     );
   }
-  const entry = (raw.entry as string | undefined) ?? "main.js";
-  // Dual-mode contract: the editor-half entry. Basename-only so a
-  // vault-writable manifest cannot point the client endpoint outside the
-  // plugin directory.
-  const clientEntry = path.basename(
-    ((raw.client as { entry?: string } | undefined)?.entry as string) ??
-      "client.js",
+  const renderName = basename(
+    raw.entry === undefined ? "main.js" : raw.entry,
+    "entry",
   );
-  const caps = (raw.capabilities ?? {}) as Partial<PluginCapabilities>;
+  const entry = entryExists(dir, renderName, raw.entry !== undefined)
+    ? renderName
+    : undefined;
+  const client = raw.client === undefined ? {} : record(raw.client, "client");
+  if (Object.keys(client).some((key) => key !== "entry")) {
+    throw new Error("unsupported client manifest property");
+  }
+  const clientEntry = basename(
+    client.entry === undefined ? "client.js" : client.entry,
+    "client entry",
+  );
+  const hasClient = entryExists(dir, clientEntry, client.entry !== undefined);
+  const runtimeInput = raw.runtime === undefined
+    ? {}
+    : record(raw.runtime, "runtime");
+  if (
+    Object.keys(runtimeInput).some((key) =>
+      key !== "server" && key !== "client"
+    )
+  ) throw new Error("unsupported runtime manifest property");
+  const runtime: PluginManifest["runtime"] = {};
+  for (const role of ["server", "client"] as const) {
+    if (runtimeInput[role] !== undefined) {
+      const name = basename(runtimeInput[role], `runtime.${role}`);
+      entryExists(dir, name, true);
+      runtime[role] = name;
+    }
+  }
+  if (runtime.server && runtime.server === entry) {
+    throw new Error("server runtime and rendering entries must be distinct");
+  }
+  if (runtime.client && hasClient && runtime.client === clientEntry) {
+    throw new Error("browser runtime and editor entries must be distinct");
+  }
+  const hooks = uniqueStrings(
+    raw.hooks === undefined ? [] : raw.hooks,
+    "hooks",
+  );
+  if (hooks.some((name) => !HOOK_NAMES.includes(name as HookName))) {
+    throw new Error("unsupported server hook name");
+  }
+  if (hooks.length && !runtime.server) {
+    throw new Error("declared server hooks require runtime.server");
+  }
+  const settings = validateSettingsPages(raw.settings);
+  const caps = raw.capabilities === undefined
+    ? {}
+    : record(raw.capabilities, "capabilities");
+  if (
+    Object.keys(caps).some((key) =>
+      !["network", "imports", "read", "write"].includes(key)
+    )
+  ) throw new Error("unsupported capability");
+  const network = caps.network === undefined ? false : caps.network;
+  if (typeof network !== "boolean") {
+    uniqueStrings(network, "network capability");
+  }
+  const requestedNetwork = canonicalScopes(network);
+  if (caps.imports !== undefined && typeof caps.imports !== "boolean") {
+    uniqueStrings(caps.imports, "imports capability");
+  }
+  const requestedImports = caps.imports === undefined
+    ? undefined
+    : canonicalScopes(caps.imports);
   const capabilities: PluginCapabilities = {
-    network: caps.network ?? DEFAULT_CAPABILITIES.network,
-    write: caps.write ?? DEFAULT_CAPABILITIES.write,
-    read: caps.read ?? DEFAULT_CAPABILITIES.read,
+    network: typeof network === "boolean"
+      ? network
+      : requestedNetwork.flatMap((scope) =>
+        scope.type === "host" ? [scope.authority] : []
+      ),
+    ...(requestedImports === undefined ? {} : {
+      imports: typeof caps.imports === "boolean"
+        ? caps.imports
+        : requestedImports.flatMap((scope) =>
+          scope.type === "host" ? [scope.authority] : []
+        ),
+    }),
+    read: uniqueStrings(
+      caps.read === undefined ? ["vault"] : caps.read,
+      "read capability",
+    ),
+    write: uniqueStrings(
+      caps.write === undefined ? [] : caps.write,
+      "write capability",
+    ),
   };
-  const entryPath = path.join(dir, entry);
+  let hasEndpoints = false;
   try {
-    if (!Deno.statSync(entryPath).isFile) throw new Error("not a file");
-  } catch {
-    throw new Error(`entry '${entry}' not found in ${dir}`);
+    const endpointDir = pluginCodePath(dir, "endpoints");
+    if (!Deno.statSync(endpointDir).isDirectory) {
+      throw new Error("endpoints must be a directory");
+    }
+    hasEndpoints = true;
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  if (
+    !entry && !hasClient && !runtime.server && !runtime.client &&
+    !settings.length && !hasEndpoints
+  ) {
+    throw new Error(
+      "plugin has no contributions (no default entry or optional contribution)",
+    );
   }
   return {
     id,
-    name: (raw.name as string | undefined) ?? id,
-    version: (raw.version as string | undefined) ?? "0.0.0",
-    author: raw.author as string | undefined,
-    source: raw.source as string | undefined,
-    license: raw.license as string | undefined,
+    name: metadata(raw, "name") ?? id,
+    version: metadata(raw, "version") ?? "0.0.0",
+    author: metadata(raw, "author"),
+    source: metadata(raw, "source"),
+    license: metadata(raw, "license"),
     entry,
     clientEntry,
+    hasClient,
+    runtime,
+    hooks: hooks as HookName[],
+    settings,
+    hasEndpoints,
     capabilities,
     dir,
   };
 }
 
-/** The host's shared/ module directory — internal (image) plugins import
- * the shared YAML subset from it. Vault-shipped plugins don't have one
- * (../../shared from their dir doesn't exist), so the path is omitted. */
-function hostSharedDir(pluginDir: string): string | null {
-  const shared = path.resolve(pluginDir, "../../shared");
+function existingSharedDir(shared: string): string | null {
   try {
-    if (Deno.statSync(shared).isDirectory) return shared;
-  } catch {
-    // No host shared directory for this plugin.
-  }
+    if (Deno.statSync(shared).isDirectory) return Deno.realPathSync(shared);
+  } catch { /* No shared code directory for this plugin. */ }
   return null;
 }
 
-/** Resolve "vault" and relative read/write paths against the vault root;
- * everything maps onto the Deno Worker permissions shape.
- *
- * `import` follows the network capability: Deno's import permission is
- * host-scoped (local file imports are always allowed — that's how the
- * plugin entry itself loads), so it only gates remote module fetching,
- * which is exactly the network capability's job. Local imports outside
- * the plugin dir (the host's shared/ modules) still need read grants,
- * which hostSharedDir provides. */
+/** Legacy direct reads/writes remain compatibility authority; services use RPC. */
 export function workerPermissions(
   manifest: PluginManifest,
   vaultPath: string,
+  options: {
+    role?: "render" | "service";
+    writable?: boolean;
+    effective?: PermissionDeclaration;
+  } = {},
 ): Deno.PermissionOptions {
-  const resolvePaths = (paths: string[]): string[] =>
-    paths.map((p) => p === "vault" ? vaultPath : path.resolve(vaultPath, p));
-  const net = manifest.capabilities.network;
-  // Dynamic import requires read access on the file when read is a
-  // list — internal plugins (outside the vault) need their own dir
-  // explicitly; vault plugins get it via "vault" but listing it is
-  // harmless either way.
-  const readPaths = [
-    ...new Set([
-      manifest.dir,
-      ...resolvePaths(manifest.capabilities.read),
-      ...(hostSharedDir(manifest.dir) ? [hostSharedDir(manifest.dir)!] : []),
-    ]),
-  ];
+  const resolvePaths = (values: string[]) =>
+    values.map((p) => p === "vault" ? vaultPath : path.resolve(vaultPath, p));
+  const service = options.role === "service";
+  const shared = service
+    ? existingSharedDir(
+      path.resolve(
+        path.dirname(path.fromFileUrl(import.meta.url)),
+        "../../shared",
+      ),
+    )
+    : existingSharedDir(path.resolve(manifest.dir, "../../shared"));
   return {
-    net: net === false ? false : net === true ? true : net,
-    import: net === false ? false : net === true ? true : net,
-    read: readPaths,
-    write: resolvePaths(manifest.capabilities.write),
+    // No host approval service means no delegated network or import authority.
+    // Query again at actual construction; stale/unavailable parent rights never escalate.
+    net: denoScopes(
+      delegableScopes("network", options.effective?.network ?? []),
+    ),
+    import: denoScopes(
+      delegableScopes("imports", options.effective?.imports ?? []),
+    ),
+    read: [
+      ...new Set([
+        manifest.dir,
+        ...(service ? [] : resolvePaths(manifest.capabilities.read)),
+        ...(shared ? [shared] : []),
+      ]),
+    ],
+    write: service || options.writable === false
+      ? false
+      : resolvePaths(manifest.capabilities.write),
     env: false,
     ffi: false,
     run: false,
@@ -152,7 +293,6 @@ export function workerPermissions(
   } as unknown as Deno.PermissionOptions;
 }
 
-/** Enumerate plugin directories directly under the given root. */
 export function discoverPluginDirs(root: string): string[] {
   try {
     const dirs: string[] = [];
@@ -160,7 +300,8 @@ export function discoverPluginDirs(root: string): string[] {
       if (entry.isDirectory) dirs.push(path.join(root, entry.name));
     }
     return dirs.sort();
-  } catch {
-    return [];
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return [];
+    throw error;
   }
 }

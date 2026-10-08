@@ -167,8 +167,28 @@ export class LocalAuth {
     };
   }
 
+  /** Fresh proof through the existing login verifier, not session renewal. */
+  async confirmCredentials(password: string, code?: string): Promise<void> {
+    if (this.isTotpEnabled && !/^\d{6}$/.test(code ?? "")) {
+      throw new Error("Current authenticator code is required.");
+    }
+    // Same verifier, window and consumed-code slot as login. The resulting
+    // token is deliberately not returned: this is proof, not a new session.
+    await this.login({
+      username: this.username,
+      password: password + (this.isTotpEnabled ? code! : ""),
+    });
+  }
+
   /** Validate a bearer token; throws on missing/invalid/expired. */
   async validateToken(token: string | null | undefined): Promise<void> {
+    await this.validateTokenMetadata(token);
+  }
+
+  /** Internal stream metadata, derived only after the same JWT/subject checks. */
+  async validateTokenMetadata(
+    token: string | null | undefined,
+  ): Promise<{ expiresAt: number | null }> {
     if (!token) throw new Error("no token");
     const key = new TextEncoder().encode(this.secretKey);
     const { payload } = await jwtVerify(token, key);
@@ -176,6 +196,7 @@ export class LocalAuth {
     if (!sub || sub.toLowerCase() !== this.username) {
       throw new Error("wrong subject");
     }
+    return { expiresAt: payload.exp === undefined ? null : payload.exp * 1000 };
   }
 
   async #createAccessToken(): Promise<string> {

@@ -148,20 +148,53 @@ export class Fts5Indexer implements Indexer {
       mtime,
       resolveTitleInfo(this.#basename(filename), content),
     );
-    this.#notifyPlugins();
   }
 
   deleteFromIndex(path: string): void {
     this.#deleteByFilename(path + MARKDOWN_EXT);
   }
 
-  /** Plan §4: reinstantiate plugins on every sync (state resets; hats
-   * rebuild their detection in onSync). Fire-and-forget; skipped when
-   * the pool was never started (no render has happened yet). */
-  #notifyPlugins(): void {
-    const plugins = state.plugins;
-    if (!plugins || plugins.hosts.size === 0) return;
-    plugins.syncAll().catch((e) => logger.error(`plugin sync failed: ${e}`));
+  /** Plan §3.2/§3.3: ordinary saves/indexing no longer respawn pools.
+   * Change notifications are delivered at a serialized batch boundary
+   * instead; render replicas receive legacy onSync broadcast, the service
+   * runtime receives one on-sync fact. */
+  #batchSynced(changedPaths: string[], initial: boolean): void {
+    const fact = {
+      operationId: crypto.randomUUID(),
+      action: "sync" as const,
+      origin: "external" as const,
+      timestamp: new Date().toISOString(),
+      initial,
+      changedPaths,
+    };
+    state.lifecycle?.syncCompleted(fact);
+  }
+
+  /** External-change observation: the scan already knows what changed on
+   * disk; publish truthful on-* facts with prior content explicitly marked
+   * unavailable. Managed writes carry signatures and are skipped. */
+  #observeExternal(
+    action: "create" | "save" | "delete",
+    filename: string,
+    content: string | null,
+  ): void {
+    const notePath = this.#stripExt(filename);
+    const fact = {
+      operationId: crypto.randomUUID(),
+      action,
+      origin: "external" as const,
+      timestamp: new Date().toISOString(),
+      path: notePath,
+      before: action === "create"
+        ? null
+        : { path: notePath, contentAvailable: false },
+      after: action === "delete" ? null : {
+        path: notePath,
+        content: content ?? undefined,
+        contentAvailable: content !== null,
+      },
+    };
+    state.lifecycle?.observe(fact);
   }
 
   /** Insert/replace a note in the FTS table, the raw-tag table, and the
@@ -296,6 +329,11 @@ export class Fts5Indexer implements Indexer {
       if (newFiles.length > 0) {
         logger.info(`Initial index sync complete (${newFiles.length} notes)`);
       }
+      // Initial indexing is inventory plus on-sync — never fake creates.
+      this.#batchSynced(
+        newFiles.map((f) => this.#stripExt(f)),
+        true,
+      );
     } catch (e) {
       logger.error(`Background index sync failed: ${(e as Error).message}`);
     } finally {
@@ -306,18 +344,24 @@ export class Fts5Indexer implements Indexer {
 
   /** Incremental sync before each search/tags call (Python
    * sync_index_with_retry after initial complete). Adds new notes,
-   * removes deleted, updates modified. */
+   * removes deleted, updates modified. Emits external on-* observations;
+   * host-managed operations carry signatures and are not double-reported. */
   syncIndex(): void {
     const indexed = this.#allIndexedFilenames();
     const fsFiles = state.notes.listAllNoteFilenames();
     const indexedSet = new Set(indexed);
     const deleted = new Set<string>();
+    const changedPaths: string[] = [];
     for (const filename of indexedSet) {
       // Python stats each indexed file directly (cache can't hide deletes).
       if (!this.#fileExists(filename)) {
         this.#deleteByFilename(filename);
         deleted.add(filename);
         logger.info(`'${filename}' removed from index`);
+        if (!state.lifecycle?.consumeManaged(filename, 0)) {
+          changedPaths.push(this.#stripExt(filename));
+          this.#observeExternal("delete", filename, null);
+        }
       }
     }
     for (const filename of fsFiles) {
@@ -325,8 +369,21 @@ export class Fts5Indexer implements Indexer {
       if (deleted.has(filename)) continue;
       if (!indexedSet.has(filename)) {
         try {
+          const fsMtime =
+            (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
+              ?.getTime() ?? 0) / 1000;
           this.#indexFile(filename);
           logger.info(`'${filename}' added to index`);
+          if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
+            changedPaths.push(this.#stripExt(filename));
+            this.#observeExternal(
+              "create",
+              filename,
+              Deno.readTextFileSync(
+                path.join(state.config.notesPath, filename),
+              ),
+            );
+          }
         } catch {
           // Tolerate deletions mid-scan (Python: continue on NotFound).
         }
@@ -337,9 +394,20 @@ export class Fts5Indexer implements Indexer {
         if (fsMtime !== this.#indexedMtime(filename)) {
           this.#indexFile(filename);
           logger.info(`'${filename}' updated`);
+          if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
+            changedPaths.push(this.#stripExt(filename));
+            this.#observeExternal(
+              "save",
+              filename,
+              Deno.readTextFileSync(
+                path.join(state.config.notesPath, filename),
+              ),
+            );
+          }
         }
       }
     }
+    if (changedPaths.length > 0) this.#batchSynced(changedPaths, false);
   }
 
   getTags(): string[] {
@@ -572,7 +640,9 @@ export class Fts5Indexer implements Indexer {
   }
 
   /** Display metadata (title + aliases) for a batch of bare note paths. */
-  noteMetaFor(paths: string[]): Record<string, { title: string; aliases: string[] }> {
+  noteMetaFor(
+    paths: string[],
+  ): Record<string, { title: string; aliases: string[] }> {
     const out: Record<string, { title: string; aliases: string[] }> = {};
     if (paths.length === 0) return out;
     const filenames = paths.map((p) => p + MARKDOWN_EXT);
@@ -581,7 +651,11 @@ export class Fts5Indexer implements Indexer {
       .prepare(
         `SELECT filename, display_title, aliases FROM notes_meta WHERE filename IN (${marks})`,
       )
-      .all(...filenames) as { filename: string; display_title: string; aliases: string }[];
+      .all(...filenames) as {
+        filename: string;
+        display_title: string;
+        aliases: string;
+      }[];
     for (const r of rows) {
       let aliases: string[] = [];
       try {
@@ -599,7 +673,10 @@ export class Fts5Indexer implements Indexer {
 
   /** Resolve an alias to a note title (front-matter aliases, exact
    * case-insensitive match). Returns null when nothing claims it. */
-  resolveAlias(target: string): string | null {
+  resolveAlias(
+    target: string,
+    eligible?: (path: string) => boolean,
+  ): string | null {
     const rows = this.#db
       .prepare(
         `SELECT filename FROM notes_meta
@@ -610,6 +687,9 @@ export class Fts5Indexer implements Indexer {
       )
       .all(target.trim()) as { filename: string }[];
     rows.sort((a, b) => a.filename.localeCompare(b.filename));
-    return rows.length > 0 ? this.#stripExt(rows[0].filename) : null;
+    const match = rows.find((row) =>
+      !eligible || eligible(this.#stripExt(row.filename))
+    );
+    return match ? this.#stripExt(match.filename) : null;
   }
 }

@@ -1,20 +1,21 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createApp, nextTick } from "vue";
+import { nextTick } from "vue";
+import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 
-vi.mock("../api.js", () => ({
+vi.mock("../api.js", async importOriginal => ({
+  ...await importOriginal(),
   postBrand: vi.fn(() =>
     Promise.resolve({ name: null, accent: null, files: [] }),
   ),
 }));
 
-import NavBar from "../partials/NavBar.vue";
-import router from "../router.js";
+import SettingsModal from "../components/SettingsModal.vue";
 import { postBrand } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
-import PrimeVue from "primevue/config";
-import ToastService from "primevue/toastservice";
+vi.mock("primevue/usetoast", () => ({ useToast: () => ({ add: vi.fn() }) }));
+let wrapper;
 
 // Pin: the branding Reset button (danger) wipes name + accent + uploaded
 // files. It must ASK first via ConfirmModal — no POST until confirm, and
@@ -32,32 +33,21 @@ describe("BrandingSettings reset", () => {
     vi.clearAllMocks();
     const pinia = createPinia();
     setActivePinia(pinia);
+    window.matchMedia=vi.fn(()=>({matches:false,addEventListener(){},removeEventListener(){}}));
   });
   afterEach(() => {
+    wrapper?.unmount();wrapper=null;
     document.body.innerHTML = "";
   });
 
   async function openBranding() {
     const pinia = createPinia();
     setActivePinia(pinia);
-    const mountEl = document.createElement("div");
-    document.body.appendChild(mountEl);
-    const app = createApp(NavBar);
-    app.use(pinia);
-    app.use(router);
-    app.use(PrimeVue);
-    app.use(ToastService);
-    app.mount(mountEl);
-    await nextTick();
     const store = useGlobalStore();
-    store.config = { brand: { ...SAMPLE } };
-    document.querySelector('[title="Menu"]').click();
-    await nextTick();
-    [...document.querySelectorAll("a")]
-      .find((a) => a.textContent.includes("Branding"))
-      ?.click();
-    await nextTick();
-    return { app, store, mountEl };
+    store.config = { authType:'none', brand: { ...SAMPLE } };
+    wrapper=mount(SettingsModal,{attachTo:document.body,props:{modelValue:true,writable:true},global:{directives:{focus:{mounted:el=>el.focus()}}}});
+    await wrapper.vm.openSettings('core:branding');await flushPromises();
+    return { app: {unmount:()=>{wrapper.unmount();wrapper=null;}}, store };
   }
 
   function findButton(label) {
@@ -99,7 +89,7 @@ describe("BrandingSettings reset", () => {
       .at(-1);
     expect(confirm, "confirm dialog Reset").toBeTruthy();
     confirm.click();
-    await nextTick();
+    await flushPromises();
     expect(postBrand).toHaveBeenCalledTimes(1);
     const form = postBrand.mock.calls[0][0];
     expect(form.get("name")).toBe("");

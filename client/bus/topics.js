@@ -12,8 +12,6 @@ const TOPICS = {
   SIDEPANEL_SECTION_SHOW: "sidepanel:section-show",
   SIDEPANEL_SECTION_HIDE: "sidepanel:section-hide",
 
-  SETTINGS_MENU_OPEN: "settings-menu:open",
-  SETTINGS_MENU_CLOSE: "settings-menu:close",
   SEARCH_MENU_OPEN: "search-menu:open",
   SEARCH_MENU_CLOSE: "search-menu:close",
 
@@ -83,6 +81,10 @@ const TOPICS = {
   APP_GO_HOME: "app:go-home",
   APP_OPEN_SWITCHER: "app:open-switcher",
   APP_OPEN_PALETTE: "app:open-palette",
+  /** Open the host-owned Settings modal. Payload: { page?: pageId }. The
+   * gear, palette, remapped keys and plugin SDK dispatch all invoke the
+   * SAME openSettings handler through this topic. */
+  APP_OPEN_SETTINGS: "app:open-settings",
 };
 
 export { TOPICS };

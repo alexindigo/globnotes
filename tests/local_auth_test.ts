@@ -5,6 +5,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
+import { SignJWT } from "jose";
 import { LocalAuth, totpSecretFromRawKey } from "../server/auth/local.ts";
 import { GlobalConfig } from "../server/config.ts";
 import { authenticatorCode } from "./helpers/totp.ts";
@@ -79,6 +80,45 @@ Deno.test("LocalAuth: session expiry lands in the token", async () => {
   );
   const expected = Math.floor(Date.now() / 1000) + 7 * 86400;
   assert(Math.abs(payload.exp - expected) < 60);
+});
+
+Deno.test("LocalAuth: expiry metadata shares verification and preserves no-expiry tokens", async () => {
+  const env = {
+    GLOBNOTES_AUTH_TYPE: "password",
+    GLOBNOTES_USERNAME: "alice",
+    GLOBNOTES_PASSWORD: "secret",
+    GLOBNOTES_SECRET_KEY: "testsecret",
+  };
+  const auth = authFor(await makeConfig(env), env);
+  const expiry = Math.floor(Date.now() / 1000) + 60;
+  const sign = (subject: string, expiration?: number, key = "testsecret") => {
+    const jwt = new SignJWT({ sub: subject }).setProtectedHeader({
+      alg: "HS256",
+    });
+    return (expiration === undefined ? jwt : jwt.setExpirationTime(expiration))
+      .sign(new TextEncoder().encode(key));
+  };
+  const expiring = await sign("ALICE", expiry);
+  assertEquals(await auth.validateTokenMetadata(expiring), {
+    expiresAt: expiry * 1000,
+  });
+  assertEquals(await auth.validateToken(expiring), undefined);
+  const unlimited = await sign("alice");
+  assertEquals(await auth.validateTokenMetadata(unlimited), {
+    expiresAt: null,
+  });
+  await auth.validateToken(unlimited);
+  await assertRejects(async () =>
+    auth.validateTokenMetadata(await sign("mallory"))
+  );
+  await assertRejects(async () =>
+    auth.validateTokenMetadata(await sign("alice", expiry, "wrong-key"))
+  );
+  await assertRejects(async () =>
+    auth.validateTokenMetadata(
+      await sign("alice", Math.floor(Date.now() / 1000) - 1),
+    )
+  );
 });
 
 Deno.test("LocalAuth: TOTP login and single-use enforcement", async () => {

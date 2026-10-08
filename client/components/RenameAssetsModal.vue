@@ -2,35 +2,33 @@
 import Icon from "../components/Icon.vue";
 import { tabAlertCircle, tabFileExport } from "../icons.js";
 import CustomButton from "./CustomButton.vue";
+import Modal from "./Modal.vue";
+import { onBeforeUnmount } from "vue";
 
 const props = defineProps({
   visible: Boolean,
   refs: { type: Array, default: () => [] },
+  promptIdentity: Object,
 });
 
-const emit = defineEmits(["update:visible", "confirm"]);
+const emit = defineEmits(["update:visible", "confirm", "cancel"]);
 
 function confirm(strategy) {
-  emit("confirm", strategy);
-  emit("update:visible", false);
+  emit("confirm", strategy, props.promptIdentity);
 }
 
 function close() {
-  emit("update:visible", false);
+  if (props.visible) emit("cancel", props.promptIdentity);
 }
+onBeforeUnmount(() => { if (props.visible) emit("cancel", props.promptIdentity); });
 </script>
 
 <template>
-  <teleport to="body">
-    <div
-      v-if="visible"
-      class="fixed inset-0 z-50 flex items-center justify-center"
-    >
-      <div class="fixed inset-0 bg-black/30" @click="close" />
+  <Modal :model-value="visible" name="rename-assets" labelledby="rename-assets-title" anchor="viewport-center" trap-focus :close-handler-override="close">
       <div
         class="relative z-10 mx-4 max-h-[80vh] w-full max-w-md overflow-y-auto rounded-lg border border-theme-border bg-theme-background p-6 shadow-lg"
       >
-        <h2 class="mb-1 text-lg font-medium text-theme-text">
+        <h2 id="rename-assets-title" class="mb-1 text-lg font-medium text-theme-text">
           Move note with attachments?
         </h2>
         <p class="mb-4 text-sm text-theme-text-muted">
@@ -121,6 +119,5 @@ function close() {
           <CustomButton label="Cancel" @click="close" />
         </div>
       </div>
-    </div>
-  </teleport>
+  </Modal>
 </template>

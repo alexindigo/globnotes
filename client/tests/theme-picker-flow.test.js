@@ -1,50 +1,19 @@
-// Click-through test for the theme picker flow:
-// menu button → "Theme: …" item → picker panel → pick Tokyo Night → CSS vars applied.
-import { describe, it, expect } from "vitest";
-import { createApp, nextTick } from "vue";
-import { createPinia } from "pinia";
-import PrimeVue from "primevue/config";
-import ToastService from "primevue/toastservice";
-import NavBar from "../partials/NavBar.vue";
-import router from "../router";
+// Real Settings entry → inline Appearance → actual CSS preference consumer.
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
+import SettingsModal from "../components/SettingsModal.vue";
 import { THEMES } from "../themes.js";
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+vi.mock("primevue/usetoast", () => ({ useToast: () => ({ add: vi.fn() }) }));
+let wrapper;
+afterEach(()=>{wrapper?.unmount();wrapper=null;document.documentElement.removeAttribute('style');});
 
 describe("theme picker flow", () => {
   it("opens picker from menu and applies a theme", async () => {
-    const overlayHost = document.createElement("div");
-    overlayHost.id = "overlay-host";
-    document.body.appendChild(overlayHost);
-    const mountEl = document.createElement("div");
-    document.body.appendChild(mountEl);
-    const app = createApp(NavBar);
-    app.use(createPinia());
-    app.use(router);
-    app.use(PrimeVue);
-    // BrandingSettings (mounted by the navbar) resolves the toast service
-    // in its setup.
-    app.use(ToastService);
-    app.mount(mountEl);
-    await nextTick();
-
-    const menuButton = document.querySelector('[title="Menu"]');
-    expect(menuButton, "menu button").toBeTruthy();
-    menuButton.click();
-    await sleep(80);
-
-    const themeItem = Array.from(document.querySelectorAll("a")).find((a) =>
-      a.textContent.includes("Theme:"),
-    );
-    expect(themeItem, "theme item").toBeTruthy();
-    themeItem.click();
-    await sleep(80);
-
-    const pickerPanel = Array.from(document.querySelectorAll("div")).find(
-      (d) =>
-        d.textContent.includes("Light") &&
-        d.textContent.includes("System (follows OS)"),
-    );
+    setActivePinia(createPinia()); window.matchMedia=vi.fn(()=>({matches:false,addEventListener(){},removeEventListener(){}}));
+    wrapper=mount(SettingsModal,{attachTo:document.body,props:{modelValue:true,writable:true}});
+    await wrapper.vm.openSettings('core:appearance');await flushPromises();
+    const pickerPanel=document.querySelector('[data-appearance-settings]');
     expect(pickerPanel, "picker panel open").toBeTruthy();
 
     const tokyo = Array.from(pickerPanel.querySelectorAll("button")).find((b) =>
@@ -52,16 +21,12 @@ describe("theme picker flow", () => {
     );
     expect(tokyo, "tokyo button").toBeTruthy();
     tokyo.click();
-    await sleep(30);
+    await flushPromises();
+    expect(localStorage.getItem('globnotes-theme')).toBe(THEMES.find(theme=>theme.label.includes('Tokyo Night')).id);
 
     expect(
       document.documentElement.style.getPropertyValue("--theme-brand").trim(),
     ).not.toBe("");
 
-    // cleanup between runs within the same process
-    app.unmount();
-    mountEl.remove();
-    overlayHost.remove();
-    document.documentElement.removeAttribute("style");
   }, THEMES.length && 10000);
 });

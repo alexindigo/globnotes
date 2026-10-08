@@ -4,12 +4,15 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 
 import SetupModal from "../components/SetupModal.vue";
-import { postSetup, postTotpEnrolment, resetSetup } from "../api.js";
+import { getAccessSettings, postSetup, postTotpEnrolment, putAccessSettings, resetSetup } from "../api.js";
 
 vi.mock("../api.js", () => ({
   postSetup: vi.fn(),
   postTotpEnrolment: vi.fn(),
   resetSetup: vi.fn(),
+  getAccessSettings: vi.fn(async () => ({ mode: "password", username: "alice", totpEnabled: false, settingsWritable: true, revision: 0, signature: "initial", pinned: {} })),
+  putAccessSettings: vi.fn(async () => ({ view: { mode: "password", username: "alice", settingsWritable: true, revision: 1, pinned: {} }, requiresLogin: true })),
+  postAccessTotpEnrolment: vi.fn(), getConfig: vi.fn(),
 }));
 
 function mountModal() {
@@ -149,7 +152,7 @@ describe("SetupModal", () => {
     await wrapper2.find("#setup-ack").setValue(true);
     await wrapper2.find("form").trigger("submit");
     await flushPromises();
-    expect(postSetup).toHaveBeenCalledWith({ mode: "none" });
+    expect(postSetup).toHaveBeenCalledWith({ mode: "none", readOnlySettings: false });
   });
 
   it("disables finish in open access until the acknowledgement is checked", async () => {
@@ -276,23 +279,24 @@ describe("SetupModal", () => {
     expect(wrapper3.emitted("dismiss")).toHaveLength(1);
   });
 
-  it("menu-invoked finish chains resetSetup before postSetup", async () => {
-    resetSetup.mockResolvedValue({});
-    postSetup.mockResolvedValue({});
+  it("configured finish confirms current credentials and updates access without reset or first-run creation", async () => {
     const wrapper = mount(SetupModal, {
       props: { dismissible: true },
       attachTo: document.body,
     });
+    await flushPromises();
     await wrapper.find("#setup-username").setValue("alice");
     await wrapper.find("#setup-password").setValue("secret");
+    await wrapper.find("#access-current-password").setValue("old-secret");
     await wrapper.find("form").trigger("submit");
     await flushPromises();
-    expect(resetSetup).toHaveBeenCalledTimes(1);
-    expect(postSetup).toHaveBeenCalledWith({
+    expect(resetSetup).not.toHaveBeenCalled();
+    expect(postSetup).not.toHaveBeenCalled();
+    expect(putAccessSettings).toHaveBeenCalledWith(expect.objectContaining({
       mode: "password",
-      username: "alice",
       password: "secret",
-    });
+      currentPassword: "old-secret", totpEnabled: false, revision: 0, signature: "initial",
+    }));
     expect(wrapper.emitted("completed")).toHaveLength(1);
   });
 
@@ -306,17 +310,20 @@ describe("SetupModal", () => {
     expect(resetSetup).not.toHaveBeenCalled();
   });
 
-  it("env-pinned reset shows a specific message and skips postSetup", async () => {
-    resetSetup.mockRejectedValue({ response: { status: 409 } });
+  it("environment-pinned access rejects in place and retains the proposed values", async () => {
+    putAccessSettings.mockRejectedValueOnce({ response: { status: 409, data: { detail: "Access mode is pinned by environment configuration." } } });
     const wrapper = mount(SetupModal, {
       props: { dismissible: true },
       attachTo: document.body,
     });
+    await flushPromises();
     await wrapper.find("#setup-username").setValue("alice");
     await wrapper.find("#setup-password").setValue("secret");
+    await wrapper.find("#access-current-password").setValue("old-secret");
     await wrapper.find("form").trigger("submit");
     await flushPromises();
     expect(postSetup).not.toHaveBeenCalled();
+    expect(resetSetup).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain(
       "Access mode is pinned by environment configuration.",
     );
@@ -508,6 +515,62 @@ describe("SetupModal", () => {
     await wrapper.find("#setup-totp-qr").trigger("click");
     expect(writeClipboard).not.toHaveBeenCalled();
     expect(wrapper.find("[role=tooltip]").text()).toContain("Click again");
+  });
+
+  it("clears copy feedback when focus leaves a disabled QR control without blur", async () => {
+    writeClipboard.mockRejectedValue(new Error("clipboard denied"));
+    const wrapper = mountModal();
+    await enableTotp(wrapper);
+    const qr = wrapper.find("#setup-totp-qr");
+    await qr.trigger("click");
+    await qr.trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[role=tooltip]").text()).toContain("Could not copy");
+    // Chromium can drop focus when the pending copy disables the QR. The
+    // next control's focusin must settle the old caption without a QR blur.
+    await wrapper.find("#setup-username").trigger("focusin");
+    expect(wrapper.find("[role=tooltip]").exists()).toBe(false);
+    expect(writeClipboard).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["success", "failure"])("a late clipboard %s cannot restore feedback after another control owns focus", async outcome => {
+    let resolve, reject;
+    writeClipboard.mockImplementation(() => new Promise((yes, no) => { resolve = yes; reject = no; }));
+    const wrapper = mountModal();
+    await enableTotp(wrapper);
+    const qr = wrapper.find("#setup-totp-qr");
+    await qr.trigger("click");
+    await qr.trigger("click");
+    expect(qr.element.disabled).toBe(true);
+    await wrapper.find("#setup-username").trigger("focusin");
+    if (outcome === "success") resolve(); else reject(new Error("clipboard denied"));
+    await flushPromises();
+    expect(wrapper.find("[role=tooltip]").exists()).toBe(false);
+    expect(qr.element.disabled).toBe(false);
+    await qr.trigger("click");
+    expect(wrapper.find("[role=tooltip]").text()).toContain("Click again");
+    expect(writeClipboard).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["success", "failure"])("the QR's automatic busy-disabling blur preserves its clipboard %s outcome", async outcome => {
+    let resolve, reject;
+    writeClipboard.mockImplementation(() => new Promise((yes, no) => { resolve = yes; reject = no; }));
+    const wrapper = mountModal();
+    await enableTotp(wrapper);
+    const qr = wrapper.find("#setup-totp-qr");
+    await qr.trigger("click");
+    await qr.trigger("click");
+    expect(qr.element.disabled).toBe(true);
+    // Real Chromium emits this blur with no next focus owner as a consequence
+    // of disabling the pending button, not of user departure from the flow.
+    qr.element.dispatchEvent(new FocusEvent("blur", { relatedTarget: null }));
+    await nextTick();
+    if (outcome === "success") resolve(); else reject(new Error("clipboard denied"));
+    await flushPromises();
+    expect(wrapper.find("[role=tooltip]").text()).toContain(outcome === "success" ? "Setup key copied." : "Could not copy");
+    await wrapper.find("#setup-username").trigger("focusin");
+    expect(wrapper.find("[role=tooltip]").exists()).toBe(false);
+    expect(writeClipboard).toHaveBeenCalledTimes(1);
   });
 
   it("disables QR and switch controls during setup without losing the bundle", async () => {

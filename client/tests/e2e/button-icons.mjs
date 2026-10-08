@@ -515,11 +515,7 @@ try {
       page?.close();
       controller?.close();
       if (!preserve) {
-        try {
-          await server?.close();
-        } finally {
-          await Deno.remove(vault, { recursive: true });
-        }
+        await server?.close();
       }
     }
     console.log(`button-icons artifacts: ${artifacts}`);

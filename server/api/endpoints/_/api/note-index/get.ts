@@ -2,7 +2,11 @@
 
 import { state } from "@server/state.ts";
 
-export default function (): { path: string; title: string; aliases: string[] }[] {
+export default function (): {
+  path: string;
+  title: string;
+  aliases: string[];
+}[] {
   const paths = state.notes.getPaths();
   const meta = state.indexer?.noteMetaFor(paths) ?? {};
   return paths.map((path) => ({

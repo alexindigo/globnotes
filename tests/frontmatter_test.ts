@@ -94,7 +94,8 @@ Deno.test("frontmatter: round-trips raw values byte-for-byte", () => {
   const yaml = "meta:\n  nested: true\n  anchor: &a value\n";
   const first = parseFrontmatter(yaml);
   assertEquals(serializeFrontmatter(first), yaml.replace(/\n$/, ""));
-});Deno.test("frontmatter: quotes scalars that would corrupt YAML", () => {
+});
+Deno.test("frontmatter: quotes scalars that would corrupt YAML", () => {
   const out = serializeFrontmatter([
     { key: "title", value: { kind: "scalar", text: "Note: [bracketed]" } },
   ]);

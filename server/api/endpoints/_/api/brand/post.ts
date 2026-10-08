@@ -12,10 +12,17 @@
 
 import * as path from "@std/path";
 import { brandBlock, brandDirPath } from "@server/brand.ts";
-import type { StoredConfig } from "@server/config.ts";
+import {
+  type GlobalConfig,
+  type StoredConfig,
+  StoredConfigConflict,
+  type StoredConfigSnapshot,
+} from "@server/config.ts";
 import { HttpError } from "@pathfinder/pathfinder";
 import { logger } from "@server/logger.ts";
 import { state } from "@server/state.ts";
+import { settingsWriteGuard } from "@server/auth/middleware.ts";
+import type { PathfinderRequest } from "@pathfinder/pathfinder";
 
 const ACCENT_RE = /^#[0-9a-fA-F]{6}$/;
 const IMAGE_EXTS = new Set([
@@ -54,22 +61,33 @@ function clearSlotFiles(dir: string, slot: string): void {
  * from env only, so a later env removal doesn't drop the instance back
  * into setup). */
 function saveBrandConfig(
+  config: GlobalConfig,
+  snapshot: StoredConfigSnapshot,
+  base: StoredConfig | null,
   changes: Partial<StoredConfig>,
   deletions: string[],
 ): void {
-  const config = state.config;
   const stored: StoredConfig = {
-    ...(config.storedConfig ??
+    ...(base ??
       (config.authType ? { auth_type: config.authType } : {})),
     ...changes,
   };
   for (const key of deletions) delete stored[key as keyof StoredConfig];
-  config.saveStoredConfig(stored);
+  config.saveStoredConfig(stored, snapshot);
 }
 
-export default async function (request) {
-  const form = await request.body.form();
+export default async function (request: PathfinderRequest) {
+  const guard = await settingsWriteGuard(request._raw);
   const config = state.config;
+  const snapshot = config.captureStoredConfig();
+  const base = snapshot.raw === null ? null : JSON.parse(snapshot.raw);
+  if (JSON.stringify(base) !== JSON.stringify(config.storedConfig)) {
+    throw new HttpError(
+      409,
+      "Configuration changed externally; branding choices retained.",
+    );
+  }
+  const form = await request.body.form();
 
   const changes: Partial<StoredConfig> = {};
   const deletions: string[] = [];
@@ -80,7 +98,6 @@ export default async function (request) {
     const value = String(name);
     if (value === "") deletions.push("brand_name");
     else changes.brand_name = value;
-    config.brandName = value === "" ? null : value;
     changed = true;
   }
 
@@ -94,11 +111,12 @@ export default async function (request) {
       }
       changes.brand_accent = value;
     }
-    config.brandAccent = value === "" ? null : value;
     changed = true;
   }
 
   const dir = brandDirPath(config.statePath);
+  const uploads: { slot: string; ext: string; bytes: Uint8Array }[] = [];
+  const removals: string[] = [];
   for (const slot of ["logo", "icon"] as const) {
     const file = form.get(slot);
     if (file instanceof File) {
@@ -106,26 +124,58 @@ export default async function (request) {
       if (!IMAGE_EXTS.has(ext)) {
         throw new HttpError(400, `${slot} must be an image file`);
       }
-      Deno.mkdirSync(dir, { recursive: true });
-      // Replace: a slot keeps only its newest upload, so an earlier
-      // different-extension upload goes away.
-      clearSlotFiles(dir, slot);
-      Deno.writeFileSync(
-        path.join(dir, `${slot}${ext}`),
-        new Uint8Array(await file.arrayBuffer()),
-      );
+      uploads.push({
+        slot,
+        ext,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      });
       changed = true;
     }
     const remove = form.get(`remove${slot === "logo" ? "Logo" : "Icon"}`);
     if (remove !== null && String(remove) !== "") {
-      clearSlotFiles(dir, slot);
+      removals.push(slot);
       changed = true;
     }
   }
 
-  if (changed) {
-    saveBrandConfig(changes, deletions);
-    logger.info("Instance branding updated.");
+  const commit = () => {
+    guard();
+    if (
+      state.config !== config ||
+      JSON.stringify(base) !== JSON.stringify(config.storedConfig)
+    ) {
+      throw new HttpError(
+        409,
+        "Configuration changed externally; branding choices retained.",
+      );
+    }
+    config.assertStoredConfigUnchanged(snapshot);
+    for (const upload of uploads) {
+      Deno.mkdirSync(dir, { recursive: true });
+      clearSlotFiles(dir, upload.slot);
+      Deno.writeFileSync(
+        path.join(dir, `${upload.slot}${upload.ext}`),
+        upload.bytes,
+      );
+    }
+    for (const slot of removals) clearSlotFiles(dir, slot);
+    if (changed) {
+      saveBrandConfig(config, snapshot, base, changes, deletions);
+      if (name !== null) config.brandName = String(name) || null;
+      if (accent !== null) config.brandAccent = String(accent) || null;
+      logger.info("Instance branding updated.");
+    }
+    return brandBlock(config);
+  };
+  try {
+    return state.lifecycle ? await state.lifecycle.gate.run(commit) : commit();
+  } catch (error) {
+    if (error instanceof StoredConfigConflict) {
+      throw new HttpError(
+        409,
+        "Configuration changed before branding commit; review current settings.",
+      );
+    }
+    throw error;
   }
-  return brandBlock(config);
 }

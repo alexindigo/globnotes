@@ -5,13 +5,11 @@ import vue from "@vitejs/plugin-vue";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const devApiUrl = "http://127.0.0.1:8000";
 const repoRoot = path.dirname(fileURLToPath(import.meta.url));
 
-// Host-owned packages a plugin's client.js may import (dual-mode plugin
-// contract). Production resolves them through the plugin-sdk entry chunk
-// + import map; dev serves plugin modules through vite's own transform
-// pipeline so they hit the same prebundled dep URLs the app uses.
+// Host-owned packages a plugin module may import (dual-mode contract).
+// Production resolves them through the plugin-sdk entry chunk + import
+// map, using the same module instances and shared aliases as the app.
 const SDK_PACKAGES = [
   "@milkdown/core",
   "@milkdown/ctx",
@@ -20,30 +18,17 @@ const SDK_PACKAGES = [
   "prosemirror-view",
   "@globnotes/frontmatter-node",
   "@globnotes/frontmatter",
+  "@globnotes/plugin-sdk",
 ];
 
-// Dual-mode plugin client modules in dev: served fresh from disk on every
-// request, but TRANSFORMED by vite (rewrite URL into /@fs and let the
-// pipeline handle it). Raw proxying would leave bare imports unresolvable
-// and duplicate the app's milkdown instances.
-function pluginClientModules(base = "/_/") {
+// Build-time import map for backend-served plugin browser/editor entries.
+function pluginSdkImportMap() {
   return {
-    name: "globnotes-plugin-client-modules",
-    configureServer(server) {
-      server.middlewares.use((req, _res, next) => {
-        const raw = (req.url || "").split("?")[0];
-        const m = raw.match(/^\/(?:_\/)?plugins\/([^/]+)\/client\.js$/);
-        if (!m) return next();
-        const id = decodeURIComponent(m[1]);
-        const pluginsRoot = path.resolve(repoRoot, "plugins") + path.sep;
-        const file = path.resolve(pluginsRoot, id, "client.js");
-        if (!file.startsWith(pluginsRoot)) return next();
-        req.url = `${base}@fs${file}${(req.url || "").slice(raw.length)}`;
-        next();
-      });
-    },
-    // Production: inject the import map that resolves plugin client
-    // modules' bare SDK imports to the plugin-sdk entry chunk.
+    name: "globnotes-plugin-sdk-import-map",
+    apply: "build",
+    enforce: "pre",
+    // Production: inject the import map that resolves plugin modules'
+    // bare SDK imports to the plugin-sdk entry chunk.
     transformIndexHtml(html, ctx) {
       if (!ctx.bundle) return html;
       const sdk = Object.values(ctx.bundle).find(
@@ -78,9 +63,16 @@ export default defineConfig({
       plugins: [tailwindcss(), autoprefixer()],
     },
   },
-  plugins: [vue(), pluginClientModules()],
+  plugins: [vue(), pluginSdkImportMap()],
   root: "client",
   base: "/_/",
+  experimental: {
+    // HTML is stamped with the deployment prefix by the server. URLs inside
+    // bundles must follow their owning file so the same build supports it.
+    renderBuiltUrl(_filename, { hostType }) {
+      if (hostType === "js" || hostType === "css") return { relative: true };
+    },
+  },
   // The @globnotes/* specifiers are the host-owned shared halves a plugin
   // client module imports (frontmatter node + YAML subset); they resolve
   // to the same files the app itself imports, so module instances dedupe.
@@ -94,6 +86,10 @@ export default defineConfig({
         find: /^@globnotes\/frontmatter$/,
         replacement: path.resolve(repoRoot, "shared/frontmatter.ts"),
       },
+      {
+        find: /^@globnotes\/plugin-sdk$/,
+        replacement: path.resolve(repoRoot, "client/plugin-sdk.js"),
+      },
     ],
   },
   build: {
@@ -106,21 +102,6 @@ export default defineConfig({
       // app consumes them, so the entry signature must be pinned or the
       // treeshaker prunes the whole namespace.
       preserveEntrySignatures: "strict",
-    },
-  },
-  server: {
-    // Note: The GLOBNOTES_PATH_PREFIX environment variable is not supported by the dev server
-    port: 8080,
-    // Plugin client modules are served (transformed) from ../plugins via
-    // /@fs — widen the dev allow list to the repo root for exactly that.
-    fs: {
-      allow: [repoRoot],
-    },
-    proxy: {
-      "/_/api/": {
-        target: devApiUrl,
-        changeOrigin: true,
-      },
     },
   },
 });

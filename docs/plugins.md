@@ -38,9 +38,17 @@ Two roots are scanned (internal first, vault overrides by ID):
 
 - `id` **must match the directory name** (hard error otherwise).
 - `entry` defaults to `main.js`.
-- `capabilities` map directly onto the Worker's Deno permissions:
-  - `network`: `false` (default), `true`, or a list of allowed hosts — also
-    gates remote `import` specifiers
+- Server-Worker network declarations are requests, not grants:
+  - `network`: `false` (default), `true`, or an exact host/port list requests
+    data-network access.
+  - `imports`: the same shape independently requests remote-code imports.
+    Omission retains the legacy network-derived **request intent**, not approval;
+    use `imports:false` for an explicitly network-only plugin.
+  - Effective network/import rights require the per-plugin master, remembered
+    host-owned approval and already-granted parent authority. The default is denial.
+  - These controls apply to server Workers. Trusted browser/editor code and browser
+    network loads from rendered content are outside this boundary.
+- Existing filesystem capabilities retain their compatibility mapping:
   - `read`: `["vault"]` by default; `"vault"` expands to the vault root
   - `write`: `[]` by default
   - `env`, `ffi`, `run`, `sys` are always `false`
@@ -62,8 +70,8 @@ export function parseNode(node, ctx) {
 }
 
 export function onSync(ctx) {
-  // Optional: fired after every note sync (plugins are reinstantiated on
-  // every sync — keep no state you can't rebuild here).
+  // Optional: initial sync and later note syncs reach each render replica.
+  // Ordinary sync retains the same Workers and their module state.
 }
 ```
 
@@ -105,28 +113,71 @@ Async RPC to the host (values are structured-cloned):
 | `ctx.readFile(path)` | `{ mediaType, body: Uint8Array }`                      |
 | `ctx.pathPrefix()`   | the configured `GLOBNOTES_PATH_PREFIX` (`""` if unset) |
 
-## Ordering and disabling
+## Ordering, enablement and the generic platform
 
-`<vault>/.globnotes/plugins.json` (or `<state dir>/plugins.json` when
-`GLOBNOTES_INDEX_PATH` relocates state):
+`<state dir>/plugins.json` is vault policy: `order`, `disabled`, `enabled`,
+`autoEnable` and `revision`. Explicit disabled wins over explicit enabled,
+which wins over the auto-enable default (a stated
+`GLOBNOTES_AUTO_ENABLE_PLUGINS` pins that default and is shown as such in
+Settings). The host Settings modal (gear, bottom-right) owns
+inventory/enablement for every browser of the vault; legacy per-browser
+switches in localStorage remain old preferences only and are never promoted
+into vault policy.
 
-```json
-{
-  "order": ["my-plugin", "globnotes-autolinks"],
-  "disabled": ["globnotes-mermaid"]
-}
-```
+In public access, **Read-only settings** can lock these vault-owned controls and
+operator approvals while leaving note editing and local theme/keybinding/editor
+preferences available. Existing workflow owners, private data and request
+publications retain their normal authority. Locked settings cannot unlock
+themselves in the UI/API; deployment configuration owns recovery. Read-only note
+access remains a separate policy that also prohibits note writes.
 
-Listed ids run first (in listed order); the rest keep discovery order; disabled
-ids are dropped. The settings UI (menu → Plugins) stores per-browser switches in
-localStorage and passes disabled ids with each render request.
+Vault disable retires render owners and service admission before asynchronous
+cleanup. Explicit re-enable rediscovers installed server code and can create
+fresh owners even when the manifest version is unchanged; unrelated plugins keep
+their owners. Render pools stay lazy until rendering is first requested.
+
+This is not an automatic on-disk hot-reload system. Ordinary rendering/index
+sync retains unchanged owners. Installed-code mismatch is exposed as
+`source-reload-required` by the owning permissions status, and old-code runtime
+permission publications cannot claim the replacement's source token. Use explicit
+enablement/source replacement to consume changed server code. Settings-source
+changes retire obsolete runtime intent and immediately fence any reduced raw
+authority at the settings commit. Same-code recovery is limited to affected roles
+and narrowed rights; unchanged owners continue using the fresh-token declaration
+flow. Approvals/master choices, unrelated owners and render laziness are retained.
+A replacement's reported readiness requires its actual demanded renderer to be ready.
+
+Server-mediated note/file/list/search/resolver reads project declared grants and
+exclude the canonical host state directory, including state relocated into a
+visible vault folder. Legacy explicit raw filesystem grants remain a separate
+direct-access boundary.
+
+Settings schema updates retain removed fields/pages in private storage while reads
+expose only the current schema. Current-field writes preserve that removed data;
+reintroducing compatible fields/pages restores their saved values. Existing current
+values that violate their declared type/constraints fail visibly, without coercion.
+Retained data still counts toward the existing storage-size bound.
+
+The full generic platform contract — runtime entries, `on-*`/`pre-*` hooks,
+commands, declarative settings pages, sandboxed endpoints, data persistence
+and guarantees — is documented in [plugin-api.md](plugin-api.md).
+
+For server network consent, use **Settings → Plugins → Review permissions** or the
+plugin's framework **Server permissions** page. Manual filesystem additions are
+listed for review; there is no marketplace or new browser activation-review gate.
+Network data and remote-code imports need separate approval, and **Allow network**
+is a per-plugin master that keeps remembered approvals when off. A prominent notice
+and framework **Runs in browser** badge disclose trusted editor/browser code;
+these server controls do not restrict it or browser loads from rendered content.
 
 ## Rules of the sandbox
 
 - A plugin that throws **abstains** — it can degrade a render, never kill it.
 - A hung Worker is terminated and respawned (250 ms heartbeat, 3×T silence).
-- Workers are reinstantiated on every sync; `onSync` is where cache-like state
-  gets rebuilt.
+- Render workers keep state across ordinary saves/indexing; legacy `onSync`
+  is broadcast to every replica at a serialized sync boundary (this is a
+  deliberate change from the old per-sync reinstantiation — plugins that
+  relied on per-sync state resets need explicit sync handling).
 - Permissions are real: `Deno.env`, `Deno.readFileSync` outside the declared
   paths, and network calls (without the capability) all throw `PermissionDenied`
   inside the Worker.

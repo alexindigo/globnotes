@@ -27,6 +27,7 @@ import { dispatchAction } from "./dispatcher.js";
 import { ACTIONS } from "./layers.js";
 import { isBareKey, platformKey, toCm6 } from "./keys.js";
 import { effectiveBindings } from "./store.js";
+import { isActionAvailable } from "../modalState.js";
 
 /** Every editor-resolved key of the active layer, in CM6/PM notation. */
 export function editorBoundKeys() {
@@ -54,6 +55,7 @@ export function cm6LayerKeymap() {
       bindings.push({
         key: name,
         run: () => {
+          if (!isActionAvailable(action)) return true;
           dispatchAction(action);
           return true;
         },
@@ -65,6 +67,7 @@ export function cm6LayerKeymap() {
   bindings.push({
     key: "Escape",
     run: (view) => {
+      if (!isActionAvailable(TOPICS.EDITOR_EXIT_EDIT)) return true;
       // The find panel owns Esc first (close it, stay in edit), then a
       // multi-cursor selection collapses, then we exit edit.
       if (closeSearchPanel(view)) return true;
@@ -89,6 +92,7 @@ export function milkdownLayerKeymap() {
     if (action === TOPICS.EDITOR_EXIT_EDIT) continue;
     if (binding === "editor") {
       bindings[name] = () => {
+        if (!isActionAvailable(action)) return true;
         dispatchAction(action);
         return true;
       };
@@ -97,6 +101,7 @@ export function milkdownLayerKeymap() {
     }
   }
   bindings["Escape"] = () => {
+    if (!isActionAvailable(TOPICS.EDITOR_EXIT_EDIT)) return true;
     dispatchAction(TOPICS.EDITOR_EXIT_EDIT);
     return true;
   };

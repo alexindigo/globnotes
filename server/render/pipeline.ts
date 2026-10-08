@@ -48,6 +48,7 @@ const md = createMarkdown();
 interface LoadedPlugin {
   host: PluginHost;
   selectors: SelectorSpec[];
+  current(): boolean;
 }
 
 /** Fetch selectors once per render; plugins without selectors are inert.
@@ -58,14 +59,19 @@ async function loadPlugins(disabled?: Set<string>): Promise<LoadedPlugin[]> {
   if (!manager) return [];
   await manager.ensureStarted();
   const out: LoadedPlugin[] = [];
-  for (const host of manager.hosts.values()) {
+  for (const owner of manager.readyRenderOwners()) {
+    const host = owner.host;
+    const current = () => manager.renderOwnerCurrent(owner);
+    if (!current()) continue;
+    if (!host.renderCapable) continue;
     if (disabled?.has(host.manifest.id)) continue;
     try {
       const specs = (await host.call("getSelectors", [])) as
         | SelectorSpec[]
         | null;
+      if (!current()) continue;
       if (Array.isArray(specs) && specs.length > 0) {
-        out.push({ host, selectors: specs });
+        out.push({ host, selectors: specs, current });
       }
     } catch (e) {
       logger.error(
@@ -102,10 +108,12 @@ async function dispatch(
 ): Promise<Dispatch> {
   let current = node;
   for (const p of plugins) {
+    if (!p.current()) continue;
     if (!p.selectors.some((s) => matches(s, current))) continue;
     let res: unknown;
     try {
       res = await p.host.call("parseNode", [current]);
+      if (!p.current()) continue;
     } catch (e) {
       logger.error(`plugin '${p.host.manifest.id}' parseNode failed: ${e}`);
       continue;

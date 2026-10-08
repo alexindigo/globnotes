@@ -6,8 +6,11 @@
     name="palette"
     anchor="center"
     class="border-none"
+    labelledby="command-palette-title"
+    trap-focus
   >
     <div class="flex max-h-[60dvh] min-h-0 w-full flex-1 flex-col p-3">
+      <h2 id="command-palette-title" class="sr-only">Command palette</h2>
       <CommandPalettePanel ref="panel" @run="onRun" />
     </div>
   </Modal>
@@ -18,6 +21,7 @@ import { nextTick, ref, watch } from "vue";
 
 import Modal from "./Modal.vue";
 import CommandPalettePanel from "./CommandPalettePanel.vue";
+import { runCommand } from "../commands.js";
 
 const isVisible = defineModel({ type: Boolean });
 const emit = defineEmits(["run"]);
@@ -30,8 +34,10 @@ watch(isVisible, async (visible) => {
   panel.value?.focus?.();
 });
 
-function onRun(topic) {
-  emit("run", topic);
+async function onRun(topic) {
   isVisible.value = false;
+  await nextTick();
+  try { const result=await runCommand(topic,{});emit("run",topic,result); }
+  catch(error) { console.error(`command '${topic}' failed`,error); }
 }
 </script>

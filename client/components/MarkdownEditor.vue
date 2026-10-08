@@ -20,6 +20,7 @@ import { tags } from "@lezer/highlight";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
 import { subscribe, TOPICS } from "../bus/index.js";
+import { isActionAvailable } from "../modalState.js";
 import { cm6LayerKeymap } from "../keybindings/editor-keymap.js";
 import * as sourceActions from "../keybindings/source-actions.js";
 
@@ -261,13 +262,13 @@ onMounted(() => {
   // Subscribe to the editor action channel; unsubscribed on teardown below.
   actionUnsubs = Object.entries(sourceActionMap).map(([topic, run]) =>
     subscribe(topic, () => {
-      if (view) run(view);
+      if (view && isActionAvailable(topic)) run(view);
     }));
   // The layer's Mod-F binding publishes editor:find; open the panel even
   // when the keypress didn't come from the editor's own keymap.
   actionUnsubs.push(
     subscribe(TOPICS.EDITOR_FIND, () => {
-      if (view) openSearchPanel(view);
+      if (view && isActionAvailable(TOPICS.EDITOR_FIND)) openSearchPanel(view);
     }),
   );
   // Reconfigure the layer keymap when the active layer (or a Custom-layer
@@ -311,6 +312,17 @@ function getMarkdown() {
   return view.state.doc.toString();
 }
 
+function getSnapshot() {
+  return view ? { ready: true, content: view.state.doc.toString() } : { ready: false };
+}
+
+function applyAcknowledgement(text) {
+  if (!view) return false;
+  const ranges = view.state.selection.ranges.map(range => EditorSelection.range(Math.min(range.anchor, text.length), Math.min(range.head, text.length)));
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: EditorSelection.create(ranges, view.state.selection.mainIndex) });
+  return true;
+}
+
 function setMarkdown(markdownText) {
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: markdownText },
@@ -321,7 +333,7 @@ function isWysiwygMode() {
   return false;
 }
 
-defineExpose({ getMarkdown, setMarkdown, isWysiwygMode, selectLine });
+defineExpose({ getMarkdown, getSnapshot, applyAcknowledgement, setMarkdown, isWysiwygMode, selectLine });
 </script>
 
 <style>

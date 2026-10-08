@@ -1,11 +1,9 @@
 <template>
-  <div class="flex min-h-0 w-full flex-col p-3">
+  <div ref="root" class="flex min-h-0 w-full flex-col p-3">
     <TextInput
-      ref="input"
       v-model="query"
       placeholder="Type a command…"
       @keydown="onKey"
-      @submit="runSelected"
     />
     <div class="mt-2 min-h-0 flex-1 overflow-y-auto">
       <div
@@ -47,29 +45,22 @@
 import { computed, nextTick, ref, watch } from "vue";
 
 import TextInput from "./TextInput.vue";
-import { ACTIONS } from "../keybindings/layers.js";
-import { dispatchAction } from "../keybindings/dispatcher.js";
-import { effectiveBindings, currentLayer } from "../keybindings/store.js";
-import { platformKey } from "../keybindings/keys.js";
+import { commandHint, commandRegistry } from "../commands.js";
 
 const query = ref("");
 const selected = ref("");
-const input = ref();
+const root = ref();
 
 const emit = defineEmits(["run"]);
 
 const entries = computed(() =>
-  Object.entries(ACTIONS).map(([topic, meta]) => ({
-    topic,
-    ...meta,
-    hint: keyHint(topic),
+  commandRegistry.value.map((command) => ({
+    topic: command.id,
+    label: command.label,
+    group: command.group,
+    hint: commandHint(command.id),
   })),
 );
-
-function keyHint(topic) {
-  const binding = effectiveBindings()[topic];
-  return binding ? platformKey(binding) : "";
-}
 
 const results = computed(() => {
   const q = query.value.trim().toLowerCase();
@@ -96,14 +87,13 @@ function move(delta) {
   const i = flat.indexOf(selected.value);
   selected.value = flat[(i + delta + flat.length) % flat.length];
   nextTick(() => {
-    const row = document.querySelector("li.bg-theme-background-elevated");
+    const row = root.value?.querySelector("li.bg-theme-background-elevated");
     row?.scrollIntoView({ block: "nearest" });
   });
 }
 
 function run(topic) {
   query.value = "";
-  dispatchAction(topic, {});
   emit("run", topic);
 }
 
@@ -127,7 +117,6 @@ function onKey(e) {
 function focus() {
   query.value = "";
   selected.value = results.value[0]?.topic ?? "";
-  nextTick(() => input.value?.focus?.());
 }
 
 defineExpose({ focus });

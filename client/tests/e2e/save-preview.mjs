@@ -206,6 +206,11 @@ try {
         assert(await page.evaluate("localStorage.getItem('defaultEditorMode')") === preference, "preview Save preserves the editor preference");
         assert(page.pageErrors.length === 0, `page errors: ${JSON.stringify(page.pageErrors)}`);
         assert(!events.slice(errorStart).some(e => e.level === "error"), "no browser console errors during Save");
+        // API/disk persistence can precede the browser's acknowledgement. The
+        // next scenario must not navigate while the prior Save still owns work.
+        if (action === "toolbar" && kind === "existing") {
+          await page.poll("(() => { const button = [...document.querySelectorAll('.content-column button')].find(button => button.textContent.trim() === 'Save'); return button?.getAttribute('aria-busy') === 'false' && !document.querySelector('.content-column .animate-spin'); })()", { timeout: 10000 });
+        }
         pending = null;
         completed++;
         console.log(`ok: ${phase}: persisted and routed`);
@@ -230,7 +235,6 @@ try {
   } else {
     if (targetId) await controller.send("Target.closeTarget", { targetId });
     await server?.close();
-    await Deno.remove(vault, { recursive: true });
   }
   page?.close();
   controller?.close();

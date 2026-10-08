@@ -15,11 +15,17 @@ import * as path from "@std/path";
 import { LocalAuth } from "./auth/local.ts";
 import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
+import { NoteOperations } from "./notes/operations.ts";
+import { PluginActions } from "./plugins/actions.ts";
+import { PluginDataStore } from "./plugins/data.ts";
+import { PluginEndpoints } from "./plugins/endpoints.ts";
+import { PluginLifecycle } from "./plugins/lifecycle.ts";
 import { PluginManager } from "./plugins/manager.ts";
+import { servicePluginRpc } from "./plugins/rpc.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { logger } from "./logger.ts";
-import { initState } from "./state.ts";
+import { initState, state } from "./state.ts";
 import { Fts5Indexer } from "./search/fts5.ts";
 
 function fileExists(p: string): boolean {
@@ -39,14 +45,97 @@ const plugins = new PluginManager(
   undefined,
   undefined,
   globalConfig.statePath,
+  {
+    // All worker roles (including legacy render replicas) go write:false
+    // while setup is pending or the vault is read-only.
+    renderWritable: () => state.lifecycle?.writable() ?? true,
+    // Policy writes commit through the short policy gate (wired below).
+    persistence: {
+      commit: (effect) => state.lifecycle!.gate.run(effect),
+    },
+  },
 );
 const auth = globalConfig.authType === AuthType.PASSWORD ||
     globalConfig.authType === AuthType.TOTP
   ? new LocalAuth(globalConfig)
   : null;
 initState(globalConfig, auth, notes, indexer, fileServing, plugins);
+
+// Guarded-operation bundle: lifecycle (epochs/gates) → operations facade →
+// deferred action queue → authoritative service runtime. Service
+// contributions start after setup completes, independent of rendering or
+// browser login; pure rendering stays lazy.
+const lifecycle = new PluginLifecycle(globalConfig);
+const operations = new NoteOperations({
+  notes,
+  files: fileServing,
+  indexer,
+  runtime: () => plugins.runtime,
+  lifecycle,
+});
+const actions = new PluginActions({
+  operations,
+  runtime: () => plugins.runtime,
+  vaultPath: globalConfig.notesPath,
+  statePath: globalConfig.statePath,
+});
+state.lifecycle = lifecycle;
+state.operations = operations;
+state.actions = actions;
+// Host control services: committed settings/data persistence (with owner
+// notification) and the sandbox endpoint router.
+const pluginData = new PluginDataStore(globalConfig.statePath, {
+  commit: (effect) => lifecycle.gate.run(effect),
+  settingsSchema: (id) => plugins.network.settingsSchema(id),
+  prepareSettingsCommit: (change) =>
+    plugins.network.prepareSettingsCommit(change),
+  settingsChanged: (id, page, revision) => {
+    plugins.runtime?.settingsChanged(id, page, revision);
+  },
+});
+state.pluginData = pluginData;
+state.pluginEndpoints = new PluginEndpoints(() => plugins.runtime);
+state.pluginNetwork = plugins.network;
+lifecycle.onFact((fact) => {
+  const runtime = plugins.runtime;
+  if (!runtime) return;
+  if (fact.action === "operation-error") {
+    runtime.post("on-operation-error", fact, {
+      operationId: fact.operationId,
+      action: "operation-error",
+    });
+    return;
+  }
+  runtime.post(`on-${fact.action}` as never, fact, {
+    operationId: fact.operationId,
+    action: fact.action,
+  });
+});
+lifecycle.onSync((fact) => {
+  plugins.syncAll(fact).catch((e) =>
+    logger.error(`plugin sync delivery failed: ${e}`)
+  );
+});
+plugins.configureRuntime({
+  operational: () => lifecycle.operational(),
+  writable: () => lifecycle.writable(),
+  commit: (effect) => lifecycle.gate.run(effect),
+  sanitizeFact: (manifest, fact) =>
+    lifecycle.applyReadGrants(manifest, fact as never),
+  changed: () => lifecycle.notifyInvalidation(),
+  rpc: servicePluginRpc({
+    vaultPath: globalConfig.notesPath,
+    statePath: globalConfig.statePath,
+    actions: () => actions,
+  }),
+});
+if (!globalConfig.setupRequired) {
+  plugins.runtime?.reconcile().catch((e) =>
+    logger.error(`plugin runtime reconciliation failed: ${e}`)
+  );
+}
 indexer.startBackgroundSync();
-// Plugins start lazily on the first render call (manager.ensureStarted).
+// Render pools still start lazily on the first render call.
 
 // Publish the path prefix into the built client before serving it
 // (Python: rewrite_index_html at import). Only when the client build
@@ -119,11 +208,15 @@ const app = await pathfinder({
 Deno.serve({ hostname, port }, (req, info) => {
   if (!prefix) return app(req, info);
   const url = new URL(req.url);
-  if (!url.pathname.startsWith(prefix)) {
+  // Exact segment matching: /notes-other is NOT the /notes app.
+  if (url.pathname !== prefix && !url.pathname.startsWith(prefix + "/")) {
     return Response.json({ detail: "Not Found" }, { status: 404 });
   }
   const stripped = url.pathname.slice(prefix.length) || "/";
-  return app(new Request(new URL(stripped, url.origin), req), info);
+  const target = new URL(stripped, url.origin);
+  // The prefix wrapper must preserve the query — plugin APIs depend on it.
+  target.search = url.search;
+  return app(new Request(target, req), info);
 });
 logger.info(
   `globnotes listening on http://${hostname}:${port}${globalConfig.pathPrefix}`,

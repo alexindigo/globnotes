@@ -54,7 +54,7 @@ Folders are never "managed": creating `a/b/c` makes the directories, renaming `a
 - **Obsidian-flavored rendering** — `[[wiki-links]]` (with `|alias` and `#heading`), `![[image embeds]]`, `==highlights==`, `> [!callouts]`, `%%comments%%`, YAML frontmatter, mermaid diagrams, KaTeX math.
 - **Sidebar folder tree** — Obsidian-style nested tree with expand/collapse, active-note highlight, filter textbox, and hover shortcuts to folder views.
 - **Search modal** — one modal that jumps and searches: fuzzy-match a note by display title, alias, or path and open it, or take the pinned footer row into the full-text page. Matched characters are highlighted inline in the title/path of each row (filename hits outrank folder hits); top 10 results in a sticky footer'd list. top 9 results, every one with a `Ctrl/Cmd+N` shortcut; `Ctrl/Cmd+Enter` opens the full search with the query. Type `#` to complete tags; empty query shows this session's recently-opened notes.
-- **16 themes** — light, dark, system auto-detect, Catppuccin, Dracula, Gruvbox, Nord, Solarized, Tokyo Night, and more. Pick one in the menu, preview it behind the panel, no page reload.
+- **16 themes** — light, dark, system auto-detect, Catppuccin, Dracula, Gruvbox, Nord, Solarized, Tokyo Night, and more. Pick one in **Settings → Appearance**, preview it behind the panel, no page reload.
 - **Full-text search and `#tags`** across the whole tree, scoped to a folder or recursive, with real-time filtering.
 - **New-note flow** — `Untitled N` prefills in the current folder context; dead wiki-links offer a one-click "Create note" affordance.
 - **Attachment-aware renames** — moving a note across folders prompts you to move its referenced files along too, or just fix the links.
@@ -119,9 +119,10 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 | `GLOBNOTES_INDEX_BATCH_SIZE` | `200` | Notes indexed per commit batch during the initial background sync. Lower it on very constrained hosts. |
 | `GLOBNOTES_INDEX_BATCH_DELAY` | `0.1` | Seconds to sleep between index batches (CPU throttle). `0` disables. |
 | `GLOBNOTES_SCAN_CACHE_TTL` | `15` | Seconds the vault file listing is cached (large vaults: raise it). |
-| `GLOBNOTES_AUTO_ENABLE_PLUGINS` | `true` | Default for new plugins in the settings UI (per-browser switches override). |
+| `GLOBNOTES_AUTO_ENABLE_PLUGINS` | `true` | Auto-enable default for new plugins. An explicit environment value pins that default; vault per-plugin enable/disable choices retain precedence. |
 | `GLOBNOTES_RENDER_WORKERS` | `2` | Sandboxed Deno Workers per plugin for rendering (heartbeats + auto-respawn). |
 | `GLOBNOTES_AUTH_TYPE` | *(unset → first-run wizard)* | `none`, `read_only`, `password` or `totp`. Env always wins over the wizard's stored choice. The wizard can also enrol `totp` itself (password mode → authenticator toggle): it mints a key, shows the QR, and requires a valid code before finishing. |
+| `GLOBNOTES_READ_ONLY_SETTINGS` | Stored choice, otherwise `false` | In public (`none`) mode, lock server-owned settings independently of note editing. An explicit `true` or `false` overrides the saved choice. |
 | `GLOBNOTES_USERNAME` / `GLOBNOTES_PASSWORD` | — | Login credentials (for `password`/`totp`). If unset, taken from the wizard's stored config. |
 | `GLOBNOTES_SECRET_KEY` | — | JWT signing key. If unset, taken from the wizard's stored config. |
 | `GLOBNOTES_TOTP_KEY` | — | TOTP secret (for `totp`). If unset, taken from the wizard's stored config; the boot-log QR is printed only for env-provided keys. |
@@ -134,6 +135,31 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 ### Home network deployment
 
 `GLOBNOTES_AUTH_TYPE=none` turns globnotes into a home-wide knowledge source: anyone (and any *agent*) on the network can read and write. `read_only` is the middle ground — open browsing, no writes ("family wiki; editing happens in Obsidian"). Either way, everything in the tree becomes reachable, so keep it to networks you trust. A warning is logged at startup when auth is off.
+
+### Access settings
+
+**Settings → Access** updates the existing account in place. Leave the new-password
+field blank to keep the current password hash. Adding an authenticator first
+shows its enrolment QR; credentials and sessions remain unchanged until its new
+code is confirmed. Protected access changes additionally require the current
+password and current authenticator code when already enabled. A committed
+password/2FA change invalidates old sessions and requires sign-in with the
+confirmed credentials. Cancelling enrolment does not reset setup or the account.
+
+The public-access panel's **Read-only settings** locks access/security, branding,
+vault plugin policy/settings and operator permissions while retaining public note
+editing and browser-local theme/keybinding/line-number/debug preferences. It
+defaults off for initial public setup, on for a saved other-mode → public change,
+and remains selectable before saving. Existing public deployments without the
+option retain writable settings. Read-only note access still denies note writes.
+
+Locked public settings cannot unlock themselves through the UI, API or legacy
+setup/reset URL. Recover through deployment configuration: set
+`GLOBNOTES_READ_ONLY_SETTINGS=false` and restart the deployment, or edit
+`read_only_settings` in the state directory's `config.json` and restart. Environment
+values retain precedence. Public/read-only modes provide no management-only
+login. Environment-pinned credentials/signing keys must be changed through their
+deployment configuration when they prevent a requested effective transition.
 
 ## Agent access
 
@@ -160,7 +186,25 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ## Plugins
 
-Rendering is a markdown-it pipeline extended by **plugins** — each running in its own permission-narrowed Deno Worker (no network/env/write unless the manifest asks). The built-ins (`globnotes-autolinks`, `-callout`, `-comments`, `-embeds`, `-mark`, `-mermaid`) produce the Obsidian-flavored rendering out of the box; drop your own into `<vault>/.globnotes/plugins/<id>/` and they join the pipeline. Per-plugin switches and the auto-enable default live in the menu → **Plugins** dialog. See [docs/plugins.md](docs/plugins.md) for the authoring guide.
+Plugins can contribute rendering, server workflows and guards, browser/editor
+extensions, commands, settings pages and sandboxed HTTP endpoints. The built-ins
+(`globnotes-autolinks`, `-callout`, `-comments`, `-embeds`, `-mark`, `-mermaid`)
+provide the Obsidian-flavored rendering; install your own under
+`<state dir>/plugins/<id>/` (`<vault>/.globnotes` by default).
+
+Open **Settings → Plugins** for inventory, enablement, auto-enable and permission
+review. Vault policy owns server, browser and editor activation across browsers.
+Legacy browser render preferences may suppress an already vault-enabled renderer
+for a request; they cannot activate a vault-disabled plugin or stop server
+workflows. Theme/keybindings remain browser preferences.
+
+Server contributions run in permission-narrowed Deno Workers. Manifests request
+network data and remote-code import access; effective rights also require the
+per-plugin **Allow network** master, operator approval and parent authority.
+Browser/editor code remains trusted same-origin code, and these server controls
+do not restrict browser network loads from rendered content. Explicit legacy raw
+filesystem grants remain a separate trust boundary. See the
+[authoring guide](docs/plugins.md) and [Plugin API](docs/plugin-api.md).
 
 ## Event bus
 
@@ -168,17 +212,17 @@ Components communicate over a mitt-based client-side event bus — publishers an
 
 ## Keybindings
 
-Keyboard shortcuts are a **switchable layer** — **navbar menu → Keybindings** opens a panel whose left rail picks one of five named layers (**Legacy Flatnotes**, **Obsidian**, **Notion**, **Typora**, **VS Code-lite**) plus a **Custom** layer, with a cheat sheet of the active layer's bindings beside it.
+Keyboard shortcuts are a **switchable layer** — **Settings → Keybindings** shows a rail with five named layers (**Legacy Flatnotes**, **Obsidian**, **Notion**, **Typora**, **VS Code-lite**) plus a **Custom** layer, with a cheat sheet of the active layer's bindings beside it.
 
 - **Cross-layer constants:** `Ctrl+Alt+N` (new note) and `Ctrl+Alt+H` (home) work everywhere — every app's own new-note key is browser-reserved.
 - **Save:** Legacy keeps `Ctrl/Cmd+Enter`; the other layers use `Mod+S` with `Ctrl/Cmd+Enter` kept as an alias. Legacy also restores Flatnotes' `/` for the quick switcher.
-- **Honest no-ops:** layers only remap actions globnotes has — Notion's `/` (slash menu) or Obsidian's `Mod+P` (command palette) are bound but do nothing.
+- **Host commands:** Obsidian's `Mod+P` and VS Code-lite's `Mod+Shift+P` open the command palette, including registered plugin commands. Notion's slash-menu action remains unimplemented.
 - **Both editors, one channel:** keys reach the editors as `editor:*` actions on the event bus, so source mode and WYSIWYG handle the same layer — formatting actions that WYSIWYG applies natively are applied in source mode as markdown-syntax edits (Typora-style). The layer also fixes latent keymap conflicts: `Mod+Enter` saves instead of inserting a blank line, `Mod+I` toggles italic, and Escape collapses a multi-cursor selection before exiting.
 - **Custom layer:** starts as a copy of Legacy; in the cheat sheet, click any binding and press a new key to remap it (marked entries reset with ↺). Overrides are stored per-browser in `localStorage`, same as the theme choice.
 
 ## Branding
 
-Make an instance yours without touching code: **navbar menu → Branding** sets the brand **name**, an **accent color**, and uploads a **logo / icon** (SVG, PNG, JPG, WebP, GIF or ICO). Everything lives in the state dir — name and accent in `config.json`, files in `brand/` — so branding travels with the vault like everything else (unless the state dir is relocated with `GLOBNOTES_INDEX_PATH`, in which case it travels with that).
+Make an instance yours without touching code: **Settings → Branding** sets the brand **name**, an **accent color**, and uploads a **logo / icon** (SVG, PNG, JPG, WebP, GIF or ICO). Everything lives in the state dir — name and accent in `config.json`, files in `brand/` — so branding travels with the vault like everything else (unless the state dir is relocated with `GLOBNOTES_INDEX_PATH`, in which case it travels with that).
 
 - The accent recolors the Globnotes Light/Dark themes; themes with a brand color of their own keep it.
 - The brand name replaces "globnotes" in the browser tab, the web manifest, and the navbar wordmark.
@@ -207,16 +251,13 @@ See [FutureDevelopment.md](FutureDevelopment.md) — note transclusion, unresolv
 deno install
 
 # Server — tests, lint, type check
-deno task test       # 121 integration + unit tests
+deno task test       # Server integration and unit tests
 deno task lint
 deno task check
 
 # Client build & unit tests (via Deno npm compat — no npm/node required)
 deno task build:client
 deno task test:client
-
-# Client dev server (Vite under Deno)
-deno task dev:client
 ```
 
 ## Credit

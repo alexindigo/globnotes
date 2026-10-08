@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { subscribe, TOPICS } from "../bus/index.js";
+import { registerModal } from "../modalState.js";
 import {
   dispatchAction,
   initDispatcher,
@@ -154,5 +155,14 @@ describe("dispatcher", () => {
     const events = collect(TOPICS.APP_OPEN_PALETTE);
     dispatchAction(TOPICS.APP_OPEN_PALETTE);
     expect(events).toHaveLength(1);
+  });
+  it("dialog ownership blocks global app/editor actions while the Settings action stays idempotent", () => {
+    const home=collect(TOPICS.APP_GO_HOME), save=collect(TOPICS.EDITOR_SAVE), settings=collect(TOPICS.APP_OPEN_SETTINGS);
+    const dialog=registerModal({name:'settings'});
+    try {
+      expect(dispatchAction(TOPICS.APP_GO_HOME)).toBe(false); expect(dispatchAction(TOPICS.EDITOR_SAVE)).toBe(false);
+      pressKey(72,{ctrlKey:true,altKey:true}); expect(home).toEqual([]); expect(save).toEqual([]);
+      expect(dispatchAction(TOPICS.APP_OPEN_SETTINGS)).toBe(true); expect(settings).toHaveLength(1);
+    } finally { dialog.dispose(); }
   });
 });
