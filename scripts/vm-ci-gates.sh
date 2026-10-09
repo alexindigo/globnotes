@@ -40,9 +40,8 @@ gate shell sh -n entrypoint.sh
 gate cold-load env ROOT="$ROOT" LABEL="hook-$(basename "$WORK")" "$DENO" run \
   --cached-only --frozen --config="$ROOT/deno.json" --unstable-worker-options \
   --allow-read --allow-write --allow-net --allow-env --allow-run /home/tester/v22-release/scripts/cold-load.mjs "$ROOT" "hook-$(basename "$WORK")"
-gate native env GLOBNOTES_E2E_ARTIFACTS="$WORK/artifacts/native" "$DENO" run \
-  --cached-only --frozen --config=deno.json --unstable-worker-options \
-   --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys client/tests/e2e/legacy-native-suite.mjs
+gate native-shell sh -n client/tests/e2e/run.sh
+gate native env DENO="$DENO" GLOBNOTES_E2E_ARTIFACTS="$WORK/artifacts/native" sh client/tests/e2e/run.sh
 gate native-results env GLOBNOTES_E2E_ARTIFACTS="$WORK/artifacts/native-results" "$DENO" run \
   --cached-only --frozen --config=deno.json --allow-read --allow-write --allow-net \
   --allow-env --allow-run --allow-sys client/tests/e2e/native-result-controls.mjs
@@ -52,3 +51,6 @@ gate unit-controls env GLOBNOTES_E2E_ARTIFACTS="$WORK/artifacts/unit-controls" "
 gate native-controls env GLOBNOTES_E2E_ARTIFACTS="$WORK/artifacts/native-controls" "$DENO" run \
   --cached-only --frozen --config=deno.json --unstable-worker-options \
   --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys client/tests/e2e/native-consumer-controls.mjs
+gate native-entrypoint-results env GLOBNOTES_E2E_ARTIFACTS="$WORK/artifacts/entrypoint-results" "$DENO" run \
+  --cached-only --frozen --config=deno.json --allow-read --allow-write \
+  --allow-env --allow-run client/tests/e2e/runner-entrypoint-controls.mjs

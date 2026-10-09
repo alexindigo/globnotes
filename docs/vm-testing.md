@@ -68,6 +68,12 @@ unfinished children and failed consumers reject the suite. Clipboard cases resto
 the prior guest clipboard without logging its contents. Fixtures retain their
 vault/state/server ownership records, API/disk/UI results and failure evidence.
 
+`client/tests/e2e/run.sh` delegates to this same native suite and preserves its
+process status. The VM hook invokes that entrypoint directly; it does not launch
+Docker or infer success from output text. `runner-entrypoint-controls.mjs` exercises
+the real shell delegation with both a misleading nonzero child and a completed
+zero-exit child.
+
 | # | Additional gate | What it observes |
 |---|---|---|
 | 1 | `native-result-controls.mjs` | Real nonzero children with misleading success output, missing startup, timeout with zero exit, and a completed child |
