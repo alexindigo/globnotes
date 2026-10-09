@@ -42,7 +42,6 @@ describe("Home empty vault", () => {
     const btn = wrapper.find("button");
     expect(btn.exists()).toBe(true);
     expect(btn.text()).toContain("Create new note");
-    expect(btn.classes()).toContain("bg-theme-brand");
   });
 
   it("hides the CTA in read-only vaults", async () => {

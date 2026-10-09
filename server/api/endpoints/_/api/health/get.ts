@@ -7,6 +7,6 @@ export const auth = false;
 
 import { json } from "@pathfinder/pathfinder";
 
-export default function (): string {
+export default function (): Response {
   return json("OK");
 }

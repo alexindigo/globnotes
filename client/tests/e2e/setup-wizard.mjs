@@ -136,7 +136,7 @@ try {
   }
 
   browser = await launchBrowser({ port: CDP_PORT });
-  const page = await connect({ port: CDP_PORT });
+  const page = await connect({ port: CDP_PORT, binding: browser });
 
   // -- 1. Geometry stability across the viewport matrix ---------------------
   for (const viewport of [
@@ -356,6 +356,7 @@ try {
   await fillField(page, "input[placeholder=Title]", "WizardOpen");
   await page.clickText("Save");
   await page.poll(`location.pathname.includes("WizardOpen")`);
+  await page.poll("fetch('/_/api/notes/WizardOpen').then(r=>r.json()).then(note=>note.path==='WizardOpen')");
   console.log("ok: open access creates a note via UI");
   // After save the note shows in view mode — toggle Edit, then type into the
   // actual editable element (CodeMirror .cm-content / .ProseMirror, NOT the
@@ -371,21 +372,23 @@ try {
   })()`);
   await page.send("Input.insertText", { text: " edited-open" });
   await page.clickText("Save");
-  await page.poll(`document.body.textContent.includes("edited-open")`, {
+  await page.poll(`fetch('/_/api/notes/WizardOpen').then(r=>r.json()).then(note=>note.content.includes('edited-open'))`, {
     timeout: 8000,
   });
+  await page.poll("(()=>{const button=[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save');return button?.getAttribute('aria-busy')==='false'&&!document.querySelector('.content-column .animate-spin');})()");
   console.log("ok: open access edits a note via UI");
   // Delete via UI.
   await page.clickText("Delete");
-  await page.waitForTimeout(400);
+  await page.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Confirm Deletion')");
   await page.clickText("Delete");
-  await page.poll(`!location.pathname.includes("WizardOpen")`, {
+  await page.poll(`location.pathname==='/'`, {
     timeout: 8000,
   });
-  const gone = await page.evaluate(
-    `!document.querySelector("aside")?.textContent.includes("WizardOpen")`,
-  );
-  assert(gone, "open access deletes a note via UI");
+  const response = await fetch(C.baseUrl + "/_/api/notes/WizardOpen");
+  await response.body?.cancel();
+  assert(response.status === 404, "open access deletes the exact note via UI/API");
+  try { await Deno.stat(join(vaultC, "WizardOpen.md")); throw Error("Deleted note remains on disk"); }
+  catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; }
 
   console.log(`\nartifacts: ${ARTIFACTS}`);
   console.log("SETUP WIZARD OK");

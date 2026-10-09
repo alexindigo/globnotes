@@ -31,7 +31,7 @@ const server = await bootServer({
 });
 const browser = await launchBrowser({ port: CDP_PORT });
 try {
-  const page = await connect({ port: CDP_PORT });
+  const page = await connect({ port: CDP_PORT, binding: browser });
   await page.send("Emulation.setDeviceMetricsOverride", {
     width: 1280, height: 900, deviceScaleFactor: 1, mobile: false,
   });
@@ -144,5 +144,5 @@ try {
 } finally {
   await stopBrowser(browser);
   await server.close();
-  Deno.removeSync(vault, { recursive: true });
+  console.log("Retained find fixture", vault);
 }

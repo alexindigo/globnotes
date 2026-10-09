@@ -49,7 +49,7 @@ const server = await bootServer({
 });
 const browser = await launchBrowser({ port: CDP_PORT });
 try {
-  const page = await connect({ port: CDP_PORT });
+  const page = await connect({ port: CDP_PORT, binding: browser });
   // §6 asks for both themes: THEME=dark runs the same checks dark-side.
   if (process.env.THEME) {
     await page.addInitScript(
@@ -159,5 +159,5 @@ try {
 } finally {
   await stopBrowser(browser);
   await server.close();
-  Deno.removeSync(vault, { recursive: true });
+  console.log("Retained anchor fixture", vault);
 }

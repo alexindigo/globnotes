@@ -6,14 +6,14 @@
  * wizard shows the bundle and the code entered at submit proves the user
  * recorded the key. */
 
-import { HttpError } from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { totpEnrolment } from "@server/auth/totp_enrolment.ts";
 import { state } from "@server/state.ts";
 
 export const auth = false;
 
 export default async function (
-  request,
+  request: PathfinderRequest,
 ): Promise<Record<string, string>> {
   if (!state.config.setupRequired) {
     throw new HttpError(409, "Setup has already been completed.");

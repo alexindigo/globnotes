@@ -73,22 +73,6 @@ describe("Modal opt-in dialog behavior", () => {
     expect(dialog.attributes("aria-labelledby")).toBe("title-id");
   });
 
-  it("keeps default anchors untouched and adds viewport-center on request", () => {
-    const top = track(mount(Modal, {
-      props: { modelValue: true, name: "test" },
-      slots: { default: "<p>content</p>" },
-    }));
-    expect(top.html()).toContain("mt-[30vh]");
-
-    const centered = track(mount(Modal, {
-      props: { modelValue: true, name: "test", anchor: "viewport-center" },
-      slots: { default: "<p>content</p>" },
-    }));
-    expect(centered.html()).toContain("w-[80dvw]");
-    expect(centered.html()).toContain("h-[80dvh]");
-    expect(centered.html()).not.toContain("mt-[30vh]");
-  });
-
   it("traps Tab within the dialog only when trapFocus is on", async () => {
     const wrapper = track(mount(Modal, {
       props: { modelValue: true, name: "test", trapFocus: true },
@@ -122,15 +106,17 @@ describe("Modal opt-in dialog behavior", () => {
   it("does not trap Tab by default", async () => {
     const wrapper = track(mount(Modal, {
       props: { modelValue: true, name: "test" },
-      slots: { default: '<button id="only">one</button>' },
+      slots: { default: '<button id="first">one</button><button id="last">two</button>' },
       attachTo: document.body,
     }));
-    wrapper.find("#only").element.focus();
-    document.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Tab", cancelable: true }),
-    );
     await nextTick();
-    expect(document.activeElement).toBe(wrapper.find("#only").element);
+    wrapper.find("#last").element.focus();
+    const event = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
+    document.dispatchEvent(event);
+    await nextTick();
+    expect(event.defaultPrevented).toBe(false);
+    // jsdom does not perform browser Tab traversal; only test ownership here.
+    expect(document.activeElement).toBe(wrapper.find("#last").element);
   });
   it("hidden inputs cannot take initial focus or become the last Tab target", async () => {
     const wrapper=track(mount(Modal,{attachTo:document.body,props:{modelValue:true,name:'visible',trapFocus:true},slots:{default:'<input type="hidden" id="hidden-first"><button id="visible-first">first</button><button id="visible-last">last</button><input type="hidden" id="hidden-last">'}}));

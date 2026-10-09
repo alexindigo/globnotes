@@ -5,10 +5,10 @@
 
 import { invalid_folder_path } from "@server/api_messages.ts";
 import { isValidNotePath } from "@server/helpers.ts";
-import { HttpError } from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 
-export default function (request) {
+export default function (request: PathfinderRequest) {
   const term = request.query.get("term") ?? "*";
   // FastAPI Literal validation: invalid sort/order values are 422 with
   // the literal_error shape.

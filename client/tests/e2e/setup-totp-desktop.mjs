@@ -4,6 +4,7 @@ import { bootServer } from "../../../tests/helpers/boot.ts";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { join } from "node:path";
 import { authenticatorCode } from "../../../tests/helpers/totp.ts";
+import { captureClipboard, restoreClipboard } from "./native-clipboard.mjs";
 
 const externalBrowser = Deno.env.get("CDP_PORT");
 const port = Number(externalBrowser || 9398);
@@ -11,6 +12,7 @@ const artifacts = await Deno.makeTempDir({ prefix: "totp-desktop-shots-" });
 const server = await bootServer({});
 let browser;
 let page;
+let priorClipboard;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -19,7 +21,10 @@ function assert(condition, message) {
 
 function stable(before, after, label) {
   for (const [name, rect] of Object.entries(before)) {
-    for (const key of ["x", "y", "w", "h"]) {
+    // The action follows intrinsic content vertically; shell() proves its
+    // feedback-lane ordering on every observation, and fit() proves reachability.
+    const axes = name === "finish" ? ["x", "w", "h"] : ["x", "y", "w", "h"];
+    for (const key of axes) {
       assert(
         Math.abs(rect[key] - after[name][key]) <= 0.5,
         `${label}: ${name}.${key} stable`,
@@ -30,9 +35,11 @@ function stable(before, after, label) {
 
 async function shell() {
   return await page.evaluate(`(() => {
+    const dialog = document.querySelector('[role=dialog]');
+    if(document.querySelector('button[type=submit]').getBoundingClientRect().top<dialog.querySelector('form > p[role=alert]').getBoundingClientRect().bottom)throw Error('Finish overlaps or precedes its feedback lane');
     const rect = (el) => {
       const r = el.getBoundingClientRect();
-      return { x: r.x, y: r.y, w: r.width, h: r.height };
+      return { x: r.x, y: r.y + (el===dialog ? 0 : dialog.scrollTop), w: r.width, h: r.height };
     };
     return Object.fromEntries([
       ['dialog', document.querySelector('[role=dialog]')],
@@ -47,6 +54,7 @@ async function fit(label) {
   const measured = await page.evaluate(`(() => {
     const dialog = document.querySelector('[role=dialog]');
     const qr = document.querySelector('#setup-totp-qr img');
+    const qrLane = qr.parentElement.parentElement;
     const fields = document.querySelector('.setup-totp-fields');
     const row = document.querySelector('.setup-totp-enrolment');
     const input = document.querySelector('#setup-totp-code');
@@ -58,8 +66,8 @@ async function fit(label) {
     };
     const r = rect(footer);
     return {
-      qr: rect(qr), fields: rect(fields), row: rect(row), input: rect(input),
-      footer: r, dialog: rect(dialog),
+      qr: rect(qr), qrLane: rect(qrLane), fields: rect(fields), row: rect(row), input: rect(input),
+      footer: r, dialog: rect(dialog), feedback: rect(document.querySelector('form > p[role=alert]')),
       authenticatorGap: document.querySelector('#setup-totp-label')
         .parentElement.parentElement.getBoundingClientRect().top -
         document.querySelector('#setup-password').getBoundingClientRect().bottom,
@@ -74,7 +82,7 @@ async function fit(label) {
         ? rect(document.querySelector('[role=tooltip]')) : null,
     };
   })()`);
-  const { qr, fields, row, input, footer, dialog } = measured;
+  const { qr, qrLane, fields, row, input, footer, dialog } = measured;
   assert(
     measured.authenticatorGap >= 16,
     `${label}: authenticator row has breathing room`,
@@ -89,40 +97,38 @@ async function fit(label) {
     `${label}: input beside QR`,
   );
   assert(
-    Math.abs(fields.y + fields.h / 2 - (qr.y + qr.h / 2)) <= 0.5,
-    `${label}: adjacent content shares the QR centerline`,
+    Math.abs(fields.y + fields.h / 2 - (qrLane.y + qrLane.h / 2)) <= 0.5,
+    `${label}: adjacent content shares the QR/feedback lane centerline`,
   );
   assert(
-    fields.y >= qr.y && fields.bottom <= qr.bottom && row.h <= qr.h + 0.5,
-    `${label}: QR sets the entire enrolment row height`,
+    fields.y >= qrLane.y && fields.bottom <= qrLane.bottom && Math.abs(row.h-Math.max(qrLane.h,fields.h))<=0.5,
+    `${label}: enrolment row contains its complete intrinsic lanes`,
   );
   assert(
-    input.right <= dialog.right && row.bottom < footer.y,
+    input.right <= dialog.right && row.bottom < footer.y && measured.feedback.bottom <= footer.y,
     `${label}: no overlap`,
   );
   if (measured.tooltip) {
     assert(
-      measured.tooltip.x >= qr.right && measured.tooltip.bottom <= fields.y &&
-        measured.tooltip.right <= dialog.right,
-      `${label}: tooltip beside QR without covering instructions or fields`,
+      measured.tooltip.y >= qr.bottom && measured.tooltip.x >= qr.x &&
+        measured.tooltip.right <= qr.right && measured.tooltip.bottom <= qrLane.bottom,
+      `${label}: feedback follows QR within its own lane without covering fields`,
     );
   }
   assert(
-    measured.verticalOverflow <= 1 && measured.horizontalOverflow <= 1 &&
+    measured.horizontalOverflow <= 1 &&
       measured.documentOverflow <= 0,
-    `${label}: fits without scrolling`,
+    `${label}: no horizontal escape`,
   );
-  const viewportHeight = await page.evaluate("innerHeight");
-  assert(
-    measured.footerHit && footer.bottom <= viewportHeight,
-    `${label}: Finish unobscured`,
-  );
+  const reachable = await page.evaluate("(async()=>{const dialog=document.querySelector('[role=dialog]'),footer=document.querySelector('button[type=submit]'),before=dialog.scrollTop;footer.scrollIntoView({block:'nearest'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const r=footer.getBoundingClientRect(),d=dialog.getBoundingClientRect(),hit=footer.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));const result={hit,inside:r.top>=d.top&&r.bottom<=d.bottom&&r.bottom<=innerHeight,scrollTop:dialog.scrollTop};dialog.scrollTop=before;return result;})()");
+  assert(reachable.hit && reachable.inside, `${label}: Finish reachable and unobscured`);
+  measured.reachableFooter = reachable;
   console.log(JSON.stringify({ label, measured }));
 }
 
 try {
   if (!externalBrowser) browser = await launchBrowser({ port });
-  page = await connect({ port });
+  page = await connect({ port, binding: browser });
   await page.send("Network.enable");
   let bundle;
   let heldEnrolment;
@@ -226,6 +232,7 @@ try {
       await page.screenshot(join(artifacts, `${label}-ready.png`));
 
       await page.grantClipboard(server.baseUrl);
+      if (priorClipboard === undefined) priorClipboard = await captureClipboard(page);
       await page.evaluate(
         "navigator.clipboard.writeText('clipboard-before-confirmation')",
       );
@@ -355,8 +362,11 @@ try {
   console.log(`artifacts: ${artifacts}`);
   console.log("TOTP DESKTOP OK");
 } finally {
-  page?.close();
-  if (browser) await stopBrowser(browser);
-  await server.close();
-  await Deno.remove(server.vault, { recursive: true });
+  try { if (priorClipboard !== undefined) await restoreClipboard(page, priorClipboard); }
+  finally {
+    await page?.close();
+    if (browser) await stopBrowser(browser);
+    await server.close();
+    console.log("Retained TOTP fixture", server.vault);
+  }
 }

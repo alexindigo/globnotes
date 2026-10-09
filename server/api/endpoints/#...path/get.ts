@@ -12,7 +12,11 @@
  * `require_auth(request)`).
  */
 
-import { HttpError } from "@pathfinder/pathfinder";
+import {
+  type Context,
+  HttpError,
+  type PathfinderRequest,
+} from "@pathfinder/pathfinder";
 
 import { file_not_found, invalid_file_path } from "@server/api_messages.ts";
 import { enforceAuth } from "@server/auth/middleware.ts";
@@ -66,8 +70,8 @@ function isFile(p: string): boolean {
 }
 
 export default async function (
-  request,
-  _context,
+  request: PathfinderRequest,
+  _context: Context,
 ): Promise<Response> {
   // Static client assets live under /_/ before anything vault-space.
   const path = request.path;

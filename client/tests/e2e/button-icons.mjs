@@ -15,7 +15,7 @@ const saveIcon = `${saveSelector} svg`;
 const events = [];
 const measurements = [];
 const stages = [];
-let server, controller, page, targetId, pendingMarker, failure;
+let server, page, targetId, pendingMarker, failure;
 let phase = "setup";
 let completed = 0;
 
@@ -51,52 +51,6 @@ async function bounded(label, operation, timeout = 15000) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-async function browserController() {
-  const version = await bounded("browser discovery", async () => {
-    const response = await fetch(`http://127.0.0.1:${port}/json/version`);
-    assert(response.ok, "native browser discovery responds");
-    return await response.json();
-  });
-  const ws = new WebSocket(version.webSocketDebuggerUrl);
-  await bounded(
-    "browser WebSocket open",
-    () =>
-      new Promise((resolve, reject) => {
-        ws.onopen = resolve;
-        ws.onerror = () => reject(new Error("native browser WebSocket failed"));
-      }),
-  );
-  let seq = 0;
-  const pending = new Map();
-  ws.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    const request = pending.get(message.id);
-    if (!request) return;
-    if (message.error) request.reject(new Error(message.error.message));
-    else request.resolve(message.result);
-  };
-  return {
-    async send(method, params = {}) {
-      const id = ++seq;
-      try {
-        return await bounded(
-          `browser ${method}`,
-          () =>
-            new Promise((resolve, reject) => {
-              pending.set(id, { resolve, reject });
-              ws.send(JSON.stringify({ id, method, params }));
-            }),
-        );
-      } finally {
-        pending.delete(id);
-      }
-    },
-    close() {
-      ws.close();
-    },
-  };
 }
 
 function toolbar() {
@@ -318,32 +272,8 @@ try {
   console.log(
     `own fixture: ${vault}; app: ${server.baseUrl}; external CDP: ${port}`,
   );
-  // Never bootstrap through an arbitrary existing page: it may be frozen or dirty.
-  controller = await browserController();
-  ({ targetId } = await controller.send("Target.createTarget", {
-    url: "about:blank",
-  }));
-  const endpoint = `http://127.0.0.1:${port}/json/list`;
-  const targets = await bounded(
-    "owned target discovery",
-    async () => (await fetch(endpoint)).json(),
-  );
-  const target = targets.find((t) => t.id === targetId);
-  assert(target, "own browser target appears in CDP discovery");
-  // connect() selects the first page; narrow discovery to our own fresh target.
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input, init) =>
-    String(input) === endpoint
-      ? Promise.resolve(new Response(JSON.stringify([target])))
-      : originalFetch(input, init);
-  try {
-    page = await bounded(
-      `connect owned target ${targetId}`,
-      () => connect({ port }),
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  page = await bounded("connect owned native target/context", () => connect({ port }));
+  targetId = page.targetId;
   for (
     const name of ["send", "evaluate", "poll", "goto", "click", "screenshot"]
   ) {
@@ -507,17 +437,8 @@ try {
       JSON.stringify(measurements, null, 2),
     );
   } finally {
-    try {
-      if (!preserve && targetId) {
-        await controller.send("Target.closeTarget", { targetId });
-      }
-    } finally {
-      page?.close();
-      controller?.close();
-      if (!preserve) {
-        await server?.close();
-      }
-    }
+    if (preserve) { page?.page.close(); page?.browser.close(); }
+    else { try { await page?.close(); } finally { await server?.close(); } }
     console.log(`button-icons artifacts: ${artifacts}`);
   }
 }

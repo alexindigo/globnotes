@@ -11,14 +11,16 @@
 import * as path from "@std/path";
 import { brandDirPath, generateWebManifest } from "@server/brand.ts";
 import { guessType } from "@server/files/mimetypes.ts";
-import { HttpError } from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 
 export const auth = false;
 
 const MANIFEST_NAME = "site.webmanifest";
 
-export default function (request): Response {
+export default function (
+  request: PathfinderRequest<{ file: string }>,
+): Response {
   const rel = request.params.file;
   if (!rel || rel.includes("..")) {
     throw new HttpError(404, "Not Found");

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { renderMarkdown } from "@server/render/pipeline.ts";
+import type { PathfinderRequest } from "@pathfinder/pathfinder";
 
 /** POST /_/api/render — render an unsaved markdown buffer through the
  * plugin pipeline (markdown-it + sandboxed worker plugins). The Preview
@@ -8,7 +9,7 @@ import { renderMarkdown } from "@server/render/pipeline.ts";
  * not the stored note. Body = raw markdown (text/markdown). Query flags
  * match the GET path: `disabled` (comma-separated plugin ids, from the
  * client's localStorage plugin switches) and `lineNumbers=true`. */
-export default async function (request): Promise<Response> {
+export default async function (request: PathfinderRequest): Promise<Response> {
   const content = await request.body.text();
   const disabled = (request.query.get("disabled") ?? "")
     .split(",")

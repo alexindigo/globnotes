@@ -2,14 +2,16 @@
 
 import { note_not_found } from "@server/api_messages.ts";
 import { InvalidPathError, NoteNotFoundError } from "@server/notes/models.ts";
-import { HttpError } from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { renderMarkdown } from "@server/render/pipeline.ts";
 import { state } from "@server/state.ts";
 
 /** Render a note's markdown through the plugin pipeline (markdown-it +
  * sandboxed worker plugins). v1 returns the full document; streamed
  * fragments land as a follow-up without changing this contract. */
-export default async function (request): Promise<Response> {
+export default async function (
+  request: PathfinderRequest<{ path: string }>,
+): Promise<Response> {
   let content: string;
   try {
     content = state.notes.get(request.params.path).content ?? "";

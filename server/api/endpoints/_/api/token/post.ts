@@ -10,13 +10,13 @@
 import { login_failed } from "@server/api_messages.ts";
 import type { Login, Token } from "@server/auth/models.ts";
 import { AuthType } from "@server/config.ts";
-import { HttpError } from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { logger } from "@server/logger.ts";
 import { state } from "@server/state.ts";
 
 export const auth = false;
 
-export default async function (request): Promise<Token> {
+export default async function (request: PathfinderRequest): Promise<Token> {
   if (
     state.config.authType === AuthType.NONE ||
     state.config.authType === AuthType.READ_ONLY

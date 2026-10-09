@@ -7,7 +7,7 @@ const vault = await Deno.makeTempDir({ prefix: "save-preview-vault-" });
 const artifacts = await Deno.makeTempDir({ prefix: "save-preview-artifacts-" });
 const destination = "SaveDestination";
 const events = [];
-let server, controller, page, targetId, failure, pending;
+let server, page, targetId, failure, pending;
 let phase = "setup";
 let completed = 0;
 
@@ -30,52 +30,8 @@ async function bounded(operation, timeout = 15000) {
 }
 
 async function ownPage() {
-  const version = await (await fetch(`http://127.0.0.1:${port}/json/version`, {
-    signal: AbortSignal.timeout(5000),
-  })).json();
-  const ws = new WebSocket(version.webSocketDebuggerUrl);
-  await bounded(() => new Promise((resolve, reject) => {
-    ws.onopen = resolve;
-    ws.onerror = () => reject(new Error("browser WebSocket failed"));
-  }));
-  let seq = 0;
-  const requests = new Map();
-  ws.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    const request = requests.get(message.id);
-    if (!request) return;
-    if (message.error) request.reject(new Error(message.error.message));
-    else request.resolve(message.result);
-  };
-  controller = {
-    async send(method, params = {}) {
-      const id = ++seq;
-      try {
-        return await bounded(() => new Promise((resolve, reject) => {
-          requests.set(id, { resolve, reject });
-          ws.send(JSON.stringify({ id, method, params }));
-        }));
-      } finally {
-        requests.delete(id);
-      }
-    },
-    close: () => ws.close(),
-  };
-  ({ targetId } = await controller.send("Target.createTarget", { url: "about:blank" }));
-  const endpoint = `http://127.0.0.1:${port}/json/list`;
-  const targets = await (await fetch(endpoint, { signal: AbortSignal.timeout(5000) })).json();
-  const target = targets.find((t) => t.id === targetId);
-  assert(target, "owned target appears in browser discovery");
-  // The shared driver selects the first page; expose only our newly created target.
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input, init) => String(input) === endpoint
-    ? Promise.resolve(new Response(JSON.stringify([target])))
-    : originalFetch(input, init);
-  try {
-    page = await bounded(() => connect({ port }));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  page = await bounded(() => connect({ port }));
+  targetId = page.targetId;
   for (const name of ["send", "evaluate", "poll", "goto", "click"]) {
     const method = page[name].bind(page);
     page[name] = (...args) => bounded(() => method(...args),
@@ -233,11 +189,10 @@ try {
     console.error(`Retained failed probe: ${server?.baseUrl}; vault ${vault}; target ${targetId}`);
     console.error(JSON.stringify({ events, pageErrors: page?.pageErrors ?? [] }));
   } else {
-    if (targetId) await controller.send("Target.closeTarget", { targetId });
+    await page?.close();
     await server?.close();
   }
-  page?.close();
-  controller?.close();
+  if (failure) { page?.page.close(); page?.browser.close(); }
 }
 if (failure) throw failure;
 console.log("SAVE-PREVIEW OK (10 cases)");

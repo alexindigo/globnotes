@@ -7,6 +7,7 @@ import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9462);
 const vault = await Deno.makeTempDir({ prefix: "wrap-vault-" });
+const artifacts = await Deno.makeTempDir({ prefix: "wrap-artifacts-" });
 const longToken = "x".repeat(300);
 const longCode = "const s = \"" + "y".repeat(180) + "\"; // long line";
 await Deno.writeTextFile(
@@ -39,7 +40,7 @@ const server = await bootServer({
 });
 const browser = await launchBrowser({ port: CDP_PORT });
 try {
-  const page = await connect({ port: CDP_PORT });
+  const page = await connect({ port: CDP_PORT, binding: browser });
   await page.addInitScript(
     `localStorage.setItem("viewLineNumbers", "true")`,
   );
@@ -95,7 +96,7 @@ try {
     JSON.stringify(aligned),
   );
 
-  await page.screenshot("/tmp/wrap-view.png");
+  await page.screenshot(artifacts + "/wrap-view.png");
 
   // Preview tab shares the class — same rules must hold there.
   await page.clickText("Edit");
@@ -116,5 +117,5 @@ try {
 } finally {
   await stopBrowser(browser);
   await server.close();
-  Deno.removeSync(vault, { recursive: true });
+  console.log("Retained wrap fixture/artifacts", vault, artifacts);
 }

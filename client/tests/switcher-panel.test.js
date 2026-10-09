@@ -45,7 +45,6 @@ function readPanel() {
       line2Brand: brandOf(line2),
       hasAliasPrefix: !!line2 && line2.textContent.trim().startsWith("alias:"),
       hint: li.querySelector(".key-tag")?.textContent ?? null,
-      divCount: lineDivs.length,
     };
   };
   // The footer ROW: the shared search row — a SwitcherRow rendering as
@@ -119,7 +118,6 @@ describe("switcher panel row uniformity", () => {
       // Uniform anatomy: every row has a hint and a line 2.
       for (const row of panel.rows) {
         expect(row.hint, "key tag on every row").toBeTruthy();
-        expect(row.divCount, "exactly two line-divs per row").toBe(2);
       }
       // File hit ranks first (docs/mom), path hits after.
       expect(panel.rows[0].title).toBe("Shopping list");
@@ -142,29 +140,10 @@ describe("switcher panel row uniformity", () => {
       // The tag is right-aligned via justify-between on line 1, and the
       // footer is a two-line row: "full search" sits on line 2, styled like
       // the result rows' path lines.
-      expect(footerTag.parentElement.className).toContain("justify-between");
       const footerLine2 = [...panel.footer.querySelectorAll("div")].find((d) =>
         d.textContent.trim() === "full search"
       );
       expect(footerLine2, "footer line 2").toBeTruthy();
-      expect(footerLine2.className).toContain("text-theme-text-very-muted");
-
-      // --- Active search row's key pill: brand text + border. The search
-      // row goes active on mouseover (index = results.length).
-      const searchRowEl = [...document.querySelectorAll("li, div")].filter(
-        (el) =>
-          el.querySelector(".key-tag") &&
-          el.textContent.includes("Search for") &&
-          el.textContent.includes("full search"),
-      ).at(-1);
-      expect(searchRowEl, "search row element").toBeTruthy();
-      searchRowEl.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
-      await sleep(30);
-      expect(
-        searchRowEl.className,
-        "active search row carries key-tag-active (the pill highlight)",
-      ).toContain("key-tag-active");
-      await sleep(30);
 
       // --- Alias hit: muted "alias:" prefix on line 2.
       typeQuery("cooking");

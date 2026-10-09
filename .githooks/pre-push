@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+ROOT=$(git rev-parse --show-toplevel)
+exec python3 -B "$ROOT/scripts/verify-in-vm.py" pre-push --root "$ROOT" --remote "$1" --url "$2"

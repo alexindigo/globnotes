@@ -2,10 +2,10 @@
 
 import { note_not_found } from "@server/api_messages.ts";
 import { InvalidPathError, NoteNotFoundError } from "@server/notes/models.ts";
-import { HttpError } from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 
-export default function (request) {
+export default function (request: PathfinderRequest) {
   const path = request.query.get("path") ?? "";
   const newPath = request.query.get("new_path") ?? "";
   try {

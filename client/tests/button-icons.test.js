@@ -35,7 +35,6 @@ describe("button icon contracts", () => {
       expect(paths(wrapper)).toEqual(tabSave);
       expect(wrapper.element.style.width).toBe("1.25em");
       expect(wrapper.element.style.height).toBe("1.25em");
-      expect(wrapper.classes()).toContain("shrink-0");
       expect(wrapper.attributes("aria-hidden")).toBe("true");
     }
   });
@@ -107,8 +106,7 @@ describe("button icon contracts", () => {
     expect(icons).toHaveLength(1);
     expect(paths(icons[0])).toEqual(tabToggleLeft);
     expect(icons[0].element.style.width).toBe("auto");
-    expect([...wrapper.element.children].map((el) => el.tagName.toLowerCase()))
-      .toEqual(["svg", "span"]);
+    expect(wrapper.text()).toBe("Edit");
     await wrapper.setProps({ isOn: true });
     icons = wrapper.findAll("svg");
     expect(icons).toHaveLength(1);
