@@ -4,6 +4,7 @@
 import {
   type CommandDefinition,
   type EndpointDescriptor,
+  FsError,
   type HandlerRegistration,
   type HookName,
   PLUGIN_LIMITS,
@@ -28,6 +29,7 @@ import {
   type Source,
 } from "./network_contracts.ts";
 import { permissionFingerprint } from "./network_permissions.ts";
+import type { PluginSettingsEnvironment } from "./settings_environment.ts";
 
 export interface RuntimeSource {
   id: string;
@@ -53,6 +55,7 @@ export interface RuntimeAdapters {
   sanitizeFact?(manifest: PluginManifest, fact: unknown): unknown;
   changed?(): void;
   network?: PluginNetworkRequests;
+  settingsEnvironment?: PluginSettingsEnvironment;
   ownerEpoch?(id: string): number;
   ownerEnabled?(id: string): boolean;
 }
@@ -256,16 +259,16 @@ export class PluginRuntime {
         }
         manifest = installed;
       }
-      const host = new PluginHost(
+      const host: PluginHost = new PluginHost(
         manifest,
         this.adapters.vaultPath,
-        (method, args, authority) => {
+        (method, args, authority): Promise<unknown> => {
           if (!authority) {
             return Promise.reject(
               new Error("plugin authority is missing"),
             );
           }
-          const current = () =>
+          const current = (): boolean =>
             entry.host === host &&
             ["starting", "ready"].includes(entry.status) &&
             currentActivation() && authority.current();
@@ -280,7 +283,9 @@ export class PluginRuntime {
           };
           if (!current() || !this.adapters.operational()) {
             return Promise.reject(
-              new Error("plugin authority is unavailable"),
+              method.startsWith("fs.")
+                ? new FsError(current() ? "fs_denied" : "fs_generation_revoked")
+                : new Error("plugin authority is unavailable"),
             );
           }
           if (method.startsWith("permissions.")) {
@@ -303,6 +308,10 @@ export class PluginRuntime {
             }
           };
           const store = new PluginDataStore(this.adapters.statePath, {
+            settingsEnvironment: this.adapters.settingsEnvironment,
+            settingsContext: this.adapters.network
+              ? (id) => this.adapters.network!.settingsContext(id)
+              : undefined,
             settingsSchema: (id) => {
               if (this.adapters.network) {
                 return this.adapters.network.settingsSchema(id);

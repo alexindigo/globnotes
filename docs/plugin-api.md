@@ -173,6 +173,72 @@ generation and guarded-commit checks remain the authority boundary. This v2
 contract adds no public background-task/run facility; that and broader file APIs
 remain v3 work.
 
+## Effective settings and auxiliary filesystem
+
+`GLOBNOTES_PLUGIN_SETTINGS` is a bounded host-only JSON overlay addressed by plugin
+ID → page ID → field key, parsed once per host lifetime. Environment fields win
+leaf-wise over stored fields/defaults; explicit empty strings remain present.
+Invalid/unknown addressed values fail visibly without logging values or repairing
+private storage. HTTP/SDK reads and PUT acknowledgements expose effective `values`,
+persisted numeric `revision`, opaque `sourceKey` and host-owned `fields` provenance
+(`source: environment|vault|default`, `readonly`). Unchanged pins may be echoed by
+complete-page saves; their exact stored fallback/absence is preserved. Pin changes
+reject. New clients submit accepted sourceKey; legacy revision-only callers retain
+their old behavior without new cross-restart source-CAS guarantees. Override
+presence/fingerprints retire obsolete requests per plugin, preserving approvals.
+
+Server services can separately declare mediated
+`capabilities.filesystem: {read:[...],write:[...]}` roots: literal paths, `"vault"`,
+or `{settings:{page:"page-id",key:"folder-field"}}` referencing the owning plugin's
+declared folder/effective value. Empty adds no grant, never cwd; roots do not grant
+`/`, siblings or ungranted missing ancestors. Raw Worker write/env/run stays denied.
+
+The server-only completion facade is distinct from deferred action acceptance:
+
+```ts
+type FsToken = string;
+type FsExpect = {kind:"absent"} | {kind:"exact";token:FsToken};
+type FsOptions = {sourceKey?:string};
+type FsStat = {kind:"file"|"directory";size:number;token:FsToken};
+stat(path:string, options?:FsOptions): Promise<FsStat|null>;
+realPath(path:string, options?:FsOptions & {expect?:{kind:"exact";token:FsToken}}): Promise<string>;
+readFile(path:string, options?:FsOptions & {expect?:{kind:"exact";token:FsToken}}): Promise<Uint8Array>;
+writeFile(path:string, bytes:Uint8Array, options:FsOptions & {expect:FsExpect}): Promise<{token:FsToken}>;
+rename(from:string, to:string, options:FsOptions & {sourceToken:FsToken;destination:FsExpect}): Promise<{token:FsToken}>;
+remove(path:string, options:FsOptions & {token:FsToken}): Promise<void>;
+mkdir(path:string, options?:FsOptions & {recursive?:boolean;expect?:FsExpect}): Promise<FsStat>;
+```
+
+All relative arguments are vault-relative, not relative to a settings-root grant.
+`realPath` returns an authorized **existing** canonical absolute pathname, with
+no missing-path fallback. `stat` returns null only for authorized absence. Missing
+reads/realPath give `fs_not_found`; missing conditional removal conflicts. Writes
+prepare/sync a temporary file before atomic target publication. Rename/remove
+are conditional file-only operations; mkdir defaults nonrecursive, authorizes
+every needed component, and permits an existing safe directory.
+
+Tokens are opaque owner/path/root/link/type/identity/content observations, not
+authority or an unbounded host registry. Omitted sourceKey binds activation; a
+fresh settings key cannot lend old executing code replacement grants. Source,
+invocation/generation, namespace, grants and deadline are rechecked after waits
+and before effect/disclosure. Canonical host state, pre-hook mutations and canonical
+in-vault `.md` mutations are denied. Guarded note work still uses actions. Auxiliary
+IO dispatches no note hooks/index updates and may be awaited from post-hooks.
+
+Bodies are bounded at16MiB, paths at4096UTF-8 bytes, outstanding calls at64 per
+generation and preparation at10seconds. The SDK captures selected bytes before
+transport (including shared-buffer views); the host validates/copies independently.
+Typed errors are `fs_too_large`, `fs_invalid_path`, `fs_busy`, `fs_denied`,
+`fs_conflict`, `fs_not_found`, `fs_source_changed`, `fs_generation_revoked`,
+`fs_deadline`, `fs_io_error`; rejected SDK Errors retain `effect: none|committed|unknown`.
+Expiration cannot start later publication. A deadline is not rollback; lost replies
+or post-effect errors do not prove no write. Tokens are not external filesystem
+CAS, recursive CRUD or multi-file atomicity. Recovery inspects recorded states.
+
+The shipped [backup plugin](../plugins/globnotes-backup/README.md) owns its entire
+post-change retention/journal policy. Adjacent files remain publicly readable
+under ordinary serving policy.
+
 ## Endpoints
 
 Plugin-local routes live at `/_/api/plugins/<id>/<route>` for

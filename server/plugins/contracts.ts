@@ -17,6 +17,47 @@ export const PLUGIN_LIMITS = Object.freeze({
   streamHeartbeatMs: 15_000,
 });
 export type PluginLimits = { [Key in keyof typeof PLUGIN_LIMITS]: number };
+export const FS_LIMITS = Object.freeze({
+  bodyBytes: 16 * 1024 * 1024,
+  pathBytes: 4096,
+  outstanding: 64,
+  deadlineMs: 10_000,
+});
+export type FsToken = string;
+export type FsExpect = { kind: "absent" } | { kind: "exact"; token: FsToken };
+export type FsOptions = { sourceKey?: string };
+export type FsStat = {
+  kind: "file" | "directory";
+  size: number;
+  token: FsToken;
+};
+export type FsEffect = "none" | "committed" | "unknown";
+export interface AuxiliaryFs {
+  stat(path: string, options?: FsOptions): Promise<FsStat | null>;
+  realPath(
+    path: string,
+    options?: FsOptions & { expect?: { kind: "exact"; token: FsToken } },
+  ): Promise<string>;
+  readFile(
+    path: string,
+    options?: FsOptions & { expect?: { kind: "exact"; token: FsToken } },
+  ): Promise<Uint8Array>;
+  writeFile(
+    path: string,
+    bytes: Uint8Array,
+    options: FsOptions & { expect: FsExpect },
+  ): Promise<{ token: FsToken }>;
+  rename(
+    from: string,
+    to: string,
+    options: FsOptions & { sourceToken: FsToken; destination: FsExpect },
+  ): Promise<{ token: FsToken }>;
+  remove(path: string, options: FsOptions & { token: FsToken }): Promise<void>;
+  mkdir(
+    path: string,
+    options?: FsOptions & { recursive?: boolean; expect?: FsExpect },
+  ): Promise<FsStat>;
+}
 
 export const CANCELLABLE_ACTIONS = [
   "create",
@@ -235,7 +276,7 @@ export type HostMessage =
     id: number;
     ok: boolean;
     value: unknown;
-    error?: { status: number; code: string };
+    error?: { status: number; code: string; effect?: FsEffect };
     receiptRequired?: boolean;
   };
 export type WorkerMessage =
@@ -272,6 +313,23 @@ export class PluginContractError extends Error {
   constructor(readonly status: number, readonly code: string, detail: string) {
     super(detail);
     this.name = "PluginContractError";
+  }
+}
+export class FsError extends PluginContractError {
+  constructor(code: string, readonly effect: FsEffect = "none") {
+    super(
+      code === "fs_denied"
+        ? 403
+        : code === "fs_not_found"
+        ? 404
+        : code === "fs_too_large"
+        ? 413
+        : code === "fs_io_error"
+        ? 500
+        : 409,
+      code,
+      `Auxiliary filesystem operation failed (${code}); target effect: ${effect}.`,
+    );
   }
 }
 

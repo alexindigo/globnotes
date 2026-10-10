@@ -85,7 +85,7 @@ try {
   await page.clickText("Coding Rules");
   await page.waitForTimeout(400);
   await page.evaluate("history.back()");
-  await page.waitForTimeout(600);
+  await page.poll(`location.hash === "" && document.querySelector('.rendered-markdown a[href="#section-one"]') !== null`);
   // The deliberate "back out of edit" gate means BACK exits preview to
   // view mode; the bug forced the source editor instead. Correct = a
   // rendered surface (view/preview), never a forced source editor.

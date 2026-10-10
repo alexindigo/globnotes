@@ -172,6 +172,14 @@ these server controls do not restrict it or browser loads from rendered content.
 
 ## Rules of the sandbox
 
+The server-only [versioned backup plugin](../plugins/globnotes-backup/README.md)
+uses generic completion IO for best-effort previous-text history. Settings →
+Backups has a default2 / integer1–10 slider and optional base. **Adjacent `.bak`
+files remain visible vault files, including old/deleted text for public readers.**
+Dedicated bases mirror the captured original path; rename/base changes do not
+migrate histories. Generic environment pins and filesystem grants are documented
+in [plugin-api.md](plugin-api.md).
+
 - A plugin that throws **abstains** — it can degrade a render, never kill it.
 - A hung Worker is terminated and respawned (250 ms heartbeat, 3×T silence).
 - Render workers keep state across ordinary saves/indexing; legacy `onSync`

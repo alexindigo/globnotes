@@ -388,11 +388,11 @@ export async function getPluginSettings(id, page) {
   }
 }
 
-export async function putPluginSettings(id, page, values, revision) {
+export async function putPluginSettings(id, page, values, revision, sourceKey) {
   try {
     const response = await api.put(
       `plugin-host/${encodeURIComponent(id)}/settings/${encodeURIComponent(page)}`,
-      { values, revision },
+      { values, revision, ...(sourceKey === undefined ? {} : { sourceKey }) },
     );
     return response.data;
   } catch (response) {

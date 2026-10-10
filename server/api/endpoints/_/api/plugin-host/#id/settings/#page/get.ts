@@ -17,7 +17,12 @@ export default async function (request: PathfinderRequest) {
   try {
     const owner = state.pluginData!.forPlugin(String(request.params.id));
     const current = await owner.page(page);
-    return { values: current.values, revision: current.revision };
+    return {
+      values: current.values,
+      revision: current.revision,
+      sourceKey: current.sourceKey,
+      fields: current.fields,
+    };
   } catch (e) {
     if (e instanceof PluginContractError) {
       return Response.json(

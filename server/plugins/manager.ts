@@ -49,6 +49,7 @@ import {
   type Source,
 } from "./network_contracts.ts";
 import { permissionFingerprint } from "./network_permissions.ts";
+import { PluginSettingsEnvironment } from "./settings_environment.ts";
 
 const INTERNAL_PLUGINS_DIR = path.resolve(
   path.dirname(path.fromFileUrl(import.meta.url)),
@@ -85,6 +86,7 @@ export type RenderStartOutcome =
   | { state: "failed"; diagnostic: PluginDiagnostic }
   | { state: "retired" };
 export interface PluginManagerOptions {
+  settingsEnvironment?: PluginSettingsEnvironment;
   internalRoot?: string;
   autoEnable?: boolean;
   environment?: boolean;
@@ -97,6 +99,7 @@ export class PluginManager {
   readonly hosts = new Map<string, PluginHost>();
   readonly policy: PluginPolicyStore;
   readonly network: PluginNetworkRequests;
+  readonly settingsEnvironment: PluginSettingsEnvironment;
   private readonly vaultPath: string;
   private readonly statePath: string;
   private readonly workerCount: number;
@@ -133,6 +136,8 @@ export class PluginManager {
       Number(getEnv("GLOBNOTES_RENDER_WORKERS", { castInt: true, default: 2 }));
     this.internalRoot = options.internalRoot ?? INTERNAL_PLUGINS_DIR;
     this.options = options;
+    this.settingsEnvironment = options.settingsEnvironment ??
+      new PluginSettingsEnvironment(Deno.env.get("GLOBNOTES_PLUGIN_SETTINGS"));
     this.networkCommit = (effect) =>
       options.persistence?.commit(effect) ??
         Promise.reject(
@@ -162,6 +167,7 @@ export class PluginManager {
       },
     );
     this.network = new PluginNetworkRequests(this.statePath, {
+      settingsEnvironment: this.settingsEnvironment,
       commit: (effect) => this.networkCommit(effect),
       plugins: () => this.networkPlugins(),
       changed: () => this.networkChanged(),
@@ -212,6 +218,7 @@ export class PluginManager {
       entry,
     ): entry is CatalogEntry => entry !== undefined);
     const ordered = new Set(head.map((entry) => entry.id));
+    this.settingsEnvironment.validateInventory([...entries.keys()]);
     return [
       ...head,
       ...[...entries.values()].filter((entry) => !ordered.has(entry.id)),
@@ -468,6 +475,7 @@ export class PluginManager {
       {
         ...adapters,
         network: this.network,
+        settingsEnvironment: this.settingsEnvironment,
         ownerEpoch: (id) => this.epoch(id),
         ownerEnabled: (id) => this.enabled(id),
         vaultPath: this.vaultPath,
@@ -577,6 +585,8 @@ export class PluginManager {
             return new PluginDataStore(this.statePath, {
               commit: (effect) => this.networkCommit(effect),
               settingsSchema: (owner) => this.network.settingsSchema(owner),
+              settingsContext: (owner) => this.network.settingsContext(owner),
+              settingsEnvironment: this.settingsEnvironment,
             }).forPlugin(id).settings(manifest.settings);
           }
           return method.startsWith("permissions.")

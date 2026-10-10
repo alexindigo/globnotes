@@ -16,19 +16,32 @@ export default async function (request: PathfinderRequest) {
   );
   const page = plugin?.pages.find((p) => p.id === String(request.params.page));
   if (!page) throw new HttpError(404, "Not Found");
+  const lease = state.pluginData!.forPlugin(String(request.params.id))
+    .settingsLease(plugin!.pages);
   const body = (await request.body.json()) as {
     values?: unknown;
     revision?: number;
+    sourceKey?: string;
   };
   try {
-    const owner = state.pluginData!.forPlugin(String(request.params.id), guard);
+    lease.assertCurrent();
+    const owner = state.pluginData!.forPlugin(String(request.params.id), () => {
+      lease.assertCurrent();
+      guard();
+    });
     const committed = await owner.savePage(
       page,
       body.values ?? {},
       body.revision ?? -1,
+      body.sourceKey,
     );
     state.lifecycle?.notifyInvalidation();
-    return { values: committed.values, revision: committed.revision };
+    return {
+      values: committed.values,
+      revision: committed.revision,
+      sourceKey: committed.sourceKey,
+      fields: committed.fields,
+    };
   } catch (e) {
     if (e instanceof PluginContractError) {
       return Response.json(

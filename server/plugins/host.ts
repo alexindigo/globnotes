@@ -8,6 +8,7 @@ import {
   workerPermissions,
 } from "./manifest.ts";
 import {
+  FsError,
   type HandlerRegistration,
   type HostMessage,
   HTTP_METHODS,
@@ -456,6 +457,15 @@ export class PluginHost {
               id: data.id,
               ok: false,
               value: "plugin invocation context is unavailable or closed",
+              ...(data.method.startsWith("fs.")
+                ? {
+                  error: {
+                    status: 409,
+                    code: "fs_generation_revoked",
+                    effect: "none" as const,
+                  },
+                }
+                : {}),
             } satisfies HostMessage,
           );
           return;
@@ -509,6 +519,15 @@ export class PluginHost {
               id: data.id,
               ok: false,
               value: "plugin generation authority revoked",
+              ...(data.method.startsWith("fs.")
+                ? {
+                  error: {
+                    status: 409,
+                    code: "fs_generation_revoked",
+                    effect: "none" as const,
+                  },
+                }
+                : {}),
             } satisfies HostMessage,
           );
           return;
@@ -544,7 +563,15 @@ export class PluginHost {
                     ? error.message
                     : "host service failed",
                   ...(error instanceof PluginContractError
-                    ? { error: { status: error.status, code: error.code } }
+                    ? {
+                      error: {
+                        status: error.status,
+                        code: error.code,
+                        ...(error instanceof FsError
+                          ? { effect: error.effect }
+                          : {}),
+                      },
+                    }
                     : {}),
                   receiptRequired,
                 } satisfies HostMessage,

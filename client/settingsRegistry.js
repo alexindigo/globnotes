@@ -66,6 +66,6 @@ export async function readPluginPage(owner, pageId) {
   return await getPluginSettings(owner, pageId);
 }
 
-export async function commitPluginPage(owner, pageId, values, revision) {
-  return await putPluginSettings(owner, pageId, values, revision);
+export async function commitPluginPage(owner, pageId, values, revision, sourceKey) {
+  return await (sourceKey === undefined ? putPluginSettings(owner, pageId, values, revision) : putPluginSettings(owner, pageId, values, revision, sourceKey));
 }

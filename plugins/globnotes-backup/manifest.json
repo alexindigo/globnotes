@@ -1,0 +1,28 @@
+{
+  "id": "globnotes-backup",
+  "name": "Versioned note backups",
+  "version": "1.0.0",
+  "license": "LGPL-3.0-only",
+  "runtime": { "server": "service.js" },
+  "hooks": ["on-save", "on-rename", "on-delete"],
+  "settings": [{
+    "id": "backup",
+    "label": "Backups",
+    "description": "Best-effort previous Markdown text after managed changes. Adjacent backups are ordinary visible vault files: public readers can retrieve old or deleted text. Choose a dedicated base outside the vault to change their placement. Histories are path-based; changing this base does not move or delete old histories.",
+    "renderer": { "kind": "declarative-v1", "version": 1 },
+    "fields": [
+      { "key": "retention", "label": "Retained versions", "type": "slider", "default": 2, "min": 1, "max": 10, "step": 1, "description": "Newest is .0.bak. Reducing the count prunes owned excess versions on the family's next successful capture." },
+      { "key": "basePath", "label": "Backup base path", "type": "folder", "default": "", "maxLength": 4096, "description": "Empty means adjacent. Relative paths are vault-relative; absolute paths select that directory. No shell or environment interpolation. Destination folders mirror the captured note's original path." }
+    ]
+  }],
+  "capabilities": {
+    "network": false,
+    "imports": false,
+    "read": ["vault"],
+    "write": [],
+    "filesystem": {
+      "read": ["vault", { "settings": { "page": "backup", "key": "basePath" } }],
+      "write": ["vault", { "settings": { "page": "backup", "key": "basePath" } }]
+    }
+  }
+}

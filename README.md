@@ -61,6 +61,17 @@ Folders are never "managed": creating `a/b/c` makes the directories, renaming `a
 - **First-run setup wizard** — no auth env vars? globnotes asks on first launch: set a password or explicitly disable auth. Each choice is deliberate.
 - **Agent-friendly** — raw markdown and files over plain HTTP (see below).
 
+## Versioned note backups
+
+The shipped server plugin offers best-effort **post-change previous Markdown text**
+history. Settings → Backups has a retention slider (default **2**, integer **1–10**)
+and optional relative/absolute base. Newest is `Note.md.0.bak`; dedicated bases
+mirror the captured original folder path. **Adjacent backups are visible vault
+files: public readers can retrieve old or deleted text under normal serving policy.**
+Note saves can succeed while backup delivery/storage fails. Histories are path-based;
+changing bases does not migrate them. See the [plugin guide](plugins/globnotes-backup/README.md)
+for environment pins, status, ownership/recovery and text/durability limits.
+
 ## Getting started
 
 ```bash

@@ -48,6 +48,26 @@ describe("ServerViewer render lifetime", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it("publishes rendered-content classes only after an owned output reaches the surface", async () => {
+    const render = deferred();
+    getRenderedHtml.mockReturnValue(render.promise);
+    const wrapper = mount(ServerViewer, { props: { title: "Held" } });
+    try {
+      await flushPromises();
+      expect(wrapper.element.innerHTML).toBe("");
+      expect(wrapper.classes()).not.toContain("rendered-markdown");
+      expect(wrapper.classes()).not.toContain("toastui-editor-contents");
+      render.resolve("<pre><code>owned code</code></pre>");
+      await flushPromises();
+      expect(wrapper.find("pre code").text()).toBe("owned code");
+      expect(wrapper.classes()).toContain("rendered-markdown");
+      expect(wrapper.classes()).toContain("toastui-editor-contents");
+    } finally {
+      render.resolve("<pre><code>owned code</code></pre>");
+      await flushPromises();
+    }
+  });
+
   it("stops a pending plugin lookup when the viewer unmounts", async () => {
     const plugins = deferred();
     getPlugins.mockReturnValue(plugins.promise);

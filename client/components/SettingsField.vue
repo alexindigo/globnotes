@@ -6,6 +6,8 @@
       class="text-sm font-medium text-theme-text"
       :for="`settings-field-${field.key}`"
     >{{ field.label }}</label>
+    <p v-if="provenance?.source === 'environment'" class="text-xs text-theme-text-muted" role="note">Set by environment · Read-only</p>
+    <output v-if="field.type === 'slider'" :for="`settings-field-${field.key}`" class="text-sm text-theme-text">{{ value }}</output>
     <p
       v-if="field.description"
       class="text-xs text-theme-text-muted"
@@ -24,6 +26,7 @@
       class="h-8 w-16"
       :value="value"
       :disabled="readonly"
+      @input="edit($event.target.value)"
       @change="change($event.target.value)"
     >
     <select
@@ -94,6 +97,7 @@ const props = defineProps({
   value: { required: true },
   error: { type: String, default: "" },
   readonly: { type: Boolean, default: false },
+  provenance: { type: Object, default: null },
   onBrowse: Function,
 });
 const emit = defineEmits(["edit", "commit"]);

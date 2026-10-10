@@ -19,11 +19,50 @@ import {
 import { delegableScopes, denoScopes } from "./network_permissions.ts";
 
 export interface PluginCapabilities {
+  filesystem?: { read: FilesystemGrant[]; write: FilesystemGrant[] };
   network: boolean | string[];
   /** Omission preserves legacy network-derived import intent, never consent. */
   imports?: boolean | string[];
   write: string[];
   read: string[];
+}
+export type FilesystemGrant = string | {
+  settings: { page: string; key: string };
+};
+function filesystemGrants(
+  value: unknown,
+  settings: SettingsPage[],
+): FilesystemGrant[] {
+  if (!Array.isArray(value)) {
+    throw new Error("filesystem grants must be an array");
+  }
+  return value.map((grant) => {
+    if (typeof grant === "string") {
+      if (!grant || grant.includes("\0") || grant === "/") {
+        throw new Error("invalid filesystem root");
+      }
+      return grant;
+    }
+    const reference = record(grant, "filesystem settings reference");
+    if (
+      Object.keys(reference).length !== 1 ||
+      !Object.hasOwn(reference, "settings")
+    ) throw new Error("invalid filesystem settings reference");
+    const field = record(reference.settings, "filesystem settings field");
+    if (
+      Object.keys(field).length !== 2 || typeof field.page !== "string" ||
+      typeof field.key !== "string" || !Object.hasOwn(field, "page") ||
+      !Object.hasOwn(field, "key")
+    ) throw new Error("invalid filesystem settings field");
+    const declaration = settings.find((page) => page.id === field.page)?.fields
+      .find((candidate) => candidate.key === field.key);
+    if (!declaration || declaration.type !== "folder") {
+      throw new Error(
+        "filesystem settings roots require the owning declared folder field",
+      );
+    }
+    return { settings: { page: field.page, key: field.key } };
+  });
 }
 export interface PluginManifest {
   id: string;
@@ -166,7 +205,7 @@ export function readManifest(dir: string): PluginManifest {
     : record(raw.capabilities, "capabilities");
   if (
     Object.keys(caps).some((key) =>
-      !["network", "imports", "read", "write"].includes(key)
+      !["network", "imports", "read", "write", "filesystem"].includes(key)
     )
   ) throw new Error("unsupported capability");
   const network = caps.network === undefined ? false : caps.network;
@@ -202,6 +241,16 @@ export function readManifest(dir: string): PluginManifest {
       "write capability",
     ),
   };
+  if (caps.filesystem !== undefined) {
+    const filesystem = record(caps.filesystem, "filesystem capability");
+    if (
+      Object.keys(filesystem).some((key) => key !== "read" && key !== "write")
+    ) throw new Error("unsupported filesystem capability");
+    capabilities.filesystem = {
+      read: filesystemGrants(filesystem.read ?? [], settings),
+      write: filesystemGrants(filesystem.write ?? [], settings),
+    };
+  }
   let hasEndpoints = false;
   try {
     const endpointDir = pluginCodePath(dir, "endpoints");

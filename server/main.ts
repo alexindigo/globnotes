@@ -17,6 +17,7 @@ import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
 import { NoteOperations } from "./notes/operations.ts";
 import { PluginActions } from "./plugins/actions.ts";
+import { AuxiliaryFilesystem } from "./plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "./plugins/data.ts";
 import { PluginEndpoints } from "./plugins/endpoints.ts";
 import { PluginLifecycle } from "./plugins/lifecycle.ts";
@@ -87,6 +88,8 @@ state.actions = actions;
 const pluginData = new PluginDataStore(globalConfig.statePath, {
   commit: (effect) => lifecycle.gate.run(effect),
   settingsSchema: (id) => plugins.network.settingsSchema(id),
+  settingsContext: (id) => plugins.network.settingsContext(id),
+  settingsEnvironment: plugins.settingsEnvironment,
   prepareSettingsCommit: (change) =>
     plugins.network.prepareSettingsCommit(change),
   settingsChanged: (id, page, revision) => {
@@ -94,6 +97,15 @@ const pluginData = new PluginDataStore(globalConfig.statePath, {
   },
 });
 state.pluginData = pluginData;
+const auxiliaryFilesystem = new AuxiliaryFilesystem({
+  vaultPath: globalConfig.notesPath,
+  statePath: globalConfig.statePath,
+  operational: () => lifecycle.operational(),
+  writable: () => lifecycle.writable(),
+  settings: (manifest) =>
+    pluginData.forPlugin(manifest.id).settingsLease(manifest.settings),
+  commit: (effect) => lifecycle.gate.run(effect),
+});
 state.pluginEndpoints = new PluginEndpoints(() => plugins.runtime);
 state.pluginNetwork = plugins.network;
 lifecycle.onFact((fact) => {
@@ -127,6 +139,7 @@ plugins.configureRuntime({
     vaultPath: globalConfig.notesPath,
     statePath: globalConfig.statePath,
     actions: () => actions,
+    filesystem: auxiliaryFilesystem,
   }),
 });
 if (!globalConfig.setupRequired) {

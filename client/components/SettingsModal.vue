@@ -244,7 +244,7 @@ function decideDeparture(decision) {
 const pageState = createSettingsPageState({ registry: {
   find: findPage,
   read: page => page.owner === "core" ? Promise.resolve({ values: {}, revision: 0 }) : readPluginPage(page.owner, page.pageId),
-  commit: (page, values, revision) => commitPluginPage(page.owner, page.pageId, values, revision),
+  commit: (page, values, revision, sourceKey) => commitPluginPage(page.owner, page.pageId, values, revision, sourceKey),
 }, confirm: askDeparture });
 const inventory = createPluginInventoryController({
   getCatalog: () => pluginCatalog.value,

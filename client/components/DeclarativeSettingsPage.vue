@@ -20,7 +20,7 @@
       <p v-if="group.description" class="text-sm text-theme-text-muted">{{ group.description }}</p>
       <SettingsField v-for="field in group.fields" :key="field.key" :field="field"
         :value="Object.hasOwn(snapshot.drafts,field.key)?snapshot.drafts[field.key]:snapshot.values[field.key]" :error="snapshot.errors[field.key]??''"
-        :readonly="!snapshot.available || !snapshot.loaded || snapshot.writable===false" :on-browse="onBrowse"
+        :readonly="!snapshot.available || !snapshot.loaded || snapshot.writable===false || snapshot.fields?.[field.key]?.readonly" :provenance="snapshot.fields?.[field.key]" :on-browse="onBrowse"
         @edit="$emit('edit',$event)" @commit="$emit('commit',$event)" />
     </section>
     <p

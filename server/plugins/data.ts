@@ -15,10 +15,13 @@ import {
 import {
   assertSettingsSchemaCurrent,
   effectivePageValues,
-  projectPageValues,
   validateSettingsPages,
 } from "./settings.ts";
 import type { SettingsPage } from "./contracts.ts";
+import {
+  PluginSettingsEnvironment,
+  type SettingsContext,
+} from "./settings_environment.ts";
 
 export interface PersistenceAdapters {
   /** Captured epoch/generation is checked inside the short host commit gate. */
@@ -26,6 +29,8 @@ export interface PersistenceAdapters {
   settingsChanged?(id: string, page: string, revision: number): void;
   /** Owning source adapter; persistence does not import runtime/global state. */
   settingsSchema?(id: string): SettingsPage[];
+  settingsEnvironment?: PluginSettingsEnvironment;
+  settingsContext?(id: string): SettingsContext;
   /** Prepared host-only transition; no network/runtime/global imports here. */
   prepareSettingsCommit?(
     change: SettingsCommitChange,
@@ -253,8 +258,11 @@ export class PluginDataStore {
       ownedPath(this.stateRoot, ["plugin-data", id, `${kind}.json`]);
     const load = async (kind: "settings" | "data") =>
       envelope((await readJson(file(kind))).value);
+    const environment = this.adapters.settingsEnvironment ??
+      new PluginSettingsEnvironment();
     const bindSchema = (pages: SettingsPage[], complete = false) => {
       const captured = validateSettingsPages(pages);
+      const context = this.adapters.settingsContext?.(id);
       const assertCurrent = () => {
         if (this.adapters.settingsSchema) {
           assertSettingsSchemaCurrent(
@@ -263,9 +271,10 @@ export class PluginDataStore {
             complete,
           );
         }
+        context?.assertCurrent();
       };
       assertCurrent();
-      return { pages: captured, assertCurrent };
+      return { pages: captured, assertCurrent, context };
     };
     const update = async (
       kind: "settings" | "data",
@@ -273,6 +282,7 @@ export class PluginDataStore {
       change: (current: JsonValues) => JsonValues,
       definition?: SettingsPage,
       assertSchema?: () => void,
+      source?: { key?: string; context?: SettingsContext },
     ) => {
       const target = file(kind);
       return await serialize(target, async () => {
@@ -280,6 +290,16 @@ export class PluginDataStore {
         revision(expected);
         const before = await readJson(target);
         const current = envelope(before.value);
+        if (
+          source?.key !== undefined &&
+          (!source.context ||
+            source.key !== source.context.key(current.revision))
+        ) {
+          stateError(
+            "plugin_settings_source_conflict",
+            "plugin settings source changed; review current values before retrying",
+          );
+        }
         if (current.revision !== expected) {
           stateError(
             "plugin_revision_conflict",
@@ -360,6 +380,44 @@ export class PluginDataStore {
       });
     };
     return Object.freeze({
+      /** Host-only synchronous lease for completion IO; never enters Worker messages. */
+      settingsLease: (pages: SettingsPage[]) => {
+        const binding = bindSchema(pages, true),
+          target = file("settings"),
+          before = readJsonSync(target),
+          current = envelope(before.value);
+        const values = Object.fromEntries(
+          binding.pages.map((
+            page,
+          ) => [
+            page.id,
+            environment.project(
+              id,
+              page,
+              Object.hasOwn(current.values, page.id)
+                ? current.values[page.id]
+                : {},
+              binding.pages,
+            ).values,
+          ]),
+        );
+        return {
+          revision: current.revision,
+          values,
+          sourceKey: binding.context?.key(current.revision),
+          codeFingerprint: binding.context?.codeFingerprint,
+          assertCurrent: () => {
+            binding.assertCurrent();
+            file("settings");
+            if (readJsonSync(target).raw !== before.raw) {
+              stateError(
+                "plugin_settings_source_conflict",
+                "plugin effective settings changed before filesystem effect",
+              );
+            }
+          },
+        };
+      },
       load: () => load("data"),
       save: (values: unknown, expected: number) =>
         update("data", expected, () => jsonValues(values)),
@@ -369,15 +427,35 @@ export class PluginDataStore {
         binding.assertCurrent();
         return {
           ...current,
+          ...(binding.context
+            ? { sourceKey: binding.context.key(current.revision) }
+            : {}),
+          fields: Object.fromEntries(
+            binding.pages.map((
+              page,
+            ) => [
+              page.id,
+              environment.project(
+                id,
+                page,
+                Object.hasOwn(current.values, page.id)
+                  ? current.values[page.id]
+                  : {},
+                binding.pages,
+              ).fields,
+            ]),
+          ),
           values: Object.fromEntries(
             binding.pages.map((
               p,
             ) => [
               p.id,
-              projectPageValues(
+              environment.project(
+                id,
                 p,
                 Object.hasOwn(current.values, p.id) ? current.values[p.id] : {},
-              ),
+                binding.pages,
+              ).values,
             ]),
           ),
         };
@@ -389,11 +467,16 @@ export class PluginDataStore {
         const captured = binding.pages[0];
         return {
           ...current,
-          values: projectPageValues(
+          ...(binding.context
+            ? { sourceKey: binding.context.key(current.revision) }
+            : {}),
+          ...environment.project(
+            id,
             captured,
             Object.hasOwn(current.values, captured.id)
               ? current.values[captured.id]
               : {},
+            this.adapters.settingsSchema?.(id) ?? [captured],
           ),
         };
       },
@@ -401,28 +484,67 @@ export class PluginDataStore {
         page: SettingsPage,
         values: unknown,
         expected: number,
+        sourceKey?: string,
       ) => {
         const binding = bindSchema([page]);
         const captured = binding.pages[0];
         const validated = effectivePageValues(captured, values);
+        const pins = environment.pages(
+          id,
+          this.adapters.settingsSchema?.(id) ?? [captured],
+        )[captured.id] ?? {};
+        for (const [key, value] of Object.entries(pins)) {
+          if (validated[key] !== value) {
+            stateError(
+              "plugin_setting_pinned",
+              "the environment-pinned field cannot be changed",
+            );
+          }
+        }
         const committed = await update(
           "settings",
           expected,
-          (current) => ({
-            ...current,
-            [captured.id]: {
-              ...jsonValues(
-                Object.hasOwn(current, captured.id) ? current[captured.id] : {},
-              ),
-              ...validated,
-            },
-          }),
+          (current) => {
+            environment.project(
+              id,
+              captured,
+              Object.hasOwn(current, captured.id) ? current[captured.id] : {},
+              this.adapters.settingsSchema?.(id) ?? [captured],
+            );
+            return ({
+              ...current,
+              [captured.id]: {
+                ...jsonValues(
+                  Object.hasOwn(current, captured.id)
+                    ? current[captured.id]
+                    : {},
+                ),
+                ...Object.fromEntries(
+                  Object.entries(validated).filter(([key]) =>
+                    !Object.hasOwn(pins, key)
+                  ),
+                ),
+              },
+            });
+          },
           captured,
           binding.assertCurrent,
+          { key: sourceKey, context: binding.context },
         );
         // Persistence has completed. Callback failures cannot undo a committed value.
         this.adapters.settingsChanged?.(id, captured.id, committed.revision);
-        return { ...committed, values: validated };
+        return {
+          ...committed,
+          ...(binding.context
+            ? { sourceKey: binding.context.key(committed.revision) }
+            : {}),
+          ...environment.project(
+            id,
+            captured,
+            committed.values[captured.id],
+            this.adapters.settingsSchema?.(id) ?? [captured],
+          ),
+        };
       },
     });
   }

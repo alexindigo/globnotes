@@ -55,7 +55,7 @@ export function createSettingsPageState({ registry, confirm }) {
     if (!record) {
       const page = registry.find(id);
       if (!page) throw new Error(`Unavailable settings page: ${id}`);
-      record = reactive({ id, page, available: page.available !== false, values: {}, revision: 0, drafts: {}, versions: {}, errors: {}, status: "unloaded", loaded: false, generation: 0, message: "", uncertain: null, changedDescriptor: null });
+      record = reactive({ id, page, available: page.available !== false, values: {}, revision: 0, sourceKey: undefined, fields: {}, drafts: {}, versions: {}, errors: {}, status: "unloaded", loaded: false, generation: 0, message: "", uncertain: null, changedDescriptor: null });
       records.set(id, record);
     }
     return record;
@@ -92,6 +92,8 @@ export function createSettingsPageState({ registry, confirm }) {
     record.changedDescriptor = null;
     record.values = {};
     record.revision = 0;
+    record.sourceKey = undefined;
+    record.fields = {};
     record.loaded = false;
     record.status = "unloaded";
     record.message = "";
@@ -102,6 +104,7 @@ export function createSettingsPageState({ registry, confirm }) {
     const record = ensure(id);
     const field = record.page.descriptor?.fields?.find(field => field.key === key);
     if (!field) throw new Error(`Unknown setting: ${key}`);
+    if (record.fields[key]?.readonly) return snapshot(id);
     record.drafts[key] = raw;
     record.versions[key] = (record.versions[key] ?? 0) + 1;
     const result = validateSettingsInput(field, raw);
@@ -122,6 +125,8 @@ export function createSettingsPageState({ registry, confirm }) {
         if (!disposed && generation === record.generation && (!dirty(record) || !record.loaded)) {
           record.values = copy(result.values);
           record.revision = result.revision;
+          record.sourceKey = result.sourceKey;
+          record.fields = copy(result.fields ?? {});
           record.status = "idle";
           record.loaded = true;
           record.message = "";
@@ -141,6 +146,8 @@ export function createSettingsPageState({ registry, confirm }) {
   function acknowledge(record, submitted, result) {
     record.values = copy(result.values);
     record.revision = result.revision;
+    record.sourceKey = result.sourceKey;
+    record.fields = copy(result.fields ?? {});
     for (const [key, version] of Object.entries(submitted.versions)) {
       if (record.versions[key] === version) {
         delete record.drafts[key];
@@ -165,11 +172,11 @@ export function createSettingsPageState({ registry, confirm }) {
     if (key ? record.errors[key] : Object.keys(record.errors).length) return false;
     const versions = Object.fromEntries(Object.keys(record.drafts).filter(key => !record.errors[key]).map(key => [key, record.versions[key]]));
     if (!Object.keys(versions).length) return false;
-    const submitted = { page: record.page, values: copy(envelope(record)), revision: record.revision, versions };
+    const submitted = { page: record.page, values: copy(envelope(record)), revision: record.revision, sourceKey: record.sourceKey, versions };
     ++record.generation; // late GETs cannot overwrite an admitted edit/PUT
     record.status = "saving";
     let observed = false;
-    const wire = Promise.resolve().then(() => registry.commit(submitted.page, submitted.values, submitted.revision));
+    const wire = Promise.resolve().then(() => submitted.sourceKey === undefined ? registry.commit(submitted.page, submitted.values, submitted.revision) : registry.commit(submitted.page, submitted.values, submitted.revision, submitted.sourceKey));
     wires.set(id, wire);
     wire.then(result => {
       if (!observed && !disposed && record.uncertain && wires.get(id) === wire) acknowledge(record, submitted, result);
@@ -205,6 +212,13 @@ export function createSettingsPageState({ registry, confirm }) {
       try {
         const result = await bounded(() => registry.read(record.page));
         if (disposed || generation !== record.generation || record.uncertain !== submitted) return false;
+        if (result.revision === submitted.revision && submitted.sourceKey !== undefined && result.sourceKey !== submitted.sourceKey) {
+          record.uncertain = null;
+          record.retiredSubmission = submitted;
+          record.status = "conflict";
+          record.message = "The settings source changed. Your original draft is retained; no write was retried.";
+          return false;
+        }
         if (result.revision > submitted.revision && Object.keys(result.values).length === Object.keys(submitted.values).length && Object.entries(submitted.values).every(([key, value]) => result.values[key] === value)) {
           acknowledge(record, submitted, result);
         } else if (result.revision !== submitted.revision) {
@@ -220,6 +234,8 @@ export function createSettingsPageState({ registry, confirm }) {
         } else {
           record.values = copy(result.values);
           record.revision = result.revision;
+          record.sourceKey = result.sourceKey;
+          record.fields = copy(result.fields ?? {});
           record.uncertain = null;
         }
       } catch (error) { record.message = error.message; return false; }

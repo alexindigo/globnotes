@@ -9,6 +9,8 @@ import type { RpcAuthority } from "./host.ts";
 import { readGrantCovers, resolveGrantedPath } from "./lifecycle.ts";
 import type { PluginManifest } from "./manifest.ts";
 import { readManagedFile } from "../notes/operations.ts";
+import type { AuxiliaryFilesystem } from "./auxiliary_fs.ts";
+import { FsError } from "./contracts.ts";
 
 export function pluginRpc(
   method: string,
@@ -61,6 +63,7 @@ export interface ServiceRpcDeps {
   vaultPath: string;
   statePath: string;
   actions(): PluginActions | null;
+  filesystem?: AuxiliaryFilesystem;
 }
 
 interface ReadRpcDeps {
@@ -168,6 +171,10 @@ export function servicePluginRpc(
 ) => Promise<unknown> {
   return (manifest, method, args, authority): Promise<unknown> => {
     try {
+      if (method.startsWith("fs.")) {
+        if (!deps.filesystem) throw new FsError("fs_denied");
+        return deps.filesystem.rpc(manifest, method, args, authority);
+      }
       if (readMethods.has(method)) {
         return Promise.resolve(
           projectedRead(deps, manifest, method, args, "service"),

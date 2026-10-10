@@ -4,7 +4,10 @@
 
 /** Handler functions never leave their owning Worker. The host binds authority. */
 import {
+  type AuxiliaryFs,
   type CommandDefinition,
+  FS_LIMITS,
+  FsError,
   type HandlerRegistration,
   HOOK_NAMES,
   type HookName,
@@ -73,6 +76,7 @@ export interface PluginCtx {
     read(path: string): Promise<unknown>;
     requestWrite(path: string, bytes: Uint8Array): Promise<unknown>;
   };
+  fs: AuxiliaryFs;
   snapshot: JsonValues;
   register(disposer: Disposer): Disposer;
   timers: {
@@ -103,13 +107,19 @@ function reason(error: unknown): string {
 }
 function rpc(method: string, args: unknown[]): Promise<unknown> {
   if (stopping) {
-    return Promise.reject(new Error("plugin generation is stopping"));
+    return Promise.reject(
+      method.startsWith("fs.")
+        ? new FsError("fs_generation_revoked")
+        : new Error("plugin generation is stopping"),
+    );
   }
   let context;
   try {
     context = currentWorkerContext();
   } catch (error) {
-    return Promise.reject(error);
+    return Promise.reject(
+      method.startsWith("fs.") ? new FsError("fs_generation_revoked") : error,
+    );
   }
   const id = ++sequence;
   return new Promise((resolve, reject) => {
@@ -255,12 +265,123 @@ const ctx: PluginCtx = {
     },
   },
   snapshot: {},
+  fs: {
+    stat: (path, options) =>
+      fsRpc("stat", [path, options]) as ReturnType<AuxiliaryFs["stat"]>,
+    realPath: (path, options) =>
+      fsRpc("realPath", [path, options]) as ReturnType<AuxiliaryFs["realPath"]>,
+    readFile: (path, options) =>
+      fsRpc("readFile", [path, options]) as ReturnType<AuxiliaryFs["readFile"]>,
+    writeFile: (path, bytes, options) =>
+      fsMutation("writeFile", [path, bytes, options]) as ReturnType<
+        AuxiliaryFs["writeFile"]
+      >,
+    rename: (from, to, options) =>
+      fsMutation("rename", [from, to, options]) as ReturnType<
+        AuxiliaryFs["rename"]
+      >,
+    remove: (path, options) =>
+      fsMutation("remove", [path, options]) as ReturnType<
+        AuxiliaryFs["remove"]
+      >,
+    mkdir: (path, options) =>
+      fsMutation("mkdir", [path, options]) as ReturnType<AuxiliaryFs["mkdir"]>,
+  },
   register: own,
   timers: {
     setTimeout: (handler, ms) => timer(handler, ms, false),
     setInterval: (handler, ms) => timer(handler, ms, true),
   },
 };
+function fsMutation(method: string, args: unknown[]): Promise<unknown> {
+  let context;
+  try {
+    context = currentWorkerContext();
+  } catch {
+    throw new FsError("fs_generation_revoked");
+  }
+  if (role !== "service" || context.pre) {
+    throw new FsError("fs_denied");
+  }
+  return fsRpc(method, args);
+}
+let outstandingFs = 0;
+function fsRpc(method: string, input: unknown[]): Promise<unknown> {
+  try {
+    currentWorkerContext();
+  } catch {
+    throw new FsError("fs_generation_revoked");
+  }
+  if (role !== "service") throw new FsError("fs_denied");
+  if (outstandingFs >= FS_LIMITS.outstanding) throw new FsError("fs_busy");
+  const check = (value: unknown) => {
+    if (
+      typeof value !== "string" || !value ||
+      value.length > FS_LIMITS.pathBytes || value.includes("\0")
+    ) throw new FsError("fs_invalid_path");
+    const bytes = new TextEncoder().encode(value);
+    if (
+      bytes.length > FS_LIMITS.pathBytes ||
+      new TextDecoder().decode(bytes) !== value
+    ) throw new FsError("fs_invalid_path");
+  };
+  check(input[0]);
+  if (method === "rename") check(input[1]);
+  const args = [...input];
+  if (method === "writeFile") {
+    if (
+      !(input[1] instanceof Uint8Array) ||
+      input[1].byteLength > FS_LIMITS.bodyBytes
+    ) throw new FsError("fs_too_large");
+    args[1] = new Uint8Array(input[1]);
+  }
+  const index = method === "writeFile" || method === "rename" ? 2 : 1,
+    options = args[index];
+  if (options !== undefined) {
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw new FsError("fs_invalid_path");
+    }
+    const raw = options as Record<string, unknown>;
+    const allowed = method === "stat"
+      ? ["sourceKey"]
+      : method === "rename"
+      ? ["sourceKey", "sourceToken", "destination"]
+      : method === "remove"
+      ? ["sourceKey", "token"]
+      : method === "mkdir"
+      ? ["sourceKey", "expect", "recursive"]
+      : ["sourceKey", "expect"];
+    if (
+      Object.keys(raw).some((key) => !allowed.includes(key)) ||
+      (raw.sourceKey !== undefined &&
+        (typeof raw.sourceKey !== "string" ||
+          raw.sourceKey.length > FS_LIMITS.pathBytes))
+    ) throw new FsError("fs_invalid_path");
+    for (const name of ["expect", "destination"]) {
+      if (raw[name] === undefined) continue;
+      const condition = raw[name] as Record<string, unknown>;
+      if (
+        !condition || typeof condition !== "object" ||
+        Array.isArray(condition) ||
+        !(condition.kind === "absent" && Object.keys(condition).length === 1 ||
+          condition.kind === "exact" && typeof condition.token === "string" &&
+            condition.token.length === 64 &&
+            Object.keys(condition).length === 2)
+      ) throw new FsError("fs_conflict");
+    }
+    if (
+      ["token", "sourceToken"].some((name) =>
+        raw[name] !== undefined &&
+        (typeof raw[name] !== "string" || (raw[name] as string).length !== 64)
+      )
+    ) throw new FsError("fs_conflict");
+    args[index] = structuredClone(raw);
+  }
+  outstandingFs++;
+  return rpc(`fs.${method}`, args).finally(() => {
+    outstandingFs--;
+  });
+}
 const renderAdapters: Record<
   string,
   (module: PluginModule, args: unknown[]) => unknown

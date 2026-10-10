@@ -34,6 +34,11 @@ import {
   permissionFingerprint,
 } from "./network_permissions.ts";
 import {
+  effectiveSourceKey,
+  installedSettingsFingerprint,
+  type SettingsContext,
+} from "./settings_environment.ts";
+import {
   type NetworkOwner,
   type NetworkRecord,
   PluginNetworkStore,
@@ -81,10 +86,16 @@ export function settingsSourceKey(
   id: string,
   codeFingerprint: string,
   settingsRevision: number,
+  overrideFingerprint?: string,
 ): Promise<string> {
   return digest(
     new TextEncoder().encode(
-      JSON.stringify({ pluginId: id, codeFingerprint, settingsRevision }),
+      JSON.stringify({
+        pluginId: id,
+        codeFingerprint,
+        settingsRevision,
+        ...(overrideFingerprint === undefined ? {} : { overrideFingerprint }),
+      }),
     ),
   );
 }
@@ -220,6 +231,38 @@ export class PluginNetworkRequests {
     }
     return plugin.manifest.settings;
   }
+  settingsContext(id: string): SettingsContext {
+    const selected = this.plugin(id);
+    if (!selected?.manifest) {
+      throw new PluginContractError(
+        409,
+        "plugin_settings_source_conflict",
+        "plugin settings source unavailable",
+      );
+    }
+    const fingerprint = installedSettingsFingerprint(selected.dir);
+    const override = this.adapters.settingsEnvironment?.fingerprint(id);
+    this.adapters.settingsEnvironment?.pages(id, selected.manifest.settings);
+    return {
+      codeFingerprint: fingerprint,
+      key: (revision) =>
+        effectiveSourceKey(id, fingerprint, revision, override),
+      assertCurrent: () => {
+        const current = this.plugin(id);
+        if (
+          !current?.manifest || current.dir !== selected.dir ||
+          installedSettingsFingerprint(current.dir) !== fingerprint ||
+          this.adapters.settingsEnvironment?.fingerprint(id) !== override
+        ) {
+          throw new PluginContractError(
+            409,
+            "plugin_settings_source_conflict",
+            "plugin installed configuration source changed",
+          );
+        }
+      },
+    };
+  }
   private owner(id: string): { plugin: NetworkPlugin; owner: NetworkOwner } {
     const plugin = this.plugin(id);
     if (!plugin) {
@@ -241,21 +284,22 @@ export class PluginNetworkRequests {
             "plugin source is no longer available",
           );
         }
-        const codeFingerprint = await installedCodeFingerprint(installed.dir);
+        const context = this.settingsContext(id);
         const settings = await new PluginDataStore(
           this.statePath,
           {
             ...this.adapters,
             settingsSchema: (owner) => this.settingsSchema(owner),
+            settingsContext: () => context,
           },
         ).forPlugin(id).settings(installed.manifest?.settings ?? []);
         const settingsRevision = settings.revision;
-        const key = await settingsSourceKey(
-          id,
-          codeFingerprint,
+        context.assertCurrent();
+        return {
+          key: settings.sourceKey!,
+          codeFingerprint: context.codeFingerprint,
           settingsRevision,
-        );
-        return { key, codeFingerprint, settingsRevision };
+        };
       },
     };
     return { plugin, owner };
@@ -329,6 +373,7 @@ export class PluginNetworkRequests {
         change.pluginId,
         original.codeFingerprint,
         change.nextRevision,
+        this.adapters.settingsEnvironment?.fingerprint(change.pluginId),
       ),
     };
     const prepared = await this.store.prepareSourceTransition(owner, identity);

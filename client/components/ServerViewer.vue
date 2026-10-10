@@ -1,8 +1,7 @@
 <template>
   <div
     ref="viewerElement"
-    class="rendered-markdown"
-    :class="{ 'toastui-editor-contents': loaded }"
+    :class="{ 'rendered-markdown': loaded, 'toastui-editor-contents': loaded }"
     @click="viewerHandleAnchorClick"
   ></div>
 </template>
