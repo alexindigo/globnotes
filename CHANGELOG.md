@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-10-10
+
+### Feature
+
+The new server backup plugin keeps previous Markdown text after managed saves,
+renames and deletes, using numbered versions with a default of two and an integer
+retention slider from one to ten. Backups can remain adjacent or mirror the note's
+original folder structure beneath a configured base; ownership records and a
+discoverable journal support restart recovery without replaying note changes.
+Generic completion filesystem operations and environment-pinned plugin settings
+support this capability while keeping all backup policy inside the plugin. Backups
+are best-effort: note writes can succeed when backup delivery fails, and adjacent
+files remain readable under the vault's ordinary serving policy.
+
+- Add versioned note backups and their generic prerequisites (`4949af2`).
+
+## 2026-10-08
+
+### Test
+
+Native validation now observes real browser, API and filesystem consumers instead
+of treating log markers or implementation-shaped checks as proof. The shared suite
+requires every selected child's successful exit and rejects unfinished or timed-out
+runs; negative controls demonstrate that broken producers fail their consumers.
+Installed Git hooks export exact staged or commit trees and delegate validation to
+the identified development VM.
+
+- Replace weak checks with behavioral consumers (`2cb7d56`).
+- Require actual native-suite exit statuses (`6c5d527`).
+
+## 2026-10-07
+
+### Feature
+
+The generic plugin platform now supports independent server and browser runtimes,
+post-change observers, explicitly declared blocking guards, commands, declarative
+settings and protected plugin endpoints. A unified Settings interface exposes
+vault-owned enablement, configuration and separate server network/import consent,
+while retained drafts and source-qualified lifetimes protect asynchronous work.
+Foreground note saves use an ordered queue, and in-place Access updates resolve
+pending work before changing credentials or policy; a public settings-only lock
+remains independent of note editing.
+
+- Complete the generic plugin platform (`59a2591`).
+
 ## v2.2 (2026-10-01)
 
 TOTP can now be enrolled in the password section of the setup wizard: enable
