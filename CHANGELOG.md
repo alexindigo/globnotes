@@ -2,6 +2,16 @@
 
 ## 2026-10-10
 
+### Fix
+
+The container healthcheck now targets the configured listener's address family,
+using IPv4 or IPv6 loopback for wildcard listeners and preserving custom ports and
+path prefixes. An IPv4-only server is no longer reported unhealthy merely because
+`localhost` resolves to IPv6; genuinely unavailable ports or routes still fail the
+probe.
+
+- Match the container healthcheck to its listener (`a90f52f`).
+
 ### Feature
 
 The new server backup plugin keeps previous Markdown text after managed saves,
