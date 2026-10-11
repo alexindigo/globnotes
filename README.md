@@ -85,15 +85,126 @@ services:
       - "8080:8080"
     volumes:
       - ./notes:/data
+      # Optional: keep application state outside the notes tree.
+      # - ./state:/state
       # Optional: mount additional sources as subdirectories
       # - /srv/dad-notes:/data/dad
       # - /srv/mom-notes:/data/mom
     environment:
+      # Enable together with the ./state mount above:
+      # GLOBNOTES_INDEX_PATH: "/state"
       # Optional. Leave unset for the first-run setup wizard.
       # GLOBNOTES_AUTH_TYPE: "none"  # trusted home network only!
+      TZ: "UTC"
 ```
 
 The image is published to both [Docker Hub](https://hub.docker.com/r/alexindigo/globnotes) (`alexindigo/globnotes`) and [GHCR](https://github.com/alexindigo/globnotes/pkgs/container/globnotes) (`ghcr.io/alexindigo/globnotes`) — same tags (`latest`, `1.0`, `1.0.1`, …), same content; use whichever registry you prefer.
+
+### Keep application state outside your notes
+
+Available since **v2.1.1**, `GLOBNOTES_INDEX_PATH` separates globnotes' application
+state from an existing notes directory. Despite its name, it selects the **whole
+state directory**, not just the search index. Without it, state lives in
+`<notes directory>/.globnotes`.
+
+For a central Markdown repository shared with other editors, mount the existing
+notes directory directly and give globnotes a separate persistent state mount:
+
+```yaml
+services:
+  globnotes:
+    image: alexindigo/globnotes:latest
+    container_name: globnotes
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /srv/notes:/data
+      - /srv/appdata/globnotes:/state
+    environment:
+      GLOBNOTES_PATH: "/data"
+      GLOBNOTES_INDEX_PATH: "/state"
+```
+
+Replace the host paths with your own directories. The left side of each mount is
+a **host path**; the right side and both environment values are **container paths**.
+In Unraid's container editor, the same setup is two path mappings (your notes to
+`/data`, application data to `/state`) and a variable named `GLOBNOTES_INDEX_PATH`
+with value `/state`. `/index` is equally valid if that is your state mount's
+container path; the directory name is not special.
+
+| Content | Host location in this example |
+|---|---|
+| Markdown notes and attachments | `/srv/notes/` |
+| Saved setup/access configuration and branding settings | `/srv/appdata/globnotes/config.json` |
+| Search index and SQLite companion files | `/srv/appdata/globnotes/index.sqlite`, `index.sqlite-wal`, `index.sqlite-shm` |
+| Custom branding files | `/srv/appdata/globnotes/brand/` |
+| Custom plugins and plugin policy | `/srv/appdata/globnotes/plugins/`, `plugins.json` |
+
+The value **is the state directory itself**: `/state` means
+`/state/config.json`, not `/state/.globnotes/config.json`. State remains grouped
+together; this setting does not provide independent directories for config and
+the database. Keep it on a persistent mount so container recreation preserves
+your settings. Environment-provided settings retain precedence over saved setup
+choices.
+
+Outside Docker, set `GLOBNOTES_PATH` to the actual notes directory and
+`GLOBNOTES_INDEX_PATH` to the actual application-state directory. There is no
+container-path translation in a native deployment.
+
+The application user needs access to both directories and write permission for
+state and any notes it edits. Container startup only adjusts ownership of the
+selected state directory; it does not change ownership of the notes tree. Use
+`PUID`/`PGID` when you need to select the application user's IDs explicitly.
+
+#### Moving an existing installation
+
+Changing `GLOBNOTES_INDEX_PATH` **does not move existing state automatically**.
+Preserve the existing state rather than treating `.globnotes` as disposable cache:
+it contains saved access configuration and other persistent application data.
+
+| Step | Action |
+|---|---|
+| 1 | Stop globnotes before transferring state, so SQLite and configuration files are not changing during the copy. Back up the existing `.globnotes` directory. |
+| 2 | Copy its **entire contents**, including hidden files and any SQLite companion files, into an empty destination such as `/srv/appdata/globnotes/`. Do not merge state from different installations or add another `.globnotes` nesting level. |
+| 3 | Add the state mount, set `GLOBNOTES_INDEX_PATH` to its container path, and ensure the application user can access the destination. Restart globnotes. |
+| 4 | Confirm that the existing access configuration, branding, plugins, notes and search are present. Retain the original backup; remove the old vault-local state only after confirming the migration. |
+
+Pointing at an empty state directory without copying the old configuration may
+start the first-run setup wizard again. Startup logs a relocation hint when it
+finds a legacy vault-local `config.json`, but does not perform the transfer.
+Treat the state directory and its backups as sensitive: configuration can contain
+authentication and signing material.
+
+**Note backups are separate from core application state.** On versions with the
+Versioned note backups plugin, `GLOBNOTES_INDEX_PATH` does not relocate its backup
+files. The plugin defaults to backups beside notes and keeps recovery bookkeeping
+in `<vault>/.globnotes-backup/`. Settings → Backups can select a separate backup
+destination, but relocating core state alone does not move every plugin-created
+file out of the vault.
+
+### Shared vaults and symbolic links
+
+To expose an existing central notes directory in Docker, bind-mount that directory
+directly as `/data`, as above. To expose several directories under one notes root,
+use separate mounts such as `/srv/dad-notes:/data/dad` and
+`/srv/mom-notes:/data/mom`. These are folders in one served tree, not separate
+instances with independent access settings.
+
+A symlink **inside** a mounted directory is resolved in the container's filesystem.
+For example, a mounted `/data/shared` link pointing to `/srv/central-notes` does
+not also expose the host's `/srv/central-notes`. Its target must exist at that path
+inside the container. A direct bind mount makes the intended notes visible without
+depending on that host-only symlink target.
+
+The current folder tree and recursive note scanner **do not traverse symlinked
+subdirectories inside the vault**. A symlink used as the configured vault root is
+a different case: root path resolution does not categorically reject it, but this
+is not a guarantee of complete symlink support across discovery, editing, renames
+and attachment handling. Internal links and root links should not be treated as
+interchangeable. If reporting a problem, describe the link's position and target
+using placeholder paths, plus the relevant non-secret option names; do not paste
+configuration files, credentials or tokens.
 
 ## URL model
 
@@ -114,7 +225,7 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 | Variable | Default | Description |
 |---|---|---|
 | `GLOBNOTES_PATH` | `/data` (in container) | Root directory of the notes tree. **Required** outside docker. |
-| `GLOBNOTES_INDEX_PATH` | `<vault>/.globnotes` | State dir (search index, wizard config, branding, plugins). The value IS the directory (not a parent). Set it to keep the vault pure notes — e.g. for backup jobs that should only see markdown. On first boot with it set and a legacy vault, the exact `mv` command is logged; state is never auto-copied. |
+| `GLOBNOTES_INDEX_PATH` | `<vault>/.globnotes` | Whole application state dir (search index, saved setup config, branding, plugins). The value IS the directory, not a parent. See [separate state and migration](#keep-application-state-outside-your-notes); existing state is never auto-copied. Note-backup placement is separate. |
 | `PUID` / `PGID` | vault owner | User the app runs as (container). Defaults to the notes vault's owner (so an Unraid `nobody:users` share needs zero configuration); set explicit ids to override. **globnotes never `chown`s your vault** — it only re-owns the state dir at boot (by design; failure-tolerant on root-squashed mounts). |
 | `GLOBNOTES_INDEX_BATCH_SIZE` | `200` | Notes indexed per commit batch during the initial background sync. Lower it on very constrained hosts. |
 | `GLOBNOTES_INDEX_BATCH_DELAY` | `0.1` | Seconds to sleep between index batches (CPU throttle). `0` disables. |
@@ -155,12 +266,12 @@ curl -H "Authorization: Bearer $TOKEN" \
 ## Migrating from flatnotes
 
 - Rename `FLATNOTES_*` env vars to `GLOBNOTES_*` (same names otherwise).
-- Your `/data` works as-is: flat notes keep their titles, and the index is rebuilt automatically (`.globnotes` replaces `.flatnotes`; both are hidden and safe to delete).
+- Your `/data` works as-is: flat notes keep their titles, and the search index is rebuilt automatically. globnotes uses `.globnotes` for application state by default, not just an index cache: **do not delete the whole directory to rebuild search**. Preserve its configuration, branding and plugins; see [state relocation](#moving-an-existing-installation).
 - The special `attachments/` directory is gone as a concept — existing `attachments/x.jpg` links keep working (it's now just a directory, served like any other). New uploads land beside the note being edited.
 
 ## Plugins
 
-Rendering is a markdown-it pipeline extended by **plugins** — each running in its own permission-narrowed Deno Worker (no network/env/write unless the manifest asks). The built-ins (`globnotes-autolinks`, `-callout`, `-comments`, `-embeds`, `-mark`, `-mermaid`) produce the Obsidian-flavored rendering out of the box; drop your own into `<vault>/.globnotes/plugins/<id>/` and they join the pipeline. Per-plugin switches and the auto-enable default live in the menu → **Plugins** dialog. See [docs/plugins.md](docs/plugins.md) for the authoring guide.
+Rendering is a markdown-it pipeline extended by **plugins** — each running in its own permission-narrowed Deno Worker (no network/env/write unless the manifest asks). The built-ins (`globnotes-autolinks`, `-callout`, `-comments`, `-embeds`, `-mark`, `-mermaid`) produce the Obsidian-flavored rendering out of the box; drop your own into `<state directory>/plugins/<id>/` (`<vault>/.globnotes/plugins/<id>/` by default) and they join the pipeline. Per-plugin switches and the auto-enable default live in the menu → **Plugins** dialog. See [docs/plugins.md](docs/plugins.md) for the authoring guide.
 
 ## Event bus
 
@@ -184,7 +295,9 @@ Make an instance yours without touching code: **navbar menu → Branding** sets 
 - The brand name replaces "globnotes" in the browser tab, the web manifest, and the navbar wordmark.
 - A custom `icon.svg` doubles as the browser-tab favicon; drop dedicated favicon files to go further.
 
-Favicon files are file-drop only — no dialog fields. Drop them into `<vault>/.globnotes/brand/`:
+Favicon files are file-drop only — no dialog fields. Drop them into
+`<state directory>/brand/`: `<vault>/.globnotes/brand/` by default, or `/state/brand/`
+inside the container when `GLOBNOTES_INDEX_PATH=/state`.
 
 | File | Replaces |
 |---|---|
