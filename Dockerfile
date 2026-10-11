@@ -47,6 +47,7 @@ WORKDIR ${APP_PATH}
 
 COPY LICENSE THIRD-PARTY-NOTICES.md deno.json deno.lock ./
 COPY server ./server
+COPY shared ./shared
 COPY plugins ./plugins
 
 # Vendor every runtime dependency (npm + jsr) into the image so the
