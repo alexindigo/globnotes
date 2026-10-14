@@ -293,6 +293,7 @@ import Icon from "./Icon.vue";
 import Modal from "./Modal.vue";
 import TextInput from "./TextInput.vue";
 import Toggle from "./Toggle.vue";
+import { copyText } from "../clipboard.js";
 
 const props = defineProps({
   // First-run setup is mandatory (default); a menu-invoked wizard can be
@@ -401,7 +402,7 @@ async function copyTotpKey() {
   const secret = totpSecret.value;
   const ticket = copyTicket;
   try {
-    await navigator.clipboard.writeText(secret);
+    await copyText(secret);
     if (!disposed && ticket === copyTicket && totpSecret.value === secret && mode.value === "password") {
       copyFeedback.value = "Setup key copied.";
     }

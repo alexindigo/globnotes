@@ -12,6 +12,10 @@ plugin generations, Access updates, server operations and backup ownership.
 Plugin contexts and the browser SDK expose `createUuid()` for portable identities,
 and the container includes the shared runtime source directory.
 
+Code-block and authenticator-key copying also use one clipboard writer with a
+user-gesture copy-event path on ordinary HTTP, preserving literal text, focus,
+selection and existing confirmation/failure feedback.
+
 ## 2026-10-10
 
 ### Fix

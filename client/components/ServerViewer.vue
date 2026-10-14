@@ -53,6 +53,7 @@ import mermaid from "mermaid";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { getPlugins, getRenderedHtml } from "../api.js";
+import { copyText } from "../clipboard.js";
 import { subscribe, TOPICS } from "../bus/index.js";
 import { disabledPluginIds, viewLineNumbers } from "../pluginSettings.js";
 // The plain script above owns + exports the handlers (Note.vue imports
@@ -95,7 +96,7 @@ function addCopyButtons(root) {
     btn.addEventListener("click", async () => {
       const text =
         pre.querySelector("code")?.textContent ?? pre.textContent ?? "";
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
       btn.innerHTML = CHECK_ICON;
       btn.classList.add("copied");
       setTimeout(() => {
