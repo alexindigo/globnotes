@@ -68,10 +68,11 @@ export function encodeRewriteFiles(files) {
   return encodeURIComponent(JSON.stringify(files));
 }
 
+/** Parse the router query value, which is already URI-decoded by the router. */
 export function decodeRewriteFiles(raw) {
   try {
     if (!raw) return [];
-    return JSON.parse(decodeURIComponent(raw));
+    return JSON.parse(raw);
   } catch {
     return [];
   }

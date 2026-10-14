@@ -179,19 +179,22 @@ describe("rewrite file URL boundary", () => {
     expect(decodeRewriteFiles(raw)).toEqual([]);
   });
 
-  it("characterizes the extra decoding of percent escapes after router decoding", () => {
+  it("preserves literal percent escapes after router decoding", () => {
     const files = [{ oldPath: "folder/literal%2Fname", newPath: "moved/literal%25name" }];
     const raw = routedRewriteFiles(files);
     expect(raw).toBe(JSON.stringify(files));
-    expect(decodeRewriteFiles(raw)).toEqual([
-      { oldPath: "folder/literal/name", newPath: "moved/literal%name" },
-    ]);
+    expect(decodeRewriteFiles(raw)).toEqual(files);
   });
 
-  it("characterizes valid JSON containing a lone percent being lost by extra decoding", () => {
+  it("preserves valid JSON containing a lone percent", () => {
     const files = [{ oldPath: "folder/100%", newPath: "moved/100%" }];
     const raw = routedRewriteFiles(files);
     expect(JSON.parse(raw)).toEqual(files);
-    expect(decodeRewriteFiles(raw)).toEqual([]);
+    expect(decodeRewriteFiles(raw)).toEqual(files);
+  });
+
+  it.each(["%20", "%2F", "%25", "%22", "%5C", "%zz", "笔记 + # & ?", "a\"b\\c"])("round-trips the literal path segment %s through the router query consumer", (segment) => {
+    const files = [{ oldPath: `before/${segment}`, newPath: `after/${segment}` }];
+    expect(decodeRewriteFiles(routedRewriteFiles(files))).toEqual(files);
   });
 });
