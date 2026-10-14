@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.3.2 (2026-10-13)
+
+### Fix
+
+Restore note viewing and creation on ordinary HTTP local-domain and LAN origins.
+Browser and server identities now use one cryptographically random UUID-v4
+generator backed by `crypto.getRandomValues()`, instead of requiring the browser's
+secure-context-only UUID API. The same contract covers confirmation dialogs,
+plugin generations, Access updates, server operations and backup ownership.
+Plugin contexts and the browser SDK expose `createUuid()` for portable identities,
+and the container includes the shared runtime source directory.
+
 ## 2026-10-10
 
 ### Fix

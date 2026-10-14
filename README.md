@@ -48,6 +48,19 @@ volumes:
 
 Folders are never "managed": creating `a/b/c` makes the directories, renaming `a/b` → `x/y` moves the file, and empty directories are pruned away (git-style).
 
+### Plain HTTP homelabs
+
+globnotes supports ordinary HTTP on a local domain such as
+`http://globnotes.home/` or a LAN address. Viewing, creating, editing and saving
+notes do not require a publicly registered domain, externally issued certificate,
+HTTPS connection or browser secure-context exception. Resolve your local name to
+the machine serving globnotes using your own local DNS or hosts mapping.
+
+Internal UUIDs use one shared cryptographically random generator backed by
+`crypto.getRandomValues()`, which browsers make available on plain HTTP. Plugins
+can use the same contract through `ctx.createUuid()` or the browser
+`@globnotes/plugin-sdk` export; see the [Plugin API](docs/plugin-api.md).
+
 ## Features
 
 - **Real-path notes** — the URL path IS the vault path: `/dad/recipes/soup` is the note, `/dad/assets/broth.jpg` is its image. Relative links (`![](broth.jpg)`, `[x](../other.md)`) work exactly like in Obsidian — no rewriting, no magic.

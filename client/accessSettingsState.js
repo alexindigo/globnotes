@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { reactive } from "vue";
+import { createUuid } from "../shared/uuid.ts";
 
 /** Owns configured Access wire/results; controls inject APIs and completion. */
 export function createAccessSettingsState({ read, write, readStatus, completed, timeoutMs = 5000 }) {
@@ -38,7 +39,7 @@ export function createAccessSettingsState({ read, write, readStatus, completed, 
       requiresLogin = proposed.mode === "password" && (before.mode !== "password" || proposed.password !== undefined ||
         (proposed.username !== undefined && proposed.username.trim().toLowerCase() !== before.username) ||
         (proposed.totpEnabled ?? before.totpEnabled) !== before.totpEnabled || proposed.totpKey !== undefined);
-      const admitted = { ...proposed, revision: before.revision, signature: before.signature, updateId: crypto.randomUUID() };
+      const admitted = { ...proposed, revision: before.revision, signature: before.signature, updateId: createUuid() };
       submission = admitted;
       state.inFlight = true;
       const originalWire = Promise.resolve().then(() => write(admitted));

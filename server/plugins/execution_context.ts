@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import type { InvocationReference } from "./contracts.ts";
+import { createUuid } from "../../shared/uuid.ts";
 
 export type ReleaseOutcome = { status: "settled" } | { status: "aborted" };
 export interface ExecutionContext {
@@ -20,7 +21,7 @@ export function executionContext(
   let resolve!: (outcome: ReleaseOutcome) => void;
   let settled = false;
   const context: ExecutionContext = {
-    reference: Object.freeze({ id: crypto.randomUUID(), kind, pre }),
+    reference: Object.freeze({ id: createUuid(), kind, pre }),
     causal: Object.freeze({ parentId: causal.parentId, depth: causal.depth }),
     open: true,
     release: new Promise((yes) => {

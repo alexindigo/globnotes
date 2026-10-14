@@ -72,6 +72,7 @@ filesystem envelope.
 
 | Surface | Contract |
 |---|---|
+| `ctx.createUuid()` | cryptographically random UUID-v4; available in browser and server contexts, including plain HTTP |
 | `ctx.hooks.on(name, handler)` | declared `on-*`/`pre-*`; returns a disposer |
 | `ctx.commands.register(def, handler)` | namespaced command; no overriding built-ins or other owners |
 | `ctx.settings.read()/subscribe(fn)` | effective validated values; committed-change notifications |
@@ -83,6 +84,12 @@ filesystem envelope.
 | Server `ctx.permissions.status()` | owning current request/approval/effective projection and source token |
 | `ctx.register(disposer)` / `ctx.timers` | generation-scoped cleanup, even when disposal throws |
 | Browser: `ctx.events.on` / `ctx.actions.dispatch` | managed bus facts/actions; admission is not completion |
+
+`createUuid` is also exported by the browser's `@globnotes/plugin-sdk` module.
+Use this helper for plugin identities rather than the secure-context-only browser
+`crypto.randomUUID()`. It uses `crypto.getRandomValues()` and does not require
+HTTPS or a publicly registered domain. An identifier does not confer permissions
+or replace an authorization check.
 
 ### Settings persistence and definition changes
 

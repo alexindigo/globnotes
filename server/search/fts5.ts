@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { DatabaseSync } from "node:sqlite";
+import { createUuid } from "../../shared/uuid.ts";
 import * as path from "@std/path";
 import type { Indexer } from "@server/state.ts";
 import { isValidNotePath } from "@server/helpers.ts";
@@ -160,7 +161,7 @@ export class Fts5Indexer implements Indexer {
    * runtime receives one on-sync fact. */
   #batchSynced(changedPaths: string[], initial: boolean): void {
     const fact = {
-      operationId: crypto.randomUUID(),
+      operationId: createUuid(),
       action: "sync" as const,
       origin: "external" as const,
       timestamp: new Date().toISOString(),
@@ -180,7 +181,7 @@ export class Fts5Indexer implements Indexer {
   ): void {
     const notePath = this.#stripExt(filename);
     const fact = {
-      operationId: crypto.randomUUID(),
+      operationId: createUuid(),
       action,
       origin: "external" as const,
       timestamp: new Date().toISOString(),

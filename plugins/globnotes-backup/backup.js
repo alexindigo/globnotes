@@ -68,7 +68,7 @@ export class BackupQueue {
     if (!stat) {
       if (!create) return null;
       stat = await fs.mkdir(location, { ...options, expect: { kind: "absent" } });
-      const owner = { schema: 1, kind: "globnotes-backup-workspace", vault, location, nonce: crypto.randomUUID() };
+      const owner = { schema: 1, kind: "globnotes-backup-workspace", vault, location, nonce: this.ctx.createUuid() };
       await writeRecord(fs, marker, owner, null, options);
     }
     if (stat.kind !== "directory" || await fs.realPath(location, options) !== location) fail("backup_workspace_conflict");
@@ -131,7 +131,7 @@ export class BackupQueue {
     return saved;
   }
   async #begin(workspace, config, captured, operationKey, bytes) {
-    const fs = this.ctx.fs, options = this.#options(config), transaction = crypto.randomUUID();
+    const fs = this.ctx.fs, options = this.#options(config), transaction = this.ctx.createUuid();
     let root;
     if (config.base === "") root = workspace.vault;
     else {

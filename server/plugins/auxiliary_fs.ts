@@ -2,6 +2,7 @@
 /** Completion IO for auxiliary files. No actions, notes, hooks or feature policy. */
 import { createHash } from "node:crypto";
 import * as path from "@std/path";
+import { createUuid } from "../../shared/uuid.ts";
 import {
   FS_LIMITS,
   type FsEffect,
@@ -558,7 +559,7 @@ export class AuxiliaryFilesystem {
           if (!Deno.statSync(parent).isDirectory) {
             throw new FsError("fs_denied");
           }
-          temporary = path.join(parent, `.auxiliary-${crypto.randomUUID()}`);
+          temporary = path.join(parent, `.auxiliary-${createUuid()}`);
           temporaryHandle = await Deno.open(temporary, {
             read: true,
             write: true,

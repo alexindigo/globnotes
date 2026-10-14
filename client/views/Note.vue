@@ -263,6 +263,7 @@
 <script setup>
 import { tabNotesOff } from "../icons.js";
 import { tabSave, tabTrash, tabLoader2 } from "../icons.js";
+import { createUuid } from "../../shared/uuid.ts";
 import Icon from "../components/Icon.vue";
 import { useToast } from "primevue/usetoast";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
@@ -523,7 +524,7 @@ const saveFeedback = computed(() => queueState.value.status === "paused"
 const saveChangesMessage = computed(() => queueState.value.unresolved
   ? "Save work is retained. Discard removes queued saves and current unsaved changes only when all sent writes have a known outcome."
   : "Do you want to save your changes?");
-const ownerId = crypto.randomUUID();
+const ownerId = createUuid();
 let editSession = 0;
 let saveQueue = null;
 let applyingAcknowledgement = false;
@@ -1005,7 +1006,7 @@ async function canonicalSaveRoute(snapshot, path) {
   const hash = serializeFragment(currentFragment());
   const fullPath = notePath(path) + hash;
   if (router.currentRoute.value.fullPath === fullPath) return;
-  const token = { ownerId, sessionId: snapshot.sessionId, submissionId: snapshot.submissionId, fullPath, path, nonce: crypto.randomUUID(), guardConsumed: false };
+  const token = { ownerId, sessionId: snapshot.sessionId, submissionId: snapshot.submissionId, fullPath, path, nonce: createUuid(), guardConsumed: false };
   acknowledgementTransition = token;
   await router.replace(fullPath);
   if (router.currentRoute.value.fullPath !== fullPath) throw new Error("Save committed, but its canonical route could not be applied. Work is retained.");

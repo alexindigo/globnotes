@@ -7,6 +7,7 @@
  * causal chain is bounded to stop accidental infinite loops. */
 
 import { type ActionReceipt, PLUGIN_LIMITS } from "./contracts.ts";
+import { createUuid } from "../../shared/uuid.ts";
 import {
   classifyWriteTarget,
   projectActionReceipt,
@@ -130,7 +131,7 @@ export class PluginActions {
       }
       authority.authorize(paths);
     }
-    const requestId = crypto.randomUUID();
+    const requestId = createUuid();
     const capturedArgs = structuredClone(args);
     if (action === "file-write") {
       const fileArgs = capturedArgs as Record<string, unknown>;
@@ -223,7 +224,7 @@ export class PluginActions {
     try {
       const a = (args ?? {}) as Record<string, unknown>;
       let result: unknown = null;
-      const operationId = crypto.randomUUID();
+      const operationId = createUuid();
       const requester = requesterAuthority(
         manifest,
         this.#adapters.vaultPath,

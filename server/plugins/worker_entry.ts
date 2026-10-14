@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** Handler functions never leave their owning Worker. The host binds authority. */
+import { createUuid } from "../../shared/uuid.ts";
 import {
   type AuxiliaryFs,
   type CommandDefinition,
@@ -41,6 +42,7 @@ interface PluginModule {
   deactivate?: (ctx: PluginCtx) => unknown;
 }
 export interface PluginCtx {
+  createUuid(): string;
   search(term: string): Promise<unknown>;
   readNote(path: string): Promise<unknown>;
   listPaths(): Promise<unknown>;
@@ -197,6 +199,7 @@ function timer(
   return release;
 }
 const ctx: PluginCtx = {
+  createUuid,
   search: (term) => rpc("search", [term]),
   readNote: (path) => rpc("readNote", [path]),
   listPaths: () => rpc("listPaths", []),

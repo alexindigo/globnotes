@@ -11,6 +11,7 @@ import { getPluginSettings } from "./api.js";
 import { subscribe } from "./bus/index.js";
 import { dispatchAction } from "./keybindings/dispatcher.js";
 import { registerPluginCommand } from "./commands.js";
+import { createUuid } from "../shared/uuid.ts";
 
 /**
  * @param {object} deps
@@ -62,6 +63,7 @@ export function createPluginSdk({ pluginId, snapshot, own, assertActive = () => 
 
   return Object.freeze({
     pluginId,
+    createUuid,
     snapshot: frozenSnapshot,
     events: {
       /** Managed bus subscription: failure-isolated, disposed on unload. */

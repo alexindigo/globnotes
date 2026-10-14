@@ -2,6 +2,7 @@
 
 /** v2 configured-access glue; keeps the existing account and policy gate. */
 import { HttpError } from "@pathfinder/pathfinder";
+import { createUuid } from "../../shared/uuid.ts";
 import {
   AuthType,
   type GlobalConfig,
@@ -308,7 +309,7 @@ export async function updateAccess(
       read_only_settings: readOnlySettings as boolean,
       access_revision: before.revision + 1,
       access_update_id: data.updateId as string | undefined ??
-        crypto.randomUUID(),
+        createUuid(),
     };
     if (protectedMode) {
       if (!auth || data.username !== undefined) next.username = username;

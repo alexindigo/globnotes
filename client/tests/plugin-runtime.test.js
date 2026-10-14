@@ -37,6 +37,7 @@ describe("pluginSdk facade", () => {
     expect(Object.keys(sdk).sort()).toEqual([
       "actions",
       "commands",
+      "createUuid",
       "events",
       "pluginId",
       "register",
@@ -46,6 +47,7 @@ describe("pluginSdk facade", () => {
     ]);
     expect(sdk.snapshot.a).toBe(1);
     expect(Object.isFrozen(sdk.snapshot)).toBe(true);
+    expect(sdk.createUuid()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
   it("managed event subscriptions isolate handler failures and dispose", () => {

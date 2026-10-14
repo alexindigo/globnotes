@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import * as path from "@std/path";
+import { createUuid } from "../../shared/uuid.ts";
 import { logger } from "../logger.ts";
 import {
   pluginCodePath,
@@ -268,7 +269,7 @@ export class PluginHost {
     const generationRetired = Promise.withResolvers<void>();
     const slot: Slot = {
       worker,
-      generation: crypto.randomUUID(),
+      generation: createUuid(),
       ready: false,
       usable: true,
       retired: false,

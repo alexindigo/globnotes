@@ -8,6 +8,7 @@
  * revalidation → commit through storage → post-fact admission → result. */
 
 import * as path from "@std/path";
+import { createUuid } from "../../shared/uuid.ts";
 import { HttpError } from "@pathfinder/pathfinder";
 import type { FileServing } from "../files/file_serving.ts";
 import type { Indexer } from "../state.ts";
@@ -194,7 +195,7 @@ export class NoteOperations {
     data: NoteCreate,
     ctx: OperationOrigin,
     requester?: RequesterAuthority,
-    operationId = crypto.randomUUID(),
+    operationId = createUuid(),
   ): Promise<Note> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);
@@ -265,7 +266,7 @@ export class NoteOperations {
     fileRefs: string,
     ctx: OperationOrigin,
     requester?: RequesterAuthority,
-    operationId = crypto.randomUUID(),
+    operationId = createUuid(),
   ): Promise<Note> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);
@@ -401,7 +402,7 @@ export class NoteOperations {
     notePath: string,
     ctx: OperationOrigin,
     requester?: RequesterAuthority,
-    operationId = crypto.randomUUID(),
+    operationId = createUuid(),
   ): Promise<void> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);
@@ -463,7 +464,7 @@ export class NoteOperations {
     body: Uint8Array,
     ctx: OperationOrigin,
   ): Promise<{ filename: string; url: string }> {
-    const operationId = crypto.randomUUID();
+    const operationId = createUuid();
     this.#admission(ctx, operationId);
     return await this.#lock.run(async () => {
       this.#admission(ctx, operationId);
@@ -527,7 +528,7 @@ export class NoteOperations {
     newPath: string,
     ctx: OperationOrigin,
   ): Promise<void> {
-    const operationId = crypto.randomUUID();
+    const operationId = createUuid();
     this.#admission(ctx, operationId);
     await this.#lock.run(async () => {
       this.#admission(ctx, operationId);
@@ -691,7 +692,7 @@ export class NoteOperations {
     bytes: Uint8Array,
     ctx: OperationOrigin,
     requester?: RequesterAuthority,
-    operationId = crypto.randomUUID(),
+    operationId = createUuid(),
   ): Promise<void> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);

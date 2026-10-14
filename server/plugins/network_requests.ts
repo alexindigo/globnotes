@@ -2,6 +2,7 @@
 
 /** Vault-owned request/approval service. HTTP and Worker facades share one projection. */
 import * as path from "@std/path";
+import { createUuid } from "../../shared/uuid.ts";
 import { PluginContractError, record, type SettingsPage } from "./contracts.ts";
 import {
   assertSettingsSchemaCurrent,
@@ -645,7 +646,7 @@ export class PluginNetworkRequests {
       previous && previous.fingerprint === fingerprint &&
       equalSource(previous.source, view.source)
     ) return;
-    const id = crypto.randomUUID();
+    const id = createUuid();
     this.replacements.set(view.pluginId, {
       id,
       fingerprint,

@@ -2,7 +2,8 @@
 
 /** Public `@globnotes/plugin-sdk` specifier — a LEAF module. Plugins
  * receive their facade instance from the host at activation; this module
- * carries only dependency-free constants so the import-map chunk never
+ * carries only dependency-free helpers/constants so the import-map chunk never
  * duplicates app module instances (the shared-package identity rule). */
 
 export const PLUGIN_SDK_VERSION = 1;
+export { createUuid } from "../shared/uuid.ts";

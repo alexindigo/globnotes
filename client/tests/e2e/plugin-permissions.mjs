@@ -76,7 +76,7 @@ async function fixture(name, { importParent = false, gateSaves = false, guardSav
     settings: [{ id: "preferences", label: "Networked preferences", renderer: { kind: "declarative-v1", version: 1 }, fields: [{ key: "message", label: "Message", type: "text", default: "native" }, { key: "limit", label: "Limit", type: "number", default: 5, min: 1, max: 10 }] }] };
   await Deno.writeTextFile(`${dir}/manifest.json`, JSON.stringify(manifest));
   await Deno.writeTextFile(`${dir}/custom-editor.js`, "export default [];");
-  await Deno.writeTextFile(`${dir}/browser.js`, "export function activate(ctx){ const nonce=crypto.randomUUID(); const marker=document.createElement('span');marker.dataset.permissionBrowserNonce=nonce;marker.hidden=true;document.body.append(marker);ctx.register(()=>marker.remove()); }");
+  await Deno.writeTextFile(`${dir}/browser.js`, "export function activate(ctx){ const nonce=ctx.createUuid(); const marker=document.createElement('span');marker.dataset.permissionBrowserNonce=nonce;marker.hidden=true;document.body.append(marker);ctx.register(()=>marker.remove()); }");
   await Deno.writeTextFile(`${dir}/service.js`, `const instance=crypto.randomUUID();export async function activate(ctx){
     const request=await ctx.permissions.requestAccess({kind:'network',hosts:['${authority}'],reason:'Read native service status'});
     ${guardSaves ? `ctx.hooks.on('pre-save',async()=>{await(await fetch('http://${authority}/save-gate')).text();});` : ""}

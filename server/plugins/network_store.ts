@@ -2,6 +2,7 @@
 
 /** Host-owned approval ledger. Plugin SDK writers receive request methods only. */
 import * as path from "@std/path";
+import { createUuid } from "../../shared/uuid.ts";
 import {
   PLUGIN_LIMITS,
   PluginContractError,
@@ -575,7 +576,7 @@ export class PluginNetworkStore {
         ? next.approvedNetwork
         : next.approvedImports;
       const request: PermissionRequest = {
-        id: crypto.randomUUID(),
+        id: createUuid(),
         pluginId: owner.id,
         source,
         kind,

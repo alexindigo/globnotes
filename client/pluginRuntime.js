@@ -9,6 +9,7 @@
  * disposes its resources. */
 
 import { readonly, ref } from "vue";
+import { createUuid } from "../shared/uuid.ts";
 
 import { getPluginHostCatalog, openPluginHostEvents } from "./api.js";
 import { removeCommandOwner } from "./commands.js";
@@ -62,7 +63,7 @@ export function createPluginRuntime({
   }
 
   async function activatePlugin(plugin, scope) {
-    const generation = crypto.randomUUID(), entry = { generation, disposers: new Set(), ready: false, activated: false, retired: false };
+    const generation = createUuid(), entry = { generation, disposers: new Set(), ready: false, activated: false, retired: false };
     generations.set(plugin.id, entry);
     const sdk = createSdk({ pluginId: plugin.id, snapshot: {
       pluginId: plugin.id, version: plugin.version, contractVersion: catalog.value?.contractVersion ?? 1,

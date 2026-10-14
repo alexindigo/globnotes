@@ -40,6 +40,7 @@
 <script setup>
 import CustomButton from "./CustomButton.vue";
 import Modal from "./Modal.vue";
+import { createUuid } from "../../shared/uuid.ts";
 
 const props = defineProps({
   title: { type: String, default: "Confirmation" },
@@ -54,7 +55,7 @@ const props = defineProps({
 });
 const emit = defineEmits(["confirm", "reject", "cancel"]);
 const isVisible = defineModel({ type: Boolean });
-const titleId=`confirmation-${crypto.randomUUID()}`;
+const titleId=`confirmation-${createUuid()}`;
 
 function emitClose(closeEvent = "cancel") {
   isVisible.value = false;

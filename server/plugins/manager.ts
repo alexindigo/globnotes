@@ -2,6 +2,7 @@
 
 /** One catalog of optional contributions. Rendering is a lazy compatibility adapter. */
 import * as path from "@std/path";
+import { createUuid } from "../../shared/uuid.ts";
 import { getEnv } from "../helpers.ts";
 import { logger } from "../logger.ts";
 import {
@@ -970,7 +971,7 @@ export class PluginManager {
       this.serviceRuntime?.post(
         "on-sync",
         snapshot ?? {
-          operationId: crypto.randomUUID(),
+          operationId: createUuid(),
           action: "sync",
           origin: "external",
           timestamp: new Date().toISOString(),

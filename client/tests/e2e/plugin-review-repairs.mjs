@@ -143,7 +143,7 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
 }
 async function browserCode(kind) {
   await Deno.writeTextFile(`${current.pluginDir}/browser.js`, `export async function activate(ctx){
-    const kind=${JSON.stringify(kind)}, nonce=crypto.randomUUID();
+    const kind=${JSON.stringify(kind)}, nonce=ctx.createUuid();
     const marker=document.createElement('output');marker.dataset.reviewOwner=kind;marker.dataset.nonce=nonce;marker.dataset.events='0';marker.dataset.commands='0';marker.hidden=true;document.body.append(marker);ctx.register(()=>marker.remove());
     ctx.commands.register({id:'inspect-browser',label:'Inspect browser repair',target:'browser'},()=>{marker.dataset.commands=String(Number(marker.dataset.commands)+1);return {kind,nonce};});
     ctx.events.on('note:save',()=>{marker.dataset.events=String(Number(marker.dataset.events)+1);});
