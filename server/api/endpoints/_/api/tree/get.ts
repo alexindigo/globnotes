@@ -2,11 +2,11 @@
 
 import { note_not_found } from "@server/api_messages.ts";
 import { InvalidPathError, NoteNotFoundError } from "@server/notes/models.ts";
-import { HttpError } from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 
 /** Tree notes carry `path` (identity) and `title` (display label). */
-export default function (request) {
+export default function (request: PathfinderRequest) {
   const dirPath = request.query.get("path") ?? "";
   try {
     const level = state.notes.listLevel(dirPath);

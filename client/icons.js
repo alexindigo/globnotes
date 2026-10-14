@@ -2,6 +2,7 @@
 // ICON_PATHS maps a tab* name to its array of <path d> strings; each tab*
 // name is also exported as its own constant for direct import.
 export const ICON_PATHS = {
+  tabLoader2: ["M12 3a9 9 0 1 0 9 9"],
   tabNumber0Small: ["M10 10v4a2 2 0 1 0 4 0v-4a2 2 0 1 0 -4 0"],
   tabNumber1Small: ["M11 8h1v8"],
   tabNumber2Small: [
@@ -415,6 +416,10 @@ export const ICON_PATHS = {
     "M14.5 4l5.5 5.5",
   ],
   tabClock: ["M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0", "M12 7v5l3 3"],
+  tabSettings: [
+    "M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z",
+    "M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0",
+  ],
   tabFilter: [
     "M4 4h16v2.172a2 2 0 0 1 -.586 1.414l-4.414 4.414v7l-6 2v-8.5l-4.48 -4.928a2 2 0 0 1 -.52 -1.345v-2.227",
   ],
@@ -584,10 +589,12 @@ export const tabMenu = ICON_PATHS.tabMenu;
 export const tabPlug = ICON_PATHS.tabPlug;
 export const tabDockLeft = ICON_PATHS.tabDockLeft;
 export const tabClock = ICON_PATHS.tabClock;
+export const tabSettings = ICON_PATHS.tabSettings;
 export const tabFilter = ICON_PATHS.tabFilter;
 export const tabClose = ICON_PATHS.tabClose;
 export const tabTrash = ICON_PATHS.tabTrash;
 export const tabSave = ICON_PATHS.tabSave;
+export const tabLoader2 = ICON_PATHS.tabLoader2;
 export const tabConsole = ICON_PATHS.tabConsole;
 export const tabDeviceDesktop = ICON_PATHS.tabDeviceDesktop;
 export const tabKeyboard = ICON_PATHS.tabKeyboard;

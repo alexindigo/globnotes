@@ -1,5 +1,132 @@
 # Changelog
 
+## v2.3.2 (2026-10-13)
+
+### Fix
+
+Restore note viewing and creation on ordinary HTTP local-domain and LAN origins.
+Browser and server identities now use one cryptographically random UUID-v4
+generator backed by `crypto.getRandomValues()`, instead of requiring the browser's
+secure-context-only UUID API. The same contract covers confirmation dialogs,
+plugin generations, Access updates, server operations and backup ownership.
+Plugin contexts and the browser SDK expose `createUuid()` for portable identities,
+and the container includes the shared runtime source directory.
+
+Code-block and authenticator-key copying also use one clipboard writer with a
+user-gesture copy-event path on ordinary HTTP, preserving literal text, focus,
+selection and existing confirmation/failure feedback.
+
+## 2026-10-10
+
+### Fix
+
+The container healthcheck now targets the configured listener's address family,
+using IPv4 or IPv6 loopback for wildcard listeners and preserving custom ports and
+path prefixes. An IPv4-only server is no longer reported unhealthy merely because
+`localhost` resolves to IPv6; genuinely unavailable ports or routes still fail the
+probe.
+
+- Match the container healthcheck to its listener (`a90f52f`).
+
+### Feature
+
+The new server backup plugin keeps previous Markdown text after managed saves,
+renames and deletes, using numbered versions with a default of two and an integer
+retention slider from one to ten. Backups can remain adjacent or mirror the note's
+original folder structure beneath a configured base; ownership records and a
+discoverable journal support restart recovery without replaying note changes.
+Generic completion filesystem operations and environment-pinned plugin settings
+support this capability while keeping all backup policy inside the plugin. Backups
+are best-effort: note writes can succeed when backup delivery fails, and adjacent
+files remain readable under the vault's ordinary serving policy.
+
+- Add versioned note backups and their generic prerequisites (`4949af2`).
+
+## 2026-10-08
+
+### Test
+
+Native validation now observes real browser, API and filesystem consumers instead
+of treating log markers or implementation-shaped checks as proof. The shared suite
+requires every selected child's successful exit and rejects unfinished or timed-out
+runs; negative controls demonstrate that broken producers fail their consumers.
+Installed Git hooks export exact staged or commit trees and delegate validation to
+the identified development VM.
+
+- Replace weak checks with behavioral consumers (`2cb7d56`).
+- Require actual native-suite exit statuses (`6c5d527`).
+
+## 2026-10-07
+
+### Feature
+
+The generic plugin platform now supports independent server and browser runtimes,
+post-change observers, explicitly declared blocking guards, commands, declarative
+settings and protected plugin endpoints. A unified Settings interface exposes
+vault-owned enablement, configuration and separate server network/import consent,
+while retained drafts and source-qualified lifetimes protect asynchronous work.
+Foreground note saves use an ordered queue, and in-place Access updates resolve
+pending work before changing credentials or policy; a public settings-only lock
+remains independent of note editing.
+
+- Complete the generic plugin platform (`59a2591`).
+
+## v2.2 (2026-10-01)
+
+TOTP can now be enrolled in the password section of the setup wizard: enable
+the authenticator toggle, scan the QR code, and enter a current code before
+finishing. Verification uses the same base32-decoded key bytes as standard
+authenticator apps, for both environment-configured and wizard-configured
+credentials. Existing enrolled keys do not need to change.
+
+The desktop wizard has a larger QR beside its instructions and code input,
+with two-click copying of the setup key. Button icons retain their proper
+sizes, and unsaved changes tint the Save icon instead of overlaying its label.
+Save works from Preview in both Source and WYSIWYG sessions; quick mode
+switches preserve dirty-state protection, and late render responses cannot
+write into an unmounted or newer note viewer.
+
+### 2026-10-01
+
+#### Fix
+
+Authenticator compatibility is corrected by decoding the enrolled base32
+secret before HMAC calculation, retaining short and UTF-8 keys without
+repeating their bytes. Independent RFC 6238 vectors and authenticator-code
+tests cover environment login, wizard setup, and persistence across restart.
+Preview-safe saving uses the retained editor buffer, WYSIWYG document edits
+notify dirty state synchronously, and viewer requests respect component and
+request lifetime. Desktop QR layout, shared SVG dimensions, the single Edit
+switch, Save-icon tinting, and error icons are corrected together.
+
+#### Docs
+
+Current introductions and the container banner describe Markdown notes in
+folders rather than equating a note's display title with its path. Historical
+changelog entries and license terms are preserved.
+
+### 2026-09-30
+
+#### Feature
+
+The setup wizard can enroll a server-generated authenticator secret and
+requires a valid code before storing it alongside the password hash. The
+environment remains the other configuration path; wizard-enrolled secrets
+are not printed in startup logs.
+
+- feat: setup wizard TOTP enrolment (`756dde5`)
+
+### 2026-09-29
+
+#### Fix
+
+TOTP login separates password and code validation and accepts the adjacent
+30-second steps for clock skew or slow entry. Immediate replay remains
+rejected; the subsequent interoperability correction completes the standard
+authenticator flow.
+
+- fix: TOTP login accepts the previous and next 30s step (`f2b303d`)
+
 ## v2.1.1 (2026-09-22)
 
 The first-run experience is rebuilt: a redesigned setup wizard with

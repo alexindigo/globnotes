@@ -1,6 +1,6 @@
-// Plugin enable/disable state — localStorage, per browser. The server
-// stays stateless: ServerViewer passes the disabled ids with each render
-// request.
+// Legacy browser-local render suppression preferences. Vault policy owns
+// activation; ServerViewer passes these disabled ids with a render request
+// to suppress renderers already enabled by the vault.
 
 import { ref } from "vue";
 

@@ -10,11 +10,10 @@
  * fallback view shows instead — the same switches drive the server render.
  */
 
-import { ref } from "vue";
+import { ref, watch } from "vue";
 
 import { getPlugins } from "./api.js";
-import { subscribe, TOPICS } from "./bus/index.js";
-import { isPluginEnabled } from "./pluginSettings.js";
+import { pluginCatalog } from "./pluginRuntime.js";
 
 const pathPrefix =
   document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
@@ -24,13 +23,18 @@ const pathPrefix =
  * remount pattern the keybinding layer switch uses). */
 export const clientPluginEpoch = ref(0);
 
-/** Last-known dual-mode plugin ids — a toggle for anything else never
- * touches the editor. */
-let clientPluginIds = new Set();
-
-subscribe(TOPICS.PLUGIN_TOGGLE, ({ id }) => {
-  if (clientPluginIds.has(id)) clientPluginEpoch.value++;
-});
+// The catalog includes disabled/editor-only inventory. Only a change to
+// actual editor participation recreates Milkdown; app commands, settings and
+// permission projections cannot remount an unrelated active buffer.
+let participation = null;
+watch(pluginCatalog, (catalog) => {
+  if (!catalog) return;
+  const next = JSON.stringify(catalog.plugins
+    .filter(plugin => plugin.client && plugin.enabled)
+    .map(plugin => plugin.id).sort());
+  if (participation !== null && participation !== next) clientPluginEpoch.value++;
+  participation = next;
+}, { immediate: true });
 
 /** Milkdown plugin factories from every enabled dual-mode plugin. Never
  * throws: a broken plugin logs and is skipped — it must never take the
@@ -43,12 +47,9 @@ export async function loadClientPlugins() {
     console.error("plugin list fetch failed", e);
     return [];
   }
-  const enabled = (plugins ?? []).filter(
-    (p) => p.client && isPluginEnabled(p.id),
-  );
-  // Every dual-mode id (enabled or not) — enabling a currently-disabled
-  // client plugin must also bump the epoch.
-  clientPluginIds = new Set((plugins ?? []).filter((p) => p.client).map((p) => p.id));
+  // This compatibility endpoint already returns vault-enabled plugins.
+  // Retained per-browser switches are preferences, not activation authority.
+  const enabled = (plugins ?? []).filter((p) => p.client);
   const lists = await Promise.all(
     enabled.map(async (p) => {
       try {

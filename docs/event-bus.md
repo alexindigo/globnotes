@@ -44,23 +44,22 @@ schema enforcement — the topics.js file IS the contract).
 | 9 | `sidepanel:close` | `{}` | `SidebarPanel.vue` toggleSidebar |
 | 10 | `sidepanel:section-show` | `{ section }` | `SidebarPanel.vue` toggleRecent (show) |
 | 11 | `sidepanel:section-hide` | `{ section }` | `SidebarPanel.vue` toggleRecent (hide) |
-| 12 | `settings-menu:open` | `{}` | `NavBar.vue` PrimeMenu show |
-| 13 | `settings-menu:close` | `{}` | `NavBar.vue` PrimeMenu hide |
-| 14 | `search-menu:open` | `{}` | `SearchResults.vue` sort-menu show |
-| 15 | `search-menu:close` | `{}` | `SearchResults.vue` sort-menu hide |
-| 16 | `modal:open` | `{ name }` | `Modal.vue` visibility watch |
-| 17 | `modal:close` | `{ name }` | `Modal.vue` visibility watch |
-| 18 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme |
-| 19 | `plugin:toggle` | `{ id, enabled }` | `pluginSettings.js` saveSwitch |
-| 20 | `plugin:auto-enable` | `{ enabled }` | `pluginSettings.js` saveAutoEnable |
-| 21 | `settings:line-numbers` | `{ value }` | `pluginSettings.js` saveViewLineNumbers |
-| 22 | `debug:change` | `{ enabled }` | `debug.js` toggleDebug |
-| 23 | `search:perform` | `{ term }` | `router.js` afterEach |
-| 24 | `search:change` | `{ term }` | `SearchInput.vue` searchTerm watch |
-| 25 | `search:include-nested` | `{ value }` | `SearchResults.vue` toggleNested |
-| 26 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
-| 27 | `note:edit-start` | `{ path }` | `Note.vue` setEditMode |
-| 28 | `note:edit-end` | `{ path }` | `Note.vue` exitEditState |
+| 12 | `search-menu:open` | `{}` | `SearchResults.vue` sort-menu show |
+| 13 | `search-menu:close` | `{}` | `SearchResults.vue` sort-menu hide |
+| 14 | `modal:open` | `{ name }` | `Modal.vue` visibility watch |
+| 15 | `modal:close` | `{ name }` | `Modal.vue` visibility watch |
+| 16 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme |
+| 17 | `plugin:toggle` | `{ id, enabled }` | `pluginSettings.js` legacy preference publisher |
+| 18 | `plugin:auto-enable` | `{ enabled }` | `pluginSettings.js` legacy preference publisher |
+| 19 | `settings:line-numbers` | `{ value }` | `pluginSettings.js` saveViewLineNumbers |
+| 20 | `debug:change` | `{ enabled }` | `debug.js` toggleDebug |
+| 21 | `search:perform` | `{ term }` | `router.js` afterEach |
+| 22 | `search:change` | `{ term }` | `SearchInput.vue` searchTerm watch |
+| 23 | `search:include-nested` | `{ value }` | `SearchResults.vue` toggleNested |
+| 24 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
+| 25 | `note:edit-start` | `{ path }` | `Note.vue` setEditMode |
+| 26 | `note:edit-end` | `{ path }` | `Note.vue` exitEditState |
+| 27 | `app:open-settings` | `{ page? }` | gear / palette / keybindings / plugin SDK → the one openSettings handler |
 
 ## Built-in consumers
 
@@ -83,6 +82,18 @@ subscribe(TOPICS.NOTE_OPEN, ({ path }) => {
 Subscriptions set up at module scope fire once on import; subscriptions
 in `<script setup>` fire when the component mounts. Choose the scope
 that matches the consumer's lifetime.
+
+Managed browser plugin subscriptions also belong to their exact activation.
+Retirement releases that activation's listeners and fences queued delivery before
+invocation; a late retired activation cannot dispose its replacement's listeners.
+An already-running arbitrary trusted-browser handler is not forcibly cancelled.
+
+Server plugin lifecycle facts/sync are a separate host-dispatched channel. Managed
+note/file operations submit one nonblocking sync from their actual reconciled
+effects, projected through each consumer's read grants; they do not depend on a
+browser publishing a bus topic. Partial effects are accounted for, no-effect or
+private-data writes produce no sync, and scans deduplicate already-acknowledged
+managed changes. See [plugin-api.md](plugin-api.md) and [saving.md](saving.md).
 
 ## Publishing a new fact
 

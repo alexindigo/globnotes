@@ -173,6 +173,11 @@ export const LAYER_ORDER = [
  * mechanism resolves the key ("app" = dispatcher/Mousetrap, "editor" =
  * the mounted editor's keymap), and cheat-sheet group. */
 export const ACTIONS = {
+  [TOPICS.APP_OPEN_SETTINGS]: {
+    label: "Open settings",
+    binding: "app",
+    group: "App",
+  },
   [TOPICS.EDITOR_SAVE]: {
     label: "Save note",
     binding: "editor",

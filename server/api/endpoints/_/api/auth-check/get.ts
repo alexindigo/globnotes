@@ -5,6 +5,6 @@ import { json } from "@pathfinder/pathfinder";
 /** GET /_/api/auth-check — returns "OK" if the request is authenticated.
  * Authenticated route: the middleware does the work. */
 
-export default function (): string {
+export default function (): Response {
   return json("OK");
 }

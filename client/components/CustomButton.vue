@@ -32,7 +32,7 @@
 import IconLabel from "./IconLabel.vue";
 
 defineProps({
-  iconPath: String,
+  iconPath: { type: [Array, String] },
   iconSize: String,
   iconClass: {
     type: [String, Array, Object],

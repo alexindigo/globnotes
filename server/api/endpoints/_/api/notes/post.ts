@@ -4,16 +4,20 @@ import { note_exists } from "@server/api_messages.ts";
 import type { NoteCreate } from "@server/notes/models.ts";
 import { InvalidPathError, NoteExistsError } from "@server/notes/models.ts";
 import { validateNotePath } from "@server/notes/validate.ts";
-import { HttpError } from "@pathfinder/pathfinder";
+import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
+import { noteMutationLease } from "@server/auth/middleware.ts";
 
-export default async function (request) {
-  const data = (await request.body.json()) as NoteCreate;
-  // Pydantic model validation runs before the route in the Python server.
-  data.path = validateNotePath(data.path, "path");
+export default async function (request: PathfinderRequest) {
   try {
-    return state.notes.create(data);
+    const lease = await noteMutationLease(request._raw);
+    const data = (await request.body.json()) as NoteCreate;
+    // Pydantic model validation runs before the route in the Python server.
+    data.path = validateNotePath(data.path, "path");
+    return await state.operations!.createNote(data, { origin: "api", lease });
   } catch (e) {
+    if (e instanceof OperationError) return toOperationResponse(e);
     if (e instanceof InvalidPathError) throw new HttpError(400, e.message);
     if (e instanceof NoteExistsError) throw new HttpError(409, note_exists);
     throw e;

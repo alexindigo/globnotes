@@ -13,6 +13,10 @@ export default function (): Record<string, unknown> {
   return {
     setupRequired: c.setupRequired,
     authType: c.authType,
+    settingsWritable: c.settingsWritable,
+    readOnlySettings: c.readOnlySettings,
+    accessRevision: c.storedConfig?.access_revision ?? 0,
+    accessUpdateId: c.storedConfig?.access_update_id ?? null,
     notesPath: c.notesPath,
     quickAccessHide: c.quickAccessHide,
     quickAccessTitle: c.quickAccessTitle,

@@ -1,13 +1,10 @@
 // Edit-mode URL fragment over CDP: entering/switching/exiting edit syncs
 // #edit / #source[:Ln]; deep links open the note in the matching edit mode;
 // unknown fragments stay in view mode and leave the URL untouched.
-import { connect } from "./cdp.mjs";
+import { runCase } from "./legacy-fixture.mjs";
 
-const BASE = process.env.BASE_URL || "http://localhost:8080";
-const PORT = Number(process.env.CDP_PORT || 9333);
+export async function exercise({ page, baseUrl: BASE }) {
 const NOTE = `${BASE}/rendering/code-blocks`;
-
-const page = await connect({ port: PORT });
 
 async function closeDrawer() {
   const drawerOpen = await page.evaluate(`(() => {
@@ -21,10 +18,7 @@ async function closeDrawer() {
 }
 
 function fail(message) {
-  console.log("pageerrors:", page.pageErrors.length ? page.pageErrors : "none");
-  page.close();
-  console.error(message);
-  process.exit(1);
+  throw new Error(message);
 }
 
 // 1. View mode: no fragment.
@@ -264,5 +258,6 @@ await page.poll(`document.querySelector(".toastui-editor-contents") !== null`, {
 console.log("pageerrors:", page.pageErrors.length ? page.pageErrors : "none");
 if (page.pageErrors.length) fail("page errors present");
 console.log("EDIT MODE URL OK");
-page.close();
-process.exit(0);
+return { editFragments: true, history: true, dirtyNavigation: true, noDuplicateDraftPrompt: true };
+}
+if (import.meta.main) await runCase("edit-mode-url", exercise);

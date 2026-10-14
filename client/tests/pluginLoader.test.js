@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The loader's fetch/enable selection logic, isolated from the network
 // and localStorage (the import() itself is browser-cached and exercised
 // by the e2e matrix).
-vi.mock("../api.js", () => ({
+vi.mock("../api.js", async importOriginal => ({
+  ...await importOriginal(),
   getPlugins: vi.fn(),
 }));
 vi.mock("../pluginSettings.js", () => ({
@@ -18,7 +19,6 @@ vi.mock("../bus/index.js", () => ({
 import { getPlugins } from "../api.js";
 import { isPluginEnabled } from "../pluginSettings.js";
 import {
-  clientPluginEpoch,
   loadClientPlugins,
 } from "../pluginLoader.js";
 
@@ -40,13 +40,17 @@ describe("pluginLoader", () => {
     await expect(loadClientPlugins()).resolves.toEqual([]);
   });
 
-  it("skips disabled dual-mode plugins", async () => {
-    getPlugins.mockResolvedValue([{ id: "on", client: true }, { id: "off", client: true }]);
-    isPluginEnabled.mockImplementation((id) => id === "on");
-    // Neither import can resolve in the test environment; the loader
-    // skips the broken module and still resolves to [].
-    await expect(loadClientPlugins()).resolves.toEqual([]);
-    // Only the enabled plugin's module was attempted.
-    expect(isPluginEnabled).toHaveBeenCalledTimes(2);
+  it("uses the vault-enabled listing despite disabled legacy preferences and isolates a broken client module", async () => {
+    // Disabled vault plugins are absent from this compatibility endpoint.
+    getPlugins.mockResolvedValue([{ id: "on", client: true }, { id: "server-only", client: false }]);
+    isPluginEnabled.mockReturnValue(false);
+    const diagnostics = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(loadClientPlugins()).resolves.toEqual([]);
+      expect(isPluginEnabled).not.toHaveBeenCalled();
+      const failures = diagnostics.mock.calls.filter(([message]) => String(message).includes("client module failed to load"));
+      expect(failures).toHaveLength(1);
+      expect(failures[0][0]).toBe("plugin 'on' client module failed to load");
+    } finally { diagnostics.mockRestore(); }
   });
 });

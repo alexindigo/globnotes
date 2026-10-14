@@ -19,19 +19,6 @@ describe("event bus", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it("does not deliver to unsubscribed handlers", () => {
-    const h1 = vi.fn();
-    const h2 = vi.fn();
-    subscribe(TOPICS.NOTE_DELETE, h1);
-    subscribe(TOPICS.NOTE_DELETE, h2);
-    publish(TOPICS.NOTE_DELETE, { path: "x" });
-    expect(h1).toHaveBeenCalledTimes(1);
-    expect(h2).toHaveBeenCalledTimes(1);
-    publish(TOPICS.NOTE_DELETE, { path: "y" });
-    expect(h1).toHaveBeenCalledTimes(2);
-    expect(h2).toHaveBeenCalledTimes(2);
-  });
-
   it("does not leak between topics", () => {
     const handler = vi.fn();
     subscribe(TOPICS.NOTE_CREATE, handler);

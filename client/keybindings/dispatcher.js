@@ -19,17 +19,23 @@
  * without touching the editors.
  */
 
-import Mousetrap from "mousetrap";
-import "mousetrap/plugins/global-bind/mousetrap-global-bind";
+import Mousetrap from "./mousetrap.js";
 
 import { publish, subscribe, TOPICS } from "../bus/index.js";
+// Cycle note: commands.js imports dispatchAction from here; both sides use
+// the imports inside functions only, never at module-evaluation time.
+import { commandRegistry, hasCommand, runCommand } from "../commands.js";
+import { watch } from "vue";
+import { isActionAvailable } from "../modalState.js";
 import { ACTIONS } from "./layers.js";
 import { isBareKey, platformKey, toMousetrap } from "./keys.js";
 import { effectiveBindings } from "./store.js";
 
 /** Publish an action on the bus. Every input source funnels through here. */
 export function dispatchAction(action, payload) {
+  if (!isActionAvailable(action)) return false;
   publish(action, payload);
+  return true;
 }
 
 /** Resolve one keydown to the action it publishes. Smart bindings
@@ -60,13 +66,32 @@ export function initDispatcher() {
   initialized = true;
   rebindDispatcher();
   subscribe(TOPICS.KEYBINDINGS_CHANGE, rebindDispatcher);
+  watch(commandRegistry, rebindDispatcher);
 }
 
-/** Rebind all app-level actions from the currently active layer. */
+/** Rebind all app-level actions from the currently active layer. Plugin
+ * command mappings (user-remapped `plugin:*` ids) bind through the same
+ * handler path; dormant mappings for disabled owners simply don't bind. */
 export function rebindDispatcher() {
   Mousetrap.reset();
   const bindings = effectiveBindings();
   for (const [action, binding] of Object.entries(bindings)) {
+    if (action.startsWith("plugin:")) {
+      if (!hasCommand(action)) continue;
+      const sequence = toMousetrap(platformKey(binding));
+      const handler = () => {
+        runCommand(action, {}).catch((error) => {
+          console.error(`command '${action}' failed`, error);
+        });
+        return false;
+      };
+      if (isBareKey(platformKey(binding))) {
+        Mousetrap.bind(sequence, handler);
+      } else {
+        Mousetrap.bindGlobal(sequence, handler);
+      }
+      continue;
+    }
     const meta = ACTIONS[action];
     if (!meta || meta.binding !== "app") continue;
     const keys = [platformKey(binding)];

@@ -14,7 +14,7 @@
 import Icon from "../components/Icon.vue";
 
 defineProps({
-  iconPath: String,
+  iconPath: { type: [Array, String] },
   iconSize: {
     type: String,
     default: "1.25em",

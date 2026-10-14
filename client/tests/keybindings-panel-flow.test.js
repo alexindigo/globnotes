@@ -1,53 +1,24 @@
-// Click-through test for the keybindings panel flow:
-// menu button → "Keybindings:" item → rail + cheat-sheet panel → rail row →
-// Custom layer → remap a binding → override persisted under
-// globnotes-keybindings-custom.
-import { describe, it, expect, beforeEach } from "vitest";
-import { createApp, nextTick } from "vue";
-import { createPinia } from "pinia";
-import PrimeVue from "primevue/config";
-import ToastService from "primevue/toastservice";
-import NavBar from "../partials/NavBar.vue";
-import router from "../router";
+// Actual inline Settings rail/remapping, preserving every preference assertion.
+import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
+import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
+import SettingsModal from "../components/SettingsModal.vue";
 import { TOPICS } from "../bus/topics.js";
-import { effectiveBindings } from "../keybindings/store.js";
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+import { effectiveBindings, setLayer } from "../keybindings/store.js";
+vi.mock("primevue/usetoast", () => ({ useToast: () => ({ add: vi.fn() }) }));
+let wrapper;
+afterEach(()=>{wrapper?.unmount();wrapper=null;localStorage.clear();});
 
 describe("keybindings panel flow", () => {
   beforeEach(() => {
     localStorage.clear();
+    setActivePinia(createPinia());setLayer('legacy');localStorage.removeItem('globnotes-keybindings');
   });
 
   it("opens the panel, switches to Custom via the rail, remaps a binding", async () => {
-    const overlayHost = document.createElement("div");
-    overlayHost.id = "overlay-host";
-    document.body.appendChild(overlayHost);
-    const mountEl = document.createElement("div");
-    document.body.appendChild(mountEl);
-    const app = createApp(NavBar);
-    app.use(createPinia());
-    app.use(router);
-    app.use(PrimeVue);
-    app.use(ToastService);
-    app.mount(mountEl);
-    await nextTick();
-
-    // Menu → Keybindings item → panel opens with the layer rail.
-    document.querySelector('[title="Menu"]').click();
-    await sleep(80);
-    const keybindingItem = Array.from(document.querySelectorAll("a")).find(
-      (a) => a.textContent.includes("Keybindings:"),
-    );
-    expect(keybindingItem, "keybindings menu item").toBeTruthy();
-    keybindingItem.click();
-    await sleep(80);
-
-    const panel = Array.from(document.querySelectorAll("div")).find(
-      (d) =>
-        d.textContent.includes("Legacy Flatnotes") &&
-        d.textContent.includes("Save note"),
-    );
+    wrapper=mount(SettingsModal,{attachTo:document.body,props:{modelValue:true,writable:true}});
+    await wrapper.vm.openSettings('core:keybindings');await flushPromises();
+    const panel=document.querySelector('[data-keybindings-settings]');
     expect(panel, "keybindings panel").toBeTruthy();
     expect(localStorage.getItem("globnotes-keybindings")).toBe(null);
 
@@ -72,14 +43,14 @@ describe("keybindings panel flow", () => {
     const notionRow = railRows.find((b) => b.textContent.trim() === "Notion");
     expect(notionRow, "notion rail row").toBeTruthy();
     notionRow.click();
-    await sleep(80);
+    await flushPromises();
     expect(localStorage.getItem("globnotes-keybindings")).toBe("notion");
 
     // Switch to the Custom layer (last rail row).
     const customRow = railRows.find((b) => b.textContent.trim() === "Custom");
     expect(customRow, "custom rail row").toBeTruthy();
     customRow.click();
-    await sleep(80);
+    await flushPromises();
     expect(localStorage.getItem("globnotes-keybindings")).toBe("custom");
 
     // Remap "Save note": click its binding button, press Ctrl+Shift+S.
@@ -88,9 +59,9 @@ describe("keybindings panel flow", () => {
     );
     expect(saveButton, "save binding button").toBeTruthy();
     saveButton.click();
-    await sleep(30);
+    await flushPromises();
     expect(saveButton.textContent).toContain("Press a key");
-    window.dispatchEvent(
+    saveButton.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "s",
         ctrlKey: true,
@@ -99,7 +70,7 @@ describe("keybindings panel flow", () => {
         cancelable: true,
       }),
     );
-    await sleep(30);
+    await flushPromises();
 
     // The override persisted and the effective bindings use it.
     const stored = JSON.parse(
@@ -120,9 +91,5 @@ describe("keybindings panel flow", () => {
       other: "E",
     });
 
-    app.unmount();
-    mountEl.remove();
-    overlayHost.remove();
-    localStorage.clear();
   }, 15000);
 });

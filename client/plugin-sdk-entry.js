@@ -17,3 +17,7 @@ export * from "prosemirror-state";
 export * from "prosemirror-view";
 export * from "@globnotes/frontmatter-node";
 export * from "@globnotes/frontmatter";
+// The narrow browser facade contract (types only at runtime — plugins
+// receive the facade instance from the host, but shared helpers/types may
+// be imported).
+export * from "@globnotes/plugin-sdk";

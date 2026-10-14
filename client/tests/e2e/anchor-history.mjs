@@ -49,7 +49,7 @@ const server = await bootServer({
 });
 const browser = await launchBrowser({ port: CDP_PORT });
 try {
-  const page = await connect({ port: CDP_PORT });
+  const page = await connect({ port: CDP_PORT, binding: browser });
   // §6 asks for both themes: THEME=dark runs the same checks dark-side.
   if (process.env.THEME) {
     await page.addInitScript(
@@ -85,7 +85,7 @@ try {
   await page.clickText("Coding Rules");
   await page.waitForTimeout(400);
   await page.evaluate("history.back()");
-  await page.waitForTimeout(600);
+  await page.poll(`location.hash === "" && document.querySelector('.rendered-markdown a[href="#section-one"]') !== null`);
   // The deliberate "back out of edit" gate means BACK exits preview to
   // view mode; the bug forced the source editor instead. Correct = a
   // rendered surface (view/preview), never a forced source editor.
@@ -159,5 +159,5 @@ try {
 } finally {
   await stopBrowser(browser);
   await server.close();
-  Deno.removeSync(vault, { recursive: true });
+  console.log("Retained anchor fixture", vault);
 }

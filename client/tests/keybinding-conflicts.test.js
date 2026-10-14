@@ -1,7 +1,10 @@
 // Latent-conflict fixes: CM6 Mod-Enter precedence, Mod-I vs italic, and
 // the Esc ordering (collapse first, exit second). Drives real keydown
 // events through a real EditorView with the layer keymap installed.
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { Editor, defaultValueCtx, editorViewCtx, rootCtx } from "@milkdown/core";
+import { commonmark } from "@milkdown/preset-commonmark";
+import { Plugin } from "prosemirror-state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
@@ -14,8 +17,10 @@ import {
 } from "../keybindings/editor-keymap.js";
 import { setLayer } from "../keybindings/store.js";
 
+const views = [];
+afterEach(() => { for (const view of views.splice(0)) view.destroy(); });
 function makeView(doc = "one two\nthree") {
-  return new EditorView({
+  const view = new EditorView({
     parent: document.body,
     state: EditorState.create({
       doc,
@@ -29,6 +34,8 @@ function makeView(doc = "one two\nthree") {
       ],
     }),
   });
+  views.push(view);
+  return view;
 }
 
 function keydown(view, key, options = {}) {
@@ -126,9 +133,30 @@ describe("editor keymap latent conflicts", () => {
     );
   });
 
-  it("milkdownLayerKeymap returns a precedence-ready PM plugin", () => {
-    setLayer("typora");
-    const plugin = milkdownLayerKeymap();
-    expect(plugin.props.handleKeyDown).toBeTypeOf("function");
+  it("Milkdown's installed layer action wins over a conflicting default without editing the document", async () => {
+    setLayer("vscode-lite");
+    const mount = document.createElement("div"); document.body.append(mount);
+    const events = [];
+    const release = subscribe(TOPICS.EDITOR_TOGGLE_BOLD, () => events.push("bold"));
+    const editor = await Editor.make().config(ctx => {
+      // Use the same real editor/schema integration as the Properties tests.
+      ctx.set(rootCtx, mount); ctx.set(defaultValueCtx, "Original document");
+    }).use(commonmark).create();
+    try {
+      const view = editor.action(ctx => ctx.get(editorViewCtx));
+      const before = view.state.doc;
+      const selection = view.state.selection;
+      let conflictingDefault = 0;
+      const conflict = new Plugin({ props: { handleKeyDown(current, event) {
+        if (event.key !== "b" || !event.ctrlKey) return false;
+        conflictingDefault++; current.dispatch(current.state.tr.insertText("wrong")); return true;
+      } } });
+      view.updateState(view.state.reconfigure({ plugins: [milkdownLayerKeymap(), conflict, ...view.state.plugins] }));
+      view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true, bubbles: true, cancelable: true }));
+      expect(events).toEqual(["bold"]);
+      expect(conflictingDefault).toBe(0);
+      expect(view.state.doc.eq(before)).toBe(true);
+      expect(view.state.selection.eq(selection)).toBe(true);
+    } finally { release(); await editor.destroy(); mount.remove(); }
   });
 });

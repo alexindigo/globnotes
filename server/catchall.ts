@@ -15,7 +15,7 @@ import { file_not_found, invalid_file_path } from "./api_messages.ts";
 import { enforceAuth } from "./auth/middleware.ts";
 import { FileNotFoundError, ValueError } from "./files/file_serving.ts";
 import { guessType } from "./files/mimetypes.ts";
-import { HttpError } from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "./state.ts";
 
 const MARKDOWN_EXT = ".md";
@@ -64,7 +64,7 @@ function isFile(p: string): boolean {
   }
 }
 
-export async function catchAll(request): Promise<Response> {
+export async function catchAll(request: PathfinderRequest): Promise<Response> {
   // Static client assets live under /_/ before anything vault-space.
   if (request.path === "/_" || request.path.startsWith("/_/")) {
     const rel = request.path === "/_" ? "" : request.path.slice(3);

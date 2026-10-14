@@ -13,7 +13,7 @@
     >
       <Icon
        
-        :path="failedIconPath"
+        :icon="failedIconPath"
         size="4em"
         class="mb-4 text-theme-brand"
       />

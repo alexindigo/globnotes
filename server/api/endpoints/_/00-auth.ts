@@ -14,6 +14,12 @@ import type { Middleware } from "@pathfinder/pathfinder";
 
 import { enforceAuth } from "@server/auth/middleware.ts";
 
+declare module "@pathfinder/pathfinder" {
+  interface Meta {
+    auth?: boolean;
+  }
+}
+
 export default (async (request, context) => {
   if (context.miss !== undefined) return; // 404/405 stay public
   if (context.meta.auth === false) return; // opted-out routes

@@ -24,7 +24,7 @@ echo "\
 ======================================
 
 A fork of flatnotes by Adam Dullage,
-where a note's title is its path.
+built for Markdown notes in folders.
 
 ──────────────────────────────────────
 "

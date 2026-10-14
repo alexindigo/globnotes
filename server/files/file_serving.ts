@@ -155,30 +155,72 @@ export class FileServing {
     rawFilename: string,
     body: Uint8Array,
   ): FileCreateResponse {
-    let targetDir: string;
+    return this.commitCreate(this.prepareCreate(directory, rawFilename), body);
+  }
+
+  /** Pure preparation: validate + resolve the collision-adjusted target
+   * name. No directory creation, no write — the guarded facade discloses
+   * this exact name to pre-hooks before any filesystem effect. */
+  prepareCreate(
+    directory: string,
+    rawFilename: string,
+  ): { directory: string; filename: string; filepath: string } {
+    const targetDir = this.resolveCreateDirectory(directory);
+    const filename = FileServing.validatedFilename(rawFilename);
+    let filepath = path.join(targetDir, filename);
+    let resolved = filename;
     try {
-      targetDir = directory
+      if (Deno.statSync(filepath).isFile) {
+        resolved = FileServing.datetimeSuffixFilename(filename);
+        filepath = path.join(targetDir, resolved);
+      }
+    } catch {
+      // Path doesn't exist yet — fine.
+    }
+    return { directory, filename: resolved, filepath };
+  }
+
+  private resolveCreateDirectory(directory: string): string {
+    try {
+      return directory
         ? resolveInRoot(this.storagePath, directory)
         : Deno.realPathSync(this.storagePath);
     } catch {
       throw new ValueError(`Invalid directory '${directory}'.`);
     }
-    const filename = FileServing.validatedFilename(rawFilename);
-    Deno.mkdirSync(targetDir, { recursive: true });
-    let filepath = path.join(targetDir, filename);
-    try {
-      if (Deno.statSync(filepath).isFile) {
-        filepath = path.join(
-          targetDir,
-          FileServing.datetimeSuffixFilename(filename),
-        );
-      }
-    } catch {
-      // Path doesn't exist yet — fine.
+  }
+
+  /** Re-resolve only the disclosed name; never select another collision suffix. */
+  revalidateCreate(
+    prepared: { directory: string; filename: string; filepath: string },
+  ): void {
+    const current = path.join(
+      this.resolveCreateDirectory(prepared.directory),
+      prepared.filename,
+    );
+    if (current !== prepared.filepath) {
+      throw new ValueError("Canonical upload destination changed.");
     }
-    logger.info(`Uploading to '${filepath}'`);
-    Deno.writeFileSync(filepath, body, { createNew: true });
-    const base = path.basename(filepath);
+    try {
+      Deno.lstatSync(current);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return;
+      throw error;
+    }
+    throw new ValueError("Disclosed upload target is now occupied.");
+  }
+
+  /** Effectful commit of a prepared upload. createNew: a name disclosed to
+   * hooks is never silently re-adjusted here; a collision after preparation
+   * surfaces as AlreadyExists for the gate to map to operation_conflict. */
+  commitCreate(
+    prepared: { directory: string; filename: string; filepath: string },
+    body: Uint8Array,
+  ): FileCreateResponse {
+    Deno.mkdirSync(path.dirname(prepared.filepath), { recursive: true });
+    logger.info(`Uploading to '${prepared.filepath}'`);
+    Deno.writeFileSync(prepared.filepath, body, { createNew: true });
+    const base = path.basename(prepared.filepath);
     return { filename: base, url: pyQuote(base) };
   }
 
