@@ -284,8 +284,7 @@ import {
 } from "../api.js";
 import { disabledPluginIds } from "../pluginSettings.js";
 import { Note } from "../classes.js";
-import { sanitizeBasename } from "@globnotes/names";
-import { bufferTitleOf, firstH1Of, frontmatterTitleOf } from "../noteTitle.js";
+import { displayTitle, followedBasename } from "../noteTitle.js";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import CustomButton from "../components/CustomButton.vue";
 import CtaButton from "../components/CtaButton.vue";
@@ -305,7 +304,12 @@ import {
   getToastOptions,
   nextUntitledPath,
 } from "../helpers.js";
-import { parseFragment, serializeFragment } from "../fragment.js";
+import {
+  editorStateFromFragment,
+  parseFragment,
+  serializeFragment,
+  viewLineFromFragment,
+} from "../fragment.js";
 import { publish, subscribe, TOPICS } from "../bus/index.js";
 import { isActionAvailable } from "../modalState.js";
 import { currentLayerId } from "../keybindings/store.js";
@@ -320,7 +324,7 @@ import {
   notePath,
   pathBreadcrumbs,
 } from "../notePath.js";
-import { notePathError } from "../validators.js";
+import { attachmentNameError, notePathError } from "../validators.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
 import { registerSessionParticipant } from "../sessionActions.js";
 import { createNoteSaveQueue, NOTE_SAVE_OBSERVATION_MS } from "../noteSaveQueue.js";
@@ -360,7 +364,6 @@ const noteBasename = computed(() => {
 // The path as breadcrumb links; each section links to its folder view.
 // Long paths keep two sections on each side of a non-linked ellipsis.
 const noteDirBreadcrumbs = computed(() => pathBreadcrumbs(noteDirName.value));
-const reservedFilenameCharacters = /[<>:"\\|?*]/;
 const route = useRoute();
 const router = useRouter();
 const newPath = ref();
@@ -568,7 +571,7 @@ function init() {
         enterEditFromFragment();
         // View-mode line links: #view:L highlights the rendered lines.
         const frag = parseFragment(window.location.hash);
-        viewLine.value = frag.mode === "view" ? frag.line : null;
+        viewLine.value = viewLineFromFragment(frag);
       })
       .catch((error) => {
         if (!isCurrentLoad()) return;
@@ -635,9 +638,10 @@ function editHandler(pushUrl = false) {
 // stale after our history writes. No history push here: the navigation
 // that carried the fragment into the tab IS the history entry.
 function enterEditFromFragment(frag = parseFragment(window.location.hash)) {
-  if (!frag.mode || frag.mode === "view" || !canModify.value) return;
-  pendingEditorMode = frag.mode === "edit" ? "wysiwyg" : "markdown";
-  pendingInitialLine = frag.line || null;
+  const target = editorStateFromFragment(frag);
+  if (!target || !canModify.value) return;
+  pendingEditorMode = target.mode;
+  pendingInitialLine = target.line;
   editHandler();
 }
 
@@ -664,19 +668,19 @@ async function gateNavigation(to) {
     // (Re-)enter edit when the destination URL carries an edit fragment —
     // forward into an edit entry, or any fragment navigation while viewing.
     const toFrag = parseFragment(to.hash);
+    const target = editorStateFromFragment(toFrag);
     if (
       canModify.value &&
       to.name === "note" &&
       destinationResourceIdentity(to) === currentResourceIdentity.value &&
-      toFrag.mode &&
-      toFrag.mode !== "view"
+      target
     ) {
-      pendingEditorMode = toFrag.mode === "edit" ? "wysiwyg" : "markdown";
-      pendingInitialLine = toFrag.line || null;
+      pendingEditorMode = target.mode;
+      pendingInitialLine = target.line;
       editHandler();
     } else if (toFrag.mode === "view") {
       // View-mode line link: highlight, no edit entry.
-      viewLine.value = toFrag.line;
+      viewLine.value = viewLineFromFragment(toFrag);
     }
     return true;
   }
@@ -686,15 +690,13 @@ async function gateNavigation(to) {
     // entries, address-bar fragment edits): align the state to the URL —
     // never write the URL back.
     const frag = parseFragment(to.hash);
-    const targetMode = frag.mode === "edit" ? "wysiwyg" : "markdown";
+    const target = editorStateFromFragment(frag, editorMode.value);
     // Preview's URL stays #source by design — a #source fragment while
     // previewing must not yank the user back into the source editor.
-    if (!(frag.mode === "source" && editorMode.value === "preview")) {
-      if (editorMode.value !== targetMode) setEditorMode(targetMode, false);
-    }
-    if (frag.mode === "source" && frag.line) {
+    if (editorMode.value !== target.mode) setEditorMode(target.mode, false);
+    if (target.line) {
       await nextTick();
-      editor.value?.selectLine?.(frag.line);
+      editor.value?.selectLine?.(target.line);
     }
     return true;
   }
@@ -866,7 +868,7 @@ function currentTitle() {
   const source = editMode.value
     ? currentBuffer()
     : (note.value.content ?? "");
-  return bufferTitleOf(source) || noteBasename.value || "Untitled";
+  return displayTitle(source, noteBasename.value);
 }
 
 function publishTitle() {
@@ -881,10 +883,7 @@ function scheduleTitleFollow() {
   titleFollowTimer = setTimeout(() => {
     titleFollowTimer = null;
     if (!isNewNote.value || titleTouched.value) return;
-    const buffer = currentBuffer();
-    if (frontmatterTitleOf(buffer)) return;
-    const h1 = firstH1Of(buffer);
-    const sanitized = h1 ? sanitizeBasename(h1) : null;
+    const sanitized = followedBasename(currentBuffer());
     if (sanitized && sanitized !== editBasename.value) {
       editBasename.value = sanitized;
       syncTitle();
@@ -1240,8 +1239,9 @@ function addImageBlobHook(file, callback) {
 
 function postAttachment(file) {
   // Invalid Character Validation
-  if (reservedFilenameCharacters.test(file.name)) {
-    badFilenameToast("Title");
+  const nameError = attachmentNameError(file.name);
+  if (nameError) {
+    toast.add(getToastOptions(nameError, "Invalid Title", "error"));
     return;
   }
 
@@ -1387,16 +1387,6 @@ function entityTooLargeToast(entityName) {
   );
 }
 
-function badFilenameToast(entityName) {
-  toast.add(
-    getToastOptions(
-      'Due to filename restrictions, the following characters are not allowed: <>:"\\|?*',
-      `Invalid ${entityName}`,
-      "error",
-    ),
-  );
-}
-
 function setBeforeUnloadConfirmation(enable = true) {
   if (enable) {
     window.onbeforeunload = () => {
@@ -1438,8 +1428,7 @@ watch(
   (hash) => {
     if (editMode.value) return;
     const frag = parseFragment(hash);
-    if (frag.mode === "view") viewLine.value = frag.line;
-    else if (!frag.mode) viewLine.value = null;
+    viewLine.value = viewLineFromFragment(frag, viewLine.value);
   },
 );
 // A keybinding-layer switch or a client-plugin toggle recreates the

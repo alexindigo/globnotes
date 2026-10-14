@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
+import { sanitizeBasename } from "@globnotes/names";
+
 /**
  * Live title resolution for the open note — the client-side read of the
  * server's display-title rule (frontmatter `title:` → first H1 →
@@ -35,4 +37,16 @@ export function frontmatterTitleOf(source) {
 /** The display title of a buffer: frontmatter title → first H1 → null. */
 export function bufferTitleOf(source) {
   return frontmatterTitleOf(source) || firstH1Of(source);
+}
+
+/** The live display title, including the basename and empty-note fallbacks. */
+export function displayTitle(buffer, basename) {
+  return bufferTitleOf(buffer) || basename || "Untitled";
+}
+
+/** Filename candidate for an untouched new note; frontmatter opts out. */
+export function followedBasename(buffer) {
+  if (frontmatterTitleOf(buffer)) return null;
+  const h1 = firstH1Of(buffer);
+  return h1 ? sanitizeBasename(h1) : null;
 }

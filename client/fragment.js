@@ -33,6 +33,27 @@ export function parseFragment(hash) {
   return { mode, line };
 }
 
+/** Map a parsed fragment to pending entry or an existing editor's state.
+ * View/unknown fragments do not enter editing. Preview keeps its #source URL.
+ */
+export function editorStateFromFragment(frag, currentMode = null) {
+  if (!frag.mode || frag.mode === "view") return null;
+  return {
+    mode: frag.mode === "edit"
+      ? "wysiwyg"
+      : currentMode === "preview" && frag.mode === "source" ? "preview" : "markdown",
+    line: frag.line || null,
+  };
+}
+
+/** Map a parsed fragment to a view highlight. Edit fragments leave an
+ * existing highlight untouched; initial loads use the default null fallback.
+ */
+export function viewLineFromFragment(frag, currentLine = null) {
+  if (frag.mode === "view") return frag.line;
+  return frag.mode ? currentLine : null;
+}
+
 export function serializeFragment(frag) {
   if (!frag || !frag.mode) return "";
   let out = `#${frag.mode}`;

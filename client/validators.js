@@ -1,6 +1,12 @@
 const FORBIDDEN_CHARS = /[<>:"\\|?*]/;
 const MAX_SEGMENT_BYTES = 255;
 
+export function attachmentNameError(name) {
+  return FORBIDDEN_CHARS.test(name)
+    ? 'Due to filename restrictions, the following characters are not allowed: <>:"\\|?*'
+    : null;
+}
+
 export function notePathError(path) {
   if (!path) {
     return "Path cannot be empty.";
