@@ -94,7 +94,7 @@
               <span v-if="crumb.ellipsis">…/</span>
               <RouterLink
                 v-else
-                :to="folderTarget(crumb.folder)"
+                :to="folderSearchTarget(crumb.folder)"
                 class="hover:text-theme-brand hover:underline"
                 >{{ crumb.label }}/</RouterLink
               >
@@ -310,7 +310,16 @@ import { publish, subscribe, TOPICS } from "../bus/index.js";
 import { isActionAvailable } from "../modalState.js";
 import { currentLayerId } from "../keybindings/store.js";
 import { clientPluginEpoch } from "../pluginLoader.js";
-import { appRelativePath, notePath } from "../notePath.js";
+import {
+  appRelativePath,
+  basenameOf,
+  encodeRewriteFiles,
+  folderSearchTarget,
+  joinNotePath,
+  newNoteTarget,
+  notePath,
+  pathBreadcrumbs,
+} from "../notePath.js";
 import { notePathError } from "../validators.js";
 import { isCurrentTokenStored } from "../tokenStorage.js";
 import { registerSessionParticipant } from "../sessionActions.js";
@@ -345,38 +354,12 @@ const noteDirName = computed(() =>
   directoryFromPath(note.value.path || props.path || ""),
 );
 const noteBasename = computed(() => {
-  const title = note.value.path || props.path || "";
-  const dir = noteDirName.value;
-  return dir ? title.slice(dir.length + 1) : title;
+  const path = note.value.path || props.path || "";
+  return noteDirName.value ? basenameOf(path) : path;
 });
 // The path as breadcrumb links; each section links to its folder view.
 // Long paths keep two sections on each side of a non-linked ellipsis.
-const noteDirBreadcrumbs = computed(() => {
-  const dir = noteDirName.value;
-  if (!dir) {
-    return [];
-  }
-  const parts = dir.split("/");
-  const toCrumb = (label, i) => ({
-    label,
-    folder: parts.slice(0, i + 1).join("/"),
-  });
-  if (dir.length <= 60) {
-    return parts.map(toCrumb);
-  }
-  const lead = parts.slice(0, 2).map(toCrumb);
-  const trail = parts
-    .slice(-2)
-    .map((label, i) => toCrumb(label, parts.length - 2 + i));
-  return [...lead, { ellipsis: true }, ...trail];
-});
-
-function folderTarget(folder) {
-  return {
-    name: "search",
-    query: { [params.searchTerm]: "*", [params.folder]: folder },
-  };
-}
+const noteDirBreadcrumbs = computed(() => pathBreadcrumbs(noteDirName.value));
 const reservedFilenameCharacters = /[<>:"\\|?*]/;
 const route = useRoute();
 const router = useRouter();
@@ -395,7 +378,7 @@ const lastMovedFiles = ref([]);
 const rewriteScanLink = computed(() => {
   const files = lastMovedFiles.value;
   if (!files.length) return "";
-  const param = encodeURIComponent(JSON.stringify(files));
+  const param = encodeRewriteFiles(files);
   return `/_/search?${params.searchTerm}=*&rewriteFiles=${param}`;
 });
 const toast = useToast();
@@ -769,7 +752,7 @@ function discardOwnedWork() {
   clearDraft();
   const base = saveQueue.state().acknowledged ?? note.value;
   newPath.value = base.path;
-  editBasename.value = base.path?.slice(base.path.lastIndexOf("/") + 1) ?? "";
+  editBasename.value = basenameOf(base.path ?? "");
   editFolder.value = directoryFromPath(base.path ?? "");
   editorInitialValue.value = base.content ?? "";
   applyingAcknowledgement = true;
@@ -846,9 +829,7 @@ function onSaveChoice(choice) {
 
 function setEditMode() {
   newPath.value = note.value.path;
-  editBasename.value = newPath.value
-    ? newPath.value.slice(newPath.value.lastIndexOf("/") + 1)
-    : "";
+  editBasename.value = basenameOf(newPath.value || "");
   editFolder.value = directoryFromPath(newPath.value);
   unsavedChanges.value = false;
   editorInitialValue.value = getInitialEditorValue();
@@ -872,9 +853,7 @@ function setEditMode() {
 
 function syncTitle() {
   pathRevision.value++;
-  newPath.value = editFolder.value
-    ? editFolder.value + "/" + editBasename.value
-    : editBasename.value;
+  newPath.value = joinNotePath(editFolder.value, editBasename.value);
   refreshDirtyState();
 }
 
@@ -1035,7 +1014,7 @@ async function applySaveAcknowledgement(snapshot, result, context) {
   note.value = new Note(result);
   if (ownsPath) {
     newPath.value = result.path;
-    editBasename.value = result.path.slice(result.path.lastIndexOf("/") + 1);
+    editBasename.value = basenameOf(result.path);
     editFolder.value = directoryFromPath(result.path);
   }
   if (ownsContent && currentBuffer() !== result.content) {
@@ -1388,7 +1367,7 @@ onMounted(() => {
 });
 
 function createFromWikilink() {
-  router.push({ name: "new", query: { path: props.path } });
+  router.push(newNoteTarget({ path: props.path }));
 }
 
 // Helpers

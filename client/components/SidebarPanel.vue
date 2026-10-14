@@ -132,7 +132,7 @@
             <span class="truncate">{{ row.folder.name }}</span>
           </button>
           <RouterLink
-            :to="folderPage(row.folder.path)"
+            :to="folderSearchTarget(row.folder.path)"
             class="ml-1 shrink-0 opacity-0 group-hover:opacity-100"
             title="Open folder"
             @click.stop
@@ -215,19 +215,11 @@ import { getNotes, getTree } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
 import { publish, subscribe, TOPICS } from "../bus/index.js";
 import { dispatchAction } from "../keybindings/dispatcher.js";
-import { notePath } from "../notePath.js";
+import { basenameOf, folderSearchTarget, notePath } from "../notePath.js";
 import { refreshNoteIndex } from "../noteIndex.js";
-import { params } from "../constants.js";
 
 const globalStore = useGlobalStore();
 const route = useRoute();
-
-function folderPage(path) {
-  return {
-    name: "search",
-    query: { [params.searchTerm]: "*", [params.folder]: path },
-  };
-}
 
 // -- Lazy tree --------------------------------------------------------------
 // One directory level per fetch (/_/api/tree?path=...): the sidebar never
@@ -270,7 +262,7 @@ function buildTree(titles) {
       }
       node = node.folders.get(segment);
     }
-    node.notes.push({ path: title, name: parts[parts.length - 1] });
+    node.notes.push({ path: title, name: basenameOf(title) });
   }
   return root;
 }
@@ -431,7 +423,7 @@ const visibleRows = computed(() => {
           // The sidebar shows the filename, like Obsidian's file
           // explorer — never the display title.
           const path = typeof t === "string" ? t : t.path;
-          return { path, name: path.split("/").pop() };
+          return { path, name: basenameOf(path) };
         })
         .sort((a, b) => a.name.localeCompare(b.name));
       for (const note of notes) {
@@ -489,7 +481,7 @@ async function loadRecentNotes() {
       .slice(0, 5)
       .map((n) => ({
         path: n.path,
-        name: n.path.split("/").pop(),
+        name: basenameOf(n.path),
       }));
   } catch {
     recentNotes.value = [];

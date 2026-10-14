@@ -3,6 +3,9 @@
 // note's updated content here, and resaves via the update API. The server
 // stays a pure file mechanism.
 
+import { directoryFromPath } from "./helpers.js";
+import { joinNotePath } from "./notePath.js";
+
 // Wikilinks: [[old]], [[old|alias]], [[old#heading]]. Never ![[embeds]]
 // (file references) and never basename-only links (those keep resolving
 // via basename matching).
@@ -27,7 +30,7 @@ export function rewriteMarkdownLinks(
 ) {
   const oldFile = oldPath + ".md";
   const newFile = newPath + ".md";
-  const noteDir = dirOf(referencingPath);
+  const noteDir = directoryFromPath(referencingPath);
   const pattern = /(\[[^\]]*\]\()([^)\s]+)(\))/g;
   return content.replace(pattern, (match, prefix, url, suffix) => {
     if (/^(https?:\/\/|\/\/|#|mailto:)/.test(url)) {
@@ -36,7 +39,7 @@ export function rewriteMarkdownLinks(
     if (url.startsWith("/")) {
       return url.slice(1) === oldFile ? prefix + "/" + newFile + suffix : match;
     }
-    const resolved = normalizePath(joinPath(noteDir, url));
+    const resolved = normalizePath(joinNotePath(noteDir, url));
     if (resolved === oldFile) {
       return prefix + rebaseUrl(url, noteDir, newFile) + suffix;
     }
@@ -59,15 +62,6 @@ export function rewriteRenamedLinks(
 }
 
 // --- path helpers (mirror the server's POSIX-style logic) ---
-
-function dirOf(path) {
-  const i = path.lastIndexOf("/");
-  return i === -1 ? "" : path.slice(0, i);
-}
-
-function joinPath(dir, rel) {
-  return dir ? dir + "/" + rel : rel;
-}
 
 function normalizePath(p) {
   const parts = [];

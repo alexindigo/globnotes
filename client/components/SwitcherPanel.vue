@@ -85,7 +85,7 @@ import SwitcherRow from "./SwitcherRow.vue";
 import HighlightedText from "./HighlightedText.vue";
 import { fuzzyFilter, windowAroundMatch } from "../fuzzy.js";
 import { useGlobalStore } from "../globalStore.js";
-import { notePath } from "../notePath.js";
+import { basenameOf, notePath } from "../notePath.js";
 import { isMac } from "../keybindings/keys.js";
 
 // The switcher shows at most this many note rows (the pinned full-search
@@ -107,9 +107,6 @@ const input = ref();
 // focus.
 defineExpose({ focus: (event) => input.value?.focus?.(event) });
 
-function basename(path) {
-  return path.split("/").pop() ?? path;
-}
 function matchText(note) {
   // Weighted, kind-tagged candidates: title outranks alias outranks
   // filename outranks folder. The full path stays a candidate so
@@ -123,7 +120,7 @@ function matchText(note) {
       weight: 1.4,
       kind: "alias",
     })),
-    { text: basename(note.path), weight: 1.3, kind: "file" },
+    { text: basenameOf(note.path), weight: 1.3, kind: "file" },
     { text: note.path, weight: 1, kind: "path" },
   ];
 }
@@ -145,7 +142,7 @@ const results = computed(() => {
   } else {
     const metaByPath = new Map(globalStore.noteMeta.map((n) => [n.path, n]));
     ranked = globalStore.recentlyOpened
-      .map((path) => metaByPath.get(path) ?? { path, title: basename(path), aliases: [] })
+      .map((path) => metaByPath.get(path) ?? { path, title: basenameOf(path), aliases: [] })
       .map((item) => ({ item, score: 0, positions: [], matchedText: null, matchedKind: null }));
   }
   return ranked.slice(0, MAX_RESULTS);
@@ -156,7 +153,7 @@ const results = computed(() => {
 // filename, so it reads as "file".
 function matchKind(entry) {
   if (!entry.matchedKind) return null;
-  if (entry.matchedKind === "title" && entry.item.title === basename(entry.item.path)) {
+  if (entry.matchedKind === "title" && entry.item.title === basenameOf(entry.item.path)) {
     return "file";
   }
   return entry.matchedKind;

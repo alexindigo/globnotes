@@ -80,14 +80,10 @@
           class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
         >
           <RouterLink
-            :to="{
-              name: 'search',
-              query: {
-                [params.searchTerm]: props.searchTerm,
-                [params.sortBy]: props.sortBy,
-                [params.folder]: dir,
-              },
-            }"
+            :to="folderSearchTarget(dir, {
+              [params.searchTerm]: props.searchTerm,
+              [params.sortBy]: props.sortBy,
+            })"
             class="flex items-center"
           >
             <Icon
@@ -96,7 +92,7 @@
               size="1.25em"
               class="mr-2 text-theme-text-muted"
             />
-            <span>{{ dir.split("/").pop() }}</span>
+            <span>{{ basenameOf(dir) }}</span>
           </RouterLink>
         </div>
       </template>
@@ -148,7 +144,13 @@ import PrimeMenu from "../components/PrimeMenu.vue";
 import Tag from "../components/Tag.vue";
 import Toggle from "../components/Toggle.vue";
 import { params, searchSortOptions } from "../constants.js";
-import { notePath } from "../notePath.js";
+import {
+  basenameOf,
+  decodeRewriteFiles,
+  folderSearchTarget,
+  notePath,
+} from "../notePath.js";
+import { directoryFromPath } from "../helpers.js";
 import SearchInput from "../partials/SearchInput.vue";
 
 const props = defineProps({
@@ -167,18 +169,8 @@ const router = useRouter();
 const sortMenu = ref();
 const toast = useToast();
 
-const rewriteFiles = ref(parseRewriteFiles());
+const rewriteFiles = ref(decodeRewriteFiles(route.query.rewriteFiles));
 const fixInProgress = ref(false);
-
-function parseRewriteFiles() {
-  try {
-    const raw = route.query.rewriteFiles;
-    if (!raw) return [];
-    return JSON.parse(decodeURIComponent(raw));
-  } catch {
-    return [];
-  }
-}
 
 async function fixSingleRef(file) {
   fixInProgress.value = true;
@@ -254,19 +246,12 @@ const currentSubdirs = computed(() => {
 
 // One level up: the parent folder, or the unscoped search from a
 // top-level folder.
-const upTarget = computed(() => {
-  const query = {
+const upTarget = computed(() =>
+  folderSearchTarget(directoryFromPath(props.folder) || undefined, {
     [params.searchTerm]: props.searchTerm,
     [params.sortBy]: props.sortBy,
-  };
-  if (props.folder) {
-    const parent = props.folder.split("/").slice(0, -1).join("/");
-    if (parent) {
-      query[params.folder] = parent;
-    }
-  }
-  return { name: "search", query };
-});
+  }),
+);
 
 function toggleNested() {
   includeNested.value = !includeNested.value;

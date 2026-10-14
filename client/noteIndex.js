@@ -1,6 +1,7 @@
 import { getNoteIndex } from "./api.js";
 import { subscribe, TOPICS } from "./bus/index.js";
 import { useGlobalStore } from "./globalStore.js";
+import { basenameOf } from "./notePath.js";
 
 const RETRY_DELAYS = [1000, 3000, 8000];
 
@@ -46,7 +47,7 @@ export function resolveNotePath(linkText) {
   // Basename match, Obsidian-style (resolved vault-wide)
   const lower = target.toLowerCase();
   const matches = titles.filter(
-    (title) => title.split("/").pop().toLowerCase() === lower,
+    (title) => basenameOf(title).toLowerCase() === lower,
   );
   if (matches.length > 0) {
     return matches.sort()[0];

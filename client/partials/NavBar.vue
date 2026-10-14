@@ -14,13 +14,10 @@
     <div class="flex grow items-start justify-end">
       <!-- All Notes (browse the whole tree) -->
       <RouterLink
-        :to="{
-          name: 'search',
-          query: {
-            [params.searchTerm]: '*',
-            [params.sortBy]: searchSortOptions.path,
-          },
-        }"
+        :to="folderSearchTarget(undefined, {
+          [params.searchTerm]: '*',
+          [params.sortBy]: searchSortOptions.path,
+        })"
         title="All notes"
       >
         <CustomButton :iconPath="allNotesIcon" title="All notes" />
@@ -28,7 +25,7 @@
       <!-- Search (unified jump + full-text) -->
       <CustomButton :iconPath="tabSearch" title="Search" @click="openSearch" />
       <!-- New Note -->
-      <RouterLink v-if="showNewButton" :to="newNoteTarget">
+      <RouterLink v-if="showNewButton" :to="newTarget">
         <CustomButton :iconPath="tabEdit" title="New note" />
       </RouterLink>
     </div>
@@ -44,7 +41,7 @@ import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
 import { authTypes, params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
-import { directoryFromPath } from "../helpers.js";
+import { folderSearchTarget, newNoteTarget } from "../notePath.js";
 
 const globalStore = useGlobalStore();
 
@@ -61,16 +58,7 @@ const allNotesIcon = computed(() =>
 );
 const route = useRoute();
 
-const newNoteTarget = computed(() => {
-  if (route.name === "search" && route.query[params.folder]) {
-    return { name: "new", query: { folder: route.query[params.folder] } };
-  }
-  if (route.name === "note" && route.params.path) {
-    const folder = directoryFromPath(route.params.path);
-    return folder ? { name: "new", query: { folder } } : { name: "new" };
-  }
-  return { name: "new" };
-});
+const newTarget = computed(() => newNoteTarget({ route }));
 
 defineProps({
   hideLogo: Boolean,
