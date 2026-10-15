@@ -50,6 +50,7 @@ export function createSidebarTree({
     sidebarVisible, sidebarPinned, setExpandedFolders, setSidebarRecent,
     setSidebarVisible, setSidebarPinned } = preferences;
   const levels = ref({});
+  const levelRequests = new Map();
   const filterVisible = ref(false);
   const filterText = ref("");
   const filterCollapsed = ref(new Set());
@@ -59,11 +60,20 @@ export function createSidebarTree({
 
   async function loadLevel(path) {
     if (levels.value[path]) return;
+    // Each path has its own latest request. Invalidation retires every ticket,
+    // including requests started by folder toggles and active-note ancestors.
+    const ticket = {};
+    levelRequests.set(path, ticket);
+    const isCurrent = () => levelRequests.get(path) === ticket;
     try {
       const data = await loadTree(path);
+      if (!isCurrent()) return;
       levels.value = { ...levels.value, [path]: data };
     } catch (_) {
+      if (!isCurrent()) return;
       levels.value = { ...levels.value, [path]: { folders: [], notes: [] } };
+    } finally {
+      if (isCurrent()) levelRequests.delete(path);
     }
   }
 
@@ -160,6 +170,7 @@ export function createSidebarTree({
   }
 
   function invalidateTree() {
+    levelRequests.clear();
     levels.value = {};
     hydrateLevels();
     if (recentEnabled.value) loadRecentNotes();

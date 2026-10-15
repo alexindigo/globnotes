@@ -12,6 +12,12 @@ const empty = () => ({ folders: [], notes: [] });
 const folder = path => ({ name: path.split("/").at(-1), path });
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
 
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 function fixture({ expanded = [], recent = false, paths = ["Indexed"], ...overrides } = {}) {
   const preferences = {
     expandedFolders: ref(new Set(expanded)), sidebarRecent: ref(recent),
@@ -284,5 +290,60 @@ describe("sidebar tree controller", () => {
     expect(getNotes).toHaveBeenCalledWith("*", undefined, undefined, undefined);
     expect(sidebar.snapshot().visibleRows[0].note.name).toBe("Default");
     expect(sidebar.snapshot().recentNotes).toEqual([{ path: "Default", name: "Default" }]);
+  });
+
+  describe("level request ownership", () => {
+    for (const path of ["", "A"]) {
+      for (const order of ["old-first", "new-first"]) {
+        it.each(["success", "failure"])(
+          `fences obsolete %s for ${path || "root"} after invalidation (${order})`, async outcome => {
+            const old = deferred(), fresh = deferred();
+            let calls = 0;
+            const sidebar = fixture({ expanded: ["A"], loadTree: requested => requested === path
+              ? (++calls === 1 ? old.promise : fresh.promise)
+              : Promise.resolve({ folders: [folder("A")], notes: [] }) });
+            sidebar.visibilityChanged(true);
+            sidebar.listeners.get(TOPICS.NOTE_RENAME)({ oldPath: "Old", newPath: "New" });
+            const obsolete = () => outcome === "success"
+              ? old.resolve({ folders: [], notes: ["Old"] }) : old.reject(Error("obsolete"));
+            const rows = () => sidebar.snapshot().visibleRows.filter(row => row.type === "note").map(row => row.note.path);
+            if (order === "old-first") {
+              obsolete(); await flush();
+              expect(rows()).toEqual([]);
+            }
+            fresh.resolve({ folders: [], notes: ["New"] });
+            await flush();
+            expect(rows()).toEqual(["New"]);
+            if (order === "new-first") { obsolete(); await flush(); }
+            expect(rows()).toEqual(["New"]);
+          },
+        );
+      }
+    }
+
+    it.each(["open", "folder", "ancestor"])("accepts only the latest same-path request from %s", async origin => {
+      const old = deferred(), fresh = deferred();
+      const path = origin === "open" ? "" : "A";
+      let calls = 0;
+      const sidebar = fixture({ loadTree: requested => requested === path
+        ? (++calls === 1 ? old.promise : fresh.promise)
+        : Promise.resolve({ folders: [folder("A")], notes: [] }) });
+      const request = () => origin === "open" ? sidebar.visibilityChanged(true)
+        : origin === "folder" ? sidebar.toggleFolder("A") : sidebar.setActivePath("A/Note");
+      if (origin !== "open") { sidebar.visibilityChanged(true); await flush(); }
+      const first = request(), second = request();
+      fresh.resolve({ folders: [], notes: ["New"] }); await second; await flush();
+      old.resolve({ folders: [], notes: ["Old"] }); await first; await flush();
+      expect(sidebar.snapshot().visibleRows.filter(row => row.type === "note").map(row => row.note.path)).toEqual(["New"]);
+    });
+
+    it("keeps simultaneous levels independent instead of using a global latest-request ticket", async () => {
+      const root = deferred(), child = deferred();
+      const sidebar = fixture({ expanded: ["A"], loadTree: path => path ? child.promise : root.promise });
+      sidebar.visibilityChanged(true);
+      child.resolve({ folders: [], notes: ["A/Child"] }); await flush();
+      root.resolve({ folders: [folder("A")], notes: ["Root"] }); await flush();
+      expect(sidebar.snapshot().visibleRows.map(row => row.key)).toEqual(["f:A", "n:A/Child", "n:Root"]);
+    });
   });
 });
