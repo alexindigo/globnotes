@@ -3,18 +3,18 @@
     <!-- Sort By + Nested toggle -->
     <div class="mb-1 flex items-center justify-between">
       <CustomButton
-        :label="`Sort By: ${sortByName}`"
+        :label="`Sort By: ${state.sortByName}`"
         :iconPath="tabSort"
         @click="toggleSortMenu"
       />
       <Toggle
         label="Include nested folders"
-        :isOn="includeNested"
-        @click="toggleNested"
+        :isOn="state.includeNested"
+        @click="search.toggleNested"
       />
       <PrimeMenu
         ref="sortMenu"
-        :model="menuItems"
+        :model="search.menuItems"
         :popup="true"
         @show="publish(TOPICS.SEARCH_MENU_OPEN, {})"
         @hide="publish(TOPICS.SEARCH_MENU_CLOSE, {})"
@@ -26,7 +26,7 @@
 
     <!-- Rewrite banner (post-move scan page) -->
     <div
-      v-if="rewriteFiles.length"
+      v-if="state.rewriteFiles.length"
       class="mb-4 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-4"
     >
       <div class="mb-2">
@@ -34,14 +34,14 @@
           Fix broken references
         </h2>
         <CtaButton
-          v-if="rewriteFiles.length > 1"
+          v-if="state.rewriteFiles.length > 1"
           label="Fix all"
-          :callback="fixAllRefs"
+          :callback="search.fixAllRefs"
         />
       </div>
       <ul class="space-y-1 text-sm">
         <li
-          v-for="f in rewriteFiles"
+          v-for="f in state.rewriteFiles"
           :key="f.oldPath"
           class="flex items-center justify-between rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
         >
@@ -51,19 +51,19 @@
             <span class="ml-2 text-theme-text-very-muted">→</span>
             <span class="ml-2">{{ f.newPath }}</span></span
           >
-          <CustomButton label="Fix" style="ghost" @click="fixSingleRef(f)" />
+          <CustomButton label="Fix" style="ghost" @click="search.fixSingleRef(f)" />
         </li>
       </ul>
     </div>
 
     <!-- Level up (whenever inside a folder) + folders at this level (when
          not including nested) -->
-    <template v-if="props.folder || (!includeNested && currentSubdirs.length)">
+    <template v-if="props.folder || (!state.includeNested && state.currentSubdirs.length)">
       <div
         v-if="props.folder"
         class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
       >
-        <RouterLink :to="upTarget" class="flex items-center">
+        <RouterLink :to="state.upTarget" class="flex items-center">
           <Icon
            
             icon="tabArrowUp"
@@ -73,17 +73,14 @@
           <span>..</span>
         </RouterLink>
       </div>
-      <template v-if="!includeNested">
+      <template v-if="!state.includeNested">
         <div
-          v-for="dir in currentSubdirs"
+          v-for="dir in state.currentSubdirs"
           :key="dir"
           class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
         >
           <RouterLink
-            :to="folderSearchTarget(dir, {
-              [params.searchTerm]: props.searchTerm,
-              [params.sortBy]: props.sortBy,
-            })"
+            :to="search.folderTarget(dir)"
             class="flex items-center"
           >
             <Icon
@@ -101,13 +98,13 @@
     <LoadingIndicator ref="loadingIndicator" class="flex-1">
       <!-- Search Results -->
       <div
-        v-for="result in results"
+        v-for="result in state.results"
         class="mb-4 cursor-pointer rounded px-2 py-1 hover:bg-theme-background-elevated hover:text-theme-brand"
       >
         <RouterLink :to="notePath(result.path)">
           <!-- Title and Tags -->
           <div>
-            <span v-html="title(result)" class="mr-2"></span>
+            <span v-html="search.title(result)" class="mr-2"></span>
             <Tag v-for="tag in result.tagMatches" :tag="tag" class="mr-1" />
           </div>
           <!-- Last Modified and Content Highlights -->
@@ -133,9 +130,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import Icon from "../components/Icon.vue";
-import { tabSearch, tabSort } from "../icons.js";
-import { tabArrowUp, tabFolder } from "../icons.js";
-import { apiErrorHandler, getNotes, rewriteRefs } from "../api.js";
+import { tabSort } from "../icons.js";
 import { publish, TOPICS } from "../bus/index.js";
 import CustomButton from "../components/CustomButton.vue";
 import CtaButton from "../components/CtaButton.vue";
@@ -143,16 +138,9 @@ import LoadingIndicator from "../components/LoadingIndicator.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
 import Tag from "../components/Tag.vue";
 import Toggle from "../components/Toggle.vue";
-import { params, searchSortOptions } from "../constants.js";
-import {
-  basenameOf,
-  decodeRewriteFiles,
-  folderSearchTarget,
-  notePath,
-} from "../notePath.js";
-import { directoryFromPath } from "../helpers.js";
+import { basenameOf, notePath } from "../notePath.js";
 import SearchInput from "../partials/SearchInput.vue";
-import { includeNested, setIncludeNested } from "../searchPreferences.js";
+import { createSearchResults } from "../searchResults.js";
 
 const props = defineProps({
   searchTerm: String,
@@ -164,227 +152,32 @@ const props = defineProps({
 });
 
 const loadingIndicator = ref();
-const results = ref([]);
 const route = useRoute();
 const router = useRouter();
 const sortMenu = ref();
 const toast = useToast();
-
-const rewriteFiles = ref(decodeRewriteFiles(route.query.rewriteFiles));
-const fixInProgress = ref(false);
-
-async function fixSingleRef(file) {
-  fixInProgress.value = true;
-  try {
-    await rewriteRefs(file.oldPath, file.newPath);
-    publish(TOPICS.NOTE_REFS_REWRITTEN, {
-      oldPath: file.oldPath,
-      newPath: file.newPath,
-    });
-    toast.add({
-      severity: "success",
-      summary: "Fixed",
-      detail: file.oldPath,
-      life: 3000,
-    });
-    rewriteFiles.value = rewriteFiles.value.filter(
-      (f) => f.oldPath !== file.oldPath,
-    );
-  } catch (e) {
-    apiErrorHandler(e, toast);
-  } finally {
-    fixInProgress.value = false;
-  }
-}
-
-async function fixAllRefs() {
-  fixInProgress.value = true;
-  const files = [...rewriteFiles.value];
-  for (const f of files) {
-    try {
-      await rewriteRefs(f.oldPath, f.newPath);
-      publish(TOPICS.NOTE_REFS_REWRITTEN, {
-        oldPath: f.oldPath,
-        newPath: f.newPath,
-      });
-    } catch (e) {
-      apiErrorHandler(e, toast);
-    }
-  }
-  toast.add({
-    severity: "success",
-    summary: "All fixed",
-    detail: `${files.length} references rewritten.`,
-    life: 3000,
-  });
-  rewriteFiles.value = [];
-  fixInProgress.value = false;
-}
-
-// Titles of all matches under the current folder (nested), used to derive
-// this level's subdirectories when nested folders are excluded.
-const subdirMatches = ref([]);
-
-// Immediate subdirectories of the current folder, filtered by the search
-// term (derived from the nested match set).
-const currentSubdirs = computed(() => {
-  const prefix = props.folder ? props.folder + "/" : "";
-  const dirs = new Set();
-  for (const path of subdirMatches.value) {
-    if (props.folder && !path.startsWith(prefix)) {
-      continue;
-    }
-    const rest = props.folder ? path.slice(prefix.length) : path;
-    const idx = rest.indexOf("/");
-    if (idx !== -1) {
-      dirs.add((props.folder ? prefix : "") + rest.slice(0, idx));
-    }
-  }
-  return [...dirs].sort();
+const search = createSearchResults({
+  query: () => props,
+  rewriteFiles: route.query.rewriteFiles,
+  navigate: target => router.push(target),
+  toast,
 });
+const state = computed(search.snapshot);
 
-// One level up: the parent folder, or the unscoped search from a
-// top-level folder.
-const upTarget = computed(() =>
-  folderSearchTarget(directoryFromPath(props.folder) || undefined, {
-    [params.searchTerm]: props.searchTerm,
-    [params.sortBy]: props.sortBy,
-  }),
-);
-
-function toggleNested() {
-  setIncludeNested(!includeNested.value);
-  init();
-}
-
-// Score means nothing for a "list everything" (*) search; default to title.
-const effectiveSortBy = computed(
-  () =>
-    props.sortBy ??
-    (props.searchTerm === "*"
-      ? searchSortOptions.path
-      : searchSortOptions.score),
-);
-
-const sortByName = computed(() => {
-  const sortOptionNames = {
-    [searchSortOptions.path]: "Path",
-    [searchSortOptions.lastModified]: "Last Modified",
-    [searchSortOptions.score]: "Score",
-  };
-  return sortOptionNames[effectiveSortBy.value];
-});
-
-function init() {
-  loadingIndicator.value.setLoading();
-  const resultsRequest = getNotes(
-    props.searchTerm,
-    undefined,
-    undefined,
-    undefined,
-    includeNested.value,
-    props.folder,
-  );
-  // When nested folders are excluded, also fetch the full (nested) match
-  // set to derive this level's subdirectories.
-  const subdirsRequest = includeNested.value
-    ? Promise.resolve([])
-    : getNotes(
-        props.searchTerm,
-        undefined,
-        undefined,
-        undefined,
-        true,
-        props.folder,
-      )
-        .then((data) => data.map((result) => result.title))
-        .catch(() => []);
-  Promise.all([resultsRequest, subdirsRequest])
-    .then(([data, subdirTitles]) => {
-      subdirMatches.value = subdirTitles;
-      results.value = sortResults(data);
-      if (results.value.length > 0 || currentSubdirs.value.length > 0) {
-        // Content to show: direct notes and/or subdirectories.
-        loadingIndicator.value.setLoaded();
-      } else {
-        loadingIndicator.value.setFailed("No Results", tabSearch);
-      }
-    })
-    .catch((error) => {
-      loadingIndicator.value.setFailed();
-      apiErrorHandler(error, toast);
-    });
-}
-
-function title(result) {
-  // Show the title relative to the current folder. Highlighted titles
-  // keep their markup intact (the prefix may contain match spans).
-  if (result.pathHighlights) {
-    return result.pathHighlights;
-  }
-  // Display title (front-matter title / alias / H1 label) when present.
-  if (result.title) {
-    return result.title;
-  }
-  const prefix = props.folder ? props.folder + "/" : "";
-  return prefix && result.path.startsWith(prefix)
-    ? result.path.slice(prefix.length)
-    : result.path;
-}
-function sortResults(results) {
-  if (effectiveSortBy.value === searchSortOptions.path) {
-    return results.sort((a, b) => a.path.localeCompare(b.path));
-  } else if (effectiveSortBy.value === searchSortOptions.lastModified) {
-    return results.sort((a, b) => b.lastModified - a.lastModified);
-  } else {
-    return results.sort((a, b) => b.score - a.score);
-  }
-}
-
-function reSortResults() {
-  results.value = sortResults(results.value);
-}
-
-function updateSortByParam(sortBy) {
-  router.push({
-    name: "search",
-    query: {
-      [params.searchTerm]: props.searchTerm,
-      [params.sortBy]: sortBy,
-    },
-  });
-}
-
-const menuItems = [
-  {
-    label: "Sort By: Score",
-    command: () => {
-      updateSortByParam(searchSortOptions.score);
-    },
-  },
-
-  {
-    label: "Sort By: Title",
-    command: () => {
-      updateSortByParam(searchSortOptions.path);
-    },
-  },
-  {
-    label: "Sort By: Last Modified",
-    command: () => {
-      updateSortByParam(searchSortOptions.lastModified);
-    },
-  },
-];
+watch(() => state.value.load, load => {
+  if (load.status === "loading") loadingIndicator.value.setLoading();
+  else if (load.status === "loaded") loadingIndicator.value.setLoaded();
+  else loadingIndicator.value.setFailed(load.message, load.icon);
+}, { flush: "sync" });
 
 function toggleSortMenu(event) {
   sortMenu.value.toggle(event);
 }
 
-watch(() => props.searchTerm, init);
-watch(() => props.folder, init);
-watch(effectiveSortBy, reSortResults);
-onMounted(init);
+watch(() => props.searchTerm, search.init);
+watch(() => props.folder, search.init);
+watch(() => state.value.effectiveSortBy, search.reSortResults);
+onMounted(search.init);
 </script>
 
 <style>
