@@ -313,6 +313,7 @@ import {
 import { publish, subscribe, TOPICS } from "../bus/index.js";
 import { isActionAvailable } from "../modalState.js";
 import { currentLayerId } from "../keybindings/store.js";
+import { defaultEditorMode, setDefaultEditorMode } from "../editorPreferences.js";
 import { clientPluginEpoch } from "../pluginLoader.js";
 import {
   appRelativePath,
@@ -389,7 +390,7 @@ const editor = ref();
 const editorKey = computed(
   () => `${currentLayerId.value}:${clientPluginEpoch.value}`,
 );
-const editorMode = ref(loadDefaultEditorMode());
+const editorMode = ref(defaultEditorMode.value);
 const editorInitialValue = ref("");
 // Fragment-driven entry state: carries through the draft modal so a
 // deep-linked mode/line survives both modal branches.
@@ -418,10 +419,7 @@ function setEditorMode(mode, writeUrl = true) {
   // Transfer content across the remount; persist the pref immediately.
   editorInitialValue.value = currentBuffer();
   editorMode.value = mode;
-  if (mode !== "preview") {
-    // Preview is a view over the buffer, not a persisted editor pref.
-    localStorage.setItem("defaultEditorMode", mode);
-  }
+  setDefaultEditorMode(mode);
   publish(TOPICS.EDITOR_MODE_CHANGE, { mode });
   // The caret doesn't transfer across editors; the fresh editor reports
   // its own selection once the user interacts with it.
@@ -840,7 +838,7 @@ function setEditMode() {
   contentRevision.value = 0;
   pathRevision.value = 0;
   startSaveOwner();
-  editorMode.value = pendingEditorMode || loadDefaultEditorMode();
+  editorMode.value = pendingEditorMode || defaultEditorMode.value;
   editorInitialLine.value = pendingInitialLine;
   editorLine.value = pendingInitialLine || null;
   pendingEditorMode = null;
@@ -1402,15 +1400,7 @@ function saveDefaultEditorMode() {
   // already written when the user switched into preview).
   if (!editor.value) return;
   const isWysiwygMode = editor.value.isWysiwygMode();
-  localStorage.setItem(
-    "defaultEditorMode",
-    isWysiwygMode ? "wysiwyg" : "markdown",
-  );
-}
-
-function loadDefaultEditorMode() {
-  const defaultWysiwygMode = localStorage.getItem("defaultEditorMode");
-  return defaultWysiwygMode || "markdown";
+  setDefaultEditorMode(isWysiwygMode ? "wysiwyg" : "markdown");
 }
 
 function isContentChanged() {

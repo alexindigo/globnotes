@@ -8,12 +8,6 @@ export const useGlobalStore = defineStore("global", () => {
   // Most-recently-opened note paths this session (fed by note:open on the
   // bus); the quick switcher shows it when the query is empty.
   const recentlyOpened = ref([]);
-  const sidebarVisible = ref(
-    localStorage.getItem("sidebarVisible") !== null
-      ? localStorage.getItem("sidebarVisible") === "true"
-      : false
-  );
-  const sidebarPinned = ref(localStorage.getItem("sidebarPinned") === "true");
   // Menu-invoked wizard: opens the setup dialog dismissibly, without
   // touching server state (the in-place update happens only on confirmation).
   const setupWizardRequested = ref(false);
@@ -23,8 +17,6 @@ export const useGlobalStore = defineStore("global", () => {
     notePaths,
     noteMeta,
     recentlyOpened,
-    sidebarVisible,
-    sidebarPinned,
     setupWizardRequested,
   };
 });

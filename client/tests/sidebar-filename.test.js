@@ -14,7 +14,7 @@ vi.mock("../api.js", () => ({
 import { createApp, nextTick } from "vue";
 import { createPinia } from "pinia";
 import SidebarPanel from "../components/SidebarPanel.vue";
-import { useGlobalStore } from "../globalStore.js";
+import { setSidebarVisible } from "../sidebarPreferences.js";
 import router from "../router";
 
 describe("sidebar shows filenames", () => {
@@ -28,8 +28,7 @@ describe("sidebar shows filenames", () => {
     app.use(createPinia());
     app.use(router);
     app.mount(el);
-    const store = useGlobalStore();
-    store.sidebarVisible = true;
+    setSidebarVisible(true);
     await nextTick();
     await new Promise((r) => setTimeout(r, 30));
 

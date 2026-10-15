@@ -13,11 +13,10 @@ import { flushPromises } from "@vue/test-utils";
 import { createPinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { getTree } from "../api.js";
-import SidebarPanel from "../components/SidebarPanel.vue";
-import { useGlobalStore } from "../globalStore.js";
 
 describe("sidebar expansion hydration", () => {
   beforeEach(() => {
+    vi.resetModules();
     getTree.mockClear();
     localStorage.clear();
   });
@@ -27,6 +26,8 @@ describe("sidebar expansion hydration", () => {
       "expandedFolders",
       JSON.stringify(["Alex", "Alex/sub"]),
     );
+    const { default: SidebarPanel } = await import("../components/SidebarPanel.vue");
+    const { setSidebarVisible } = await import("../sidebarPreferences.js");
     const pinia = createPinia();
     const router = createRouter({ history: createMemoryHistory(), routes: [
       { path: "/:path(.*)", name: "note", component: { template: "<p>Opened note</p>" } },
@@ -42,10 +43,9 @@ describe("sidebar expansion hydration", () => {
     const app = createApp(SidebarPanel);
     app.use(pinia);
     app.use(router);
-    const store = useGlobalStore();
     const element = document.createElement("div"); document.body.append(element);
     app.mount(element);
-    store.sidebarVisible = true;
+    setSidebarVisible(true);
     await nextTick();
     await flushPromises();
 

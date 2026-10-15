@@ -4,7 +4,7 @@
        lands once open (aside py-2 + header pt-2, px-4) — the toggle
        never jumps. -->
   <CustomButton
-    v-if="!globalStore.sidebarVisible"
+    v-if="!sidebarVisible"
     :iconPath="tabDockLeft"
     label=""
     title="Open sidebar"
@@ -13,13 +13,13 @@
   />
   <!-- Backdrop: overlay mode only (unpinned) -->
   <div
-    v-if="globalStore.sidebarVisible && !globalStore.sidebarPinned"
+    v-if="sidebarVisible && !sidebarPinned"
     class="fixed inset-0 z-10 bg-slate-950/40"
     @click="toggleSidebar"
   />
   <aside
-    v-show="globalStore.sidebarVisible"
-    :class="globalStore.sidebarPinned
+    v-show="sidebarVisible"
+    :class="sidebarPinned
       ? 'fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-theme-border bg-theme-background py-2'
       : 'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-theme-border bg-theme-background py-2 shadow-lg'"
     class="flex flex-col"
@@ -31,13 +31,13 @@
         <CustomButton
           :iconPath="tabDockLeft"
           label=""
-          :title="globalStore.sidebarPinned ? 'Close sidebar' : 'Close sidebar'"
+          :title="sidebarPinned ? 'Close sidebar' : 'Close sidebar'"
           @click="toggleSidebar"
         />
         <CustomButton
-          :iconPath="globalStore.sidebarPinned ? tabPinnedOff : tabPinned"
+          :iconPath="sidebarPinned ? tabPinnedOff : tabPinned"
           label=""
-          :title="globalStore.sidebarPinned ? 'Unpin sidebar' : 'Pin sidebar'"
+          :title="sidebarPinned ? 'Unpin sidebar' : 'Pin sidebar'"
           @click="togglePin"
         />
       </div>
@@ -213,7 +213,17 @@ import CustomButton from "../components/CustomButton.vue";
 import TextInput from "../components/TextInput.vue";
 import { getNotes, getTree } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
-import { publish, subscribe, TOPICS } from "../bus/index.js";
+import { subscribe, TOPICS } from "../bus/index.js";
+import {
+  expandedFolders as expanded,
+  setExpandedFolders,
+  setSidebarPinned,
+  setSidebarRecent,
+  setSidebarVisible,
+  sidebarPinned,
+  sidebarRecent as recentEnabled,
+  sidebarVisible,
+} from "../sidebarPreferences.js";
 import { dispatchAction } from "../keybindings/dispatcher.js";
 import { basenameOf, folderSearchTarget, notePath } from "../notePath.js";
 import { refreshNoteIndex } from "../noteIndex.js";
@@ -271,17 +281,6 @@ const tree = computed(() => buildTree(globalStore.notePaths || []));
 
 // -- Expansion state --------------------------------------------------------
 
-const expanded = ref(
-  new Set(JSON.parse(localStorage.getItem("expandedFolders") || "[]")),
-);
-
-function persistExpanded() {
-  localStorage.setItem(
-    "expandedFolders",
-    JSON.stringify([...expanded.value]),
-  );
-}
-
 async function toggleFolder(path) {
   if (filterText.value.trim()) {
     // While filtering, toggle against the forced expansion.
@@ -303,13 +302,11 @@ async function toggleFolder(path) {
     expanded.value.add(path);
   }
   // Force reactivity for the Set
-  expanded.value = new Set(expanded.value);
-  persistExpanded();
+  setExpandedFolders(expanded.value);
 }
 
 function collapseAll() {
-  expanded.value = new Set();
-  persistExpanded();
+  setExpandedFolders([]);
 }
 
 // Whether there is anything left to collapse.
@@ -446,7 +443,6 @@ const activePath = computed(() =>
 // section is visible. The clock toggle (bottom row) switches Recent on/off,
 // persisted across sessions.
 
-const recentEnabled = ref(localStorage.getItem("sidebarRecent") === "true");
 const recentNotes = ref([]);
 
 // Sections in render order. Recent shows only when its toggle is on; Files is
@@ -460,13 +456,9 @@ const enabledSections = computed(() => {
 const showSectionTitles = computed(() => enabledSections.value.length > 1);
 
 function toggleRecent() {
-  recentEnabled.value = !recentEnabled.value;
-  localStorage.setItem("sidebarRecent", recentEnabled.value ? "true" : "false");
+  setSidebarRecent(!recentEnabled.value);
   if (recentEnabled.value) {
-    publish(TOPICS.SIDEPANEL_SECTION_SHOW, { section: "recent" });
     loadRecentNotes();
-  } else {
-    publish(TOPICS.SIDEPANEL_SECTION_HIDE, { section: "recent" });
   }
 }
 
@@ -508,7 +500,7 @@ subscribe(TOPICS.NOTE_DELETE, invalidateTree);
 // folders are hydrated too — otherwise restored expansion shows empty
 // children until the user toggles each folder.
 watch(
-  () => globalStore.sidebarVisible,
+  sidebarVisible,
   (visible) => {
     if (visible) {
       loadLevel("");
@@ -539,26 +531,21 @@ watch(
         expanded.value.add(path);
       }
     }
-    expanded.value = new Set(expanded.value);
-    persistExpanded();
+    setExpandedFolders(expanded.value);
   },
   { immediate: true },
 );
 
 function toggleSidebar() {
-  globalStore.sidebarVisible = false;
-  localStorage.setItem("sidebarVisible", "false");
-  publish(TOPICS.SIDEPANEL_CLOSE, {});
+  setSidebarVisible(false);
 }
 
 function openSidebar() {
-  globalStore.sidebarVisible = true;
-  localStorage.setItem("sidebarVisible", "true");
+  setSidebarVisible(true);
 }
 
 function togglePin() {
-  globalStore.sidebarPinned = !globalStore.sidebarPinned;
-  localStorage.setItem("sidebarPinned", String(globalStore.sidebarPinned));
+  setSidebarPinned(!sidebarPinned.value);
 }
 
 </script>

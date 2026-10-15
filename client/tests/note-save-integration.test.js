@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import App from "../App.vue";
 import NoteView from "../views/Note.vue";
 import { useGlobalStore } from "../globalStore.js";
+import { setDefaultEditorMode } from "../editorPreferences.js";
 import { getConfig, getNote, deleteNote, updateNote, createNote, previewRename, renderBuffer, apiErrorHandler } from "../api.js";
 import { hasUnsavedWork } from "../sessionActions.js";
 import { Note } from "../classes.js";
@@ -58,6 +59,7 @@ let wrapper;
 let pending;
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 beforeEach(async () => {
+  setDefaultEditorMode("markdown");
   localStorage.clear(); sessionStorage.clear(); document.body.innerHTML = "";
   window.history.replaceState(null, "", "/NoteA");
   window.onbeforeunload = null;

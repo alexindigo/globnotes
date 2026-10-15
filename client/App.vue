@@ -46,7 +46,7 @@
         class="content-column flex min-h-0 flex-1 flex-col print:max-w-full"
         :class="{
           'content-column--pinned':
-            globalStore.sidebarVisible && globalStore.sidebarPinned,
+            sidebarVisible && sidebarPinned,
         }"
       >
         <NavBar
@@ -81,6 +81,7 @@ import SidebarPanel from "./components/SidebarPanel.vue";
 import SyncBanner from "./components/SyncBanner.vue";
 import { authTypes } from "./constants.js";
 import { useGlobalStore } from "./globalStore.js";
+import { sidebarPinned, sidebarVisible } from "./sidebarPreferences.js";
 import { initDebugNotifications } from "./debug.js";
 import { getToastOptions } from "./helpers.js";
 import { initTheme } from "./themes.js";

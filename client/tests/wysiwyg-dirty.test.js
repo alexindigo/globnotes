@@ -7,6 +7,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
 import App from "../App.vue";
 import NoteView from "../views/Note.vue";
+import { setDefaultEditorMode } from "../editorPreferences.js";
 import { getConfig, updateNote } from "../api.js";
 import { hasUnsavedWork } from "../sessionActions.js";
 
@@ -75,6 +76,7 @@ describe("real App/Note/Milkdown immediate dirty consumer", () => {
   let app, view;
   const button = label => [...document.querySelectorAll("button")].find(el => el.textContent.trim() === label && el.style.display !== "none");
   beforeEach(async () => {
+    setDefaultEditorMode("markdown");
     localStorage.clear(); sessionStorage.clear(); document.body.innerHTML = "";
     window.history.replaceState(null, "", "/NoteA");
     milkdown.editor = milkdown.ready = milkdown.destroyed = null;

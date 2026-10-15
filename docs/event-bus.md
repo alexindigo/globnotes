@@ -40,10 +40,10 @@ schema enforcement — the topics.js file IS the contract).
 | 5 | `note:delete` | `{ path }` | `Note.vue` deleteConfirmedHandler |
 | 6 | `note:refs-rewritten` | `{ oldPath, newPath }` | `SearchResults.vue` fixAllRefs / fixSingleRef |
 | 7 | `file:upload` | `{ name }` | `Note.vue` postAttachment (success) |
-| 8 | `sidepanel:open` | `{}` | `SidebarPanel.vue` openSidebar |
-| 9 | `sidepanel:close` | `{}` | `SidebarPanel.vue` toggleSidebar |
-| 10 | `sidepanel:section-show` | `{ section }` | `SidebarPanel.vue` toggleRecent (show) |
-| 11 | `sidepanel:section-hide` | `{ section }` | `SidebarPanel.vue` toggleRecent (hide) |
+| 8 | `sidepanel:open` | `{}` | Not currently published (opening only persists the preference) |
+| 9 | `sidepanel:close` | `{}` | `sidebarPreferences.js` setSidebarVisible (close) |
+| 10 | `sidepanel:section-show` | `{ section }` | `sidebarPreferences.js` setSidebarRecent (show) |
+| 11 | `sidepanel:section-hide` | `{ section }` | `sidebarPreferences.js` setSidebarRecent (hide) |
 | 12 | `search-menu:open` | `{}` | `SearchResults.vue` sort-menu show |
 | 13 | `search-menu:close` | `{}` | `SearchResults.vue` sort-menu hide |
 | 14 | `modal:open` | `{ name }` | `Modal.vue` visibility watch |
@@ -55,7 +55,7 @@ schema enforcement — the topics.js file IS the contract).
 | 20 | `debug:change` | `{ enabled }` | `debug.js` toggleDebug |
 | 21 | `search:perform` | `{ term }` | `router.js` afterEach |
 | 22 | `search:change` | `{ term }` | `SearchInput.vue` searchTerm watch |
-| 23 | `search:include-nested` | `{ value }` | `SearchResults.vue` toggleNested |
+| 23 | `search:include-nested` | `{ value }` | `searchPreferences.js` setIncludeNested |
 | 24 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
 | 25 | `note:edit-start` | `{ path }` | `Note.vue` setEditMode |
 | 26 | `note:edit-end` | `{ path }` | `Note.vue` exitEditState |

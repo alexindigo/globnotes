@@ -152,6 +152,7 @@ import {
 } from "../notePath.js";
 import { directoryFromPath } from "../helpers.js";
 import SearchInput from "../partials/SearchInput.vue";
+import { includeNested, setIncludeNested } from "../searchPreferences.js";
 
 const props = defineProps({
   searchTerm: String,
@@ -220,8 +221,6 @@ async function fixAllRefs() {
   fixInProgress.value = false;
 }
 
-const includeNested = ref(localStorage.getItem("includeNested") !== "false");
-
 // Titles of all matches under the current folder (nested), used to derive
 // this level's subdirectories when nested folders are excluded.
 const subdirMatches = ref([]);
@@ -254,9 +253,7 @@ const upTarget = computed(() =>
 );
 
 function toggleNested() {
-  includeNested.value = !includeNested.value;
-  localStorage.setItem("includeNested", includeNested.value);
-  publish(TOPICS.SEARCH_INCLUDE_NESTED, { value: includeNested.value });
+  setIncludeNested(!includeNested.value);
   init();
 }
 
