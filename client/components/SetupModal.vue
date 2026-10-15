@@ -43,7 +43,7 @@
                 v-model="mode"
                 :value="option.mode"
                 :id="`setup-mode-${option.mode}`"
-                 :disabled="pending || accessLoading || accessView?.pinned.mode"
+                :disabled="state.disabled.mode"
                 :aria-describedby="`setup-desc-${option.mode}`"
                 class="mt-1 h-4 w-4 shrink-0 accent-theme-brand"
               />
@@ -80,10 +80,9 @@
               <TextInput
                 id="setup-username"
                 ref="usernameInput"
-                 v-model="username"
-                 @update:modelValue="usernameEdited = true"
+                v-model="username"
                 autocomplete="username"
-                 :disabled="pending || accessLoading || accessView?.pinned.username || mode !== 'password'"
+                :disabled="state.disabled.username"
                 :aria-invalid="missingUsername ? 'true' : undefined"
               />
             </div>
@@ -98,7 +97,7 @@
                   v-model="password"
                   :type="showPassword ? 'text' : 'password'"
                   autocomplete="new-password"
-                   :disabled="pending || accessLoading || accessView?.pinned.password || accessView?.pinned.sessions || mode !== 'password'"
+                  :disabled="state.disabled.password"
                   :aria-invalid="missingPassword ? 'true' : undefined"
                   class="pr-10"
                 />
@@ -107,7 +106,7 @@
                   class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-theme-text-muted hover:text-theme-brand"
                   :aria-pressed="showPassword"
                    :aria-label="showPassword ? 'Hide password' : 'Show password'"
-                   :disabled="pending || accessLoading || accessView?.pinned.password || accessView?.pinned.sessions || mode !== 'password'"
+                  :disabled="state.disabled.password"
                   @click="showPassword = !showPassword"
                 >
                   <Icon
@@ -135,13 +134,13 @@
                 :aria-checked="totpEnabled"
                 aria-labelledby="setup-totp-label"
                  aria-describedby="setup-totp-description"
-                 :disabled="pending || accessLoading || accessView?.pinned.totp || accessView?.pinned.sessions || mode !== 'password'"
+                :disabled="state.disabled.totp"
                 class="shrink-0 text-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-theme-brand disabled:cursor-not-allowed disabled:opacity-50"
                 @click="totpEnabled = !totpEnabled"
               />
             </div>
             <div
-              v-if="totpEnabled && (!existingTotp || replacingTotp || totpKey)"
+              v-if="state.showEnrolment"
               class="setup-totp-enrolment grid grid-cols-1 items-center gap-4 sm:grid-cols-[224px_minmax(0,1fr)]"
             >
               <template v-if="totpSecret">
@@ -153,7 +152,7 @@
                     aria-label="Copy authenticator setup key"
                     :aria-describedby="copyFeedback ? 'setup-totp-copy-feedback' : undefined"
                     :aria-busy="copying"
-                    :disabled="pending || copying || mode !== 'password'"
+                    :disabled="state.disabled.qr"
                     class="block w-full shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-theme-brand disabled:cursor-not-allowed"
                     @click="copyTotpKey"
                     @blur="onCopyBlur"
@@ -190,7 +189,7 @@
                       autocomplete="one-time-code"
                       maxlength="6"
                       placeholder="123456"
-                      :disabled="pending || mode !== 'password'"
+                      :disabled="state.disabled.code"
                       :aria-invalid="missingTotp ? 'true' : undefined"
                     />
                   </div>
@@ -200,7 +199,7 @@
                 Generating enrolment key…
               </p>
             </div>
-            <button v-if="totpEnabled && existingTotp && !replacingTotp" type="button" :disabled="pending || accessView?.pinned.totp || accessView?.pinned.sessions" class="text-left text-sm text-theme-brand disabled:opacity-50" @click="replaceAuthenticator">Set up a new authenticator</button>
+            <button v-if="state.showReplacement" type="button" :disabled="state.disabled.replaceAuthenticator" class="text-left text-sm text-theme-brand disabled:opacity-50" @click="form.replaceAuthenticator">Set up a new authenticator</button>
           </div>
         </div>
 
@@ -236,7 +235,7 @@
             <div class="mt-4 flex items-center justify-between gap-3 text-sm">
               <div><p id="setup-settings-lock-label" class="font-semibold">Read-only settings</p>
                 <p id="setup-settings-lock-help" class="text-theme-text-muted">Keep note editing public while locking access, branding and plugin settings. Unlock through deployment configuration.</p></div>
-              <Toggle id="setup-read-only-settings" type="button" role="switch" :is-on="readOnlySettings" :aria-checked="readOnlySettings" aria-labelledby="setup-settings-lock-label" aria-describedby="setup-settings-lock-help" :disabled="pending || accessLoading || mode !== 'none' || accessView?.pinned.readOnlySettings" @click="readOnlySettings = !readOnlySettings" />
+              <Toggle id="setup-read-only-settings" type="button" role="switch" :is-on="readOnlySettings" :aria-checked="readOnlySettings" aria-labelledby="setup-settings-lock-label" aria-describedby="setup-settings-lock-help" :disabled="state.disabled.readOnlySettings" @click="readOnlySettings = !readOnlySettings" />
             </div>
             <label class="mt-3 flex items-start gap-2 text-sm">
               <input
@@ -244,7 +243,7 @@
                 id="setup-ack"
                 ref="ackCheckbox"
                 v-model="acked"
-                :disabled="pending || mode !== 'none'"
+                :disabled="state.disabled.ack"
                 :aria-invalid="missingAck ? 'true' : undefined"
                 class="mt-0.5 h-4 w-4 shrink-0 accent-theme-brand"
               />
@@ -260,21 +259,21 @@
 
       <fieldset v-if="existingAccount" class="mt-4 grid gap-3 border-t border-theme-border pt-3 sm:grid-cols-2">
         <legend class="text-sm font-semibold">Confirm the current login before changing access</legend>
-        <div><label for="access-current-password" class="mb-1 block text-sm">Current password</label><TextInput id="access-current-password" v-model="currentPassword" type="password" autocomplete="current-password" :disabled="pending" /></div>
-        <div v-if="existingTotp"><label for="access-current-totp" class="mb-1 block text-sm">Code from the current authenticator</label><TextInput id="access-current-totp" v-model="currentTotp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" :disabled="pending" /></div>
+        <div><label for="access-current-password" class="mb-1 block text-sm">Current password</label><TextInput id="access-current-password" v-model="currentPassword" type="password" autocomplete="current-password" :disabled="state.disabled.proof" /></div>
+        <div v-if="existingTotp"><label for="access-current-totp" class="mb-1 block text-sm">Code from the current authenticator</label><TextInput id="access-current-totp" v-model="currentTotp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" :disabled="state.disabled.proof" /></div>
       </fieldset>
 
       <!-- Reserved feedback space: populated without shifting the action. -->
       <p
         class="mb-1 mt-2 min-h-[1.25rem] text-sm text-theme-danger"
         role="alert"
-      >{{ feedback || accessState.state.error }}</p>
-      <button v-if="accessState.state.needsReview" type="button" :disabled="pending || accessState.state.reviewing" class="text-sm text-theme-brand disabled:opacity-50" @click="accessState.review">Review current access</button>
+      >{{ state.message }}</p>
+      <button v-if="state.needsReview" type="button" :disabled="state.disabled.review" class="text-sm text-theme-brand disabled:opacity-50" @click="form.review">Review current access</button>
 
       <CtaButton
         type="submit"
         :label="pending ? 'Setting up…' : dismissible ? 'Save access settings' : 'Finish setup'"
-        :disabled="pending || accessLoading || accessState.state.needsReview || (dismissible && !accessView?.settingsWritable) || (mode === 'none' && !acked)"
+        :disabled="state.disabled.submit"
         :aria-busy="pending"
         class="mt-1"
       />
@@ -283,17 +282,15 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, toRefs } from "vue";
 
-import { getAccessSettings, getConfig, postAccessTotpEnrolment, postSetup, postTotpEnrolment, putAccessSettings } from "../api.js";
-import { createAccessSettingsState } from "../accessSettingsState.js";
+import { createSetupFormState, setupOptions as options } from "../setupFormState.js";
 import { tabClose, tabEye, tabEyeOff } from "../icons.js";
 import CtaButton from "./CtaButton.vue";
 import Icon from "./Icon.vue";
 import Modal from "./Modal.vue";
 import TextInput from "./TextInput.vue";
 import Toggle from "./Toggle.vue";
-import { copyText } from "../clipboard.js";
 
 const props = defineProps({
   // First-run setup is mandatory (default); a menu-invoked wizard can be
@@ -304,274 +301,54 @@ const props = defineProps({
 const emit = defineEmits(["completed", "dismiss"]);
 
 const isVisible = ref(true);
-const accessState = createAccessSettingsState({ read: getAccessSettings, write: putAccessSettings, readStatus: getConfig, completed: result => emit('completed', result) });
-const accessView = computed(() => accessState.state.view);
-const accessLoading = computed(() => props.dismissible && (accessState.state.loading || !accessView.value));
-const existingAccount = computed(() => props.dismissible && !!accessView.value?.username);
-const existingTotp = computed(() => existingAccount.value && accessView.value?.totpEnabled);
-const readOnlySettings = ref(false), currentPassword = ref(''), currentTotp = ref(''), replacingTotp = ref(false);
-let enrolmentTicket = 0, disposed = false;
-onBeforeUnmount(() => { disposed = true; enrolmentTicket++; accessState.dispose(); });
-
-function dismiss() {
-  if (pending.value || !accessState.canDismiss()) return;
-  isVisible.value = false;
-  emit("dismiss");
-}
-
-const options = [
-  {
-    mode: "password",
-    title: "Password protected",
-    description: "A username and password are required to read or edit notes.",
-  },
-  {
-    mode: "read_only",
-    title: "Read-only",
-    description:
-      "Anyone who can reach this server can read notes. Editing is disabled.",
-  },
-  {
-    mode: "none",
-    title: "Open access",
-    description:
-      "Anyone who can reach this server can read, edit, and delete notes. No sign-in required.",
-  },
-];
-
-const mode = ref("password");
-const username = ref("");
-const usernameEdited = ref(false);
-watch(accessView, (view, previous) => {
-  // An untouched username is omitted intent, not a rename proposal. Review
-  // may refresh its display without touching passwords or enrolment state.
-  if (view && previous && !usernameEdited.value) username.value = view.username;
-});
-const password = ref("");
-const showPassword = ref(false);
-const acked = ref(false);
-const submitting = ref(false);
-const pending = computed(() => submitting.value || accessState.state.pending || accessState.state.inFlight || accessState.state.reviewing);
-const feedback = ref("");
-const missingUsername = ref(false);
-const missingPassword = ref(false);
-const missingAck = ref(false);
-
-// TOTP enrolment: the bundle is minted once per toggle-on and echoed
-// back at submit; the entered code proves the user recorded the key.
-const totpEnabled = ref(false);
-const totpKey = ref("");
-const totpSecret = ref("");
-const totpQr = ref("");
-const totpCode = ref("");
-const missingTotp = ref(false);
-const copyArmed = ref(false);
-const copying = ref(false);
-const copyFeedback = ref("");
-const totpQrControl = ref(null);
-let copyTicket = 0;
-
-function resetCopyConfirmation() {
-  copyTicket++;
-  copyArmed.value = false;
-  copyFeedback.value = "";
-}
-
-function onCopyFocus(event) {
-  // A disabled pending QR may lose native focus without delivering its blur.
-  // The next form control owns a new focus attempt regardless of that event.
-  if (!totpQrControl.value?.contains(event.target)) resetCopyConfirmation();
-}
-
-function onCopyBlur(event) {
-  // Native disabling can blur the busy button without admitting a new focus
-  // owner. Keep that attempt; an actual next control retires it via focusin.
-  if (copying.value && !event.relatedTarget) return;
-  resetCopyConfirmation();
-}
-
-async function copyTotpKey() {
-  if (pending.value || copying.value || !totpSecret.value) return;
-  if (!copyArmed.value) {
-    copyArmed.value = true;
-    copyFeedback.value = "Click again to copy the setup key.";
-    return;
-  }
-  copyArmed.value = false;
-  copying.value = true;
-  const secret = totpSecret.value;
-  const ticket = copyTicket;
-  try {
-    await copyText(secret);
-    if (!disposed && ticket === copyTicket && totpSecret.value === secret && mode.value === "password") {
-      copyFeedback.value = "Setup key copied.";
-    }
-  } catch {
-    if (!disposed && ticket === copyTicket && totpSecret.value === secret && mode.value === "password") {
-      copyFeedback.value = "Could not copy the setup key. Please try again.";
-    }
-  } finally {
-    copying.value = false;
-  }
-}
-
 const usernameInput = ref(null);
 const passwordInput = ref(null);
 const ackCheckbox = ref(null);
 const totpCodeInput = ref(null);
-
-// Mint a fresh bundle each time the toggle comes on; a fetch failure
-// rolls the toggle back off with feedback.
-watch(totpEnabled, async (enabled) => {
-  const ticket = ++enrolmentTicket;
-  resetCopyConfirmation();
-  missingTotp.value = false;
-  totpCode.value = "";
-  if (!enabled) {
-    totpKey.value = "";
-    totpSecret.value = "";
-    totpQr.value = "";
-    return;
-  }
-  if (existingTotp.value && !replacingTotp.value) return;
-  try {
-    const bundle = await (props.dismissible ? postAccessTotpEnrolment : postTotpEnrolment)(username.value);
-    if (disposed || ticket !== enrolmentTicket || !totpEnabled.value) return;
-    totpKey.value = bundle.key;
-    totpSecret.value = bundle.secret;
-    totpQr.value = bundle.qr;
-  } catch {
-    if (disposed || ticket !== enrolmentTicket) return;
-    totpKey.value = "";
-    totpSecret.value = "";
-    totpQr.value = "";
-    feedback.value = "Could not start TOTP enrolment. Please try again.";
-    totpEnabled.value = false;
-  }
+const totpQrControl = ref(null);
+const form = createSetupFormState({
+  dismissible: () => props.dismissible,
+  beforeCommit: () => props.beforeCommit(),
+  completed: (...args) => emit("completed", ...args),
+  focus(name) {
+    const target = { username: usernameInput, password: passwordInput, totpCode: totpCodeInput, ack: ackCheckbox }[name]?.value;
+    (target?.$el ?? target)?.focus();
+  },
 });
+const state = form.state;
+const { pending, existingAccount, existingTotp, totpSecret, totpQr, copying, copyFeedback,
+  missingUsername, missingPassword, missingAck, missingTotp } = toRefs(state);
+// Writable Vue bindings forward form intent; the controller owns the values.
+function field(name) {
+  return computed({ get: () => state[name], set: value => form.setField(name, value) });
+}
+const mode = field("mode"), username = field("username"), password = field("password");
+const showPassword = field("showPassword"), acked = field("acked"), totpEnabled = field("totpEnabled");
+const totpCode = field("totpCode"), readOnlySettings = field("readOnlySettings");
+const currentPassword = field("currentPassword"), currentTotp = field("currentTotp");
+const finish = form.finish, copyTotpKey = form.copyTotpKey;
+onBeforeUnmount(form.dispose);
 
-async function replaceAuthenticator() {
-  if (pending.value) return;
-  replacingTotp.value = true;
-  totpEnabled.value = false;
-  await nextTick();
-  totpEnabled.value = true;
+function dismiss() {
+  if (!form.canDismiss()) return;
+  isVisible.value = false;
+  emit("dismiss");
+}
+
+function onCopyFocus(event) {
+  form.copyFocus(!!totpQrControl.value?.contains(event.target));
+}
+
+function onCopyBlur(event) {
+  form.copyBlur(!!event.relatedTarget);
 }
 
 // The modal cannot be dismissed: setup must be completed.
 function noop() {}
 
 onMounted(async () => {
-  if (props.dismissible) {
-    const view = await accessState.load();
-    if (view && !disposed) { mode.value = view.mode; username.value = view.username; totpEnabled.value = view.totpEnabled; readOnlySettings.value = view.mode === 'none' ? view.readOnlySettings : true; }
-  }
+  if (props.dismissible) await form.load();
   // Focus the selected radio first so the choice is announced.
   document.getElementById("setup-mode-password")?.focus();
 });
-
-// Switching modes resets mode-specific state (acknowledgement, masking,
-// stale validation); typed credentials stay in memory.
-watch(mode, () => {
-  resetCopyConfirmation();
-  acked.value = false;
-  showPassword.value = false;
-  feedback.value = "";
-  missingUsername.value = false;
-  missingPassword.value = false;
-  missingAck.value = false;
-});
-
-async function finish() {
-  if (pending.value || accessLoading.value || accessState.state.needsReview) return;
-  feedback.value = "";
-  missingUsername.value = false;
-  missingPassword.value = false;
-  missingAck.value = false;
-
-  if (mode.value === "password") {
-    missingUsername.value = !username.value;
-    missingPassword.value = !existingAccount.value && !password.value;
-    missingTotp.value = totpEnabled.value && (!existingTotp.value || replacingTotp.value || !!totpKey.value) && !/^\d{6}$/.test(totpCode.value);
-    if (missingUsername.value || missingPassword.value || missingTotp.value) {
-      feedback.value = missingTotp.value
-        ? "Enter the current 6-digit code from your authenticator."
-        : "Enter a username and password.";
-      nextTick(() => {
-        const target = missingUsername.value
-          ? usernameInput.value
-          : missingPassword.value
-          ? passwordInput.value
-          : totpCodeInput.value;
-        target?.$el?.focus();
-      });
-      return;
-    }
-  } else if (mode.value === "none" && !acked.value) {
-    missingAck.value = true;
-    feedback.value = "Confirm that you understand open access.";
-    nextTick(() => ackCheckbox.value?.focus());
-    return;
-  }
-
-  if (existingAccount.value && (!currentPassword.value || (existingTotp.value && !/^\d{6}$/.test(currentTotp.value)))) {
-    feedback.value = 'Confirm your current password and current authenticator code.';
-    return;
-  }
-  const payload = mode.value === "password"
-    ? {
-      mode: "password",
-      username: username.value,
-       ...(!existingAccount.value || password.value ? { password: password.value } : {}),
-      // The minted key echoes back; the server persists it only after
-      // the code checks out.
-      ...(totpEnabled.value && totpKey.value
-        ? { totpKey: totpKey.value, totpCode: totpCode.value }
-        : {}),
-    }
-    : { mode: mode.value, ...(mode.value === 'none' ? { readOnlySettings: readOnlySettings.value } : {}) };
-  if (props.dismissible) {
-    const configured = { ...payload, ...(mode.value === 'password' ? { totpEnabled: totpEnabled.value } : {}),
-      ...(mode.value === 'none' ? { readOnlySettings: readOnlySettings.value } : {}),
-      ...(existingAccount.value ? { currentPassword: currentPassword.value, ...(existingTotp.value ? { currentTotp: currentTotp.value } : {}) } : {}) };
-    if (mode.value === 'password' && existingAccount.value && !usernameEdited.value) delete configured.username;
-    if (existingTotp.value && !replacingTotp.value && !totpKey.value) { delete configured.totpKey; delete configured.totpCode; }
-    await accessState.commit(configured, props.beforeCommit);
-    return;
-  }
-
-  submitting.value = true;
-  try {
-    if (await props.beforeCommit() !== true || disposed) {
-      submitting.value = false;
-      return;
-    }
-  } catch {
-    feedback.value = "Your changes could not be resolved. Keep editing and try again.";
-    submitting.value = false;
-    return;
-  }
-
-  postSetup(payload)
-    .then(() => {
-      // Busy state is retained through the parent-owned handoff.
-      emit("completed");
-    })
-    .catch((error) => {
-      // A 400 carries the server's reason (e.g. the TOTP code didn't
-      // match) — show it; anything else stays generic.
-      const detail = error.response?.data?.detail;
-      feedback.value = error.message === "env-pinned"
-        ? "Access mode is pinned by environment configuration."
-        : error.response?.status === 400 && detail
-        ? detail
-        : "Setup failed. Please try again.";
-      if (error.response?.status === 400 && totpEnabled.value) {
-        // The code is spent or wrong — clear for a fresh one.
-        totpCode.value = "";
-        nextTick(() => totpCodeInput.value?.$el?.focus());
-      }
-       submitting.value = false;
-    });
-}
 </script>
