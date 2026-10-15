@@ -44,7 +44,7 @@ const TOPICS = {
   // touching the editors. Both editors subscribe to the same channel and
   // handle-or-decline: exactly one editor is mounted at a time, so exactly
   // one live subscriber exists per action. Save/exit/toggle-edit are
-  // app-level concerns and are handled by Note.vue, not the editors.
+  // app-level concerns and are handled by noteController.js, not the editors.
   EDITOR_SAVE: "editor:save",
   EDITOR_SAVE_CLOSE: "editor:save-close",
   EDITOR_EXIT_EDIT: "editor:exit-edit",

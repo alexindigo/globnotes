@@ -37,7 +37,7 @@ schema enforcement — the topics.js file IS the contract).
 | 2 | `note:create` | `{ path }` | `noteSaveOwner.js` acknowledge (new identity) |
 | 3 | `note:save` | `{ path }` | `noteSaveOwner.js` acknowledge (content-only) |
 | 4 | `note:rename` | `{ oldPath, newPath }` | `noteSaveOwner.js` acknowledge (path changed) |
-| 5 | `note:delete` | `{ path }` | `Note.vue` deleteConfirmedHandler |
+| 5 | `note:delete` | `{ path }` | `noteController.js` deleteConfirmedHandler |
 | 6 | `note:refs-rewritten` | `{ oldPath, newPath }` | `SearchResults.vue` fixAllRefs / fixSingleRef |
 | 7 | `file:upload` | `{ name }` | `noteAttachments.js` postAttachment (success) |
 | 8 | `sidepanel:open` | `{}` | Not currently published (opening only persists the preference) |
@@ -56,10 +56,11 @@ schema enforcement — the topics.js file IS the contract).
 | 21 | `search:perform` | `{ term }` | `router.js` afterEach |
 | 22 | `search:change` | `{ term }` | `SearchInput.vue` searchTerm watch |
 | 23 | `search:include-nested` | `{ value }` | `searchPreferences.js` setIncludeNested |
-| 24 | `editor:mode-change` | `{ mode }` | `Note.vue` setEditorMode |
-| 25 | `note:edit-start` | `{ path }` | `Note.vue` setEditMode |
-| 26 | `note:edit-end` | `{ path }` | `Note.vue` exitEditState |
+| 24 | `editor:mode-change` | `{ mode }` | `noteController.js` setEditorMode |
+| 25 | `note:edit-start` | `{ path }` | `noteController.js` setEditMode |
+| 26 | `note:edit-end` | `{ path }` | `noteController.js` exitEditState |
 | 27 | `app:open-settings` | `{ page? }` | gear / palette / keybindings / plugin SDK → the one openSettings handler |
+| 28 | `note:title-changed` | `{ title }` | `noteController.js` publishTitle (live buffer or loaded note) |
 
 ## Built-in consumers
 
@@ -67,6 +68,7 @@ schema enforcement — the topics.js file IS the contract).
 |---|---|---|
 | `noteIndex.js` | `note:create`, `note:rename`, `note:delete` | Calls `refreshNoteIndex()` — keeps the sidebar filter and wiki-link resolver fresh without a page reload. |
 | `ServerViewer.vue` | `plugin:toggle`, `plugin:auto-enable` | Re-renders the open note so plugin enable/disable changes take effect immediately. |
+| `noteController.js` | `editor:save`, `editor:save-close`, `editor:exit-edit`, `editor:toggle-edit`, `editor:toggle-source-mode` | Owns note actions for the mounted view; registers at mount and unsubscribes on dispose. |
 
 ## Subscribing from a component
 
