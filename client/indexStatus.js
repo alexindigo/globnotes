@@ -7,6 +7,7 @@ import { refreshNoteIndex } from "./noteIndex.js";
 export function createIndexStatus({
   loadStatus = getIndexStatus, refreshIndex = refreshNoteIndex,
   schedule = setInterval, cancel = clearInterval,
+  reportError = (error) => console.error("[indexStatus] poll failed", error),
 } = {}) {
   const syncing = ref(false);
   const done = ref(0);
@@ -14,7 +15,15 @@ export function createIndexStatus({
   let timer = null;
 
   async function poll() {
-    const status = await loadStatus();
+    let status;
+    try {
+      status = await loadStatus();
+    } catch (error) {
+      // Both mount and timer ticks are fire-and-forget. A failed read is not
+      // evidence that indexing completed: retain progress and the current timer.
+      reportError(error);
+      return;
+    }
     syncing.value = status.syncing;
     done.value = status.done;
     total.value = status.total;

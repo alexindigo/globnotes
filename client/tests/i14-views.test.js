@@ -107,4 +107,41 @@ describe("I14 view wiring", () => {
     expect(refreshNoteIndex).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("contains an initial status failure at the mounted banner without fabricating progress", async () => {
+    const error = new Error("initial read failed");
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      getIndexStatus.mockRejectedValueOnce(error);
+      const { wrapper } = await setup(SyncBanner);
+      expect(wrapper.text()).toBe("");
+      expect(refreshNoteIndex).not.toHaveBeenCalled();
+      expect(diagnostic).toHaveBeenCalledExactlyOnceWith("[indexStatus] poll failed", error);
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
+
+  it("retains the rendered banner through a rejected timer read and hides only on actual completion", async () => {
+    vi.useFakeTimers();
+    const error = new Error("interval read failed");
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      getIndexStatus.mockResolvedValueOnce({ syncing: true, done: 3, total: 9 })
+        .mockRejectedValueOnce(error)
+        .mockResolvedValueOnce({ syncing: false, done: 9, total: 9 });
+      const { wrapper } = await setup(SyncBanner);
+      await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+      expect(wrapper.text()).toContain("(3/9)");
+      expect(refreshNoteIndex).not.toHaveBeenCalled();
+      expect(diagnostic).toHaveBeenCalledExactlyOnceWith("[indexStatus] poll failed", error);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+      expect(wrapper.text()).toBe("");
+      expect(refreshNoteIndex).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
 });
