@@ -6,7 +6,7 @@ import App from "../App.vue";
 import NoteView from "../views/Note.vue";
 import { useGlobalStore } from "../globalStore.js";
 import { setDefaultEditorMode } from "../editorPreferences.js";
-import { getConfig, getNote, deleteNote, updateNote, createNote, previewRename, renderBuffer, apiErrorHandler } from "../api.js";
+import { getConfig, getNote, getNotes, deleteNote, updateNote, createNote, previewRename, renderBuffer, apiErrorHandler, uploadFile } from "../api.js";
 import { hasUnsavedWork } from "../sessionActions.js";
 import { Note } from "../classes.js";
 import { dispatchAction } from "../keybindings/dispatcher.js";
@@ -293,6 +293,31 @@ describe("foreground FIFO through the real Note", () => {
     await enter(); await content("A"); await clickSave(); await content("D");
     await acknowledge(0, "NoteA", "A");
     expect(live()).toBe("D");
+  });
+
+  it("a rename acknowledgement rewrites remote references through the extracted workflow and reports completion", async () => {
+    await enter(); await content("Saved text");
+    await wrapper.find('input[placeholder="Title"]').setValue("Renamed");
+    getNotes.mockResolvedValueOnce(["NoteA", "Renamed", "Reference"].map(path => ({ path })));
+    getNote.mockResolvedValueOnce({ path: "Reference", content: "[[NoteA]]" });
+    await clickSave(); await acknowledge(0, "Renamed", "Saved text");
+    expect(getNotes).toHaveBeenCalledWith("NoteA", undefined, undefined, undefined, true);
+    expect(pending[1].args).toEqual(["Reference", "Reference", "[[Renamed]]"]);
+    expect(live()).toBe("Saved text");
+    await acknowledge(1, "Reference", "[[Renamed]]");
+    expect(toastConsumer.add).toHaveBeenCalledWith(expect.objectContaining({ summary: "Links updated", detail: "Updated links in 1 note(s).", severity: "success" }));
+    expect(holder.router.currentRoute.value.params.path).toBe("Renamed");
+  });
+
+  it("the editor receives the extracted upload hook using the current folder and canonical image metadata", async () => {
+    await enter(); await wrapper.find('input[placeholder="Folder (root)"]').setValue("uploads");
+    const file = { name: "image.png" }, callback = vi.fn();
+    uploadFile.mockResolvedValueOnce({ url: "/uploads/image-1.png", filename: "image-1.png" });
+    wrapper.findComponent({ name: "MarkdownEditor" }).props("addImageBlobHook")(file, callback);
+    await flushPromises();
+    expect(uploadFile).toHaveBeenCalledExactlyOnceWith(file, "uploads");
+    expect(callback).toHaveBeenCalledExactlyOnceWith("/uploads/image-1.png", "image-1.png");
+    expect(toastConsumer.add).toHaveBeenCalledWith(expect.objectContaining({ summary: "Success", detail: "Attachment uploaded successfully ✓", severity: "success" }));
   });
 
   it("equal-content Save clicks remain distinct foreground jobs", async () => {

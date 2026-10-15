@@ -39,7 +39,7 @@ schema enforcement — the topics.js file IS the contract).
 | 4 | `note:rename` | `{ oldPath, newPath }` | `noteSaveOwner.js` acknowledge (path changed) |
 | 5 | `note:delete` | `{ path }` | `Note.vue` deleteConfirmedHandler |
 | 6 | `note:refs-rewritten` | `{ oldPath, newPath }` | `SearchResults.vue` fixAllRefs / fixSingleRef |
-| 7 | `file:upload` | `{ name }` | `Note.vue` postAttachment (success) |
+| 7 | `file:upload` | `{ name }` | `noteAttachments.js` postAttachment (success) |
 | 8 | `sidepanel:open` | `{}` | Not currently published (opening only persists the preference) |
 | 9 | `sidepanel:close` | `{}` | `sidebarPreferences.js` setSidebarVisible (close) |
 | 10 | `sidepanel:section-show` | `{ section }` | `sidebarPreferences.js` setSidebarRecent (show) |

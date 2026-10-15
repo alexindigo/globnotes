@@ -273,10 +273,6 @@ import {
   apiErrorHandler,
   deleteNote,
   getNote,
-  getNotes,
-  operationError,
-  updateNote,
-  uploadFile,
 } from "../api.js";
 import { Note } from "../classes.js";
 import { displayTitle, followedBasename } from "../noteTitle.js";
@@ -293,7 +289,6 @@ import ServerViewer, {
 } from "../components/ServerViewer.vue";
 import { authTypes, params } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
-import { rewriteRenamedLinks } from "../links.js";
 import {
   directoryFromPath,
   getToastOptions,
@@ -318,7 +313,6 @@ import {
   notePath,
   pathBreadcrumbs,
 } from "../notePath.js";
-import { attachmentNameError } from "../validators.js";
 import { createNoteDraftStore } from "../noteDrafts.js";
 import { createNotePreview } from "../notePreview.js";
 import { createNoteUrlSync } from "../noteUrlSync.js";
@@ -326,6 +320,9 @@ import { decideNavigation, noteResourceIdentity } from "../noteNavigationGate.js
 import { setBeforeUnloadConfirmation } from "../unloadGuard.js";
 import { registerSessionParticipant } from "../sessionActions.js";
 import { createNoteSaveOwner } from "../noteSaveOwner.js";
+import { createNoteRenameLinks } from "../noteRenameLinks.js";
+import { createNoteAttachments } from "../noteAttachments.js";
+import { noteOperationError, noteSaveError } from "../noteErrors.js";
 
 const props = defineProps({
   path: String,
@@ -383,6 +380,15 @@ const rewriteScanLink = computed(() => {
   return `/_/search?${params.searchTerm}=*&rewriteFiles=${param}`;
 });
 const toast = useToast();
+const { updateRenamedLinks } = createNoteRenameLinks({
+  ownsPath: path => saveOwner.ownsPath(path),
+  updated: count => toast.add(getToastOptions(`Updated links in ${count} note(s).`, "Links updated", "success")),
+});
+const { addImageBlobHook } = createNoteAttachments({
+  getState: () => ({ requestedPath: newPath.value, path: props.path }),
+  notify: ({ title, message, severity }) => toast.add(getToastOptions(message, title, severity)),
+  failed: error => apiErrorHandler(error, toast),
+});
 const editor = ref();
 const editorKey = computed(
   () => `${currentLayerId.value}:${clientPluginEpoch.value}`,
@@ -860,9 +866,7 @@ async function deleteConfirmedHandler() {
       router.push({ name: "home" });
     })
     .catch((error) => {
-      const opError = operationError(error);
-      if (opError) toast.add(getToastOptions(opError.message, opError.title, "error"));
-      else apiErrorHandler(error, toast);
+      showNoteError(error, noteOperationError(error));
     });
 }
 
@@ -878,85 +882,14 @@ function refreshDirtyState() {
   setBeforeUnloadConfirmation(dirty);
 }
 
-// After a rename, the client drives link updates across the vault: find
-// referencing notes via search, rewrite their links client-side, and resave
-// each via the normal update API. The server stays a pure file mechanism —
-// it never rewrites other notes as a rename side effect. Best-effort.
-async function updateRenamedLinks(oldPath, newPath) {
-  try {
-    const results = await getNotes(oldPath, undefined, undefined, undefined, true);
-    const candidates = results
-      .map((r) => r.path)
-      .filter((t) => t !== oldPath && t !== newPath);
-    let updated = 0;
-    for (const title of candidates) {
-      if (saveOwner.ownsPath(title)) continue;
-      const other = await getNote(title);
-      const newContent = rewriteRenamedLinks(
-        other.content,
-        oldPath,
-        newPath,
-        title,
-      );
-      if (newContent !== other.content) {
-        if (saveOwner.ownsPath(title)) continue;
-        await updateNote(title, title, newContent);
-        updated++;
-      }
-    }
-    if (updated > 0) {
-      toast.add(
-        getToastOptions(
-          `Updated links in ${updated} note(s).`,
-          "Links updated",
-          "success",
-        ),
-      );
-    }
-  } catch (e) {
-    // Link updates are best-effort; the rename itself already succeeded.
-    console.error("link update failed", e);
-  }
-}
-
 function noteSaveFailure(error) {
   noteDirty.value = true;
-  const failure = queueState.value.failure;
-  if (failure?.certainty === "unknown" || failure?.certainty === "known-committed") {
-    toast.add(getToastOptions(failure.certainty === "unknown"
-      ? "The write outcome is unknown. Current edits and queued saves are retained; no retry or handoff was performed."
-      : "The write committed, but its UI update failed. Retained work is paused; do not resend this submission.", "Save paused", "error"));
-    return;
-  }
-  // Structured plugin/operation codes precede status-only branches: a
-  // plugin-cancelled 409 is not a duplicate title. The buffer stays dirty
-  // and nothing navigates as if the save succeeded.
-  const opError = operationError(error);
-  if (opError) {
-    toast.add(getToastOptions(opError.message, opError.title, "error"));
-    return;
-  }
-  if (error.response?.status === 400) {
-    toast.add(
-      getToastOptions(
-        error.response.data?.detail || "Invalid note title.",
-        "Invalid",
-        "error",
-      ),
-    );
-  } else if (error.response?.status === 409) {
-    toast.add(
-      getToastOptions(
-        "A note with this title already exists. Please try again with a new title.",
-        "Duplicate",
-        "error",
-      ),
-    );
-  } else if (error.response?.status === 413) {
-    entityTooLargeToast("note");
-  } else {
-    apiErrorHandler(error, toast);
-  }
+  showNoteError(error, noteSaveError(error, queueState.value.failure));
+}
+
+function showNoteError(error, mapped) {
+  if (mapped) toast.add(getToastOptions(mapped.message, mapped.title, "error"));
+  else apiErrorHandler(error, toast);
 }
 
 // Note Closure
@@ -1008,64 +941,6 @@ function closeNote() {
   exitEditState();
   if (acknowledgedPath) router.push({ path: notePath(acknowledgedPath), hash: "" });
   else router.push({ name: "home" });
-}
-
-// Image Upload
-function addImageBlobHook(file, callback) {
-  // Upload the image, then the callback inserts the markdown into the
-  // editor (alt text falls back to the uploaded filename).
-  postAttachment(file).then(function (data) {
-    if (data) {
-      callback(data.url, data.filename);
-    }
-  });
-}
-
-function postAttachment(file) {
-  // Invalid Character Validation
-  const nameError = attachmentNameError(file.name);
-  if (nameError) {
-    toast.add(getToastOptions(nameError, "Invalid Title", "error"));
-    return;
-  }
-
-  // Uploading Toast
-  toast.add(getToastOptions("Uploading attachment..."));
-
-  // Upload the attachment
-  return uploadFile(file, noteDirectory())
-    .then((data) => {
-      publish(TOPICS.FILE_UPLOAD, { name: file.name });
-      // Success Toast
-      toast.add(
-        getToastOptions(
-          "Attachment uploaded successfully ✓",
-          "Success",
-          "success",
-        ),
-      );
-      return data;
-    })
-    .catch((error) => {
-      const opError = operationError(error);
-      if (opError) {
-        toast.add(getToastOptions(opError.message, opError.title, "error"));
-      } else if (error.response?.status === 409) {
-        // Note: The current implementation will append a datetime to the filename if it already exists.
-        // Error Toast
-        toast.add(
-          getToastOptions(
-            "An attachment with this filename already exists.",
-            "Duplicate",
-            "error",
-          ),
-        );
-      } else if (error.response?.status == 413) {
-        entityTooLargeToast("attachment");
-      } else {
-        apiErrorHandler(error, toast);
-      }
-    });
 }
 
 // Content Change Watcher
@@ -1136,23 +1011,6 @@ onMounted(() => {
 
 function createFromWikilink() {
   router.push(newNoteTarget({ path: props.path }));
-}
-
-// Helpers
-function noteDirectory() {
-  // The directory of the note being edited (falling back to the note being
-  // viewed), so uploads land beside the note.
-  return directoryFromPath(newPath.value || props.path || "");
-}
-
-function entityTooLargeToast(entityName) {
-  toast.add(
-    getToastOptions(
-      `This ${entityName} is too large. Please try again with a smaller ${entityName} or adjust your server configuration.`,
-      "Failure",
-      "error",
-    ),
-  );
 }
 
 function saveDefaultEditorMode() {
