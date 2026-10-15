@@ -67,7 +67,7 @@ schema enforcement — the topics.js file IS the contract).
 | Consumer | Subscribes to | Action |
 |---|---|---|
 | `noteIndex.js` | `note:create`, `note:rename`, `note:delete` | Calls `refreshNoteIndex()` — keeps the sidebar filter and wiki-link resolver fresh without a page reload. |
-| `ServerViewer.vue` | `plugin:toggle`, `plugin:auto-enable` | Re-renders the open note so plugin enable/disable changes take effect immediately. |
+| `serverViewer.js` | `plugin:toggle`, `plugin:auto-enable`, `theme:change` | Re-renders the open note for plugin switches and the current Mermaid palette; releases subscriptions on dispose. |
 | `noteController.js` | `editor:save`, `editor:save-close`, `editor:exit-edit`, `editor:toggle-edit`, `editor:toggle-source-mode` | Owns note actions for the mounted view; registers at mount and unsubscribes on dispose. |
 
 ## Subscribing from a component

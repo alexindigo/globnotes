@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { classifyAnchorClick } from "../components/ServerViewer.vue";
+vi.mock("../router.js", () => ({ default: { push: vi.fn() } }));
+
+import { classifyAnchorClick, handleAnchorClick } from "../anchorClicks.js";
+import router from "../router.js";
 
 const NOTE = "http://localhost:8080/anchors";
 
@@ -43,5 +46,78 @@ describe("classifyAnchorClick", () => {
       "same-page-anchor",
     );
     expect(classifyAnchorClick("#view:L3", prefixed)).toBe("app-fragment");
+  });
+});
+
+describe("shared rendered-markdown click handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("location", { href: NOTE });
+    vi.stubGlobal("CSS", { escape: vi.fn(value => value.replaceAll('"', '\\"')) });
+  });
+  afterEach(() => {
+    document.body.innerHTML = "";
+    vi.unstubAllGlobals();
+  });
+
+  function click(href) {
+    const link = document.createElement("a");
+    link.setAttribute("href", href);
+    const child = document.createElement("span");
+    link.appendChild(child);
+    return { target: child, preventDefault: vi.fn() };
+  }
+
+  it("ignores clicks outside links", async () => {
+    const event = { target: document.createElement("p"), preventDefault: vi.fn() };
+    await handleAnchorClick(event);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("leaves cross-page navigation to the browser", async () => {
+    const event = click("/other-note#heading");
+    await handleAnchorClick(event);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("scrolls decoded element ids without adding a router history entry", async () => {
+    const target = document.createElement("h2");
+    target.id = "section one";
+    target.scrollIntoView = vi.fn();
+    document.body.appendChild(target);
+    const event = click("#section%20one");
+    await handleAnchorClick(event);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(target.scrollIntoView).toHaveBeenCalledOnce();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("falls back to escaped named anchors", async () => {
+    const target = document.createElement("a");
+    target.name = 'section"one';
+    target.scrollIntoView = vi.fn();
+    document.body.appendChild(target);
+    const event = click("#section%22one");
+    await handleAnchorClick(event);
+    expect(CSS.escape).toHaveBeenCalledExactlyOnceWith('section"one');
+    expect(target.scrollIntoView).toHaveBeenCalledOnce();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("tolerates a missing anchor target", async () => {
+    const event = click("#missing");
+    await expect(handleAnchorClick(event)).resolves.toBeUndefined();
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it.each(["#source", "#edit", "#view:L5"])("routes app fragment %s with prefix and query intact", async hash => {
+    vi.stubGlobal("location", { href: "http://globnotes.home/mom/anchors?option=1" });
+    const event = click(hash);
+    await handleAnchorClick(event);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(router.push).toHaveBeenCalledExactlyOnceWith(`/mom/anchors?option=1${hash}`);
   });
 });

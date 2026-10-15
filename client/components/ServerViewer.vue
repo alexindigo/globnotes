@@ -2,49 +2,9 @@
   <div
     ref="viewerElement"
     :class="{ 'rendered-markdown': loaded, 'toastui-editor-contents': loaded }"
-    @click="viewerHandleAnchorClick"
+    @click="handleAnchorClick"
   ></div>
 </template>
-
-<script>
-// Same-page anchor handling for rendered markdown surfaces (this viewer and
-// Note.vue's preview). A browser-native fragment click pushes a history
-// entry vue-router never sees, and the next pop reinterprets the stack
-// (issue #5: BACK after an anchor "enters edit mode" instead of returning
-// to the origin page). Intercept: bare anchors scroll without entering
-// history; app fragments stay first-class router entries; cross-page links
-// are untouched.
-import { parseFragment } from "../fragment.js";
-
-export function classifyAnchorClick(href, currentHref) {
-  const url = new URL(href, currentHref);
-  const current = new URL(currentHref);
-  if (url.pathname !== current.pathname || url.search !== current.search) {
-    return "cross-page";
-  }
-  return parseFragment(url.hash).mode ? "app-fragment" : "same-page-anchor";
-}
-
-export async function handleAnchorClick(event) {
-  const a = event.target.closest("a[href]");
-  if (!a) return;
-  const cls = classifyAnchorClick(a.getAttribute("href"), location.href);
-  if (cls === "cross-page") return;
-  event.preventDefault();
-  const url = new URL(a.getAttribute("href"), location.href);
-  if (cls === "app-fragment") {
-    // Lazy import: a static edge to router.js would close a cycle
-    // (router → views → ServerViewer → router) and shift boot init order.
-    const { default: router } = await import("../router.js");
-    router.push(url.pathname + url.search + url.hash);
-    return;
-  }
-  const id = decodeURIComponent(url.hash.slice(1));
-  const target = document.getElementById(id) ||
-    document.querySelector(`a[name="${CSS.escape(id)}"]`);
-  target?.scrollIntoView();
-}
-</script>
 
 <script setup>
 import { tabCheck, tabCopy } from "../icons.js";
@@ -52,15 +12,11 @@ import renderMathInElement from "katex/contrib/auto-render/auto-render.js";
 import mermaid from "mermaid";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import { getRenderedHtml } from "../api.js";
-import { renderWithPlugins } from "../noteRendering.js";
 import { copyText } from "../clipboard.js";
-import { subscribe, TOPICS } from "../bus/index.js";
+import { handleAnchorClick } from "../anchorClicks.js";
+import { createServerViewer } from "../serverViewer.js";
+import { mermaidThemeVariables } from "../mermaidTheme.js";
 import { viewLineNumbers } from "../pluginSettings.js";
-// The plain script above owns + exports the handlers (Note.vue imports
-// them); the alias self-import binds them for this surface's template
-// without colliding with the export declarations.
-import { handleAnchorClick as viewerHandleAnchorClick } from "./ServerViewer.vue";
 
 const props = defineProps({
   title: String,
@@ -109,109 +65,6 @@ function addCopyButtons(root) {
   });
 }
 
-// Mermaid follows the app's light/dark mode: the theme engine maintains
-// body.dark as the source of truth, so diagrams re-initialize per render
-// with the matching built-in mermaid theme. Label spans inherit the app's
-// text color, which keeps them readable once the themes agree.
-// Mermaid theme palettes: map the app's live --theme-* CSS variables into
-// mermaid's themeVariables so diagrams pick up every theme's palette
-// instead of mermaid's two built-ins. Computed at init from the applied
-// theme (the theme engine stamps the variables on <html> before render).
-// Variables are stored as space-separated RGB triplets ("243 244 245");
-// mermaid needs hex, so triplets convert back via rgb().
-function mermaidColor(name, fallback) {
-  const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue(`--theme-${name}`).trim();
-  if (!raw) return fallback;
-  if (raw.startsWith("#")) return raw;
-  const parts = raw.split(/\s+/).map(Number);
-  if (parts.length === 3 && parts.every((n) => n >= 0 && n <= 255)) {
-    return `#${parts.map((n) => n.toString(16).padStart(2, "0")).join("")}`;
-  }
-  return fallback;
-}
-
-function mermaidThemeVariables() {
-  const v = mermaidColor;
-  return {
-    background: "transparent",
-    primaryColor: v("background-elevated", "#ececff"),
-    primaryTextColor: v("text", "#333"),
-    primaryBorderColor: v("border", "#999"),
-    secondaryColor: v("background", "#ffffde"),
-    secondaryTextColor: v("text", "#333"),
-    secondaryBorderColor: v("border", "#999"),
-    tertiaryColor: v("background-elevated", "#ececff"),
-    tertiaryTextColor: v("text", "#333"),
-    tertiaryBorderColor: v("border", "#999"),
-    noteBkgColor: v("background-elevated", "#fff5ad"),
-    noteTextColor: v("text", "#333"),
-    noteBorderColor: v("brand", "#999"),
-    lineColor: v("text-muted", "#333"),
-    textColor: v("text", "#333"),
-    mainBkg: v("background-elevated", "#ececff"),
-    nodeBorder: v("border", "#999"),
-    clusterBkg: v("background", "#ffffde"),
-    clusterBorder: v("border", "#999"),
-    edgeLabelBackground: v("background-elevated", "#e8e8e8"),
-    actorBkg: v("background-elevated", "#ececff"),
-    actorBorder: v("border", "#999"),
-    actorTextColor: v("text", "#333"),
-    actorLineColor: v("text-muted", "#999"),
-    signalColor: v("text", "#333"),
-    signalTextColor: v("text", "#333"),
-    labelBoxBkgColor: v("background-elevated", "#ececff"),
-    labelBoxBorderColor: v("border", "#999"),
-    labelTextColor: v("text", "#333"),
-    loopTextColor: v("text", "#333"),
-    activationBkgColor: v("background-elevated", "#ececff"),
-    activationBorderColor: v("border", "#999"),
-    sequenceNumberColor: v("background", "#fff"),
-    // Gantt
-    sectionBkgColor: v("background-elevated", "#ececff"),
-    altSectionBkgColor: v("background", "#ffffde"),
-    sectionBkgColor2: v("background-elevated", "#ececff"),
-    taskBkgColor: v("brand", "#ccc"),
-    taskTextColor: v("background", "#fff"),
-    taskBorderColor: v("border", "#999"),
-    taskTextDarkColor: v("text", "#333"),
-    taskTextOutsideColor: v("text-muted", "#333"),
-    taskTextClickableColor: v("brand", "#003163"),
-    activeTaskBkgColor: v("brand", "#ccc"),
-    activeTaskBorderColor: v("border", "#999"),
-    doneTaskBkgColor: v("text-very-muted", "#bbb"),
-    doneTaskBorderColor: v("text-muted", "#999"),
-    critBkgColor: v("code-keyword", "#ff8888"),
-    critBorderColor: v("border", "#999"),
-    todayLineColor: v("brand", "#ff0000"),
-    // Pie / state / class shared accents
-    pie1: v("brand", "#ccc"),
-    pie2: v("code-string", "#ccc"),
-    pie3: v("code-function", "#ccc"),
-    pie4: v("code-keyword", "#ccc"),
-    pie5: v("code-number", "#ccc"),
-    pie6: v("code-attr", "#ccc"),
-    pie7: v("text-muted", "#ccc"),
-    pie8: v("border", "#ccc"),
-    pie9: v("code-comment", "#ccc"),
-    pie10: v("code-tag", "#ccc"),
-    pie11: v("background-elevated", "#ccc"),
-    pie12: v("background", "#ccc"),
-  };
-}
-
-function initMermaid() {
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: "base",
-    themeVariables: mermaidThemeVariables(),
-  });
-}
-
-// Fetches the server-rendered HTML (markdown-it + plugin pipeline) and
-// mounts it; the container keeps the toastui-editor-contents class so
-// existing content CSS applies unchanged during the transition.
-
 function highlightLines() {
   if (!props.line || !viewerElement.value) return;
   viewerElement.value
@@ -225,66 +78,46 @@ function highlightLines() {
   }
 }
 
-let renderVersion = 0;
-async function renderNote() {
-  const version = ++renderVersion;
-  const root = viewerElement.value;
-  const title = props.title;
-  if (!title || !root) {
-    return;
-  }
-  // Async responses belong to one render and one mounted surface only.
-  const isCurrent = () => version === renderVersion &&
-    viewerElement.value === root && props.title === title;
-  try {
-    const html = await renderWithPlugins(
-      disabled => getRenderedHtml(title, disabled, viewLineNumbers.value),
-      { isCurrent },
-    );
-    if (!isCurrent()) return;
-    root.innerHTML = html;
-  } catch (error) {
-    if (!isCurrent()) return;
-    console.error("Note render failed", error);
-    root.innerHTML =
+const viewer = createServerViewer({
+  getContext: () => ({ title: props.title, root: viewerElement.value }),
+  setHtml: html => { viewerElement.value.innerHTML = html; },
+  failed: () => {
+    viewerElement.value.innerHTML =
       '<p class="render-error">Failed to render this note.</p>';
     loaded.value = true;
-    return;
-  }
-  addCopyButtons(root);
-  loaded.value = true;
-  initMermaid();
-  mermaid
-    .run({ nodes: root.querySelectorAll(".mermaid") })
-    .catch((error) => {
-      if (isCurrent()) console.error("Mermaid rendering failed", error);
+  },
+  rendered: isCurrent => {
+    const root = viewerElement.value;
+    addCopyButtons(root);
+    loaded.value = true;
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: "base",
+      themeVariables: mermaidThemeVariables(),
     });
-  renderMathInElement(root, {
-    delimiters: [
-      { left: "$$", right: "$$", display: true },
-      { left: "$", right: "$", display: false },
-    ],
-    throwOnError: false,
-  });
-  highlightLines();
-}
+    mermaid
+      .run({ nodes: root.querySelectorAll(".mermaid") })
+      .catch((error) => {
+        if (isCurrent()) console.error("Mermaid rendering failed", error);
+      });
+    renderMathInElement(root, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "$", right: "$", display: false },
+      ],
+      throwOnError: false,
+    });
+    highlightLines();
+  },
+});
 
-onMounted(renderNote);
-watch(() => props.title, renderNote);
+onMounted(viewer.renderNote);
+watch(() => props.title, viewer.renderNote);
 // Re-render when the line-numbers-in-view-mode toggle changes.
-watch(viewLineNumbers, renderNote);
+watch(viewLineNumbers, viewer.renderNote);
 // Re-highlight when the #view:L fragment changes (no re-render needed).
 watch(() => props.line, highlightLines);
-const unsubscribers = [
-  subscribe(TOPICS.PLUGIN_TOGGLE, renderNote),
-  subscribe(TOPICS.PLUGIN_AUTO_ENABLE, renderNote),
-  // Re-render on theme switch so mermaid picks up the new mode's theme.
-  subscribe(TOPICS.THEME_CHANGE, renderNote),
-];
-onBeforeUnmount(() => {
-  renderVersion++;
-  for (const unsubscribe of unsubscribers) unsubscribe();
-});
+onBeforeUnmount(viewer.dispose);
 </script>
 
 <style>

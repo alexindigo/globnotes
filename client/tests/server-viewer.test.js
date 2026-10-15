@@ -5,6 +5,10 @@ import { enableAutoUnmount, flushPromises, mount as mountComponent } from "@vue/
 import ServerViewer from "../components/ServerViewer.vue";
 import { getPlugins, getRenderedHtml } from "../api.js";
 import { subscribe } from "../bus/index.js";
+import { viewLineNumbers } from "../pluginSettings.js";
+import { copyText } from "../clipboard.js";
+import mermaid from "mermaid";
+import renderMathInElement from "katex/contrib/auto-render/auto-render.js";
 
 vi.mock("../api.js", () => ({
   getPlugins: vi.fn(),
@@ -20,6 +24,7 @@ vi.mock("../pluginSettings.js", async () => {
 });
 vi.mock("mermaid", () => ({ default: { initialize: vi.fn(), run: vi.fn().mockResolvedValue(undefined) } }));
 vi.mock("katex/contrib/auto-render/auto-render.js", () => ({ default: vi.fn() }));
+vi.mock("../clipboard.js", () => ({ copyText: vi.fn().mockResolvedValue(true) }));
 
 enableAutoUnmount(afterEach);
 
@@ -43,6 +48,7 @@ describe("ServerViewer render lifetime", () => {
     vi.clearAllMocks();
     getPlugins.mockReset().mockResolvedValue([]);
     getRenderedHtml.mockReset().mockResolvedValue("<p>Current note</p>");
+    viewLineNumbers.value = false;
     errors = vi.spyOn(console, "error").mockImplementation(() => {});
     hookErrors = vi.fn();
   });
@@ -136,5 +142,53 @@ describe("ServerViewer render lifetime", () => {
     expect(unsubscribers.length).toBeGreaterThan(0);
     wrapper.unmount();
     for (const unsubscribe of unsubscribers) expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("wires rendered HTML to Mermaid, math, copy buttons and line highlighting", async () => {
+    getRenderedHtml.mockResolvedValue('<p data-source-line="0">first</p><p data-source-line="1">second</p><pre><code>code</code></pre><pre class="mermaid">graph TD</pre>');
+    const wrapper = mount(ServerViewer, { props: { title: "Current", line: { from: 2, to: 2 } } });
+    await flushPromises();
+    expect(wrapper.find('[data-source-line="0"]').classes()).not.toContain("line-highlight");
+    expect(wrapper.find('[data-source-line="1"]').classes()).toContain("line-highlight");
+    expect(wrapper.findAll(".code-copy-btn")).toHaveLength(1);
+    expect(wrapper.find(".mermaid .code-copy-btn").exists()).toBe(false);
+    expect(mermaid.initialize).toHaveBeenCalledWith({ startOnLoad: false, theme: "base", themeVariables: expect.objectContaining({ background: "transparent" }) });
+    expect([...mermaid.run.mock.calls[0][0].nodes]).toEqual([wrapper.find(".mermaid").element]);
+    expect(renderMathInElement).toHaveBeenCalledWith(wrapper.element, {
+      delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }],
+      throwOnError: false,
+    });
+    await wrapper.setProps({ line: { from: 1, to: 1 } });
+    expect(wrapper.find('[data-source-line="0"]').classes()).toContain("line-highlight");
+    expect(wrapper.find('[data-source-line="1"]').classes()).not.toContain("line-highlight");
+    expect(getRenderedHtml).toHaveBeenCalledOnce();
+  });
+
+  it("rerenders the mounted surface when the view line-number preference changes", async () => {
+    const wrapper = mount(ServerViewer, { props: { title: "Current" } });
+    await flushPromises();
+    getRenderedHtml.mockResolvedValue('<p data-source-line="0">Numbered</p>');
+    viewLineNumbers.value = true;
+    await flushPromises();
+    expect(getRenderedHtml).toHaveBeenLastCalledWith("Current", [], true);
+    expect(wrapper.text()).toBe("Numbered");
+  });
+
+  it("copies code through the clipboard owner and resets visual feedback", async () => {
+    vi.useFakeTimers();
+    try {
+      getRenderedHtml.mockResolvedValue("<pre><code>copy this</code></pre>");
+      const wrapper = mount(ServerViewer, { props: { title: "Current" } });
+      await flushPromises();
+      const button = wrapper.find(".code-copy-btn");
+      await button.trigger("click");
+      await flushPromises();
+      expect(copyText).toHaveBeenCalledExactlyOnceWith("copy this");
+      expect(button.classes()).toContain("copied");
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(button.classes()).not.toContain("copied");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
