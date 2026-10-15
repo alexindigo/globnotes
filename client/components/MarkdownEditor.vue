@@ -8,7 +8,7 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
-import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
+import { search, searchKeymap } from "@codemirror/search";
 import {
   EditorView,
   keymap,
@@ -22,7 +22,7 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 import { subscribe, TOPICS } from "../bus/index.js";
 import { isActionAvailable } from "../modalState.js";
 import { cm6LayerKeymap } from "../keybindings/editor-keymap.js";
-import * as sourceActions from "../keybindings/source-actions.js";
+import { sourceActionMap } from "../sourceEditorActions.js";
 
 const props = defineProps({
   initialValue: String,
@@ -187,34 +187,6 @@ function handleFiles(files) {
   return true;
 }
 
-// Editor action channel: handle the formatting/structure actions this
-// source editor supports (as markdown-syntax edits) and decline the rest
-// (no subscriber → silent no-op). Save/exit/toggle-edit belong to Note.vue.
-const sourceActionMap = {
-  [TOPICS.EDITOR_TOGGLE_BOLD]: (v) => sourceActions.toggleWrap(v, "**"),
-  [TOPICS.EDITOR_TOGGLE_ITALIC]: (v) => sourceActions.toggleWrap(v, "*"),
-  [TOPICS.EDITOR_TOGGLE_STRIKETHROUGH]: (v) => sourceActions.toggleWrap(v, "~~"),
-  [TOPICS.EDITOR_TOGGLE_INLINE_CODE]: (v) => sourceActions.toggleWrap(v, "`"),
-  [TOPICS.EDITOR_INSERT_LINK]: sourceActions.insertLink,
-  [TOPICS.EDITOR_HEADING_1]: (v) => sourceActions.setHeading(v, 1),
-  [TOPICS.EDITOR_HEADING_2]: (v) => sourceActions.setHeading(v, 2),
-  [TOPICS.EDITOR_HEADING_3]: (v) => sourceActions.setHeading(v, 3),
-  [TOPICS.EDITOR_HEADING_4]: (v) => sourceActions.setHeading(v, 4),
-  [TOPICS.EDITOR_HEADING_5]: (v) => sourceActions.setHeading(v, 5),
-  [TOPICS.EDITOR_HEADING_6]: (v) => sourceActions.setHeading(v, 6),
-  [TOPICS.EDITOR_PARAGRAPH]: (v) => sourceActions.setHeading(v, 0),
-  [TOPICS.EDITOR_BULLET_LIST]: sourceActions.toggleBulletList,
-  [TOPICS.EDITOR_ORDERED_LIST]: sourceActions.toggleOrderedList,
-  [TOPICS.EDITOR_CHECKLIST_TOGGLE]: sourceActions.toggleChecklist,
-  [TOPICS.EDITOR_CODE_BLOCK]: sourceActions.toggleCodeBlock,
-  [TOPICS.EDITOR_BLOCKQUOTE]: sourceActions.toggleBlockquote,
-  [TOPICS.EDITOR_UNDO]: sourceActions.undoAction,
-  [TOPICS.EDITOR_REDO]: sourceActions.redoAction,
-  [TOPICS.EDITOR_HARD_BREAK]: sourceActions.insertHardBreak,
-  [TOPICS.EDITOR_LIST_INDENT]: sourceActions.indentLines,
-  [TOPICS.EDITOR_LIST_OUTDENT]: sourceActions.outdentLines,
-};
-
 onMounted(() => {
   view = new EditorView({
     parent: editorElement.value,
@@ -264,13 +236,6 @@ onMounted(() => {
     subscribe(topic, () => {
       if (view && isActionAvailable(topic)) run(view);
     }));
-  // The layer's Mod-F binding publishes editor:find; open the panel even
-  // when the keypress didn't come from the editor's own keymap.
-  actionUnsubs.push(
-    subscribe(TOPICS.EDITOR_FIND, () => {
-      if (view && isActionAvailable(TOPICS.EDITOR_FIND)) openSearchPanel(view);
-    }),
-  );
   // Reconfigure the layer keymap when the active layer (or a Custom-layer
   // override) changes.
   actionUnsubs.push(

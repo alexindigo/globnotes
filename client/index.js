@@ -6,6 +6,7 @@ import { createPinia } from "pinia";
 import { initTheme } from "./themes.js";
 import { initDocTitle } from "./title.js";
 import { loadStoredToken } from "./tokenStorage.js";
+import { readPathPrefix } from "./pathPrefix.js";
 import router from "/router.js";
 
 // Theme vars are stamped on <html> before mount so every surface is
@@ -17,8 +18,7 @@ initDocTitle();
 // combined at <prefix>/_/plugins.css. Loaded globally; plugins namespace
 // their own selectors.
 {
-  const prefix =
-    document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+  const prefix = readPathPrefix();
   const pluginStyles = document.createElement("link");
   pluginStyles.rel = "stylesheet";
   pluginStyles.href = prefix + "/_/plugins.css";

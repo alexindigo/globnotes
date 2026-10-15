@@ -66,7 +66,6 @@
 </template>
 
 <script setup>
-import Mousetrap from "./keybindings/mousetrap.js";
 import { useToast } from "primevue/usetoast";
 import { computed, onBeforeUnmount, provide, ref, watch } from "vue";
 import { RouterView, useRoute } from "vue-router";

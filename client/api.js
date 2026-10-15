@@ -6,9 +6,9 @@ import axios from "axios";
 import { getStoredToken } from "./tokenStorage.js";
 import { getToastOptions } from "./helpers.js";
 import router from "./router.js";
+import { readPathPrefix } from "./pathPrefix.js";
 
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+const pathPrefix = readPathPrefix();
 
 const api = axios.create({ baseURL: `${pathPrefix}/_/api` });
 

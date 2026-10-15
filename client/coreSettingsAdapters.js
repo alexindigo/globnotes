@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { computed, reactive } from "vue";
+import { readPathPrefix } from "./pathPrefix.js";
 import { publish, TOPICS } from "./bus/index.js";
 import { commandRegistry } from "./commands.js";
 import { debugEnabled, toggleDebug } from "./debug.js";
@@ -20,7 +21,7 @@ async function observe(wire, message = "Branding write outcome is unknown; revie
 
 /** Core effects and retained File drafts. Pages receive only snapshots/callbacks. */
 export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, writeBrand, readBrand }) {
-  const prefix = document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+  const prefix = readPathPrefix();
   const state = reactive({ loaded: false, committed: {}, name: "", accent: "#38bdf8", accentTouched: false, accentCleared: false,
     picked: { logo: null, icon: null }, urls: { logo: null, icon: null }, remove: { logo: false, icon: false }, versions: { name: 0, accent: 0, logo: 0, icon: 0 },
     pending: false, inFlight: false, reviewing: false, unknown: false, readBack: false, error: "", reload: 0, capturing: null });

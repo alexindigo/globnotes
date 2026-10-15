@@ -1,11 +1,12 @@
+import { readPathPrefix } from "./pathPrefix.js";
+
 const tokenStorageKey = "token";
 
 function getBasePath() {
   // Cookie scope: the app root — the path prefix when served under a
   // sub-path, "/" otherwise. flatnotes read this from a <base> tag;
   // globnotes has no <base> and publishes the prefix in a meta tag instead.
-  return document.querySelector('meta[name="globnotes-prefix"]')?.content ||
-    "/";
+  return readPathPrefix() || "/";
 }
 
 function getCookieString(token) {

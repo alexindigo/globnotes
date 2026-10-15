@@ -57,6 +57,7 @@
 import { computed } from "vue";
 
 import SettingsField from "./SettingsField.vue";
+import { settingsFieldGroups } from "../declarativeSettings.js";
 
 const props = defineProps({
   page: { type: Object, required: true }, // declarative-v1 descriptor
@@ -66,16 +67,8 @@ const props = defineProps({
 });
 defineEmits(["edit", "commit", "reload", "retry"]);
 
-const visibleFields = computed(() =>
-  (props.page.fields ?? []).filter((field) => {
-    if (!field.visibleWhen) return true;
-    return props.snapshot.values[field.visibleWhen.field] === field.visibleWhen.equals;
-  }),
+const fieldGroups = computed(() =>
+  settingsFieldGroups(props.page, props.snapshot.values),
 );
-const fieldGroups=computed(()=>{
-  const byKey=new Map(visibleFields.value.map(field=>[field.key,field])), assigned=new Set(), groups=[];
-  for(const group of props.page.groups??[]){group.fields.forEach(key=>assigned.add(key));const fields=group.fields.map(key=>byKey.get(key)).filter(Boolean);if(fields.length)groups.push({...group,fields});}
-  const remaining=visibleFields.value.filter(field=>!assigned.has(field.key));if(remaining.length)groups.push({id:'ungrouped',fields:remaining});return groups;
-});
 
 </script>

@@ -6,9 +6,9 @@ import { authCheck } from "./api.js";
 import { notePath } from "./notePath.js";
 import { publish, TOPICS } from "./bus/index.js";
 import { setDocTitleBase } from "./title.js";
+import { readPathPrefix } from "./pathPrefix.js";
 
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+const pathPrefix = readPathPrefix();
 
 const router = createRouter({
   history: createWebHistory(pathPrefix + "/"),

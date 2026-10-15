@@ -46,6 +46,7 @@
 import { computed } from "vue";
 
 import { brandVersion } from "../brand.js";
+import { readPathPrefix } from "../pathPrefix.js";
 import iconSvg from "../assets/brand/icon.svg?raw";
 import logoSvg from "../assets/brand/logo.svg?raw";
 import { useGlobalStore } from "../globalStore.js";
@@ -58,8 +59,7 @@ const props = defineProps({
 });
 
 const globalStore = useGlobalStore();
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+const pathPrefix = readPathPrefix();
 
 const brand = computed(() => globalStore.config.brand ?? {});
 const brandFiles = computed(() => brand.value.files ?? []);

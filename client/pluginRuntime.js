@@ -15,8 +15,9 @@ import { getPluginHostCatalog, openPluginHostEvents } from "./api.js";
 import { removeCommandOwner } from "./commands.js";
 import { createPluginSdk } from "./pluginSdk.js";
 import { getStoredToken } from "./tokenStorage.js";
+import { readPathPrefix } from "./pathPrefix.js";
 
-const pathPrefix = document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+const pathPrefix = readPathPrefix();
 
 /** Internal injectable owner; the application uses the singleton below. */
 export function createPluginRuntime({

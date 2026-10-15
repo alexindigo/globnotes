@@ -70,6 +70,8 @@ schema enforcement — the topics.js file IS the contract).
 | `sidebarTree.js` | `note:create`, `note:rename`, `note:delete` | Invalidates the lazy cache, reloads root and expanded levels, and refreshes Recent when enabled. Releases subscriptions and retires pending reads on dispose. Sidepanel visibility/section facts remain published by `sidebarPreferences.js`. |
 | `serverViewer.js` | `plugin:toggle`, `plugin:auto-enable`, `theme:change` | Re-renders the open note for plugin switches and the current Mermaid palette; releases subscriptions on dispose. |
 | `noteController.js` | `editor:save`, `editor:save-close`, `editor:exit-edit`, `editor:toggle-edit`, `editor:toggle-source-mode` | Owns note actions for the mounted view; registers at mount and unsubscribes on dispose. |
+| `MarkdownEditor.vue` | Formatting/structure and `editor:find` topics in `sourceEditorActions.js`; `keybindings:change` | Applies source edits or opens find; reconfigures the layer keymap. Mount/unmount owns subscriptions; action availability is checked before execution. |
+| `WysiwygEditorInner.vue` / `WysiwygEditor.vue` | Command topics / link-popover topic in `wysiwygEditorActions.js` | Inner editor calls the mapped Milkdown command; wrapper opens its toolbar link popover. Mount/unmount owns subscriptions; action availability is checked before execution. |
 
 ## Subscribing from a component
 

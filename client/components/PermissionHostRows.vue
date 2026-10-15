@@ -24,8 +24,8 @@
 </template>
 <script setup>
 import CustomButton from "./CustomButton.vue";
+import { permissionScopeKey as key } from "../pluginPermissionController.js";
 const props = defineProps({ kind: String, heading: String, rows: { type: Array, default: () => [] }, disabled: Boolean, onApprove: { type: Function, required: true }, onDelete: { type: Function, required: true } });
-const key = scope => scope.type === "all" ? "all" : `host:${scope.authority}`;
 function label(scope) {
   if (scope.type === "all") return "All hosts";
   const match = /^(\[[^\]]+\]|[^:]+)(?::([0-9]+))?$/.exec(scope.authority);

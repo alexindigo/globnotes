@@ -3,9 +3,9 @@ import { ref } from "vue";
 import iconSvg from "./assets/brand/icon.svg?raw";
 import { subscribe, TOPICS } from "./bus/index.js";
 import { setBrandAccent } from "./themes.js";
+import { readPathPrefix } from "./pathPrefix.js";
 
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+const pathPrefix = readPathPrefix();
 
 // favicon rel → the dropped brand file that replaces it.
 const FAVICON_MAP = [

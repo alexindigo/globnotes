@@ -46,6 +46,7 @@ import { computed, nextTick, ref, watch } from "vue";
 
 import TextInput from "./TextInput.vue";
 import { commandHint, commandRegistry } from "../commands.js";
+import { commandPaletteEntries, filterCommandEntries, commandGroups, commandGroupEntries } from "../commandPalette.js";
 
 const query = ref("");
 const selected = ref("");
@@ -54,27 +55,17 @@ const root = ref();
 const emit = defineEmits(["run"]);
 
 const entries = computed(() =>
-  commandRegistry.value.map((command) => ({
-    topic: command.id,
-    label: command.label,
-    group: command.group,
-    hint: commandHint(command.id),
-  })),
+  commandPaletteEntries(commandRegistry.value, commandHint),
 );
 
-const results = computed(() => {
-  const q = query.value.trim().toLowerCase();
-  return entries.value.filter(
-    (e) => !q || `${e.group} ${e.label}`.toLowerCase().includes(q),
-  );
-});
+const results = computed(() => filterCommandEntries(entries.value, query.value));
 
 const grouped = computed(() =>
-  [...new Set(results.value.map((e) => e.group))],
+  commandGroups(results.value),
 );
 
 function groupEntries(group) {
-  return results.value.filter((e) => e.group === group);
+  return commandGroupEntries(results.value, group);
 }
 
 watch(query, () => {

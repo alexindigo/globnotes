@@ -40,9 +40,9 @@ import Modal from "./Modal.vue";
 import CustomButton from "./CustomButton.vue";
 import Toggle from "./Toggle.vue";
 import PluginPermissionPanel from "./PluginPermissionPanel.vue";
+import { permissionScopeKey as key } from "../pluginPermissionController.js";
 const props = defineProps({ request: Object, plugin: Object, view: Object, choices: Object, busy: Boolean, error: String, hasServer: Boolean, writable: Boolean,
   onScope: { type: Function, required: true }, onMaster: { type: Function, required: true }, onApprove: { type: Function, required: true }, onDeny: { type: Function, required: true }, onCancel: { type: Function, required: true } });
 const narrow = ref("");
-const key = scope => scope.type === "all" ? "all" : `host:${scope.authority}`;
 function addNarrow() { props.onScope({ type: "host", authority: narrow.value }, true); narrow.value = ""; }
 </script>

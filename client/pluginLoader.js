@@ -14,9 +14,9 @@ import { ref, watch } from "vue";
 
 import { getPlugins } from "./api.js";
 import { pluginCatalog } from "./pluginRuntime.js";
+import { readPathPrefix } from "./pathPrefix.js";
 
-const pathPrefix =
-  document.querySelector('meta[name="globnotes-prefix"]')?.content || "";
+const pathPrefix = readPathPrefix();
 
 /** Bumped whenever a dual-mode plugin's enabled state toggles, so the
  * WYSIWYG editor remounts and re-runs loadClientPlugins (the same keyed

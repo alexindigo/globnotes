@@ -28,7 +28,8 @@
 import { MilkdownProvider } from "@milkdown/vue";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
-import { subscribe, TOPICS } from "../bus/index.js";
+import { subscribe } from "../bus/index.js";
+import { wysiwygToolbarActionMap } from "../wysiwygEditorActions.js";
 import { isActionAvailable } from "../modalState.js";
 import WysiwygEditorInner from "./WysiwygEditorInner.vue";
 import WysiwygToolbar from "./WysiwygToolbar.vue";
@@ -63,11 +64,10 @@ function onActiveChange(payload) {
 onMounted(() => {
   // The wrapper owns the toolbar, so editor:insert-link lands here: open
   // the link popover (prefilled from any link at the selection).
-  actionUnsubs.push(
-    subscribe(TOPICS.EDITOR_INSERT_LINK, () => {
-      if(isActionAvailable(TOPICS.EDITOR_INSERT_LINK))toolbar.value?.openLinkPopover?.();
-    }),
-  );
+  actionUnsubs = Object.entries(wysiwygToolbarActionMap).map(([topic, method]) =>
+    subscribe(topic, () => {
+      if (isActionAvailable(topic)) toolbar.value?.[method]?.();
+    }));
 });
 
 function getMarkdown() {
