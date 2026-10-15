@@ -17,6 +17,7 @@ import { registerSessionParticipant } from "./sessionActions.js";
 import { createSettingsPageState } from "./settingsPageState.js";
 import { commitPluginPage, findPage, readPluginPage, settingsPages } from "./settingsRegistry.js";
 import { getStoredToken } from "./tokenStorage.js";
+import { permissionSessionKey } from "./appSessionPolicy.js";
 
 const defaultRegistry = {
   find: findPage,
@@ -70,7 +71,7 @@ export function createSettingsSession({
   const pageState = createPages({ registry, confirm: askDeparture });
   const inventory = createInventory({
     getCatalog: () => catalog.value,
-    getSession: () => `${config().authType}:${token() ?? 'anonymous'}`,
+    getSession: () => permissionSessionKey(config(), token()),
     writable,
     captureOwner: capturePluginCatalogOwnership, acknowledge: acknowledgePluginPolicy,
     writeEnabled: putPluginEnabled, writePolicy: putPluginPolicy, refreshCatalog,
