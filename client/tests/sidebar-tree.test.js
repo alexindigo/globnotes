@@ -1,0 +1,288 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ref } from "vue";
+
+vi.mock("../api.js", () => ({ getTree: vi.fn(), getNotes: vi.fn() }));
+vi.mock("../noteIndex.js", () => ({ refreshNoteIndex: vi.fn() }));
+
+import { getTree, getNotes } from "../api.js";
+import { TOPICS } from "../bus/index.js";
+import { createSidebarTree } from "../sidebarTree.js";
+
+const empty = () => ({ folders: [], notes: [] });
+const folder = path => ({ name: path.split("/").at(-1), path });
+const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+
+function fixture({ expanded = [], recent = false, paths = ["Indexed"], ...overrides } = {}) {
+  const preferences = {
+    expandedFolders: ref(new Set(expanded)), sidebarRecent: ref(recent),
+    sidebarVisible: ref(false), sidebarPinned: ref(false),
+  };
+  preferences.setExpandedFolders = vi.fn(value => { preferences.expandedFolders.value = new Set(value); });
+  preferences.setSidebarRecent = vi.fn(value => { preferences.sidebarRecent.value = value; });
+  preferences.setSidebarVisible = vi.fn(value => { preferences.sidebarVisible.value = value; });
+  preferences.setSidebarPinned = vi.fn(value => { preferences.sidebarPinned.value = value; });
+  const titles = ref(paths), listeners = new Map();
+  const subscribe = vi.fn((topic, handler) => {
+    listeners.set(topic, handler);
+    return vi.fn(() => listeners.delete(topic));
+  });
+  const loadTree = vi.fn().mockResolvedValue(empty());
+  const loadNotes = vi.fn().mockResolvedValue([]);
+  const refreshIndex = vi.fn();
+  const controller = createSidebarTree({
+    preferences, notePaths: () => titles.value, subscribe, loadTree, loadNotes, refreshIndex, ...overrides,
+  });
+  return { ...controller, preferences, titles, listeners, subscribe, loadTree, loadNotes, refreshIndex };
+}
+
+describe("sidebar tree controller", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("starts without transport and loads nothing when hidden", () => {
+    const sidebar = fixture();
+    sidebar.visibilityChanged(false);
+    expect(sidebar.loadTree).not.toHaveBeenCalled();
+    expect(sidebar.loadNotes).not.toHaveBeenCalled();
+    expect(sidebar.snapshot()).toMatchObject({
+      visibleRows: [], recentNotes: [], filterText: "", filterVisible: false,
+      canCollapse: false, activePath: null, recentEnabled: false, showSectionTitles: false,
+    });
+  });
+
+  it("hydrates root and persisted expanded levels, preserving their order", async () => {
+    const sidebar = fixture({ expanded: ["A", "A/B"] });
+    sidebar.visibilityChanged(true);
+    expect(sidebar.loadTree.mock.calls).toEqual([[""], ["A"], ["A/B"]]);
+    await flush();
+    sidebar.visibilityChanged(true);
+    expect(sidebar.loadTree).toHaveBeenCalledTimes(3);
+    expect(sidebar.preferences.setExpandedFolders).not.toHaveBeenCalled();
+  });
+
+  it.each([null, []])("refreshes an empty index on opening (%s)", paths => {
+    const sidebar = fixture({ paths });
+    sidebar.visibilityChanged(true);
+    expect(sidebar.refreshIndex).toHaveBeenCalledOnce();
+  });
+
+  it("does not refresh a populated index", () => {
+    const sidebar = fixture();
+    sidebar.visibilityChanged(true);
+    expect(sidebar.refreshIndex).not.toHaveBeenCalled();
+  });
+
+  it("walks sorted folders before sorted filename-only notes with stable keys and depths", async () => {
+    const levels = {
+      "": { folders: [folder("Z"), folder("A")], notes: ["z-root", { path: "a-root", title: "Ignore H1" }] },
+      A: { folders: [folder("A/B")], notes: ["A/z-note", "A/a-note"] },
+      "A/B": { folders: [], notes: ["A/B/deep"] },
+      Z: { folders: [], notes: ["Z/last"] },
+    };
+    const sidebar = fixture({ expanded: ["A", "A/B"], loadTree: async path => levels[path] });
+    sidebar.visibilityChanged(true);
+    await flush();
+    expect(sidebar.snapshot().visibleRows.map(row => [row.key, row.depth, row.expanded])).toEqual([
+      ["f:A", 0, true], ["f:A/B", 1, true], ["n:A/B/deep", 2, undefined],
+      ["n:A/a-note", 1, undefined], ["n:A/z-note", 1, undefined], ["f:Z", 0, false],
+      ["n:a-root", 0, undefined], ["n:z-root", 0, undefined],
+    ]);
+    expect(sidebar.snapshot().visibleRows.at(-2).note).toEqual({ path: "a-root", name: "a-root" });
+    expect(levels[""].folders.map(value => value.path)).toEqual(["Z", "A"]);
+  });
+
+  it("fetches folder children on demand, then reuses the cached level after collapse", async () => {
+    const sidebar = fixture();
+    sidebar.loadTree.mockImplementation(async path => path ? { folders: [], notes: ["A/child"] } : { folders: [folder("A")], notes: [] });
+    sidebar.visibilityChanged(true);
+    await flush();
+    expect(sidebar.loadTree.mock.calls).toEqual([[""]]);
+    await sidebar.toggleFolder("A");
+    expect(sidebar.snapshot().visibleRows.map(row => row.key)).toEqual(["f:A", "n:A/child"]);
+    expect(sidebar.snapshot().canCollapse).toBe(true);
+    await sidebar.toggleFolder("A");
+    expect(sidebar.snapshot().visibleRows.map(row => row.key)).toEqual(["f:A"]);
+    await sidebar.toggleFolder("A");
+    expect(sidebar.loadTree.mock.calls).toEqual([[""], ["A"]]);
+  });
+
+  it("caches a failed level as empty until invalidation", async () => {
+    const sidebar = fixture();
+    sidebar.loadTree.mockRejectedValue(Error("offline"));
+    sidebar.visibilityChanged(true);
+    await flush();
+    sidebar.visibilityChanged(true);
+    expect(sidebar.loadTree).toHaveBeenCalledOnce();
+    expect(sidebar.snapshot().visibleRows).toEqual([]);
+    sidebar.listeners.get(TOPICS.NOTE_CREATE)({ path: "Created" });
+    expect(sidebar.loadTree).toHaveBeenCalledTimes(2);
+    await flush();
+  });
+
+  it("filters the full index case-insensitively by whole path and forces ancestor expansion", () => {
+    const sidebar = fixture({ paths: ["Z/skip", "A/deep/MATCH", "a-root", "A/other"] });
+    sidebar.setFilterText("  match  ");
+    expect(sidebar.snapshot().visibleRows.map(row => [row.key, row.depth])).toEqual([
+      ["f:A", 0], ["f:A/deep", 1], ["n:A/deep/MATCH", 2],
+    ]);
+    sidebar.setFilterText("a/");
+    expect(sidebar.snapshot().visibleRows.map(row => row.key)).toEqual([
+      "f:A", "f:A/deep", "n:A/deep/MATCH", "n:A/other",
+    ]);
+    expect(sidebar.loadTree).not.toHaveBeenCalled();
+    expect(sidebar.preferences.expandedFolders.value.size).toBe(0);
+  });
+
+  it("reacts to full-index updates while filtering", () => {
+    const sidebar = fixture({ paths: ["A/match"] });
+    sidebar.setFilterText("match");
+    expect(sidebar.snapshot().visibleRows.map(row => row.key)).toEqual(["f:A", "n:A/match"]);
+    sidebar.titles.value = ["B/match"];
+    expect(sidebar.snapshot().visibleRows.map(row => row.key)).toEqual(["f:B", "n:B/match"]);
+  });
+
+  it("keeps filter-only collapse separate from persistent expansion and resets on clearing", async () => {
+    const sidebar = fixture({ expanded: ["saved"], paths: ["A/match"] });
+    sidebar.setFilterText("match");
+    await sidebar.toggleFolder("A");
+    expect(sidebar.snapshot().visibleRows.map(row => row.key)).toEqual(["f:A"]);
+    await sidebar.toggleFolder("A");
+    expect(sidebar.snapshot().visibleRows).toHaveLength(2);
+    await sidebar.toggleFolder("A");
+    sidebar.setFilterText("   ");
+    sidebar.setFilterText("match");
+    expect(sidebar.snapshot().visibleRows).toHaveLength(2);
+    expect([...sidebar.preferences.expandedFolders.value]).toEqual(["saved"]);
+    expect(sidebar.preferences.setExpandedFolders).not.toHaveBeenCalled();
+  });
+
+  it("hides the filter by clearing text and temporary collapse", async () => {
+    const sidebar = fixture({ paths: ["A/match"] });
+    sidebar.toggleFilter();
+    expect(sidebar.snapshot().filterVisible).toBe(true);
+    sidebar.setFilterText("match");
+    await sidebar.toggleFolder("A");
+    sidebar.toggleFilter();
+    expect(sidebar.snapshot()).toMatchObject({ filterVisible: false, filterText: "" });
+    sidebar.setFilterText("match");
+    expect(sidebar.snapshot().visibleRows).toHaveLength(2);
+  });
+
+  it("collapse all persists empty expansion even while filtering", () => {
+    const sidebar = fixture({ expanded: ["A"], paths: ["A/match"] });
+    sidebar.setFilterText("match");
+    sidebar.collapseAll();
+    expect(sidebar.preferences.setExpandedFolders).toHaveBeenCalledWith([]);
+    expect(sidebar.snapshot().canCollapse).toBe(false);
+    expect(sidebar.snapshot().visibleRows[0].expanded).toBe(true);
+  });
+
+  it("loads and expands every active-note ancestor sequentially, even while hidden", async () => {
+    const sidebar = fixture({ expanded: ["saved"] });
+    const pending = sidebar.setActivePath("A/B/Note");
+    expect(sidebar.snapshot().activePath).toBe("A/B/Note");
+    expect(sidebar.loadTree.mock.calls).toEqual([["A"]]);
+    await pending;
+    expect(sidebar.loadTree.mock.calls).toEqual([["A"], ["A/B"]]);
+    expect([...sidebar.preferences.expandedFolders.value]).toEqual(["saved", "A", "A/B"]);
+    expect(sidebar.preferences.setExpandedFolders).toHaveBeenCalledOnce();
+    await sidebar.setActivePath(null);
+    expect(sidebar.snapshot().activePath).toBe(null);
+    expect(sidebar.loadTree).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an ancestor expanded when its level fails", async () => {
+    const sidebar = fixture();
+    sidebar.loadTree.mockRejectedValue(Error("offline"));
+    await sidebar.setActivePath("A/Note");
+    expect([...sidebar.preferences.expandedFolders.value]).toEqual(["A"]);
+  });
+
+  it("sorts Recent by last modification, limits to five and uses filenames", async () => {
+    const sidebar = fixture({ recent: true });
+    const notes = Array.from({ length: 7 }, (_, i) => ({ path: `folder/n${i}`, title: "Ignored title", lastModified: i }));
+    sidebar.loadNotes.mockResolvedValue(notes);
+    sidebar.visibilityChanged(true);
+    await flush();
+    expect(sidebar.loadNotes).toHaveBeenCalledExactlyOnceWith("*", undefined, undefined, undefined);
+    expect(sidebar.snapshot().recentNotes).toEqual([6, 5, 4, 3, 2].map(i => ({ path: `folder/n${i}`, name: `n${i}` })));
+    expect(sidebar.snapshot().showSectionTitles).toBe(true);
+    expect(notes[0].path).toBe("folder/n0");
+  });
+
+  it("enables Recent through its preference owner before loading; disabling retains cached rows", async () => {
+    const sidebar = fixture();
+    sidebar.loadNotes.mockImplementation(async () => {
+      expect(sidebar.preferences.sidebarRecent.value).toBe(true);
+      return [{ path: "A/Recent", lastModified: 1 }];
+    });
+    sidebar.toggleRecent();
+    await flush();
+    sidebar.toggleRecent();
+    expect(sidebar.preferences.setSidebarRecent.mock.calls).toEqual([[true], [false]]);
+    expect(sidebar.loadNotes).toHaveBeenCalledOnce();
+    expect(sidebar.snapshot()).toMatchObject({ recentEnabled: false, showSectionTitles: false, recentNotes: [{ path: "A/Recent", name: "Recent" }] });
+  });
+
+  it("clears Recent after a failed read", async () => {
+    const sidebar = fixture({ recent: true });
+    sidebar.loadNotes.mockResolvedValueOnce([{ path: "Old", lastModified: 1 }]).mockRejectedValueOnce(Error("offline"));
+    sidebar.visibilityChanged(true);
+    await flush();
+    expect(sidebar.snapshot().recentNotes).toHaveLength(1);
+    sidebar.visibilityChanged(true);
+    await flush();
+    expect(sidebar.snapshot().recentNotes).toEqual([]);
+  });
+
+  it.each([TOPICS.NOTE_CREATE, TOPICS.NOTE_RENAME, TOPICS.NOTE_DELETE])(
+    "invalidates root and all expanded levels on %s, retaining expansion and refreshing Recent", async topic => {
+      const sidebar = fixture({ expanded: ["A"], recent: true });
+      sidebar.loadTree.mockResolvedValue({ folders: [], notes: ["Old"] });
+      sidebar.visibilityChanged(true);
+      await flush();
+      sidebar.loadTree.mockResolvedValue({ folders: [], notes: ["New"] });
+      sidebar.listeners.get(topic)({ path: "changed" });
+      expect(sidebar.snapshot().visibleRows).toEqual([]);
+      expect(sidebar.loadTree.mock.calls).toEqual([[""], ["A"], [""], ["A"]]);
+      await flush();
+      expect(sidebar.snapshot().visibleRows.map(row => row.key)).toEqual(["n:New"]);
+      expect([...sidebar.preferences.expandedFolders.value]).toEqual(["A"]);
+      expect(sidebar.loadNotes).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("invalidates even when hidden without requesting disabled Recent", async () => {
+    const sidebar = fixture();
+    sidebar.listeners.get(TOPICS.NOTE_DELETE)({ path: "Deleted" });
+    await flush();
+    expect(sidebar.loadTree).toHaveBeenCalledExactlyOnceWith("");
+    expect(sidebar.loadNotes).not.toHaveBeenCalled();
+    expect(sidebar.subscribe.mock.calls.map(([topic]) => topic)).toEqual([TOPICS.NOTE_CREATE, TOPICS.NOTE_RENAME, TOPICS.NOTE_DELETE]);
+  });
+
+  it("delegates open/close and pinning to the same preference setters", () => {
+    const sidebar = fixture();
+    sidebar.openSidebar();
+    expect(sidebar.snapshot().sidebarVisible).toBe(true);
+    sidebar.closeSidebar();
+    expect(sidebar.snapshot().sidebarVisible).toBe(false);
+    sidebar.togglePin();
+    expect(sidebar.snapshot().sidebarPinned).toBe(true);
+    sidebar.togglePin();
+    expect(sidebar.snapshot().sidebarPinned).toBe(false);
+    expect(sidebar.preferences.setSidebarVisible.mock.calls).toEqual([[true], [false]]);
+    expect(sidebar.preferences.setSidebarPinned.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("binds default transport adapters without a view importing transport", async () => {
+    getTree.mockResolvedValue({ folders: [], notes: ["Default"] });
+    getNotes.mockResolvedValue([{ path: "Default", lastModified: 1 }]);
+    const sidebar = fixture({ recent: true, loadTree: undefined, loadNotes: undefined });
+    sidebar.visibilityChanged(true);
+    await flush();
+    expect(getTree).toHaveBeenCalledWith("");
+    expect(getNotes).toHaveBeenCalledWith("*", undefined, undefined, undefined);
+    expect(sidebar.snapshot().visibleRows[0].note.name).toBe("Default");
+    expect(sidebar.snapshot().recentNotes).toEqual([{ path: "Default", name: "Default" }]);
+  });
+});

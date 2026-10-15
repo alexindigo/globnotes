@@ -9,6 +9,7 @@ vi.mock("../api.js", () => ({
     notes: [{ path: "untitled-thing", title: "A Fancy H1 Title" }],
   }),
   getNoteIndex: vi.fn().mockResolvedValue([]),
+  getNotes: vi.fn().mockResolvedValue([]),
 }));
 
 import { createApp, nextTick } from "vue";

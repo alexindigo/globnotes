@@ -16,7 +16,7 @@ async function copySource(source, destination, relative = "") {
 const controls = [
   { name: "milkdown-action", file: "client/keybindings/editor-keymap.js", old: "return pmKeymap(bindings);", broken: "return pmKeymap({});", test: "client/tests/keybinding-conflicts.test.js", title: "Milkdown's installed layer action wins over a conflicting default without editing the document" },
   { name: "default-tab", file: "client/components/Modal.vue", old: "if (props.trapFocus && rootEl.value) {", broken: "if (rootEl.value) {", test: "client/tests/modal.test.js", title: "does not trap Tab by default" },
-  { name: "discarded-hydration", file: "client/components/SidebarPanel.vue", old: "levels.value = { ...levels.value, [path]: data };", broken: "levels.value = { ...levels.value, [path]: { folders: [], notes: [] } };", test: "client/tests/sidebar-hydration.test.js", title: "loads levels for all persisted expanded folders on mount" },
+  { name: "discarded-hydration", file: "client/sidebarTree.js", old: "levels.value = { ...levels.value, [path]: data };", broken: "levels.value = { ...levels.value, [path]: { folders: [], notes: [] } };", test: "client/tests/sidebar-hydration.test.js", title: "loads levels for all persisted expanded folders on mount" },
 ];
 const outcomes = [];
 for (const control of controls) {
