@@ -51,6 +51,7 @@ export function createSidebarTree({
     setSidebarVisible, setSidebarPinned } = preferences;
   const levels = ref({});
   const levelRequests = new Map();
+  let disposed = false;
   const filterVisible = ref(false);
   const filterText = ref("");
   const filterCollapsed = ref(new Set());
@@ -59,7 +60,7 @@ export function createSidebarTree({
   const tree = computed(() => buildTree(notePaths() || []));
 
   async function loadLevel(path) {
-    if (levels.value[path]) return;
+    if (disposed || levels.value[path]) return;
     // Each path has its own latest request. Invalidation retires every ticket,
     // including requests started by folder toggles and active-note ancestors.
     const ticket = {};
@@ -78,6 +79,7 @@ export function createSidebarTree({
   }
 
   async function toggleFolder(path) {
+    if (disposed) return;
     if (filterText.value.trim()) {
       if (filterCollapsed.value.has(path)) filterCollapsed.value.delete(path);
       else filterCollapsed.value.add(path);
@@ -87,21 +89,25 @@ export function createSidebarTree({
     if (expanded.value.has(path)) expanded.value.delete(path);
     else {
       await loadLevel(path);
+      if (disposed) return;
       expanded.value.add(path);
     }
     setExpandedFolders(expanded.value);
   }
 
   function collapseAll() {
+    if (disposed) return;
     setExpandedFolders([]);
   }
 
   function setFilterText(text) {
+    if (disposed) return;
     filterText.value = text;
     if (!text.trim()) filterCollapsed.value = new Set();
   }
 
   function toggleFilter() {
+    if (disposed) return;
     filterVisible.value = !filterVisible.value;
     if (!filterVisible.value) {
       setFilterText("");
@@ -149,17 +155,20 @@ export function createSidebarTree({
   });
 
   async function loadRecentNotes() {
+    if (disposed) return;
     try {
       const results = await loadNotes("*", undefined, undefined, undefined);
+      if (disposed) return;
       recentNotes.value = [...results]
         .sort((a, b) => b.lastModified - a.lastModified).slice(0, 5)
         .map(n => ({ path: n.path, name: basenameOf(n.path) }));
     } catch {
-      recentNotes.value = [];
+      if (!disposed) recentNotes.value = [];
     }
   }
 
   function toggleRecent() {
+    if (disposed) return;
     setSidebarRecent(!recentEnabled.value);
     if (recentEnabled.value) loadRecentNotes();
   }
@@ -170,17 +179,21 @@ export function createSidebarTree({
   }
 
   function invalidateTree() {
+    if (disposed) return;
     levelRequests.clear();
     levels.value = {};
     hydrateLevels();
     if (recentEnabled.value) loadRecentNotes();
   }
 
-  subscribe(TOPICS.NOTE_CREATE, invalidateTree);
-  subscribe(TOPICS.NOTE_RENAME, invalidateTree);
-  subscribe(TOPICS.NOTE_DELETE, invalidateTree);
+  const unsubscribers = [
+    subscribe(TOPICS.NOTE_CREATE, invalidateTree),
+    subscribe(TOPICS.NOTE_RENAME, invalidateTree),
+    subscribe(TOPICS.NOTE_DELETE, invalidateTree),
+  ];
 
   function visibilityChanged(visible) {
+    if (disposed) return;
     if (visible) {
       hydrateLevels();
       if (!(notePaths() || []).length) refreshIndex();
@@ -189,15 +202,24 @@ export function createSidebarTree({
   }
 
   async function setActivePath(title) {
+    if (disposed) return;
     activePath.value = title;
     if (!title) return;
     const parts = title.split("/");
     for (let i = 1; i < parts.length; i++) {
       const path = parts.slice(0, i).join("/");
       await loadLevel(path);
+      if (disposed) return;
       if (!expanded.value.has(path)) expanded.value.add(path);
     }
     setExpandedFolders(expanded.value);
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    levelRequests.clear();
+    for (const unsubscribe of unsubscribers) unsubscribe();
   }
 
   function snapshot() {
@@ -212,9 +234,9 @@ export function createSidebarTree({
 
   return {
     snapshot, toggleFolder, collapseAll, setFilterText, toggleFilter,
-    toggleRecent, visibilityChanged, setActivePath,
-    closeSidebar: () => setSidebarVisible(false),
-    openSidebar: () => setSidebarVisible(true),
-    togglePin: () => setSidebarPinned(!sidebarPinned.value),
+    toggleRecent, visibilityChanged, setActivePath, dispose,
+    closeSidebar: () => { if (!disposed) setSidebarVisible(false); },
+    openSidebar: () => { if (!disposed) setSidebarVisible(true); },
+    togglePin: () => { if (!disposed) setSidebarPinned(!sidebarPinned.value); },
   };
 }

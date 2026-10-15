@@ -197,7 +197,7 @@
 </template>
 
 <script setup>
-import { computed, watch } from "vue";
+import { computed, onBeforeUnmount, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 
 import Icon from "../components/Icon.vue";
@@ -237,4 +237,5 @@ watch(
   sidebar.setActivePath,
   { immediate: true },
 );
+onBeforeUnmount(sidebar.dispose);
 </script>

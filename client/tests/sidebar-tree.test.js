@@ -346,4 +346,85 @@ describe("sidebar tree controller", () => {
       expect(sidebar.snapshot().visibleRows.map(row => row.key)).toEqual(["f:A", "n:A/Child", "n:Root"]);
     });
   });
+
+  describe("controller lifetime", () => {
+    it("releases every bus subscription exactly once and ignores queued retired delivery", async () => {
+      const sidebar = fixture({ recent: true });
+      const queued = [...sidebar.listeners.values()];
+      sidebar.dispose?.();
+      sidebar.dispose?.();
+      expect(sidebar.listeners.size).toBe(0);
+      for (const result of sidebar.subscribe.mock.results) expect(result.value).toHaveBeenCalledOnce();
+      for (const handler of queued) handler({ path: "Changed" });
+      await flush();
+      expect(sidebar.loadTree).not.toHaveBeenCalled();
+      expect(sidebar.loadNotes).not.toHaveBeenCalled();
+    });
+
+    for (const origin of ["open", "folder", "ancestor"]) {
+      it.each(["success", "failure"])(`retires pending ${origin} levels on dispose (%s)`, async outcome => {
+        const pending = deferred();
+        const path = origin === "open" ? "" : "A";
+        const sidebar = fixture({ loadTree: requested => requested === path
+          ? pending.promise : Promise.resolve({ folders: [folder("A")], notes: [] }) });
+        if (origin !== "open") { sidebar.visibilityChanged(true); await flush(); }
+        const task = origin === "open" ? sidebar.visibilityChanged(true)
+          : origin === "folder" ? sidebar.toggleFolder("A") : sidebar.setActivePath("A/B/Note");
+        const before = sidebar.snapshot();
+        sidebar.dispose?.();
+        if (outcome === "success") pending.resolve({ folders: [], notes: ["Retired"] });
+        else pending.reject(Error("retired"));
+        await task; await flush();
+        expect(sidebar.snapshot()).toEqual(before);
+        expect(sidebar.preferences.setExpandedFolders).not.toHaveBeenCalled();
+        expect([...sidebar.preferences.expandedFolders.value]).toEqual([]);
+      });
+    }
+
+    it.each(["success", "failure"])("retains its last Recent snapshot after disposal (%s)", async outcome => {
+      const pending = deferred();
+      const sidebar = fixture({ recent: true });
+      sidebar.loadNotes.mockResolvedValueOnce([{ path: "Existing", lastModified: 1 }]).mockReturnValueOnce(pending.promise);
+      sidebar.visibilityChanged(true); await flush();
+      sidebar.visibilityChanged(true);
+      sidebar.dispose?.();
+      if (outcome === "success") pending.resolve([{ path: "Retired", lastModified: 2 }]);
+      else pending.reject(Error("retired"));
+      await flush();
+      expect(sidebar.snapshot().recentNotes).toEqual([{ path: "Existing", name: "Existing" }]);
+    });
+
+    it("rejects further intents after disposal without writing shared preferences", async () => {
+      const sidebar = fixture({ expanded: ["A"], recent: true, paths: [] });
+      const before = sidebar.snapshot();
+      sidebar.dispose?.();
+      sidebar.openSidebar(); sidebar.closeSidebar(); sidebar.togglePin();
+      sidebar.toggleRecent(); sidebar.toggleFilter(); sidebar.setFilterText("retired");
+      sidebar.collapseAll(); sidebar.visibilityChanged(true);
+      await sidebar.setActivePath("A/Retired"); await sidebar.toggleFolder("B");
+      expect(sidebar.snapshot()).toEqual(before);
+      expect(sidebar.loadTree).not.toHaveBeenCalled();
+      expect(sidebar.loadNotes).not.toHaveBeenCalled();
+      expect(sidebar.refreshIndex).not.toHaveBeenCalled();
+      for (const key of ["setExpandedFolders", "setSidebarRecent", "setSidebarVisible", "setSidebarPinned"]) {
+        expect(sidebar.preferences[key]).not.toHaveBeenCalled();
+      }
+    });
+
+    it("cannot retire a replacement controller's subscriptions or cache", async () => {
+      const handlers = new Set();
+      const subscribe = (_topic, handler) => { handlers.add(handler); return () => handlers.delete(handler); };
+      const old = fixture({ subscribe }), current = fixture({ subscribe });
+      old.dispose?.();
+      current.loadTree.mockResolvedValue({ folders: [], notes: ["Current"] });
+      for (const handler of handlers) handler({ path: "Created" });
+      await flush();
+      expect(old.loadTree).not.toHaveBeenCalled();
+      expect(current.snapshot().visibleRows.map(row => row.key)).toEqual(["n:Current"]);
+      old.dispose?.();
+      expect(handlers.size).toBe(1);
+      current.dispose?.();
+      expect(handlers.size).toBe(0);
+    });
+  });
 });

@@ -116,4 +116,33 @@ describe("sidebar expansion hydration", () => {
     expect(localStorage.getItem("sidebarVisible")).toBe("false");
     app.unmount(); element.remove();
   });
+
+  it("retires sidebar subscriptions on unmount so remount has only one tree consumer", async () => {
+    localStorage.setItem("sidebarVisible", "true");
+    const { default: SidebarPanel } = await import("../components/SidebarPanel.vue");
+    const { publish, TOPICS } = await import("../bus/index.js");
+    const pinia = createPinia();
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: "/:path(.*)", name: "note", component: { template: "<p>Note</p>" } },
+    ] });
+    await router.push("/Root"); await router.isReady();
+    getTree.mockResolvedValue({ folders: [], notes: ["Before"] });
+    const mount = () => {
+      const app = createApp(SidebarPanel); app.use(pinia); app.use(router);
+      const element = document.createElement("div"); document.body.append(element); app.mount(element);
+      return { app, element };
+    };
+    const old = mount(); await flushPromises();
+    old.app.unmount(); old.element.remove();
+    getTree.mockClear();
+    publish(TOPICS.NOTE_CREATE, { path: "Between" }); await flushPromises();
+    expect(getTree).not.toHaveBeenCalled();
+    const current = mount(); await flushPromises();
+    getTree.mockClear(); getTree.mockResolvedValue({ folders: [], notes: ["After"] });
+    publish(TOPICS.NOTE_DELETE, { path: "Before" }); await flushPromises();
+    expect(getTree).toHaveBeenCalledExactlyOnceWith("");
+    expect(current.element.querySelector('a[href="/After"]')?.textContent).toContain("After");
+    expect(current.element.querySelector('a[href="/Before"]')).toBe(null);
+    current.app.unmount(); current.element.remove();
+  });
 });
