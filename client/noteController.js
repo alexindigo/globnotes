@@ -99,7 +99,6 @@ export function createNoteController({
   const preview = previewFactory({ changed: ({ html }) => { previewHtml.value = html; } });
   const viewLine = ref(null);
   const unsavedChanges = ref(false);
-  const noteDirty = ref(false);
   const contentRevision = ref(0), pathRevision = ref(0);
   const queueState = shallowRef({ status: "idle", unresolved: false, queued: [], jobs: [], canDiscard: true });
   const saving = computed(() => ["preparing", "sending"].includes(queueState.value.status));
@@ -170,7 +169,6 @@ export function createNoteController({
   function onEditorInput() {
     if (applyingAcknowledgement) return;
     contentRevision.value++;
-    noteDirty.value = true;
     refreshDirtyState(); startContentChangedTimeout(); schedulePreviewRefresh(); scheduleTitleFollow(); publishTitle();
   }
   function schedulePreviewRefresh() {
@@ -287,7 +285,6 @@ export function createNoteController({
     newPath.value = note.value.path;
     editBasename.value = basenameOf(newPath.value || ""); editFolder.value = directoryFromPath(newPath.value);
     unsavedChanges.value = false; editorInitialValue.value = getInitialEditorValue();
-    noteDirty.value = editorInitialValue.value != note.value.content;
     contentRevision.value = 0; pathRevision.value = 0; saveOwner.start();
     editorMode.value = pendingEditorMode || getEditorPreference();
     editorInitialLine.value = pendingInitialLine; editorLine.value = pendingInitialLine || null;
@@ -325,9 +322,9 @@ export function createNoteController({
   }
   function saveHandler(close = false) { return saveOwner.save(close); }
   function refreshDirtyState() {
-    const dirty = isDirty(); unsavedChanges.value = dirty; noteDirty.value = dirty; setUnload(dirty);
+    const dirty = isDirty(); unsavedChanges.value = dirty; setUnload(dirty);
   }
-  function noteSaveFailure(error) { noteDirty.value = true; showNoteError(error, noteSaveError(error, queueState.value.failure)); }
+  function noteSaveFailure(error) { showNoteError(error, noteSaveError(error, queueState.value.failure)); }
   function showNoteError(error, mapped) { if (mapped) notify(mapped.message, mapped.title, "error"); else failed(error); }
   async function closeHandler() {
     if (!await resolveOwnedWork()) return;
@@ -338,7 +335,7 @@ export function createNoteController({
   function exitEditState() {
     saveOwner.revokeRenamePrompt(); clearEditTimers();
     editMode.value = false; editorLine.value = null; editorInitialLine.value = null;
-    noteDirty.value = false; unsavedChanges.value = false; setUnload(false);
+    unsavedChanges.value = false; setUnload(false);
     publishTitle(); publishFact(TOPICS.NOTE_EDIT_END, { path: note.value.path }); saveOwner.end();
   }
   function saveForNavigation() { return saveOwner.saveForNavigation(); }

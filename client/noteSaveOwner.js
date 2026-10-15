@@ -149,7 +149,7 @@ export function createNoteSaveOwner({
         clearAcknowledgedDrafts(snapshot);
         if (closeIntent) {
           closeIntent = null;
-          resolve("Save and close").then(ok => { if (ok && queue?.state().sessionId === sessionId) closeNote(); });
+          resolve().then(ok => { if (ok && queue?.state().sessionId === sessionId) closeNote(); });
         } else if (startedNew && snapshot.intent === "save" && !isContentChanged()) closeNote();
       },
     });
@@ -167,7 +167,7 @@ export function createNoteSaveOwner({
     }
     const receipt = queue.submit({ content: getBuffer(), requestedPath: current.requestedPath,
       contentRevision: current.contentRevision, pathRevision: current.pathRevision,
-      draftKey: current.requestedPath, draftRevision: current.contentRevision, intent, attachmentPolicy });
+      draftRevision: current.contentRevision, intent, attachmentPolicy });
     if (receipt.held) held();
     return receipt;
   }

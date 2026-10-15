@@ -98,7 +98,8 @@ describe("save owner submission and acknowledgement", () => {
     owner.start(); edit("A"); const a = owner.save();
     edit("B"); const b = owner.save(); edit("D");
     expect(a.submissionId).not.toBe(b.submissionId);
-    expect(owner.queueState().active.snapshot).toMatchObject({ content: "A", requestedPath: "P", contentRevision: 1, pathRevision: 0, draftKey: "P", draftRevision: 1, intent: "save", attachmentPolicy: "prompt" });
+    expect(owner.queueState().active.snapshot).toMatchObject({ content: "A", requestedPath: "P", contentRevision: 1, pathRevision: 0, draftRevision: 1, intent: "save", attachmentPolicy: "prompt" });
+    expect(owner.queueState().active.snapshot).not.toHaveProperty("draftKey");
     expect(Object.isFrozen(owner.queueState().active.snapshot)).toBe(true);
     await flush(); expect(sent.map(item => item.args)).toEqual([["P", "P", "A", "none"]]);
     await ack(0); expect(sent[1].args).toEqual(["P", "P", "B", "none"]);
