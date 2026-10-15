@@ -326,7 +326,8 @@ import {
   pathBreadcrumbs,
 } from "../notePath.js";
 import { attachmentNameError, notePathError } from "../validators.js";
-import { isCurrentTokenStored } from "../tokenStorage.js";
+import { createNoteDraftStore } from "../noteDrafts.js";
+import { setBeforeUnloadConfirmation } from "../unloadGuard.js";
 import { registerSessionParticipant } from "../sessionActions.js";
 import { createNoteSaveQueue, NOTE_SAVE_OBSERVATION_MS } from "../noteSaveQueue.js";
 
@@ -522,7 +523,7 @@ let applyingAcknowledgement = false;
 let acknowledgementTransition = null;
 let closeIntent = null;
 const noteAliases = new Set();
-const ownedDrafts = new Map();
+const drafts = createNoteDraftStore();
 let caretSyncTimer = null;
 let loadGeneration = 0;
 function resourceIdentity(path, query) {
@@ -555,7 +556,7 @@ function init() {
   saveQueue = null;
   queueState.value = { status: "idle", unresolved: false, queued: [], jobs: [], canDiscard: true };
   noteAliases.clear();
-  ownedDrafts.clear(); // release ownership, never erase another logical note's draft
+  drafts.release(); // release ownership, never erase another logical note's draft
   isNoteNotFound.value = false;
   loadingIndicator.value.setLoading();
   if (props.path) {
@@ -1051,11 +1052,7 @@ function refreshDirtyState() {
 
 function clearAcknowledgedDrafts(snapshot) {
   if (isContentChanged() || saveQueue.state().unresolved) return;
-  for (const [key, record] of ownedDrafts) {
-    if (record.revision <= snapshot.draftRevision && record.storage.getItem(record.key) === record.value) {
-      record.storage.removeItem(record.key); ownedDrafts.delete(key);
-    }
-  }
+  drafts.clearAcknowledged(snapshot.draftRevision);
 }
 
 // After a rename, the client drives link updates across the vault: find
@@ -1308,31 +1305,15 @@ function contentChangedHandler() {
 
 // Drafts
 function saveDraft() {
-  const content = currentBuffer();
-  const userHasPersistedToken = isCurrentTokenStored();
-  const draftKey = newPath.value;
-  if (typeof content === "string" && draftKey) {
-    const storage = userHasPersistedToken ? localStorage : sessionStorage;
-    storage.setItem(draftKey, content);
-    ownedDrafts.set(`${userHasPersistedToken ? 'local' : 'session'}:${draftKey}`, { storage, key: draftKey, value: content, revision: contentRevision.value });
-  }
+  drafts.save(newPath.value, currentBuffer(), contentRevision.value);
 }
 
 function clearDraft() {
-  for (const [id, record] of ownedDrafts) {
-    if (record.storage.getItem(record.key) === record.value) record.storage.removeItem(record.key);
-    ownedDrafts.delete(id);
-  }
+  drafts.clear();
 }
 
 function loadDraft() {
-  const draftKey = newPath.value;
-  if (!draftKey) return null;
-  const localDraft = localStorage.getItem(draftKey);
-  const sessionDraft = sessionStorage.getItem(draftKey);
-  if (localDraft !== null) ownedDrafts.set(`local:${draftKey}`, { storage: localStorage, key: draftKey, value: localDraft, revision: contentRevision.value });
-  if (sessionDraft !== null) ownedDrafts.set(`session:${draftKey}`, { storage: sessionStorage, key: draftKey, value: sessionDraft, revision: contentRevision.value });
-  return localDraft ?? sessionDraft;
+  return drafts.load(newPath.value, contentRevision.value);
 }
 
 // Editor action channel: this view owns save/exit/toggle-edit/source-mode
@@ -1383,16 +1364,6 @@ function entityTooLargeToast(entityName) {
       "error",
     ),
   );
-}
-
-function setBeforeUnloadConfirmation(enable = true) {
-  if (enable) {
-    window.onbeforeunload = () => {
-      return true;
-    };
-  } else {
-    window.onbeforeunload = null;
-  }
 }
 
 function saveDefaultEditorMode() {
