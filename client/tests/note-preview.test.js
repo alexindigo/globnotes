@@ -8,9 +8,9 @@ import { disabledPluginIds } from "../pluginSettings.js";
 import { createNotePreview } from "../notePreview.js";
 
 function deferred() {
-  let resolve;
-  const promise = new Promise(ok => { resolve = ok; });
-  return { promise, resolve };
+  let resolve, reject;
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 describe("unsaved note preview", () => {
@@ -93,5 +93,55 @@ describe("unsaved note preview", () => {
     await vi.advanceTimersByTimeAsync(400);
     expect(preview.state().html).toBe('<p class="render-error">Preview render failed.</p>');
     expect(changed).toHaveBeenCalledExactlyOnceWith(preview.state());
+  });
+
+  it("dispose clears the pending timer and refuses future schedules", async () => {
+    const render = vi.fn();
+    const changed = vi.fn();
+    const preview = createNotePreview({ render, changed });
+    const intent = { isActive: () => true, getBuffer: () => "retired" };
+    preview.schedule(intent);
+    expect(vi.getTimerCount()).toBe(1);
+    preview.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    preview.dispose();
+    preview.schedule(intent);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(render).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+    expect(preview.state().html).toBe("");
+  });
+
+  it("dispose during plugin discovery prevents a later buffer request", async () => {
+    const pending = deferred();
+    getPlugins.mockReturnValue(pending.promise);
+    const changed = vi.fn();
+    const preview = createNotePreview({ changed });
+    preview.schedule({ isActive: () => true, getBuffer: () => "retired" });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(getPlugins).toHaveBeenCalledOnce();
+    preview.dispose();
+    pending.resolve([{ id: "off" }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(disabledPluginIds).not.toHaveBeenCalled();
+    expect(renderBuffer).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+    expect(preview.state().html).toBe("");
+  });
+
+  it.each(["success", "failure"])("dispose fences an already-started render's late %s", async outcome => {
+    const pending = deferred();
+    renderBuffer.mockReturnValue(pending.promise);
+    const changed = vi.fn();
+    const preview = createNotePreview({ changed });
+    preview.schedule({ isActive: () => true, getBuffer: () => "retired" });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(renderBuffer).toHaveBeenCalledExactlyOnceWith("retired", ["off"]);
+    preview.dispose();
+    if (outcome === "success") pending.resolve("<p>retired result</p>");
+    else pending.reject(Error("retired failure"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(changed).not.toHaveBeenCalled();
+    expect(preview.state().html).toBe("");
   });
 });

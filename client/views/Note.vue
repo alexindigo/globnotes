@@ -1390,6 +1390,7 @@ onMounted(() => {
 // The content-change debounce can outlive the editor (close/leave within 1s
 // of typing); drop it so the callback never dereferences a dead editor.
 onBeforeUnmount(() => {
+  preview.dispose();
   if (titleFollowTimer) clearTimeout(titleFollowTimer);
   loadGeneration++;
   revokeRenamePrompt(resolveRenameDialog);
