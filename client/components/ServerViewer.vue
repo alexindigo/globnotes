@@ -52,10 +52,11 @@ import renderMathInElement from "katex/contrib/auto-render/auto-render.js";
 import mermaid from "mermaid";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import { getPlugins, getRenderedHtml } from "../api.js";
+import { getRenderedHtml } from "../api.js";
+import { renderWithPlugins } from "../noteRendering.js";
 import { copyText } from "../clipboard.js";
 import { subscribe, TOPICS } from "../bus/index.js";
-import { disabledPluginIds, viewLineNumbers } from "../pluginSettings.js";
+import { viewLineNumbers } from "../pluginSettings.js";
 // The plain script above owns + exports the handlers (Note.vue imports
 // them); the alias self-import binds them for this surface's template
 // without colliding with the export declarations.
@@ -236,13 +237,9 @@ async function renderNote() {
   const isCurrent = () => version === renderVersion &&
     viewerElement.value === root && props.title === title;
   try {
-    const plugins = await getPlugins();
-    if (!isCurrent()) return;
-    const disabled = disabledPluginIds(plugins);
-    const html = await getRenderedHtml(
-      title,
-      disabled,
-      viewLineNumbers.value,
+    const html = await renderWithPlugins(
+      disabled => getRenderedHtml(title, disabled, viewLineNumbers.value),
+      { isCurrent },
     );
     if (!isCurrent()) return;
     root.innerHTML = html;

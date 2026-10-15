@@ -446,6 +446,21 @@ describe("foreground FIFO through the real Note", () => {
     expect(document.querySelector(".cm-content")).toBeNull(); await clickSave();
     expect(pending[0].args[2]).toBe("preview work");
   });
+  it.each(["success", "failure"])("Preview renders the retained buffer's %s at the real Note surface", async outcome => {
+    await enter(); await content("unsaved preview consumer");
+    if (outcome === "failure") renderBuffer.mockRejectedValueOnce(Error("preview unavailable"));
+    vi.useFakeTimers();
+    try {
+      button("Preview").click(); await flushPromises();
+      expect(document.querySelector(".cm-content")).toBeNull();
+      await vi.advanceTimersByTimeAsync(399);
+      expect(renderBuffer).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1); await flushPromises();
+      expect(renderBuffer).toHaveBeenCalledExactlyOnceWith("unsaved preview consumer", []);
+      expect(document.querySelector(".preview-buffer").textContent).toBe(outcome === "success"
+        ? "unsaved preview consumer" : "Preview render failed.");
+    } finally { vi.useRealTimers(); }
+  });
   it("an invalid filename click is rejected without changing A's admitted request", async () => {
     await enter(); await content("A"); await clickSave();
     await wrapper.find('input[placeholder="Title"]').setValue("bad?"); await content("D"); await clickSave();

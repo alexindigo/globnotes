@@ -275,14 +275,11 @@ import {
   deleteNote,
   getNote,
   getNotes,
-  getPlugins,
   operationError,
   previewRename,
-  renderBuffer,
   updateNote,
   uploadFile,
 } from "../api.js";
-import { disabledPluginIds } from "../pluginSettings.js";
 import { Note } from "../classes.js";
 import { displayTitle, followedBasename } from "../noteTitle.js";
 import ConfirmModal from "../components/ConfirmModal.vue";
@@ -327,6 +324,7 @@ import {
 } from "../notePath.js";
 import { attachmentNameError, notePathError } from "../validators.js";
 import { createNoteDraftStore } from "../noteDrafts.js";
+import { createNotePreview } from "../notePreview.js";
 import { setBeforeUnloadConfirmation } from "../unloadGuard.js";
 import { registerSessionParticipant } from "../sessionActions.js";
 import { createNoteSaveQueue, NOTE_SAVE_OBSERVATION_MS } from "../noteSaveQueue.js";
@@ -402,6 +400,7 @@ const editorInitialLine = ref(null);
 const editorLine = ref(null);
 // Preview tab state: the server-rendered buffer HTML.
 const previewHtml = ref("");
+const preview = createNotePreview({ changed: ({ html }) => { previewHtml.value = html; } });
 // View-mode line-link target (from the #view:L fragment) — read by
 // ServerViewer's highlight.
 const viewLine = ref(null);
@@ -468,28 +467,12 @@ function onEditorInput() {
   publishTitle();
 }
 
-// Preview refresh: debounced server render of the UNSAVED buffer. The
-// rendered HTML reflects the editor exactly (plugins + disabled switches
-// honored like the GET path) — the preview never lies about unsaved work.
-let previewTimer = null;
-async function schedulePreviewRefresh() {
-  if (editorMode.value !== "preview") return;
-  if (previewTimer) clearTimeout(previewTimer);
-  previewTimer = setTimeout(async () => {
-    previewTimer = null;
-    if (editorMode.value !== "preview") return;
-    // The buffer was captured into editorInitialValue at switch time —
-    // the editor is unmounted while the preview is up.
-    try {
-      const plugins = await getPlugins();
-      previewHtml.value = await renderBuffer(
-        editorInitialValue.value,
-        disabledPluginIds(plugins),
-      );
-    } catch (e) {
-      previewHtml.value = '<p class="render-error">Preview render failed.</p>';
-    }
-  }, 400);
+function schedulePreviewRefresh() {
+  preview.schedule({
+    isActive: () => editorMode.value === "preview",
+    // Preview unmounts the editor; the retained buffer remains authoritative.
+    getBuffer: () => editorInitialValue.value,
+  });
 }
 
 function onSourceSelection(line) {
