@@ -97,4 +97,23 @@ describe("SearchResults controller wiring", () => {
     expect(wrapper.find('a[href="/New"]').exists()).toBe(true);
     expect(wrapper.find('a[href="/Old"]').exists()).toBe(false);
   });
+
+  it("keeps failed reference rows visible after Fix all and permits an explicit retry", async () => {
+    const files = ["A", "B"].map(name => ({ oldPath: "old/" + name, newPath: "new/" + name }));
+    rewriteRefs.mockRejectedValueOnce(new Error("failed A")).mockResolvedValue(undefined);
+    const { wrapper } = await render({}, { rewriteFiles: JSON.stringify(files) });
+    await wrapper.findAll("button").find(b => b.text() === "Fix all").trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll("li")).toHaveLength(1);
+    expect(wrapper.find("li").text()).toContain("old/A");
+    expect(wrapper.text()).not.toContain("old/B");
+    expect(toast.add.mock.lastCall[0]).toMatchObject({ severity: "warn", summary: "Partially fixed" });
+    expect(rewriteRefs).toHaveBeenCalledTimes(2);
+    await wrapper.findAll("button").find(b => b.text() === "Fix").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).not.toContain("Fix broken references");
+    expect(rewriteRefs).toHaveBeenCalledTimes(3);
+    expect(rewriteRefs.mock.lastCall).toEqual(["old/A", "new/A"]);
+    expect(toast.add.mock.lastCall[0].summary).toBe("Fixed");
+  });
 });

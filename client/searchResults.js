@@ -127,6 +127,9 @@ export function createSearchResults({
     publish(TOPICS.NOTE_REFS_REWRITTEN, {
       oldPath: file.oldPath, newPath: file.newPath,
     });
+    // Single and bulk intents share acknowledgement-based row ownership.
+    // A rejected rewrite leaves its row available for an explicit later retry.
+    rewriteFiles.value = rewriteFiles.value.filter(f => f.oldPath !== file.oldPath);
   }
 
   async function fixSingleRef(file) {
@@ -134,7 +137,6 @@ export function createSearchResults({
     try {
       await rewriteFile(file);
       toast.add({ severity: "success", summary: "Fixed", detail: file.oldPath, life: 3000 });
-      rewriteFiles.value = rewriteFiles.value.filter(f => f.oldPath !== file.oldPath);
     } catch (error) {
       reportError(error, toast);
     } finally {
@@ -145,17 +147,26 @@ export function createSearchResults({
   async function fixAllRefs() {
     fixInProgress.value = true;
     const files = [...rewriteFiles.value];
-    for (const file of files) {
-      try {
-        await rewriteFile(file);
-      } catch (error) {
-        reportError(error, toast);
+    let fixed = 0;
+    try {
+      for (const file of files) {
+        try {
+          await rewriteFile(file);
+          fixed++;
+        } catch (error) {
+          reportError(error, toast);
+        }
       }
+      const failed = files.length - fixed;
+      toast.add(failed
+        ? { severity: fixed ? "warn" : "error",
+          summary: fixed ? "Partially fixed" : "References not fixed",
+          detail: `${fixed} of ${files.length} references rewritten. ${failed} failed; failed references remain listed.`, life: 3000 }
+        : { severity: "success", summary: "All fixed",
+          detail: `${fixed} references rewritten.`, life: 3000 });
+    } finally {
+      fixInProgress.value = false;
     }
-    toast.add({ severity: "success", summary: "All fixed",
-      detail: `${files.length} references rewritten.`, life: 3000 });
-    rewriteFiles.value = [];
-    fixInProgress.value = false;
   }
 
   function snapshot() {

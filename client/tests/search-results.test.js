@@ -316,3 +316,64 @@ describe("search request ownership", () => {
     expect(s.loadNotes).not.toHaveBeenCalled();
   });
 });
+
+describe("reference rewrite outcome accounting", () => {
+  const batch = [...files, { oldPath: "before/C", newPath: "after/C" }];
+
+  it.each([0, 1, 2])("retains failed row %s, continues the batch and reports only successful rewrites", async failedIndex => {
+    const s = setup({ files: batch }); const error = new Error("denied");
+    s.rewrite.mockImplementation(async oldPath => { if (oldPath === batch[failedIndex].oldPath) throw error; });
+    await s.controller.fixAllRefs();
+    const successes = batch.filter((_, i) => i !== failedIndex);
+    expect(s.rewrite.mock.calls).toEqual(batch.map(f => [f.oldPath, f.newPath]));
+    expect(s.state().rewriteFiles).toEqual([batch[failedIndex]]);
+    expect(s.publish.mock.calls).toEqual(successes.map(f => [TOPICS.NOTE_REFS_REWRITTEN, f]));
+    expect(s.reportError).toHaveBeenCalledExactlyOnceWith(error, s.toast);
+    expect(s.toast.add).toHaveBeenCalledExactlyOnceWith({ severity: "warn", summary: "Partially fixed",
+      detail: "2 of 3 references rewritten. 1 failed; failed references remain listed.", life: 3000 });
+    expect(s.state().fixInProgress).toBe(false);
+  });
+
+  it("retains every row and never announces success when every rewrite fails", async () => {
+    const s = setup({ files }); s.rewrite.mockRejectedValue(new Error("offline"));
+    await s.controller.fixAllRefs();
+    expect(s.state().rewriteFiles).toEqual(files); expect(s.publish).not.toHaveBeenCalled();
+    expect(s.reportError).toHaveBeenCalledTimes(2);
+    expect(s.toast.add).toHaveBeenCalledExactlyOnceWith({ severity: "error", summary: "References not fixed",
+      detail: "0 of 2 references rewritten. 2 failed; failed references remain listed.", life: 3000 });
+    expect(s.state().fixInProgress).toBe(false);
+  });
+
+  it("removes acknowledged rows without clearing another still-pending row", async () => {
+    const last = deferred(); const s = setup({ files });
+    s.rewrite.mockResolvedValueOnce(undefined).mockReturnValueOnce(last.promise);
+    const pending = s.controller.fixAllRefs();
+    // Wait for the first acknowledgement and the next dispatch, not a timer.
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(s.rewrite).toHaveBeenCalledTimes(2);
+    expect(s.state().rewriteFiles).toEqual([files[1]]);
+    expect(s.state().fixInProgress).toBe(true); expect(s.toast.add).not.toHaveBeenCalled();
+    last.reject(new Error("last failed")); await pending;
+    expect(s.state().rewriteFiles).toEqual([files[1]]);
+  });
+
+  it("does not retry automatically; a later bulk intent retries only the failed rows", async () => {
+    const s = setup({ files }); s.rewrite.mockRejectedValueOnce(new Error("first failed"));
+    await s.controller.fixAllRefs();
+    expect(s.rewrite).toHaveBeenCalledTimes(2); expect(s.state().rewriteFiles).toEqual([files[0]]);
+    s.rewrite.mockClear(); s.publish.mockClear(); s.toast.add.mockClear();
+    await s.controller.fixAllRefs();
+    expect(s.rewrite).toHaveBeenCalledExactlyOnceWith("before/A", "after/A");
+    expect(s.publish).toHaveBeenCalledExactlyOnceWith(TOPICS.NOTE_REFS_REWRITTEN, files[0]);
+    expect(s.state().rewriteFiles).toEqual([]);
+    expect(s.toast.add).toHaveBeenCalledWith({ severity: "success", summary: "All fixed", detail: "1 references rewritten.", life: 3000 });
+  });
+
+  it("allows an explicit single-row retry after a partial batch", async () => {
+    const s = setup({ files }); s.rewrite.mockRejectedValueOnce(new Error("failed"));
+    await s.controller.fixAllRefs(); s.toast.add.mockClear();
+    await s.controller.fixSingleRef(s.state().rewriteFiles[0]);
+    expect(s.state().rewriteFiles).toEqual([]);
+    expect(s.toast.add).toHaveBeenCalledWith({ severity: "success", summary: "Fixed", detail: "before/A", life: 3000 });
+  });
+});
