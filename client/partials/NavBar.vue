@@ -39,9 +39,10 @@ import { computed } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
-import { authTypes, params, searchSortOptions } from "../constants.js";
+import { params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { folderSearchTarget, newNoteTarget } from "../notePath.js";
+import { canCreateNote } from "../noteCreation.js";
 
 const globalStore = useGlobalStore();
 
@@ -70,8 +71,6 @@ function openSearch() {
   emit("toggleQuickSwitcher");
 }
 
-const showNewButton = computed(() => {
-  return globalStore.config.authType !== authTypes.readOnly;
-});
+const showNewButton = computed(() => canCreateNote(globalStore.config.authType));
 
 </script>

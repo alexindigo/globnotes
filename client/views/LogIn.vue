@@ -47,14 +47,12 @@ import { useToast } from "primevue/usetoast";
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 
-import { apiErrorHandler, getToken } from "../api.js";
 import CtaButton from "../components/CtaButton.vue";
 import Logo from "../components/Logo.vue";
 import TextInput from "../components/TextInput.vue";
 import { authTypes } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
-import { getToastOptions } from "../helpers.js";
-import { storeToken } from "../tokenStorage.js";
+import { createLoginFlow } from "../loginFlow.js";
 
 const props = defineProps({ redirect: String });
 
@@ -67,37 +65,19 @@ const password = ref("");
 const totp = ref("");
 const rememberMe = ref(false);
 
-function logIn() {
-  getToken(username.value, password.value, totp.value)
-    .then((access_token) => {
-      storeToken(access_token, rememberMe.value);
-      if (props.redirect) {
-        router.push(props.redirect);
-      } else {
-        router.push({ name: "home" });
-      }
-    })
-    .catch((error) => {
-      username.value = "";
-      password.value = "";
-      totp.value = "";
-
-      if (error.response?.status === 401) {
-        toast.add(
-          getToastOptions(
-            "Please check your credentials and try again.",
-            "Login Failed",
-            "error",
-          ),
-        );
-      } else {
-        apiErrorHandler(error, toast);
-      }
-    });
-}
+const flow = createLoginFlow({
+  credentials: () => ({ username: username.value, password: password.value, totp: totp.value, rememberMe: rememberMe.value }),
+  clearCredentials: () => {
+    username.value = "";
+    password.value = "";
+    totp.value = "";
+  },
+  redirect: () => props.redirect,
+  navigate: (target) => router.push(target),
+  toast,
+});
+const { logIn } = flow;
 
 // Redirect to home if authentication is disabled.
-if (globalStore.config.authType === authTypes.none) {
-  router.push({ name: "home" });
-}
+flow.init(globalStore.config.authType);
 </script>

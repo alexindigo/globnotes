@@ -35,13 +35,7 @@
         </RouterLink>
         <RouterLink
           v-if="notes.length > globalStore.config.quickAccessLimit"
-          :to="{
-            name: 'search',
-            query: {
-              term: globalStore.config.quickAccessTerm,
-              sortBy: searchSortOptions[globalStore.config.quickAccessSort],
-            },
-          }"
+          :to="state.moreTarget"
           title="Show more"
           ><CustomButton :iconPath="tabDots"
         /></RouterLink>
@@ -61,13 +55,13 @@
               class="rounded bg-theme-background-elevated px-1.5 py-0.5 text-theme-text"
               >{{ globalStore.config.notesPath }}</code
             >, which is currently empty. Point it at your existing notes{{
-              globalStore.config.authType !== authTypes.readOnly
+              canCreateNote(globalStore.config.authType)
                 ? ", or create your first note here"
                 : ""
             }}.
           </p>
           <RouterLink
-            v-if="globalStore.config.authType !== authTypes.readOnly"
+            v-if="canCreateNote(globalStore.config.authType)"
             :to="{ name: 'new' }"
           >
             <CtaButton label="Create new note" />
@@ -81,27 +75,34 @@
 <script setup>
 import { tabDots } from "../icons.js";
 import { useToast } from "primevue/usetoast";
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 
-import { apiErrorHandler, getNotes } from "../api.js";
 import { publish, TOPICS } from "../bus/index.js";
 import CustomButton from "../components/CustomButton.vue";
 import CtaButton from "../components/CtaButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Logo from "../components/Logo.vue";
-import { authTypes, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { notePath } from "../notePath.js";
+import { canCreateNote } from "../noteCreation.js";
+import { createQuickAccess, homeSearchTarget } from "../quickAccess.js";
 import SwitcherInput from "../components/SwitcherInput.vue";
 
 const globalStore = useGlobalStore();
 const loadingIndicator = ref();
-const notes = ref([]);
-const loaded = ref(false);
 const toast = useToast();
 const router = useRouter();
 const searchTerm = ref("");
+const quickAccess = createQuickAccess({ config: () => globalStore.config, toast });
+const state = computed(quickAccess.snapshot);
+const notes = computed(() => state.value.notes);
+const loaded = computed(() => state.value.loaded);
+
+watch(() => state.value.load, (load) => {
+  if (load.status === "loaded") loadingIndicator.value.setLoaded();
+  else if (load.status === "failed") loadingIndicator.value.setFailed();
+});
 
 // Home's search box is the switcher's bare input. One early hint, then the
 // modal takes over — the focus event carries the browser's native Event so
@@ -111,40 +112,11 @@ function openSwitcher(event) {
 }
 
 function submitSearch() {
-  const term = searchTerm.value.trim();
-  if (term) router.push({ name: "search", query: { term } });
-}
-
-function init() {
-  // Config may not have landed yet (delayed fetch) — the watcher refires
-  // when quickAccessLimit appears. Firing early would send limit=NaN.
-  if (globalStore.config.quickAccessLimit === undefined) return;
-  if (globalStore.config.quickAccessHide) {
-    return;
-  }
-  getNotes(
-    globalStore.config.quickAccessTerm,
-    globalStore.config.quickAccessSort,
-    // Order by ascending if sorting by title, descending otherwise.
-    globalStore.config.quickAccessSort === "title"
-      ? "asc"
-      : "desc",
-    // Limit is increased by 1 to check if there are more notes than the limit.
-    globalStore.config.quickAccessLimit + 1,
-  )
-    .then((data) => {
-      notes.value = data;
-      loaded.value = true;
-      loadingIndicator.value.setLoaded();
-    })
-    .catch((error) => {
-      loaded.value = true;
-      loadingIndicator.value.setFailed();
-      apiErrorHandler(error, toast);
-    });
+  const target = homeSearchTarget(searchTerm.value);
+  if (target) router.push(target);
 }
 
 // Watch to allow for delayed config load.
-watch(() => globalStore.config.quickAccessLimit, init);
-onMounted(init);
+watch(() => globalStore.config.quickAccessLimit, quickAccess.init);
+onMounted(quickAccess.init);
 </script>
