@@ -1,6 +1,6 @@
 // One fragment grammar, one module. Every UI element that wants a URL
-// fragment delegates here for parsing/serialization; Note.vue decides WHEN
-// a fragment is written and does so with path-string router navigations —
+// fragment delegates here for parsing/serialization; noteUrlSync.js owns
+// state-to-URL writes and uses path-string router navigations —
 // hash-only location objects re-serialize the title param into %2F, and raw
 // history calls corrupt vue-router's history.state bookkeeping.
 //

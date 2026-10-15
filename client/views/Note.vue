@@ -304,7 +304,6 @@ import {
 import {
   editorStateFromFragment,
   parseFragment,
-  serializeFragment,
   viewLineFromFragment,
 } from "../fragment.js";
 import { publish, subscribe, TOPICS } from "../bus/index.js";
@@ -313,7 +312,6 @@ import { currentLayerId } from "../keybindings/store.js";
 import { defaultEditorMode, setDefaultEditorMode } from "../editorPreferences.js";
 import { clientPluginEpoch } from "../pluginLoader.js";
 import {
-  appRelativePath,
   basenameOf,
   encodeRewriteFiles,
   folderSearchTarget,
@@ -325,6 +323,8 @@ import {
 import { attachmentNameError, notePathError } from "../validators.js";
 import { createNoteDraftStore } from "../noteDrafts.js";
 import { createNotePreview } from "../notePreview.js";
+import { createNoteUrlSync } from "../noteUrlSync.js";
+import { decideNavigation, noteResourceIdentity } from "../noteNavigationGate.js";
 import { setBeforeUnloadConfirmation } from "../unloadGuard.js";
 import { registerSessionParticipant } from "../sessionActions.js";
 import { createNoteSaveQueue, NOTE_SAVE_OBSERVATION_MS } from "../noteSaveQueue.js";
@@ -415,7 +415,7 @@ function currentBuffer() {
 
 function setEditorMode(mode, writeUrl = true) {
   if (mode === editorMode.value) return;
-  clearCaretSyncTimer();
+  urlSync.clearCaretSyncTimer();
   // Transfer content across the remount; persist the pref immediately.
   editorInitialValue.value = currentBuffer();
   editorMode.value = mode;
@@ -425,35 +425,8 @@ function setEditorMode(mode, writeUrl = true) {
   // its own selection once the user interacts with it.
   editorLine.value = null;
   editorInitialLine.value = null;
-  if (writeUrl) writeFragment(currentFragment(), true);
+  if (writeUrl) urlSync.writeCurrentFragment(true);
   if (mode === "preview") schedulePreviewRefresh();
-}
-
-function currentFragment() {
-  if (!editMode.value) return { mode: "view", line: viewLine.value };
-  if (editorMode.value === "wysiwyg") return { mode: "edit" };
-  return { mode: "source", line: editorLine.value };
-}
-
-// Fragment-only URL changes navigate via path STRINGS (which preserve the
-// title's real slashes) rather than hash-only location objects (which make
-// vue-router re-serialize the title param into %2F) or raw history calls
-// (which corrupt vue-router's history.state position bookkeeping). The gate
-// below guards every such navigation.
-function writeFragment(frag, push = false) {
-  // New notes live at /_/new — no note path to attach a fragment to.
-  if (isNewNote.value) return;
-  const hash = serializeFragment(frag);
-  if (window.location.hash === hash) return;
-  const url = appRelativePath(window.location.pathname, router.options.history.base) + window.location.search + hash;
-  if (push) router.push(url);
-  else router.replace(url);
-}
-
-// Caret/selection sync is continuous state — always replace in place,
-// never a history entry per keystroke.
-function syncNoteFragment(frag) {
-  writeFragment(frag, false);
 }
 
 function onEditorInput() {
@@ -477,13 +450,7 @@ function schedulePreviewRefresh() {
 
 function onSourceSelection(line) {
   editorLine.value = line;
-  // State now; URL shortly — debounced so typing doesn't churn the router
-  // once per keystroke.
-  if (caretSyncTimer != null) clearTimeout(caretSyncTimer);
-  caretSyncTimer = setTimeout(() => {
-    caretSyncTimer = null;
-    syncNoteFragment(currentFragment());
-  }, 120);
+  urlSync.scheduleCaretSync();
 }
 const unsavedChanges = ref(false);
 // Revisions identify who may apply an acknowledgement. Pending work and
@@ -503,34 +470,26 @@ const ownerId = createUuid();
 let editSession = 0;
 let saveQueue = null;
 let applyingAcknowledgement = false;
-let acknowledgementTransition = null;
 let closeIntent = null;
 const noteAliases = new Set();
 const drafts = createNoteDraftStore();
-let caretSyncTimer = null;
 let loadGeneration = 0;
-function resourceIdentity(path, query) {
-  return JSON.stringify(path ? ["note", path] : ["new", query.path ?? "", query.folder ?? ""]);
-}
-const currentResourceIdentity = computed(() => resourceIdentity(props.path, route.query));
-function destinationResourceIdentity(to) {
-  if (to.name === "note") return resourceIdentity(to.params.path, to.query);
-  if (to.name === "new") return resourceIdentity(null, to.query);
-  return null;
-}
-
-function clearCaretSyncTimer() {
-  if (caretSyncTimer != null) {
-    clearTimeout(caretSyncTimer);
-    caretSyncTimer = null;
-  }
-}
+const currentResourceIdentity = computed(() => noteResourceIdentity(props.path, route.query));
+const urlSync = createNoteUrlSync({
+  router,
+  ownerId,
+  getPath: () => props.path,
+  getState: () => ({
+    isNewNote: isNewNote.value,
+    editMode: editMode.value,
+    editorMode: editorMode.value,
+    editorLine: editorLine.value,
+    viewLine: viewLine.value,
+  }),
+});
 
 function init() {
-  if (acknowledgementTransition?.guardConsumed && props.path === acknowledgementTransition.path && saveQueue?.state().sessionId === acknowledgementTransition.sessionId) {
-    acknowledgementTransition = null;
-    return;
-  }
+  if (urlSync.consumeAcknowledgedResource(props.path, saveQueue?.state().sessionId)) return;
   revokeRenamePrompt(resolveRenameDialog);
   saveQueue?.dispose();
   const generation = ++loadGeneration;
@@ -633,56 +592,44 @@ function enterEditFromFragment(frag = parseFragment(window.location.hash)) {
 // through here BEFORE the URL commits: clean exits commit immediately; dirty
 // exits wait on the Save/Discard/Cancel modal; cancel reverts the URL and
 // keeps the session exactly where it was.
-function isStayingInEditState(to) {
-  if (destinationResourceIdentity(to) !== currentResourceIdentity.value) return false;
-  if (to.name === "new") return true;
-  return ["edit", "source"].includes(parseFragment(to.hash).mode);
-}
-
 async function gateNavigation(to) {
-  const transition = acknowledgementTransition;
-  if (transition && !transition.guardConsumed && transition.ownerId === ownerId && transition.fullPath === to.fullPath &&
-      transition.sessionId === saveQueue?.state().sessionId && transition.submissionId === saveQueue?.state().active?.submissionId) {
-    transition.guardConsumed = true;
+  const saveState = saveQueue?.state();
+  const action = decideNavigation({
+    ...urlSync.state(),
+    ownerId,
+    sessionId: saveState?.sessionId,
+    activeSubmissionId: saveState?.active?.submissionId,
+    resourceIdentity: currentResourceIdentity.value,
+    editMode: editMode.value,
+    editorMode: editorMode.value,
+    canModify: canModify.value,
+    queue: queueState.value,
+    dirty: isContentChanged(),
+  }, to);
+  if (action.type === "acknowledge") {
+    urlSync.consumeAcknowledgementGuard();
     return true;
   }
-  if (!editMode.value && !queueState.value.unresolved) {
-    // (Re-)enter edit when the destination URL carries an edit fragment —
-    // forward into an edit entry, or any fragment navigation while viewing.
-    const toFrag = parseFragment(to.hash);
-    const target = editorStateFromFragment(toFrag);
-    if (
-      canModify.value &&
-      to.name === "note" &&
-      destinationResourceIdentity(to) === currentResourceIdentity.value &&
-      target
-    ) {
-      pendingEditorMode = target.mode;
-      pendingInitialLine = target.line;
-      editHandler();
-    } else if (toFrag.mode === "view") {
-      // View-mode line link: highlight, no edit entry.
-      viewLine.value = viewLineFromFragment(toFrag);
-    }
+  if (action.type === "allow") return true;
+  if (action.type === "enter-edit") {
+    pendingEditorMode = action.mode;
+    pendingInitialLine = action.line;
+    editHandler();
     return true;
   }
-  if (isStayingInEditState(to)) {
-    if (to.name === "new") return true;
-    // URL-driven transition between edit states (back/forward across edit
-    // entries, address-bar fragment edits): align the state to the URL —
-    // never write the URL back.
-    const frag = parseFragment(to.hash);
-    const target = editorStateFromFragment(frag, editorMode.value);
-    // Preview's URL stays #source by design — a #source fragment while
-    // previewing must not yank the user back into the source editor.
-    if (editorMode.value !== target.mode) setEditorMode(target.mode, false);
-    if (target.line) {
+  if (action.type === "view-line") {
+    viewLine.value = action.line;
+    return true;
+  }
+  if (action.type === "sync-editor") {
+    if (editorMode.value !== action.mode) setEditorMode(action.mode, false);
+    if (action.line) {
       await nextTick();
-      editor.value?.selectLine?.(target.line);
+      editor.value?.selectLine?.(action.line);
     }
     return true;
   }
-  if (!isContentChanged()) {
+  if (action.type === "exit-edit") {
     exitEditState();
     return true;
   }
@@ -694,7 +641,7 @@ async function gateNavigation(to) {
   const navWasPop = window.location.hash === to.hash;
   const target = { to, pop: navWasPop, sessionId: saveQueue?.state().sessionId };
   pendingNavTarget = target;
-  if (["preparing", "sending"].includes(queueState.value.status)) {
+  if (action.type === "settle") {
     // Abort the real route immediately; a bounded owned barrier decides
     // whether a later transition can be requested with this same target.
     settlePendingWrites().then(ok => {
@@ -703,7 +650,7 @@ async function gateNavigation(to) {
       if (isContentChanged()) isSaveChangesModalVisible.value = true;
       else { pendingNavTarget = null; exitEditState(); commitNavTarget(to, navWasPop); }
     });
-  } else if (queueState.value.canDiscard) isSaveChangesModalVisible.value = true;
+  } else if (action.type === "prompt") isSaveChangesModalVisible.value = true;
   else pendingNavTarget = null;
   return false;
 }
@@ -832,7 +779,7 @@ function setEditMode() {
   editMode.value = true;
   refreshDirtyState();
   publish(TOPICS.NOTE_EDIT_START, { path: note.value.path });
-  writeFragment(currentFragment(), push);
+  urlSync.writeCurrentFragment(push);
 }
 
 function syncTitle() {
@@ -1011,19 +958,8 @@ async function applySaveAcknowledgement(snapshot, result, context) {
   else if (context.sourcePath !== result.path) publish(TOPICS.NOTE_RENAME, { oldPath: context.sourcePath, newPath: result.path });
   else publish(TOPICS.NOTE_SAVE, { path: result.path });
   lastMovedFiles.value = result.movedFiles ?? [];
-  await canonicalSaveRoute(snapshot, result.path);
+  await urlSync.canonicalSaveRoute(snapshot, result.path);
   if (context.sourcePath && context.sourcePath !== result.path) updateRenamedLinks(context.sourcePath, result.path);
-}
-
-async function canonicalSaveRoute(snapshot, path) {
-  const hash = serializeFragment(currentFragment());
-  const fullPath = notePath(path) + hash;
-  if (router.currentRoute.value.fullPath === fullPath) return;
-  const token = { ownerId, sessionId: snapshot.sessionId, submissionId: snapshot.submissionId, fullPath, path, nonce: createUuid(), guardConsumed: false };
-  acknowledgementTransition = token;
-  await router.replace(fullPath);
-  if (router.currentRoute.value.fullPath !== fullPath) throw new Error("Save committed, but its canonical route could not be applied. Work is retained.");
-  if (props.path === path && acknowledgementTransition === token) acknowledgementTransition = null;
 }
 
 function refreshDirtyState() {
@@ -1162,7 +1098,7 @@ async function closeHandler() {
   // clean exits commit, dirty ones wait on Save/Discard/Cancel, and cancel
   // reverts the URL without moving anywhere. Path-string push: hash-only
   // locations re-encode the title's slashes.
-  router.push(appRelativePath(window.location.pathname, router.options.history.base) + window.location.search);
+  urlSync.writeFragment(null, true);
 }
 
 // End the edit session in state only. Callers own the URL: either the
@@ -1171,7 +1107,7 @@ async function closeHandler() {
 function exitEditState() {
   revokeRenamePrompt(resolveRenameDialog);
   clearContentChangedTimeout();
-  clearCaretSyncTimer();
+  urlSync.clearCaretSyncTimer();
   editMode.value = false;
   editorLine.value = null;
   editorInitialLine.value = null;
