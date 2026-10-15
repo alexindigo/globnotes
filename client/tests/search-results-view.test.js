@@ -85,4 +85,16 @@ describe("SearchResults controller wiring", () => {
     expect(publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_REFS_REWRITTEN)).toEqual(files.map(f => [TOPICS.NOTE_REFS_REWRITTEN, f]));
     expect(toast.add.mock.lastCall[0].summary).toBe("All fixed");
   });
+
+  it("keeps the newest query rendered when an older request finishes last", async () => {
+    let finishOld;
+    getNotes.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve; }))
+      .mockResolvedValueOnce([{ path: "New", title: "Current result" }]);
+    const { wrapper } = await render();
+    await wrapper.setProps({ searchTerm: "new" }); await flushPromises();
+    expect(wrapper.find('a[href="/New"]').text()).toContain("Current result");
+    finishOld([{ path: "Old", title: "Retired result" }]); await flushPromises();
+    expect(wrapper.find('a[href="/New"]').exists()).toBe(true);
+    expect(wrapper.find('a[href="/Old"]').exists()).toBe(false);
+  });
 });

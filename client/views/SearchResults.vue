@@ -126,7 +126,7 @@
 
 <script setup>
 import { useToast } from "primevue/usetoast";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import Icon from "../components/Icon.vue";
@@ -178,6 +178,7 @@ watch(() => props.searchTerm, search.init);
 watch(() => props.folder, search.init);
 watch(() => state.value.effectiveSortBy, search.reSortResults);
 onMounted(search.init);
+onBeforeUnmount(search.dispose);
 </script>
 
 <style>

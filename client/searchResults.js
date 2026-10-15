@@ -25,6 +25,8 @@ export function createSearchResults({
   const rewriteFiles = ref(decodeRewriteFiles(initialRewriteFiles));
   const fixInProgress = ref(false);
   const load = ref({ status: "loading" });
+  let requestTicket;
+  let disposed = false;
   const { includeNested, setIncludeNested } = preferences;
 
   // Score means nothing for a "list everything" (*) search; default to path.
@@ -78,6 +80,10 @@ export function createSearchResults({
   }
 
   async function init() {
+    if (disposed) return;
+    const ticket = {};
+    requestTicket = ticket;
+    const isCurrent = () => requestTicket === ticket;
     load.value = { status: "loading" };
     const { searchTerm, folder } = query();
     const resultsRequest = loadNotes(searchTerm, undefined, undefined, undefined,
@@ -88,18 +94,22 @@ export function createSearchResults({
         .then(data => data.map(result => result.title)).catch(() => []);
     try {
       const [data, subdirTitles] = await Promise.all([resultsRequest, subdirsRequest]);
+      // Both reads belong to one search, including its loading/error surface.
+      if (!isCurrent()) return;
       subdirMatches.value = subdirTitles;
       results.value = sortResults(data);
       load.value = results.value.length || currentSubdirs.value.length
         ? { status: "loaded" }
         : { status: "failed", message: "No Results", icon: tabSearch };
     } catch (error) {
+      if (!isCurrent()) return;
       load.value = { status: "failed" };
       reportError(error, toast);
     }
   }
 
   function toggleNested() {
+    if (disposed) return;
     setIncludeNested(!includeNested.value);
     return init();
   }
@@ -163,6 +173,10 @@ export function createSearchResults({
     { label: "Sort By: Title", command: () => selectSort(searchSortOptions.path) },
     { label: "Sort By: Last Modified", command: () => selectSort(searchSortOptions.lastModified) },
   ];
+  function dispose() {
+    disposed = true;
+    requestTicket = undefined;
+  }
   return { snapshot, init, toggleNested, reSortResults, folderTarget, title,
-    selectSort, menuItems, fixSingleRef, fixAllRefs };
+    selectSort, menuItems, fixSingleRef, fixAllRefs, dispose };
 }

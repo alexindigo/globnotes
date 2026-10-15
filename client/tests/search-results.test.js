@@ -217,3 +217,102 @@ describe("search result policy", () => {
     expect(s.toast.add).toHaveBeenCalledWith({ severity: "success", summary: "All fixed", detail: "2 references rewritten.", life: 3000 });
   });
 });
+
+describe("search request ownership", () => {
+  it.each(["term", "folder", "nested"])("only accepts the latest %s query even when old success arrives last", async change => {
+    const old = deferred(), current = deferred();
+    const s = setup();
+    s.loadNotes.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise).mockResolvedValue([]);
+    const first = s.controller.init();
+    if (change === "term") s.input.searchTerm = "new";
+    if (change === "folder") s.input.folder = "New";
+    const second = change === "nested" ? s.controller.toggleNested() : s.controller.init();
+    current.resolve([{ path: "New/n", score: 1 }]); await second;
+    old.resolve([{ path: "Old/n", score: 9 }]); await first;
+    expect(s.state().results.map(n => n.path)).toEqual(["New/n"]);
+    expect(s.state().load.status).toBe("loaded");
+  });
+
+  it.each(["success", "failure"])("ignores old %s while the latest query is loading", async outcome => {
+    const old = deferred(), current = deferred(); const s = setup();
+    s.loadNotes.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+    const first = s.controller.init(); s.input.searchTerm = "new"; const second = s.controller.init();
+    if (outcome === "success") old.resolve([{ path: "Old" }]); else old.reject(new Error("retired"));
+    await first;
+    expect(s.state().load.status).toBe("loading");
+    expect(s.state().results).toEqual([]); expect(s.reportError).not.toHaveBeenCalled();
+    current.resolve([{ path: "New" }]); await second;
+    expect(s.state().results[0].path).toBe("New");
+  });
+
+  it("does not let a stale failure replace current results or report an error", async () => {
+    const old = deferred(); const s = setup();
+    s.loadNotes.mockReturnValueOnce(old.promise).mockResolvedValueOnce([{ path: "New" }]);
+    const first = s.controller.init(); s.input.searchTerm = "new"; await s.controller.init();
+    old.reject(new Error("retired")); await first;
+    expect(s.state().load.status).toBe("loaded"); expect(s.state().results[0].path).toBe("New");
+    expect(s.reportError).not.toHaveBeenCalled();
+  });
+
+  it("does not let stale success replace a current failed query", async () => {
+    const old = deferred(); const s = setup(); const error = new Error("current");
+    s.loadNotes.mockReturnValueOnce(old.promise).mockRejectedValueOnce(error);
+    const first = s.controller.init(); s.input.folder = "New"; await s.controller.init();
+    old.resolve([{ path: "Old" }]); await first;
+    expect(s.state().load).toEqual({ status: "failed" }); expect(s.state().results).toEqual([]);
+    expect(s.reportError).toHaveBeenCalledExactlyOnceWith(error, s.toast);
+  });
+
+  it("does not let stale empty results replace current rows", async () => {
+    const old = deferred(); const s = setup();
+    s.loadNotes.mockReturnValueOnce(old.promise).mockResolvedValueOnce([{ path: "New" }]);
+    const first = s.controller.init(); await s.controller.init(); old.resolve([]); await first;
+    expect(s.state().load.status).toBe("loaded"); expect(s.state().results[0].path).toBe("New");
+  });
+
+  it("treats results and delayed subdirectory matches as one ticketed response", async () => {
+    const oldDirs = deferred(); const s = setup({ nested: false, input: { folder: "F" } });
+    s.loadNotes.mockResolvedValueOnce([{ path: "F/Old" }]).mockReturnValueOnce(oldDirs.promise)
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([{ title: "F/New/n" }]);
+    const first = s.controller.init(); s.input.searchTerm = "new"; await s.controller.init();
+    oldDirs.resolve([{ title: "F/Old/n" }]); await first;
+    expect(s.state().results).toEqual([]); expect(s.state().currentSubdirs).toEqual(["F/New"]);
+    expect(s.state().load.status).toBe("loaded");
+  });
+
+  it("retires a pending non-nested pair when toggled back to nested", async () => {
+    const old = deferred(); const s = setup({ nested: false });
+    s.loadNotes.mockReturnValueOnce(old.promise).mockResolvedValueOnce([{ title: "Old/n" }])
+      .mockResolvedValueOnce([{ path: "New/n" }]);
+    const first = s.controller.init(); await s.controller.toggleNested();
+    old.resolve([{ path: "Old" }]); await first;
+    expect(s.state().results[0].path).toBe("New/n"); expect(s.state().currentSubdirs).toEqual([]);
+  });
+
+  it("accepts the current result when its auxiliary lookup fails", async () => {
+    const old = deferred(); const s = setup({ nested: false });
+    s.loadNotes.mockReturnValueOnce(old.promise).mockResolvedValueOnce([{ title: "Old/n" }])
+      .mockResolvedValueOnce([{ path: "New" }]).mockRejectedValueOnce(new Error("dirs"));
+    const first = s.controller.init(); await s.controller.init(); old.resolve([]); await first;
+    expect(s.state().results[0].path).toBe("New"); expect(s.state().currentSubdirs).toEqual([]);
+    expect(s.reportError).not.toHaveBeenCalled();
+  });
+
+  it.each(["success", "failure"])("retires pending %s on disposal without affecting a replacement owner", async outcome => {
+    const old = deferred(); const s = setup(); s.loadNotes.mockReturnValueOnce(old.promise);
+    const first = s.controller.init(); s.controller.dispose?.();
+    const replacement = setup(); replacement.loadNotes.mockResolvedValue([{ path: "Replacement" }]);
+    await replacement.controller.init();
+    if (outcome === "success") old.resolve([{ path: "Old" }]); else old.reject(new Error("retired"));
+    await first;
+    expect(s.state().results).toEqual([]); expect(s.state().load.status).toBe("loading");
+    expect(s.reportError).not.toHaveBeenCalled(); expect(replacement.state().results[0].path).toBe("Replacement");
+  });
+
+  it("does not start a new query after disposal", async () => {
+    const s = setup(); s.controller.dispose?.(); await s.controller.init();
+    await s.controller.toggleNested();
+    expect(s.preferences.setIncludeNested).not.toHaveBeenCalled();
+    expect(s.loadNotes).not.toHaveBeenCalled();
+  });
+});
