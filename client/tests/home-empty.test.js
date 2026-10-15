@@ -9,6 +9,7 @@ import { useGlobalStore } from "../globalStore.js";
 
 vi.mock("../api.js", () => ({
   getNotes: vi.fn().mockResolvedValue([]),
+  getTags: vi.fn().mockResolvedValue([]),
   apiErrorHandler: vi.fn(),
 }));
 vi.mock("primevue/usetoast", () => ({ useToast: () => ({ add: vi.fn() }) }));

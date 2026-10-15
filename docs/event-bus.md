@@ -54,7 +54,7 @@ schema enforcement — the topics.js file IS the contract).
 | 19 | `settings:line-numbers` | `{ value }` | `pluginSettings.js` saveViewLineNumbers |
 | 20 | `debug:change` | `{ enabled }` | `debug.js` toggleDebug |
 | 21 | `search:perform` | `{ term }` | `router.js` afterEach |
-| 22 | `search:change` | `{ term }` | `SearchInput.vue` searchTerm watch |
+| 22 | `search:change` | `{ term }` | `tagCompletion.js` searchTermChanged (SearchInput / SwitcherInput term watches; typing, tag insertion, clear and prop updates) |
 | 23 | `search:include-nested` | `{ value }` | `searchPreferences.js` setIncludeNested |
 | 24 | `editor:mode-change` | `{ mode }` | `noteController.js` setEditorMode |
 | 25 | `note:edit-start` | `{ path }` | `noteController.js` setEditMode |

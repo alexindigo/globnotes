@@ -15,7 +15,7 @@
         @keydown="keydownHandler"
         @keyup="stateChangeHandler"
         @click="stateChangeHandler"
-        @blur="tagMenuVisible = false"
+        @blur="completion.hide()"
         @keydown.down.prevent
         @keydown.up.prevent
       />
@@ -55,11 +55,10 @@
 import Icon from "../components/Icon.vue";
 import { tabClose } from "../icons.js";
 import { useToast } from "primevue/usetoast";
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
-import { apiErrorHandler, getTags } from "../api.js";
-import { publish, TOPICS } from "../bus/index.js";
+import { createTagCompletion, searchTermChanged } from "../tagCompletion.js";
 import * as constants from "../constants.js";
 import { getToastOptions } from "../helpers.js";
 
@@ -74,32 +73,30 @@ const input = ref();
 const router = useRouter();
 const searchTerm = ref(props.initialSearchTerm);
 const toast = useToast();
-let tags = null;
-const tagMatches = ref([]);
+const completion = createTagCompletion({ toast, clearOnNonTag: true });
+const tagState = computed(completion.snapshot);
+const tagMatches = computed(() => tagState.value.matches);
 const tagMenuItems = ref([]);
-const tagMenuIndex = ref(0);
-const tagMenuVisible = ref(false);
+const tagMenuIndex = computed(() => tagState.value.index);
+const tagMenuVisible = computed(() => tagState.value.visible);
 
 function keydownHandler(event) {
   // Tag Menu Open
   if (tagMenuVisible.value) {
     if (event.key === "ArrowDown") {
-      tagMenuIndex.value = Math.min(
-        tagMenuIndex.value + 1,
-        tagMatches.value.length - 1,
-      );
+      completion.move(1);
       tagMenuItems.value[tagMenuIndex.value].scrollIntoView({
         block: "nearest",
       });
     } else if (event.key === "ArrowUp") {
-      tagMenuIndex.value = Math.max(tagMenuIndex.value - 1, 0);
+      completion.move(-1);
       tagMenuItems.value[tagMenuIndex.value].scrollIntoView({
         block: "nearest",
       });
     } else if (event.key === "Enter") {
       tagChosen(tagMatches.value[tagMenuIndex.value]);
     } else if (event.key === "Escape") {
-      tagMenuVisible.value = false;
+      completion.hide();
       event.stopPropagation(); // Prevent the modal from closing when the tag menu is open.
     }
   }
@@ -110,8 +107,7 @@ function keydownHandler(event) {
 }
 
 function tagChosen(tag) {
-  replaceWordOnCursor(tag);
-  tagMenuVisible.value = false;
+  searchTerm.value = completion.choose(searchTerm.value, input.value.selectionStart, tag);
 }
 
 function clearToAll() {
@@ -135,80 +131,7 @@ function search() {
 }
 
 function stateChangeHandler() {
-  const wordOnCursor = getWordOnCursor();
-  if (wordOnCursor.charAt(0) !== "#") {
-    tagMenuVisible.value = false;
-    tagMatches.value = [];
-  } else {
-    // All tags are stored in lowercase, so we can do a case-insensitive search.
-    filterTagMatches(wordOnCursor.toLowerCase());
-  }
-}
-
-async function filterTagMatches(input) {
-  if (tags === null) {
-    try {
-      tags = await getTags();
-    } catch (error) {
-      tags = [];
-      apiErrorHandler(error, toast);
-    }
-    tags = tags.map((tag) => `#${tag}`);
-  }
-  const currentTagMatchCount = tagMatches.value.length;
-  tagMatches.value = tags.filter(
-    (tag) => tag.startsWith(input) && tag !== input,
-  );
-  if (
-    currentTagMatchCount !== tagMatches.value.length &&
-    tagMatches.value.length > 0
-  ) {
-    tagMenuIndex.value = 0;
-    tagMenuVisible.value = true;
-  } else if (tagMatches.value.length === 0) {
-    tagMenuVisible.value = false;
-  }
-}
-
-// Helpers
-
-/**
- * Returns the word that the cursor is currently on.
- * @returns {Object} An object containing the start and end indices of the word.
- */
-function getWordOnCursorPosition() {
-  const cursorPosition = input.value.selectionStart;
-  const wordStart = Math.max(
-    searchTerm.value.lastIndexOf(" ", cursorPosition - 1) + 1,
-    0,
-  );
-  let wordEnd = searchTerm.value.indexOf(" ", cursorPosition);
-  if (wordEnd === -1) {
-    // If there is no space after the cursor, then the word ends at the end of the input.
-    wordEnd = searchTerm.value.length;
-  }
-  return { start: wordStart, end: wordEnd };
-}
-
-/**
- * Retrieves the word at the current cursor position in the search term.
- * @returns {string} The word at the cursor position.
- */
-function getWordOnCursor() {
-  const { start, end } = getWordOnCursorPosition();
-  return searchTerm.value.substring(start, end);
-}
-
-/**
- * Replaces the word at the cursor position with the given replacement.
- * @param {string} replacement The word to replace the current word with.
- */
-function replaceWordOnCursor(replacement) {
-  const { start, end } = getWordOnCursorPosition();
-  searchTerm.value =
-    searchTerm.value.substring(0, start) +
-    replacement +
-    searchTerm.value.substring(end);
+  completion.update(searchTerm.value, input.value.selectionStart);
 }
 
 watch(
@@ -220,7 +143,5 @@ watch(
 
 // The search term is global state — every change (typing, tag insert, clear)
 // publishes a search:change fact.
-watch(searchTerm, (term) => {
-  publish(TOPICS.SEARCH_CHANGE, { term });
-});
+watch(searchTerm, searchTermChanged);
 </script>

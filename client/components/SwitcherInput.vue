@@ -10,7 +10,7 @@
       @keyup="stateChangeHandler"
       @click="stateChangeHandler"
       @focus="$emit('focus')"
-      @blur="tagMenuVisible = false"
+      @blur="completion.hide()"
       @keydown.down.prevent
       @keydown.up.prevent
     />
@@ -42,8 +42,7 @@
 import { computed, ref, watch } from "vue";
 import { useToast } from "primevue/usetoast";
 
-import { apiErrorHandler, getTags } from "../api.js";
-import { publish, TOPICS } from "../bus/index.js";
+import { createTagCompletion, searchTermChanged } from "../tagCompletion.js";
 
 const props = defineProps({
   modelValue: { type: String, default: "" },
@@ -65,58 +64,21 @@ const term = computed({
   set: (v) => emit("update:modelValue", v),
 });
 
-watch(term, (t) => publish(TOPICS.SEARCH_CHANGE, { term: t }));
+watch(term, searchTermChanged);
 
 // Tag completion
-let tags = null;
-const tagMatches = ref([]);
+const completion = createTagCompletion({ toast });
+const tagState = computed(completion.snapshot);
+const tagMatches = computed(() => tagState.value.matches);
 const tagMenuItems = ref([]);
-const tagMenuIndex = ref(0);
-const tagMenuVisible = ref(false);
+const tagMenuIndex = computed(() => tagState.value.index);
+const tagMenuVisible = computed(() => tagState.value.visible);
 
-function getWordOnCursorPosition() {
-  const cursorPosition = input.value?.selectionStart ?? 0;
-  const wordStart = Math.max(term.value.lastIndexOf(" ", cursorPosition - 1) + 1, 0);
-  let wordEnd = term.value.indexOf(" ", cursorPosition);
-  if (wordEnd === -1) wordEnd = term.value.length;
-  return { start: wordStart, end: wordEnd };
-}
-function getWordOnCursor() {
-  const { start, end } = getWordOnCursorPosition();
-  return term.value.substring(start, end);
-}
-function replaceWordOnCursor(replacement) {
-  const { start, end } = getWordOnCursorPosition();
-  term.value = term.value.substring(0, start) + replacement + term.value.substring(end);
-}
-
-async function filterTagMatches(input) {
-  if (tags === null) {
-    try {
-      tags = await getTags();
-    } catch (error) {
-      tags = [];
-      apiErrorHandler(error, toast);
-    }
-    tags = tags.map((t) => `#${t}`);
-  }
-  const before = tagMatches.value.length;
-  tagMatches.value = tags.filter((t) => t.startsWith(input) && t !== input);
-  if (before !== tagMatches.value.length && tagMatches.value.length > 0) {
-    tagMenuIndex.value = 0;
-    tagMenuVisible.value = true;
-  } else if (tagMatches.value.length === 0) {
-    tagMenuVisible.value = false;
-  }
-}
 function stateChangeHandler() {
-  const word = getWordOnCursor();
-  if (word.charAt(0) !== "#") tagMenuVisible.value = false;
-  else filterTagMatches(word.toLowerCase());
+  completion.update(term.value, input.value?.selectionStart ?? 0);
 }
 function tagChosen(tag) {
-  replaceWordOnCursor(tag);
-  tagMenuVisible.value = false;
+  term.value = completion.choose(term.value, input.value?.selectionStart ?? 0, tag);
 }
 
 function keydownHandler(event) {
@@ -133,15 +95,15 @@ function keydownHandler(event) {
   }
   if (tagMenuVisible.value) {
     if (event.key === "ArrowDown") {
-      tagMenuIndex.value = Math.min(tagMenuIndex.value + 1, tagMatches.value.length - 1);
+      completion.move(1);
       tagMenuItems.value[tagMenuIndex.value]?.scrollIntoView({ block: "nearest" });
     } else if (event.key === "ArrowUp") {
-      tagMenuIndex.value = Math.max(tagMenuIndex.value - 1, 0);
+      completion.move(-1);
       tagMenuItems.value[tagMenuIndex.value]?.scrollIntoView({ block: "nearest" });
     } else if (event.key === "Enter") {
       tagChosen(tagMatches.value[tagMenuIndex.value]);
     } else if (event.key === "Escape") {
-      tagMenuVisible.value = false;
+      completion.hide();
       event.stopPropagation();
     }
   } else if (event.key === "Enter") {

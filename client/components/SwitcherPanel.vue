@@ -83,14 +83,15 @@ import { useRouter } from "vue-router";
 import SwitcherInput from "./SwitcherInput.vue";
 import SwitcherRow from "./SwitcherRow.vue";
 import HighlightedText from "./HighlightedText.vue";
-import { fuzzyFilter, windowAroundMatch } from "../fuzzy.js";
+import {
+  rankSwitcherResults,
+  switcherMatchKind as matchKind,
+  switcherAnnotation as annotation,
+} from "../switcherRanking.js";
 import { useGlobalStore } from "../globalStore.js";
-import { basenameOf, notePath } from "../notePath.js";
+import { notePath } from "../notePath.js";
 import { isMac } from "../keybindings/keys.js";
-
-// The switcher shows at most this many note rows (the pinned full-search
-// row is additional).
-const MAX_RESULTS = 9;
+import { params } from "../constants.js";
 
 defineProps({ placeholder: { type: String, default: "Search or switch to note…" } });
 const emit = defineEmits(["opened"]);
@@ -107,23 +108,6 @@ const input = ref();
 // focus.
 defineExpose({ focus: (event) => input.value?.focus?.(event) });
 
-function matchText(note) {
-  // Weighted, kind-tagged candidates: title outranks alias outranks
-  // filename outranks folder. The full path stays a candidate so
-  // cross-segment queries (e.g. "recipes/soup") keep working. The
-  // basename is its own candidate so notes stay findable by filename
-  // even when their display title diverges from it.
-  return [
-    { text: note.title, weight: 1.5, kind: "title" },
-    ...(note.aliases || []).map((alias) => ({
-      text: alias,
-      weight: 1.4,
-      kind: "alias",
-    })),
-    { text: basenameOf(note.path), weight: 1.3, kind: "file" },
-    { text: note.path, weight: 1, kind: "path" },
-  ];
-}
 function kind(item) {
   return item.search ? "srch:" + item.term : item.path;
 }
@@ -133,50 +117,9 @@ const showSearchRow = computed(() => Boolean(query.value.trim()));
 // matched no notes — never on an untouched/empty query. (results holds
 // note rows only; the pinned search row is its own item.)
 const showEmptyMessage = computed(() => showSearchRow.value && results.value.length === 0);
-const results = computed(() => {
-  const term = query.value.trim();
-  const matchQuery = term.startsWith("#") ? term.slice(1) : term;
-  let ranked = [];
-  if (term) {
-    ranked = fuzzyFilter(matchQuery, globalStore.noteMeta, matchText);
-  } else {
-    const metaByPath = new Map(globalStore.noteMeta.map((n) => [n.path, n]));
-    ranked = globalStore.recentlyOpened
-      .map((path) => metaByPath.get(path) ?? { path, title: basenameOf(path), aliases: [] })
-      .map((item) => ({ item, score: 0, positions: [], matchedText: null, matchedKind: null }));
-  }
-  return ranked.slice(0, MAX_RESULTS);
-});
-
-// What matched — only alias/file/path get a second line; title hits
-// highlight inline in the title itself. A basename-fallback title is the
-// filename, so it reads as "file".
-function matchKind(entry) {
-  if (!entry.matchedKind) return null;
-  if (entry.matchedKind === "title" && entry.item.title === basenameOf(entry.item.path)) {
-    return "file";
-  }
-  return entry.matchedKind;
-}
-
-// Annotation payload for a match row: the matched text (the full path for
-// file/path hits, so context survives) windowed around the first match.
-function annotation(entry) {
-  const kind = matchKind(entry);
-  if (kind === "title" || kind === "alias") {
-    return windowAroundMatch(entry.matchedText, entry.positions);
-  }
-  const path = entry.item.path;
-  if (kind === "path") {
-    return windowAroundMatch(path, entry.positions);
-  }
-  // file: basename positions offset into the full path.
-  const offset = path.length - entry.matchedText.length;
-  return windowAroundMatch(
-    path,
-    entry.positions.map((p) => p + offset),
-  );
-}
+const results = computed(() => rankSwitcherResults(
+  query.value, globalStore.noteMeta, globalStore.recentlyOpened,
+));
 
 function rowTitle(entry) {
   return entry.item.title;
@@ -199,7 +142,7 @@ function openSelected() {
 }
 function open(item) {
   emit("opened");
-  if (item.search) router.push({ name: "search", query: { term: item.term } });
+  if (item.search) router.push({ name: "search", query: { [params.searchTerm]: item.term } });
   else router.push(notePath(item.path));
 }
 // Ctrl/Cmd+N jumps to result N (no-op beyond the row count); Ctrl+Enter
@@ -211,7 +154,7 @@ function jumpTo(n) {
 }
 function goToSearch() {
   emit("opened");
-  router.push({ name: "search", query: { term: query.value.trim() } });
+  router.push({ name: "search", query: { [params.searchTerm]: query.value.trim() } });
 }
 const isMacPlatform = isMac();
 function shortcutLabel(key) {
