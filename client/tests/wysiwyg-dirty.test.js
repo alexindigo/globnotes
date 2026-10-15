@@ -102,7 +102,7 @@ describe("real App/Note/Milkdown immediate dirty consumer", () => {
     view.dispatch(tr);
     expect(app.findComponent({ name: "WysiwygEditor" }).vm.getSnapshot()).toEqual({ ready: true, content: `${kind} Original\n` });
     expect({ unsaved: hasUnsavedWork(), unload: typeof window.onbeforeunload }).toEqual({ unsaved: true, unload: "function" });
-    expect(sessionStorage.getItem("NoteA")).toBeNull();
+    expect(sessionStorage.getItem("globnotes:draft:NoteA")).toBeNull();
   });
 });
 vi.mock("../pluginLoader.js", async () => {

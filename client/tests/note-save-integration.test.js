@@ -11,6 +11,7 @@ import { hasUnsavedWork } from "../sessionActions.js";
 import { Note } from "../classes.js";
 import { dispatchAction } from "../keybindings/dispatcher.js";
 import { TOPICS } from "../bus/index.js";
+import { getStoredToken, isCurrentTokenStored, storeToken } from "../tokenStorage.js";
 
 const holder = vi.hoisted(() => ({ router: null }));
 const deferredWys = vi.hoisted(() => ({ ready: false, content: "" }));
@@ -381,14 +382,53 @@ describe("foreground FIFO through the real Note", () => {
     replace.mockRestore();
   });
 
+  it.each([false, true])("real token-named Note draft and acknowledgement preserve authentication (remembered=%s)", async persist => {
+    window.history.replaceState(null, "", "/token");
+    await holder.router.push("/token"); await flushPromises();
+    storeToken("auth-token", persist);
+    vi.useFakeTimers();
+    try {
+      await enter();
+      expect(document.body.textContent).not.toContain("Draft Detected");
+      await content("token note work");
+      await vi.advanceTimersByTimeAsync(1000);
+      expect((persist ? localStorage : sessionStorage).getItem("globnotes:draft:token")).toBe("token note work");
+      expect(getStoredToken()).toBe("auth-token");
+      expect(isCurrentTokenStored()).toBe(persist);
+      await clickSave();
+      expect(pending[0].args).toEqual(["token", "token", "token note work", "none"]);
+      await acknowledge(0, "token", "token note work");
+      expect(live()).toBe("token note work");
+      expect((persist ? localStorage : sessionStorage).getItem("globnotes:draft:token")).toBeNull();
+      expect(getStoredToken()).toBe("auth-token");
+      expect(isCurrentTokenStored()).toBe(persist);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("the real Note resumes migrated legacy bytes and removes only the acknowledged draft", async () => {
+    sessionStorage.setItem("NoteA", "legacy unsaved work");
+    await enter();
+    expect(document.body.textContent).toContain("Draft Detected");
+    expect(sessionStorage.getItem("NoteA")).toBeNull();
+    expect(sessionStorage.getItem("globnotes:draft:NoteA")).toBe("legacy unsaved work");
+    button("Resume Draft", document.querySelector('[data-modal-top="true"]')).click(); await flushPromises();
+    expect(live()).toBe("legacy unsaved work");
+    expect(hasUnsavedWork()).toBe(true);
+    await clickSave();
+    expect(pending[0].args[2]).toBe("legacy unsaved work");
+    await acknowledge(0, "NoteA", "legacy unsaved work");
+    expect(sessionStorage.getItem("globnotes:draft:NoteA")).toBeNull();
+    expect(hasUnsavedWork()).toBe(false);
+  });
+
   it("an older acknowledgement does not delete a newer owned draft", async () => {
     vi.useFakeTimers();
     try {
       await enter(); await content("A"); await clickSave(); await content("D");
       await vi.advanceTimersByTimeAsync(1000);
-      const before = sessionStorage.getItem("NoteA"); expect(before).toBe("D");
+      const before = sessionStorage.getItem("globnotes:draft:NoteA"); expect(before).toBe("D");
       await acknowledge(0, "NoteA", "A");
-      expect(sessionStorage.getItem("NoteA")).toBe("D"); expect(live()).toBe("D");
+      expect(sessionStorage.getItem("globnotes:draft:NoteA")).toBe("D"); expect(live()).toBe("D");
     } finally { vi.useRealTimers(); }
   });
 
