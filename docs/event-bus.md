@@ -34,9 +34,9 @@ schema enforcement — the topics.js file IS the contract).
 | # | Topic | Payload | Published from |
 |---|---|---|---|
 | 1 | `note:open` | `{ path }` | `router.js` afterEach |
-| 2 | `note:create` | `{ path }` | `Note.vue` saveNew / saveNote |
-| 3 | `note:save` | `{ path }` | `Note.vue` saveExisting / saveNote (content-only) |
-| 4 | `note:rename` | `{ oldPath, newPath }` | `Note.vue` saveExisting / saveNote (path changed) |
+| 2 | `note:create` | `{ path }` | `noteSaveOwner.js` acknowledge (new identity) |
+| 3 | `note:save` | `{ path }` | `noteSaveOwner.js` acknowledge (content-only) |
+| 4 | `note:rename` | `{ oldPath, newPath }` | `noteSaveOwner.js` acknowledge (path changed) |
 | 5 | `note:delete` | `{ path }` | `Note.vue` deleteConfirmedHandler |
 | 6 | `note:refs-rewritten` | `{ oldPath, newPath }` | `SearchResults.vue` fixAllRefs / fixSingleRef |
 | 7 | `file:upload` | `{ name }` | `Note.vue` postAttachment (success) |

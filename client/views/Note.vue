@@ -28,8 +28,8 @@
       :visible="renameAssetsModalVisible"
       :refs="renameRefs"
       :prompt-identity="renamePromptIdentity"
-      @confirm="onRenameDialogConfirm"
-      @cancel="onRenameDialogCancel"
+      @confirm="saveOwner.confirmRename"
+      @cancel="saveOwner.cancelRename"
     />
 
     <!-- Draft Modal -->
@@ -271,12 +271,10 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vu
 
 import {
   apiErrorHandler,
-  createNote,
   deleteNote,
   getNote,
   getNotes,
   operationError,
-  previewRename,
   updateNote,
   uploadFile,
 } from "../api.js";
@@ -320,14 +318,14 @@ import {
   notePath,
   pathBreadcrumbs,
 } from "../notePath.js";
-import { attachmentNameError, notePathError } from "../validators.js";
+import { attachmentNameError } from "../validators.js";
 import { createNoteDraftStore } from "../noteDrafts.js";
 import { createNotePreview } from "../notePreview.js";
 import { createNoteUrlSync } from "../noteUrlSync.js";
 import { decideNavigation, noteResourceIdentity } from "../noteNavigationGate.js";
 import { setBeforeUnloadConfirmation } from "../unloadGuard.js";
 import { registerSessionParticipant } from "../sessionActions.js";
-import { createNoteSaveQueue, NOTE_SAVE_OBSERVATION_MS } from "../noteSaveQueue.js";
+import { createNoteSaveOwner } from "../noteSaveOwner.js";
 
 const props = defineProps({
   path: String,
@@ -373,10 +371,10 @@ const editFolder = ref("");
 // follows the buffer's first H1 (debounced). First user edit stops it.
 const titleTouched = ref(false);
 const folderDatalistId = "folder-datalist";
-const renameAssetsModalVisible = ref(false);
-const renameRefs = ref([]);
-let resolveRenameDialog = null;
-const renamePromptIdentity = shallowRef(null);
+const saveOwnerState = shallowRef({ pendingRenamePrompt: null });
+const renameAssetsModalVisible = computed(() => !!saveOwnerState.value.pendingRenamePrompt);
+const renameRefs = computed(() => saveOwnerState.value.pendingRenamePrompt?.refs ?? []);
+const renamePromptIdentity = computed(() => saveOwnerState.value.pendingRenamePrompt?.identity ?? null);
 const lastMovedFiles = ref([]);
 const rewriteScanLink = computed(() => {
   const files = lastMovedFiles.value;
@@ -467,11 +465,7 @@ const saveChangesMessage = computed(() => queueState.value.unresolved
   ? "Save work is retained. Discard removes queued saves and current unsaved changes only when all sent writes have a known outcome."
   : "Do you want to save your changes?");
 const ownerId = createUuid();
-let editSession = 0;
-let saveQueue = null;
 let applyingAcknowledgement = false;
-let closeIntent = null;
-const noteAliases = new Set();
 const drafts = createNoteDraftStore();
 let loadGeneration = 0;
 const currentResourceIdentity = computed(() => noteResourceIdentity(props.path, route.query));
@@ -487,17 +481,61 @@ const urlSync = createNoteUrlSync({
     viewLine: viewLine.value,
   }),
 });
+const saveOwner = createNoteSaveOwner({
+  ownerId,
+  getState: () => ({
+    note: note.value,
+    isNewNote: isNewNote.value,
+    requestedPath: newPath.value,
+    contentRevision: contentRevision.value,
+    pathRevision: pathRevision.value,
+  }),
+  getBuffer: currentBuffer,
+  isContentChanged,
+  applyNote: result => { note.value = new Note(result); },
+  applyPath: path => {
+    newPath.value = path;
+    editBasename.value = basenameOf(path ?? "");
+    editFolder.value = directoryFromPath(path ?? "");
+  },
+  applyContentAcknowledgement: content => {
+    if (!editor.value) editorInitialValue.value = content;
+    else if (editor.value.applyAcknowledgement) {
+      applyingAcknowledgement = true;
+      try { editor.value.applyAcknowledgement(content); }
+      finally { applyingAcknowledgement = false; }
+    }
+  },
+  restoreContent: content => {
+    editorInitialValue.value = content;
+    applyingAcknowledgement = true;
+    try { editor.value?.setMarkdown(content); }
+    finally { applyingAcknowledgement = false; }
+  },
+  publishTitle,
+  setMovedFiles: files => { lastMovedFiles.value = files; },
+  urlSync,
+  updateRenamedLinks,
+  drafts,
+  requestDecision: requestNoteDecision,
+  closeNote,
+  saveEditorPreference: saveDefaultEditorMode,
+  changed: state => {
+    saveOwnerState.value = state;
+    queueState.value = state.queue;
+  },
+  refreshDirtyState,
+  invalid: message => toast.add(getToastOptions(message, "Invalid", "error")),
+  held: () => toast.add(getToastOptions("This Save was captured and held. The queue is paused; no retry or resume was performed.", "Save held", "error")),
+  failed: noteSaveFailure,
+});
 
 function init() {
-  if (urlSync.consumeAcknowledgedResource(props.path, saveQueue?.state().sessionId)) return;
-  revokeRenamePrompt(resolveRenameDialog);
-  saveQueue?.dispose();
+  if (urlSync.consumeAcknowledgedResource(props.path, saveOwner.queueState()?.sessionId)) return;
+  saveOwner.reset();
   const generation = ++loadGeneration;
   const resource = currentResourceIdentity.value;
   const isCurrentLoad = () => generation === loadGeneration && resource === currentResourceIdentity.value;
-  saveQueue = null;
-  queueState.value = { status: "idle", unresolved: false, queued: [], jobs: [], canDiscard: true };
-  noteAliases.clear();
   drafts.release(); // release ownership, never erase another logical note's draft
   isNoteNotFound.value = false;
   loadingIndicator.value.setLoading();
@@ -593,7 +631,7 @@ function enterEditFromFragment(frag = parseFragment(window.location.hash)) {
 // exits wait on the Save/Discard/Cancel modal; cancel reverts the URL and
 // keeps the session exactly where it was.
 async function gateNavigation(to) {
-  const saveState = saveQueue?.state();
+  const saveState = saveOwner.queueState();
   const action = decideNavigation({
     ...urlSync.state(),
     ownerId,
@@ -639,13 +677,13 @@ async function gateNavigation(to) {
   // For a push the address never committed. Either way the modal drives
   // the actual transition; Cancel leaves everything exactly as it was.
   const navWasPop = window.location.hash === to.hash;
-  const target = { to, pop: navWasPop, sessionId: saveQueue?.state().sessionId };
+  const target = { to, pop: navWasPop, sessionId: saveOwner.queueState()?.sessionId };
   pendingNavTarget = target;
   if (action.type === "settle") {
     // Abort the real route immediately; a bounded owned barrier decides
     // whether a later transition can be requested with this same target.
     settlePendingWrites().then(ok => {
-      if (pendingNavTarget !== target || target.sessionId !== saveQueue?.state().sessionId) return;
+      if (pendingNavTarget !== target || target.sessionId !== saveOwner.queueState()?.sessionId) return;
       if (!ok) { pendingNavTarget = null; return; }
       if (isContentChanged()) isSaveChangesModalVisible.value = true;
       else { pendingNavTarget = null; exitEditState(); commitNavTarget(to, navWasPop); }
@@ -670,36 +708,11 @@ function requestNoteDecision() {
     .finally(() => { pendingDecisionPromise = null; });
   return pendingDecisionPromise;
 }
-async function settlePendingWrites() {
-  const queue = saveQueue;
-  if (!queue) return true;
-  const before = queue.state();
-  if (before.status === "paused") return before.canDiscard;
-  const result = await queue.awaitSettled({ deadline: Date.now() + NOTE_SAVE_OBSERVATION_MS });
-  return queue === saveQueue && result.safe === true;
-}
+function settlePendingWrites() { return saveOwner.settle(); }
 function discardOwnedWork() {
-  if (!saveQueue?.discard()) return false;
-  clearDraft();
-  const base = saveQueue.state().acknowledged ?? note.value;
-  newPath.value = base.path;
-  editBasename.value = basenameOf(base.path ?? "");
-  editFolder.value = directoryFromPath(base.path ?? "");
-  editorInitialValue.value = base.content ?? "";
-  applyingAcknowledgement = true;
-  try { editor.value?.setMarkdown(editorInitialValue.value); }
-  finally { applyingAcknowledgement = false; }
-  refreshDirtyState();
-  return true;
+  return saveOwner.discard();
 }
-async function resolveOwnedWork() {
-  if (!await settlePendingWrites()) return false;
-  if (!isContentChanged()) return true;
-  const decision = await requestNoteDecision();
-  if (decision === "save") return saveForNavigation();
-  if (decision === "discard") return discardOwnedWork();
-  return false;
-}
+function resolveOwnedWork() { return saveOwner.resolve(); }
 
 // The Note registers its own unsaved-state/save/discard callbacks with the
 // session coordinator; the coordinator never reads editor internals.
@@ -768,7 +781,7 @@ function setEditMode() {
   noteDirty.value = editorInitialValue.value != note.value.content;
   contentRevision.value = 0;
   pathRevision.value = 0;
-  startSaveOwner();
+  saveOwner.start();
   editorMode.value = pendingEditorMode || defaultEditorMode.value;
   editorInitialLine.value = pendingInitialLine;
   editorLine.value = pendingInitialLine || null;
@@ -855,111 +868,7 @@ async function deleteConfirmedHandler() {
 
 // Note Saving
 function saveHandler(close = false) {
-  saveDefaultEditorMode();
-  const receipt = submitSave(close ? "save-close" : "save", "prompt");
-  if (receipt && close && !receipt.held) closeIntent = receipt.submissionId;
-  return receipt;
-}
-
-function submitSave(intent, attachmentPolicy) {
-  const titleError = notePathError(newPath.value);
-  if (titleError) {
-    toast.add(getToastOptions(titleError, "Invalid", "error"));
-    return null;
-  }
-  const receipt = saveQueue.submit({ content: currentBuffer(), requestedPath: newPath.value,
-    contentRevision: contentRevision.value, pathRevision: pathRevision.value,
-    draftKey: newPath.value, draftRevision: contentRevision.value, intent, attachmentPolicy });
-  if (receipt.held) toast.add(getToastOptions("This Save was captured and held. The queue is paused; no retry or resume was performed.", "Save held", "error"));
-  return receipt;
-}
-
-function startSaveOwner() {
-  revokeRenamePrompt(resolveRenameDialog);
-  saveQueue?.dispose();
-  closeIntent = null;
-  const startedNew = isNewNote.value;
-  const sessionId = `${ownerId}:${++editSession}`;
-  saveQueue = createNoteSaveQueue({
-    sessionId,
-    initial: startedNew ? null : { path: note.value.path, content: note.value.content ?? "" },
-    changed: state => {
-      queueState.value = state;
-      if (resolveRenameDialog && !resolveRenameDialog.isCurrent()) revokeRenamePrompt(resolveRenameDialog);
-      refreshDirtyState();
-    },
-    prepare: prepareSave,
-    send: (snapshot, context, preparation) => context.sourcePath
-      ? updateNote(context.sourcePath, context.targetPath, snapshot.content, preparation.fileRefs)
-      : createNote(context.targetPath, snapshot.content),
-    acknowledge: applySaveAcknowledgement,
-    failed: error => { closeIntent = null; noteSaveFailure(error); },
-    canResolveLate: (_, result) => currentBuffer() === result.content && newPath.value === result.path,
-    drained: snapshot => {
-      clearAcknowledgedDrafts(snapshot);
-      if (closeIntent) {
-        closeIntent = null;
-        resolveOwnedWork("Save and close").then(ok => { if (ok && saveQueue?.state().sessionId === sessionId) closeNote(); });
-      } else if (startedNew && snapshot.intent === "save" && !isContentChanged()) closeNote();
-    },
-  });
-  queueState.value = saveQueue.state();
-  if (!startedNew) noteAliases.add(note.value.path);
-}
-
-async function prepareSave(snapshot, context) {
-  const queue = saveQueue;
-  const session = editSession;
-  const isCurrent = () => context.isPreparationCurrent() && queue === saveQueue && session === editSession && snapshot.sessionId === queue.state().sessionId;
-  const requireCurrent = () => {
-    if (!isCurrent()) throw new Error("Obsolete attachment preparation abandoned.");
-  };
-  requireCurrent();
-  if (!context.sourcePath || snapshot.attachmentPolicy === "none" || directoryFromPath(context.sourcePath) === directoryFromPath(context.targetPath)) return { fileRefs: "none" };
-  const refs = await previewRename(context.sourcePath, context.targetPath);
-  requireCurrent();
-  if (!Array.isArray(refs)) throw new Error("Invalid rename preview; no write was sent.");
-  if (!refs.length) return { fileRefs: "none" };
-  const identity = Object.freeze({ sessionId: snapshot.sessionId, jobId: snapshot.submissionId, queue, session, isCurrent });
-  requireCurrent();
-  renameRefs.value = refs;
-  renamePromptIdentity.value = identity;
-  const fileRefs = await new Promise((resolve, reject) => {
-    requireCurrent();
-    resolveRenameDialog = { identity, isCurrent, resolve, reject };
-    renameAssetsModalVisible.value = true;
-  });
-  requireCurrent();
-  return { fileRefs };
-}
-
-async function applySaveAcknowledgement(snapshot, result, context) {
-  const newer = saveQueue.state().queued;
-  const ownsContent = contentRevision.value === snapshot.contentRevision && !newer.length;
-  const ownsPath = pathRevision.value === snapshot.pathRevision && !newer.some(job => job.snapshot.pathRevision > snapshot.pathRevision);
-  if (context.sourcePath) noteAliases.add(context.sourcePath);
-  noteAliases.add(result.path);
-  note.value = new Note(result);
-  if (ownsPath) {
-    newPath.value = result.path;
-    editBasename.value = basenameOf(result.path);
-    editFolder.value = directoryFromPath(result.path);
-  }
-  if (ownsContent && currentBuffer() !== result.content) {
-    if (!editor.value) editorInitialValue.value = result.content;
-    else if (editor.value.applyAcknowledgement) {
-      applyingAcknowledgement = true;
-      try { editor.value.applyAcknowledgement(result.content); }
-      finally { applyingAcknowledgement = false; }
-    }
-  }
-  publishTitle();
-  if (!context.sourcePath) publish(TOPICS.NOTE_CREATE, { path: result.path });
-  else if (context.sourcePath !== result.path) publish(TOPICS.NOTE_RENAME, { oldPath: context.sourcePath, newPath: result.path });
-  else publish(TOPICS.NOTE_SAVE, { path: result.path });
-  lastMovedFiles.value = result.movedFiles ?? [];
-  await urlSync.canonicalSaveRoute(snapshot, result.path);
-  if (context.sourcePath && context.sourcePath !== result.path) updateRenamedLinks(context.sourcePath, result.path);
+  return saveOwner.save(close);
 }
 
 function refreshDirtyState() {
@@ -967,11 +876,6 @@ function refreshDirtyState() {
   unsavedChanges.value = dirty;
   noteDirty.value = dirty;
   setBeforeUnloadConfirmation(dirty);
-}
-
-function clearAcknowledgedDrafts(snapshot) {
-  if (isContentChanged() || saveQueue.state().unresolved) return;
-  drafts.clearAcknowledged(snapshot.draftRevision);
 }
 
 // After a rename, the client drives link updates across the vault: find
@@ -986,7 +890,7 @@ async function updateRenamedLinks(oldPath, newPath) {
       .filter((t) => t !== oldPath && t !== newPath);
     let updated = 0;
     for (const title of candidates) {
-      if (noteAliases.has(title) || title === saveQueue?.state().acknowledged?.path) continue;
+      if (saveOwner.ownsPath(title)) continue;
       const other = await getNote(title);
       const newContent = rewriteRenamedLinks(
         other.content,
@@ -995,7 +899,7 @@ async function updateRenamedLinks(oldPath, newPath) {
         title,
       );
       if (newContent !== other.content) {
-        if (noteAliases.has(title) || title === saveQueue?.state().acknowledged?.path) continue;
+        if (saveOwner.ownsPath(title)) continue;
         await updateNote(title, title, newContent);
         updated++;
       }
@@ -1013,31 +917,6 @@ async function updateRenamedLinks(oldPath, newPath) {
     // Link updates are best-effort; the rename itself already succeeded.
     console.error("link update failed", e);
   }
-}
-
-function detachRenamePrompt(prompt) {
-  if (!prompt || resolveRenameDialog !== prompt) return false;
-  resolveRenameDialog = null;
-  renameAssetsModalVisible.value = false;
-  renamePromptIdentity.value = null;
-  renameRefs.value = [];
-  return true;
-}
-function revokeRenamePrompt(prompt) {
-  if (!detachRenamePrompt(prompt)) return;
-  prompt.reject(Object.assign(new Error("Attachment preparation revoked; saves are retained."), { cancelled: true }));
-}
-function onRenameDialogConfirm(strategy, identity) {
-  const prompt = resolveRenameDialog;
-  if (!prompt || prompt.identity !== identity || !prompt.isCurrent()) return;
-  detachRenamePrompt(prompt);
-  prompt.resolve(strategy);
-}
-function onRenameDialogCancel(identity) {
-  const prompt = resolveRenameDialog;
-  if (!prompt || prompt.identity !== identity || !prompt.isCurrent()) return;
-  detachRenamePrompt(prompt);
-  prompt.reject(Object.assign(new Error("Attachment preparation cancelled; saves are retained."), { cancelled: true }));
 }
 
 function noteSaveFailure(error) {
@@ -1105,7 +984,7 @@ async function closeHandler() {
 // navigation that triggered the exit commits it (guards), or closeNote
 // writes the fragment-less URL explicitly (toggle/Esc close).
 function exitEditState() {
-  revokeRenamePrompt(resolveRenameDialog);
+  saveOwner.revokeRenamePrompt();
   clearContentChangedTimeout();
   urlSync.clearCaretSyncTimer();
   editMode.value = false;
@@ -1116,25 +995,16 @@ function exitEditState() {
   setBeforeUnloadConfirmation(false);
   publishTitle();
   publish(TOPICS.NOTE_EDIT_END, { path: note.value.path });
-  saveQueue?.dispose();
-  saveQueue = null;
-  queueState.value = { status: "idle", unresolved: false, queued: [], jobs: [], canDiscard: true };
+  saveOwner.end();
 }
 
 // Persist the work without any navigation of its own — used when a pending
 // navigation is gated on it. The gated navigation commits the URL change.
-async function saveForNavigation() {
-  saveDefaultEditorMode();
-  const queue = saveQueue;
-  const receipt = submitSave("session", "none");
-  if (!receipt || receipt.held) return false;
-  const outcome = await queue.awaitSettled({ deadline: Date.now() + NOTE_SAVE_OBSERVATION_MS });
-  return queue === saveQueue && outcome.safe && !isContentChanged();
-}
+function saveForNavigation() { return saveOwner.saveForNavigation(); }
 
 function closeNote() {
   if (isContentChanged() || queueState.value.unresolved) return;
-  const acknowledgedPath = saveQueue?.state().acknowledged?.path;
+  const acknowledgedPath = saveOwner.queueState()?.acknowledged?.path;
   exitEditState();
   if (acknowledgedPath) router.push({ path: notePath(acknowledgedPath), hash: "" });
   else router.push({ name: "home" });
@@ -1296,7 +1166,7 @@ function saveDefaultEditorMode() {
 function isContentChanged() {
   if (queueState.value.unresolved) return true;
   if (!editMode.value) return false;
-  const acknowledged = saveQueue?.state().acknowledged ?? note.value;
+  const acknowledged = saveOwner.queueState()?.acknowledged ?? note.value;
   return newPath.value !== acknowledged.path || currentBuffer() !== (acknowledged.content ?? "");
 }
 
@@ -1329,8 +1199,7 @@ onBeforeUnmount(() => {
   preview.dispose();
   if (titleFollowTimer) clearTimeout(titleFollowTimer);
   loadGeneration++;
-  revokeRenamePrompt(resolveRenameDialog);
-  saveQueue?.dispose();
+  saveOwner.dispose();
   disposeSessionParticipant();
   if (pendingSessionDecision) {
     pendingSessionDecision("cancel");
