@@ -14,31 +14,38 @@ export function createNotePreview({ render = renderPreview, delay = 400, changed
   let timer = null;
   let html = "";
   let disposed = false;
+  let generation = 0;
   const state = () => Object.freeze({ html });
 
   function schedule({ isActive, getBuffer }) {
     if (disposed || !isActive()) return;
     if (timer != null) clearTimeout(timer);
+    const owner = generation;
+    const isCurrent = () => !disposed && owner === generation;
     timer = setTimeout(async () => {
       timer = null;
-      if (disposed || !isActive()) return;
+      if (!isCurrent() || !isActive()) return;
       try {
-        const rendered = await render(getBuffer, () => !disposed);
-        if (disposed) return;
+        const rendered = await render(getBuffer, isCurrent);
+        if (!isCurrent()) return;
         html = rendered;
       } catch {
-        if (disposed) return;
+        if (!isCurrent()) return;
         html = '<p class="render-error">Preview render failed.</p>';
       }
       changed(state());
     }, delay);
   }
 
-  function dispose() {
-    disposed = true;
+  function cancel() {
+    generation++;
     if (timer != null) clearTimeout(timer);
     timer = null;
   }
+  function dispose() {
+    disposed = true;
+    cancel();
+  }
 
-  return { state, schedule, dispose };
+  return { state, schedule, cancel, dispose };
 }

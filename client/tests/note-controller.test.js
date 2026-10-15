@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isReadonly, reactive } from "vue";
 import { createNoteController } from "../noteController.js";
+import { createNotePreview } from "../notePreview.js";
 import { TOPICS } from "../bus/index.js";
 import { getNote, deleteNote, updateNote, createNote } from "../api.js";
 
@@ -22,7 +23,7 @@ function fixture(overrides = {}, contextValues = {}) {
   const router = { options: { history: { base: "" } }, currentRoute: { value: { fullPath: "/folder/P#source" } },
     push: vi.fn(), replace: vi.fn(async path => { router.currentRoute.value.fullPath = path; }) };
   const drafts = { load: vi.fn(() => null), release: vi.fn(), save: vi.fn(), clear: vi.fn(), clearAcknowledged: vi.fn() };
-  const preview = { schedule: vi.fn(), dispose: vi.fn() };
+  const preview = { schedule: vi.fn(), cancel: vi.fn(), dispose: vi.fn() };
   const handlers = new Map(), unsubs = [];
   let participant;
   const unregister = vi.fn();
@@ -201,5 +202,33 @@ describe("note workflow ownership", () => {
     expect(updateNote).toHaveBeenCalledWith("folder/P", "folder/P", "Saved", "none");
     expect(f.controller.isDirty()).toBe(false); expect(createNote).not.toHaveBeenCalled();
     await f.controller.deleteConfirmedHandler(); expect(deleteNote).toHaveBeenCalledWith("folder/P");
+  });
+  it("dispose retires the pending caret URL write", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter(); f.location.hash = "#source";
+    f.router.replace.mockClear(); f.router.push.mockClear();
+    f.controller.onSourceSelection({ from: 3, to: 3 }); f.controller.dispose();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(f.router.replace).not.toHaveBeenCalled(); expect(f.router.push).not.toHaveBeenCalled();
+  });
+  it.each(["exit", "resource-reset"])("%s retires new-note title and draft timers", async ending => {
+    const f = fixture({}, { path: undefined, query: { path: "Initial" } }); await f.controller.mount();
+    f.controller.registerEditor(f.port); f.input("# Obsolete title");
+    expect(vi.getTimerCount()).toBe(2);
+    if (ending === "exit") f.participant().discard();
+    else { f.context.path = "Latest"; await f.controller.init(); }
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1000); expect(f.drafts.save).not.toHaveBeenCalled();
+    expect(f.controller.state.editBasename).not.toBe("Obsolete title");
+  });
+  it.each(["exit", "mode-switch", "resource-reset"])("%s retires the pending preview timer", async ending => {
+    const render = vi.fn(async () => "obsolete");
+    const f = fixture({ previewFactory: options => createNotePreview({ ...options, render }) });
+    await f.controller.mount(); f.enter(); f.controller.setEditorMode("preview"); f.controller.registerEditor(null);
+    expect(vi.getTimerCount()).toBe(1);
+    if (ending === "exit") f.participant().discard();
+    else if (ending === "mode-switch") f.controller.setEditorMode("markdown");
+    else { f.context.path = "Latest"; await f.controller.init(); }
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(400); expect(render).not.toHaveBeenCalled();
   });
 });

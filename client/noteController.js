@@ -158,6 +158,7 @@ export function createNoteController({
   function setEditorMode(mode, writeUrl = true) {
     if (mode === editorMode.value) return;
     urlSync.clearCaretSyncTimer();
+    if (editorMode.value === "preview") preview.cancel();
     editorInitialValue.value = currentBuffer();
     editorMode.value = mode;
     saveEditorPreference(mode);
@@ -179,6 +180,7 @@ export function createNoteController({
 
   function init() {
     if (urlSync.consumeAcknowledgedResource(getContext().path, saveOwner.queueState()?.sessionId)) return;
+    clearEditTimers();
     saveOwner.reset();
     const generation = ++loadGeneration, resource = resourceIdentity.value;
     const isCurrentLoad = () => generation === loadGeneration && resource === resourceIdentity.value;
@@ -334,7 +336,7 @@ export function createNoteController({
     urlSync.writeFragment(null, true);
   }
   function exitEditState() {
-    saveOwner.revokeRenamePrompt(); clearContentChangedTimeout(); urlSync.clearCaretSyncTimer();
+    saveOwner.revokeRenamePrompt(); clearEditTimers();
     editMode.value = false; editorLine.value = null; editorInitialLine.value = null;
     noteDirty.value = false; unsavedChanges.value = false; setUnload(false);
     publishTitle(); publishFact(TOPICS.NOTE_EDIT_END, { path: note.value.path }); saveOwner.end();
@@ -348,7 +350,19 @@ export function createNoteController({
     else router.push({ name: "home" });
   }
   function startContentChangedTimeout() { clearContentChangedTimeout(); contentChangedTimeout = setTimeout(contentChangedHandler, 1000); }
-  function clearContentChangedTimeout() { if (contentChangedTimeout != null) clearTimeout(contentChangedTimeout); }
+  function clearContentChangedTimeout() {
+    if (contentChangedTimeout != null) clearTimeout(contentChangedTimeout);
+    contentChangedTimeout = null;
+  }
+  // Every edit-session boundary retires the same owned delayed work. Preview
+  // cancellation also fences an already-started render without blocking re-entry.
+  function clearEditTimers() {
+    clearContentChangedTimeout();
+    if (titleFollowTimer != null) clearTimeout(titleFollowTimer);
+    titleFollowTimer = null;
+    urlSync.clearCaretSyncTimer();
+    preview.cancel();
+  }
   function contentChangedHandler() {
     if (isDirty()) { unsavedChanges.value = true; setUnload(true); drafts.save(newPath.value, currentBuffer(), contentRevision.value); }
     else { unsavedChanges.value = false; setUnload(false); clearDraft(); }
@@ -383,11 +397,11 @@ export function createNoteController({
   function routeHashChanged(hash) { if (!editMode.value) viewLine.value = viewLineFromFragment(parseFragment(hash), viewLine.value); }
   function captureEditorForRemount() { if (editMode.value && editorMode.value === "wysiwyg" && editor) editorInitialValue.value = currentBuffer(); }
   function dispose() {
+    clearEditTimers();
     preview.dispose();
-    if (titleFollowTimer) clearTimeout(titleFollowTimer);
     loadGeneration++; saveOwner.dispose(); disposeSessionParticipant();
     if (pendingSessionDecision) { pendingSessionDecision("cancel"); pendingSessionDecision = null; }
-    clearContentChangedTimeout(); editorActionUnsubs.forEach(fn => fn()); editorActionUnsubs = [];
+    editorActionUnsubs.forEach(fn => fn()); editorActionUnsubs = [];
   }
   const state = readonly(reactive({
     canModify, isNewNote, editMode, isSaveChangesModalVisible, isDeleteModalVisible, isDraftModalVisible,

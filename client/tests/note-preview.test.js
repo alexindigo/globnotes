@@ -144,4 +144,33 @@ describe("unsaved note preview", () => {
     expect(changed).not.toHaveBeenCalled();
     expect(preview.state().html).toBe("");
   });
+  it("cancel clears a pending timer while allowing a fresh edit session to schedule", async () => {
+    const render = vi.fn(async getBuffer => getBuffer()), changed = vi.fn();
+    const preview = createNotePreview({ render, changed });
+    preview.schedule({ isActive: () => true, getBuffer: () => "retired" });
+    preview.cancel(); expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(400); expect(render).not.toHaveBeenCalled();
+    preview.schedule({ isActive: () => true, getBuffer: () => "current" });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(changed).toHaveBeenCalledExactlyOnceWith({ html: "current" });
+  });
+  it.each(["success", "failure"])("cancel fences retired render %s across re-entry", async outcome => {
+    const old = deferred(), changed = vi.fn();
+    const render = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce("current");
+    const preview = createNotePreview({ render, changed });
+    const intent = { isActive: () => true, getBuffer: () => "buffer" };
+    preview.schedule(intent); await vi.advanceTimersByTimeAsync(400); preview.cancel();
+    preview.schedule(intent); await vi.advanceTimersByTimeAsync(400);
+    if (outcome === "success") old.resolve("retired"); else old.reject(Error("retired failure"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(changed).toHaveBeenCalledExactlyOnceWith({ html: "current" }); expect(preview.state().html).toBe("current");
+  });
+  it("cancel during plugin discovery prevents retired transport after re-entry", async () => {
+    const old = deferred(), changed = vi.fn(); getPlugins.mockReturnValueOnce(old.promise);
+    const preview = createNotePreview({ changed });
+    const intent = { isActive: () => true, getBuffer: () => "buffer" };
+    preview.schedule(intent); await vi.advanceTimersByTimeAsync(400); preview.cancel();
+    old.resolve([]); await vi.advanceTimersByTimeAsync(0);
+    expect(renderBuffer).not.toHaveBeenCalled(); expect(changed).not.toHaveBeenCalled();
+  });
 });

@@ -498,6 +498,18 @@ describe("foreground FIFO through the real Note", () => {
       expect(document.querySelector(".preview-buffer")).toBeNull();
     } finally { vi.useRealTimers(); }
   });
+  it("leaving edit state cancels the retained preview timer before it can render", async () => {
+    await enter(); await content("retired edit-session preview");
+    vi.useFakeTimers();
+    try {
+      button("Preview").click(); await flushPromises();
+      button("Edit").click(); await flushPromises();
+      button("Discard", document.querySelector('[data-modal-top="true"]')).click(); await flushPromises();
+      expect(document.querySelector(".preview-buffer")).toBeNull();
+      await vi.advanceTimersByTimeAsync(400); await flushPromises();
+      expect(renderBuffer).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
   it("an invalid filename click is rejected without changing A's admitted request", async () => {
     await enter(); await content("A"); await clickSave();
     await wrapper.find('input[placeholder="Title"]').setValue("bad?"); await content("D"); await clickSave();
