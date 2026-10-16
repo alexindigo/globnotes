@@ -71,7 +71,29 @@ export interface RenderRecoveryAdmission {
   readonly effective: PermissionDeclaration;
   readonly writable?: boolean;
 }
+/** Internal host liveness seam; all other deadlines retain their native clocks. */
+export interface HostLivenessScheduler {
+  now(): number;
+  setTimeout(
+    callback: () => void,
+    milliseconds: number,
+  ): ReturnType<typeof setTimeout>;
+  clearTimeout(id: ReturnType<typeof setTimeout>): void;
+  setInterval(
+    callback: () => void,
+    milliseconds: number,
+  ): ReturnType<typeof setInterval>;
+  clearInterval(id: ReturnType<typeof setInterval>): void;
+}
+const NATIVE_LIVENESS: HostLivenessScheduler = {
+  now: () => performance.now(),
+  setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
+  clearTimeout: (id) => clearTimeout(id),
+  setInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+  clearInterval: (id) => clearInterval(id),
+};
 export interface HostOptions {
+  liveness?: HostLivenessScheduler;
   role?: "render" | "service";
   writable?: boolean;
   snapshot?: JsonValues;
@@ -107,8 +129,12 @@ interface Slot {
   retireGeneration(): void;
   source?: Source;
   exports: Set<string>;
-  lastHeartbeat: number;
-  provenAlive: boolean;
+  startIdentity: object;
+  initialization: "pending" | "running" | "complete";
+  heartbeatEstablished: boolean;
+  lastHeartbeatReceipt: number | null;
+  activationDeadline: number;
+  steadyStartedAt: number | null;
   lastDispatch: number;
   /** FIFO lane: renders, observer invocations, commands — one at a time. */
   active: Job | null;
@@ -146,6 +172,7 @@ export class PluginHost {
     );
   }
   readonly limits: PluginLimits;
+  private readonly liveness: HostLivenessScheduler;
   private slots: Slot[] = [];
   private queue: Job[] = [];
   /** Service guards have their own bounded pending admission, independent of FIFO. */
@@ -167,6 +194,7 @@ export class PluginHost {
     private readonly options: HostOptions = {},
   ) {
     this.role = options.role ?? "render";
+    this.liveness = options.liveness ?? NATIVE_LIVENESS;
     this.limits = { ...PLUGIN_LIMITS, ...options.limits };
     if (this.role === "render" && !manifest.entry) {
       throw new Error("render host requires a rendering entry");
@@ -218,7 +246,10 @@ export class PluginHost {
       for (let index = 0; index < this.workerCount; index++) {
         owned.push(this.spawn());
       }
-      this.watchdog = setInterval(() => this.checkHeartbeats(), HEARTBEAT_MS);
+      this.watchdog = this.liveness.setInterval(
+        () => this.checkHeartbeats(),
+        HEARTBEAT_MS,
+      );
       await Promise.all(owned.map((slot) => slot.readyPromise));
       if (this.startIdentity !== identity) {
         throw new Error("plugin start owner retired");
@@ -232,7 +263,37 @@ export class PluginHost {
     return !this.stopped && !this.failedDetail && !slot.retired &&
       this.slots.includes(slot);
   }
+  private livenessCurrent(slot: Slot, identity: object): boolean {
+    return !this.stopping && this.startIdentity === identity &&
+      slot.startIdentity === identity && this.valid(slot);
+  }
+  /** The original absolute budget also fences messages when timer delivery is late. */
+  private activationExpired(slot: Slot, now = this.liveness.now()): boolean {
+    if (!slot.ready && now >= slot.activationDeadline) {
+      this.fail(slot, "plugin activation deadline exceeded");
+      return true;
+    }
+    return false;
+  }
+  private tryQualifySlot(slot: Slot, identity: object): void {
+    if (!this.livenessCurrent(slot, identity) || slot.ready) return;
+    const now = this.liveness.now();
+    if (this.activationExpired(slot, now)) return;
+    if (slot.initialization !== "complete" || !slot.heartbeatEstablished) {
+      return;
+    }
+    slot.steadyStartedAt = now;
+    slot.ready = true;
+    if (slot.bootTimer !== undefined) {
+      this.liveness.clearTimeout(slot.bootTimer);
+      slot.bootTimer = undefined;
+    }
+    slot.background.settle({ status: "settled" });
+    slot.resolveReady();
+    this.pump();
+  }
   private spawn(admission?: RenderRecoveryAdmission): Slot {
+    const identity = this.startIdentity!;
     const entry = this.role === "service"
       ? this.manifest.runtime.server
       : this.manifest.entry;
@@ -252,366 +313,408 @@ export class PluginHost {
     if (typeof permissions !== "object") {
       throw new Error("explicit Worker permissions are required");
     }
+    const origin = this.liveness.now();
     const worker = new Worker(WORKER_URL, {
       type: "module",
       deno: {
         permissions,
       },
     });
-    let resolveReady!: () => void;
-    let rejectReady!: (error: Error) => void;
-    const readyPromise = new Promise<void>((resolve, reject) => {
-      resolveReady = resolve;
-      rejectReady = reject;
-    });
-    // Replacement slots can fail before a consumer awaits the readiness promise.
-    readyPromise.catch(() => undefined);
-    const generationRetired = Promise.withResolvers<void>();
-    const slot: Slot = {
-      worker,
-      generation: createUuid(),
-      ready: false,
-      usable: true,
-      retired: false,
-      generationRetired: generationRetired.promise,
-      retireGeneration: generationRetired.resolve,
-      source: admission?.source
-        ? structuredClone(admission.source)
-        : !admission && this.options.source
-        ? structuredClone(this.options.source)
-        : undefined,
-      exports: new Set(),
-      lastHeartbeat: Date.now(),
-      provenAlive: false,
-      lastDispatch: 0,
-      active: null,
-      activeGuard: null,
-      resolveReady,
-      rejectReady,
-      readyPromise,
-      background: executionContext("background", false),
-      contexts: new Map(),
-      permissions: {
-        network: canonicalScopes(permissions.net ?? false),
-        imports: canonicalScopes(permissions.import ?? false),
-      },
-      receipts: new Map(),
-    };
-    const bootDeadline = setTimeout(
-      () => this.fail(slot, "plugin activation deadline exceeded"),
-      this.limits.activationMs,
-    );
-    slot.bootTimer = bootDeadline;
-    worker.onmessage = ({ data }: MessageEvent<WorkerMessage>) => {
-      if (!data || typeof data !== "object") {
-        this.fail(slot, "invalid worker envelope");
-        return;
+    let constructed: Slot | undefined;
+    try {
+      let resolveReady!: () => void;
+      let rejectReady!: (error: Error) => void;
+      const readyPromise = new Promise<void>((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+      });
+      // Replacement slots can fail before a consumer awaits the readiness promise.
+      readyPromise.catch(() => undefined);
+      const generationRetired = Promise.withResolvers<void>();
+      const slot: Slot = {
+        worker,
+        generation: createUuid(),
+        ready: false,
+        usable: true,
+        retired: false,
+        generationRetired: generationRetired.promise,
+        retireGeneration: generationRetired.resolve,
+        source: admission?.source
+          ? structuredClone(admission.source)
+          : !admission && this.options.source
+          ? structuredClone(this.options.source)
+          : undefined,
+        exports: new Set(),
+        startIdentity: identity,
+        initialization: "pending",
+        heartbeatEstablished: false,
+        lastHeartbeatReceipt: null,
+        activationDeadline: origin + this.limits.activationMs,
+        steadyStartedAt: null,
+        lastDispatch: 0,
+        active: null,
+        activeGuard: null,
+        resolveReady,
+        rejectReady,
+        readyPromise,
+        background: executionContext("background", false),
+        contexts: new Map(),
+        permissions: {
+          network: canonicalScopes(permissions.net ?? false),
+          imports: canonicalScopes(permissions.import ?? false),
+        },
+        receipts: new Map(),
+      };
+      constructed = slot;
+      const remaining = slot.activationDeadline - this.liveness.now();
+      if (remaining <= 0) {
+        // This constructed candidate is not yet a member: fail() cannot own cleanup.
+        this.retireSlot(slot, "plugin activation deadline exceeded");
+        throw new Error("plugin activation deadline exceeded");
       }
-      if (!this.valid(slot) || data.generation !== slot.generation) return;
-      if (data.type === "heartbeat") {
-        slot.lastHeartbeat = Date.now();
-        slot.provenAlive = true;
-        return;
-      }
-      if (data.type === "initError") {
-        clearTimeout(bootDeadline);
-        this.fail(slot, `plugin failed to load: ${data.value}`);
-        return;
-      }
-      if (data.type === "ready") {
-        if (
-          !Array.isArray(data.exports) ||
-          data.exports.some((name) => typeof name !== "string")
-        ) {
-          this.fail(slot, "invalid worker export descriptor");
+      slot.bootTimer = this.liveness.setTimeout(
+        () => {
+          if (this.livenessCurrent(slot, identity)) {
+            this.activationExpired(slot);
+          }
+        },
+        remaining,
+      );
+      worker.onmessage = ({ data }: MessageEvent<WorkerMessage>) => {
+        if (!data || typeof data !== "object") {
+          this.fail(slot, "invalid worker envelope");
           return;
         }
-        slot.exports = new Set(data.exports);
-        slot.lastHeartbeat = Date.now();
-        slot.provenAlive = true;
-        if (this.role === "service") {
-          try {
-            compileEndpointTable(
-              [...this.registry].filter(([, entry]) =>
-                entry.kind === "endpoint"
-              ).map(([handlerId, entry]) => ({
-                handlerId,
-                descriptor: entry.definition,
-              })),
+        if (!this.valid(slot) || data.generation !== slot.generation) return;
+        if (data.type === "heartbeat") {
+          if (
+            !this.livenessCurrent(slot, identity) ||
+            this.activationExpired(slot)
+          ) return;
+          slot.lastHeartbeatReceipt = this.liveness.now();
+          slot.heartbeatEstablished = true;
+          this.tryQualifySlot(slot, identity);
+          return;
+        }
+        if (data.type === "initError") {
+          this.fail(slot, `plugin failed to load: ${data.value}`);
+          return;
+        }
+        if (data.type === "ready") {
+          if (
+            !this.livenessCurrent(slot, identity) ||
+            this.activationExpired(slot)
+          ) return;
+          if (
+            !Array.isArray(data.exports) ||
+            data.exports.some((name) => typeof name !== "string")
+          ) {
+            this.fail(slot, "invalid worker export descriptor");
+            return;
+          }
+          // Validate malformed duplicates above, but never replace the first descriptor
+          // or re-enter the direct initial-sync lane for another valid descriptor.
+          if (slot.initialization !== "pending") return;
+          slot.initialization = "running";
+          slot.exports = new Set(data.exports);
+          if (this.role === "service") {
+            try {
+              compileEndpointTable(
+                [...this.registry].filter(([, entry]) =>
+                  entry.kind === "endpoint"
+                ).map(([handlerId, entry]) => ({
+                  handlerId,
+                  descriptor: entry.definition,
+                })),
+              );
+            } catch (error) {
+              this.fail(
+                slot,
+                error instanceof Error
+                  ? error.message
+                  : "invalid endpoint table",
+              );
+              return;
+            }
+            const missing = this.manifest.hooks.filter((hook) =>
+              hook.startsWith("pre-") &&
+              ![...this.registrations.values()].some((r) =>
+                r.kind === "hook" && r.id === hook
+              )
             );
+            if (missing.length) {
+              this.fail(
+                slot,
+                `required pre-hook registration missing: ${missing.join(", ")}`,
+              );
+              return;
+            }
+          }
+          const initialized =
+            this.role === "render" && slot.exports.has("onSync")
+              ? this.enqueue(
+                "call",
+                "onSync",
+                [],
+                false,
+                this.limits.serviceCallMs,
+                slot,
+                true,
+              )
+              : Promise.resolve();
+          initialized.then(() => {
+            if (
+              !this.livenessCurrent(slot, identity) ||
+              this.activationExpired(slot)
+            ) return;
+            slot.initialization = "complete";
+            this.tryQualifySlot(slot, identity);
+          }, (error) => {
+            this.fail(
+              slot,
+              `plugin initial onSync failed: ${
+                error instanceof Error
+                  ? error.message
+                  : "initial synchronization failed"
+              }`,
+            );
+          });
+          return;
+        }
+        if (data.type === "register") {
+          try {
+            if (
+              this.role !== "service" || this.stopping ||
+              this.registrations.has(data.handlerId)
+            ) throw new Error("invalid handler registration lifetime");
+            if (
+              typeof data.handlerId !== "string" || data.handlerId.length > 128
+            ) throw new Error("invalid handler identity");
+            this.validateRegistration(data.registration);
+            this.registry.set(
+              data.handlerId,
+              structuredClone(data.registration),
+            );
+            this.options.registrationChanged?.();
           } catch (error) {
             this.fail(
               slot,
-              error instanceof Error ? error.message : "invalid endpoint table",
+              error instanceof Error ? error.message : "invalid registration",
             );
-            return;
           }
-          const missing = this.manifest.hooks.filter((hook) =>
-            hook.startsWith("pre-") &&
-            ![...this.registrations.values()].some((r) =>
-              r.kind === "hook" && r.id === hook
-            )
-          );
-          if (missing.length) {
-            clearTimeout(bootDeadline);
-            this.fail(
-              slot,
-              `required pre-hook registration missing: ${missing.join(", ")}`,
-            );
-            return;
-          }
+          return;
         }
-        const initialized = this.role === "render" && slot.exports.has("onSync")
-          ? this.enqueue(
-            "call",
-            "onSync",
-            [],
-            false,
-            this.limits.serviceCallMs,
-            slot,
-            true,
-          )
-          : Promise.resolve();
-        initialized.then(() => {
-          clearTimeout(bootDeadline);
-          if (!this.valid(slot)) return;
-          slot.ready = true;
-          slot.background.settle({ status: "settled" });
-          slot.resolveReady();
-          this.pump();
-        }, (error) => {
-          this.fail(
-            slot,
-            `plugin initial onSync failed: ${
-              error instanceof Error
-                ? error.message
-                : "initial synchronization failed"
-            }`,
-          );
-        });
-        return;
-      }
-      if (data.type === "register") {
-        try {
-          if (
-            this.role !== "service" || this.stopping ||
-            this.registrations.has(data.handlerId)
-          ) throw new Error("invalid handler registration lifetime");
-          if (
-            typeof data.handlerId !== "string" || data.handlerId.length > 128
-          ) throw new Error("invalid handler identity");
-          this.validateRegistration(data.registration);
-          this.registry.set(data.handlerId, structuredClone(data.registration));
+        if (data.type === "unregister") {
+          const removed = this.registrations.get(data.handlerId);
+          this.registry.delete(data.handlerId);
           this.options.registrationChanged?.();
-        } catch (error) {
-          this.fail(
-            slot,
-            error instanceof Error ? error.message : "invalid registration",
-          );
-        }
-        return;
-      }
-      if (data.type === "unregister") {
-        const removed = this.registrations.get(data.handlerId);
-        this.registry.delete(data.handlerId);
-        this.options.registrationChanged?.();
-        if (
-          !this.stopping && removed?.kind === "hook" &&
-          removed.id.startsWith("pre-")
-        ) this.fail(slot, "required pre-hook registration disposed");
-        return;
-      }
-      if (data.type === "result") {
-        const job = slot.activeGuard?.id === data.id
-          ? slot.activeGuard
-          : slot.active;
-        if (!job || job.id !== data.id) return;
-        if (!job.context || job.context.reference.id !== data.contextId) return;
-        job.context.close({ status: "settled" });
-        slot.contexts.delete(job.context.reference.id);
-        clearTimeout(job.timer);
-        if (slot.activeGuard?.id === data.id) slot.activeGuard = null;
-        else slot.active = null;
-        if (data.ok) job.resolve(data.value);
-        else job.reject(new Error(String(data.value)));
-        this.pump();
-        return;
-      }
-      if (data.type === "rpcReceipt") {
-        const receipt = slot.receipts.get(data.id);
-        if (!receipt?.sent) return;
-        clearTimeout(receipt.timer);
-        receipt.context.settle({ status: "settled" });
-        slot.receipts.delete(data.id);
-        return;
-      }
-      if (data.type === "rpc") {
-        const context = data.contextId === slot.background.reference.id
-          ? slot.background
-          : slot.contexts.get(data.contextId);
-        const generationCurrent = () => this.valid(slot) && !this.stopping;
-        if (!context?.open || !generationCurrent()) {
-          worker.postMessage(
-            {
-              type: "rpcResponse",
-              generation: slot.generation,
-              id: data.id,
-              ok: false,
-              value: "plugin invocation context is unavailable or closed",
-              ...(data.method.startsWith("fs.")
-                ? {
-                  error: {
-                    status: 409,
-                    code: "fs_generation_revoked",
-                    effect: "none" as const,
-                  },
-                }
-                : {}),
-            } satisfies HostMessage,
-          );
+          if (
+            !this.stopping && removed?.kind === "hook" &&
+            removed.id.startsWith("pre-")
+          ) this.fail(slot, "required pre-hook registration disposed");
           return;
         }
-        const receiptRequired = [
-          "permissions.declare",
-          "permissions.requestAccess",
-        ].includes(data.method);
-        if (receiptRequired && slot.receipts.size >= this.limits.queuedJobs) {
-          worker.postMessage(
-            {
-              type: "rpcResponse",
-              generation: slot.generation,
-              id: data.id,
-              ok: false,
-              value: "permission transport admission is full",
-              error: { status: 503, code: "permission_admission_full" },
-            } satisfies HostMessage,
-          );
+        if (data.type === "result") {
+          const job = slot.activeGuard?.id === data.id
+            ? slot.activeGuard
+            : slot.active;
+          if (!job || job.id !== data.id) return;
+          if (!job.context || job.context.reference.id !== data.contextId) {
+            return;
+          }
+          job.context.close({ status: "settled" });
+          slot.contexts.delete(job.context.reference.id);
+          clearTimeout(job.timer);
+          if (slot.activeGuard?.id === data.id) slot.activeGuard = null;
+          else slot.active = null;
+          if (data.ok) job.resolve(data.value);
+          else job.reject(new Error(String(data.value)));
+          this.pump();
           return;
         }
-        const receipt = receiptRequired
-          ? executionContext("background", false)
-          : undefined;
-        if (receipt) {
-          const timer = setTimeout(() => {
-            receipt.close({ status: "aborted" });
-            slot.receipts.delete(data.id);
-          }, NETWORK_LIMITS.receiptMs);
-          slot.receipts.set(data.id, { sent: false, context: receipt, timer });
-        }
-        const authority: RpcAuthority = {
-          generation: slot.generation,
-          role: this.role,
-          // The host's current job determines protection, never a worker flag.
-          pre: context.reference.pre,
-          causal: context.causal,
-          current: () => generationCurrent() && context.open,
-          generationCurrent,
-          release: context.release,
-          generationRetired: slot.generationRetired,
-          source: slot.source,
-          receipt: receipt?.release,
-          readiness: slot.background.release,
-        };
-        if (!authority.current()) {
-          worker.postMessage(
-            {
-              type: "rpcResponse",
-              generation: slot.generation,
-              id: data.id,
-              ok: false,
-              value: "plugin generation authority revoked",
-              ...(data.method.startsWith("fs.")
-                ? {
-                  error: {
-                    status: 409,
-                    code: "fs_generation_revoked",
-                    effect: "none" as const,
-                  },
-                }
-                : {}),
-            } satisfies HostMessage,
-          );
+        if (data.type === "rpcReceipt") {
+          const receipt = slot.receipts.get(data.id);
+          if (!receipt?.sent) return;
+          clearTimeout(receipt.timer);
+          receipt.context.settle({ status: "settled" });
+          slot.receipts.delete(data.id);
           return;
         }
-        Promise.resolve().then(() =>
-          this.rpc(data.method, data.args, authority)
-        ).then(
-          (value) => {
-            if (authority.current()) {
-              worker.postMessage(
-                {
-                  type: "rpcResponse",
-                  generation: slot.generation,
-                  id: data.id,
-                  ok: true,
-                  value,
-                  receiptRequired,
-                } satisfies HostMessage,
-              );
-              const receipt = slot.receipts.get(data.id);
-              if (receipt) receipt.sent = true;
-            }
-          },
-          (error) => {
-            if (authority.current()) {
-              worker.postMessage(
-                {
-                  type: "rpcResponse",
-                  generation: slot.generation,
-                  id: data.id,
-                  ok: false,
-                  value: error instanceof Error
-                    ? error.message
-                    : "host service failed",
-                  ...(error instanceof PluginContractError
-                    ? {
-                      error: {
-                        status: error.status,
-                        code: error.code,
-                        ...(error instanceof FsError
-                          ? { effect: error.effect }
-                          : {}),
-                      },
-                    }
-                    : {}),
-                  receiptRequired,
-                } satisfies HostMessage,
-              );
-              const receipt = slot.receipts.get(data.id);
-              if (receipt) receipt.sent = true;
-            }
-          },
+        if (data.type === "rpc") {
+          const context = data.contextId === slot.background.reference.id
+            ? slot.background
+            : slot.contexts.get(data.contextId);
+          const generationCurrent = () => this.valid(slot) && !this.stopping;
+          if (!context?.open || !generationCurrent()) {
+            worker.postMessage(
+              {
+                type: "rpcResponse",
+                generation: slot.generation,
+                id: data.id,
+                ok: false,
+                value: "plugin invocation context is unavailable or closed",
+                ...(data.method.startsWith("fs.")
+                  ? {
+                    error: {
+                      status: 409,
+                      code: "fs_generation_revoked",
+                      effect: "none" as const,
+                    },
+                  }
+                  : {}),
+              } satisfies HostMessage,
+            );
+            return;
+          }
+          const receiptRequired = [
+            "permissions.declare",
+            "permissions.requestAccess",
+          ].includes(data.method);
+          if (receiptRequired && slot.receipts.size >= this.limits.queuedJobs) {
+            worker.postMessage(
+              {
+                type: "rpcResponse",
+                generation: slot.generation,
+                id: data.id,
+                ok: false,
+                value: "permission transport admission is full",
+                error: { status: 503, code: "permission_admission_full" },
+              } satisfies HostMessage,
+            );
+            return;
+          }
+          const receipt = receiptRequired
+            ? executionContext("background", false)
+            : undefined;
+          if (receipt) {
+            const timer = setTimeout(() => {
+              receipt.close({ status: "aborted" });
+              slot.receipts.delete(data.id);
+            }, NETWORK_LIMITS.receiptMs);
+            slot.receipts.set(data.id, {
+              sent: false,
+              context: receipt,
+              timer,
+            });
+          }
+          const authority: RpcAuthority = {
+            generation: slot.generation,
+            role: this.role,
+            // The host's current job determines protection, never a worker flag.
+            pre: context.reference.pre,
+            causal: context.causal,
+            current: () => generationCurrent() && context.open,
+            generationCurrent,
+            release: context.release,
+            generationRetired: slot.generationRetired,
+            source: slot.source,
+            receipt: receipt?.release,
+            readiness: slot.background.release,
+          };
+          if (!authority.current()) {
+            worker.postMessage(
+              {
+                type: "rpcResponse",
+                generation: slot.generation,
+                id: data.id,
+                ok: false,
+                value: "plugin generation authority revoked",
+                ...(data.method.startsWith("fs.")
+                  ? {
+                    error: {
+                      status: 409,
+                      code: "fs_generation_revoked",
+                      effect: "none" as const,
+                    },
+                  }
+                  : {}),
+              } satisfies HostMessage,
+            );
+            return;
+          }
+          Promise.resolve().then(() =>
+            this.rpc(data.method, data.args, authority)
+          ).then(
+            (value) => {
+              if (authority.current()) {
+                worker.postMessage(
+                  {
+                    type: "rpcResponse",
+                    generation: slot.generation,
+                    id: data.id,
+                    ok: true,
+                    value,
+                    receiptRequired,
+                  } satisfies HostMessage,
+                );
+                const receipt = slot.receipts.get(data.id);
+                if (receipt) receipt.sent = true;
+              }
+            },
+            (error) => {
+              if (authority.current()) {
+                worker.postMessage(
+                  {
+                    type: "rpcResponse",
+                    generation: slot.generation,
+                    id: data.id,
+                    ok: false,
+                    value: error instanceof Error
+                      ? error.message
+                      : "host service failed",
+                    ...(error instanceof PluginContractError
+                      ? {
+                        error: {
+                          status: error.status,
+                          code: error.code,
+                          ...(error instanceof FsError
+                            ? { effect: error.effect }
+                            : {}),
+                        },
+                      }
+                      : {}),
+                    receiptRequired,
+                  } satisfies HostMessage,
+                );
+                const receipt = slot.receipts.get(data.id);
+                if (receipt) receipt.sent = true;
+              }
+            },
+          );
+        }
+      };
+      worker.onerror = (error) => {
+        error.preventDefault();
+        this.fail(slot, "plugin worker crashed; in-flight outcome unknown");
+      };
+      try {
+        worker.postMessage(
+          {
+            type: "init",
+            generation: slot.generation,
+            role: this.role,
+            pluginUrl,
+            endpointsUrl,
+            hooks: this.manifest.hooks,
+            snapshot: this.options.snapshot ?? {},
+            context: slot.background.reference,
+            permissionsSource: slot.source,
+          } satisfies HostMessage,
         );
+      } catch (error) {
+        this.retireSlot(slot, "plugin initialization envelope failed");
+        throw error;
       }
-    };
-    worker.onerror = (error) => {
-      error.preventDefault();
-      clearTimeout(bootDeadline);
-      this.fail(slot, "plugin worker crashed; in-flight outcome unknown");
-    };
-    try {
-      worker.postMessage(
-        {
-          type: "init",
-          generation: slot.generation,
-          role: this.role,
-          pluginUrl,
-          endpointsUrl,
-          hooks: this.manifest.hooks,
-          snapshot: this.options.snapshot ?? {},
-          context: slot.background.reference,
-          permissionsSource: slot.source,
-        } satisfies HostMessage,
-      );
+      return slot;
     } catch (error) {
-      clearTimeout(bootDeadline);
-      slot.retireGeneration();
-      slot.background.close({ status: "aborted" });
-      worker.terminate();
-      slot.rejectReady(new Error("plugin initialization envelope failed"));
+      if (constructed) {
+        this.retireSlot(
+          constructed,
+          "plugin construction or initialization failed",
+        );
+      } else worker.terminate();
       throw error;
     }
-    return slot;
   }
   private validateRegistration(registration: HandlerRegistration) {
     const value = record(registration, "registration");
@@ -889,7 +992,10 @@ export class PluginHost {
     if (slot.retired) return;
     slot.retired = true;
     slot.retireGeneration();
-    clearTimeout(slot.bootTimer);
+    if (slot.bootTimer !== undefined) {
+      this.liveness.clearTimeout(slot.bootTimer);
+      slot.bootTimer = undefined;
+    }
     slot.background.close({ status: "aborted" });
     for (const context of slot.contexts.values()) {
       context.close({ status: "aborted" });
@@ -1004,7 +1110,7 @@ export class PluginHost {
     this.retireSlot(slot, detail);
     if (this.role === "service") {
       this.failedDetail = detail;
-      if (this.watchdog) clearInterval(this.watchdog);
+      if (this.watchdog !== null) this.liveness.clearInterval(this.watchdog);
       this.watchdog = null;
       this.registry.clear();
       this.rejectQueued(detail);
@@ -1028,12 +1134,16 @@ export class PluginHost {
     }
   }
   private checkHeartbeats() {
-    for (const slot of this.slots) {
+    for (const slot of [...this.slots]) {
       if (this.role === "service" && this.failedDetail) return;
-      const timeout = slot.provenAlive
-        ? 3 * HEARTBEAT_MS
-        : this.limits.activationMs;
-      if (Date.now() - slot.lastHeartbeat > timeout) {
+      if (!this.livenessCurrent(slot, slot.startIdentity)) continue;
+      if (!slot.ready) {
+        this.activationExpired(slot);
+        continue;
+      }
+      const age = this.liveness.now() -
+        Math.max(slot.steadyStartedAt!, slot.lastHeartbeatReceipt!);
+      if (age > 3 * HEARTBEAT_MS) {
         this.fail(slot, "worker heartbeat timeout; in-flight outcome unknown");
       }
     }
@@ -1096,7 +1206,7 @@ export class PluginHost {
   stop(): void {
     this.startIdentity = undefined;
     this.stopped = true;
-    if (this.watchdog) clearInterval(this.watchdog);
+    if (this.watchdog !== null) this.liveness.clearInterval(this.watchdog);
     this.watchdog = null;
     this.renderRecoveries.clear();
     for (const slot of this.slots) {

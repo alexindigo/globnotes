@@ -10,6 +10,11 @@ import { renderMarkdown } from "../server/render/pipeline.ts";
 import { state } from "../server/state.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { GlobalConfig } from "../server/config.ts";
+import {
+  bounded as livenessBounded,
+  until,
+  WorkerDeliveryGate,
+} from "./helpers/worker_liveness.ts";
 
 const enabledUrl = new URL(
   "../server/api/endpoints/_/api/plugin-host/%23id/enabled/put.ts",
@@ -150,6 +155,70 @@ async function reviewRenderBarrier(
     clearTimeout(timer);
   }
 }
+
+Deno.test("startup liveness: demanded render leases await both initialized replicas and first heartbeats", async () => {
+  const generations = new Set<string>(),
+    release = Promise.withResolvers<void>();
+  const b = await fixtureBundle(async (method, args, actor) => {
+    assertEquals(method, "readNote");
+    assertEquals(args[0], "initial-sync-sentinel");
+    generations.add(actor!.generation);
+    await release.promise;
+    return "REAL-SYNC-CONSUMER";
+  }, true);
+  const gate = new WorkerDeliveryGate();
+  let starting: Promise<void> | undefined;
+  try {
+    await b.fixture.install("probe", { settings: [fixturePage] }, {
+      "main.js":
+        `const nonce=crypto.randomUUID();let sentinel;export function getSelectors(){return[{node:'fence',language:'probe'}]}export async function onSync(ctx){const settings=await ctx.settings.read();await ctx.permissions.declare({network:false,imports:false});sentinel=await ctx.readNote('initial-sync-sentinel');if(settings.values.preferences.message!=='fixture')throw Error('wrong actual settings')}export function parseNode(node){return node.identity?{nonce,sentinel}:{parts:['<b>'+sentinel+'</b>']}}`,
+    });
+    starting = b.manager.ensureStarted();
+    starting.catch(() => undefined);
+    await until(
+      () => generations.size === 2,
+      "both real initial-sync SDK/permission RPC lanes",
+    );
+    await livenessBounded(
+      gate.heartbeat.promise,
+      "actual held render heartbeat",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    assertEquals(b.manager.readyRenderOwners(), []);
+    assertEquals(b.manager.hosts.size, 0);
+    release.resolve();
+    await until(
+      () =>
+        gate.workers.every((item) =>
+          item.received.some((message) => message.type === "result")
+        ),
+      "actual completed initial sync for both replicas",
+    );
+    gate.releaseHeartbeat(0);
+    assertEquals(b.manager.readyRenderOwners(), []);
+    await until(
+      () => gate.workers[1].held.length > 0,
+      "actual second replica heartbeat",
+    );
+    gate.holdHeartbeat = false;
+    gate.releaseHeartbeat(1);
+    await livenessBounded(starting, "ready manager render lease");
+    assertEquals(await b.render(), "<b>REAL-SYNC-CONSUMER</b>");
+    const host = b.manager.hosts.get("probe")!;
+    const nonces = await Promise.all([
+      host.call("parseNode", [{ identity: true }]),
+      host.call("parseNode", [{ identity: true }]),
+    ]) as { nonce: string; sentinel: string }[];
+    assertEquals(new Set(nonces.map((value) => value.nonce)).size, 2);
+    assert(nonces.every((value) => value.sentinel === "REAL-SYNC-CONSUMER"));
+    assert(b.manager.renderOwnerCurrent(b.manager.readyRenderOwners()[0]));
+  } finally {
+    release.resolve();
+    await b.close();
+    await starting?.catch(() => undefined);
+    gate.restore();
+  }
+});
 
 Deno.test("review repairs: R22 failed demanded render construction cannot be reported permission reload ready", async () => {
   const b = await fixtureBundle(() => Promise.resolve(null), true);

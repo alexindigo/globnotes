@@ -404,6 +404,33 @@ replacement can safely reject an in-flight action; that is not saved success.
 
 ## Guarantees and limits
 
+Server Worker readiness requires two independent host-owned prerequisites:
+completed initialization and an accepted heartbeat from the current generation.
+Initialization includes service activation/endpoint/required-guard validation, or
+the actual initial render `onSync` (including its awaited SDK RPCs). Every render
+replica and admitted replacement qualifies independently; the demanded pool stays
+unavailable until all its owners qualify. Duplicate ready descriptors cannot rerun
+initial sync or restart grace, and retired/stopping owners cannot publish readiness.
+
+One absolute monotonic 10-second slot startup budget begins immediately before
+Worker construction. Both prerequisites must finish strictly before that deadline;
+continued heartbeat traffic cannot keep unfinished initialization alive. This bound
+does not include earlier policy reads or later final runtime/manager policy checks.
+Startup SDK RPC admission and replies remain available before readiness: accepted
+deferred actions return their request IDs promptly but execute only after successful
+combined readiness. Failed activation/disable aborts unstarted effects without replay.
+Permission admission similarly returns before receipt/origin/readiness settlement;
+replacement waits outside the SDK call. Required guards retain their independent
+operation/per-plugin deadlines and fail closed while awaiting readiness.
+
+At qualification, one 750 ms steady window starts without falsifying the actual
+heartbeat receipt timestamp. Thereafter only accepted heartbeat receipts refresh
+monitoring. The host watchdog retains its 250 ms cadence and strict age `>750 ms`
+expiry (750 is allowed; 751 fails when observed), with no timeout enlargement or
+retry. Invocation/guard/operation/permission limits and wall-clock expiry semantics
+are unchanged. Monotonic liveness prevents wall-clock jumps from changing this age;
+it does not confer immunity to host/OS pauses or explain missing heartbeat receipts.
+
 Browser foreground note saves use a per-edit-session FIFO; every admitted Save
 has its own immutable content/path snapshot and server operation opportunity.
 Acknowledgement is distinct from current cleanliness. Failed or uncertain work

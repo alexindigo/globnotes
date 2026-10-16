@@ -181,7 +181,21 @@ migrate histories. Generic environment pins and filesystem grants are documented
 in [plugin-api.md](plugin-api.md).
 
 - A plugin that throws **abstains** — it can degrade a render, never kill it.
-- A hung Worker is terminated and respawned (250 ms heartbeat, 3×T silence).
+- Each service Worker, initial render replica and admitted render replacement
+  becomes operational only after initialization **and** its first accepted,
+  current-owner heartbeat. Service initialization includes activation, endpoints
+  and required guards; render initialization includes the awaited initial `onSync`.
+  Both prerequisites share one absolute 10-second startup budget, including Worker
+  construction. Neither ready nor heartbeat traffic extends that budget.
+- Qualified Workers use the unchanged 250 ms heartbeat and strict `>750 ms`
+  silence threshold, observed at a host watchdog tick. A single steady window
+  begins at combined readiness; thereafter only genuine heartbeat receipts refresh
+  it. Failed service registrations are revoked; qualified render failures enter
+  the existing admitted replacement flow, without replaying calls. Startup failure
+  does not count as a previously healthy render owner.
+- Liveness uses a monotonic host clock, independently of wall-clock changes. This
+  does not protect an established Worker from host/OS pauses longer than its steady
+  budget or establish why a particular heartbeat receipt was absent.
 - Render workers keep state across ordinary saves/indexing; legacy `onSync`
   is broadcast to every replica at a serialized sync boundary (this is a
   deliberate change from the old per-sync reinstantiation — plugins that

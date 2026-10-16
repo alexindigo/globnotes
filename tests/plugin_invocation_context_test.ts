@@ -1,8 +1,22 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { PluginHost, type RpcAuthority } from "../server/plugins/host.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
+import {
+  bounded as livenessBounded,
+  LivenessClock,
+  until,
+  WorkerDeliveryGate,
+} from "./helpers/worker_liveness.ts";
+import { GlobalConfig } from "../server/config.ts";
+import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
+import { PluginActions } from "../server/plugins/actions.ts";
+import { FileSystemNotes } from "../server/notes/file_system.ts";
+import { FileServing } from "../server/files/file_serving.ts";
+import { NoteOperations } from "../server/notes/operations.ts";
+import { servicePluginRpc } from "../server/plugins/rpc.ts";
+import { PluginRuntime } from "../server/plugins/runtime.ts";
 
 function deferred<T>() {
   return Promise.withResolvers<T>();
@@ -109,6 +123,171 @@ Deno.test("plugin context: independent managed timer cannot borrow an active pre
     await fixture.dispose();
   }
 });
+
+for (const outcome of ["qualified", "expired", "disabled"] as const) {
+  Deno.test(`startup liveness: accepted startup action ${outcome} executes only after combined readiness without replay`, async () => {
+    const fixture = await pluginFixture();
+    const dir = await fixture.install("startup-action", {
+      runtime: { server: "service.js" },
+      capabilities: { write: ["vault"] },
+    }, {
+      "service.js":
+        `let admission;export async function activate(ctx){admission=await ctx.actions.request('create',{path:'consumer',content:'combined-ready-effect'});ctx.commands.register({id:'receipt',label:'Receipt',target:'server'},()=>ctx.actions.result(admission.requestId));}`,
+    });
+    const manifest = readManifest(dir);
+    const keys = [
+        "GLOBNOTES_PATH",
+        "GLOBNOTES_INDEX_PATH",
+        "GLOBNOTES_AUTH_TYPE",
+      ],
+      old = keys.map((key) => Deno.env.get(key));
+    Deno.env.set(keys[0], fixture.vault);
+    Deno.env.set(keys[1], fixture.statePath);
+    Deno.env.set(keys[2], "none");
+    const config = new GlobalConfig();
+    keys.forEach((key, index) =>
+      old[index] === undefined
+        ? Deno.env.delete(key)
+        : Deno.env.set(key, old[index]!)
+    );
+    const lifecycle = new PluginLifecycle(config);
+    let effects = 0;
+    lifecycle.onFact(() => {
+      effects++;
+    });
+    const runtime = new PluginRuntime(() => [], {
+      vaultPath: fixture.vault,
+      statePath: fixture.statePath,
+      operational: () => lifecycle.operational(),
+      writable: () => lifecycle.writable(),
+      commit: (effect) => lifecycle.gate.run(effect),
+    });
+    const operations = new NoteOperations({
+      notes: new FileSystemNotes(fixture.vault),
+      files: new FileServing(fixture.vault),
+      indexer: null,
+      runtime: () => runtime,
+      lifecycle,
+    });
+    const actions = new PluginActions({
+      operations,
+      runtime: () => runtime,
+      vaultPath: fixture.vault,
+      statePath: fixture.statePath,
+    });
+    const rpc = servicePluginRpc({
+      vaultPath: fixture.vault,
+      statePath: fixture.statePath,
+      actions: () => actions,
+    });
+    const gate = new WorkerDeliveryGate(), clock = new LivenessClock();
+    let admission: { requestId: string } | undefined,
+      actor: RpcAuthority | undefined;
+    const host = new PluginHost(
+      manifest,
+      fixture.vault,
+      async (method, args, authority) => {
+        const result = await rpc(manifest, method, args, authority!);
+        if (method === "actions.request") {
+          admission = result as { requestId: string };
+          actor = authority;
+        }
+        return result;
+      },
+      1,
+      { role: "service", liveness: clock },
+    );
+    const start = host.start();
+    start.catch(() => undefined);
+    try {
+      await livenessBounded(
+        gate.ready.promise,
+        "actual admission response consumed during activate",
+      );
+      await livenessBounded(gate.heartbeat.promise, "actual held heartbeat");
+      assert(admission?.requestId);
+      assert(actor?.current());
+      assertEquals(
+        actions.result(manifest.id, actor!.generation, admission!.requestId)
+          .status,
+        "accepted",
+      );
+      clock.tick(1000);
+      assertEquals(host.available, false);
+      assertEquals(effects, 0);
+      await assertRejects(
+        () => Deno.stat(`${fixture.vault}/consumer.md`),
+        Deno.errors.NotFound,
+      );
+      if (outcome === "qualified") {
+        gate.releaseHeartbeat();
+        await start;
+        await until(
+          () =>
+            !["accepted", "running"].includes(
+              actions.result(
+                manifest.id,
+                actor!.generation,
+                admission!.requestId,
+              ).status,
+            ),
+          "actual settled action receipt",
+        );
+        const settled = actions.result(
+          manifest.id,
+          actor!.generation,
+          admission!.requestId,
+        );
+        console.log(JSON.stringify({ actualStartupActionReceipt: settled }));
+        assertEquals(settled.status, "completed");
+        assertEquals(
+          await Deno.readTextFile(`${fixture.vault}/consumer.md`),
+          "combined-ready-effect",
+        );
+        assertEquals(effects, 1);
+        const receipt = await host.invoke(
+          [...host.registrations.keys()][0],
+          [],
+        ) as { status: string; operationId: string };
+        assertEquals(receipt.status, "completed");
+        assert(receipt.operationId);
+        assert(receipt.operationId !== admission!.requestId);
+        gate.releaseReady();
+        assertEquals(effects, 1);
+      } else {
+        if (outcome === "expired") clock.tick(10000, true);
+        else await host.dispose();
+        await assertRejects(() => start, Error);
+        gate.releaseHeartbeat();
+        gate.releaseReady();
+        assertEquals(await actor!.release, { status: "aborted" });
+        await until(
+          () => actions.retentionCounts().unfinished === 0,
+          "aborted action accounting",
+        );
+        await assertRejects(
+          () => Deno.stat(`${fixture.vault}/consumer.md`),
+          Deno.errors.NotFound,
+        );
+        assertEquals(effects, 0);
+        assertEquals(host.available, false);
+      }
+    } finally {
+      host.stop();
+      await start.catch(() => undefined);
+      await runtime.close();
+      gate.restore();
+      console.log(
+        JSON.stringify({
+          startupActionOutcome: outcome,
+          effects,
+          acceptedRequestId: admission?.requestId,
+          retainedLivenessFixture: fixture.root,
+        }),
+      );
+    }
+  });
+}
 
 Deno.test("plugin context: command arguments cannot inject causal metadata and release waits for actual settlement", async () => {
   const fixture = await pluginFixture(),
