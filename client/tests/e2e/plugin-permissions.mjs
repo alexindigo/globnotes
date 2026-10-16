@@ -1,5 +1,6 @@
 // VM-only native operator consent. Each fixture/context and normal parent is owned.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { parseArguments } from "./harness-helpers.mjs";
 
 let options;
@@ -22,18 +23,18 @@ async function operatorSession() {
 }
 
 async function launch(fixture) {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 }), port = listener.addr.port; listener.close();
+  const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
   const args = ["run", "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env",
     ...(fixture.importParent ? [`--allow-import=jsr.io:443,${fixture.authority}`, `--lock=${fixture.privateLock}`] : []), `${ROOT}/server/main.ts`];
   const child = new Deno.Command(Deno.execPath(), { args, cwd: ROOT, stdout: "piped", stderr: "piped", clearEnv: true,
     env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", NO_COLOR: "1", GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_HOST: "127.0.0.1", GLOBNOTES_PORT: String(port) } }).spawn();
+      GLOBNOTES_INDEX_PATH: fixture.state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_HOST: hostname, GLOBNOTES_PORT: String(port) } }).spawn();
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${fixture.directory}/server-${fixture.launchCount}-${name}.log`, { createNew: true, write: true });
     try { for await (const bytes of child[name]) { let at = 0; while (at < bytes.length) at += await file.write(bytes.subarray(at)); } } finally { file.close(); }
   });
   fixture.launchCount++;
-  const base = `http://127.0.0.1:${port}`;
+  const base = httpOrigin(port);
   await Deno.writeTextFile(`${fixture.directory}/parent-${fixture.launchCount}.json`, JSON.stringify({ pid: child.pid, args, cwd: ROOT, isolatedImportParent: fixture.importParent }, null, 2));
   const deadline = Date.now() + 30000;
   for (;;) {
@@ -101,7 +102,7 @@ async function fixture(name, { importParent = false, gateSaves = false, guardSav
   current = value; value.server = await launch(value);
   value.noteWrites = [];
   if (gateSaves) {
-    value.proxy = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async request => {
+    value.proxy = Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, async request => {
       const url = new URL(request.url), mutation = ["POST", "PATCH"].includes(request.method) && /^\/_\/api\/notes(?:\/|$)/.test(url.pathname);
       const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
       const headers = new Headers(request.headers); headers.delete("host"); headers.delete("content-length");
@@ -119,7 +120,7 @@ async function fixture(name, { importParent = false, gateSaves = false, guardSav
       return new Response(bytes, { status: response.status, headers: response.headers });
     });
   }
-  value.entryBase = value.proxy ? `http://127.0.0.1:${value.proxy.addr.port}` : value.server.base;
+  value.entryBase = value.proxy ? httpOrigin(value.proxy.addr.port) : value.server.base;
   value.session = await operatorSession(); value.sessions.push(value.session);
   await value.session.goto(`${value.entryBase}/NoteA`);
   await value.session.poll("!!document.querySelector('.toast-viewer')");

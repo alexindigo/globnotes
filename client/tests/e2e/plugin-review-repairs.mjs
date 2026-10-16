@@ -2,6 +2,7 @@
 // Transport and plugin-owned module barriers order real application work; they
 // never replace a controller, a response, the registry or its ownership logic.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { authenticatorCode } from "../../../tests/helpers/totp.ts";
@@ -112,7 +113,7 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
   }
   current.server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_AUTO_ENABLE_PLUGINS: "" }, logsDir: directory, headers });
   const owner = current;
-  current.proxy = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async request => {
+  current.proxy = Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, async request => {
     const url = new URL(request.url);
     if (url.pathname === "/fixture/browser-A") {
       const barrier = Promise.withResolvers(); owner.browserHolds.push(barrier); await barrier.promise;
@@ -131,7 +132,7 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
     }
     return new Response(response.body, { status: response.status, headers: response.headers });
   });
-  current.entryBase = `http://127.0.0.1:${current.proxy.addr.port}`;
+  current.entryBase = httpOrigin(current.proxy.addr.port);
   current.session = await sessionAt(current.entryBase);
   current.peer = await sessionAt(current.server.baseUrl);
   current.peerPolicyWrites = 0;

@@ -1,5 +1,6 @@
 // VM-only port of main's preview-save regression. Use native Chromium on CDP_PORT.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { applicationServer } from "./http-origin.mjs";
 import { connect } from "./cdp.mjs";
 
 const port = Number(Deno.env.get("CDP_PORT") || 9333);
@@ -93,7 +94,7 @@ try {
   server = await bootServer({
     GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: `${vault}/.globnotes`,
     GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_PATH_PREFIX: "",
-  });
+  }, applicationServer());
   await ownPage();
   console.log(JSON.stringify({ source: import.meta.url, vault, artifacts,
     baseUrl: server.baseUrl, cdpPort: port, targetId }));

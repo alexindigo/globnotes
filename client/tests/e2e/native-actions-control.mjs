@@ -4,7 +4,9 @@ import { connect } from "./cdp.mjs";
 import { assert } from "./test-outcomes.mjs";
 const page = await connect({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
 try {
-  await page.goto("about:blank");
+  // A helper control on the owned target's initial about:blank, not an application
+  // page, so it does not navigate through the application-origin goto().
+  await page.poll("location.href === 'about:blank' && document.readyState === 'complete'");
   await page.evaluate("(()=>{document.body.innerHTML='<div style=\"width:800px;height:80px\"><button>Delete</button></div>';window.actionCount=0;document.querySelector('button').onclick=()=>window.actionCount++;return true;})()");
   await page.clickText("Delete");
   assert(await page.evaluate("window.actionCount===1&&document.querySelector('[data-cdp-click-target]').tagName==='BUTTON'"), "Named native action missed its actual control");

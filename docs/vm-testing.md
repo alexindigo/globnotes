@@ -22,6 +22,28 @@ The shared `vm-transfer` tool independently verifies the pinned host/guest keys,
 domain, current guest address, account, rw filesystem and workspace before source
 transfer. A missing/mismatched guest blocks validation; there is no host fallback.
 
+## Local HTTP domain for browser tests
+
+Browser tests open the application only through an ordinary local HTTP hostname,
+never `localhost` or a loopback address: plain HTTP on a local domain is a
+first-class deployment, and browsers treat loopback as a secure context.
+
+| # | Item | Convention |
+|---|---|---|
+| 1 | Hostname | Each feature VM `arch-niri-globnotes-devbase-globnotes-<feature>` has an `/etc/hosts` entry `<VM network address>  <feature>-globnotes.test` |
+| 2 | Variable | `GLOBNOTES_TEST_HOST` names it. It must resolve to exactly one non-loopback IPv4 address of the machine; test servers and proxies bind to that address |
+| 3 | Page check | Every application `goto()` rejects any URL other than `http://$GLOBNOTES_TEST_HOST:<port>`, then requires the loaded origin and `isSecureContext === false`, logging an `application-origin` record. An unset, loopback or foreign name fails before navigation |
+| 4 | Hook | `scripts/vm-ci-gates.sh` sets `GLOBNOTES_TEST_HOST=generic-plugin-system-globnotes.test`, checks it before any gate, and passes it and the run's disk-backed `TMPDIR` into every gate unit |
+| 5 | Not changed | CDP discovery stays on `127.0.0.1` (browser control). Server tests keep their loopback default in `tests/helpers/boot.ts`. Server-side network-egress fixtures stay on loopback |
+
+Plain HTTP has no `navigator.clipboard`. `client/tests/e2e/native-clipboard.mjs`
+observes the real clipboard with page APIs only, through a test-owned witness
+page on the same domain in its own browser context. It reads with the trusted
+`paste` event of a native Ctrl+V, and writes or restores every exposed type with
+`execCommand("copy")` and a `copy` handler under a CDP user gesture, so the
+application page keeps focus. Open the witness (`prepareClipboardWitness`)
+before a focus-sensitive flow.
+
 ## Worktree-local installation
 
 The installer takes a verified user-owned transfer profile, an absolute **guest**
@@ -55,7 +77,8 @@ Inside a newly exported guest source root, with its client already built and the
 owned guest browser on CDP 9335:
 
 ```sh
-CDP_PORT=9335 GLOBNOTES_E2E_ARTIFACTS=/fresh/owned/guest/artifacts \
+CDP_PORT=9335 GLOBNOTES_TEST_HOST=<feature>-globnotes.test \
+  GLOBNOTES_E2E_ARTIFACTS=/fresh/owned/guest/artifacts \
   deno run --cached-only --frozen --config=deno.json --unstable-worker-options \
   --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys \
   client/tests/e2e/legacy-native-suite.mjs

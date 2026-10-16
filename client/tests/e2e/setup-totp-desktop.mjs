@@ -1,15 +1,16 @@
 // Desktop-only TOTP wizard acceptance: actual layout, switch/QR activation,
 // and clipboard outcome. Run in the test VM, never on the host.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { join } from "node:path";
 import { authenticatorCode } from "../../../tests/helpers/totp.ts";
-import { captureClipboard, restoreClipboard } from "./native-clipboard.mjs";
+import { captureClipboard, prepareClipboardWitness, restoreClipboard, writeClipboardText } from "./native-clipboard.mjs";
 
 const externalBrowser = Deno.env.get("CDP_PORT");
 const port = Number(externalBrowser || 9398);
 const artifacts = await Deno.makeTempDir({ prefix: "totp-desktop-shots-" });
-const server = await bootServer({});
+const server = await bootServer({}, applicationServer());
 let browser;
 let page;
 let priorClipboard;
@@ -129,6 +130,8 @@ async function fit(label) {
 try {
   if (!externalBrowser) browser = await launchBrowser({ port });
   page = await connect({ port, binding: browser });
+  // Open the clipboard witness before the app flow; it never takes app focus later.
+  await prepareClipboardWitness(page);
   await page.send("Network.enable");
   let bundle;
   let heldEnrolment;
@@ -231,11 +234,8 @@ try {
       await fit(label);
       await page.screenshot(join(artifacts, `${label}-ready.png`));
 
-      await page.grantClipboard(server.baseUrl);
       if (priorClipboard === undefined) priorClipboard = await captureClipboard(page);
-      await page.evaluate(
-        "navigator.clipboard.writeText('clipboard-before-confirmation')",
-      );
+      await writeClipboardText(page, "clipboard-before-confirmation");
       await page.click("#setup-totp-qr");
       await page.poll(
         "document.querySelector('[role=tooltip]')?.textContent.includes('Click again')",
@@ -255,9 +255,7 @@ try {
         await page.readClipboard() === bundle.secret,
         `${label}: actual clipboard receives base32 key`,
       );
-      await page.evaluate(
-        "navigator.clipboard.writeText('clipboard-after-copy')",
-      );
+      await writeClipboardText(page, "clipboard-after-copy");
       await page.click("#setup-totp-qr");
       await page.poll(
         "document.querySelector('[role=tooltip]')?.textContent.includes('Click again')",

@@ -1,5 +1,6 @@
 // VM-only native input + a guest-owned response gate around the real server.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { SignJWT } from "jose";
@@ -44,7 +45,7 @@ async function setup(label, { password = false, create = false } = {}) {
   const controller = new AbortController();
   const records = [];
   let active = 0, maxActive = 0;
-  const proxy = Deno.serve({ hostname: "127.0.0.1", port: 0, signal: controller.signal, onListen() {} }, async request => {
+  const proxy = Deno.serve({ hostname: bindAddress(), port: 0, signal: controller.signal, onListen() {} }, async request => {
     const url = new URL(request.url);
     const mutation = ["POST", "PATCH"].includes(request.method) && /^\/_\/api\/notes(?:\/|$)/.test(url.pathname);
     const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
@@ -73,7 +74,7 @@ async function setup(label, { password = false, create = false } = {}) {
       return Response.json({ detail: "Owned test proxy transport failure" }, { status: 502 });
     } finally { if (record) active--; }
   });
-  const baseUrl = `http://127.0.0.1:${proxy.addr.port}`;
+  const baseUrl = httpOrigin(proxy.addr.port);
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
   current = { label, directory, vault, state, server, proxy, controller, records, session, baseUrl, maxActive: () => maxActive };
   owned.push(current);

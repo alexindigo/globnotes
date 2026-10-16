@@ -1,5 +1,6 @@
 // Production-assets native consumers. Every target, server, variant and artifact is owned.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { httpOrigin } from "./http-origin.mjs";
 import { bootServer } from "./harness-helpers.mjs";
 import { executeChild } from "./legacy-native-suite.mjs";
 
@@ -97,7 +98,7 @@ if (options.controls) {
     Deno.Command = class extends NativeCommand {
       constructor(command, options) {
         super(command, options);
-        if (options?.args?.some(argument => argument.replace(/\/+/g, "/") === `${ROOT}/server/main.ts`)) admitted.resolve({ baseUrl: `http://127.0.0.1:${options.env.GLOBNOTES_PORT}`, vault: options.env.GLOBNOTES_PATH });
+        if (options?.args?.some(argument => argument.replace(/\/+/g, "/") === `${ROOT}/server/main.ts`)) admitted.resolve({ baseUrl: httpOrigin(options.env.GLOBNOTES_PORT), vault: options.env.GLOBNOTES_PATH });
       }
     };
     const boot = bootServer(current.vault, current.state, { env, logsDir: directory });

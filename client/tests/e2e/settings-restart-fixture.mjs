@@ -1,11 +1,12 @@
 // Stable owned browser origin across backend restarts; existing launcher unchanged.
+import { bindAddress, httpOrigin } from "./http-origin.mjs";
 export function createSettingsRestartFixture({ initialServer, launch, directory }) {
   let backend = initialServer;
   let launches = 1;
   let restarting = null;
   let closed = false;
   const shutdown = new AbortController();
-  const proxy = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {}, signal: shutdown.signal }, async (request, info) => {
+  const proxy = Deno.serve({ hostname: bindAddress(), port: 0, onListen() {}, signal: shutdown.signal }, async (request, info) => {
     const current = backend;
     if (!current) return new Response(JSON.stringify({ detail: "Owned restart in progress" }), { status: 503, headers: { "content-type": "application/json" } });
     const url = new URL(request.url);
@@ -29,7 +30,7 @@ export function createSettingsRestartFixture({ initialServer, launch, directory 
     } finally { clearTimeout(timer); }
   });
   return {
-    baseUrl: `http://127.0.0.1:${proxy.addr.port}`,
+    baseUrl: httpOrigin(proxy.addr.port),
     get pid() { return backend?.pid; },
     async restart() {
       if (closed) throw Error("Owned restart fixture is closed");

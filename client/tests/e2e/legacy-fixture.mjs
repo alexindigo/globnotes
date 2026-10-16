@@ -3,6 +3,7 @@ import { bootServer } from "./harness-helpers.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { clickReady } from "./native-actions.mjs";
 import { assert } from "./test-outcomes.mjs";
+import { closeClipboardWitness, readClipboardText } from "./native-clipboard.mjs";
 
 const ROOT = new URL("../../..", import.meta.url).pathname;
 export const CHAIN = ["readme", "rendering/code-blocks", "rendering/math", "rendering/callouts", "rendering/highlights", "rendering/mermaid", "rendering/frontmatter", "links/wiki-links", "links/embeds", "folders/dad/recipes/soup", "folders/mom/ideas", "rename-me/moving-note"];
@@ -78,14 +79,13 @@ export async function createFixture(name, directory, { empty = false } = {}) {
       async reload() { await session.send("Page.reload"); await session.poll("document.readyState==='complete'"); },
       waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),
       async screenshot(path) { const { data } = await session.send("Page.captureScreenshot", { format: "png" }); await Deno.writeFile(path, Uint8Array.from(atob(data), char => char.charCodeAt(0)), { createNew: true }); },
-      async grantClipboard() { await session.browser.send("Browser.grantPermissions", { browserContextId: session.browserContextId, origin: baseUrl, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] }); },
-      readClipboard: () => session.evaluate("navigator.clipboard.readText()"),
+      readClipboard: () => readClipboardText(session),
     };
     await page.addInitScript('for(const [key,value] of [["sidebarVisible","false"],["sidebarRecent","false"]])if(localStorage.getItem(key)===null)localStorage.setItem(key,value);');
     await Deno.writeTextFile(directory + "/ownership.json", JSON.stringify({ name, vault, state, baseUrl, pid: server.pid, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
     let closing;
     return { name, directory, vault, state, server, page, session, baseUrl, api, image, writes,
-      close() { return closing ??= (async()=>{ releaseWire(); try { await session.close(); } finally { await server.close(); } })(); } };
+      close() { return closing ??= (async()=>{ releaseWire(); try { await closeClipboardWitness(session); } finally { try { await session.close(); } finally { await server.close(); } } })(); } };
   } catch (error) {
     if (session) await session.close();
     if (server) await server.close();

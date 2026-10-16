@@ -2,6 +2,7 @@
 // panel (CM6 searches the whole doc, not the viewport DOM); WYSIWYG and
 // preview keep native browser find. Esc closes the panel before exiting.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9461);
@@ -28,7 +29,7 @@ const server = await bootServer({
   GLOBNOTES_PATH: vault,
   GLOBNOTES_AUTH_TYPE: "none",
   GLOBNOTES_PATH_PREFIX: "",
-});
+}, applicationServer());
 const browser = await launchBrowser({ port: CDP_PORT });
 try {
   const page = await connect({ port: CDP_PORT, binding: browser });

@@ -3,6 +3,7 @@
 // each against its own fresh server + vault, one browser it owns.
 // Prints the artifact dir and "SETUP WIZARD OK" only when all pass.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { join } from "node:path";
 
@@ -126,9 +127,9 @@ try {
   await Deno.writeTextFile(join(vaultB, "FixtureB.md"), "# Fixture B\n\nbravo\n");
 
   // No auth env anywhere — the wizard must fire on every server.
-  servers.push(await bootServer({ GLOBNOTES_PATH: vaultA }));
-  servers.push(await bootServer({ GLOBNOTES_PATH: vaultB }));
-  servers.push(await bootServer({ GLOBNOTES_PATH: vaultC }));
+  servers.push(await bootServer({ GLOBNOTES_PATH: vaultA }, applicationServer()));
+  servers.push(await bootServer({ GLOBNOTES_PATH: vaultB }, applicationServer()));
+  servers.push(await bootServer({ GLOBNOTES_PATH: vaultC }, applicationServer()));
   const [A, B, C] = servers;
   for (const s of servers) {
     const setup = await (await fetch(`${s.baseUrl}/_/api/setup`)).json();

@@ -1,5 +1,6 @@
 // Final native clipboard and Access transport/conflict/error consumers.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { captureClipboard, closeClipboardWitness, prepareClipboardWitness, readClipboardText, restoreClipboard, writeClipboardText } from "./native-clipboard.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { SignJWT } from "jose";
@@ -75,7 +76,7 @@ async function retained() {
 }
 async function close() {
   if (!current || current.closed) return;
-  await current.session.close(); await current.server.close(); current.closed = true;
+  try { await closeClipboardWitness(current.session); } finally { await current.session.close(); } await current.server.close(); current.closed = true;
   await Deno.writeTextFile(`${current.directory}/closure.json`, JSON.stringify({ targetClosed: true, serverClosed: true, generatedFilesRetained: true }), { createNew: true });
 }
 async function done(consumers) {
@@ -85,11 +86,17 @@ async function done(consumers) {
 }
 try {
   for (const granted of [true, false]) {
-    await fixture(granted ? "clipboard-success" : "clipboard-denied", true, !granted); await open();
+    await fixture(granted ? "clipboard-success" : "clipboard-denied", true, !granted);
     const s = current.session;
-    await s.browser.send("Browser.setPermission", { permission: { name: "clipboard-write" }, setting: granted ? "granted" : "denied", origin: current.server.baseUrl, browserContextId: s.browserContextId });
-    if (granted) await s.browser.send("Browser.setPermission", { permission: { name: "clipboard-read" }, setting: "granted", origin: current.server.baseUrl, browserContextId: s.browserContextId });
-    assert(await s.evaluate("navigator.permissions.query({name:'clipboard-write'}).then(permission=>permission.state)") === (granted ? "granted" : "denied"), "Actual clipboard permission differs from owned fixture setting");
+    await prepareClipboardWitness(s); await open();
+    // Plain HTTP: no navigator.clipboard and no clipboard permission applies; the
+    // app copies through execCommand("copy"). The denied fixture refuses that
+    // command in the page, and the real clipboard must then stay unchanged.
+    assert(await s.evaluate("!isSecureContext && navigator.clipboard===undefined"), "Clipboard application origin is not plain insecure HTTP");
+    const prior = await captureClipboard(s);
+    const marker = `clipboard-before-${current.label}`; await writeClipboardText(s, marker);
+    if (!granted) await s.evaluate("(()=>{const native=document.execCommand;document.execCommand=function(command,...rest){return command==='copy'?false:native.call(this,command,...rest);};return true;})()");
+    assert(await s.evaluate("document.execCommand!==Document.prototype.execCommand") === !granted, "Actual copy capability differs from owned fixture setting");
     const bundles = []; s.page.onEvent(event => { if (event.method === "Network.responseReceived" && event.params.response.url.endsWith("/access/totp-enrolment")) bundles.push(event.params.requestId); });
     await s.click("#setup-totp"); await s.poll("document.querySelector('#setup-totp-qr img')?.naturalWidth>0");
     assert(bundles.length === 1, "Missing actual enrolment bundle");
@@ -97,14 +104,15 @@ try {
     await s.click("#setup-totp-qr"); await s.poll("document.querySelector('#setup-totp-copy-feedback')?.textContent.includes('Click again')");
     await s.click("#setup-totp-qr");
     await s.poll(`document.querySelector('#setup-totp-copy-feedback')?.textContent===${JSON.stringify(granted ? "Setup key copied." : "Could not copy the setup key. Please try again.")}`);
-    if (granted) assert(await s.evaluate("navigator.clipboard.readText()") === bundle.secret, "Actual clipboard consumer did not receive the minted key");
+    assert(await readClipboardText(s) === (granted ? bundle.secret : marker), granted ? "Actual clipboard consumer did not receive the minted key" : "Refused copy changed the actual clipboard");
     const beforeFocus = await s.evaluate("({active:document.activeElement?.id,caption:document.querySelector('#setup-totp-copy-feedback')?.textContent})");
     await capture("second-click-feedback"); await s.click("#access-current-password");
     await Deno.writeTextFile(`${current.directory}/clipboard-focus-observation.json`, JSON.stringify({ before: beforeFocus, after: await s.evaluate("({active:document.activeElement?.id,caption:document.querySelector('#setup-totp-copy-feedback')?.textContent,hit:document.querySelector('#access-current-password')===document.elementFromPoint(...(()=>{const r=document.querySelector('#access-current-password').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2];})())})") }, null, 2), { createNew: true });
     await s.poll("document.activeElement===document.querySelector('#access-current-password')");
     await s.poll("!document.querySelector('#setup-totp-copy-feedback')");
     await retained(); assert(await Deno.readTextFile(`${current.state}/config.json`) === current.original && (await api("auth-check")).status === 200, "Clipboard flow changed account/session");
-    await done({ secondNativeClick: true, actualClipboardMatchesBundle: granted, actualPermission: granted ? "granted" : "denied", feedbackRemovedOnBlur: true, configAndSessionUnchanged: true, literalDirtyBufferRetained: true });
+    await restoreClipboard(s, prior);
+    await done({ secondNativeClick: true, actualClipboardMatchesBundle: granted, refusedCopyLeftClipboardUnchanged: !granted, copyCapability: granted ? "available" : "refused", regularHttpOrigin: true, feedbackRemovedOnBlur: true, configAndSessionUnchanged: true, literalDirtyBufferRetained: true, priorClipboardRestored: true });
   }
   for (const lost of [false, true]) {
     await fixture(lost ? "lost-receipt-review" : "unknown-held-wire", false, lost); await open();

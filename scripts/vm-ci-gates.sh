@@ -8,6 +8,16 @@ case "$WORK" in /home/tester/generic-plugin-system/test-quality-cleanup/hooks/*)
 ROOT="$WORK/source"
 export PATH="$(dirname "$DENO"):/home/tester/.deno/bin:/usr/local/bin:/usr/bin"
 export NO_COLOR=1 VITEST_MAX_WORKERS=1 CDP_PORT=9335
+# Browser tests open the app only on this VM's local HTTP domain (docs/vm-testing.md).
+export GLOBNOTES_TEST_HOST=generic-plugin-system-globnotes.test
+test_address=$(getent ahostsv4 "$GLOBNOTES_TEST_HOST" | awk '{print $1}' | sort -u)
+case "$test_address" in
+  "" | *[!0-9.]* | 127.*) echo "$GLOBNOTES_TEST_HOST must resolve to one non-loopback IPv4 address" >&2; exit 1 ;;
+esac
+ip -4 -o addr show scope global | grep -qF " inet $test_address/" ||
+  { echo "$GLOBNOTES_TEST_HOST resolves to $test_address, not an address of this VM" >&2; exit 1; }
+export TMPDIR="$WORK/tmp"
+mkdir -m 700 "$TMPDIR"
 python3 -B "$WORK/inputs/source-check.py" "$WORK" extract
 gate() {
   local label="$1" command_status log_status
@@ -16,7 +26,7 @@ gate() {
   set +e
   systemd-run --user --unit="globnotes-hook-$(basename "$WORK")-$label" --wait --pipe \
     -p MemoryHigh=384M -p MemoryMax=1G -p MemorySwapMax=1G -p OOMScoreAdjust=1000 \
-    --working-directory="$ROOT" env PATH="$PATH" NO_COLOR=1 VITEST_MAX_WORKERS=1 CDP_PORT=9335 "$@" \
+    --working-directory="$ROOT" env PATH="$PATH" GLOBNOTES_TEST_HOST="$GLOBNOTES_TEST_HOST" TMPDIR="$TMPDIR" NO_COLOR=1 VITEST_MAX_WORKERS=1 CDP_PORT=9335 "$@" \
     2>&1 | tee "$WORK/logs/$label.log"
   statuses=("${PIPESTATUS[@]}")
   command_status="${statuses[0]}"; log_status="${statuses[1]}"

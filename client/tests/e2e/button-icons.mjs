@@ -1,5 +1,6 @@
 // VM-only acceptance. Uses an already running native Chromium on CDP_PORT (9333).
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { applicationServer } from "./http-origin.mjs";
 import { connect } from "./cdp.mjs";
 import { tabSave, tabToggleLeft, tabToggleRight } from "../../icons.js";
 import { join } from "node:path";
@@ -267,7 +268,7 @@ try {
     GLOBNOTES_INDEX_PATH: join(vault, ".globnotes"),
     GLOBNOTES_AUTH_TYPE: "none",
     GLOBNOTES_PATH_PREFIX: "",
-  });
+  }, applicationServer());
   console.log(`button-icons artifacts: ${artifacts}`);
   console.log(
     `own fixture: ${vault}; app: ${server.baseUrl}; external CDP: ${port}`,

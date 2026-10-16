@@ -1,5 +1,6 @@
 // Feature-owned native access consumers; shared browser/runner helpers unchanged.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { authenticatorCode } from "../../../tests/helpers/totp.ts";
@@ -19,15 +20,15 @@ const port = Number(Deno.env.get("CDP_PORT") ?? 9334);
 const username = "access-fixture", password = "current-fixture-password";
 const ROOT = new URL("../../..", import.meta.url).pathname;
 async function bootFirstRun(vault, state, directory, prefix) {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 }), port = listener.addr.port; listener.close();
+  const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
   const child = new Deno.Command(Deno.execPath(), { args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`], cwd: ROOT, clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_AUTO_ENABLE_PLUGINS: "false", GLOBNOTES_PATH_PREFIX: prefix, GLOBNOTES_HOST: "127.0.0.1", GLOBNOTES_PORT: String(port) }, stdout: "piped", stderr: "piped" }).spawn();
+    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_AUTO_ENABLE_PLUGINS: "false", GLOBNOTES_PATH_PREFIX: prefix, GLOBNOTES_HOST: hostname, GLOBNOTES_PORT: String(port) }, stdout: "piped", stderr: "piped" }).spawn();
   await Deno.writeTextFile(`${directory}/startup-ownership.json`, JSON.stringify({ pid: child.pid, vault, state, prefix, port, cwd: ROOT }), { createNew: true });
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${directory}/server-${name}.log`, { write: true, createNew: true });
     try { for await (const chunk of child[name]) { let offset = 0; while (offset < chunk.length) offset += await file.write(chunk.subarray(offset)); } } finally { file.close(); }
   });
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const baseUrl = httpOrigin(port);
   const end = Date.now() + 30000;
   for (;;) {
     try { const response = await fetch(`${baseUrl}${prefix}/_/api/health`, { signal: AbortSignal.timeout(5000) }); await response.body?.cancel(); if (response.ok) break; } catch { /* readiness only */ }

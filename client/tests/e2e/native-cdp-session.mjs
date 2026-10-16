@@ -1,4 +1,5 @@
 // Feature-owned native CDP; all targets/contexts are explicitly owned.
+import { assertHttpTestUrl } from "./http-origin.mjs";
 export function connectSocket(url, { timeout = 15000, Socket = WebSocket } = {}) {
   return new Promise((resolve, reject) => {
     const socket = new Socket(url);
@@ -121,7 +122,20 @@ export async function nativeSession({ port = 9333, width = 1280, height = 900, d
     for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
   }
   return { ...owned, browser, errors, events, version, evaluate, poll, click, send: page.send,
-    async goto(url) { await page.send("Page.navigate", { url }); await poll("document.readyState === 'complete'"); },
+    // Every application page load is checked before and after navigation: plain
+    // HTTP on the local test domain, and an insecure context (AXIOMS §1).
+    async goto(url) {
+      const expected = assertHttpTestUrl(url);
+      await page.send("Page.navigate", { url: expected.href });
+      await poll(`location.origin === ${JSON.stringify(expected.origin)} && document.readyState === 'complete'`);
+      const actual = await evaluate("({ href: location.href, origin: location.origin, secure: isSecureContext })");
+      assertHttpTestUrl(actual.href);
+      if (actual.origin !== expected.origin) throw new Error(`Application page left its origin: ${actual.origin}`);
+      if (actual.secure !== false) throw new Error("Application page unexpectedly has a secure context");
+      const record = { type: "application-origin", host: expected.hostname, origin: actual.origin, secure: actual.secure };
+      events.push(record);
+      console.log(JSON.stringify(record));
+    },
     async button(text, scope = "body") {
       await poll(`(() => { document.querySelector('[data-gps-click]')?.removeAttribute('data-gps-click'); const button = [...document.querySelectorAll(${JSON.stringify(scope + " button")})].find(el => el.textContent.trim() === ${JSON.stringify(text)} && el.getBoundingClientRect().width); button?.setAttribute('data-gps-click','1'); return !!button; })()`);
       await click("[data-gps-click]");

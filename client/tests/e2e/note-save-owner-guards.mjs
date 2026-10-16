@@ -1,5 +1,6 @@
 // Feature-owned, VM-only consumer proof. Each case owns a fresh browser context.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 
 let options;
@@ -34,7 +35,7 @@ async function setup(name, { view = false, readonly = false, create = false } = 
   const controller = new AbortController();
   const records = [], reads = [];
   let active = 0, maxActive = 0;
-  const proxy = Deno.serve({ hostname: "127.0.0.1", port: 0, signal: controller.signal, onListen() {} }, async request => {
+  const proxy = Deno.serve({ hostname: bindAddress(), port: 0, signal: controller.signal, onListen() {} }, async request => {
     const url = new URL(request.url);
     const mutation = ["POST", "PATCH", "DELETE"].includes(request.method) && /^\/_\/api\/notes(?:\/|$)/.test(url.pathname);
     if (request.method === "GET" && /^\/_\/api\/notes\//.test(url.pathname)) reads.push(url.pathname);
@@ -66,7 +67,7 @@ async function setup(name, { view = false, readonly = false, create = false } = 
   function released(record) { return record.released; }
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
   current = { name, directory, vault, state, server, proxy, controller, records, reads, session, maxActive: () => maxActive };
-  await session.goto(`http://127.0.0.1:${proxy.addr.port}/${create ? "_/new?path=First" : "NoteA"}`);
+  await session.goto(`${httpOrigin(proxy.addr.port)}/${create ? "_/new?path=First" : "NoteA"}`);
   await session.poll(create ? "!!document.querySelector('.cm-content')" : "!!document.querySelector('.toast-viewer')");
   if (!view && !create) { await session.button("Edit", ".content-column"); await session.button("Source", ".content-column"); }
   return current;

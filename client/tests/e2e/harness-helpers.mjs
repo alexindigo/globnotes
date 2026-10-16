@@ -1,9 +1,12 @@
 // Minimal e2e server boot helper (native, no Docker): builds are expected
-// to have run (client/dist present); boots server/main.ts on a free port.
+// to have run (client/dist present); boots server/main.ts on a free port of
+// the local test domain's address (http-origin.mjs).
+import { bindAddress, httpOrigin } from "./http-origin.mjs";
 const ROOT = new URL("../../..", import.meta.url).pathname;
 
 export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFailed = false, headers = {} } = {}) {
-  const listener = Deno.listen({ port: 0, hostname: "127.0.0.1" });
+  const hostname = bindAddress();
+  const listener = Deno.listen({ port: 0, hostname });
   const port = listener.addr.port;
   listener.close();
   const child = new Deno.Command(Deno.execPath(), {
@@ -22,7 +25,7 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFail
       GLOBNOTES_PATH: vault,
       GLOBNOTES_INDEX_PATH: stateDir,
       GLOBNOTES_AUTH_TYPE: env.GLOBNOTES_AUTH_TYPE ?? "none",
-      GLOBNOTES_HOST: "127.0.0.1",
+      GLOBNOTES_HOST: hostname,
       GLOBNOTES_PORT: String(port),
     },
     stdout: "piped",
@@ -55,7 +58,7 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFail
     }
     await Promise.all(drains);
   }
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const baseUrl = httpOrigin(port);
   const prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
   const deadline = Date.now() + 30000;
   try {

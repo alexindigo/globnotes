@@ -1,5 +1,6 @@
 // Feature-owned production cwd: prefix stamping never changes donor assets.
 const ROOT = new URL("../../..", import.meta.url).pathname;
+import { bindAddress, httpOrigin } from "./http-origin.mjs";
 const assert = (value, message) => { if (!value) throw Error(message); };
 const hash = async bytes => [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
 
@@ -28,15 +29,15 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
   await copyAssets(`${ROOT}/client/dist`, `${cwd}/client/dist`, assets);
   assets.sort((a, b) => a.path.localeCompare(b.path));
   await Deno.writeTextFile(`${directory}/production-assets-before.json`, JSON.stringify({ sourceRoot: ROOT, cwd, assets }, null, 2), { createNew: true });
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 });
   const port = listener.addr.port; listener.close();
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`],
     cwd, clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_PATH_PREFIX: prefix, GLOBNOTES_AUTO_ENABLE_PLUGINS: "false", GLOBNOTES_HOST: "127.0.0.1", GLOBNOTES_PORT: String(port) },
+    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_PATH_PREFIX: prefix, GLOBNOTES_AUTO_ENABLE_PLUGINS: "false", GLOBNOTES_HOST: hostname, GLOBNOTES_PORT: String(port) },
     stdout: "piped", stderr: "piped",
   }).spawn();
-  const baseUrl = `http://127.0.0.1:${port}`, logs = { stdout: "", stderr: "" };
+  const baseUrl = httpOrigin(port), logs = { stdout: "", stderr: "" };
   await Deno.writeTextFile(`${directory}/startup-ownership.json`, JSON.stringify({ pid: child.pid, vault, state, prefix, port, cwd, sourceRoot: ROOT }), { createNew: true });
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${directory}/server-${name}.log`, { write: true, createNew: true });

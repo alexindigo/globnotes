@@ -29,18 +29,25 @@ export interface TestServer {
   close: () => Promise<void>;
 }
 
-function freePort(): number {
-  const listener = Deno.listen({ port: 0, hostname: "127.0.0.1" });
+function freePort(hostname: string): number {
+  const listener = Deno.listen({ port: 0, hostname });
   const port = (listener.addr as Deno.NetAddr).port;
   listener.close();
   return port;
 }
 
+/** Server tests listen on loopback. Browser tests pass the local test domain's
+ * address as `host` and its browser-facing `origin` (client/tests/e2e/http-origin.mjs). */
 export async function bootServer(
   env: Record<string, string>,
-  opts: { cwd?: string } = {},
+  opts: {
+    cwd?: string;
+    host?: string;
+    origin?: (port: number) => string;
+  } = {},
 ): Promise<TestServer> {
-  const port = freePort();
+  const hostname = opts.host ?? "127.0.0.1";
+  const port = freePort(hostname);
   const ownsVault = !env.GLOBNOTES_PATH;
   const vault = env.GLOBNOTES_PATH ??
     (await Deno.makeTempDir({ prefix: "globnotes-test-vault-" }));
@@ -61,7 +68,7 @@ export async function bootServer(
       ...env,
       GLOBNOTES_PATH: vault,
       GLOBNOTES_PORT: String(port),
-      GLOBNOTES_HOST: "127.0.0.1",
+      GLOBNOTES_HOST: hostname,
       NO_COLOR: "1",
     },
     stdout: "null",
@@ -80,7 +87,7 @@ export async function bootServer(
     )
     .catch(() => {});
 
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const baseUrl = opts.origin?.(port) ?? `http://127.0.0.1:${port}`;
   // With a path prefix the router only answers under it.
   const prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
   const deadline = Date.now() + 15_000;

@@ -2,7 +2,7 @@
 import { CHAIN } from "./legacy-fixture.mjs";
 import { assert, copiedText, renamedConsumer, tokenColors } from "./test-outcomes.mjs";
 import { visibleElement } from "./native-actions.mjs";
-import { captureClipboard, restoreClipboard } from "./native-clipboard.mjs";
+import { captureClipboard, prepareClipboardWitness, restoreClipboard } from "./native-clipboard.mjs";
 
 const PALETTES = [
   ["globnotes-light", false, "ffffff", "0284c7", "2c3139", "eceef0"],
@@ -137,12 +137,13 @@ export const cases = {
     tokenColors(samples); return samples;
   },
   async "copy-button"(f) {
-    await open(f); await f.page.grantClipboard();
+    await prepareClipboardWitness(f.page); await open(f);
     const prior = await captureClipboard(f.page);
     try {
       const expected = await f.page.evaluate("document.querySelector('.toast-viewer pre code').textContent");
       await f.page.click(".code-copy-btn");
-      await f.page.poll(`navigator.clipboard.readText().then(text=>text===${JSON.stringify(expected)})`);
+      const deadline = Date.now() + 15000;
+      while (await f.page.readClipboard() !== expected && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
       copiedText(await f.page.readClipboard(), expected);
       assert(expected.includes("def greet"), "Code fixture changed");
       return { copiedSelectedBlock: true, characters: expected.length };

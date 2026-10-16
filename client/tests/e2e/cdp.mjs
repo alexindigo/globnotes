@@ -2,6 +2,7 @@
 // Browser process/profile stays intact; this caller owns only its fresh targets.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { clickReady } from "./native-actions.mjs";
+import { closeClipboardWitness, readClipboardText } from "./native-clipboard.mjs";
 const bindings = new WeakMap();
 
 export async function launchBrowser({ port = 9335 } = {}) {
@@ -35,10 +36,9 @@ export async function connect({ binding, port = binding?.port ?? 9335 } = {}) {
     },
     fill: (selector, value) => session.evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw Error('Missing input');el.value=${JSON.stringify(value)};el.dispatchEvent(new Event('input',{bubbles:true}));return true;})()`),
     waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),
-    async grantClipboard(origin) { await session.browser.send("Browser.grantPermissions", { origin, browserContextId: session.browserContextId, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] }); },
-    readClipboard: () => session.evaluate("navigator.clipboard.readText()"),
+    readClipboard: () => readClipboardText(session),
     async screenshot(path) { const { data } = await session.send("Page.captureScreenshot", { format: "png" }); await Deno.writeFile(path, Uint8Array.from(atob(data), character => character.charCodeAt(0)), { createNew: true }); },
-    close() { return closing ??= session.close().finally(() => owned.delete(page)); },
+    close() { return closing ??= closeClipboardWitness(session).finally(() => session.close()).finally(() => owned.delete(page)); },
   };
   owned.add(page);
   return page;

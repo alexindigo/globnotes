@@ -2,6 +2,7 @@
 // title field is untouched; a manual title edit stops the follow; the tab
 // shows the title live; the sidebar shows the filename after save.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9413);
@@ -19,7 +20,7 @@ function assert(cond, msg) {
 let server = null;
 let browser = null;
 try {
-  server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" }, applicationServer());
   browser = await launchBrowser({ port: CDP_PORT });
   const page = await connect({ port: CDP_PORT });
 
