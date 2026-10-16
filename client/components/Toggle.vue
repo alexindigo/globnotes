@@ -1,6 +1,6 @@
 <template>
   <button
-    class="group flex cursor-pointer items-center text-nowrap rounded bg-theme-background px-2 py-1 text-theme-text-muted hover:bg-theme-background-elevated hover:text-theme-brand"
+    class="toggle-control group flex cursor-pointer items-center text-nowrap rounded bg-theme-background px-2 py-1 text-theme-text-muted hover:bg-theme-background-elevated hover:text-theme-brand"
   >
     <Icon
       :icon="isOn ? tabToggleRight : tabToggleLeft"
@@ -23,3 +23,10 @@ defineProps({
   isOn: Boolean,
 });
 </script>
+
+<style scoped>
+.toggle-control:focus-visible {
+  outline: 2px solid rgb(var(--theme-text));
+  outline-offset: 2px;
+}
+</style>

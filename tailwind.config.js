@@ -18,6 +18,7 @@ export default {
       colors: {
         // Dynamic
         "theme-brand": "rgb(var(--theme-brand) / <alpha-value>)",
+        "theme-warning": "rgb(var(--theme-warning) / <alpha-value>)",
         "theme-background": "rgb(var(--theme-background) / <alpha-value>)",
         "theme-background-elevated":
           "rgb(var(--theme-background-elevated) / <alpha-value>)",

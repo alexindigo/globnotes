@@ -1,7 +1,7 @@
 <template>
   <input
     :type="type"
-    class="w-full rounded-md border border-theme-border px-3 py-2 focus:outline-none dark:bg-theme-background-elevated"
+    class="text-input w-full rounded-md border border-theme-border px-3 py-2 dark:bg-theme-background-elevated"
     v-model="model"
     ref="input"
   />
@@ -17,3 +17,10 @@ defineProps({
 const model = defineModel();
 const input = ref();
 </script>
+
+<style scoped>
+.text-input:focus-visible {
+  outline: 2px solid rgb(var(--theme-text));
+  outline-offset: 2px;
+}
+</style>

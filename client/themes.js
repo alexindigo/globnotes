@@ -7,6 +7,7 @@ import { publish, TOPICS } from "./bus/index.js";
 
 export const GLOBNOTES_LIGHT = {
   brand: "#0284c7",
+  warning: "#92400e",
   background: "#ffffff",
   "background-elevated": "#f3f4f5",
   text: "#2c3139",
@@ -27,6 +28,7 @@ export const GLOBNOTES_LIGHT = {
 
 export const GLOBNOTES_DARK = {
   brand: "#38bdf8",
+  warning: "#fcd34d",
   background: "#22262c",
   "background-elevated": "#2c3139",
   text: "#c1c7d0",

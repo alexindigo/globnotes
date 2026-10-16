@@ -12,7 +12,16 @@
     <!-- Message -->
     <div class="mb-6">{{ message }}</div>
     <!-- Buttons -->
-    <div class="flex flex-wrap justify-end gap-2">
+    <SettingsActions v-if="actionLayout === 'grouped'">
+      <template #start>
+        <CtaButton type="button" :label="cancelButtonText" :intent="cancelButtonStyle === 'danger' ? 'danger' : 'primary'" @click="emitClose('cancel')" />
+      </template>
+      <template #end>
+        <CtaButton v-if="rejectButtonText" type="button" :label="rejectButtonText" :intent="rejectButtonStyle === 'danger' ? 'danger' : 'primary'" @click="emitClose('reject')" />
+        <CtaButton v-focus type="button" :label="confirmButtonText" :intent="confirmButtonStyle === 'danger' ? 'danger' : 'primary'" :disabled="confirmDisabled" @click="emitClose('confirm')" />
+      </template>
+    </SettingsActions>
+    <div v-else class="flex flex-wrap justify-end gap-2">
       <CustomButton
         :label="cancelButtonText"
         :variant="cancelButtonStyle"
@@ -39,10 +48,13 @@
 
 <script setup>
 import CustomButton from "./CustomButton.vue";
+import CtaButton from "./CtaButton.vue";
+import SettingsActions from "./SettingsActions.vue";
 import Modal from "./Modal.vue";
 import { createUuid } from "../../shared/uuid.ts";
 
 const props = defineProps({
+  actionLayout: { type: String, default: "inline", validator: value => ["inline", "grouped"].includes(value) },
   title: { type: String, default: "Confirmation" },
   message: String,
   confirmButtonStyle: { type: String, default: "cta" },

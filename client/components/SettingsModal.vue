@@ -142,7 +142,7 @@
         :on-discard="()=>discardPermission(reviewPluginId)" :on-request="request=>emit('review-request',request)" />
     </section>
   </Modal>
-  <ConfirmModal :model-value="riskVisible" :title="riskTitle" :message="riskMessage" :confirm-button-text="riskConfirmText" :confirm-button-style="riskConfirmStyle" @update:model-value="session.setRiskVisible" @confirm="resolveRisk(true)" @cancel="resolveRisk(false)" />
+  <ConfirmModal :model-value="riskVisible" action-layout="grouped" :title="riskTitle" :message="riskMessage" :confirm-button-text="riskConfirmText" :confirm-button-style="riskConfirmStyle" @update:model-value="session.setRiskVisible" @confirm="resolveRisk(true)" @cancel="resolveRisk(false)" />
   <Modal :model-value="!!pathChoice" name="settings-path-choice" anchor="viewport-center" labelledby="settings-path-title" trap-focus :close-handler-override="closePathChoice">
     <section v-if="pathChoice" class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4"><h2 id="settings-path-title" class="text-lg font-semibold">Choose {{ pathChoice.field.type }} in this vault</h2>
       <p class="text-sm text-theme-text-muted">Outside-host paths remain validated text values in the settings field.</p><p v-if="pathChoiceError" role="alert">{{ pathChoiceError }}</p>
@@ -154,6 +154,7 @@
   </Modal>
   <ConfirmModal
     :model-value="departureVisible"
+    action-layout="grouped"
     title="Unsaved settings"
     :message="departureMessage"
     confirm-button-text="Save / Retry"

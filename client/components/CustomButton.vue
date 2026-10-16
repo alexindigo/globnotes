@@ -1,10 +1,11 @@
 <template>
   <button
-    class="flex items-center justify-center text-nowrap rounded"
+    class="custom-button flex items-center justify-center rounded"
     :disabled="disabled"
     :title="title"
     :class="[
-      variant === 'cta' ? 'px-4 py-2.5 font-semibold' : 'px-2 py-1',
+      prominent || variant === 'cta' ? 'px-4 py-2.5 font-semibold' : 'px-2 py-1',
+      wrapLabel ? 'min-w-0 whitespace-normal' : 'text-nowrap',
       {
         'bg-theme-background text-theme-text-muted enabled:hover:bg-theme-background-elevated enabled:hover:text-theme-brand':
           variant === 'subtle',
@@ -24,6 +25,7 @@
       :iconSize="iconSize"
       :iconClass="iconClass"
       :label="label"
+      :wrap-label="wrapLabel"
     />
   </button>
 </template>
@@ -41,6 +43,8 @@ defineProps({
   label: String,
   title: String,
   disabled: Boolean,
+  prominent: { type: Boolean, default: false },
+  wrapLabel: { type: Boolean, default: false },
   // NOTE: must not be named `style` — Vue reserves that attr and the
   // variant never reached the props (everything rendered default).
   variant: {
@@ -52,3 +56,10 @@ defineProps({
   },
 });
 </script>
+
+<style scoped>
+.custom-button:focus-visible {
+  outline: 2px solid rgb(var(--theme-text));
+  outline-offset: 2px;
+}
+</style>

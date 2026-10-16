@@ -20,16 +20,24 @@
     </div>
     <p v-if="snapshot.busy" role="status" class="text-sm text-theme-text-muted">{{ snapshot.reviewing ? 'Reading current branding…' : 'Saving branding…' }}</p>
     <p v-if="snapshot.error" role="alert" class="text-sm text-theme-danger">{{ snapshot.error }} Your branding choices are retained.</p>
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <CustomButton label="Reset" variant="danger" :disabled="!snapshot.writable || snapshot.busy || !snapshot.hasBranding" @click="onReset" />
-      <div class="flex flex-wrap items-center gap-2"><CustomButton v-if="snapshot.canRetry" label="Review / Retry" :disabled="!snapshot.writable || snapshot.busy" @click="onRetry" /><CustomButton label="Cancel" @click="onCancel" /><CustomButton label="Save" variant="cta" :disabled="!snapshot.writable || snapshot.busy || !snapshot.dirty || snapshot.unknown" @click="onSave" /></div>
-    </div>
+    <SettingsActions>
+      <template #start>
+        <CtaButton type="button" label="Reset" intent="danger" :disabled="!snapshot.writable || snapshot.busy || !snapshot.hasBranding" @click="onReset" />
+      </template>
+      <template #end>
+        <CtaButton v-if="snapshot.canRetry" type="button" label="Review / Retry" :disabled="!snapshot.writable || snapshot.busy" @click="onRetry" />
+        <CtaButton type="button" label="Cancel" @click="onCancel" />
+        <CtaButton type="button" label="Save" :disabled="!snapshot.writable || snapshot.busy || !snapshot.dirty || snapshot.unknown" @click="onSave" />
+      </template>
+    </SettingsActions>
   </section>
 </template>
 <script setup>
 import { reactive } from "vue";
 import { tabClose, tabFileExport, tabTrash } from "../icons.js";
 import CustomButton from "./CustomButton.vue";
+import CtaButton from "./CtaButton.vue";
+import SettingsActions from "./SettingsActions.vue";
 import TextInput from "./TextInput.vue";
 const props = defineProps({ snapshot: Object, onEdit: Function, onClearAccent: Function, onPickFile: Function, onDiscardFile: Function, onRemoveFile: Function, onSave: Function, onReset: Function, onRetry: Function, onCancel: Function });
 const inputs = reactive({ logo: null, icon: null });
