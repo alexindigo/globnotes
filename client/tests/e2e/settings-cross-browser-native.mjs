@@ -15,7 +15,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
       if (await peer.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await peer.click('[title="Open sidebar"]');
       await peer.click('[aria-label="Settings"]'); await peer.poll("!!document.querySelector('#settings-modal-title')");
     }
-    await peer.button(page);
+    await peer.button(page, '[aria-label="Settings pages"]');
     if (page === "Native preferences") await peer.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
   }
   async function editMessage(peer, value) {

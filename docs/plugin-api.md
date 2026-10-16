@@ -93,6 +93,16 @@ or replace an authorization check.
 
 ### Settings persistence and definition changes
 
+Every valid declared page has its own named launcher on the left of the plugin's
+**Settings → Plugins** inventory item, in descriptor order. **Permissions** is a
+separate right-hand action into the existing controlled server-permission review.
+Disabled plugins and failed runtimes with valid declarations retain their page
+launchers; opening them does not enable the plugin or grant authority. Plugins
+without declared pages expose only Permissions. Catalog refresh updates current
+declarations while host-owned captured drafts remain reachable for explicit
+recovery. Renderer support stays `declarative-v1`; unsupported declarations are
+rejected when the plugin definition loads.
+
 Settings reads expose the current declared fields/pages with validated values and
 declared defaults. Removing a field/page from an updated descriptor preserves its
 raw saved data but omits it from current reads. Saving current fields retains that
@@ -342,7 +352,7 @@ Persisted settings are not rolled back and old reduced authority stays retired.
 
 Operator controls are protected host routes, not plugin SDK methods:
 
-Open **Settings → Plugins → Review permissions** to inspect a plugin's server
+Open **Settings → Plugins → Permissions** to inspect a plugin's server
 requests and remembered approvals. Every discovered plugin also has a framework
 **Server permissions** page, including disabled and settings-less plugins. The
 same controlled panel is used for review and settings. Network data and remote-code

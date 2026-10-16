@@ -15,13 +15,13 @@ import {
 } from "./pluginRuntime.js";
 import { registerSessionParticipant } from "./sessionActions.js";
 import { createSettingsPageState } from "./settingsPageState.js";
-import { commitPluginPage, findPage, readPluginPage, settingsPages } from "./settingsRegistry.js";
+import { commitPluginPage, findPage, isPluginSettingsPage, readPluginPage, settingsPages } from "./settingsRegistry.js";
 import { getStoredToken } from "./tokenStorage.js";
 import { permissionSessionKey } from "./appSessionPolicy.js";
 
 const defaultRegistry = {
   find: findPage,
-  read: page => page.owner === "core" ? Promise.resolve({ values: {}, revision: 0 }) : readPluginPage(page.owner, page.pageId),
+  read: page => isPluginSettingsPage(page) ? readPluginPage(page.owner, page.pageId) : Promise.resolve({ values: {}, revision: 0 }),
   commit: (page, values, revision, sourceKey) => commitPluginPage(page.owner, page.pageId, values, revision, sourceKey),
 };
 
@@ -95,10 +95,26 @@ export function createSettingsSession({
   };
   const disposeParticipant = registerParticipant("settings", participant);
   const pluginError = ref({});
+  // Current registry order plus captured recovery definitions, normalized once
+  // for both navigation consumers. Retained descriptors replace the same ID in
+  // place; removed recovery IDs append without inventing new catalog plugins.
+  const projectedPages = computed(() => {
+    const retained = pageState.pageIds().map(pageState.snapshot)
+      .filter(snapshot => snapshot.dirty || snapshot.pending || snapshot.uncertain || snapshot.changedDescriptor)
+      .map(snapshot => snapshot.page);
+    return [...new Map([...pages.value, ...retained].map(page => [page.id, page])).values()];
+  });
+  const inventoryPages = computed(() => {
+    const byOwner = Object.create(null);
+    for (const page of projectedPages.value) {
+      if (!isPluginSettingsPage(page)) continue;
+      (byOwner[page.owner] ??= []).push(page);
+    }
+    return byOwner;
+  });
   const groupedPages = computed(() => {
     const groups = new Map();
-    const available = new Map([...pages.value, ...pageState.recoveryPages()].map(page => [page.id, page]));
-    for (const page of available.values()) {
+    for (const page of projectedPages.value) {
       if (!groups.has(page.group)) groups.set(page.group, []);
       groups.get(page.group).push(page);
     }
@@ -106,6 +122,7 @@ export function createSettingsSession({
   });
   const currentSnapshot = computed(() => ({ ...pageState.snapshot(currentPageId.value), writable: writable() }));
   const currentPage = computed(() => currentSnapshot.value.page);
+  const currentPageIsPlugin = computed(() => isPluginSettingsPage(currentPage.value));
   const permissionSnapshot = computed(() => currentPage.value?.permissionPluginId ? permissions.snapshot(currentPage.value.permissionPluginId) : null);
   const catalogPlugins = computed(() => catalog.value?.plugins ?? []);
   const catalogPolicy = computed(() => catalog.value?.policy ?? null);
@@ -135,7 +152,7 @@ export function createSettingsSession({
     if (page && registry.find(page) && !await selectPage(page)) return;
     if (isVisible()) { focus(); return; }
     setVisible(true);
-    if (currentPage.value?.owner !== "core") await pageState.load(currentPageId.value);
+    if (currentPageIsPlugin.value) await pageState.load(currentPageId.value);
   }
   async function selectPage(id) {
     if (id !== currentPageId.value && !await inventory.resolveDeparture("changing pages")) return false;
@@ -146,7 +163,7 @@ export function createSettingsSession({
     currentPageId.value = id;
     if (id === 'core:branding') core.loadBrand();
     if (currentPage.value?.permissionPluginId) await permissions.load(currentPage.value.permissionPluginId);
-    if (currentPage.value?.owner !== "core") await pageState.load(id);
+    if (currentPageIsPlugin.value) await pageState.load(id);
     return true;
   }
   /** Close keeps pending/invalid drafts unless explicitly resolved. */
@@ -244,7 +261,7 @@ export function createSettingsSession({
     state: readonly(reactive({ brandingSnapshot, keybindingSnapshot, canLogout, currentPageId, reviewPluginId,
       riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice, pathEntries, pathChoiceError,
       reviewSnapshot, departureVisible, departureMessage, departureCanSave, inventorySnapshot, pluginError,
-      groupedPages, currentSnapshot, currentPage, permissionSnapshot, catalogPlugins, catalogPolicy })),
+      groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageIsPlugin, permissionSnapshot, catalogPlugins, catalogPolicy })),
     core, permissions, pageState, inventory,
     setRiskVisible: value => { riskVisible.value = value; },
     setDepartureVisible: value => { departureVisible.value = value; },

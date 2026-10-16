@@ -6,6 +6,7 @@
     v-model="isVisible"
     name="settings"
     anchor="viewport-center"
+    class="!mx-1 !w-full sm:!mx-4 sm:!w-[80dvw]"
     labelledby="settings-modal-title"
     trap-focus
     :keydown-handler="core.captureKey"
@@ -48,7 +49,7 @@
             </button>
           </div>
         </nav>
-        <div class="min-w-0 flex-1 overflow-y-auto p-4">
+        <div class="min-w-0 flex-1 overflow-y-auto p-2 sm:p-4">
           <div v-if="currentPage?.unsupported">
             <p class="text-sm text-theme-danger">
               This settings page uses an unsupported renderer
@@ -73,10 +74,10 @@
             :on-discard="()=>discardPermission(currentPage.permissionPluginId)"
             :on-request="request=>emit('review-request',request)"
           />
-          <div v-else-if="currentPage?.owner && currentPage.owner !== 'core'" class="flex flex-col gap-3">
+          <div v-else-if="currentPageIsPlugin" class="flex flex-col gap-3">
           <div class="flex flex-wrap items-center gap-2">
             <PluginBrowserBadge :runs-in-browser="currentPage.plugin?.runsInBrowser" :browser-components="currentPage.plugin?.browserComponents" />
-            <CustomButton label="Review permissions" @click="openPermissionReview(currentPage.owner)" />
+            <CustomButton label="Permissions" @click="openPermissionReview(currentPage.owner)" />
           </div>
           <PluginTrustNotice />
           <DeclarativeSettingsPage
@@ -101,6 +102,7 @@
              localStorage switches are legacy preferences, shown once). -->
             <PluginInventorySettingsPage v-else-if="currentPage.id === 'core:plugins'"
               :plugins="catalogPlugins" :policy="catalogPolicy" :writable="writable" :errors="pluginError" :snapshot="inventorySnapshot"
+               :pages-by-plugin="inventoryPages" :on-open-page="session.selectPage"
                :on-auto-enable="toggleAutoEnable" :on-enabled="togglePlugin" :on-review="openPermissionReview"
                :on-policy-review="inventory.review" :on-policy-retry="inventory.retry" :on-policy-discard="discardInventoryChoice" />
             <div v-else-if="currentPage.id === 'core:editor'" class="flex items-center gap-2 text-sm text-theme-text">
@@ -210,7 +212,7 @@ const { core, permissions, pageState, inventory,
 const { brandingSnapshot, keybindingSnapshot, canLogout, currentPageId, reviewPluginId,
   riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice, pathEntries, pathChoiceError,
   reviewSnapshot, departureVisible, departureMessage, departureCanSave, inventorySnapshot, pluginError,
-  groupedPages, currentSnapshot, currentPage, permissionSnapshot, catalogPlugins, catalogPolicy,
+  groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageIsPlugin, permissionSnapshot, catalogPlugins, catalogPolicy,
 } = toRefs(session.state);
 onBeforeUnmount(session.dispose);
 defineExpose({ openSettings, selectPage });

@@ -37,7 +37,7 @@ export async function exerciseSettingsPending({ session, server, directory }) {
   await session.click('[title="Open sidebar"]');
   await session.click('[aria-label="Settings"]');
   await session.poll("!!document.querySelector('#settings-modal-title')");
-  await session.button("Native preferences");
+  await session.button("Native preferences", '[aria-label="Settings pages"]');
   await session.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
   const initial = await read();
   await session.send("Fetch.enable", { patterns: [{ urlPattern: `*${path}`, requestStage: "Response" }] });
@@ -69,7 +69,7 @@ export async function exerciseSettingsPending({ session, server, directory }) {
   await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
   await session.button("Discard", '[data-modal-top="true"]');
   await session.poll("!!document.querySelector('[data-appearance-settings]')");
-  await session.button("Native preferences");
+  await session.button("Native preferences", '[aria-label="Settings pages"]');
   await session.poll("document.querySelector('#settings-field-limit')?.value==='5'");
   const late = { name: "native-pending-wire-late-acknowledgement", revision: persisted.revision, values: persisted.values, upstreamStatus: lateResponse.status, heldBeyondDeadline: true, duplicateWrites: 0, newerInvalidDraftRetained: true, departureBlockedWhileUnresolved: true, topmostEscapeKeptDraft: true, explicitDiscard: true };
   await Deno.writeTextFile(`${directory}/pending-step-1.json`, JSON.stringify(late, null, 2), { createNew: true });

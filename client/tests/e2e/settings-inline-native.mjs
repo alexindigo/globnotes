@@ -83,7 +83,7 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   assert(await inspect("document.querySelectorAll('#settings-modal-title').length===1 && document.querySelector('.cm-content')===window.__gpsEditor"), "Real SDK Settings dispatch did not reach the common retained dialog");
   await record({ name: "native-palette-sdk-settings-actions", builtInPalette: true, pluginSdkPage: "plugin:session-guard:preferences", sameEditor: true, instances: 1 });
 
-  await session.button("Native preferences");
+  await session.button("Native preferences", '[aria-label="Settings pages"]');
   await session.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
   await replace("#settings-field-message", "native committed message");
   await session.key("Enter", { windowsVirtualKeyCode: 13 });
@@ -107,7 +107,7 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
   await session.button("Discard", '[data-modal-top="true"]');
   await session.poll("!!document.querySelector('[data-appearance-settings]')");
-  await session.button("Native preferences");
+  await session.button("Native preferences", '[aria-label="Settings pages"]');
   await session.poll("document.querySelector('#settings-field-limit')?.value === '5'");
   assert((await stored()).revision === beforeInvalid.revision, "Invalid/Discard flow mutated persisted settings");
   await record({ name: "native-settings-ack-and-invalid-draft", values: acknowledged.values, revision: acknowledged.revision, command: command.result, topmostEscapeRetainedDraft: true });

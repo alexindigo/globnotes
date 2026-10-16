@@ -162,7 +162,14 @@ The full generic platform contract — runtime entries, `on-*`/`pre-*` hooks,
 commands, declarative settings pages, sandboxed endpoints, data persistence
 and guarantees — is documented in [plugin-api.md](plugin-api.md).
 
-For server network consent, use **Settings → Plugins → Review permissions** or the
+Every valid plugin-declared settings page appears as a named action on the left of
+its **Settings → Plugins** inventory item, in declaration order. For example,
+**Settings → Plugins → Backups** opens the shipped backup settings. Pages remain
+discoverable for disabled plugins and valid declarations whose runtime failed;
+the existing host-owned availability and draft-recovery controls still apply.
+Settings-less plugins have no invented settings action.
+
+For server network consent, use the right-hand **Settings → Plugins → Permissions** action or the
 plugin's framework **Server permissions** page. Manual filesystem additions are
 listed for review; there is no marketplace or new browser activation-review gate.
 Network data and remote-code imports need separate approval, and **Allow network**
@@ -174,7 +181,7 @@ these server controls do not restrict it or browser loads from rendered content.
 
 The server-only [versioned backup plugin](../plugins/globnotes-backup/README.md)
 uses generic completion IO for best-effort previous-text history. Settings →
-Backups has a default2 / integer1–10 slider and optional base. **Adjacent `.bak`
+Plugins → Backups has a default2 / integer1–10 slider and optional base. **Adjacent `.bak`
 files remain visible vault files, including old/deleted text for public readers.**
 Dedicated bases mirror the captured original path; rename/base changes do not
 migrate histories. Generic environment pins and filesystem grants are documented

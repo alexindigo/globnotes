@@ -51,7 +51,7 @@ describe("actual Settings permissions entry", () => {
   });
   it("exposes review and framework permission pages without declared settings", async () => {
     await inventory();
-    expect([...document.querySelectorAll("button")].filter(el => el.textContent.trim() === "Review permissions")).toHaveLength(2);
+    expect([...document.querySelectorAll('[data-plugin-inventory] button')].filter(el => el.textContent.trim() === "Permissions")).toHaveLength(2);
     expect(document.querySelector('[data-permission-page="mixed"]')).not.toBeNull();
   });
 });
@@ -174,7 +174,7 @@ describe("operator confirmation through the reusable Settings review", () => {
     pluginCatalog.value = { policy: { revision: 0, signature: "policy", effectiveAutoEnable: true }, plugins: [{ id: "p", name: "P", enabled: true, status: "ready", runtime: { server: true }, permissions: permissionView, pages: [], blocking: { actions: [] } }] };
     wrapper = mount(SettingsModal, { attachTo: document.body, props: { modelValue: true, permissionController: controller, writable: true }, global: { directives: { focus: { mounted: el => el.focus() } } } });
     await wrapper.vm.openSettings("core:plugins"); await flushPromises();
-    [...document.querySelectorAll("button")].find(el => el.textContent.trim() === "Review permissions").click(); await flushPromises();
+    [...document.querySelectorAll('[data-plugin-inventory-id="p"] button')].find(el => el.textContent.trim() === "Permissions").click(); await flushPromises();
     return { controller, adapters };
   }
   it("all-host approval requires a distinct topmost confirmation and Cancel grants nothing", async () => {

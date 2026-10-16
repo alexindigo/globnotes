@@ -154,7 +154,7 @@ async function inventory(session = current.session) {
 }
 async function review(session = current.session) {
   await inventory(session);
-  await session.button("Review permissions", '[data-plugin-inventory-id=networked]');
+  await session.button("Permissions", '[data-plugin-inventory-id=networked]');
   await session.poll("!!document.querySelector('[data-permission-review] [data-plugin-permission-panel]')");
 }
 async function master(session = current.session) {
@@ -294,7 +294,7 @@ try {
   await current.session.click('input[type=number]'); await current.session.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 }); await current.session.key("Backspace", { code: "Backspace", windowsVirtualKeyCode: 8 });
   await current.session.key("Tab", { code: "Tab", windowsVirtualKeyCode: 9 });
   await current.session.poll("document.body.textContent.includes('Enter a number')");
-  await current.session.button("Review permissions", '[data-modal-top="true"]');
+  await current.session.button("Permissions", '[data-modal-top="true"]');
   await current.session.button("Review access request", '[data-permission-review]');
   await current.session.poll("!!document.querySelector('#permission-request-title')");
   await promptFocus();

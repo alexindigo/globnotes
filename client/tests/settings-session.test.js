@@ -121,12 +121,64 @@ describe("Settings composition and ownership", () => {
   });
   it("groups current and retained recovery pages by stable ID, preferring the recovery record", () => {
     const f = fixture();
-    f.pageState.recoveryPages.mockReturnValue([{ ...pluginPage, label: "Retained" }, { id: "removed", group: "Removed", label: "Recovery" }]);
+    f.records[pluginPage.id] = { dirty: true, page: { ...pluginPage, label: "Retained" } };
+    f.records.removed = { dirty: true, page: { id: "removed", group: "Removed", label: "Recovery" } };
     expect(f.session.state.groupedPages.map(group => group.name)).toEqual(["Settings", "A", "Removed"]);
     expect(f.session.state.groupedPages[1].pages).toEqual([{ ...pluginPage, label: "Retained" }]);
     expect(f.session.state.currentSnapshot.writable).toBe(true);
     expect(f.session.state.brandingSnapshot).toEqual({ name: "Brand" });
     expect(f.session.state.keybindingSnapshot).toEqual({ id: "custom" });
+  });
+});
+
+describe("Settings page projection", () => {
+  // Navigation groups cluster by group name in first-seen registry order.
+  const ids = f => f.session.state.groupedPages.flatMap(group => group.pages.map(page => page.id));
+  const second = { ...pluginPage, id: "plugin:a:q", pageId: "q", label: "Second" };
+  const registryIds = ["core:appearance", "core:branding", "core:plugins", "core:plugin-permissions:a", "plugin:a:p", "plugin:a:q"];
+  const withSecond = () => { const f = fixture(); f.pages.value = [...f.pages.value, second]; return f; };
+  it("keeps registry order when nothing is retained, ignoring clean records", () => {
+    const f = withSecond(); f.records[pluginPage.id] = { page: { ...pluginPage, label: "Clean record" } };
+    expect(ids(f)).toEqual(registryIds);
+    expect(f.session.state.groupedPages[1].pages).toEqual([pluginPage, second]);
+    expect(f.session.state.inventoryPages.a).toEqual([pluginPage, second]);
+  });
+  it.each(["dirty", "pending", "uncertain", "changedDescriptor"])("a %s page replaces its ID in place with the captured definition", flag => {
+    const f = withSecond(), captured = { ...pluginPage, label: "Captured" };
+    f.records[pluginPage.id] = { [flag]: flag === "uncertain" ? { limit: 3 } : true, page: captured };
+    expect(ids(f)).toEqual(registryIds);
+    expect(f.session.state.groupedPages.find(group => group.name === "A").pages).toEqual([captured, second]);
+    expect(f.session.state.inventoryPages.a).toEqual([captured, second]);
+  });
+  it("appends a removed recovery page after the registry pages without changing their order", () => {
+    const f = withSecond(), removed = { id: "plugin:gone:x", owner: "gone", pageId: "x", group: "Gone", label: "Removed page" };
+    f.records[removed.id] = { dirty: true, page: removed };
+    expect(ids(f)).toEqual([...registryIds, removed.id]);
+    expect(f.session.state.groupedPages.at(-1)).toEqual({ name: "Gone", pages: [removed] });
+    expect(f.session.state.inventoryPages.gone).toEqual([removed]);
+  });
+  it("groups plugin pages by owner for the inventory and excludes non-plugin pages", () => {
+    const other = { ...pluginPage, id: "plugin:b:p", owner: "b", group: "B" };
+    const coreNamed = { ...pluginPage, id: "plugin:core:p", owner: "core", group: "Core plugin" };
+    const coreOwnedByPlugin = { id: "core:x", owner: "a", group: "Settings", label: "Core page" };
+    const f = withSecond(); f.pages.value = [...f.pages.value, other, coreNamed, coreOwnedByPlugin];
+    expect(f.session.state.inventoryPages).toEqual({ a: [pluginPage, second], b: [other], core: [coreNamed] });
+  });
+  it("loads pages by plugin-page identity rather than owner name", async () => {
+    const coreNamed = { ...pluginPage, id: "plugin:core:p", owner: "core", group: "Core plugin" };
+    const f = fixture(); f.pages.value = [...f.pages.value, coreNamed, { id: "core:x", owner: "a", group: "Settings", label: "Core page" }];
+    await f.session.selectPage(coreNamed.id);
+    expect(f.session.state.currentPageIsPlugin).toBe(true); expect(f.pageState.load).toHaveBeenCalledWith(coreNamed.id);
+    f.pageState.load.mockClear(); await f.session.selectPage("core:x");
+    expect(f.session.state.currentPageIsPlugin).toBe(false); expect(f.pageState.load).not.toHaveBeenCalled();
+  });
+  it("reads plugin settings through the default registry by page identity", async () => {
+    const f = fixture({ registry: undefined }), registry = f.factories.createPages.mock.calls[0][0].registry;
+    api.getPluginSettings.mockResolvedValue({ values: { limit: 4 }, revision: 2 });
+    expect(await registry.read({ id: "plugin:core:p", owner: "core", pageId: "p" })).toEqual({ values: { limit: 4 }, revision: 2 });
+    expect(api.getPluginSettings).toHaveBeenCalledWith("core", "p");
+    expect(await registry.read({ id: "core:appearance", owner: "a", pageId: "appearance" })).toEqual({ values: {}, revision: 0 });
+    expect(api.getPluginSettings).toHaveBeenCalledOnce();
   });
 });
 

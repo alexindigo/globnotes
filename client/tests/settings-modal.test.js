@@ -6,7 +6,7 @@ import SettingsModal from "../components/SettingsModal.vue";
 import NavBar from "../partials/NavBar.vue";
 import { pluginCatalog } from "../pluginRuntime.js";
 import { useGlobalStore } from "../globalStore.js";
-import { getPluginSettings, putPluginSettings, postBrand, getTree, putPluginEnabled, putPluginPolicy } from "../api.js";
+import { getPluginSettings, putPluginSettings, postBrand, getTree, putPluginEnabled, putPluginPolicy, getPluginPermissions, putPluginPermissions } from "../api.js";
 import { hasUnsavedWork, resolveParticipants } from "../sessionActions.js";
 import { registerPluginCommand, removeCommandOwner } from "../commands.js";
 import { viewLineNumbers, saveViewLineNumbers } from "../pluginSettings.js";
@@ -216,5 +216,128 @@ describe("actual menu replacement", () => {
     await router.push("/"); await router.isReady();
     wrapper = mount(NavBar, { global: { plugins: [router], stubs: { RouterLink: { template: '<a><slot /></a>' } } } });
     expect(wrapper.find('[title="Menu"]').exists()).toBe(false);
+  });
+});
+
+describe("registry-owned inventory page launchers", () => {
+  const item = id => document.querySelector(`[data-plugin-inventory-id="${id}"]`);
+  const launchers = id => [...item(id).querySelectorAll('[data-settings-page-id]')];
+  const assertNoMutation = () => {
+    expect(putPluginSettings).not.toHaveBeenCalled();
+    expect(putPluginEnabled).not.toHaveBeenCalled();
+    expect(putPluginPolicy).not.toHaveBeenCalled();
+    expect(putPluginPermissions).not.toHaveBeenCalled();
+    expect(postBrand).not.toHaveBeenCalled();
+  };
+  it("opens the shipped Backups descriptor from its inventory item, without writing", async () => {
+    const { default: manifest } = await import('../../plugins/globnotes-backup/manifest.json');
+    pluginCatalog.value.plugins = [{ id: manifest.id, name: manifest.name, enabled: true, pages: manifest.settings, runtime: { server: true } }];
+    getPluginSettings.mockResolvedValue({ revision: 0, values: { retention: 2, basePath: '' } });
+    await open('core:plugins');
+    expect(launchers(manifest.id).map(el => [el.dataset.settingsPageId, el.textContent.trim()])).toEqual([['plugin:globnotes-backup:backup', 'Backups']]);
+    launchers(manifest.id)[0].click(); await flushPromises();
+    expect(document.body.textContent).toContain('Retained versions');
+    expect(document.body.textContent).toContain('Backup base path');
+    expect(getPluginSettings).toHaveBeenCalledWith(manifest.id, 'backup');
+    assertNoMutation();
+  });
+  it("renders every normalized page once in registry order and keeps permissions separate", async () => {
+    const second = { ...page, id: 'second', label: 'Several words for preferences' };
+    pluginCatalog.value.plugins[0].pages = [page, second, page];
+    pluginCatalog.value.plugins.push({ id: 'zero', name: 'No settings', enabled: true, pages: [], runtime: { server: true } });
+    await open('core:plugins');
+    expect(launchers('a').map(el => el.dataset.settingsPageId)).toEqual(['plugin:a:p', 'plugin:a:second']);
+    expect([...item('a').querySelectorAll('[data-settings-actions-start] button')].map(el => el.textContent.trim())).toEqual([page.label, second.label]);
+    expect(item('a').querySelector('[data-settings-actions-end] button').textContent.trim()).toBe('Permissions');
+    expect(launchers('zero')).toHaveLength(0);
+    expect(item('zero').querySelector('[data-settings-actions-start]')).toBeNull();
+    expect(item('zero').querySelector('[data-settings-actions-end] button').textContent.trim()).toBe('Permissions');
+    launchers('a')[1].click(); await flushPromises();
+    expect(getPluginSettings).toHaveBeenLastCalledWith('a', 'second');
+    assertNoMutation();
+  });
+  it("opens a valid plugin named core by its normalized plugin-page identity", async () => {
+    pluginCatalog.value.plugins = [{ id: 'core', name: 'Core-named plugin', enabled: true, pages: [page] }];
+    await open('core:plugins');
+    expect(launchers('core').map(el => el.dataset.settingsPageId)).toEqual(['plugin:core:p']);
+    launchers('core')[0].click(); await flushPromises();
+    expect(getPluginSettings).toHaveBeenCalledWith('core', 'p');
+    expect(document.querySelector('#settings-field-message').value).toBe('stored');
+    assertNoMutation();
+  });
+  it("keeps valid disabled and failed-runtime pages discoverable without enabling them", async () => {
+    pluginCatalog.value.plugins = [
+      { id: 'disabled', name: 'Disabled', enabled: false, pages: [page] },
+      { id: 'failed', name: 'Failed runtime', enabled: true, status: 'failed', pages: [page], diagnostics: [{ detail: 'fixture failure' }] },
+    ];
+    await open('core:plugins');
+    expect(launchers('disabled')).toHaveLength(1); expect(launchers('failed')).toHaveLength(1);
+    launchers('disabled')[0].click(); await flushPromises();
+    expect(document.body.textContent).toContain('This page is unavailable');
+    expect(document.querySelector('#settings-field-message').readOnly).toBe(true);
+    expect(getPluginSettings).not.toHaveBeenCalled();
+    await wrapper.vm.selectPage('core:plugins'); await flushPromises();
+    launchers('failed')[0].click(); await flushPromises();
+    expect(getPluginSettings).toHaveBeenCalledWith('failed', 'p');
+    expect(document.querySelector('#settings-field-message').value).toBe('stored');
+    assertNoMutation();
+  });
+  it("reactively replaces catalog pages while removed dirty pages retain their captured identity and raw draft", async () => {
+    await open('core:plugins'); const owner = document.querySelector('#settings-modal-title');
+    launchers('a')[0].click(); await flushPromises();
+    await wrapper.find('#settings-field-limit').setValue('');
+    pluginCatalog.value = { ...pluginCatalog.value, plugins: [{ ...pluginCatalog.value.plugins[0], pages: [{ ...page, id: 'new', label: 'New declaration' }] }] };
+    await flushPromises();
+    expect(document.querySelector('#settings-field-limit').value).toBe('');
+    expect(document.body.textContent).toContain('This page is unavailable');
+    expect([...document.querySelectorAll('[aria-label="Settings pages"] button')].map(el => el.textContent.trim())).toContain(page.label);
+    const departure = wrapper.vm.selectPage('core:plugins'); await flushPromises();
+    button('Keep editing', document.querySelector('[data-modal-top=true]')).click();
+    expect(await departure).toBe(false); await flushPromises();
+    expect(document.querySelector('#settings-field-limit').value).toBe('');
+    expect(document.querySelector('#settings-modal-title')).toBe(owner);
+    const discard = wrapper.vm.selectPage('core:plugins'); await flushPromises();
+    button('Discard', document.querySelector('[data-modal-top=true]')).click(); expect(await discard).toBe(true); await flushPromises();
+    expect(launchers('a').map(el => el.dataset.settingsPageId)).toEqual(['plugin:a:new']);
+    expect([...document.querySelectorAll('[aria-label="Settings pages"] button')].map(el => el.textContent.trim())).not.toContain(page.label);
+    assertNoMutation();
+  });
+  it("Permissions invokes the existing review owner for the selected item, without mutations", async () => {
+    getPluginPermissions.mockImplementation(async id => ({ pluginId: id, revision: 0, signature: 'p0', allowNetwork: false, rows: [], approvedNetwork: [], approvedImports: [], pendingRequests: [], reload: { state: 'none' } }));
+    await open('core:plugins');
+    const owner = document.querySelector('#settings-modal-title');
+    button('Permissions', item('a')).click(); await flushPromises();
+    expect(document.querySelector('[data-permission-review]').textContent).toContain('Fixture');
+    expect(getPluginPermissions).toHaveBeenCalledWith('a');
+    button('Close review', document.querySelector('[data-permission-review]')).click(); await flushPromises();
+    expect(document.querySelector('[data-permission-review]')).toBeNull();
+    expect(document.querySelector('#settings-modal-title')).toBe(owner);
+    expect(item('a')).not.toBeNull(); assertNoMutation();
+  });
+  it("keeps the captured definition's navigation label while a same-ID schema replacement needs draft recovery", async () => {
+    await open('plugin:a:p');
+    await wrapper.find('#settings-field-limit').setValue('');
+    pluginCatalog.value = { ...pluginCatalog.value, plugins: [{ ...pluginCatalog.value.plugins[0], pages: [{ ...page, label: 'Replacement definition', fields: [{ key: 'new', label: 'New field', type: 'text', default: 'new default' }] }] }] };
+    await flushPromises();
+    const navigation = [...document.querySelectorAll('[aria-label="Settings pages"] button')].map(el => el.textContent.trim());
+    expect(navigation).toContain(page.label);
+    expect(navigation).not.toContain('Replacement definition');
+    expect(document.querySelector('#settings-field-limit').value).toBe('');
+    expect(document.querySelector('#settings-field-new')).toBeNull();
+    expect(document.body.textContent).toContain('Your original draft is retained');
+    assertNoMutation();
+  });
+  it("an inventory page click waits for its held policy wire and cannot bypass failed settlement", async () => {
+    let reject;
+    putPluginEnabled.mockReturnValue(new Promise((_, no) => { reject = no; }));
+    await open('core:plugins');
+    item('a').querySelector('.toggle-control').click(); await flushPromises();
+    launchers('a')[0].click(); await flushPromises();
+    expect(getPluginSettings).not.toHaveBeenCalled();
+    expect(item('a')).not.toBeNull();
+    reject({ response: { status: 503, data: { detail: 'unsettled policy' } } }); await flushPromises();
+    expect(getPluginSettings).not.toHaveBeenCalled();
+    expect(item('a')).not.toBeNull(); expect(hasUnsavedWork()).toBe(true);
+    expect(putPluginEnabled).toHaveBeenCalledTimes(1);
   });
 });

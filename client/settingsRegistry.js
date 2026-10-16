@@ -26,6 +26,9 @@ const CORE_PAGES = [
 /** Framework review IDs cannot collide with plugin-declared page IDs. */
 export const permissionPageId = id => `core:plugin-permissions:${id}`;
 
+/** Page kind belongs to its normalized namespace, not its plugin owner name. */
+export const isPluginSettingsPage = page => page?.id?.startsWith("plugin:") === true;
+
 /** Reactive page list: core pages + catalog plugin pages. */
 export const settingsPages = computed(() => {
   const pages = CORE_PAGES.map((page) => ({
