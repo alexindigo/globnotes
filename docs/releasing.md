@@ -15,6 +15,16 @@ The Docker release workflow runs `scripts/check-release-version.sh <tag>` before
 building and refuses to publish a tag that does not equal `v` + `VERSION`. It
 builds the images with `GLOBNOTES_REVISION` set to the tagged commit.
 
+For a `v2.3.3` release, both Docker Hub (`alexindigo/globnotes`) and GHCR
+(`ghcr.io/alexindigo/globnotes`) publish the exact `2.3.3` tag and update these
+moving tags to the same image:
+
+| # | Tag | Tracks |
+|---|---|---|
+| 1 | `2` | Latest release in major version 2 |
+| 2 | `2.3` | Latest release in minor version 2.3 |
+| 3 | `latest` | Latest release |
+
 ## What the running app shows
 
 The server reads `VERSION` once at startup; a missing or invalid file stops
