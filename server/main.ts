@@ -28,6 +28,8 @@ import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import { initState, state } from "./state.ts";
 import { Fts5Indexer } from "./search/fts5.ts";
+import { readAppVersion } from "./version.ts";
+import { formatVersion } from "../shared/version.ts";
 
 function fileExists(p: string): boolean {
   try {
@@ -36,6 +38,11 @@ function fileExists(p: string): boolean {
     return false;
   }
 }
+
+// Release identity first: a missing or invalid VERSION/GLOBNOTES_REVISION
+// stops startup before anything else is touched.
+const appVersion = readAppVersion();
+logger.info(`globnotes ${formatVersion(appVersion)}`);
 
 const globalConfig = new GlobalConfig();
 const notes = new FileSystemNotes(globalConfig.notesPath);
@@ -80,6 +87,7 @@ const actions = new PluginActions({
   vaultPath: globalConfig.notesPath,
   statePath: globalConfig.statePath,
 });
+state.version = appVersion;
 state.lifecycle = lifecycle;
 state.operations = operations;
 state.actions = actions;

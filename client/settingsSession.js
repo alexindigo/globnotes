@@ -18,6 +18,7 @@ import { createSettingsPageState } from "./settingsPageState.js";
 import { commitPluginPage, findPage, isPluginSettingsPage, readPluginPage, settingsPages } from "./settingsRegistry.js";
 import { getStoredToken } from "./tokenStorage.js";
 import { permissionSessionKey } from "./appSessionPolicy.js";
+import { formatVersion } from "../shared/version.ts";
 
 const defaultRegistry = {
   find: findPage,
@@ -42,6 +43,7 @@ export function createSettingsSession({
     readBrand: async () => (await getConfig()).brand, applyBrand });
   const brandingSnapshot = computed(() => core.brandSnapshot()), keybindingSnapshot = computed(() => core.keybindings());
   const canLogout = computed(() => [authTypes.password, authTypes.totp].includes(config().authType));
+  const versionLabel = computed(() => formatVersion({ version: config()?.version, revision: config()?.revision }));
   const currentPageId = ref("core:appearance");
   const ownsPermissions = !permissionController;
   const permissions = permissionController ?? createPermissions({ readView: getPluginPermissions, writeView: putPluginPermissions,
@@ -258,7 +260,7 @@ export function createSettingsSession({
     stopPages(); stopCatalog();
   }
   return {
-    state: readonly(reactive({ brandingSnapshot, keybindingSnapshot, canLogout, currentPageId, reviewPluginId,
+    state: readonly(reactive({ brandingSnapshot, keybindingSnapshot, canLogout, versionLabel, currentPageId, reviewPluginId,
       riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice, pathEntries, pathChoiceError,
       reviewSnapshot, departureVisible, departureMessage, departureCanSave, inventorySnapshot, pluginError,
       groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageIsPlugin, permissionSnapshot, catalogPlugins, catalogPolicy })),

@@ -2,6 +2,7 @@
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
+import { formatVersion } from "../../../shared/version.ts";
 
 let options;
 try { options = parseArguments(Deno.args); }
@@ -261,6 +262,20 @@ try {
   await settleSettingsInventory(session, `document.querySelector(${JSON.stringify(item(zero.id))})?.textContent.includes('Enabled')`);
   await session.click(pageButton(multi.id, "new")); await session.poll("document.querySelector('#settings-field-message')?.value==='new seed'");
   await invariant(); await record("held-policy-navigation", { blockedWhileOwnedWireUnresolved: true, explicitSettlementThenPageConsumer: true, screenshot: policyShot });
+  // Header version: the server's own config, beside (not inside) the dialog title, clear of Close.
+  const appConfig = await api("/_/api/config"), expectedVersion = formatVersion(appConfig);
+  assert(typeof appConfig.version === "string" && expectedVersion !== "", `header-version: config has no version ${JSON.stringify({ version: appConfig.version, revision: appConfig.revision })}`);
+  const headerCases = [];
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 640 }]) {
+    await session.send("Emulation.setDeviceMetricsOverride", { ...viewport, deviceScaleFactor: 1, mobile: false }); await settled();
+    const header = await inspect(`(()=>{const title=document.querySelector('#settings-modal-title'),label=document.querySelector('[data-app-version]'),close=document.querySelector('[aria-label="Close settings"]');const rect=el=>el?el.getBoundingClientRect().toJSON():null;return {text:label?label.textContent.trim():null,insideTitle:!!label&&title.contains(label),title:rect(title),label:rect(label),close:rect(close)};})()`);
+    assert(header.text === expectedVersion, `header-version ${viewport.width}: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(header.text)}`);
+    assert(!header.insideTitle, `header-version ${viewport.width}: version is inside the title heading`);
+    const overlap = header.label.right > header.close.left && header.label.left < header.close.right && header.label.bottom > header.close.top && header.label.top < header.close.bottom;
+    assert(!overlap, `header-version ${viewport.width}: version overlaps Close ${JSON.stringify(header)}`);
+    headerCases.push({ viewport, ...header, screenshot: await screenshot(`header-version-${viewport.width}`) });
+  }
+  await record("header-version", { config: { version: appConfig.version, revision: appConfig.revision }, expected: expectedVersion, cases: headerCases });
   assert(session.errors.length === 0, "Browser exceptions during inventory/navigation consumers");
 } catch (error) { failure = error; console.error(`FAIL: ${error.message}`); }
 finally {

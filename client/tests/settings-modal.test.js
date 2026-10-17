@@ -210,6 +210,23 @@ describe("review repairs: R13 real inventory policy wires participate in protect
   });
 });
 
+describe("Settings header app version", () => {
+  it("renders the version label next to the title, outside the dialog's heading", async () => {
+    useGlobalStore().config = { ...useGlobalStore().config, version: "2.3.2", revision: "0123456789abcdef0123456789abcdef01234567" };
+    await open("core:appearance");
+    const title = document.querySelector("#settings-modal-title"), label = document.querySelector("[data-app-version]");
+    expect(label.textContent.trim()).toBe("v2.3.2 (0123456)");
+    expect(title.textContent.trim()).toBe("Settings");
+    expect(title.contains(label)).toBe(false);
+    expect(label.parentElement).toBe(title.parentElement);
+  });
+  it("renders nothing without a version", async () => {
+    await open("core:appearance");
+    expect(document.querySelector("[data-app-version]")).toBeNull();
+    expect(document.querySelector("#settings-modal-title").textContent.trim()).toBe("Settings");
+  });
+});
+
 describe("actual menu replacement", () => {
   it("navbar no longer renders the obsolete floating menu", async () => {
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", name: "home", component: { template: "<p>Home</p>" } }] });

@@ -13,12 +13,20 @@
     :close-handler-override="requestClose"
   >
     <div class="flex min-h-0 flex-1 flex-col">
-      <div class="flex items-center justify-between border-b border-theme-border px-4 py-3">
-        <h2
-          id="settings-modal-title"
-          class="text-lg font-semibold text-theme-text"
-        >Settings</h2>
+      <div class="flex items-center justify-between gap-2 border-b border-theme-border px-4 py-3">
+        <div class="flex min-w-0 flex-wrap items-baseline gap-x-2">
+          <h2
+            id="settings-modal-title"
+            class="text-lg font-semibold text-theme-text"
+          >Settings</h2>
+          <span
+            v-if="versionLabel"
+            data-app-version
+            class="min-w-0 max-w-full truncate text-xs text-theme-text-muted"
+          >{{ versionLabel }}</span>
+        </div>
         <CustomButton
+          class="shrink-0"
           aria-label="Close settings"
           :icon-path="tabClose"
           @click="requestClose"
@@ -209,7 +217,7 @@ const { core, permissions, pageState, inventory,
   approveScope, deleteScope, discardPermission, openPermissionReview, closePermissionReview, resolveRisk,
   resetCoreBranding, openAccess, parentPath, closePathChoice, browseField, loadPathChoices, selectPath,
 } = session;
-const { brandingSnapshot, keybindingSnapshot, canLogout, currentPageId, reviewPluginId,
+const { brandingSnapshot, keybindingSnapshot, canLogout, versionLabel, currentPageId, reviewPluginId,
   riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice, pathEntries, pathChoiceError,
   reviewSnapshot, departureVisible, departureMessage, departureCanSave, inventorySnapshot, pluginError,
   groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageIsPlugin, permissionSnapshot, catalogPlugins, catalogPolicy,

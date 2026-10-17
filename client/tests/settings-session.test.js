@@ -131,6 +131,22 @@ describe("Settings composition and ownership", () => {
   });
 });
 
+describe("app version label", () => {
+  const revision = "0123456789abcdef0123456789abcdef01234567";
+  it("shows the version with the short revision when the build supplies one", () => {
+    const f = fixture(); f.config.version = "2.3.2"; f.config.revision = revision;
+    expect(f.session.state.versionLabel).toBe("v2.3.2 (0123456)");
+  });
+  it("marks a build without a revision as a development build", () => {
+    const f = fixture(); f.config.version = "2.3.2"; f.config.revision = null;
+    expect(f.session.state.versionLabel).toBe("v2.3.2-dev");
+  });
+  it("is empty without a version", () => {
+    const f = fixture(); f.config.revision = revision;
+    expect(f.session.state.versionLabel).toBe("");
+  });
+});
+
 describe("Settings page projection", () => {
   // Navigation groups cluster by group name in first-seen registry order.
   const ids = f => f.session.state.groupedPages.flatMap(group => group.pages.map(page => page.id));

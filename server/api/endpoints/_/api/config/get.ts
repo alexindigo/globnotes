@@ -25,5 +25,7 @@ export default function (): Record<string, unknown> {
     quickAccessLimit: c.quickAccessLimit,
     autoEnablePlugins: c.autoEnablePlugins,
     brand: brandBlock(c),
+    version: state.version?.version ?? null,
+    revision: state.version?.revision ?? null,
   };
 }

@@ -59,6 +59,13 @@ COPY --from=build ${BUILD_DIR}/client/dist ./client/dist
 COPY entrypoint.sh healthcheck.sh /
 RUN chmod +x /entrypoint.sh /healthcheck.sh
 
+# Release identity (docs/releasing.md). Copied after the dependency layers so a
+# version bump does not reinstall them. The release workflow supplies the
+# commit; local builds leave it empty and report a development version.
+COPY VERSION ./
+ARG GLOBNOTES_REVISION=
+ENV GLOBNOTES_REVISION=$GLOBNOTES_REVISION
+
 VOLUME /data
 EXPOSE ${GLOBNOTES_PORT}/tcp
 HEALTHCHECK --interval=60s --timeout=10s CMD /healthcheck.sh

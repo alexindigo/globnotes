@@ -19,6 +19,7 @@ import type { PluginEndpoints } from "./plugins/endpoints.ts";
 import type { PluginLifecycle } from "./plugins/lifecycle.ts";
 import type { PluginManager } from "./plugins/manager.ts";
 import type { PluginNetworkRequests } from "./plugins/network_requests.ts";
+import type { AppVersion } from "./version.ts";
 
 /** Implemented by the FTS5 commit; unset until then (storage still works,
  * index hooks are simply skipped). */
@@ -75,6 +76,9 @@ export interface ServerState {
   pluginEndpoints: PluginEndpoints | null;
   /** Host-owned server permission requests and operator approvals. */
   pluginNetwork: PluginNetworkRequests | null;
+  /** Release identity read once at startup; null only in unit tests that
+   * never start the server. */
+  version: AppVersion | null;
 }
 
 // Assigned by initState() before the server starts listening; endpoints only
@@ -86,6 +90,7 @@ export const state: ServerState = {
   pluginData: null,
   pluginEndpoints: null,
   pluginNetwork: null,
+  version: null,
 } as ServerState;
 
 export function initState(
@@ -108,4 +113,5 @@ export function initState(
   state.pluginData = null;
   state.pluginEndpoints = null;
   state.pluginNetwork = null;
+  state.version = null;
 }
