@@ -11,6 +11,10 @@ The tracked root `VERSION` file is the release version: `MAJOR.MINOR` or
 Development commits keep the last release's value. Git tags and commit counts
 never choose or increment the version.
 
+The Docker release workflow runs `scripts/check-release-version.sh <tag>` before
+building and refuses to publish a tag that does not equal `v` + `VERSION`. It
+builds the images with `GLOBNOTES_REVISION` set to the tagged commit.
+
 ## What the running app shows
 
 The server reads `VERSION` once at startup; a missing or invalid file stops
