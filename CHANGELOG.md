@@ -1,5 +1,37 @@
 # Changelog
 
+## v2.3.3 (2026-10-16)
+
+### Fix
+
+Settings → Plugins now links to each plugin's own settings pages, such as
+Backups, with Permissions on the right.
+
+Settings buttons are consistent, keyboard focus is visible, and warnings are
+readable in every theme.
+
+Server plugins count as started only after they respond, preventing intermittent
+startup failures, notably with the backup plugin.
+
+Unsaved drafts of notes with names like `token` no longer collide with the app's
+own browser storage. Existing drafts are moved, never discarded.
+
+Reference fixing after a rename handles paths containing `%`; failed rewrites
+stay listed with an error.
+
+The sidebar and search ignore stale responses from older requests and stop
+updating once closed.
+
+Preview rendering and note timers stop when editing ends or a note closes, and
+index status polling errors are contained.
+
+### Added
+
+The app version now appears in the Settings header and at the top of the startup
+log, resolving #11.
+
+Internal tests and client structure were also improved.
+
 ## v2.3.2 (2026-10-13)
 
 ### Fix
