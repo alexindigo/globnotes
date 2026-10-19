@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.4.0 (2026-10-19)
+
+### Changed
+
+Settings has a new layout that matches the rest of the app. Pages are grouped
+by who they affect: this browser or this vault. On the Plugins page each plugin
+is one row, which expands to show its network permissions and access requests.
+Plugins with their own settings get a sidebar entry, and their pages appear as
+tabs.
+
+Appearance shows each theme as a small preview note, grouped by theme family.
+System shows the light and dark themes it switches between.
+
+Plugin access requests you postpone stay under "Needs attention" in Settings,
+where you can answer them from any page without losing unsaved edits.
+
+Buttons look the same across Settings and the rest of the app. Destructive
+actions sit apart from the main action, keyboard focus is visible everywhere,
+and text meets contrast requirements in every theme.
+
+### Fix
+
+The Settings header line now reaches the window edge.
+
 ## v2.3.3 (2026-10-16)
 
 ### Fix
