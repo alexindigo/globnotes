@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { totp } from "otplib";
 import { checkTotpCode } from "../server/auth/local.ts";
-import { authenticatorCode } from "./helpers/totp.ts";
+import {
+  authenticatorCode,
+  settledTotpNow,
+  TOTP_STEP_MS,
+  unusedWindowCode,
+} from "./helpers/totp.ts";
 
 Deno.test("TOTP reference: RFC 6238 SHA1 test vectors", async () => {
   const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
@@ -77,4 +82,18 @@ Deno.test("TOTP verification: authenticator key bytes, window and preset isolati
     totp.resetOptions();
     totp.options = originalOptions;
   }
+});
+
+Deno.test("totp helper: an unused window code avoids every consumed code", async () => {
+  const secret = "JBSWY3DPEHPK3PXP";
+  const now = await settledTotpNow();
+  const window = await Promise.all(
+    [0, 1, -1].map((offset) =>
+      authenticatorCode(secret, now + offset * TOTP_STEP_MS)
+    ),
+  );
+  const fresh = await unusedWindowCode(secret, [window[0]]);
+  assert(fresh !== window[0]);
+  assert(window.includes(fresh));
+  await assertRejects(() => unusedWindowCode(secret, window));
 });

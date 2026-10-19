@@ -8,7 +8,7 @@ import { encodeBase32 } from "@std/encoding/base32";
 import { SignJWT } from "jose";
 import { LocalAuth, totpSecretFromRawKey } from "../server/auth/local.ts";
 import { GlobalConfig } from "../server/config.ts";
-import { authenticatorCode } from "./helpers/totp.ts";
+import { authenticatorCode, settledTotpNow } from "./helpers/totp.ts";
 
 async function makeConfig(
   env: Record<string, string>,
@@ -138,7 +138,7 @@ Deno.test("LocalAuth: TOTP login and single-use enforcement", async () => {
   const secret = encodeBase32(new TextEncoder().encode(totpKey))
     .replace(/=+$/, "");
   const stepMs = 30_000;
-  const now = Date.now();
+  const now = await settledTotpNow();
   const codeAt = (epochMs: number) => authenticatorCode(secret, epochMs);
   const code = await codeAt(now);
   const prevCode = await codeAt(now - stepMs);
@@ -240,7 +240,7 @@ Deno.test("LocalAuth: wizard-enrolled TOTP (stored key + password hash)", async 
 
   const secret = totpSecretFromRawKey(totpKey);
   const stepMs = 30_000;
-  const now = Date.now();
+  const now = await settledTotpNow();
   const codeAt = (epochMs: number) => authenticatorCode(secret, epochMs);
 
   // Current, previous, next — all accepted (window ±1), each single-use.

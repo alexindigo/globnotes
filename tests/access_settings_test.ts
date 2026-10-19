@@ -4,7 +4,11 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { GlobalConfig } from "../server/config.ts";
 import { hashPassword } from "../server/helpers.ts";
 import { bootServer } from "./helpers/boot.ts";
-import { authenticatorCode } from "./helpers/totp.ts";
+import {
+  authenticatorCode,
+  settledTotpNow,
+  unusedWindowCode,
+} from "./helpers/totp.ts";
 import { HttpError } from "@pathfinder/pathfinder";
 import { settingsWriteGuard } from "../server/auth/middleware.ts";
 import { state } from "../server/state.ts";
@@ -142,7 +146,10 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
       (await call("auth-check", "GET", undefined, token)).status,
       200,
     );
-    const code = await authenticatorCode(bundle.secret, Date.now());
+    const code = await authenticatorCode(
+      bundle.secret,
+      await settledTotpNow(),
+    );
     const view = (await call("access", "GET", undefined, token)).body;
     const request = {
       mode: "password",
@@ -204,10 +211,8 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
         assertEquals((await login(`old-password${code}`)).status, 401);
       },
     );
-    const previousCode = await authenticatorCode(
-      bundle.secret,
-      Date.now() - 30_000,
-    );
+    // The enrolment consumed `code`; log in with another window code.
+    const previousCode = await unusedWindowCode(bundle.secret, [code]);
     const totpLogin = await login(`old-password${previousCode}`);
     assertEquals(totpLogin.status, 200);
     token = totpLogin.body.access_token;
@@ -231,10 +236,10 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
           (await call("auth-check", "GET", undefined, token)).status,
           200,
         );
-        const nextCode = await authenticatorCode(
-          bundle.secret,
-          Date.now() + 30_000,
-        );
+        const nextCode = await unusedWindowCode(bundle.secret, [
+          code,
+          previousCode,
+        ]);
         assertEquals(
           (await call("access", "PUT", {
             mode: "password",

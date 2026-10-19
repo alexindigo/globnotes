@@ -8,7 +8,12 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
-import { authenticatorCode } from "./helpers/totp.ts";
+import {
+  authenticatorCode,
+  settledTotpNow,
+  TOTP_STEP_MS,
+  totpStep,
+} from "./helpers/totp.ts";
 import { totpSecretFromRawKey } from "../server/auth/local.ts";
 import { bootServer } from "./helpers/boot.ts";
 
@@ -329,10 +334,19 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
     await t.step(
       "a wrong code keeps setup pending and writes nothing",
       async () => {
-        // Deterministically wrong: whatever the current valid code is,
-        // send a different one (000000 could in principle be valid).
-        const valid = await codeFor(secret, Date.now());
-        const wrong = valid === "000000" ? "000001" : "000000";
+        // Deterministically wrong: a code outside every step the verifier
+        // accepts right now (000000 could in principle be valid).
+        const now = await settledTotpNow();
+        const valid = new Set(
+          await Promise.all(
+            [-1, 0, 1].map((offset) =>
+              codeFor(secret, now + offset * TOTP_STEP_MS)
+            ),
+          ),
+        );
+        const wrong = ["000000", "000001", "000002", "000003"].find((code) =>
+          !valid.has(code)
+        )!;
         const res = await fetch(`${server.baseUrl}/_/api/setup`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -354,9 +368,11 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
       },
     );
 
-    let enrolCode = "";
+    let enrolCode = "", enrolStep = 0;
     await t.step("a valid code completes setup as totp", async () => {
-      enrolCode = await codeFor(secret, Date.now());
+      const enrolledAt = await settledTotpNow();
+      enrolStep = totpStep(enrolledAt);
+      enrolCode = await codeFor(secret, enrolledAt);
       const res = await fetch(`${server.baseUrl}/_/api/setup`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -399,7 +415,9 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
 
     let acceptedNext = "";
     await t.step("previous and next step codes log in", async () => {
-      const now = Date.now();
+      // Not the step right after enrolment: its previous step is the spent
+      // enrolment code, which the replay guard (correctly) rejects.
+      const now = await settledTotpNow({ consumedAtStep: enrolStep });
       for (const epoch of [now - stepMs, now + stepMs]) {
         const code = await codeFor(secret, epoch);
         const res = await login(`secret${code}`);

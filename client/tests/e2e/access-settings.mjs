@@ -3,7 +3,7 @@ import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
-import { authenticatorCode } from "../../../tests/helpers/totp.ts";
+import { authenticatorCode, unusedWindowCode } from "../../../tests/helpers/totp.ts";
 import { SignJWT } from "jose";
 import { createSettingsRestartFixture } from "./settings-restart-fixture.mjs";
 import { exerciseLockedControls } from "./access-lock-controls-native.mjs";
@@ -163,8 +163,7 @@ try {
   assert(after.auth_type === "totp" && after.password_hash === owned.initial.password_hash && after.username === username && after.brand_name === owned.initial.brand_name && after.unrelated_fixture.kept, "Confirmed 2FA replaced existing credentials/config");
   assert((await api("auth-check", "GET", undefined, oldToken)).status === 401, "Confirmed 2FA left old session valid");
   if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
-  const now = Date.now(), loginCodes = await Promise.all([now, now - 30_000, now + 30_000].map(time => authenticatorCode(bundle.secret, time)));
-  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", loginCodes.find(code => code !== confirmedCode));
+  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await unusedWindowCode(bundle.secret, [confirmedCode]));
   await session.button("Log In"); await session.poll("!document.querySelector('#username')");
   const freshToken = await session.evaluate("sessionStorage.getItem('token')");
   assert((await api("auth-check", "GET", undefined, freshToken)).status === 200, "Confirmed authenticator cannot sign in");
@@ -235,8 +234,7 @@ try {
   assert((await api("auth-check", "GET", undefined, old)).status === 401, "Password change did not invalidate the old session");
   assert(JSON.parse(await saved()).totp_key === owned.initial.totp_key, "Password change replaced the existing authenticator");
   if (await owned.session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await owned.session.click('[title="Close sidebar"]');
-  const codeNow = Date.now(), currentCodes = await Promise.all([codeNow, codeNow - 30_000, codeNow + 30_000].map(time => authenticatorCode(currentSecret, time)));
-  await fill("#username", username); await fill("#password", "changed-native-password"); await fill("#one-time-code", currentCodes.find(code => code !== acceptedCode));
+  await fill("#username", username); await fill("#password", "changed-native-password"); await fill("#one-time-code", await unusedWindowCode(currentSecret, [acceptedCode]));
   await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, await owned.session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Changed password/current authenticator cannot log in");
   await finishCase("native fresh-current-2FA rejection and password-change login", { wrongCurrentCodePreservedSession: true, passwordChangeRevokedOldSession: true, currentAuthenticatorRetained: true, newPasswordLoginAccepted: true });
