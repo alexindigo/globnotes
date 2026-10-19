@@ -77,11 +77,11 @@
             <span v-show="!editMode" :title="note.path">{{
               noteBasename
             }}</span>
-            <input
+            <TextInput
               v-show="editMode"
               v-model.trim="editBasename"
               @input="onTitleInput"
-              class="w-full bg-theme-background outline-none"
+              variant="plain"
               placeholder="Title"
             />
           </div>
@@ -101,11 +101,12 @@
             </template>
           </div>
           <div v-show="editMode" class="flex pt-1">
-            <input
+            <TextInput
               v-model="editFolder"
               @input="syncTitle"
               :list="folderDatalistId"
-              class="min-w-0 grow bg-theme-background text-sm text-theme-text-muted outline-none"
+              class="grow"
+              variant="plain-muted"
               placeholder="Folder (root)"
             />
             <datalist :id="folderDatalistId">
@@ -269,6 +270,7 @@ import Icon from "../components/Icon.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import CustomButton from "../components/CustomButton.vue";
 import CtaButton from "../components/CtaButton.vue";
+import TextInput from '../components/TextInput.vue';
 import RenameAssetsModal from "../components/RenameAssetsModal.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import Toggle from "../components/Toggle.vue";

@@ -3,6 +3,7 @@ import { nextTick, reactive, ref } from "vue";
 import { flushPromises } from "@vue/test-utils";
 import { createSettingsSession } from "../settingsSession.js";
 import { createSettingsPageState } from "../settingsPageState.js";
+import { createAttentionRegistry } from '../attention.js';
 import * as api from "../api.js";
 
 vi.mock("../pluginRuntime.js", async () => {
@@ -11,7 +12,7 @@ vi.mock("../pluginRuntime.js", async () => {
     capturePluginCatalogOwnership: vi.fn(), acknowledgePluginPolicy: vi.fn() };
 });
 vi.mock("../api.js", () => ({
-  getConfig: vi.fn(), postBrand: vi.fn(), getTree: vi.fn(),
+  getConfig: vi.fn(), getAccessSettings:vi.fn(), postBrand: vi.fn(), getTree: vi.fn(),
   getPluginSettings: vi.fn(), putPluginSettings: vi.fn(),
   putPluginEnabled: vi.fn(), putPluginPolicy: vi.fn(),
   getPluginPermissions: vi.fn(), putPluginPermissions: vi.fn(),
@@ -25,16 +26,17 @@ const deferred = () => {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 };
-const corePage = id => ({ id: `core:${id}`, owner: "core", group: "Settings", label: id });
-const pluginPage = { id: "plugin:a:p", owner: "a", pageId: "p", group: "A", label: "Preferences", available: true,
+const corePage = id => ({ id: `core:${id}`, owner: "core", group: id === "appearance" ? "browser" : "vault", label: id,
+  kind:id === "appearance" ? "browser-pref" : id === "branding" ? "branding" : id === "plugins" ? "plugins" : "unsupported" });
+const pluginPage = { id: "plugin:a:p", owner: "a", pageId: "p", group: "plugin", kind:"plugin-page", plugin:{id:"a",name:"A"}, label: "Preferences", available: true,
   descriptor: { fields: [{ key: "folder", type: "folder", default: "" }, { key: "file", type: "file", default: "" }, { key: "limit", type: "number", min: 1, default: 2 }] } };
 const folder = { key: "folder", type: "folder" }, file = { key: "file", type: "file" };
 function fixture(options = {}) {
+  const attentionRegistry=options.attentionRegistry ?? createAttentionRegistry();
   const config = reactive({ authType: "none", brand: { name: "Brand" } });
   const writable = ref(true), visible = ref(false), token = ref(null);
   const catalog = ref({ plugins: [{ id: "a" }], policy: { revision: 0, signature: "p0", effectiveAutoEnable: true } });
-  const pages = ref([corePage("appearance"), corePage("branding"), corePage("plugins"), pluginPage,
-    { ...corePage("plugin-permissions:a"), permissionPluginId: "a" }]);
+  const pages = ref([corePage("appearance"), corePage("branding"), corePage("plugins"), pluginPage]);
   const records = reactive({});
   const registry = { find: id => pages.value.find(page => page.id === id),
     read: vi.fn(async () => ({ values: { folder: "", file: "", limit: 2 }, revision: 0 })),
@@ -45,18 +47,20 @@ function fixture(options = {}) {
     settle: vi.fn(async () => true), resolveDeparture: vi.fn(async () => true), reconcile: vi.fn(), dispose: vi.fn(),
     load: vi.fn(async () => true), edit: vi.fn(), commit: vi.fn(),
   };
-  const permissionRecords = reactive({ a: { view: { revision: 0 }, draft: null, busy: false } });
+  const permissionRecords = reactive({ a: { plugin:{id:"a",name:"A"}, available:true, hasServer:true, view: { revision: 0 }, draft: null, busy: false } });
   const permissions = {
-    snapshot: vi.fn(id => permissionRecords[id]),
+    snapshot: vi.fn(id => permissionRecords[id] ?? {available:false,hasServer:false,plugin:null}),
+    permissionView: vi.fn(id => ({ id, requests:[], network:[], imports:[], allowNetwork:false,
+      recovery:permissionRecords[id]?.draft ? {text:"Retained permission choice"} : null })),
     recoveryIds: vi.fn(() => Object.keys(permissionRecords).filter(id => permissionRecords[id].draft)),
     setSession: vi.fn(), reconcile: vi.fn(), hasWork: vi.fn(() => false), settle: vi.fn(async () => true),
     load: vi.fn(async () => true), retry: vi.fn(async () => true), discard: vi.fn(() => true), dispose: vi.fn(),
     approve: vi.fn(async () => true), remove: vi.fn(async () => true),
   };
-  const core = { brandSnapshot: vi.fn(() => ({ name: config.brand.name })), keybindings: vi.fn(() => ({ id: "custom" })),
+  const core = { appearance:vi.fn(()=>({})), brandSnapshot: vi.fn(() => ({ name: config.brand.name })), keybindings: vi.fn(() => ({ id: "custom" })),
     hasWork: vi.fn(() => false), settle: vi.fn(async () => true), stopCapture: vi.fn(), dispose: vi.fn(),
     loadBrand: vi.fn(), discardBrand: vi.fn(() => true), saveBrand: vi.fn(async () => true), resetMessage: vi.fn(() => "Reset retained brand") };
-  const inventory = { snapshot: vi.fn(() => ({ label: "Inventory", canRetry: true, canDiscard: true })),
+  const inventory = { snapshot: vi.fn(() => ({ label: "Inventory", canMutate:true, canRetry: true, canDiscard: true })),
     hasWork: vi.fn(() => false), settle: vi.fn(async () => true), resolveDeparture: vi.fn(async () => true),
     setEnabled: vi.fn(async () => true), setAutoEnable: vi.fn(async () => true), discard: vi.fn(() => true), dispose: vi.fn() };
   const factories = { createCore: vi.fn(() => core), createPages: vi.fn(() => pageState),
@@ -67,13 +71,86 @@ function fixture(options = {}) {
   const session = createSettingsSession({ config: () => config, writable: () => writable.value,
     applyBrand: fresh => { config.brand = fresh; }, isVisible: () => visible.value, setVisible: value => { visible.value = value; },
     token: () => token.value, focus, openAccess, catalog, pages, registry, readPaths,
-    registerParticipant, ...factories, ...options });
+    registerParticipant, attentionRegistry, ...factories, ...options });
   sessions.push(session);
   return { session, config, writable, visible, token, catalog, pages, records, registry, pageState: session.pageState,
-    permissions, permissionRecords, core, inventory, factories, participant, unregister, registerParticipant, focus, openAccess, readPaths };
+    permissions, permissionRecords, core, inventory, attentionRegistry, factories, participant, unregister, registerParticipant, focus, openAccess, readPaths };
 }
 
 describe("Settings composition and ownership", () => {
+  it('r2 B1 refreshes the account on reopen and clears a previous login immediately', async () => {
+    const readAccess=vi.fn(async()=>({mode:'password',username:'alice',settingsWritable:true}));
+    const f=fixture({readAccess}); f.pages.value.push({...corePage('account'),kind:'account'});
+    f.config.authType='password'; f.token.value='alice-token';
+    await f.session.openSettings('core:account'); expect(f.session.state.accountName).toBe('alice');
+    await f.session.requestClose(); f.config.authType='none'; f.token.value=null; await nextTick();
+    expect(f.session.state.accountName).not.toContain('alice');
+    f.config.authType='password'; f.token.value='bob-token'; await nextTick();
+    readAccess.mockResolvedValue({mode:'password',username:'bob',settingsWritable:true});
+    await f.session.openSettings(); expect(f.session.state.accountName).toBe('bob');
+    expect(readAccess).toHaveBeenCalledTimes(2);
+  });
+  it('r2 B1 invalidates an Access revision and fences a held old-session summary', async () => {
+    const old=deferred(),readAccess=vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue({mode:'read_only',settingsWritable:false});
+    const f=fixture({readAccess}); f.pages.value.push({...corePage('access'),kind:'access'});
+    const opening=f.session.openSettings('core:access'); await flushPromises();
+    f.config.accessRevision=2; await nextTick();
+    old.resolve({mode:'none',settingsWritable:true}); await opening;
+    await f.session.openSettings();
+    expect(f.session.state.accessSummary.rows[0].value).toBe('Read-only');
+  });
+  it('r2 B1 clears identity at reopen even when the token adapter is nonreactive', async () => {
+    let stored='alice-token'; const next=deferred();
+    const readAccess=vi.fn().mockResolvedValueOnce({mode:'password',username:'alice',settingsWritable:true}).mockReturnValueOnce(next.promise);
+    const f=fixture({token:()=>stored,readAccess}); f.config.authType='password'; f.pages.value.push({...corePage('account'),kind:'account'});
+    await f.session.openSettings('core:account'); await f.session.requestClose();
+    stored='bob-token'; const opening=f.session.openSettings();
+    expect(f.session.state.accountName).toBe('');
+    next.resolve({mode:'password',username:'bob',settingsWritable:true});await opening;
+    expect(f.session.state.accountName).toBe('bob');
+  });
+  it.each(['loading','visible'])('r2 B1 refreshes an admitted summary identity while %s', async phase => {
+    const old=deferred(),alice={mode:'password',username:'alice',settingsWritable:true},bob={...alice,username:'bob'};
+    const readAccess=vi.fn().mockReturnValueOnce(phase==='loading'?old.promise:Promise.resolve(alice)).mockResolvedValue(bob);
+    const f=fixture({readAccess});f.config.authType='password';f.token.value='current-user';f.pages.value.push({...corePage('account'),kind:'account'});
+    const opening=f.session.openSettings('core:account');await flushPromises();
+    f.config.accessRevision=1;await nextTick();
+    if(phase==='loading')old.resolve(alice);
+    await opening;await flushPromises();
+    expect(f.session.state.accountName).toBe('bob');expect(f.session.state.accountSummary.text).toBe('Signed in as bob');
+    expect(readAccess).toHaveBeenCalledTimes(2);expect(f.registry.commit).not.toHaveBeenCalled();
+  });
+  it('r2 B2 postponed edited requests outside the expanded owner do not guard page switching', async () => {
+    const f=fixture(); await f.session.selectPage('core:plugins');
+    f.permissions.recoveryIds.mockReturnValue(['a']); // request draft, not a permission-policy draft
+    const selecting=f.session.selectPage('core:appearance'); await flushPromises();
+    expect(f.session.state.departureVisible).toBe(false);
+    expect(await selecting).toBe(true); expect(f.permissions.discard).not.toHaveBeenCalled();
+  });
+  it('r2 B4 retains a retired inventory intent owner and its recovery controls', () => {
+    const f=fixture(); f.inventory.snapshot.mockReturnValue({intent:{type:'enabled',id:'retired',value:false},canDiscard:true,canReview:true,canRetry:false});
+    const row=f.session.state.pluginRows.find(row=>row.id==='retired');
+    expect(row).toMatchObject({id:'retired',canToggle:false,recovery:{canDiscard:true,canReview:true}});
+    expect(f.inventory.discard).not.toHaveBeenCalled();
+  });
+  it('r2 B6 qualifies a disabled blocking plugin rather than claiming active hooks', () => {
+    const f=fixture(); f.catalog.value.plugins[0]={id:'a',name:'A',enabled:false,blocking:{active:false,actions:['save']}};
+    expect(f.session.state.pluginRows[0].attention.find(item=>item.key==='blocking').text).toBe('Can block when on: save');
+  });
+  it.each(['missing','browser-only'])('r2 B12 legacy links do not expand or load a %s owner', async kind => {
+    const f=fixture(); if(kind==='browser-only')f.permissionRecords.a.hasServer=false;
+    await f.session.openSettings(`core:plugin-permissions:${kind==='missing'?'unknown':'a'}`);
+    expect(f.session.state.currentPageId).toBe('core:plugins');
+    expect(f.session.state.expandedPluginId ?? f.session.state.expansionRequest?.id ?? null).toBeNull(); expect(f.permissions.load).not.toHaveBeenCalled();
+  });
+  it('Branding Cancel is scoped to the Branding owner and preserves other retained work', async () => {
+    const f=fixture(); f.core.hasWork.mockReturnValue(true); f.records[pluginPage.id]={dirty:true};
+    expect(typeof f.session.cancelBranding).toBe('function');
+    expect(await f.session.cancelBranding()).toBe(true);
+    expect(f.core.discardBrand).toHaveBeenCalledOnce();
+    expect(f.pageState.resolveDeparture).not.toHaveBeenCalled(); expect(f.inventory.resolveDeparture).not.toHaveBeenCalled();
+    expect(f.records[pluginPage.id].dirty).toBe(true); expect(f.visible.value).toBe(false);
+  });
   it("binds real transport defaults at the owner and supplies live brand/session adapters", async () => {
     const f = fixture();
     const core = f.factories.createCore.mock.calls[0][0], inventory = f.factories.createInventory.mock.calls[0][0];
@@ -122,9 +199,11 @@ describe("Settings composition and ownership", () => {
   it("groups current and retained recovery pages by stable ID, preferring the recovery record", () => {
     const f = fixture();
     f.records[pluginPage.id] = { dirty: true, page: { ...pluginPage, label: "Retained" } };
-    f.records.removed = { dirty: true, page: { id: "removed", group: "Removed", label: "Recovery" } };
-    expect(f.session.state.groupedPages.map(group => group.name)).toEqual(["Settings", "A", "Removed"]);
-    expect(f.session.state.groupedPages[1].pages).toEqual([{ ...pluginPage, label: "Retained" }]);
+    const removed = { ...pluginPage, id:"plugin:gone:x", owner:"gone", plugin:{id:"gone",name:"Removed"}, label:"Recovery" };
+    f.records[removed.id] = { dirty: true, page:removed };
+    expect(f.session.state.groupedPages.map(group => group.label)).toEqual(["This browser", "This vault", "Plugin settings"]);
+    expect(f.session.state.groupedPages[2].pages[0].pages).toEqual([{ ...pluginPage, label: "Retained" }]);
+    expect(f.session.state.groupedPages[2].pages[1].pages).toEqual([removed]);
     expect(f.session.state.currentSnapshot.writable).toBe(true);
     expect(f.session.state.brandingSnapshot).toEqual({ name: "Brand" });
     expect(f.session.state.keybindingSnapshot).toEqual({ id: "custom" });
@@ -148,29 +227,29 @@ describe("app version label", () => {
 });
 
 describe("Settings page projection", () => {
-  // Navigation groups cluster by group name in first-seen registry order.
-  const ids = f => f.session.state.groupedPages.flatMap(group => group.pages.map(page => page.id));
+  // Entries group by scope and owner; all normalized pages remain in tab order.
+  const ids = f => f.session.state.groupedPages.flatMap(group => group.pages.flatMap(entry => entry.pages.map(page => page.id)));
   const second = { ...pluginPage, id: "plugin:a:q", pageId: "q", label: "Second" };
-  const registryIds = ["core:appearance", "core:branding", "core:plugins", "core:plugin-permissions:a", "plugin:a:p", "plugin:a:q"];
+  const registryIds = ["core:appearance", "core:branding", "core:plugins", "plugin:a:p", "plugin:a:q"];
   const withSecond = () => { const f = fixture(); f.pages.value = [...f.pages.value, second]; return f; };
   it("keeps registry order when nothing is retained, ignoring clean records", () => {
     const f = withSecond(); f.records[pluginPage.id] = { page: { ...pluginPage, label: "Clean record" } };
     expect(ids(f)).toEqual(registryIds);
-    expect(f.session.state.groupedPages[1].pages).toEqual([pluginPage, second]);
+    expect(f.session.state.groupedPages[2].pages[0].pages).toEqual([pluginPage, second]);
     expect(f.session.state.inventoryPages.a).toEqual([pluginPage, second]);
   });
   it.each(["dirty", "pending", "uncertain", "changedDescriptor"])("a %s page replaces its ID in place with the captured definition", flag => {
     const f = withSecond(), captured = { ...pluginPage, label: "Captured" };
     f.records[pluginPage.id] = { [flag]: flag === "uncertain" ? { limit: 3 } : true, page: captured };
     expect(ids(f)).toEqual(registryIds);
-    expect(f.session.state.groupedPages.find(group => group.name === "A").pages).toEqual([captured, second]);
+    expect(f.session.state.groupedPages.find(group => group.id === "plugin").pages[0].pages).toEqual([captured, second]);
     expect(f.session.state.inventoryPages.a).toEqual([captured, second]);
   });
   it("appends a removed recovery page after the registry pages without changing their order", () => {
-    const f = withSecond(), removed = { id: "plugin:gone:x", owner: "gone", pageId: "x", group: "Gone", label: "Removed page" };
+    const f = withSecond(), removed = { ...pluginPage, id: "plugin:gone:x", owner: "gone", pageId: "x", plugin:{id:"gone",name:"Gone"}, label: "Removed page" };
     f.records[removed.id] = { dirty: true, page: removed };
     expect(ids(f)).toEqual([...registryIds, removed.id]);
-    expect(f.session.state.groupedPages.at(-1)).toEqual({ name: "Gone", pages: [removed] });
+    expect(f.session.state.groupedPages.at(-1).pages.at(-1)).toMatchObject({ id:"plugin:gone", label:"Gone", target:removed.id, pages:[removed] });
     expect(f.session.state.inventoryPages.gone).toEqual([removed]);
   });
   it("groups plugin pages by owner for the inventory and excludes non-plugin pages", () => {
@@ -187,6 +266,30 @@ describe("Settings page projection", () => {
     expect(f.session.state.currentPageIsPlugin).toBe(true); expect(f.pageState.load).toHaveBeenCalledWith(coreNamed.id);
     f.pageState.load.mockClear(); await f.session.selectPage("core:x");
     expect(f.session.state.currentPageIsPlugin).toBe(false); expect(f.pageState.load).not.toHaveBeenCalled();
+  });
+  it("projects attention in order and uses the inventory's admission capability", () => {
+    const f=fixture();
+    f.catalog.value.plugins[0]={id:"a",name:"A",enabled:true,runsInBrowser:true,status:"failed",diagnostics:[{detail:"Failed activation"}],blocking:{actions:["save","rename"]}};
+    for(const id of ['r1','r2']) f.attentionRegistry.publish({id,kind:'plugin-access-request',owner:'a',label:id,open:()=>true});
+    f.inventory.snapshot.mockReturnValue({canMutate:false});
+    expect(f.session.state.pluginRows[0]).toMatchObject({runsInBrowser:true,canToggle:false,attention:[
+      {text:"2 access requests",tone:"quiet"},{text:"Failed: Failed activation",tone:"danger"},{text:"Can block: save, rename",tone:"warning"},
+    ]});
+  });
+  it("keeps a removed permission owner visible and non-mutable until its retained choice is resolved", () => {
+    const f=fixture(); f.permissionRecords.a.draft={intent:{type:"master",value:true}};
+    f.permissionRecords.a.available=false; f.catalog.value.plugins=[];
+    const row=f.session.state.pluginRows.find(row=>row.id==="a");
+    expect(row).toMatchObject({id:"a",name:"A",canToggle:false,permission:{recovery:{text:"Retained permission choice"}}});
+    expect(row.toggleNote).toContain("unavailable");
+    expect(f.permissions.discard).not.toHaveBeenCalled();
+  });
+  it("leaves unsupported plugin renderers discoverable without loading their data", async () => {
+    const f=fixture();const unsupported={...pluginPage,id:"plugin:a:custom",kind:"unsupported",unsupported:true};
+    f.pages.value.push(unsupported);await f.session.selectPage(unsupported.id);
+    expect(f.session.state.currentPageId).toBe(unsupported.id);
+    expect(f.pageState.load).not.toHaveBeenCalled();
+    expect(f.session.state.inventoryPages.a).toContainEqual(unsupported);
   });
   it("reads plugin settings through the default registry by page identity", async () => {
     const f = fixture({ registry: undefined }), registry = f.factories.createPages.mock.calls[0][0].registry;
@@ -213,12 +316,20 @@ describe("Settings page and close orchestration", () => {
     expect(f.visible.value).toBe(true); expect(f.session.state.currentPageId).toBe("core:appearance");
     expect(f.pageState.load).not.toHaveBeenCalled();
   });
-  it("loads branding and permission owners only at their respective page entries", async () => {
+  it("a rejected departure also blocks a legacy permission deep link without opening or expanding", async () => {
+    const f=fixture();f.inventory.resolveDeparture.mockResolvedValue(false);
+    await f.session.openSettings("core:plugin-permissions:a");
+    expect(f.visible.value).toBe(false);expect(f.session.state.currentPageId).toBe("core:appearance");
+    expect(f.session.state.expandedPluginId).toBeNull();expect(f.permissions.load).not.toHaveBeenCalled();
+  });
+  it("loads branding at its page and permissions through a legacy deep link to Plugins", async () => {
     const f = fixture();
     await f.session.selectPage("core:branding"); expect(f.core.loadBrand).toHaveBeenCalledOnce();
-    await f.session.selectPage("core:plugin-permissions:a");
+    await f.session.openSettings("core:plugin-permissions:a");
     expect(f.permissions.load).toHaveBeenCalledWith("a");
-    expect(f.session.state.permissionSnapshot).toMatchObject({ view: { revision: 0 } });
+    expect(f.session.state.currentPageId).toBe("core:plugins");
+    expect(f.session.state.expandedPluginId).toBe("a");
+    expect(f.permissions.snapshot("a")).toMatchObject({ view: { revision: 0 } });
     expect(f.pageState.load).not.toHaveBeenCalled();
   });
   it.each(["inventory", "pageState", "core"])("a rejected %s departure preserves the current page and visibility", async owner => {
@@ -231,7 +342,7 @@ describe("Settings page and close orchestration", () => {
     expect(f.core.stopCapture).not.toHaveBeenCalled();
   });
   it("orders page departure as inventory, current draft, permission recovery, then branding", async () => {
-    const f = fixture(); await f.session.selectPage("core:plugin-permissions:a");
+    const f = fixture(); await f.session.managePlugin("a");
     const order = [];
     f.inventory.resolveDeparture.mockImplementation(async () => { order.push("inventory"); return true; });
     f.pageState.resolveDeparture.mockImplementation(async () => { order.push("page"); return true; });
@@ -290,7 +401,8 @@ describe("aggregated session participant and departure decisions", () => {
     f.permissionRecords.a.draft = {}; f.core.hasWork.mockReturnValue(true); f.inventory.hasWork.mockReturnValue(true);
     const first = f.participant.requestDecision("logout"), second = f.participant.requestDecision("other reason");
     expect(first).toBe(second); expect(f.session.state.departureCanSave).toBe(false);
-    expect(f.session.state.departureMessage).toContain("before logout. Preferences, Server permissions: a, Branding, Inventory.");
+    expect(f.session.state.departureMessage).toContain("Unsaved changes on Preferences, Permissions for A, Branding, Plugins.");
+    expect(f.session.state.departureMessage).toContain("before logout");
     f.session.setDepartureVisible(false); expect(f.session.state.departureVisible).toBe(false);
     f.session.decideDeparture("cancel"); expect(await first).toBe("cancel");
     const third = f.participant.requestDecision("Access"); expect(third).not.toBe(first);
@@ -309,18 +421,19 @@ describe("aggregated session participant and departure decisions", () => {
     expect(order).toEqual([["inventory", "session handoff", decision], ["page", [pluginPage.id], "session handoff", decision], ["permission", "a"], ["brand"]]);
     expect(f.session.state.departureVisible).toBe(false);
   });
-  it("permission review cannot close while its wire fails settlement or its decision is cancelled", async () => {
-    const f = fixture(); await f.session.openPermissionReview("a");
-    expect(f.session.state.reviewSnapshot.view.revision).toBe(0);
+  it("permission row cannot collapse while its wire fails settlement or its decision is cancelled", async () => {
+    const f = fixture();
+    await f.session.managePlugin("a");
+    expect(f.permissions.snapshot("a").view.revision).toBe(0);
     f.permissionRecords.a.busy = true; f.permissions.settle.mockResolvedValue(false);
-    expect(await f.session.closePermissionReview()).toBe(false); expect(f.session.state.reviewPluginId).toBe("a");
+    expect(await f.session.toggleExpansion('a')).toBe(false); expect(f.session.state.expandedPluginId).toBe("a");
     f.permissionRecords.a.busy = false; f.permissionRecords.a.draft = {};
-    const closing = f.session.closePermissionReview(); await flushPromises();
+    const closing = f.session.toggleExpansion('a'); await flushPromises();
     expect(f.session.state.departureCanSave).toBe(true); f.session.decideDeparture("cancel");
-    expect(await closing).toBe(false); expect(f.session.state.reviewPluginId).toBe("a");
-    const retry = f.session.closePermissionReview(); await flushPromises(); f.session.decideDeparture("retry");
+    expect(await closing).toBe(false); expect(f.session.state.expandedPluginId).toBe("a");
+    const retry = f.session.toggleExpansion('a'); await flushPromises(); f.session.decideDeparture("retry");
     expect(await retry).toBe(true); expect(f.permissions.retry).toHaveBeenCalledWith("a");
-    expect(f.session.state.reviewPluginId).toBeNull();
+    expect(f.session.state.expandedPluginId).toBeNull();
   });
   it("permission retries stop on failure and branding saves must leave the owner clean", async () => {
     const f = fixture(); f.permissionRecords.a.draft = {}; f.permissions.retry.mockResolvedValue(false);
@@ -383,10 +496,10 @@ describe("risk decisions retain their captured permission view", () => {
     const inventory = f.session.discardInventoryChoice(); expect(f.session.state.riskMessage).toContain("does not undo a committed request");
     f.session.resolveRisk(false); expect(await inventory).toBe(false); expect(f.inventory.discard).not.toHaveBeenCalled();
     const reset = f.session.resetCoreBranding();
-    expect(f.session.state.riskConfirmText).toBe("Reset"); expect(f.session.state.riskConfirmStyle).toBe("danger");
+    expect(f.session.state.riskConfirmText).toBe("Reset branding"); expect(f.session.state.riskConfirmStyle).toBe("danger");
     expect(f.session.state.riskMessage).toBe("Reset retained brand"); f.session.resolveRisk(true); await reset;
     expect(f.core.saveBrand).toHaveBeenCalledWith(true);
-    const discard = f.session.discardInventoryChoice(); expect(f.session.state.riskConfirmStyle).toBe("cta");
+    const discard = f.session.discardInventoryChoice(); expect(f.session.state.riskConfirmStyle).toBe("danger");
     f.session.resolveRisk(true); expect(await discard).toBe(true); expect(f.inventory.discard).toHaveBeenCalledOnce();
   });
   it("does not prompt when an inventory choice cannot be discarded", async () => {

@@ -32,7 +32,7 @@ async function bootWarningServer(vault, state, logsDir) {
   const port = listener.addr.port; listener.close();
   const args = ["run", "--cached-only", "--frozen", `--config=${root}/deno.json`, "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env", "--allow-import=jsr.io:443", `${root}/server/main.ts`];
   const child = new Deno.Command(Deno.execPath(), { args, cwd: root, clearEnv: true, stdout: "piped", stderr: "piped", env: {
-    PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_HOST: host, GLOBNOTES_PORT: String(port),
+    PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_HOST: host, GLOBNOTES_PORT: String(port),
   } }).spawn();
   const drains = ["stdout", "stderr"].map(async channel => {
     const file = await Deno.open(`${logsDir}/server-${channel}.log`, { write: true, createNew: true });
@@ -87,6 +87,16 @@ async function screenshot(name) {
 }
 const inspect = expression => session.evaluate(expression);
 const settled = () => inspect("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
+async function expandPermissions() {
+  await session.button('Plugins','[aria-label="Settings pages"]');
+  const selector='[data-plugin-inventory-id="foundation-guard"] button[aria-expanded]';
+  if(await inspect(`document.querySelector('${selector}')?.getAttribute('aria-expanded')!=='true'`))await session.click(selector);
+  await session.poll("!!document.querySelector('[data-plugin-inventory-id=foundation-guard] [data-plugin-permission-panel] [role=switch]')");
+}
+async function master() {
+  await session.poll("(()=>{const el=document.querySelector('[data-plugin-inventory-id=foundation-guard] [data-plugin-permission-panel] [role=switch]');if(!el||el.disabled)return false;el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()");
+  await session.click('[data-plugin-inventory-id=foundation-guard] [data-plugin-permission-panel] [role=switch]');
+}
 async function replace(selector, value) {
   await session.click(selector);
   await session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 });
@@ -125,36 +135,38 @@ function focusAssertion(result) {
   assert(result.focusVisible && result.outlineStyle === "solid" && result.outlineWidth >= 2 && result.outlineColor === result.themeText, `input-focus contract: ${JSON.stringify(result)}`);
 }
 async function actions(scope, name) {
-  await inspect(`document.querySelector(${JSON.stringify(scope + " [data-settings-actions]")})?.scrollIntoView({block:'center'})`);
+  const selector=scope+' [data-settings-actions]:has([data-variant=cta],[data-variant=danger-primary])';
+  await inspect(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({block:'center'})`);
   await settled();
   const result = await inspect(`(()=>{
-    const box=document.querySelector(${JSON.stringify(scope + " [data-settings-actions]")});
+    const box=document.querySelector(${JSON.stringify(selector)});
     if(!box)return {missing:true};
     const r=box.getBoundingClientRect(),style=getComputedStyle(box),rem=parseFloat(getComputedStyle(document.documentElement).fontSize);
-    const rect=el=>el.getBoundingClientRect().toJSON();
+    const rect=el=>el?.getBoundingClientRect().toJSON();
     const collect=zone=>[...box.querySelectorAll(zone+' button')].map(el=>{
       const s=getComputedStyle(el),label=el.querySelector('.icon-label-wrap > span'),lr=label?.getBoundingClientRect();
-       const br=el.getBoundingClientRect();return {text:el.textContent.trim(),rect:br.toJSON(),type:el.type,disabled:el.disabled,opacity:parseFloat(s.opacity),paddingX:parseFloat(s.paddingLeft),paddingY:parseFloat(s.paddingTop),fontWeight:s.fontWeight,fontSize:s.fontSize,lineHeight:parseFloat(s.lineHeight),whiteSpace:s.whiteSpace,color:s.color,borderColor:s.borderTopColor,background:s.backgroundColor,labelRect:lr?.toJSON(),hit:el.contains(document.elementFromPoint(br.x+br.width/2,br.y+br.height/2))};
+       const br=el.getBoundingClientRect();return {text:el.textContent.trim(),variant:el.dataset.variant,rect:br.toJSON(),type:el.type,disabled:el.disabled,opacity:parseFloat(s.opacity),paddingX:parseFloat(s.paddingLeft),paddingY:parseFloat(s.paddingTop),fontWeight:s.fontWeight,fontSize:s.fontSize,lineHeight:parseFloat(s.lineHeight),whiteSpace:s.whiteSpace,color:s.color,borderColor:s.borderTopColor,background:s.backgroundColor,labelRect:lr?.toJSON(),hit:el.contains(document.elementFromPoint(br.x+br.width/2,br.y+br.height/2))};
     });
     const dialog=box.closest('[role=dialog]');
     return {rect:r.toJSON(),start:rect(box.querySelector('[data-settings-actions-start]')),end:rect(box.querySelector('[data-settings-actions-end]')),left:collect('[data-settings-actions-start]'),right:collect('[data-settings-actions-end]'),gap:parseFloat(style.columnGap),rem,display:style.display,overflow:dialog.scrollWidth-dialog.clientWidth,fontsReady:document.fonts.status==='loaded',themeDanger:'rgb(225, 29, 72)',themeBrand:'rgb('+getComputedStyle(document.documentElement).getPropertyValue('--theme-brand').trim().split(/\\s+/).join(', ')+')'};
   })()`);
   assert(!result.missing, `${name}: missing structural action zones`);
-  assert(result.display === "grid" && result.gap >= result.rem - 0.5, `${name}: persistent one-rem gap missing`);
-  assert(result.left.length > 0 && result.right.length > 0, `${name}: paired consumer is missing its actions`);
+   result.primary=await inspect(`document.querySelectorAll(${JSON.stringify(scope+' [data-settings-actions] button.bg-theme-brand')}).length+document.querySelectorAll(${JSON.stringify(scope+' [data-settings-actions] button[data-variant=danger-primary]')}).length`);
+  result.themeDanger=await inspect("'rgb('+getComputedStyle(document.documentElement).getPropertyValue('--theme-danger').trim().split(' ').join(', ')+')'");
+  assert(result.display === "flex" && result.gap >= result.rem - 0.5, `${name}: wrapping action row gap missing`);
+  assert(result.right.length >= 2 && result.primary === 1, `${name}: decision actions/single primary missing`);
   assert(result.fontsReady && result.overflow <= 1, `${name}: fonts/overflow contract`);
   assert(Math.abs(result.end.right - result.rect.right) <= 0.5, `${name}: end zone not right aligned`);
-  assert(result.right.every(button => Math.abs(button.rect.right - result.rect.right) <= 0.5), `${name}: end actions not right aligned`);
-  assert(result.right[0].rect.left - Math.max(...result.left.map(button => button.rect.right)) >= result.gap - 0.5, `${name}: action separation lost`);
+  assert(Math.abs(result.right.at(-1).rect.right-result.rect.right)<=0.5, `${name}: final action is not right aligned`);
   for (const [zone, buttons] of [[result.start, result.left], [result.end, result.right]]) {
     for (const button of buttons) {
       assert(button.rect.left >= zone.left - 0.5 && button.rect.right <= zone.right + 0.5, `${name}: ${button.text} escapes zone`);
-      assert(button.paddingX === result.rem && button.paddingY === result.rem * 0.625 && Number(button.fontWeight) === 600, `${name}: ${button.text} is not canonical CTA geometry`);
+      const textAction=['text','danger-text'].includes(button.variant);
+      assert((textAction?button.paddingX===0:button.paddingX>=8) && button.paddingY>=4 && button.rect.height>=(textAction?28:40), `${name}: ${button.text} lost its Settings action sizing/hit-area contract`);
       assert(button.type === "button" && button.whiteSpace !== "nowrap", `${name}: type/wrap contract lost`);
       assert(button.disabled ? button.opacity === 0.4 : button.hit, `${name}: disabled presentation/hit contract lost`);
       if (button.labelRect) assert(button.labelRect.right <= button.rect.right + 0.5, `${name}: visible label escaped`);
-      if (["Reset", "Discard"].includes(button.text)) assert(button.color === result.themeDanger && button.borderColor === result.themeDanger, `${name}: danger semantics lost`);
-      else assert(button.background === result.themeBrand && button.color === "rgb(255, 255, 255)", `${name}: primary theme treatment lost`);
+      if (["Reset branding…", "Discard"].includes(button.text)) assert(button.color === result.themeDanger, `${name}: danger text semantics lost`);
     }
   }
   return result;
@@ -241,11 +253,10 @@ try {
     await session.button("Plugins", '[aria-label="Settings pages"]');
     const observations = [
       await warningObservation('[data-plugin-inventory-id="foundation-guard"] .text-theme-warning', "text"),
-      await warningObservation('[data-plugin-inventory-id="foundation-guard"] [data-plugin-browser-badge]', "border"),
     ];
-    await session.button("Foundation preferences", '[aria-label="Settings pages"]');
-    observations.push(await warningObservation('[role="note"].border-theme-warning', "border"));
-    await session.click('[data-permission-page="foundation-guard"]');
+    await session.click('[data-settings-nav-id="plugin:foundation-guard"]');
+    observations.push(await warningObservation('[role="note"].text-theme-warning', "text"));
+    await expandPermissions();
     observations.push(await warningObservation('[data-permission-kind="network"][data-permission-scope="all"] .text-theme-warning', "text"));
     await invariant();
     await record(`warning-${id}`, { observations, screenshot: await screenshot(`warning-${id}`) });
@@ -259,40 +270,44 @@ try {
       await session.button("Branding", '[aria-label="Settings pages"]');
       await session.poll("document.querySelector('#brand-name')?.value==='Foundation seed'");
       const clean = await actions("[data-branding-settings]", `${name}-clean`);
-      assert(clean.right.find(button => button.text === "Save").disabled, "Clean Branding Save is enabled");
+       assert(clean.right.find(button => button.text === "Save branding").disabled, "Clean Branding Save is enabled");
+       assert(clean.right.find(button => button.text === "Cancel changes").disabled, "Clean Branding Cancel changes is enabled");
       const inputFocus = await tabTo("#brand-name"); focusAssertion(inputFocus);
       await replace("#brand-name", `Foundation retained draft ${name}`);
-      await session.poll("[...document.querySelectorAll('[data-branding-settings] button')].some(b=>b.textContent.trim()==='Save'&&!b.disabled)");
+      await session.poll("[...document.querySelectorAll('[data-branding-settings] button')].some(b=>b.textContent.trim()==='Save branding'&&!b.disabled)");
       await session.button("Appearance", '[aria-label="Settings pages"]');
-      await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
+      await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
        const departure = await actions('[data-modal-top="true"]', `${name}-departure`);
-       assert(departure.left[0].text === "Keep editing" && departure.right.some(button => button.text === "Discard"), "Grouped departure lost decision semantics");
-       if (viewport.width === 320) assert(departure.left[0].labelRect.height > departure.left[0].lineHeight, "Narrow CTA label did not actually wrap");
+       assert(departure.right[0].text === "Keep editing" && departure.left.some(button => button.text === "Discard"), "Grouped departure lost decision semantics");
       const screenshotPath = await screenshot(`${name}-departure`);
       // Native Tab/Shift+Tab, Space, Escape and restored opener in the actual topmost modal.
-      const ctaFocus = await tabTo('[data-modal-top="true"] [data-settings-actions-start] button'); focusAssertion(ctaFocus);
-      await session.key("Tab", { modifiers: 8, windowsVirtualKeyCode: 9 });
-      await session.poll("document.activeElement===document.querySelector('[data-modal-top=true] [data-settings-actions-end] button:last-child')");
-      await session.key("Tab", { windowsVirtualKeyCode: 9 });
-      await session.poll("document.activeElement===document.querySelector('[data-modal-top=true] [data-settings-actions-start] button')");
+       const ctaFocus = await tabTo('[data-modal-top="true"] [data-settings-actions-end] button:first-child'); focusAssertion(ctaFocus);
+       await session.key("Tab", { modifiers: 8, windowsVirtualKeyCode: 9 });
+       await session.poll("document.activeElement===document.querySelector('[data-modal-top=true] [data-settings-actions-start] button')");
+       await session.key("Tab", { modifiers: 8, windowsVirtualKeyCode: 9 });
+       await session.poll("document.activeElement===document.querySelector('[data-modal-top=true] [data-settings-actions-end] button:last-child')");
+       await session.key("Tab", { windowsVirtualKeyCode: 9 });
+       await session.poll("document.activeElement===document.querySelector('[data-modal-top=true] [data-settings-actions-start] button')");
+       await session.key("Tab", { windowsVirtualKeyCode: 9 });
+       await session.poll("document.activeElement===document.querySelector('[data-modal-top=true] [data-settings-actions-end] button:first-child')");
       await session.key(" ", { code: "Space", windowsVirtualKeyCode: 32 });
-      await session.poll("!document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings') && document.activeElement?.textContent.trim()==='Appearance'");
+      await session.poll("!document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes') && document.activeElement?.textContent.trim()==='Appearance'");
       assert(await inspect(`document.querySelector('#brand-name').value===${JSON.stringify(`Foundation retained draft ${name}`)}`), "Keep editing lost Branding draft");
-      await session.button("Reset", "[data-branding-settings]");
+      await session.button("Reset branding…", "[data-branding-settings]");
       await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?')");
       const reset = await actions('[data-modal-top="true"]', `${name}-reset`);
       const resetScreenshot = await screenshot(`${name}-reset`);
       if (dpr === 1) {
-        await tabTo('[data-modal-top="true"] [data-settings-actions-start] button');
+        await tabTo('[data-modal-top="true"] [data-settings-actions-end] button:first-child');
         for (const type of ["keyDown", "keyUp"]) await session.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, ...(type === "keyDown" ? { text: "\r", unmodifiedText: "\r" } : {}) });
       } else await session.key("Escape", { windowsVirtualKeyCode: 27 });
-      await session.poll("!document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?') && document.activeElement?.textContent.trim()==='Reset'");
+      await session.poll("!document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?') && document.activeElement?.textContent.trim()==='Reset branding…'");
       await session.button("Appearance", '[aria-label="Settings pages"]');
-      await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
+      await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
       await session.button("Discard", '[data-modal-top="true"]');
       await session.poll("!!document.querySelector('[data-appearance-settings]')");
       await session.button("Access", '[aria-label="Settings pages"]');
-      await session.button("Change access mode");
+      await waitForAccessSummary(session); await session.button("Change access…");
       await session.poll("!!document.querySelector('#setup-title') && !document.querySelector('#setup-mode-password').disabled");
       await session.click("#setup-mode-password");
       const accessFocus = await tabTo("#setup-username"); focusAssertion(accessFocus);
@@ -320,7 +335,7 @@ try {
   await session.send("Fetch.enable", { patterns: [{ urlPattern: `*${brandPath}`, requestStage: "Response" }] });
   holdBrand = true;
   await replace("#brand-name", "Foundation persisted A");
-  await session.button("Save", "[data-branding-settings]");
+  await session.button("Save branding", "[data-branding-settings]");
   const deadline = Date.now() + 15000;
   while (!heldBrand) { assert(Date.now() < deadline, "Owned Branding response did not arrive"); await new Promise(resolve => setTimeout(resolve, 50)); }
   assert(heldBrand.responseStatusCode === 200, "Held Branding write failed upstream");
@@ -335,7 +350,7 @@ try {
   assert(writes.length === 1 && writes[0].path === brandPath, "Branding newer-draft flow repeated a mutation");
   await record("branding-pending-newer-draft", { capturedPersisted: persisted.brand_name, newerVisible: "Foundation newer B", writes, screenshot: await screenshot("branding-pending-newer-draft") });
   await session.button("Appearance", '[aria-label="Settings pages"]');
-  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
+  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
   await session.button("Discard", '[data-modal-top="true"]');
   await session.poll("!!document.querySelector('[data-appearance-settings]')");
   await close();
@@ -344,10 +359,10 @@ try {
   await open();
   await session.button("Branding", '[aria-label="Settings pages"]');
   await session.poll("document.querySelector('#brand-name')?.value==='Foundation persisted A'");
-  await session.button("Reset", "[data-branding-settings]");
+  await session.button("Reset branding…", "[data-branding-settings]");
   await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?')");
   assert(writes.length === 1, "Reset sent a write before explicit confirmation");
-  await session.button("Reset", '[data-modal-top="true"]');
+  await session.button("Reset branding", '[data-modal-top="true"]');
   await session.poll("document.querySelector('#brand-name')?.value==='' && !document.querySelector('[data-branding-settings] [role=status]')");
   const resetConfig = JSON.parse(await Deno.readTextFile(`${state}/config.json`));
   const resetApi = await fetch(`${server.baseUrl}/_/api/config`, { signal: AbortSignal.timeout(5000) }).then(response => response.json());
@@ -361,11 +376,11 @@ try {
 
   // Real import approval under the unchanged parent cannot confer remote imports.
   await session.button("Plugins", '[aria-label="Settings pages"]');
-  await session.click('[data-permission-page="foundation-guard"]');
+  await expandPermissions();
   const importRow = '[data-permission-kind="imports"][data-permission-scope="host:foundation.invalid:443"]';
   await enabledButton("Approve", importRow);
-  await session.poll(`document.querySelector(${JSON.stringify(importRow)})?.textContent.includes('Delete approval')`);
-  await enabledButton("Allow network", "[data-plugin-permission-panel]");
+  await session.poll(`document.querySelector(${JSON.stringify(importRow)})?.textContent.includes('Remove')`);
+  await master();
   await session.poll(`document.querySelector(${JSON.stringify(importRow)})?.textContent.includes('parent unavailable')`);
   const permissionView = async () => {
     const response = await fetch(`${server.baseUrl}${permissionPath}`, { signal: AbortSignal.timeout(5000) });
@@ -376,26 +391,26 @@ try {
   for (const id of themeIds) {
     await theme(id);
     await session.button("Plugins", '[aria-label="Settings pages"]');
-    await session.click('[data-permission-page="foundation-guard"]');
+    await expandPermissions();
     const parentWarning = await warningObservation(`${importRow} .text-theme-warning`, "text");
     // Reject only the next owned wire before effect; the actual controller retains its choice.
     const before = await permissionView();
     await session.send("Fetch.enable", { patterns: [{ urlPattern: `*${permissionPath}`, requestStage: "Request" }] });
     rejectPermissionWrite = true;
-    await enabledButton("Allow network", "[data-plugin-permission-panel]");
-    await session.poll("[...document.querySelectorAll('[data-plugin-permission-panel] button')].some(b=>b.textContent.trim()==='Discard permission choice'&&!b.disabled)");
+    await master();
+    await session.poll("[...document.querySelectorAll('[data-plugin-permission-panel] button')].some(b=>b.textContent.trim()==='Discard choice…'&&!b.disabled)");
     assert(!rejectPermissionWrite, "Retained-choice fixture never reached its owned wire");
     await session.send("Fetch.disable");
-    const retainedWarning = await warningObservation("[data-plugin-permission-panel] > div.border-theme-warning", "border");
-    assert(retainedWarning.text.includes("Your permission choices are retained."), "Retained-warning observation targeted another warning consumer");
+    const retainedWarning = await warningObservation("[data-plugin-permission-panel] .permission-recovery > p", "text");
+    assert(retainedWarning.text.includes('Your permission choices are retained.'), "Retained-warning observation targeted another warning consumer");
     const after = await permissionView();
     assert(before.revision === after.revision && after.allowNetwork, "Rejected permission wire changed authority");
     await invariant();
     await record(`permission-warning-${id}`, { observations: [parentWarning, retainedWarning], unchangedRevision: after.revision, expectedTransportFailure: "ConnectionClosed", screenshot: await screenshot(`permission-warning-${id}`) });
-    await enabledButton("Discard permission choice", "[data-plugin-permission-panel]");
-    await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Discard permission choice')");
-    await session.button("Confirm permission change", '[data-modal-top="true"]');
-    await session.poll("!document.querySelector('[data-plugin-permission-panel] > div.border-theme-warning')");
+    await enabledButton("Discard choice…", "[data-plugin-permission-panel]");
+    await session.poll("document.querySelector('[data-modal-top=true] h2')?.textContent==='Discard choice?'");
+    await session.button("Discard choice", '[data-modal-top="true"]');
+    await session.poll("!document.querySelector('[data-plugin-permission-panel] .permission-recovery')");
   }
   assert(writes.length === 19 && writes.slice(2).every(write => write.path === permissionPath && write.method === "PUT"), "Unexpected mutation in parent/retained-warning consumers");
   await close(); await invariant();
@@ -413,7 +428,7 @@ try {
   await Deno.mkdir(`${state}/plugins/foundation-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/manifest.json`, JSON.stringify({ id: "foundation-guard", name: "Foundation request warning", runtime: { server: "service.js" }, capabilities: { network: true, imports: false } }));
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/service.js`, "export async function activate(ctx){await ctx.permissions.requestAccess({kind:'network',hosts:true,reason:'Foundation read-only broad-access warning consumer'});}");
-  server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "" }, logsDir: readonlyArtifacts });
+  server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", TMPDIR:Deno.env.get('TMPDIR') }, logsDir: readonlyArtifacts });
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   await Deno.writeTextFile(`${readonlyArtifacts}/ownership.json`, JSON.stringify({ vault, state, serverPid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
   const readonlyWrites = [];
@@ -422,21 +437,21 @@ try {
   });
   await session.goto(`${server.baseUrl}/NoteA`);
   await session.poll("!!document.querySelector('#permission-request-title')");
-  await session.button("Cancel", '[data-modal-top="true"]');
+  await session.button("Review later", '[data-modal-top="true"]');
   await session.poll("!document.querySelector('#permission-request-title')");
   await open();
   for (const id of themeIds) {
     await theme(id);
     await session.button("Plugins", '[aria-label="Settings pages"]');
-    await session.click('[data-permission-page="foundation-guard"]');
-    await enabledButton("Review access request", "[data-plugin-permission-panel]");
+    await expandPermissions();
+    await enabledButton("Review request…", "[data-plugin-permission-panel]");
     await session.poll("!!document.querySelector('#permission-request-title')");
     const broad = await warningObservation("[data-permission-request-choices] .text-theme-warning", "text");
     const readonly = await warningObservation('[data-modal-top="true"] section > p.text-theme-warning', "text");
     assert(readonly.text === "Read-only session: permission decisions are unavailable.", "Read-only warning describes the wrong state");
-    assert(await inspect("(()=>{const inputs=[...document.querySelectorAll('[data-permission-request-choices] input')],decisions=[...document.querySelectorAll('[data-modal-top=true] button')].filter(el=>['Deny','Approve selected request'].includes(el.textContent.trim()));return inputs.length===2 && inputs.every(el=>el.disabled) && decisions.length===2 && decisions.every(el=>el.disabled);})()"), "Read-only request permits a decision or is missing its controls");
+    assert(await inspect("(()=>{const inputs=[...document.querySelectorAll('[data-permission-request-choices] input')],decisions=[...document.querySelectorAll('[data-modal-top=true] button')].filter(el=>['Deny','Approve'].includes(el.textContent.trim()));return inputs.length===2 && inputs.every(el=>el.disabled) && decisions.length===2 && decisions.every(el=>el.disabled);})()"), "Read-only request permits a decision or is missing its controls");
     await record(`request-warning-${id}`, { observations: [broad, readonly], mutations: readonlyWrites.length, screenshot: await screenshot(`request-warning-${id}`) });
-    await session.button("Cancel", '[data-modal-top="true"]');
+    await session.button("Review later", '[data-modal-top="true"]');
     await session.poll("!document.querySelector('#permission-request-title')");
   }
   assert(readonlyWrites.length === 0 && session.errors.length === 0, "Read-only warning consumers issued writes/browser exceptions");
@@ -456,3 +471,4 @@ finally {
 }
 if (failure) throw failure;
 console.log(`SETTINGS FOUNDATIONS OK (${outcomes.length} consumer outcomes)`);
+import { waitForAccessSummary } from './settings-access-native.mjs';

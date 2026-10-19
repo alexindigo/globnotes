@@ -2,53 +2,32 @@
   <Modal
     v-model="isVisible"
     name="confirm"
+    :anchor="actionLayout==='grouped' ? 'dialog' : 'top'"
     :labelledby="titleId"
     trap-focus
     :closeHandlerOverride="() => emitClose('cancel')"
     class="px-6 py-4"
+    :class="{'!max-w-[500px]':actionLayout==='grouped'}"
   >
     <!-- Title -->
-    <div v-if="title" :id="titleId" class="mb-6 text-xl">{{ title }}</div>
+    <h2 v-if="title" :id="titleId" :class="actionLayout==='grouped' ? 'mb-4 text-lg font-semibold' : 'mb-6 text-xl'">{{ title }}</h2>
     <!-- Message -->
-    <div class="mb-6">{{ message }}</div>
+    <div class="mb-6" :class="{'text-sm':actionLayout==='grouped'}">{{ message }}</div>
     <!-- Buttons -->
-    <SettingsActions v-if="actionLayout === 'grouped'">
-      <template #start>
-        <CtaButton type="button" :label="cancelButtonText" :intent="cancelButtonStyle === 'danger' ? 'danger' : 'primary'" @click="emitClose('cancel')" />
+    <SettingsActions>
+      <template v-if="rejectButtonText" #start>
+        <CustomButton type="button" :label="rejectButtonText" :variant="actionLayout === 'grouped' ? 'danger-text' : rejectButtonStyle" wrap-label @click="emitClose('reject')" />
       </template>
       <template #end>
-        <CtaButton v-if="rejectButtonText" type="button" :label="rejectButtonText" :intent="rejectButtonStyle === 'danger' ? 'danger' : 'primary'" @click="emitClose('reject')" />
-        <CtaButton v-focus type="button" :label="confirmButtonText" :intent="confirmButtonStyle === 'danger' ? 'danger' : 'primary'" :disabled="confirmDisabled" @click="emitClose('confirm')" />
+        <CustomButton type="button" :label="cancelButtonText" :variant="actionLayout === 'grouped' ? 'secondary' : cancelButtonStyle" wrap-label @click="emitClose('cancel')" />
+        <CustomButton v-focus type="button" :label="confirmButtonText" :variant="actionLayout === 'grouped' ? (confirmButtonStyle === 'danger' ? 'danger-primary' : 'cta') : confirmButtonStyle" data-primary="true" wrap-label :disabled="confirmDisabled" @click="emitClose('confirm')" />
       </template>
     </SettingsActions>
-    <div v-else class="flex flex-wrap justify-end gap-2">
-      <CustomButton
-        :label="cancelButtonText"
-        :variant="cancelButtonStyle"
-        @click="emitClose('cancel')"
-        class="mr-2"
-      />
-      <CustomButton
-        v-if="rejectButtonText"
-        :label="rejectButtonText"
-        :variant="rejectButtonStyle"
-        @click="emitClose('reject')"
-        class="mr-2"
-      />
-      <CustomButton
-        v-focus
-        :label="confirmButtonText"
-         :variant="confirmButtonStyle"
-         :disabled="confirmDisabled"
-        @click="emitClose('confirm')"
-      />
-    </div>
   </Modal>
 </template>
 
 <script setup>
 import CustomButton from "./CustomButton.vue";
-import CtaButton from "./CtaButton.vue";
 import SettingsActions from "./SettingsActions.vue";
 import Modal from "./Modal.vue";
 import { createUuid } from "../../shared/uuid.ts";

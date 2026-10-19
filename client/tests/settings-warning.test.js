@@ -40,14 +40,15 @@ describe("Settings warning theme contract", () => {
 
   it("keeps blocking text and trusted-browser disclosure at their actual inventory consumers", () => {
     const wrapper = mount(PluginInventorySettingsPage, { props: {
-      plugins: [{ id: "warning-fixture", name: "Warning fixture", enabled: true, runsInBrowser: true, browserComponents: ["runtime"], blocking: { actions: ["save"], active: true } }],
+      rows: [{ id: "warning-fixture", name: "Warning fixture", enabled: true, runsInBrowser: true, hasServer:true, pages:[],
+        attention:[{key:"blocking",text:"Can block: save",tone:"warning"}] }],
       onAutoEnable: vi.fn(), onEnabled: vi.fn(), onReview: vi.fn(),
     } });
-    expect(wrapper.find(".text-theme-warning").text()).toContain("Can block actions: save");
-    const badge = wrapper.find("[data-plugin-browser-badge]");
-    expect(badge.text()).toBe("Runs in browser");
-    expect(badge.classes()).toContain("border-theme-warning");
-    expect(badge.classes()).toContain("text-theme-text");
+    expect(wrapper.find(".plugin-row-attention .text-theme-warning").text()).toContain("Can block: save");
+    const browser = wrapper.find(".plugin-row-browser");
+    expect(browser.text()).toBe("Runs in browser");
+    expect(wrapper.find("[data-plugin-browser-badge]").exists()).toBe(false);
+    expect(wrapper.find("[data-plugin-trust-notice]").text()).toContain("server code");
     wrapper.unmount();
   });
 });

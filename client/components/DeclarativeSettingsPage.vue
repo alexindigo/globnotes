@@ -1,74 +1,36 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-only -->
-
 <template>
-  <div class="flex flex-col gap-4">
-    <div
-      v-if="blocking?.actions?.length"
-      class="rounded border border-theme-warning px-3 py-2 text-sm"
-      role="note"
-    >
-      <strong>Can block actions</strong>: {{ blocking.actions.join(", ") }}.
-      Errors or timeouts in this plugin's guards also cancel the operation.
-      <span v-if="!blocking.active">(currently inactive — plugin disabled)</span>
+  <div class="flex min-w-0 flex-col gap-4" data-declarative-settings>
+    <p v-if="snapshot.blockingText" class="text-[13px] text-theme-warning" role="note">{{ snapshot.blockingText }}</p>
+    <div v-if="snapshot.recovery.visible" class="flex min-w-0 flex-col gap-2 text-[13px]" data-declarative-recovery>
+      <template v-if="snapshot.status === 'conflict'">
+        <p class="text-theme-warning">These settings changed elsewhere. Your edits are kept.</p>
+        <SettingsActions><template #start><CustomButton type="button" label="Reload (discards your edits)…" variant="danger-text" wrap-label @click="$emit('reload')" /></template><CustomButton type="button" label="Keep editing" variant="text" wrap-label @click="fieldStart?.focus()" /></SettingsActions>
+      </template>
+      <template v-else-if="snapshot.status === 'error'">
+        <p class="text-theme-danger" role="alert">{{ snapshot.message }} Your edit is kept.</p>
+        <SettingsActions><CustomButton type="button" :label="snapshot.recovery.label" variant="text" wrap-label :disabled="!snapshot.canRetry" @click="$emit('retry')" /></SettingsActions>
+      </template>
+      <p v-if="!snapshot.available" role="status" class="text-theme-warning">This page is unavailable. Your draft is retained for recovery.</p>
+      <p v-if="snapshot.changedDescriptor" role="status" class="text-theme-warning">The page definition changed. Your original draft is retained; discard explicitly to load the new definition.</p>
+      <pre v-if="!snapshot.available || snapshot.changedDescriptor" tabindex="0" class="focus-ring">{{ snapshot.retainedText }}</pre>
     </div>
-    <p
-      v-if="page.description"
-      class="text-sm text-theme-text-muted"
-    >{{ page.description }}</p>
-    <section v-for="group in fieldGroups" :key="group.id" class="flex flex-col gap-4">
-      <h3 v-if="group.label" class="font-semibold text-theme-text">{{ group.label }}</h3>
-      <p v-if="group.description" class="text-sm text-theme-text-muted">{{ group.description }}</p>
-      <SettingsField v-for="field in group.fields" :key="field.key" :field="field"
-        :value="Object.hasOwn(snapshot.drafts,field.key)?snapshot.drafts[field.key]:snapshot.values[field.key]" :error="snapshot.errors[field.key]??''"
-        :readonly="!snapshot.available || !snapshot.loaded || snapshot.writable===false || snapshot.fields?.[field.key]?.readonly" :provenance="snapshot.fields?.[field.key]" :on-browse="onBrowse"
-        @edit="$emit('edit',$event)" @commit="$emit('commit',$event)" />
-    </section>
-    <p
-      v-if="snapshot.status === 'saving'"
-      class="text-xs text-theme-text-muted"
-    >Saving…</p>
-    <p
-      v-else-if="snapshot.status === 'conflict'"
-      class="text-xs text-theme-danger"
-    >
-      These settings changed elsewhere. Your edits were kept; reload to see
-      the newer values (discards your pending edits) or keep editing.
-      <button
-        class="underline"
-        @click="$emit('reload')"
-      >Reload</button>
-    </p>
-    <p
-      v-else-if="snapshot.status === 'error'"
-      class="text-xs text-theme-danger"
-    >{{ snapshot.message }} Your edit is kept. <button class="underline" :disabled="snapshot.pending || !snapshot.available || snapshot.writable===false" @click="$emit('retry')">Review / Retry</button></p>
-    <div v-if="!snapshot.available" role="status">
-      <p>This page is unavailable. Your draft is retained for recovery.</p>
-      <pre tabindex="0">{{ JSON.stringify(snapshot.drafts, null, 2) }}</pre>
-    </div>
-    <div v-if="snapshot.changedDescriptor" role="status">
-      <p>The page definition changed. Your original draft is retained; discard explicitly to load the new definition.</p>
-      <pre tabindex="0">{{ JSON.stringify(snapshot.drafts, null, 2) }}</pre>
+    <p v-if="snapshot.status === 'saving'" class="text-[13px] text-theme-text-muted" role="status">Saving…</p>
+    <div ref="fieldStart" tabindex="-1" class="flex flex-col gap-8">
+      <SettingsSection v-for="group in snapshot.fieldGroups" :key="group.id" :title="group.label" :help="group.description">
+        <SettingsField v-for="field in group.fields" :key="field.key" :field="field" v-bind="snapshot.fieldViews[field.key]" :on-browse="onBrowse"
+          @edit="$emit('edit',$event)" @commit="$emit('commit',$event)" />
+      </SettingsSection>
     </div>
   </div>
 </template>
-
 <script setup>
-import { computed } from "vue";
-
-import SettingsField from "./SettingsField.vue";
-import { settingsFieldGroups } from "../declarativeSettings.js";
-
-const props = defineProps({
-  page: { type: Object, required: true }, // declarative-v1 descriptor
-  blocking: { type: Object, default: null },
-  snapshot: { type: Object, required: true },
-  onBrowse: Function,
-});
-defineEmits(["edit", "commit", "reload", "retry"]);
-
-const fieldGroups = computed(() =>
-  settingsFieldGroups(props.page, props.snapshot.values),
-);
-
+import { ref } from 'vue';
+import SettingsField from './SettingsField.vue';
+import SettingsSection from './settings/SettingsSection.vue';
+import SettingsActions from './SettingsActions.vue';
+import CustomButton from './CustomButton.vue';
+defineProps({ page:{type:Object, required:true}, snapshot:{type:Object, required:true}, onBrowse:Function });
+defineEmits(['edit','commit','reload','retry']);
+const fieldStart = ref(null);
 </script>

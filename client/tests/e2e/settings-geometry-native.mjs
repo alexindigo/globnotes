@@ -47,7 +47,7 @@ export async function exerciseSettingsGeometry({ session, directory }) {
       await session.click('[aria-label="Settings"]');
       await session.poll("document.activeElement===document.querySelector('[aria-label=\"Close settings\"]')");
       await session.key("Tab", { modifiers: 8, windowsVirtualKeyCode: 9 });
-      const wrappedLast = await session.evaluate("(()=>{const box=document.querySelector('[role=dialog]'),buttons=[...box.querySelectorAll('button:not([disabled])')].filter(el=>!el.closest('[inert]')&&el.getBoundingClientRect().width);return box.contains(document.activeElement)&&document.activeElement===buttons.at(-1);})()");
+      const wrappedLast = await session.evaluate("(()=>{const box=document.querySelector('[role=dialog]'),buttons=[...box.querySelectorAll('button:not([disabled])')].filter(el=>el.tabIndex>=0&&!el.closest('[inert]')&&el.getBoundingClientRect().width);return box.contains(document.activeElement)&&document.activeElement===buttons.at(-1);})()");
       assert(wrappedLast, `${label}: Shift+Tab did not wrap within the top Settings dialog`);
       await session.key("Tab", { windowsVirtualKeyCode: 9 });
       await session.poll("document.activeElement===document.querySelector('[aria-label=\"Close settings\"]')");

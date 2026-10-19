@@ -101,7 +101,7 @@ if (options.controls) {
         if (options?.args?.some(argument => argument.replace(/\/+/g, "/") === `${ROOT}/server/main.ts`)) admitted.resolve({ baseUrl: httpOrigin(options.env.GLOBNOTES_PORT), vault: options.env.GLOBNOTES_PATH });
       }
     };
-    const boot = bootServer(current.vault, current.state, { env, logsDir: directory });
+    const boot = bootServer(current.vault, current.state, { env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory });
     Deno.Command = NativeCommand;
     const observe = (async () => {
       const owner = await admitted.promise;
@@ -156,7 +156,7 @@ if (options.controls) {
       if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
       await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
     }
-    await session.button("Backups");
+    await session.click('[data-settings-nav-id="plugin:globnotes-backup"]');
     await session.poll(`!!document.querySelector('#settings-field-retention') && document.querySelector('#settings-field-retention').value !== '' ${current.label === 'settings-lock' ? '' : "&& !document.querySelector('#settings-field-retention').disabled"}`);
     await session.evaluate("document.fonts.ready.then(()=>true)");
   }
@@ -255,7 +255,7 @@ if (options.controls) {
         const pin = { GLOBNOTES_PLUGIN_SETTINGS: JSON.stringify({ "globnotes-backup": { backup: { basePath: root } } }) };
         await fixture(label, pin, { retention: 2, basePath: "stored" }); await Deno.mkdir(root);
         await open();
-        assert(await current.session.evaluate(`document.querySelector('#settings-field-basePath').readOnly && document.querySelector('#settings-field-basePath').value===${JSON.stringify(root)} && document.querySelector('[data-modal-top=true]').textContent.includes('Set by environment')`), "BACKUP_NATIVE_pin: effective readonly field");
+        assert(await current.session.evaluate(`document.querySelector('#settings-field-basePath').readOnly && document.querySelector('#settings-field-basePath').value===${JSON.stringify(root)} && document.querySelector('[data-modal-top=true]').textContent.includes('Set by the server configuration')`), "BACKUP_NATIVE_pin: effective readonly field");
         await picture("environment-pin"); await retention(3); await closeSettings();
         const raw = JSON.parse(await Deno.readTextFile(`${current.state}/plugin-data/globnotes-backup/settings.json`));
         equal(raw.values.backup.basePath, "stored", "BACKUP_NATIVE_pin: stored fallback preserved by sibling save");

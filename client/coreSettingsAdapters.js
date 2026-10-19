@@ -5,12 +5,15 @@ import { publish, TOPICS } from "./bus/index.js";
 import { commandRegistry } from "./commands.js";
 import { debugEnabled, toggleDebug } from "./debug.js";
 import { saveViewLineNumbers, viewLineNumbers } from "./pluginSettings.js";
-import { currentTheme, GLOBNOTES_DARK, GLOBNOTES_LIGHT, setTheme, THEMES } from "./themes.js";
+import { currentTheme, setTheme, themePreviews } from "./themes.js";
 import { CUSTOM_BASE_LAYER_ID, CUSTOM_LAYER_ID, LAYER_ORDER, LAYERS } from "./keybindings/layers.js";
 import { isMac, platformKey } from "./keybindings/keys.js";
 import { currentLayerId, customOverridesMap, effectiveBindings, isCustomLayer, removeCustomBinding, setCustomBinding, setLayer } from "./keybindings/store.js";
 
 const slots = ["logo", "icon"];
+const brandFileTypes=[['SVG',['.svg']],['PNG',['.png']],['JPG',['.jpg','.jpeg']],['WebP',['.webp']],['GIF',['.gif']],['ICO',['.ico']]];
+const brandFileAccept=brandFileTypes.flatMap(([,extensions])=>extensions).join(',');
+const brandFileHelp=brandFileTypes.map(([label])=>label).join(', ');
 const namedKeys = new Set(["Enter", "Tab", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
 const copy = value => JSON.parse(JSON.stringify(value));
 async function observe(wire, message = "Branding write outcome is unknown; review current status before an explicit retry.") {
@@ -38,6 +41,11 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
   function brandSnapshot() {
     if (!state.loaded) loadBrand();
     return { name: state.name, accent: state.accent, accentCleared: state.accentCleared, dirty: brandDirty(), busy: state.pending || state.inFlight || state.reviewing, reviewing: state.reviewing,
+      slots: slots.map(id => ({ id, label: id === 'logo' ? 'Logo' : 'Icon', accept:brandFileAccept, help:brandFileHelp })), accept:brandFileAccept,
+      canCancel:!!brandDirty() && !state.pending && !state.inFlight && !state.reviewing && !state.unknown,
+      canSave:writable() && !!brandDirty() && !state.pending && !state.inFlight && !state.reviewing && !state.unknown,
+      canReset:writable() && !state.pending && !state.inFlight && !state.reviewing && !!(state.committed.name || state.committed.accent || state.committed.files?.length),
+      pendingText:state.unknown ? 'Waiting for the server to confirm…' : state.reviewing ? 'Reading current branding…' : 'Saving branding…',
       writable: writable(), unknown: state.unknown, error: state.error, canRetry: state.unknown && !state.inFlight,
       hasBranding: !!(state.committed.name || state.committed.accent || state.committed.files?.length),
       files: Object.fromEntries(slots.map(slot => [slot, { picked: !!state.picked[slot], present: !!customFile(slot), removed: state.remove[slot],
@@ -107,7 +115,6 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
     } catch (error) { state.error = error.message; return false; }
     finally { state.reviewing = false; }
   }
-  async function retryBrand() { if (!await reviewBrand()) return false; return !brandDirty() || saveBrand(); }
   async function settle() { if (state.inFlight) { try { await observe(wire); } catch {} } return !state.inFlight && !state.pending && !state.reviewing && !state.unknown; }
   function discardBrand() { if (state.pending || state.inFlight || state.reviewing || (state.unknown && !state.readBack)) return false; state.unknown = false; state.loaded = false; loadBrand(); return true; }
   function resetMessage() { const parts = []; if (state.committed.name) parts.push(`name "${state.committed.name}"`); if (state.committed.accent) parts.push(`accent ${state.committed.accent}`); if (state.committed.files?.length) parts.push(`${state.committed.files.length} uploaded files (${state.committed.files.join(", ")})`); return `This clears ${parts.join(", ")}. Unsaved branding choices are also replaced only when this reset succeeds. The instance returns to default globnotes branding.`; }
@@ -119,7 +126,7 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
     const commands = [...commandRegistry.value], present = new Set(commands.map(command => command.id));
     for (const id of Object.keys(overrides)) if (!present.has(id) && id.startsWith("plugin:")) commands.push({ id, label: id, group: "Dormant plugin commands", dormant: true });
     for (const command of commands) { const name = command.group || "Plugins"; if (!groups.has(name)) groups.set(name, []); groups.get(name).push({ action: command.id, label: command.label,
-      display: display(effective[command.id] ?? (command.dormant ? overrides[command.id] : null)), dormant: !!command.dormant,
+      display: display(effective[command.id] ?? (command.dormant ? overrides[command.id] : null)), assigned:!!(effective[command.id] ?? (command.dormant ? overrides[command.id] : null)), dormant: !!command.dormant,
       modified: isCustomLayer() && Object.hasOwn(overrides, command.id) && JSON.stringify(base[command.id]) !== JSON.stringify(overrides[command.id]) }); }
     return [...groups].map(([name, rows]) => ({ name, rows }));
   });
@@ -133,10 +140,15 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
     const mac = parts.join("+"), other = isMac() ? mac.replace("Cmd+", "Ctrl+") : mac;
     setCustomBinding(state.capturing, { mac, other }); stopCapture(); return true;
   }
-  return { THEMES, currentTheme, setTheme, themeSwatch: theme => theme.mode ? theme.colors?.brand || (theme.mode === "dark" ? GLOBNOTES_DARK : GLOBNOTES_LIGHT).brand : undefined,
+  function appearance() {
+    const [system, ...previews] = themePreviews(), groups = new Map();
+    for (const theme of previews) { if (!groups.has(theme.family)) groups.set(theme.family, []); groups.get(theme.family).push(theme); }
+    return { system, families:[...groups].map(([label,themes]) => ({label,themes})), ids:[system.id,...previews.map(theme=>theme.id)] };
+  }
+  return { currentTheme, setTheme, appearance,
     layers, keybindings: () => ({ id: currentLayerId.value, description: (LAYERS[currentLayerId.value] ?? LAYERS[CUSTOM_BASE_LAYER_ID]).description, custom: isCustomLayer(), capturing: state.capturing, groups: bindings.value }),
     setLayer, startCapture, stopCapture, captureKey, resetBinding: removeCustomBinding, viewLineNumbers, saveViewLineNumbers, debugEnabled, toggleDebug,
-    loadBrand, brandSnapshot, editBrand, clearAccent, chooseFile, discardFile, removeFile, saveBrand, resetMessage, reviewBrand, retryBrand, discardBrand, settle,
+    loadBrand, brandSnapshot, editBrand, clearAccent, chooseFile, discardFile, removeFile, saveBrand, resetMessage, reviewBrand, discardBrand, settle,
     hasWork: () => brandDirty() || state.pending || state.inFlight || state.reviewing || state.unknown,
     dispose() { disposed = true; stopCapture(); slots.forEach(releaseUrl); } };
 }

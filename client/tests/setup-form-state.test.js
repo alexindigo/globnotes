@@ -227,6 +227,15 @@ describe("ticketed enrolment and copy arming", () => {
 });
 
 describe("configured Access ownership and control policy", () => {
+  it('projects save, unknown and review labels from the configured workflow', async () => {
+    const wire=deferred(), status=deferred();
+    const {form,state}=await configured({writeAccess:()=>wire.promise,readStatus:()=>status.promise});
+    expect(state.submitLabel).toBe('Save access settings'); form.setField('currentPassword','current');
+    const saving=form.finish(); await flushPromises(); expect(state.submitLabel).toBe('Saving access settings…');
+    wire.reject(Error('receipt lost')); await saving; expect(state.submitLabel).toBe('Waiting for the server to confirm…');
+    const review=form.review(); await flushPromises(); expect(state.submitLabel).toBe('Checking current access…');
+    status.resolve({}); await review; expect(state.submitLabel).toBe('Save access settings');
+  });
   it("loads protected defaults and omits untouched username/password and old authenticator keys", async () => {
     const { form, state, writeAccess, enrolAccess, submitSetup } = await configured({ readAccess: async () => view({ totpEnabled: true }) });
     expect(state).toMatchObject({ existingAccount: true, existingTotp: true, username: "alice", password: "", readOnlySettings: true, showEnrolment: false, showReplacement: true });

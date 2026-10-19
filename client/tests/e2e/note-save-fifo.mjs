@@ -41,7 +41,7 @@ async function setup(label, { password = false, create = false } = {}) {
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/manifest.json`, JSON.stringify({ id: "fifo-guard", runtime: { server: "service.js" }, hooks: ["pre-save"] }));
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => (fact.proposed?.content ?? '').includes('FIFO-GUARD') ? {cancel:true,reason:'FIFO guard protection'} : {cancel:false}); }");
   const token = password ? await new SignJWT({ sub: "fifo-user" }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  const server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "" }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
   const controller = new AbortController();
   const records = [];
   let active = 0, maxActive = 0;
@@ -208,7 +208,7 @@ try {
     await current.session.click('[title="Open sidebar"]'); await current.session.poll("!!document.querySelector('[aria-label=Settings]')"); await current.session.click('[aria-label="Settings"]'); await current.session.button(action === "logout" ? "Account" : "Access");
     if (action === "logout") await current.session.button("Log out");
     else {
-      await current.session.button("Change access mode"); await current.session.poll("!!document.querySelector('#access-current-password') && !document.querySelector('#setup-mode-read_only').disabled");
+      await waitForAccessSummary(current.session); await current.session.button("Change access…"); await current.session.poll("!!document.querySelector('#access-current-password') && !document.querySelector('#setup-mode-read_only').disabled");
       await current.session.click("#access-current-password"); await current.session.type("fifo-secret");
       await current.session.click("#setup-mode-read_only"); await current.session.button("Save access settings");
     }
@@ -234,3 +234,4 @@ finally {
   }
 }
 if (failure) throw failure;
+import { waitForAccessSummary } from './settings-access-native.mjs';

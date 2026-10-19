@@ -9,6 +9,20 @@ let wrapper;
 afterEach(()=>{wrapper?.unmount();wrapper=null;document.documentElement.removeAttribute('style');});
 
 describe("theme picker flow", () => {
+  it('moves radio focus with arrows without applying until Enter and retains the selection', async () => {
+    setActivePinia(createPinia()); window.matchMedia=vi.fn(()=>({matches:false,addEventListener(){},removeEventListener(){}}));
+    wrapper=mount(SettingsModal,{attachTo:document.body,props:{modelValue:true,writable:true}});
+    await wrapper.vm.openSettings('core:appearance'); await flushPromises();
+    const group=document.querySelector('[role=radiogroup]'); expect(group).toBeTruthy();
+    const system=group.querySelector('[data-theme-id=system]'); system.click(); await flushPromises(); system.focus();
+    system.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})); await flushPromises();
+    expect(document.activeElement.dataset.themeId).toBe('globnotes-light');
+    expect(localStorage.getItem('globnotes-theme')).toBe('system');
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); await flushPromises();
+    expect(localStorage.getItem('globnotes-theme')).toBe('globnotes-light');
+    expect(group.querySelectorAll('[aria-checked=true]')).toHaveLength(1);
+    expect(group.querySelector('[aria-checked=true]').dataset.themeId).toBe('globnotes-light');
+  });
   it("opens picker from menu and applies a theme", async () => {
     setActivePinia(createPinia()); window.matchMedia=vi.fn(()=>({matches:false,addEventListener(){},removeEventListener(){}}));
     wrapper=mount(SettingsModal,{attachTo:document.body,props:{modelValue:true,writable:true}});
@@ -16,9 +30,7 @@ describe("theme picker flow", () => {
     const pickerPanel=document.querySelector('[data-appearance-settings]');
     expect(pickerPanel, "picker panel open").toBeTruthy();
 
-    const tokyo = Array.from(pickerPanel.querySelectorAll("button")).find((b) =>
-      b.textContent.includes("Tokyo Night"),
-    );
+    const tokyo = pickerPanel.querySelector('[data-theme-id="tokyo-night"]');
     expect(tokyo, "tokyo button").toBeTruthy();
     tokyo.click();
     await flushPromises();

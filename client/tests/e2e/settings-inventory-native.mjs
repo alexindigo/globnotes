@@ -10,15 +10,15 @@ export async function settleSettingsInventory(session, expected) {
   });
   let reviewed = false;
   try {
-    await session.poll(`(${expected}) && (!document.querySelector('[data-inventory-recovery]') || [...document.querySelectorAll('[data-inventory-recovery] button')].some(button=>button.textContent.trim()==='Review current policy'&&!button.disabled))`);
+    await session.poll(`(${expected}) && (!document.querySelector('[data-inventory-recovery]') || [...document.querySelectorAll('[data-inventory-recovery] button')].some(button=>button.textContent.trim()==='Check current status'&&!button.disabled))`);
     // Callers can enter immediately after native click, before its deferred
     // original PUT dispatch. Keep those requests as evidence, but start the
     // no-replay interval only once the committed/settled outcome is observed.
     const acknowledgedWriteCount = writes.length;
     if (await session.evaluate("!!document.querySelector('[data-inventory-recovery]')")) {
-      const committed = await session.evaluate("[...document.querySelectorAll('[role=alert]')].some(element=>element.textContent.includes('Policy saved;'))");
+      const committed = await session.evaluate("document.querySelector('[data-inventory-recovery]')?.textContent.includes('Policy saved;')");
       if (!committed) throw Error("Inventory did not acknowledge its write; recovery is not a successful fixture precondition");
-      await session.button("Review current policy", '[data-inventory-recovery]');
+      await session.button("Check current status", '[data-inventory-recovery]');
       reviewed = true;
     }
     await session.poll(`(${expected}) && !document.querySelector('[data-inventory-recovery]')`);

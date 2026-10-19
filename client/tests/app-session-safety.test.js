@@ -9,7 +9,7 @@ import { hasUnsavedWork } from "../sessionActions.js";
 import { dispatchAction } from "../keybindings/dispatcher.js";
 import { publish, TOPICS } from "../bus/index.js";
 import { getStoredToken, storeToken } from "../tokenStorage.js";
-import { getConfig, updateNote, resetSetup, postSetup, putAccessSettings, postAccessTotpEnrolment, getPluginPermissions, getPluginPermissionRequests, decidePluginPermissionRequest, putPluginEnabled } from "../api.js";
+import { getConfig, updateNote, resetSetup, postSetup, putAccessSettings, postAccessTotpEnrolment, getPluginPermissions, getPluginPermissionRequests, decidePluginPermissionRequest, putPluginEnabled, getPluginSettings, putPluginSettings } from "../api.js";
 import { pluginCatalog } from "../pluginRuntime.js";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import SettingsModal from "../components/SettingsModal.vue";
@@ -45,7 +45,7 @@ vi.mock("../api.js", () => ({
 }));
 vi.mock("../themes.js", async () => {
   const { ref } = await import("vue");
-  return { currentTheme: ref("system"), THEMES: [], initTheme: vi.fn(), setTheme: vi.fn(), currentThemeLabel: ref("System"), resolvedTheme: ref({}) };
+  return { currentTheme: ref("system"), THEMES: [], themePreviews:()=>[{id:'system',label:'System',nowShowing:'Globnotes Light',pair:[]}], initTheme: vi.fn(), setTheme: vi.fn(), currentThemeLabel: ref("System"), resolvedTheme: ref({}) };
 });
 vi.mock("../brand.js", () => ({ applyBrandToDocument: vi.fn(), currentBrandName: () => "globnotes", brandRevision: { value: 0 } }));
 let wrapper;
@@ -330,7 +330,7 @@ describe("real App permission prompt ownership", () => {
     const opener = document.activeElement;
     permissionFixture(); await flushPromises();
     const prompt = document.querySelector('[data-modal-top="true"]');
-    expect(prompt.textContent).toContain("Plugin access request");
+    expect(prompt.textContent).toContain("Prompt plugin asks for network access");
     expect(prompt.contains(document.activeElement)).toBe(true);
     expect(document.querySelector('[data-app-shell]').hasAttribute("inert")).toBe(true);
     expect(document.querySelector('#settings-modal-title').closest('[data-modal-top]').hasAttribute("inert")).toBe(true);
@@ -353,6 +353,27 @@ describe("real App permission prompt ownership", () => {
     expect(decidePluginPermissionRequest).toHaveBeenCalledWith("p", "request-A", { revision: 2, signature: "v2", requestSourceKey: "source-A", requestSourceRevision: 1,
       decision: "deny", allowNetwork: false, approvedNetwork: [], approvedImports: [] });
     expect(document.querySelector('#permission-request-title')).toBeNull();
+  });
+  it('Needs attention opens a postponed request over an invalid plugin draft without page/tab departure', async () => {
+    permissionFixture(); await flushPromises();
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',cancelable:true})); await flushPromises();
+    const definition=id=>({id,label:id,renderer:{kind:'declarative-v1',version:1},fields:[{key:'limit',label:'Limit',type:'number',min:1,default:5}]});
+    getPluginSettings.mockResolvedValue({revision:0,values:{limit:5}});
+    pluginCatalog.value={...pluginCatalog.value,plugins:[{...pluginCatalog.value.plugins[0],pages:[definition('settings'),definition('other')]}]}; await flushPromises();
+    dispatchAction(TOPICS.APP_OPEN_SETTINGS,{page:'plugin:p:settings'}); await flushPromises();
+    const input=document.querySelector('#settings-field-limit'); expect(input).not.toBeNull();
+    input.value=''; input.dispatchEvent(new Event('input',{bubbles:true})); await flushPromises();
+    const field=document.querySelector('#settings-field-limit'),tab=document.querySelector('[role=tab][aria-selected=true]'),url=location.href;
+    expect(field.value).toBe('');
+    const group=document.querySelector('[data-settings-attention]'); expect(group).not.toBeNull();
+    expect(group.querySelector('h3').textContent).toBe('Needs attention (1)');
+    const entry=group.querySelector('button'); expect(entry.hasAttribute('aria-current')).toBe(false); entry.click(); await flushPromises();
+    expect(document.querySelector('#permission-request-title')).not.toBeNull();
+    expect(document.querySelector('#settings-field-limit')).toBe(field); expect(field.value).toBe('');
+    expect(document.querySelector('[role=tab][aria-selected=true]')).toBe(tab);
+    expect(document.querySelector('[data-settings-content]').dataset.settingsCurrentPage).toBe('plugin:p:settings');
+    expect(location.href).toBe(url); expect(document.body.textContent).not.toContain('Unsaved changes');
+    expect(putPluginSettings).not.toHaveBeenCalled(); expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
   });
 
   it("source retirement closes an old prompt before any stale decision can be sent", async () => {
@@ -410,14 +431,19 @@ describe("real App permission prompt ownership", () => {
     expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
   });
 
-  it("read-only review discloses browser trust while disabling every decision", async () => {
+  it("read-only review disables every decision and the Plugins notice discloses browser trust", async () => {
     useGlobalStore().config.authType = "read_only";
     permissionFixture(); await flushPromises();
     const prompt = document.querySelector('[data-modal-top="true"]');
     expect(prompt.textContent).toContain("Read-only session");
     expect(decisionButton("Deny").disabled).toBe(true);
-    expect(decisionButton("Approve selected request").disabled).toBe(true);
-    expect(prompt.textContent).toContain("trusted same-origin application code");
+    expect(decisionButton("Approve").disabled).toBe(true);
+    expect(prompt.textContent).toContain("Approvals are separate from the plugin’s requested access");
+    decisionButton('Review later').click(); await flushPromises();
+    dispatchAction(TOPICS.APP_OPEN_SETTINGS,{page:'core:plugins'}); await flushPromises();
+    const trust=document.querySelector('[data-plugin-trust-notice]');
+    trust.querySelector('summary').click(); await flushPromises();
+    expect(trust.textContent).toContain('trusted same-origin application code');
     expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
   });
 

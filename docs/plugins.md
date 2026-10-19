@@ -162,26 +162,27 @@ The full generic platform contract — runtime entries, `on-*`/`pre-*` hooks,
 commands, declarative settings pages, sandboxed endpoints, data persistence
 and guarantees — is documented in [plugin-api.md](plugin-api.md).
 
-Every valid plugin-declared settings page appears as a named action on the left of
-its **Settings → Plugins** inventory item, in declaration order. For example,
-**Settings → Plugins → Backups** opens the shipped backup settings. Pages remain
+Each plugin that declares settings has one **Open settings** action in its
+**Settings → Plugins** row and one entry under **Plugin settings**. Multiple declared
+pages appear as tabs in declaration order. For example, **Versioned note backups**
+opens its **Backups** page. **Manage in Plugins** returns to the expanded owner row. Pages remain
 discoverable for disabled plugins and valid declarations whose runtime failed;
 the existing host-owned availability and draft-recovery controls still apply.
 Settings-less plugins have no invented settings action.
 
-For server network consent, use the right-hand **Settings → Plugins → Permissions** action or the
-plugin's framework **Server permissions** page. Manual filesystem additions are
+For server network consent, expand the plugin's row in **Settings → Plugins**.
+The inline controls replace the old permission pages and review dialog. Manual filesystem additions are
 listed for review; there is no marketplace or new browser activation-review gate.
 Network data and remote-code imports need separate approval, and **Allow network**
 is a per-plugin master that keeps remembered approvals when off. A prominent notice
-and framework **Runs in browser** badge disclose trusted editor/browser code;
+and inline **Runs in browser** label disclose trusted editor/browser code;
 these server controls do not restrict it or browser loads from rendered content.
 
 ## Rules of the sandbox
 
 The server-only [versioned backup plugin](../plugins/globnotes-backup/README.md)
 uses generic completion IO for best-effort previous-text history. Settings →
-Plugins → Backups has a default2 / integer1–10 slider and optional base. **Adjacent `.bak`
+Versioned note backups → Backups has a default2 / integer1–10 slider and optional base. **Adjacent `.bak`
 files remain visible vault files, including old/deleted text for public readers.**
 Dedicated bases mirror the captured original path; rename/base changes do not
 migrate histories. Generic environment pins and filesystem grants are documented

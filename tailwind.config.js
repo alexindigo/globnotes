@@ -1,7 +1,5 @@
 /** @type {import('tailwindcss').Config} */
 
-import colors from "tailwindcss/colors";
-
 export default {
   content: ["client/**/*.{html,js,vue}", "!client/dist/**"],
   darkMode: "selector",
@@ -19,6 +17,8 @@ export default {
         // Dynamic
         "theme-brand": "rgb(var(--theme-brand) / <alpha-value>)",
         "theme-warning": "rgb(var(--theme-warning) / <alpha-value>)",
+        "theme-success": "rgb(var(--theme-success) / <alpha-value>)",
+        "theme-danger": "rgb(var(--theme-danger) / <alpha-value>)",
         "theme-background": "rgb(var(--theme-background) / <alpha-value>)",
         "theme-background-elevated":
           "rgb(var(--theme-background-elevated) / <alpha-value>)",
@@ -28,9 +28,6 @@ export default {
           "rgb(var(--theme-text-very-muted) / <alpha-value>)",
         "theme-shadow": "rgb(var(--theme-shadow) / <alpha-value>)",
         "theme-border": "rgb(var(--theme-border) / <alpha-value>)",
-        // Static
-        "theme-success": colors.emerald[600],
-        "theme-danger": colors.rose[600],
       },
     },
   },

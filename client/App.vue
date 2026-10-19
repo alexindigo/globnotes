@@ -24,15 +24,14 @@
         v-model="isSettingsVisible"
         :permission-controller="permissions"
         :writable="permissionsWritable"
-        @review-request="openRequestedPermissionReview"
         @open-access="openAccessFromSettings"
         @logout="logoutFromSettings"
       />
-      <PermissionRequestModal :request="activePermissionRequest" :plugin="activePermissionSnapshot?.plugin" :view="activePermissionSnapshot?.view"
+      <PermissionRequestModal :request="activePermissionRequest" :presentation="requestPresentation" :narrow-error="narrowError" :narrow-host-text="narrowHostText" :on-narrow-text="permissionReview.setNarrowHost" :on-narrow-host="permissionReview.selectNarrowHost"
         :choices="activePermissionChoices" :busy="activePermissionSnapshot?.busy" :error="activePermissionSnapshot?.error"
-        :has-server="activePermissionSnapshot?.hasServer" :writable="permissionsWritable"
+        :writable="permissionsWritable"
         :on-scope="chooseRequestScope" :on-master="chooseRequestMaster" :on-approve="approvePermissionRequest" :on-deny="denyPermissionRequest" :on-cancel="deferPermissionRequest" />
-      <ConfirmModal :model-value="permissionRiskVisible" @update:model-value="permissionReview.setPermissionRiskVisible" title="Approve all hosts" :message="permissionRiskMessage" confirm-button-text="Select all hosts"
+      <ConfirmModal :model-value="permissionRiskVisible" action-layout="grouped" @update:model-value="permissionReview.setPermissionRiskVisible" title="Approve all hosts" :message="permissionRiskMessage" confirm-button-text="Approve all hosts"
         @confirm="finishPermissionRisk(true)" @cancel="finishPermissionRisk(false)" />
       <!-- Sidebar chrome (open button, backdrop, drawer/docked panel)
            positions itself — fixed, outside the page column. -->
@@ -119,8 +118,8 @@ const permissionReview = createAppPermissions({
   refreshConfig: session.refreshConfig,
 });
 const { permissions, finishPermissionRisk, chooseRequestScope, chooseRequestMaster,
-  approvePermissionRequest, denyPermissionRequest, deferPermissionRequest, openRequestedPermissionReview } = permissionReview;
-const { permissionsWritable, activePermissionRequest, activePermissionSnapshot, activePermissionChoices,
+  approvePermissionRequest, denyPermissionRequest, deferPermissionRequest } = permissionReview;
+const { permissionsWritable, activePermissionRequest, activePermissionSnapshot, activePermissionChoices, requestPresentation, narrowError, narrowHostText,
   permissionRiskVisible, permissionRiskMessage } = toRefs(permissionReview.state);
 onBeforeUnmount(permissionReview.dispose);
 // The focus event that opened the modal — consumed by QuickSwitcher to place

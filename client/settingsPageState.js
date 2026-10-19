@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { reactive } from "vue";
+import { settingsFieldGroups } from "./declarativeSettings.js";
 
 const copy = value => JSON.parse(JSON.stringify(value));
 export function validateSettingsInput(field, raw) {
@@ -71,9 +72,22 @@ export function createSettingsPageState({ registry, confirm }) {
     }
     return values;
   }
-  function snapshot(id) {
+  function snapshot(id, writable = true) {
     const record = ensure(id);
-    return { ...record, values: envelope(record), committed: record.values, dirty: dirty(record), pending: requests.has(id) || wires.has(id) || loads.has(id) || reviews.has(id), canSave: record.available && record.loaded && !blockingLoad(record) && !reviews.has(id) && !record.changedDescriptor && !Object.keys(record.errors).length };
+    const values = envelope(record);
+    const current=registry.find(id);
+    // Draft schemas are retained; current runtime status is not schema state.
+    const blocking=current ? current.blocking : record.page.blocking && {...record.page.blocking,active:false};
+    const fieldViews = Object.fromEntries((record.page.descriptor?.fields ?? []).map(field => [field.key, {
+      value:Object.hasOwn(record.drafts, field.key) ? record.drafts[field.key] : values[field.key],
+      readonly:!writable || !record.available || !record.loaded || !!record.fields[field.key]?.readonly,
+      error:record.errors[field.key] ?? '', pin:record.fields[field.key]?.source === 'environment' ? 'Set by the server configuration' : '',
+    }]));
+    return { ...record, fieldViews, fieldGroups:settingsFieldGroups(record.page.descriptor ?? {}, values), retainedText:JSON.stringify(record.drafts, null, 2),
+      blockingText:blocking?.actions?.length ? `${blocking.active===false ? 'Can block when on' : 'Can block'}: ${blocking.actions.join(', ')}. Errors or timeouts also cancel the action.` : '',
+      recovery:{visible:record.status==='conflict'||record.status==='error'||!record.available||!!record.changedDescriptor,label:record.uncertain?'Check current status':'Retry'},
+      canRetry:writable && retryAdmissible(record),
+      values, committed: record.values, dirty: dirty(record), pending: requests.has(id) || wires.has(id) || loads.has(id) || reviews.has(id), canSave: record.available && record.loaded && !blockingLoad(record) && !reviews.has(id) && !record.changedDescriptor && !Object.keys(record.errors).length };
   }
   // Re-read the registry at settlement: a retained D2 is not necessarily the
   // current definition. Never project old acknowledgement values as new-schema
@@ -201,11 +215,16 @@ export function createSettingsPageState({ registry, confirm }) {
     requests.set(id, request);
     return request;
   }
+  function retryAdmissible(record) {
+    const id = record.id;
+    return !disposed && !wires.has(id) && !requests.has(id) && !blockingLoad(record) && !reviews.has(id) &&
+      !(loads.has(id) && record.uncertain) && record.available &&
+      !!(record.uncertain || (!record.changedDescriptor && record.status !== "conflict"));
+  }
   async function retry(id) {
     if (disposed) return false;
     const record = ensure(id);
-    if (wires.has(id) || requests.has(id) || blockingLoad(record) || reviews.has(id) || (loads.has(id) && record.uncertain)) return false;
-    if (!record.available || (!record.uncertain && (record.changedDescriptor || record.status === "conflict"))) return false;
+    if (!retryAdmissible(record)) return false;
     if (record.uncertain) {
       const submitted = record.uncertain, generation = record.generation;
       reviews.set(id, submitted);

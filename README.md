@@ -67,7 +67,7 @@ can use the same contract through `ctx.createUuid()` or the browser
 - **Obsidian-flavored rendering** — `[[wiki-links]]` (with `|alias` and `#heading`), `![[image embeds]]`, `==highlights==`, `> [!callouts]`, `%%comments%%`, YAML frontmatter, mermaid diagrams, KaTeX math.
 - **Sidebar folder tree** — Obsidian-style nested tree with expand/collapse, active-note highlight, filter textbox, and hover shortcuts to folder views.
 - **Search modal** — one modal that jumps and searches: fuzzy-match a note by display title, alias, or path and open it, or take the pinned footer row into the full-text page. Matched characters are highlighted inline in the title/path of each row (filename hits outrank folder hits); top 10 results in a sticky footer'd list. top 9 results, every one with a `Ctrl/Cmd+N` shortcut; `Ctrl/Cmd+Enter` opens the full search with the query. Type `#` to complete tags; empty query shows this session's recently-opened notes.
-- **16 themes** — light, dark, system auto-detect, Catppuccin, Dracula, Gruvbox, Nord, Solarized, Tokyo Night, and more. Pick one in **Settings → Appearance**, preview it behind the panel, no page reload.
+- **16 theme choices** — System auto-detect plus light/dark variants of Globnotes, Catppuccin, Dracula, Gruvbox, Nord, Solarized and Tokyo Night. **Settings → Appearance** previews miniature notes grouped by family; System shows the default light/dark pair. Arrow keys move focus, Space/Enter applies without a page reload.
 - **Full-text search and `#tags`** across the whole tree, scoped to a folder or recursive, with real-time filtering.
 - **New-note flow** — `Untitled N` prefills in the current folder context; dead wiki-links offer a one-click "Create note" affordance.
 - **Attachment-aware renames** — moving a note across folders prompts you to move its referenced files along too, or just fix the links.
@@ -328,7 +328,12 @@ provide the Obsidian-flavored rendering; install your own under
 `<state dir>/plugins/<id>/` (`<vault>/.globnotes` by default).
 
 Open **Settings → Plugins** for inventory, enablement, auto-enable and permission
-review. Vault policy owns server, browser and editor activation across browsers.
+review in expandable plugin rows. A plugin's **Open settings** action and its
+**Plugin settings** navigation entry open its declared pages as tabs; **Manage in
+Plugins** returns to its expanded row. Vault policy owns server, browser and editor activation across browsers.
+Pending or postponed access requests also appear under **Needs attention** at the
+top of Settings navigation. Those entries open a decision layer over the current
+page, preserving its tab and drafts without triggering page departure.
 Legacy browser render preferences may suppress an already vault-enabled renderer
 for a request; they cannot activate a vault-disabled plugin or stop server
 workflows. Theme/keybindings remain browser preferences.
@@ -347,19 +352,20 @@ Components communicate over a mitt-based client-side event bus — publishers an
 
 ## Keybindings
 
-Keyboard shortcuts are a **switchable layer** — **Settings → Keybindings** shows a rail with five named layers (**Legacy Flatnotes**, **Obsidian**, **Notion**, **Typora**, **VS Code-lite**) plus a **Custom** layer, with a cheat sheet of the active layer's bindings beside it.
+Keyboard shortcuts are a **switchable layer** — **Settings → Keybindings** shows a segmented selector with five named layers (**Legacy Flatnotes**, **Obsidian**, **Notion**, **Typora**, **VS Code-lite**) plus a **Custom** layer, followed by the active layer's bindings.
 
 - **Cross-layer constants:** `Ctrl+Alt+N` (new note) and `Ctrl+Alt+H` (home) work everywhere — every app's own new-note key is browser-reserved.
 - **Save:** Legacy keeps `Ctrl/Cmd+Enter`; the other layers use `Mod+S` with `Ctrl/Cmd+Enter` kept as an alias. Legacy also restores Flatnotes' `/` for the quick switcher.
 - **Host commands:** Obsidian's `Mod+P` and VS Code-lite's `Mod+Shift+P` open the command palette, including registered plugin commands. Notion's slash-menu action remains unimplemented.
 - **Both editors, one channel:** keys reach the editors as `editor:*` actions on the event bus, so source mode and WYSIWYG handle the same layer — formatting actions that WYSIWYG applies natively are applied in source mode as markdown-syntax edits (Typora-style). The layer also fixes latent keymap conflicts: `Mod+Enter` saves instead of inserting a blank line, `Mod+I` toggles italic, and Escape collapses a multi-cursor selection before exiting.
-- **Custom layer:** starts as a copy of Legacy; in the cheat sheet, click any binding and press a new key to remap it (marked entries reset with ↺). Overrides are stored per-browser in `localStorage`, same as the theme choice.
+- **Custom layer:** starts as a copy of Legacy; click any binding and press a new key to remap it (modified entries have a **Reset** action). Overrides are stored per-browser in `localStorage`, same as the theme choice.
 
 ## Branding
 
 Make an instance yours without touching code: **Settings → Branding** sets the brand **name**, an **accent color**, and uploads a **logo / icon** (SVG, PNG, JPG, WebP, GIF or ICO). Everything lives in the state dir — name and accent in `config.json`, files in `brand/` — so branding travels with the vault like everything else (unless the state dir is relocated with `GLOBNOTES_INDEX_PATH`, in which case it travels with that).
 
 - The accent recolors the Globnotes Light/Dark themes; themes with a brand color of their own keep it.
+- **Save branding** applies your choices; **Cancel changes** discards only Branding drafts and keeps Settings open. **Reset branding…** asks before clearing the vault's stored branding.
 - The brand name replaces "globnotes" in the browser tab, the web manifest, and the navbar wordmark.
 - A custom `icon.svg` doubles as the browser-tab favicon; drop dedicated favicon files to go further.
 

@@ -7,7 +7,7 @@ async function settled(page) {
   await page.evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
 }
 async function trappedTab(page) {
-  await page.evaluate("(()=>{const root=document.querySelector('[data-modal-top=true] [role=dialog]');const targets=[...root.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex=\"-1\"])')].filter(el=>!el.closest('[hidden],[inert],[aria-hidden=true]')&&el.getBoundingClientRect().height>0);if(targets.length<2)throw Error('Missing Tab containment controls');targets[0].setAttribute('data-quality-tab-first','');targets.at(-1).setAttribute('data-quality-tab-last','');targets.at(-1).focus();return true;})()");
+  await page.evaluate("(()=>{const root=document.querySelector('[data-modal-top=true] [role=dialog]');const targets=[...root.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex=\"-1\"])')].filter(el=>el.tabIndex>=0&&!el.closest('[hidden],[inert],[aria-hidden=true]')&&el.getBoundingClientRect().height>0);if(targets.length<2)throw Error('Missing Tab containment controls');targets[0].setAttribute('data-quality-tab-first','');targets.at(-1).setAttribute('data-quality-tab-last','');targets.at(-1).focus();return true;})()");
   await page.key("Tab", { code: "Tab", windowsVirtualKeyCode: 9 });
   await page.poll("document.activeElement===document.querySelector('[data-quality-tab-first]')");
   await page.key("Tab", { code: "Tab", windowsVirtualKeyCode: 9, modifiers: 8 });
@@ -67,8 +67,8 @@ export async function exercise(f) {
   const point = await f.page.evaluate("(()=>{const r=document.querySelector('[data-quality-footer]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()");
   await f.page.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
   await f.page.poll("getComputedStyle(document.querySelector('[data-quality-footer] [title=\"Open the full search page\"]')).color==='rgb(56, 189, 248)'");
-  const pill = await f.page.evaluate("(()=>{const footer=document.querySelector('[data-quality-footer] [title=\"Open the full search page\"]'),style=getComputedStyle(footer);return{color:style.color,border:style.borderColor,inactive:[...document.querySelectorAll('ul.switcher-results>li:not(:last-child) [title^=\"Open result\"]')].map(el=>getComputedStyle(el).color)};})()");
-  assert(pill.color==='rgb(56, 189, 248)' && pill.border==='rgb(56, 189, 248)' && pill.inactive.every(color=>color==='rgb(94, 107, 128)'), "Active footer/inactive result pills did not consume their declared palettes");
+  const pill = await f.page.evaluate("(()=>{const footer=document.querySelector('[data-quality-footer] [title=\"Open the full search page\"]'),style=getComputedStyle(footer),ink=getComputedStyle(document.documentElement).getPropertyValue('--theme-text-very-muted').trim().split(' ').join(', ');return{color:style.color,border:style.borderColor,expectedInactive:'rgb('+ink+')',inactive:[...document.querySelectorAll('ul.switcher-results>li:not(:last-child) [title^=\"Open result\"]')].map(el=>getComputedStyle(el).color)};})()");
+  assert(pill.color==='rgb(56, 189, 248)' && pill.border==='rgb(56, 189, 248)' && pill.inactive.every(color=>color===pill.expectedInactive), "Active footer/inactive result pills did not consume their declared palettes");
   await f.page.screenshot(f.directory + "/switcher-rows.png");
   return { visualStates: outcomes, navbarStates: navbar, switcherRows: rows, pills: pill, defaultTabTraversedOutside: true };
 }

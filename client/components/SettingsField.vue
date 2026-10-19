@@ -1,122 +1,40 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-only -->
-
 <template>
-  <div class="flex flex-col gap-1">
-    <label
-      class="text-sm font-medium text-theme-text"
-      :for="`settings-field-${field.key}`"
-    >{{ field.label }}</label>
-    <p v-if="provenance?.source === 'environment'" class="text-xs text-theme-text-muted" role="note">Set by environment · Read-only</p>
-    <output v-if="field.type === 'slider'" :for="`settings-field-${field.key}`" class="text-sm text-theme-text">{{ value }}</output>
-    <p
-      v-if="field.description"
-      class="text-xs text-theme-text-muted"
-    >{{ field.description }}</p>
-    <Toggle
-      v-if="field.type === 'toggle'"
-      :id="`settings-field-${field.key}`"
-      :is-on="Boolean(value)"
-      :disabled="readonly"
-      @click="change(!value)"
-    />
-    <input
-      v-else-if="field.type === 'color'"
-      :id="`settings-field-${field.key}`"
-      type="color"
-      class="h-8 w-16"
-      :value="value"
-      :disabled="readonly"
-      @input="edit($event.target.value)"
-      @change="change($event.target.value)"
-    >
-    <select
-      v-else-if="field.type === 'select'"
-      :id="`settings-field-${field.key}`"
-      class="rounded border border-theme-border bg-theme-background px-2 py-1 text-theme-text"
-      :value="JSON.stringify(value)"
-      :disabled="readonly"
-      @change="change(parseSelect($event.target.value))"
-    >
-      <option
-        v-for="option in field.options ?? []"
-        :key="JSON.stringify(option.value)"
-        :value="JSON.stringify(option.value)"
-      >{{ option.label }}</option>
-    </select>
-    <input
-      v-else-if="field.type === 'number' || field.type === 'slider'"
-      :id="`settings-field-${field.key}`"
-      :type="field.type === 'slider' ? 'range' : 'number'"
-      class="rounded border border-theme-border bg-theme-background px-2 py-1 text-theme-text"
-      :value="value"
-      :min="field.min"
-      :max="field.max"
-      :step="field.step"
-      :readonly="readonly"
-      :disabled="field.type === 'slider' && readonly"
-      @input="edit($event.target.value)"
-      @blur="commit"
-      @keydown.enter.prevent="commit"
-    >
-    <textarea
-      v-else-if="field.type === 'textarea'"
-      :id="`settings-field-${field.key}`"
-      class="rounded border border-theme-border bg-theme-background px-2 py-1 text-theme-text"
-      :value="value"
-      :maxlength="field.maxLength"
-      :readonly="readonly"
-      @input="edit($event.target.value)"
-      @blur="commit"
-      @keydown="textareaKeydown"
-    />
-    <TextInput
-      v-else
-      :id="`settings-field-${field.key}`"
-      :model-value="String(value ?? '')"
-      :maxlength="field.maxLength"
-      :readonly="readonly"
-      @update:model-value="edit"
-      @blur="commit"
-      @keydown.enter.prevent="commit"
-    />
-    <CustomButton v-if="(field.type==='file'||field.type==='folder')&&onBrowse" :label="field.type==='folder'?'Choose folder':'Choose file'" :disabled="readonly" @click="onBrowse(field)" />
-    <p
-      v-if="error"
-      class="text-xs text-theme-danger"
-    >{{ error }}</p>
-  </div>
+  <SettingRow :id="`settings-field-${field.key}`" :label="field.label" :help="field.description" :error="error" :pin="pin || presentation.pin" :short="presentation.short">
+    <template v-if="field.type === 'slider'" #value><output :for="`settings-field-${field.key}`">{{ value }}</output></template>
+    <template #default="{ id, labelledby, describedby, invalid }">
+      <Toggle v-if="field.type === 'toggle'" :id="id" :is-on="Boolean(value)" :disabled="readonly" :aria-labelledby="labelledby" :aria-describedby="describedby" :aria-invalid="invalid" @click="toggle" />
+      <input v-else-if="field.type === 'color'" :id="id" type="color" class="focus-ring h-8 w-16" :value="value" :disabled="readonly" :aria-describedby="describedby" :aria-invalid="invalid" @input="edit($event.target.value)" @change="change($event.target.value)">
+      <select v-else-if="field.type === 'select'" :id="id" class="settings-field-input focus-ring" :value="presentation.selected" :disabled="readonly" :aria-describedby="describedby" :aria-invalid="invalid" @change="select($event.target.value)">
+        <option v-for="option in field.options ?? []" :key="JSON.stringify(option.value)" :value="JSON.stringify(option.value)">{{ option.label }}</option>
+      </select>
+      <TextInput v-else-if="field.type === 'number'" :id="id" type="number" class="max-w-24" :model-value="value" :min="field.min" :max="field.max" :step="field.step" :readonly="readonly"
+        :aria-describedby="describedby" :aria-invalid="invalid" @update:model-value="edit" @blur="commit" @keydown.enter.prevent="commit" />
+      <input v-else-if="field.type === 'slider'" :id="id" type="range" class="focus-ring w-full accent-theme-brand" :value="value" :min="field.min" :max="field.max" :step="field.step" :disabled="readonly"
+        :aria-describedby="describedby" :aria-invalid="invalid" @input="edit($event.target.value)" @blur="commit" @keydown.enter.prevent="commit">
+      <textarea v-else-if="field.type === 'textarea'" :id="id" class="settings-field-input focus-ring w-full" :value="value" :maxlength="field.maxLength" :readonly="readonly"
+        :aria-describedby="describedby" :aria-invalid="invalid" @input="edit($event.target.value)" @blur="commit" @keydown.ctrl.enter.prevent="commit" @keydown.meta.enter.prevent="commit" />
+      <div v-else class="settings-field-text">
+        <TextInput :id="id" :model-value="presentation.text" :maxlength="field.maxLength" :readonly="readonly" :aria-describedby="describedby" :aria-invalid="invalid" @update:model-value="edit" @blur="commit" @keydown.enter.prevent="commit" />
+        <CustomButton v-if="presentation.browseLabel && onBrowse" type="button" variant="secondary" :label="presentation.browseLabel" wrap-label :disabled="readonly" @click="onBrowse(field)" />
+      </div>
+    </template>
+  </SettingRow>
 </template>
-
 <script setup>
-import TextInput from "./TextInput.vue";
-import Toggle from "./Toggle.vue";
-import CustomButton from "./CustomButton.vue";
-
-const props = defineProps({
-  field: { type: Object, required: true },
-  value: { required: true },
-  error: { type: String, default: "" },
-  readonly: { type: Boolean, default: false },
-  provenance: { type: Object, default: null },
-  onBrowse: Function,
-});
-const emit = defineEmits(["edit", "commit"]);
-
-function edit(raw) {
-  if (!props.readonly) emit("edit", { key: props.field.key, raw });
-}
-function commit() {
-  if (!props.readonly) emit("commit", props.field.key);
-}
-function change(raw) { edit(raw); commit(); }
-function textareaKeydown(event) {
-  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); commit(); }
-}
-function parseSelect(raw) {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
-  }
-}
+import { computed } from 'vue';
+import TextInput from './TextInput.vue';
+import Toggle from './Toggle.vue';
+import CustomButton from './CustomButton.vue';
+import SettingRow from './settings/SettingRow.vue';
+import { settingsFieldPresentation, createSettingsFieldIntents } from '../declarativeSettings.js';
+const props = defineProps({ field:{ type:Object, required:true }, value:{ required:true }, error:String, readonly:Boolean, provenance:Object, pin:String, onBrowse:Function });
+const emit = defineEmits(['edit','commit']);
+const presentation = computed(() => settingsFieldPresentation(props.field, props.value, props.provenance));
+const { edit, commit, change, toggle, select } = createSettingsFieldIntents(props, emit);
 </script>
+<style scoped>
+.settings-field-input { min-width:0; max-width:100%; border:1px solid rgb(var(--theme-border)); border-radius:0.25rem; padding:0.375rem 0.5rem; background:rgb(var(--theme-background)); color:rgb(var(--theme-text)); font-size:14px; accent-color:rgb(var(--theme-brand)); }
+.settings-field-text { display:flex; flex-wrap:wrap; align-items:stretch; gap:1rem; min-width:0; }
+.settings-field-text > input { flex:1; min-width:min(8rem,100%); }
+</style>

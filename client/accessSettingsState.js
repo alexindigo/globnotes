@@ -81,6 +81,10 @@ export function createAccessSettingsState({ read, write, readStatus, completed, 
     } catch (error) { if (current()) state.error = error.response?.data?.detail ?? error.message; return false; }
     finally { if (reviewing === reviewId) state.reviewing = false; }
   }
-  return { state, load, commit, review, canDismiss: () => !state.pending && !state.inFlight && !state.unknown && !state.reviewing,
+  function invalidate() {
+    if (state.pending || state.inFlight || state.unknown || state.needsReview || state.reviewing) return false;
+    owner++; state.view=null; state.loading=false; state.error=''; return true;
+  }
+  return { state, load, commit, review, invalidate, canDismiss: () => !state.pending && !state.inFlight && !state.unknown && !state.reviewing,
     dispose() { disposed = true; owner++; } };
 }

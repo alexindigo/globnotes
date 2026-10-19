@@ -8,6 +8,8 @@ import { publish, TOPICS } from "./bus/index.js";
 export const GLOBNOTES_LIGHT = {
   brand: "#0284c7",
   warning: "#92400e",
+  success: "#047857",
+  danger: "#be123c",
   background: "#ffffff",
   "background-elevated": "#f3f4f5",
   text: "#2c3139",
@@ -29,6 +31,8 @@ export const GLOBNOTES_LIGHT = {
 export const GLOBNOTES_DARK = {
   brand: "#38bdf8",
   warning: "#fcd34d",
+  success: "#6ee7b7",
+  danger: "#fda4af",
   background: "#22262c",
   "background-elevated": "#2c3139",
   text: "#c1c7d0",
@@ -55,15 +59,15 @@ export const THEMES = [
   { id: "system", label: "System (follows OS)" },
   {
     id: "globnotes-light",
-    label: "Globnotes Light",
+    label: "Globnotes Light", family: "Globnotes", variant: "Light",
     mode: "light",
     colors: {},
   },
-  { id: "globnotes-dark", label: "Globnotes Dark", mode: "dark", colors: {} },
+  { id: "globnotes-dark", label: "Globnotes Dark", family: "Globnotes", variant: "Dark", mode: "dark", colors: {} },
 
   {
     id: "dracula",
-    label: "Dracula",
+    label: "Dracula", family: "Dracula", variant: "Dracula",
     mode: "dark",
     colors: {
       brand: "#bd93f9",
@@ -86,7 +90,7 @@ export const THEMES = [
   },
   {
     id: "dracula-alucard",
-    label: "Dracula Alucard",
+    label: "Dracula Alucard", family: "Dracula", variant: "Alucard",
     mode: "light",
     colors: {
       brand: "#644ac9",
@@ -110,7 +114,7 @@ export const THEMES = [
 
   {
     id: "catppuccin-latte",
-    label: "Catppuccin Latte",
+    label: "Catppuccin Latte", family: "Catppuccin", variant: "Latte",
     mode: "light",
     colors: {
       brand: "#1e66f5",
@@ -133,7 +137,7 @@ export const THEMES = [
   },
   {
     id: "catppuccin-frappe",
-    label: "Catppuccin Frappé",
+    label: "Catppuccin Frappé", family: "Catppuccin", variant: "Frappé",
     mode: "dark",
     colors: {
       brand: "#8caaee",
@@ -156,7 +160,7 @@ export const THEMES = [
   },
   {
     id: "catppuccin-macchiato",
-    label: "Catppuccin Macchiato",
+    label: "Catppuccin Macchiato", family: "Catppuccin", variant: "Macchiato",
     mode: "dark",
     colors: {
       brand: "#8aadf4",
@@ -179,7 +183,7 @@ export const THEMES = [
   },
   {
     id: "catppuccin-mocha",
-    label: "Catppuccin Mocha",
+    label: "Catppuccin Mocha", family: "Catppuccin", variant: "Mocha",
     mode: "dark",
     colors: {
       brand: "#89b4fa",
@@ -203,7 +207,7 @@ export const THEMES = [
 
   {
     id: "solarized-light",
-    label: "Solarized Light",
+    label: "Solarized Light", family: "Solarized", variant: "Light",
     mode: "light",
     colors: {
       brand: "#268bd2",
@@ -226,7 +230,7 @@ export const THEMES = [
   },
   {
     id: "solarized-dark",
-    label: "Solarized Dark",
+    label: "Solarized Dark", family: "Solarized", variant: "Dark",
     mode: "dark",
     colors: {
       brand: "#268bd2",
@@ -250,7 +254,7 @@ export const THEMES = [
 
   {
     id: "gruvbox-light",
-    label: "Gruvbox Light",
+    label: "Gruvbox Light", family: "Gruvbox", variant: "Light",
     mode: "light",
     colors: {
       brand: "#af3a03",
@@ -273,7 +277,7 @@ export const THEMES = [
   },
   {
     id: "gruvbox-dark",
-    label: "Gruvbox Dark",
+    label: "Gruvbox Dark", family: "Gruvbox", variant: "Dark",
     mode: "dark",
     colors: {
       brand: "#fe8019",
@@ -296,32 +300,8 @@ export const THEMES = [
   },
 
   {
-    id: "nord",
-    label: "Nord",
-    mode: "dark",
-    colors: {
-      brand: "#88c0d0",
-      background: "#2e3440",
-      "background-elevated": "#3b4252",
-      text: "#d8dee9",
-      "text-muted": "#7b88a1",
-      "text-very-muted": "#4c566a",
-      border: "#434c5e",
-      "code-keyword": "#81a1c1",
-      "code-string": "#a3be8c",
-      "code-function": "#88c0d0",
-      "code-comment": "#616e88",
-      "code-number": "#b48ead",
-      "code-operator": "#81a1c1",
-      "code-tag": "#8fbcbb",
-      "code-attr": "#88c0d0",
-      "code-punctuation": "#d8dee9",
-    },
-  },
-
-  {
     id: "tokyo-night",
-    label: "Tokyo Night",
+    label: "Tokyo Night", family: "Tokyo Night", variant: "Night",
     mode: "dark",
     colors: {
       brand: "#7aa2f7",
@@ -344,7 +324,7 @@ export const THEMES = [
   },
   {
     id: "tokyo-night-light",
-    label: "Tokyo Night Light",
+    label: "Tokyo Night Light", family: "Tokyo Night", variant: "Light",
     mode: "light",
     colors: {
       brand: "#2959aa",
@@ -365,6 +345,29 @@ export const THEMES = [
       "code-punctuation": "#343b58",
     },
   },
+  {
+    id: "nord",
+    label: "Nord", family: "Nord", variant: "Nord",
+    mode: "dark",
+    colors: {
+      brand: "#88c0d0",
+      background: "#2e3440",
+      "background-elevated": "#3b4252",
+      text: "#d8dee9",
+      "text-muted": "#7b88a1",
+      "text-very-muted": "#4c566a",
+      border: "#434c5e",
+      "code-keyword": "#81a1c1",
+      "code-string": "#a3be8c",
+      "code-function": "#88c0d0",
+      "code-comment": "#616e88",
+      "code-number": "#b48ead",
+      "code-operator": "#81a1c1",
+      "code-tag": "#8fbcbb",
+      "code-attr": "#88c0d0",
+      "code-punctuation": "#d8dee9",
+    },
+  },
 ];
 
 // -- Engine ------------------------------------------------------------------
@@ -373,10 +376,10 @@ const STORAGE_KEY = "globnotes-theme";
 
 // Instance brand accent (hex or null), fed from the server config and
 // kept live by brand:change. Module-level: themes apply outside components.
-let brandAccent = null;
+const brandAccent = ref(null), systemMode = ref("light");
 
 export function setBrandAccent(accent) {
-  brandAccent = accent || null;
+  brandAccent.value = accent || null;
   // Re-stamp with the accent folded in (idempotent; re-publishes
   // theme:change). Clearing restores the theme's own brand.
   applyTheme(currentTheme.value);
@@ -405,26 +408,72 @@ function resolveThemeId(id) {
   return prefersDark ? "globnotes-dark" : "globnotes-light";
 }
 
+function luminance(color) {
+  return hexToRgbTriplet(color).split(' ').map(Number)
+    .map(channel => channel / 255).map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, value, i) => sum + value * [0.2126, 0.7152, 0.0722][i], 0);
+}
+
+function contrast(left, right) {
+  const a = luminance(left), b = luminance(right);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+// Filled destructive confirmations derive their readable label at the palette owner.
+function onDanger(hex) {
+  const preferred=contrast('#ffffff', hex) >= contrast(GLOBNOTES_LIGHT.text, hex) ? '#ffffff' : GLOBNOTES_LIGHT.text;
+  return contrast(preferred,hex)>=4.5 ? preferred : '#000000';
+}
+
+// Status ink must remain readable on both surfaces of every theme. Resolve this
+// once at the palette owner; components only consume semantic theme tokens.
+function statusInk(preferred, surfaces, threshold=4.5) {
+  const minimum = ink => Math.min(...surfaces.map(surface => contrast(ink, surface)));
+  if (minimum(preferred) >= threshold) return preferred;
+  const target = minimum('#ffffff') > minimum('#000000') ? 255 : 0;
+  const channels = hexToRgbTriplet(preferred).split(' ').map(Number);
+  for (let step = 1; step <= 255; step++) {
+    const candidate = '#' + channels.map(channel => Math.round(channel + (target - channel) * step / 255).toString(16).padStart(2, '0')).join('');
+    if (minimum(candidate) >= threshold) return candidate;
+  }
+  return target === 255 ? '#ffffff' : '#000000';
+}
+
+function palette(theme) {
+  const defaults = theme.mode === "dark" ? GLOBNOTES_DARK : GLOBNOTES_LIGHT;
+  const colors = { ...defaults, ...theme.colors };
+  const surfaces = [colors.background, colors['background-elevated']];
+  for (const role of ['text','text-muted','text-very-muted','success', 'warning', 'danger']) colors[role] = statusInk(colors[role], surfaces);
+  colors.quiet=colors['text-muted'];
+  colors['control-border']=statusInk(colors.border,surfaces,3);
+  colors['on-danger']=onDanger(colors.danger);
+  const hoverTarget=colors['on-danger']==='#ffffff'?0:255;
+  colors['danger-hover']='#'+hexToRgbTriplet(colors.danger).split(' ').map(Number).map(channel=>Math.round(channel+(hoverTarget-channel)*0.08).toString(16).padStart(2,'0')).join('');
+  if (brandAccent.value && !theme.colors.brand) colors.brand = brandAccent.value;
+  return colors;
+}
+
+/** The same effective variables used by the live application, scoped per tile. */
+export function themePreviews() {
+  const previews = THEMES.filter(theme => theme.mode).map(theme => ({
+    id: theme.id, family: theme.family, variant: theme.variant, mode: theme.mode, label: theme.label,
+    vars: Object.fromEntries(Object.entries(palette(theme)).map(([name,value]) => [`--theme-${name}`, hexToRgbTriplet(value)])),
+  }));
+  const pair = ['globnotes-light','globnotes-dark'].map(id => previews.find(theme => theme.id === id));
+  return [{ id:'system', label:'System — follows your device', nowShowing:pair.find(theme => theme.mode === systemMode.value).label, pair }, ...previews];
+}
+
 function applyTheme(id) {
   const resolvedId = resolveThemeId(id);
   const theme = THEMES.find((t) => t.id === resolvedId);
-  if (!theme) {
-    return;
-  }
-  const defaults = theme.mode === "dark" ? GLOBNOTES_DARK : GLOBNOTES_LIGHT;
-  const colors = { ...defaults, ...theme.colors };
+  if (!theme) return;
+  const colors = palette(theme);
   const root = document.documentElement;
   for (const [name, value] of Object.entries(colors)) {
     root.style.setProperty(
       `--theme-${name}`,
       value.startsWith("#") ? hexToRgbTriplet(value) : value,
     );
-  }
-  // Instance branding: the accent replaces the default pair's brand while
-  // the theme doesn't define its own (globnotes-light/dark never do —
-  // themes with an explicit brand keep their identity).
-  if (brandAccent && !theme.colors.brand) {
-    root.style.setProperty("--theme-brand", hexToRgbTriplet(brandAccent));
   }
   // The .dark class drives the handful of class-based overrides.
   document.body.classList.toggle("dark", theme.mode === "dark");
@@ -446,12 +495,14 @@ export function setTheme(id) {
 }
 
 export function initTheme() {
+  systemMode.value = window.matchMedia("(prefers-color-scheme: dark)").matches ? 'dark' : 'light';
   applyTheme(currentTheme.value);
   if (!systemListenerBound) {
     systemListenerBound = true;
     window
       .matchMedia("(prefers-color-scheme: dark)")
-      .addEventListener("change", () => {
+      .addEventListener("change", event => {
+        systemMode.value = event.matches ? 'dark' : 'light';
         if (currentTheme.value === "system") {
           applyTheme("system");
         }

@@ -35,28 +35,33 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
     assert(await session.evaluate(expression), `${text}: actual mutation control is not disabled`);
     await session.button(text, scope);
   }
+  async function disabledControl(selector) {
+    assert(await session.evaluate(`document.querySelector(${JSON.stringify(selector)})?.disabled===true`),`${selector}: actual mutation control is not disabled`);
+    await session.click(selector);
+  }
   await open(); await session.button("Branding");
   await session.poll("document.querySelector('#brand-name')?.value==='Native locked brand'");
   assert(await session.evaluate("document.querySelector('#brand-name').readOnly && document.querySelector('#brand-accent').disabled && [...document.querySelectorAll('[data-branding-settings] input[type=file]')].every(input=>input.disabled)"), "Locked branding inputs remain writable");
   await session.click("#brand-name"); await session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); await session.type("must not replace branding");
   assert(await session.evaluate("document.querySelector('#brand-name').value==='Native locked brand'"), "Native input changed locked branding");
-  await disabledButton("Save", "[data-branding-settings]"); await disabledButton("Reset", "[data-branding-settings]");
+  await disabledButton("Save branding", "[data-branding-settings]"); await disabledButton("Reset branding…", "[data-branding-settings]");
   await capture("locked-branding-controls");
   await session.button("Plugins");
   await session.poll("!!document.querySelector('[data-plugin-inventory-id=access-workflow]')");
-  await disabledButton("Auto-enable new plugins", "[data-plugin-inventory]");
-  await disabledButton("Enabled", "[data-plugin-inventory-id=access-workflow]");
+  await disabledControl('[data-plugin-inventory] > .setting-row [role=switch]');
+  await disabledControl('[data-plugin-inventory-id=access-workflow] .plugin-row-actions [role=switch]');
   await capture("locked-plugin-policy-controls");
-  await session.button("Access workflow settings");
+  await session.click('[data-settings-nav-id="plugin:access-workflow"]');
   await session.poll("document.querySelector('#settings-field-message')?.value==='locked retained settings consumer'");
   assert(await session.evaluate("['message','limit'].every(key=>{const input=document.querySelector('#settings-field-'+key);return !!input&&(input.readOnly||input.disabled);})"), "Actual locked declarative fields remain writable");
   await session.click("#settings-field-message"); await session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); await session.type("must not replace plugin settings");
   assert(await session.evaluate("document.querySelector('#settings-field-message').value==='locked retained settings consumer'"), "Native input changed locked declarative settings");
   await capture("locked-declarative-controls");
-  await session.click('[data-permission-page="access-workflow"]');
+  await session.button('Plugins','[aria-label="Settings pages"]');
+  await session.click('[data-plugin-inventory-id=access-workflow] button[aria-expanded]');
   await session.poll("!!document.querySelector('[data-plugin-permission-panel] [data-permission-scope=\"host:127.0.0.1:9\"]')");
-  await disabledButton("Allow network", "[data-plugin-permission-panel]");
-  await disabledButton("Delete approval", '[data-permission-scope="host:127.0.0.1:9"]');
+  await disabledControl('[data-plugin-permission-panel] [role=switch]');
+  await disabledButton("Remove", '[data-permission-scope="host:127.0.0.1:9"]');
   await disabledButton("Approve", '[data-permission-scope="host:127.0.0.1:10"]');
   await capture("locked-permission-controls");
   const publication = await api(`plugin-host/${id}/commands/request`, "POST", {});
@@ -64,7 +69,7 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
   const requestId = publication.body.result.requestId;
   await session.poll("!!document.querySelector('#permission-request-title') && document.querySelector('[data-modal-top=true]').textContent.includes('Native locked request fixture')");
   assert(await session.evaluate("[...document.querySelectorAll('[data-permission-request-choices] input,[data-permission-request-choices] button')].every(input=>input.disabled)"), "Locked request choices remain writable");
-  await disabledButton("Deny", "[data-modal-top=true]"); await disabledButton("Approve selected request", "[data-modal-top=true]");
+  await disabledButton("Deny", "[data-modal-top=true]"); await disabledButton("Approve", "[data-modal-top=true]");
   await capture("locked-permission-request-decisions");
   await session.button("Review later", "[data-modal-top=true]"); await session.poll("!document.querySelector('#permission-request-title')");
   const permissionView = (await api(`plugin-host/${id}/permissions`)).body;
@@ -83,7 +88,7 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
   assert((await api("plugin-host/permission-requests")).body.some(request => request.id === requestId && request.state === "pending"), "Readonly review silently decided the actual request");
   assert(writes.length === 0, "Disabled UI issued a covered settings mutation");
   await session.button("Access");
-  assert(!await session.evaluate("[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access mode')"), "Locked Access exposes self-unlock");
+  assert(!await session.evaluate("[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access…')"), "Locked Access exposes self-unlock");
   await session.button("Appearance"); await session.click('[data-theme-id="globnotes-dark"]');
   await session.poll("localStorage.getItem('globnotes-theme')==='globnotes-dark'&&document.body.classList.contains('dark')");
   await session.button("Editor"); await session.click('[data-modal-top=true] button.group');

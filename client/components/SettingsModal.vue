@@ -6,14 +6,15 @@
     v-model="isVisible"
     name="settings"
     anchor="viewport-center"
-    class="!mx-1 !w-full sm:!mx-4 sm:!w-[80dvw]"
+    scroll="content"
+    class="!mx-1 !w-full [--settings-inline-inset:1rem] sm:!mx-4 sm:!w-[80dvw]"
     labelledby="settings-modal-title"
     trap-focus
     :keydown-handler="core.captureKey"
     :close-handler-override="requestClose"
   >
     <div class="flex min-h-0 flex-1 flex-col">
-      <div class="flex items-center justify-between gap-2 border-b border-theme-border px-4 py-3">
+      <div class="flex items-center justify-between gap-2 border-b border-theme-border py-3 [padding-inline:var(--settings-inline-inset)]">
         <div class="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <h2
             id="settings-modal-title"
@@ -26,6 +27,8 @@
           >{{ versionLabel }}</span>
         </div>
         <CustomButton
+          type="button"
+          variant="text"
           class="shrink-0"
           aria-label="Close settings"
           :icon-path="tabClose"
@@ -33,65 +36,24 @@
         />
       </div>
       <div class="flex min-h-0 flex-1 flex-col sm:flex-row">
-        <nav
-          class="max-h-40 w-full shrink-0 overflow-y-auto border-b border-theme-border py-2 sm:max-h-none sm:w-48 sm:border-b-0 sm:border-r"
-          aria-label="Settings pages"
-        >
-          <div
-            v-for="group in groupedPages"
-            :key="group.name"
-            class="mb-2"
-          >
-            <div class="px-4 py-1 text-xs font-bold uppercase text-theme-text-very-muted">
-              {{ group.name }}
-            </div>
-            <button
-              v-for="page in group.pages"
-              :key="page.id"
-              :data-permission-page="page.permissionPluginId"
-              class="block w-full truncate px-4 py-1.5 text-left text-sm text-theme-text"
-              :class="{ 'bg-theme-background-elevated': page.id === currentPageId }"
-              @click="selectPage(page.id)"
-            >
-              {{ page.label }}
-            </button>
-          </div>
-        </nav>
-        <div class="min-w-0 flex-1 overflow-y-auto p-2 sm:p-4">
-          <div v-if="currentPage?.unsupported">
+        <SettingsNav :groups="groupedPages" :attention-items="attentionItems" :on-select="selectPage" />
+        <div class="min-w-0 flex-1 overflow-y-auto p-4 sm:p-6" data-settings-content :data-settings-current-page="currentPageId">
+          <SettingsPage v-if="currentPage?.kind === 'unsupported'" :title="pluginPageHeader.title" :description="pluginPageHeader.description">
+            <template #action><CustomButton type="button" label="Manage in Plugins" variant="text" @click="managePlugin(currentPage.owner)" /></template>
+            <SettingsTabs :pages="pluginPageHeader.pages" :selected="currentPageId" :on-select="selectPage">
             <p class="text-sm text-theme-danger">
               This settings page uses an unsupported renderer
               ({{ currentPage.renderer?.kind }}). It cannot be displayed in
               this version of globnotes.
             </p>
-          </div>
-          <PluginPermissionPanel
-            v-else-if="currentPage?.permissionPluginId"
-            :plugin="permissionSnapshot?.plugin"
-            :view="permissionSnapshot?.view"
-            :busy="permissionSnapshot?.busy"
-            :error="permissionSnapshot?.error"
-            :has-server="permissionSnapshot?.hasServer"
-            :writable="permissionSnapshot?.writable"
-            :has-draft="!!permissionSnapshot?.draft"
-            :on-master="value=>permissions.setMaster(currentPage.permissionPluginId,value)"
-            :on-approve="(kind,scope)=>approveScope(currentPage.permissionPluginId,kind,scope)"
-            :on-delete="(kind,row)=>deleteScope(currentPage.permissionPluginId,kind,row)"
-            :on-review="()=>permissions.review(currentPage.permissionPluginId)"
-            :on-retry="()=>permissions.retry(currentPage.permissionPluginId)"
-            :on-discard="()=>discardPermission(currentPage.permissionPluginId)"
-            :on-request="request=>emit('review-request',request)"
-          />
-          <div v-else-if="currentPageIsPlugin" class="flex flex-col gap-3">
-          <div class="flex flex-wrap items-center gap-2">
-            <PluginBrowserBadge :runs-in-browser="currentPage.plugin?.runsInBrowser" :browser-components="currentPage.plugin?.browserComponents" />
-            <CustomButton label="Permissions" @click="openPermissionReview(currentPage.owner)" />
-          </div>
-          <PluginTrustNotice />
+            </SettingsTabs>
+          </SettingsPage>
+          <SettingsPage v-else-if="currentPage?.kind === 'plugin-page'" :title="pluginPageHeader.title" :description="pluginPageHeader.description">
+          <template #action><CustomButton type="button" label="Manage in Plugins" variant="text" @click="managePlugin(currentPage.owner)" /></template>
+          <SettingsTabs :pages="pluginPageHeader.pages" :selected="currentPageId" :on-select="selectPage">
           <DeclarativeSettingsPage
             :key="currentPageId"
             :page="currentPage.descriptor"
-            :blocking="currentPage.blocking"
             :snapshot="currentSnapshot"
             :on-browse="field=>browseField(currentPageId,field)"
             @edit="pageState.edit(currentPageId, $event.key, $event.raw)"
@@ -99,75 +61,63 @@
             @reload="reloadCurrentPage"
             @retry="pageState.retry(currentPageId)"
           />
-          </div>
-          <div v-else-if="currentPage">
+          </SettingsTabs>
+          </SettingsPage>
+          <SettingsPage v-else-if="currentPage" :title="currentPage.label" :description="currentPage.description">
             <!-- Appearance: the theme list content (values + callbacks;
              the legacy popup wrapper is not rendered here). -->
-            <AppearanceSettingsPage v-if="currentPage.id === 'core:appearance'" :themes="core.THEMES" :selected="core.currentTheme.value" :on-select="core.setTheme" :on-swatch="core.themeSwatch" />
-            <KeybindingsSettingsPage v-else-if="currentPage.id === 'core:keybindings'" :layers="core.layers" :snapshot="keybindingSnapshot" :on-layer="core.setLayer" :on-capture="core.startCapture" :on-reset="core.resetBinding" />
-            <BrandingSettingsPage v-else-if="currentPage.id === 'core:branding'" :snapshot="brandingSnapshot" :on-edit="core.editBrand" :on-clear-accent="core.clearAccent" :on-pick-file="core.chooseFile" :on-discard-file="core.discardFile" :on-remove-file="core.removeFile" :on-save="()=>core.saveBrand()" :on-reset="resetCoreBranding" :on-retry="core.retryBrand" :on-cancel="requestClose" />
+            <AppearanceSettingsPage v-if="currentPage.preference === 'appearance'" :snapshot="appearanceSnapshot" :selected="core.currentTheme.value" :on-select="core.setTheme" />
+            <KeybindingsSettingsPage v-else-if="currentPage.preference === 'keybindings'" :layers="core.layers" :snapshot="keybindingSnapshot" :on-layer="core.setLayer" :on-capture="core.startCapture" :on-reset="core.resetBinding" />
+            <BrandingSettingsPage v-else-if="currentPage.kind === 'branding'" :snapshot="brandingSnapshot" :on-edit="core.editBrand" :on-clear-accent="core.clearAccent" :on-pick-file="core.chooseFile" :on-discard-file="core.discardFile" :on-remove-file="core.removeFile" :on-save="()=>core.saveBrand()" :on-reset="resetCoreBranding" :on-review="core.reviewBrand" :on-cancel="session.cancelBranding" />
             <!-- Plugins: vault-owned inventory + enablement (the old
              localStorage switches are legacy preferences, shown once). -->
-            <PluginInventorySettingsPage v-else-if="currentPage.id === 'core:plugins'"
-              :plugins="catalogPlugins" :policy="catalogPolicy" :writable="writable" :errors="pluginError" :snapshot="inventorySnapshot"
-               :pages-by-plugin="inventoryPages" :on-open-page="session.selectPage"
-               :on-auto-enable="toggleAutoEnable" :on-enabled="togglePlugin" :on-review="openPermissionReview"
-               :on-policy-review="inventory.review" :on-policy-retry="inventory.retry" :on-policy-discard="discardInventoryChoice" />
-            <div v-else-if="currentPage.id === 'core:editor'" class="flex items-center gap-2 text-sm text-theme-text">
-              <Toggle :is-on="core.viewLineNumbers.value" @click="core.saveViewLineNumbers(!core.viewLineNumbers.value)" />
-              Line numbers in view mode
-            </div>
-            <div v-else-if="currentPage.id === 'core:diagnostics'" class="flex items-center gap-2 text-sm text-theme-text">
-              <Toggle :is-on="core.debugEnabled.value" @click="core.toggleDebug()" />
-              Debug notifications
-            </div>
-            <div v-else-if="currentPage.id === 'core:access'" class="flex flex-col gap-2">
-              <p class="text-sm text-theme-text-muted">
-                Update access and authenticator settings in place. Your note
-                stays open underneath while you confirm the change.
-              </p>
-              <CustomButton v-if="writable" label="Change access mode" @click="openAccess" />
+            <PluginInventorySettingsPage v-else-if="currentPage.kind === 'plugins'"
+              :rows="pluginRows" :auto-enable="autoEnableView" :on-expansion="toggleExpansion"
+              :on-open-page="selectPage" :on-auto-enable="toggleAutoEnable" :on-enabled="togglePluginRow"
+              :on-policy-review="inventory.review" :on-policy-retry="inventory.retry" :on-policy-discard="discardInventoryChoice"
+              :on-master="session.togglePermissionMaster" :on-host="session.permissionHostAction"
+              :on-review="permissions.review" :on-retry="permissions.retry" :on-discard="discardPermission" />
+            <SettingRow v-else-if="currentPage.preference === 'editor'" label="Line numbers when reading" help="Show line numbers beside code blocks when reading notes. This preference is stored in this browser." short v-slot="row">
+              <Toggle :id="row.id" :aria-labelledby="row.labelledby" :aria-describedby="row.describedby" :is-on="core.viewLineNumbers.value" @click="session.toggleLineNumbers" />
+            </SettingRow>
+            <SettingRow v-else-if="currentPage.preference === 'diagnostics'" label="Debug notifications" help="Show diagnostic notifications in this browser while investigating a problem." short v-slot="row">
+              <Toggle :id="row.id" :aria-labelledby="row.labelledby" :aria-describedby="row.describedby" :is-on="core.debugEnabled.value" @click="session.toggleDebug" />
+            </SettingRow>
+            <div v-else-if="currentPage.kind === 'access'" class="flex flex-col gap-4" data-access-summary>
+              <p v-if="accessSummary.loading" role="status" class="text-[13px] text-theme-text-muted">Reading current access…</p>
+              <p v-if="accessSummary.error" role="alert" class="text-[13px] text-theme-danger">{{ accessSummary.error }}</p>
+              <dl class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-4 text-sm"><template v-for="row in accessSummary.rows" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl>
+              <CustomButton v-if="writable" type="button" variant="secondary" label="Change access…" class="self-start" @click="openAccess" />
                <p v-else class="text-sm text-theme-text-muted">Access changes are unavailable in this session. Locked settings are recovered through deployment configuration.</p>
             </div>
-            <div v-else-if="currentPage.id === 'core:account'" class="flex flex-col gap-2">
-              <CustomButton v-if="canLogout" label="Log out" @click="$emit('logout')" />
-              <p v-else class="text-sm text-theme-text-muted">This session has no account to log out.</p>
+            <div v-else-if="currentPage.kind === 'account'" class="flex flex-col gap-2">
+              <p class="text-sm text-theme-text">{{ accountSummary.text }}</p>
+              <CustomButton v-if="canLogout" type="button" variant="secondary" label="Log out" class="self-start" @click="$emit('logout')" />
             </div>
             <p v-else class="text-sm text-theme-text-muted">This page has no options.</p>
-          </div>
+          </SettingsPage>
         </div>
       </div>
     </div>
   </Modal>
-  <Modal :model-value="!!reviewPluginId" name="plugin-permission-review" anchor="viewport-center" labelledby="permission-review-title" trap-focus :close-handler-override="closePermissionReview">
-    <section v-if="reviewSnapshot" class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" data-permission-review>
-      <div class="flex items-center justify-between gap-2">
-        <h2 id="permission-review-title" class="text-lg font-semibold">Review permissions</h2>
-        <CustomButton label="Close review" @click="closePermissionReview" />
-      </div>
-      <PluginPermissionPanel :plugin="reviewSnapshot.plugin" :view="reviewSnapshot.view" :busy="reviewSnapshot.busy" :error="reviewSnapshot.error"
-        :has-server="reviewSnapshot.hasServer" :writable="reviewSnapshot.writable" :has-draft="!!reviewSnapshot.draft"
-        :on-master="value=>permissions.setMaster(reviewPluginId,value)" :on-approve="(kind,scope)=>approveScope(reviewPluginId,kind,scope)"
-        :on-delete="(kind,row)=>deleteScope(reviewPluginId,kind,row)" :on-review="()=>permissions.review(reviewPluginId)" :on-retry="()=>permissions.retry(reviewPluginId)"
-        :on-discard="()=>discardPermission(reviewPluginId)" :on-request="request=>emit('review-request',request)" />
-    </section>
-  </Modal>
   <ConfirmModal :model-value="riskVisible" action-layout="grouped" :title="riskTitle" :message="riskMessage" :confirm-button-text="riskConfirmText" :confirm-button-style="riskConfirmStyle" @update:model-value="session.setRiskVisible" @confirm="resolveRisk(true)" @cancel="resolveRisk(false)" />
-  <Modal :model-value="!!pathChoice" name="settings-path-choice" anchor="viewport-center" labelledby="settings-path-title" trap-focus :close-handler-override="closePathChoice">
-    <section v-if="pathChoice" class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4"><h2 id="settings-path-title" class="text-lg font-semibold">Choose {{ pathChoice.field.type }} in this vault</h2>
-      <p class="text-sm text-theme-text-muted">Outside-host paths remain validated text values in the settings field.</p><p v-if="pathChoiceError" role="alert">{{ pathChoiceError }}</p>
-      <CustomButton v-if="pathChoice.root" label="Parent folder" @click="loadPathChoices(parentPath(pathChoice.root))" />
-      <CustomButton v-if="pathChoice.field.type==='folder'" :label="pathChoice.root ? 'Use this folder' : 'Use vault root'" @click="selectPath(pathChoice.root)" />
-      <button v-for="entry in pathEntries" :key="entry.path" class="rounded border border-theme-border p-2 text-left text-theme-text" @click="entry.directory ? loadPathChoices(entry.path) : selectPath(entry.path)">{{ entry.label }}{{ entry.directory ? '/' : '' }}</button>
-      <CustomButton label="Cancel" @click="closePathChoice" />
+  <Modal :model-value="!!pathChoice" name="settings-path-choice" anchor="dialog" scroll="content" labelledby="settings-path-title" trap-focus :close-handler-override="closePathChoice">
+    <section v-if="pathChoice" class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6"><h2 id="settings-path-title" class="text-lg font-semibold">Choose {{ pathChoice.field.type }} in this vault</h2>
+      <p v-if="pathChoiceError" role="alert">{{ pathChoiceError }}</p>
+      <nav aria-label="Current folder" class="flex flex-wrap items-center gap-1"><template v-for="(crumb,index) in pathCrumbs" :key="crumb.path"><span v-if="index" aria-hidden="true">/</span><span v-if="index===pathCrumbs.length-1" aria-current="location" class="text-sm">{{ crumb.label }}</span><CustomButton v-else type="button" variant="text" :label="crumb.label" :disabled="pathLoading" @click="loadPathChoices(crumb.path)" /></template></nav>
+      <CustomButton v-if="pathChoice.root" type="button" label="Up one level" variant="text" class="self-start" :disabled="pathLoading" @click="loadPathChoices(parentPath(pathChoice.root))" />
+      <p v-if="pathLoading" role="status" class="text-[13px] text-theme-text-muted">Loading this folder…</p>
+      <p v-else-if="!pathEntries.length && !pathChoiceError" class="text-[13px] text-theme-text-muted">This folder is empty.</p>
+      <ul v-else class="flex min-w-0 flex-col divide-y divide-theme-border"><li v-for="entry in pathEntries" :key="entry.path"><button type="button" class="focus-ring flex w-full min-w-0 items-center gap-2 py-3 text-left text-sm text-theme-text" :disabled="pathLoading" @click="session.choosePathEntry(entry)"><Icon v-if="entry.directory" :icon="tabFolder" class="shrink-0" width="18" height="18" /><span>{{ entry.label }}{{ entry.directory ? '/' : '' }}</span></button></li></ul>
+      <SettingsActions class="mt-auto"><template #end><CustomButton type="button" label="Cancel" variant="secondary" @click="closePathChoice" /><CustomButton v-if="pathChoice.field.type==='folder'" type="button" label="Use this folder" variant="cta" :disabled="!pathChoice.canSelect" @click="selectPath(pathChoice.root)" /></template></SettingsActions>
     </section>
   </Modal>
   <ConfirmModal
     :model-value="departureVisible"
     action-layout="grouped"
-    title="Unsaved settings"
+    title="Unsaved changes"
     :message="departureMessage"
-    confirm-button-text="Save / Retry"
+    :confirm-button-text="departureConfirmText"
     :confirm-disabled="!departureCanSave"
     reject-button-text="Discard"
     cancel-button-text="Keep editing"
@@ -185,12 +135,15 @@ import Modal from "./Modal.vue";
 import ConfirmModal from "./ConfirmModal.vue";
 import CustomButton from "./CustomButton.vue";
 import DeclarativeSettingsPage from "./DeclarativeSettingsPage.vue";
-import { tabClose } from "../icons.js";
+import { tabClose, tabFolder } from "../icons.js";
+import Icon from './Icon.vue';
 import Toggle from "./Toggle.vue";
-import PluginPermissionPanel from "./PluginPermissionPanel.vue";
 import PluginInventorySettingsPage from "./PluginInventorySettingsPage.vue";
-import PluginTrustNotice from "./PluginTrustNotice.vue";
-import PluginBrowserBadge from "./PluginBrowserBadge.vue";
+import SettingsNav from './settings/SettingsNav.vue';
+import SettingsPage from './settings/SettingsPage.vue';
+import SettingsTabs from './settings/SettingsTabs.vue';
+import SettingRow from './settings/SettingRow.vue';
+import SettingsActions from './SettingsActions.vue';
 import { useGlobalStore } from "../globalStore.js";
 import AppearanceSettingsPage from "./AppearanceSettingsPage.vue";
 import KeybindingsSettingsPage from "./KeybindingsSettingsPage.vue";
@@ -198,7 +151,7 @@ import BrandingSettingsPage from "./BrandingSettingsPage.vue";
 
 const props = defineProps({ permissionController: Object, writable: { type: Boolean, default: false } });
 const isVisible = defineModel({ type: Boolean });
-const emit = defineEmits(["open-access", "logout", "review-request"]);
+const emit = defineEmits(["open-access", "logout"]);
 const globalStore = useGlobalStore();
 const modal = ref(null);
 const session = createSettingsSession({
@@ -213,14 +166,15 @@ const session = createSettingsSession({
 });
 const { core, permissions, pageState, inventory,
   openSettings, selectPage, requestClose, reloadCurrentPage, decideDeparture,
-  togglePlugin, toggleAutoEnable, discardInventoryChoice,
-  approveScope, deleteScope, discardPermission, openPermissionReview, closePermissionReview, resolveRisk,
+   togglePluginRow, toggleAutoEnable, discardInventoryChoice, managePlugin, toggleExpansion,
+   discardPermission, resolveRisk,
   resetCoreBranding, openAccess, parentPath, closePathChoice, browseField, loadPathChoices, selectPath,
 } = session;
-const { brandingSnapshot, keybindingSnapshot, canLogout, versionLabel, currentPageId, reviewPluginId,
-  riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice, pathEntries, pathChoiceError,
-  reviewSnapshot, departureVisible, departureMessage, departureCanSave, inventorySnapshot, pluginError,
-  groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageIsPlugin, permissionSnapshot, catalogPlugins, catalogPolicy,
+const { brandingSnapshot, keybindingSnapshot, appearanceSnapshot, accessSummary, accountSummary, attentionItems, canLogout, versionLabel, currentPageId,
+  riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice, pathEntries, pathChoiceError, pathLoading, pathCrumbs,
+  departureVisible, departureMessage, departureCanSave, departureConfirmText,
+   groupedPages, currentSnapshot, currentPage,
+   pluginRows, autoEnableView, pluginPageHeader,
 } = toRefs(session.state);
 onBeforeUnmount(session.dispose);
 defineExpose({ openSettings, selectPage });

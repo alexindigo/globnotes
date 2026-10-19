@@ -4,7 +4,7 @@
   <div
     v-if="isVisible"
     class="fixed left-0 top-0 z-50 flex h-dvh w-dvw justify-center bg-slate-950/40 backdrop-blur-sm"
-    :class="anchor === 'viewport-center' ? 'items-center' : 'items-start'"
+    :class="['viewport-center','dialog'].includes(anchor) ? 'items-center' : 'items-start'"
     :inert="ownership && !ownership.topmost.value ? '' : undefined"
     :data-modal-top="ownership?.topmost.value ? 'true' : 'false'"
     :style="{ zIndex: 50 + (ownership?.level.value ?? 0) }"
@@ -23,8 +23,10 @@
       :class="[
         anchor === 'center'
           ? 'absolute left-1/2 top-[calc(50%-var(--switcher-lift)-12px)] flex w-[calc(100%-1rem)] max-w-[524px] -translate-x-1/2 flex-col overflow-hidden max-h-[calc(50dvh+var(--switcher-lift)-1rem)]'
+          : anchor === 'dialog'
+            ? ['relative mx-4 flex w-[calc(100%-2rem)] max-w-xl max-h-[80dvh] flex-col', scroll === 'content' ? 'overflow-hidden' : 'overflow-y-auto']
           : anchor === 'viewport-center'
-            ? 'relative mx-4 flex h-[80dvh] w-[80dvw] flex-col overflow-y-auto [scrollbar-gutter:stable]'
+            ? ['relative mx-4 flex h-[80dvh] w-[80dvw] flex-col', scroll === 'content' ? 'overflow-hidden' : 'overflow-y-auto [scrollbar-gutter:stable]']
             : 'relative mx-2 mt-[30vh] max-w-[500px] grow',
         $attrs.class,
       ]"
@@ -52,6 +54,9 @@ const props = defineProps({
   closeHandlerOverride: Function,
   name: { type: String, default: undefined },
   anchor: { type: String, default: "top" },
+  // Fixed frames delegate scrolling to their body panes; other dialogs retain
+  // their existing box-scrolling contract unless they explicitly opt in.
+  scroll: { type: String, default: "box", validator: value => ["box", "content"].includes(value) },
   // Opt-in dialog semantics: id of the element naming the dialog.
   labelledby: { type: String, default: undefined },
   // Opt-in Tab containment within the dialog (first-run setup).
@@ -99,7 +104,7 @@ watch(isVisible, visible => visible ? open() : release(), { flush: "post" });
 function focusables() {
   return [...(rootEl.value?.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [])]
     .filter(el => {
-      if(el.matches('input[type="hidden"], :disabled') || el.closest('[hidden], [inert], [aria-hidden="true"]'))return false;
+      if(el.tabIndex < 0 || el.matches('input[type="hidden"], :disabled') || el.closest('[hidden], [inert], [aria-hidden="true"]'))return false;
       for(let node=el;node&&rootEl.value?.contains(node);node=node.parentElement){const style=getComputedStyle(node);if(style.display==='none'||style.visibility==='hidden')return false;}
       return true;
     });

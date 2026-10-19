@@ -4,13 +4,14 @@ export async function exerciseSettingsFields({ session, readSettings, replace })
   const assert = (condition, message) => { if (!condition) throw Error(message); };
   const start = await readSettings();
   assert(await session.evaluate("document.querySelector('[data-modal-top=true]').textContent.includes('Host path choices')"), "Declared groups/help did not reach the real page");
-  await session.button("Choose folder");
+  await session.button("Choose folder…");
   await session.poll("document.querySelector('#settings-path-title')?.textContent.includes('folder')");
   await session.button("Chosen/", '[data-modal-top="true"]');
+  await session.poll("(()=>{const box=document.querySelector('#settings-path-title')?.closest('[role=dialog]'),button=[...box.querySelectorAll('button')].find(el=>el.textContent.trim()==='Use this folder');return box.querySelector('[aria-label=\"Current folder\"]')?.textContent.includes('Chosen')&&button&&!button.disabled;})()");
   await session.button("Use this folder", '[data-modal-top="true"]');
   await session.poll("!document.querySelector('#settings-path-title') && document.querySelector('#settings-field-folder')?.value==='Chosen'");
   await session.poll("fetch('/_/api/plugin-host/session-guard/settings/preferences').then(r=>r.json()).then(d=>d.values.folder==='Chosen')");
-  await session.button("Choose file");
+  await session.button("Choose file…");
   await session.poll("document.querySelector('#settings-path-title')?.textContent.includes('file')");
   await session.button("Chosen/", '[data-modal-top="true"]');
   await session.button("Inside.md", '[data-modal-top="true"]');

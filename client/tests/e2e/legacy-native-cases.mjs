@@ -119,10 +119,10 @@ export const cases = {
       const [, , background, , text, border] = PALETTES.find(row => row[0] === id);
       await theme(f, id);
       await f.page.poll("document.querySelector('aside')?.getBoundingClientRect().width>0");
-      const value = await f.page.evaluate("(()=>{const aside=document.querySelector('aside');return{body:getComputedStyle(document.body).backgroundColor,nav:getComputedStyle(document.querySelector('nav')).backgroundColor,sidebar:getComputedStyle(aside).backgroundColor,text:getComputedStyle(document.querySelector('.content-column')).color,border:getComputedStyle(aside).borderRightColor,button:getComputedStyle(document.querySelector('[title=Search] svg')).stroke};})()");
+      const value = await f.page.evaluate("(()=>{const aside=document.querySelector('aside'),background=getComputedStyle(document.body).backgroundColor,button=getComputedStyle(document.querySelector('[title=Search] svg')).stroke,role=getComputedStyle(document.documentElement).getPropertyValue('--theme-text-muted').trim().split(' ').filter(Boolean).join(', '),l=css=>css.match(/[0-9.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0),a=l(button),b=l(background);return{body:background,nav:getComputedStyle(document.querySelector('nav')).backgroundColor,sidebar:getComputedStyle(aside).backgroundColor,text:getComputedStyle(document.querySelector('.content-column')).color,border:getComputedStyle(aside).borderRightColor,button,expectedButton:'rgb('+role+')',buttonContrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};})()");
       assert([value.body, value.nav, value.sidebar].every(color => color === rgb(background)), `${id}: a surface retained a stale background`);
       assert(value.text === rgb(text) && value.border === rgb(border), `${id}: text/border palette did not reach consumers`);
-      assert(value.button === rgb({ "globnotes-light": "8891a1", "globnotes-dark": "8891a1", dracula: "6272a4", "catppuccin-latte": "6c6f85" }[id]), `${id}: button glyph retained a stale palette`);
+      assert(value.button === value.expectedButton && value.buttonContrast >= 4.5, `${id}: button glyph did not consume its readable derived palette`);
       outcomes.push({ id, ...value });
     }
     return outcomes;

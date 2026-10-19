@@ -42,7 +42,7 @@ describe("backup settings", () => {
     expect(range.emitted("commit")[0]).toEqual(["retention"]);
     range.unmount();
     const pinned = mount(SettingsField, { props: { field: { key: "basePath", label: "Base", type: "folder" }, value: "/effective", readonly: true, provenance: { source: "environment", readonly: true } } });
-    expect(pinned.text()).toContain("Set by environment");
+    expect(pinned.text()).toContain("Set by the server configuration");
     expect(pinned.find("input").element.readOnly).toBe(true);
     await pinned.find("input").setValue("/attempt");
     expect(pinned.emitted("edit")).toBeUndefined();

@@ -56,12 +56,21 @@ describe("Modal Esc dismissal", () => {
 });
 
 describe("Modal opt-in dialog behavior", () => {
+  it('honours roving tabindex when wrapping around a radio group', async () => {
+    const wrapper=track(mount(Modal,{attachTo:document.body,props:{modelValue:true,name:'radio-group',trapFocus:true},slots:{default:'<button id="radio-close">Close</button><button role="radio" id="radio-selected" tabindex="0">Selected</button><button role="radio" id="radio-other" tabindex="-1">Other</button>'}}));
+    await nextTick(); wrapper.find('#radio-close').element.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,cancelable:true})); await nextTick();
+    expect(document.activeElement).toBe(wrapper.find('#radio-selected').element);
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',cancelable:true})); await nextTick();
+    expect(document.activeElement).toBe(wrapper.find('#radio-close').element);
+  });
   it("exposes dialog semantics only when labelledby is set", () => {
     const plain = track(mount(Modal, {
       props: { modelValue: true, name: "test" },
       slots: { default: "<p>content</p>" },
     }));
     expect(plain.find("[role=dialog]").exists()).toBe(false);
+    expect(plain.props("scroll")).toBe("box");
 
     const labelled = track(mount(Modal, {
       props: { modelValue: true, name: "test", labelledby: "title-id" },
@@ -123,5 +132,16 @@ describe("Modal opt-in dialog behavior", () => {
     await nextTick(); expect(document.activeElement).toBe(wrapper.find('#visible-first').element);
     wrapper.find('#visible-last').element.focus(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',cancelable:true})); await nextTick();
     expect(document.activeElement).toBe(wrapper.find('#visible-first').element);
+  });
+  it.each(["box","content"])("keeps focus containment and Escape ownership with %s scrolling", async scroll => {
+    const close=vi.fn();
+    const wrapper=track(mount(Modal,{attachTo:document.body,props:{modelValue:true,anchor:"viewport-center",scroll,trapFocus:true,labelledby:"scroll-title",closeHandlerOverride:close},
+      slots:{default:'<h2 id="scroll-title">Scroll ownership</h2><section class="overflow-y-auto"><button id="scroll-first">First</button><button id="scroll-last">Last</button></section>'}}));
+    await nextTick();wrapper.find('#scroll-last').element.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',cancelable:true}));await nextTick();
+    expect(document.activeElement).toBe(wrapper.find('#scroll-first').element);
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',cancelable:true}));await nextTick();
+    expect(close).toHaveBeenCalledOnce();
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
   });
 });

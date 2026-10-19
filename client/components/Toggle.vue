@@ -1,6 +1,10 @@
 <template>
   <button
-    class="toggle-control group flex cursor-pointer items-center text-nowrap rounded bg-theme-background px-2 py-1 text-theme-text-muted hover:bg-theme-background-elevated hover:text-theme-brand"
+    type="button"
+    role="switch"
+    :aria-checked="isOn"
+    :disabled="disabled"
+    class="toggle-control focus-ring group inline-flex shrink-0 items-center rounded px-2 py-1 text-theme-text-muted enabled:hover:bg-theme-background-elevated enabled:hover:text-theme-brand disabled:cursor-not-allowed disabled:opacity-40"
   >
     <Icon
       :icon="isOn ? tabToggleRight : tabToggleLeft"
@@ -8,9 +12,9 @@
       width="auto"
       height="1em"
       viewBox="1 5 22 14"
-      class="mr-1"
+      class="shrink-0"
     ></Icon>
-    <span v-if="label">{{ label }}</span>
+    <span v-if="label" class="ml-1 min-w-0 [overflow-wrap:anywhere]">{{ label }}</span>
   </button>
 </template>
 
@@ -21,12 +25,6 @@ import { tabToggleRight, tabToggleLeft } from "../icons.js";
 defineProps({
   label: String,
   isOn: Boolean,
+  disabled: Boolean,
 });
 </script>
-
-<style scoped>
-.toggle-control:focus-visible {
-  outline: 2px solid rgb(var(--theme-text));
-  outline-offset: 2px;
-}
-</style>

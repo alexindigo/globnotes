@@ -36,7 +36,7 @@ export async function exerciseSettingsMenu({ session, server, state }) {
   await session.poll("localStorage.getItem('debug')==='false'");
   await session.button("Plugins");
   const before = await api("/_/api/plugin-host");
-  await session.button("Auto-enable new plugins");
+  await session.click('[data-plugin-inventory] > .setting-row [role=switch]');
   await session.poll("fetch('/_/api/plugin-host').then(r=>r.json()).then(c=>c.policy.effectiveAutoEnable===false)");
   const inventoryOff = await settleSettingsInventory(session, "true");
   const off = await api("/_/api/plugin-host");
@@ -45,15 +45,15 @@ export async function exerciseSettingsMenu({ session, server, state }) {
   assert(before.plugins.every(plugin => off.plugins.find(other => other.id === plugin.id)?.enabled === plugin.enabled), "Changing the discovery default changed existing participation");
   const command = await api("/_/api/plugins/session-guard/ping");
   assert(command.available === true, "Retained existing plugin lost its actual endpoint");
-  await session.button("Auto-enable new plugins");
+  await session.click('[data-plugin-inventory] > .setting-row [role=switch]');
   await session.poll("fetch('/_/api/plugin-host').then(r=>r.json()).then(c=>c.policy.effectiveAutoEnable===true)");
   const inventoryOn = await settleSettingsInventory(session, "true");
   const on = await api("/_/api/plugin-host");
   assert(on.policy.revision === before.policy.revision + 2, "Native policy toggles were not distinct acknowledged writes");
   await session.button("Access");
-  assert(await session.evaluate("[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access mode')"), "Writable no-auth Access action disappeared");
+  assert(await session.evaluate("[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access…')"), "Writable no-auth Access action disappeared");
   await session.button("Account");
-  assert(await session.evaluate("document.querySelector('[data-modal-top=true]').textContent.includes('no account to log out') && ![...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Log out')"), "No-auth Account exposed a meaningless logout");
+  assert(await session.evaluate("document.querySelector('[data-modal-top=true]').textContent.includes('This session has no account.') && ![...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Log out')"), "No-auth Account exposed a meaningless logout");
   await close();
   assert(!await session.evaluate("!!document.querySelector('[title=Menu]')"), "Obsolete floating Settings menu remains");
   // The Settings opener leaves its unpinned sidebar overlay open. Dismiss

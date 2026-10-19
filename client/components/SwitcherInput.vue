@@ -1,10 +1,10 @@
 <template>
   <div class="relative w-full">
-    <input
+    <TextInput
       ref="input"
       v-model="term"
       type="text"
-      class="w-full rounded-md border border-theme-border bg-theme-background px-4 py-3 text-theme-text focus:outline-none"
+      variant="search"
       :placeholder="placeholder"
       @keydown="keydownHandler"
       @keyup="stateChangeHandler"
@@ -41,6 +41,7 @@
 // Modal-local shortcuts, like ↑↓/Enter — not keybinding-layer actions.
 import { computed, ref, watch } from "vue";
 import { useToast } from "primevue/usetoast";
+import TextInput from './TextInput.vue';
 
 import { createTagCompletion, searchTermChanged } from "../tagCompletion.js";
 
@@ -75,10 +76,10 @@ const tagMenuIndex = computed(() => tagState.value.index);
 const tagMenuVisible = computed(() => tagState.value.visible);
 
 function stateChangeHandler() {
-  completion.update(term.value, input.value?.selectionStart ?? 0);
+  completion.update(term.value, input.value?.selectionStart() ?? 0);
 }
 function tagChosen(tag) {
-  term.value = completion.choose(term.value, input.value?.selectionStart ?? 0, tag);
+  term.value = completion.choose(term.value, input.value?.selectionStart() ?? 0, tag);
 }
 
 function keydownHandler(event) {

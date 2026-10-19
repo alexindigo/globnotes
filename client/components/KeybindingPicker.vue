@@ -1,10 +1,10 @@
 <template>
-  <nav class="flex flex-col gap-0.5" aria-label="Keybinding layers">
+  <nav class="keybinding-picker flex flex-wrap overflow-hidden rounded border border-theme-border" aria-label="Keybinding layers">
     <button
       v-for="layer in layers"
       :key="layer.id"
       type="button"
-      class="w-full rounded px-2 py-1 text-left text-xs"
+      class="focus-ring px-3 py-2 text-left text-sm [--focus-ring-offset:-4px]"
       :class="{
         'bg-theme-background-elevated text-theme-text':
           layer.id === selected,
@@ -23,3 +23,6 @@
 <script setup>
 defineProps({ layers: { type: Array, required: true }, selected: { type: String, required: true }, onSelect: { type: Function, required: true } });
 </script>
+<style scoped>
+.keybinding-picker > button + button { border-inline-start:1px solid rgb(var(--theme-border)); }
+</style>

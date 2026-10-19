@@ -22,7 +22,7 @@ const ROOT = new URL("../../..", import.meta.url).pathname;
 async function bootFirstRun(vault, state, directory, prefix) {
   const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
   const child = new Deno.Command(Deno.execPath(), { args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`], cwd: ROOT, clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_AUTO_ENABLE_PLUGINS: "false", GLOBNOTES_PATH_PREFIX: prefix, GLOBNOTES_HOST: hostname, GLOBNOTES_PORT: String(port) }, stdout: "piped", stderr: "piped" }).spawn();
+    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_AUTO_ENABLE_PLUGINS: "false", GLOBNOTES_PATH_PREFIX: prefix, GLOBNOTES_HOST: hostname, GLOBNOTES_PORT: String(port) }, stdout: "piped", stderr: "piped" }).spawn();
   await Deno.writeTextFile(`${directory}/startup-ownership.json`, JSON.stringify({ pid: child.pid, vault, state, prefix, port, cwd: ROOT }), { createNew: true });
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${directory}/server-${name}.log`, { write: true, createNew: true });
@@ -54,10 +54,10 @@ async function fixture(label, protectedMode) {
     await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["access-workflow"], autoEnable: false }));
   }
   const token = protectedAccount ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  let server = setup ? await bootFirstRun(vault, state, directory, prefix) : await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: label === "pinned-credentials" ? "password" : "", GLOBNOTES_AUTO_ENABLE_PLUGINS: label === "locked-controls" ? "" : "false", GLOBNOTES_PATH_PREFIX: prefix, ...(label === "pinned-credentials" ? { GLOBNOTES_USERNAME: username, GLOBNOTES_PASSWORD: password, GLOBNOTES_SECRET_KEY: secret } : {}) }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  let server = setup ? await bootFirstRun(vault, state, directory, prefix) : await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_AUTH_TYPE: label === "pinned-credentials" ? "password" : "", GLOBNOTES_AUTO_ENABLE_PLUGINS: label === "locked-controls" ? "" : "false", GLOBNOTES_PATH_PREFIX: prefix, ...(label === "pinned-credentials" ? { GLOBNOTES_USERNAME: username, GLOBNOTES_PASSWORD: password, GLOBNOTES_SECRET_KEY: secret } : {}) }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
   if (label === "peer-policy") server = createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
     const logsDir = `${directory}/backend-${count}`; await Deno.mkdir(logsDir);
-    return bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_AUTO_ENABLE_PLUGINS: "false" }, logsDir });
+    return bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_AUTO_ENABLE_PLUGINS: "false" }, logsDir });
   } });
   const session = await nativeSession({ port });
   owned = { label, directory, vault, state, server, session, prefix, closed: false, initial: config };
@@ -83,7 +83,7 @@ async function fill(selector, value) {
 async function access({ pinnedMode = false } = {}) {
   const session = owned.session;
   if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
-  await session.click('[aria-label="Settings"]'); await session.button("Access"); await session.button("Change access mode");
+  await session.click('[aria-label="Settings"]'); await session.button("Access"); await waitForAccessSummary(session); await session.button("Change access…");
   await session.poll(pinnedMode ? "!!document.querySelector('#setup-title') && !!document.querySelector('#access-current-password') && !document.querySelector('#access-current-password').disabled" : "!!document.querySelector('#setup-title') && !document.querySelector('#setup-mode-none').disabled");
 }
 async function edit(marker) {
@@ -194,7 +194,7 @@ try {
   for (const [route, method] of [["brand", "POST"], ["plugin-host/policy", "PUT"], ["plugin-host/missing/enabled", "PUT"], ["plugin-host/missing/settings/page", "PUT"], ["plugin-host/missing/permissions", "PUT"], ["plugin-host/missing/permission-requests/request/decision", "POST"], ["access", "PUT"], ["access/totp-enrolment", "POST"], ["setup/reset", "POST"]]) assert((await api(route, method, {})).status === 403, `Locked public mutation escaped: ${route}`);
   if (await owned.session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await owned.session.click('[title="Open sidebar"]');
   await owned.session.click('[aria-label="Settings"]'); await owned.session.button("Access");
-  assert(!await owned.session.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access mode')"), "Locked Access can unlock itself");
+  assert(!await owned.session.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access…')"), "Locked Access can unlock itself");
   await owned.session.button("Appearance"); await owned.session.click('[data-theme-id="globnotes-light"]');
   await owned.session.poll("localStorage.getItem('globnotes-theme')==='globnotes-light' && !document.body.classList.contains('dark')");
   await finishCase("native public lock keeps note editing and local preferences while denying controls", { publicNoteSavePersisted: true, sameEditor: true, settingsApisDenied: 9, accessUnlockUnavailable: true, localThemeAvailable: true, sameWorkflowOwner: true, privateWorkflowConsumerPersisted: true });
@@ -292,7 +292,7 @@ try {
   await peer.button("Edit", ".content-column"); await peer.button("Source", ".content-column"); await peer.poll("!!document.querySelector('.cm-content[contenteditable=true]')");
   await peer.click(".cm-content"); await peer.type("Peer retained dirty note marker\n");
   await peer.evaluate("window.__peerEditor=document.querySelector('.cm-content');true");
-  await peer.click('[title="Open sidebar"]'); await peer.click('[aria-label="Settings"]'); await peer.button("Access workflow settings");
+  await peer.click('[title="Open sidebar"]'); await peer.click('[aria-label="Settings"]'); await peer.click('[data-settings-nav-id="plugin:access-workflow"]');
   await peer.poll("!!document.querySelector('#settings-field-limit') && !document.querySelector('#settings-field-limit').readOnly");
   await peer.click("#settings-field-limit"); await peer.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 }); await peer.key("Backspace", { windowsVirtualKeyCode: 8 });
   await peer.poll("document.querySelector('#settings-field-limit').value === ''");
@@ -451,3 +451,4 @@ finally {
   }
 }
 if (failure) throw failure;
+import { waitForAccessSummary } from './settings-access-native.mjs';

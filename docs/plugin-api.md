@@ -93,12 +93,14 @@ or replace an authorization check.
 
 ### Settings persistence and definition changes
 
-Every valid declared page has its own named launcher on the left of the plugin's
-**Settings → Plugins** inventory item, in descriptor order. **Permissions** is a
-separate right-hand action into the existing controlled server-permission review.
+Every plugin with valid declared pages has one **Open settings** action in its
+**Settings → Plugins** row and a navigation entry under **Plugin settings**.
+Its declared pages appear as tabs in descriptor order. Server permissions live in
+the expanded Plugins row; **Manage in Plugins** returns there from a plugin page.
 Disabled plugins and failed runtimes with valid declarations retain their page
 launchers; opening them does not enable the plugin or grant authority. Plugins
-without declared pages expose only Permissions. Catalog refresh updates current
+without declared pages have no invented settings launcher. Plugins with server code
+expose permission controls through their disclosure. Catalog refresh updates current
 declarations while host-owned captured drafts remain reachable for explicit
 recovery. Renderer support stays `declarative-v1`; unsupported declarations are
 rejected when the plugin definition loads.
@@ -352,16 +354,17 @@ Persisted settings are not rolled back and old reduced authority stays retired.
 
 Operator controls are protected host routes, not plugin SDK methods:
 
-Open **Settings → Plugins → Permissions** to inspect a plugin's server
-requests and remembered approvals. Every discovered plugin also has a framework
-**Server permissions** page, including disabled and settings-less plugins. The
-same controlled panel is used for review and settings. Network data and remote-code
+Expand a plugin in **Settings → Plugins** to inspect its server requests and
+remembered approvals, including disabled and settings-less plugins with server code.
+The expanded row replaces the old **Server permissions** pages and review dialog.
+Legacy `core:plugin-permissions:<id>` opening requests select Plugins and expand
+that owner after the existing departure guard. Network data and remote-code
 imports have separate rows; All hosts approvals and deletion of covering broad
-grants require explicit confirmation. The **Runs in browser** badge is derived
+grants require explicit confirmation. The inline **Runs in browser** label is derived
 from actual editor/runtime contributions and remains visible with the master off.
 
 Explicit runtime access requests appear in a framework-owned dialog for an eligible
-session. **Cancel / Review later** keeps the request pending and defers automatic
+session. **Review later** keeps the request pending and defers automatic
 opening of that ID in the session; the review entry remains available. **Deny**
 persists a decision. Approval and the master choice are separate: storing approval
 while the master stays off does not start access. Settings drafts and the Note
@@ -369,6 +372,12 @@ save owner remain mounted through permission review and affected server reloads.
 Conflicts retain permission choices for refreshed review; uncertain writes read
 authoritative status before an explicit retry and do not free an unresolved wire
 slot or authorize session handoff.
+
+Pending requests, including those postponed with **Review later**, appear in the
+Settings sidebar's **Needs attention** section. These are decision-layer buttons,
+not settings pages: opening one preserves the current page, tab, drafts and URL
+without running page departure. The expanded Plugins row points to the same item
+and manual fresh-read opening; plugin pages have no separate permission action.
 
 Another modal or Access wizard postpones automatic opening without deferring,
 denying or approving the request. After it closes, a fresh accepted/current

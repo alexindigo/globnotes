@@ -26,11 +26,12 @@
         class="link-popover"
         @keydown.esc="closeLinkPopover"
       >
-        <input
+        <TextInput
           ref="linkHrefInput"
           v-model="linkHref"
           type="text"
           class="link-input"
+          variant="compact"
           placeholder="https://…"
           aria-label="Link URL"
         />
@@ -52,6 +53,7 @@
 
 <script setup>
 import Icon from "../components/Icon.vue";
+import TextInput from './TextInput.vue';
 import {
   tabCheck,
   tabClose,
@@ -219,15 +221,5 @@ defineExpose({ refreshActive, openLinkPopover });
 }
 .wysiwyg-toolbar-wrap .link-popover .link-input {
   width: 220px;
-  padding: 3px 8px;
-  border: 1px solid rgb(var(--theme-border));
-  border-radius: 4px;
-  background-color: rgb(var(--theme-background));
-  color: rgb(var(--theme-text));
-  font-size: 0.8rem;
-  outline: none;
-}
-.wysiwyg-toolbar-wrap .link-popover .link-input:focus {
-  border-color: rgb(var(--theme-brand));
 }
 </style>

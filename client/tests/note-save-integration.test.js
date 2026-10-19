@@ -52,7 +52,7 @@ vi.mock("../api.js", async importOriginal => ({
 }));
 vi.mock("../themes.js", async () => {
   const { ref } = await import("vue");
-  return { currentTheme: ref("system"), THEMES: [], initTheme: vi.fn(), setTheme: vi.fn(), currentThemeLabel: ref("System"), resolvedTheme: ref({}) };
+  return { currentTheme: ref("system"), THEMES: [], themePreviews:()=>[{id:'system',label:'System',nowShowing:'Globnotes Light',pair:[]}], initTheme: vi.fn(), setTheme: vi.fn(), currentThemeLabel: ref("System"), resolvedTheme: ref({}) };
 });
 vi.mock("../brand.js", () => ({ applyBrandToDocument: vi.fn(), currentBrandName: () => "globnotes", brandRevision: { value: 0 } }));
 

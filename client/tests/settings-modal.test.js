@@ -48,6 +48,14 @@ async function open(id, writable = true) {
 }
 
 describe("actual retained Settings entry and inline pages", () => {
+  it('Cancel changes explicitly discards Branding while keeping Settings open without writes', async () => {
+    await open('core:branding'); const title=document.querySelector('#settings-modal-title');
+    await wrapper.find('#brand-name').setValue('discard this branding');
+    const cancel=button('Cancel changes'); expect(cancel).toBeTruthy(); cancel.click(); await flushPromises();
+    expect(document.querySelector('#brand-name').value).toBe('my notes');
+    expect(document.querySelector('#settings-modal-title')).toBe(title);
+    expect(postBrand).not.toHaveBeenCalled(); expect(putPluginSettings).not.toHaveBeenCalled();
+  });
   it("review repairs: R18 mounted enabled fields keep Enter/blur admission during a same-page refresh", async () => {
     await open("plugin:a:p"); let release;
     getPluginSettings.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
@@ -74,7 +82,7 @@ describe("actual retained Settings entry and inline pages", () => {
   });
   it("renders Branding content in the existing Settings instance and reset asks before posting", async () => {
     await open("core:branding"); expect(document.querySelector('#brand-name').value).toBe("my notes");
-    button("Reset").click(); await flushPromises();
+    button("Reset branding…").click(); await flushPromises();
     expect(document.querySelector('[data-modal-top=true]').textContent).toContain('name "my notes"');
     expect(postBrand).not.toHaveBeenCalled(); button("Cancel", document.querySelector('[data-modal-top=true]')).click(); await flushPromises();
     expect(document.querySelector('#brand-name').value).toBe("my notes"); expect(document.querySelector('#settings-modal-title')).not.toBeNull();
@@ -94,7 +102,7 @@ describe("actual retained Settings entry and inline pages", () => {
   });
   it("groups/help and host folder choices are present on the real page", async () => {
     await open("plugin:a:p"); expect(document.body.textContent).toContain("General group"); expect(document.body.textContent).toContain("Group help");
-    expect(document.body.textContent).toContain("Message help"); expect(button("Choose folder")).toBeTruthy();
+    expect(document.body.textContent).toContain("Message help"); expect(button("Choose folder…")).toBeTruthy();
   });
   it("Enter then blur persists a typed value once and keeps the acknowledged consumer value", async () => {
     await open("plugin:a:p"); const input = wrapper.find('#settings-field-message'); await input.setValue("typed committed value");
@@ -104,11 +112,11 @@ describe("actual retained Settings entry and inline pages", () => {
   });
   it("an acknowledged branding snapshot cannot erase newer name edits or bypass the departure decision", async () => {
     await open('core:branding');let acknowledge;postBrand.mockImplementation(()=>new Promise(resolve=>{acknowledge=resolve;}));
-    await wrapper.find('#brand-name').setValue('submitted A');button('Save',document.querySelector('[data-branding-settings]')).click();await flushPromises();
+    await wrapper.find('#brand-name').setValue('submitted A');button('Save branding',document.querySelector('[data-branding-settings]')).click();await flushPromises();
     expect(postBrand.mock.calls[0][0].get('name')).toBe('submitted A');
     await wrapper.find('#brand-name').setValue('newer D');acknowledge({name:'submitted A',accent:'#53c729',files:['logo.svg','icon.svg']});await flushPromises();
     expect(useGlobalStore().config.brand.name).toBe('submitted A');expect(document.querySelector('#brand-name').value).toBe('newer D');
-    document.querySelector('[aria-label="Close settings"]').click();await flushPromises();expect(document.querySelector('[data-modal-top=true]').textContent).toContain('Unsaved settings');
+    document.querySelector('[aria-label="Close settings"]').click();await flushPromises();expect(document.querySelector('[data-modal-top=true]').textContent).toContain('Unsaved changes');
     button('Keep editing',document.querySelector('[data-modal-top=true]')).click();await flushPromises();expect(document.querySelector('#brand-name').value).toBe('newer D');
   });
   it("File drafts/previews survive a cancelled page departure and revoke only on explicit discard", async () => {
@@ -122,7 +130,7 @@ describe("actual retained Settings entry and inline pages", () => {
   });
   it("host folder choice uses the actual tree identity and persists to the captured field", async () => {
     getTree.mockImplementation(async path=>path ? {folders:[],notes:[]} : {folders:[{name:'Chosen',path:'Chosen'}],notes:[]});
-    await open('plugin:a:p');button('Choose folder').click();await flushPromises();
+    await open('plugin:a:p');button('Choose folder…').click();await flushPromises();
     expect(getTree).toHaveBeenCalledWith('');expect(document.querySelector('[data-modal-top=true]').textContent).toContain('Chosen');
     button('Chosen/',document.querySelector('[data-modal-top=true]')).click();await flushPromises();
     button('Use this folder',document.querySelector('[data-modal-top=true]')).click();await flushPromises();
@@ -155,15 +163,15 @@ describe("actual retained Settings entry and inline pages", () => {
     await wrapper.find('#settings-field-message').setValue("retained D1 intent"); await wrapper.find('#settings-field-message').trigger("keydown", { key: "Enter" }); await flushPromises();
     pluginCatalog.value = { ...pluginCatalog.value, plugins: [{ ...pluginCatalog.value.plugins[0], pages: [{ ...page, groups: [], fields: [{ key: "d3", label: "D3", type: "text", default: "default" }] }] }] };
     await flushPromises(); getPluginSettings.mockResolvedValue({ revision: 1, values: { d3: "D3 authoritative" } });
-    button("Review / Retry").click(); await flushPromises();
+    button("Check current status").click(); await flushPromises();
     expect(getPluginSettings).toHaveBeenCalledTimes(2); expect(putPluginSettings).toHaveBeenCalledTimes(1);
     expect(document.querySelector('#settings-field-message').value).toBe("retained D1 intent");
     expect(document.querySelector('#settings-field-d3')).toBeNull();
-    button("Reload").click(); await flushPromises();
-    expect(document.querySelector('[data-modal-top=true]').textContent).toContain("Unsaved settings");
+    button("Reload (discards your edits)…").click(); await flushPromises();
+    expect(document.querySelector('[data-modal-top=true]').textContent).toContain("Unsaved changes");
     button("Keep editing", document.querySelector('[data-modal-top=true]')).click(); await flushPromises();
     expect(document.querySelector('#settings-field-message').value).toBe("retained D1 intent");
-    button("Reload").click(); await flushPromises(); button("Discard", document.querySelector('[data-modal-top=true]')).click(); await flushPromises();
+    button("Reload (discards your edits)…").click(); await flushPromises(); button("Discard", document.querySelector('[data-modal-top=true]')).click(); await flushPromises();
     expect(document.querySelector('#settings-field-d3').value).toBe("D3 authoritative");
     expect(document.querySelector('#settings-field-d3').readOnly).toBe(false);
     expect(document.querySelector('#settings-modal-title')).toBe(owner); expect(putPluginSettings).toHaveBeenCalledTimes(1);
@@ -172,7 +180,7 @@ describe("actual retained Settings entry and inline pages", () => {
 
 describe("review repairs: R13 real inventory policy wires participate in protected handoffs", () => {
   const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-  const inventoryButton = () => document.querySelector('[data-plugin-inventory-id="a"] button');
+  const inventoryButton = () => document.querySelector('[data-plugin-inventory-id="a"] .plugin-row-actions [role="switch"]');
 
   it("a held enablement wire is unsaved work and cannot close Settings", async () => {
     const wire = deferred(); putPluginEnabled.mockReturnValue(wire.promise);
@@ -190,7 +198,7 @@ describe("review repairs: R13 real inventory policy wires participate in protect
     try {
       await open("core:plugins"); inventoryButton().click(); await flushPromises();
       const switches = [...document.querySelectorAll('[data-plugin-inventory] button')];
-      const automatic = switches.find(button => button.textContent.includes("Auto-enable new plugins"));
+      const automatic = switches.find(button => document.getElementById(button.getAttribute('aria-labelledby'))?.textContent === "Turn on new plugins automatically");
       expect(automatic).toBeTruthy(); automatic.click();
       await flushPromises();
       expect(putPluginPolicy).not.toHaveBeenCalled();
@@ -251,25 +259,29 @@ describe("registry-owned inventory page launchers", () => {
     pluginCatalog.value.plugins = [{ id: manifest.id, name: manifest.name, enabled: true, pages: manifest.settings, runtime: { server: true } }];
     getPluginSettings.mockResolvedValue({ revision: 0, values: { retention: 2, basePath: '' } });
     await open('core:plugins');
-    expect(launchers(manifest.id).map(el => [el.dataset.settingsPageId, el.textContent.trim()])).toEqual([['plugin:globnotes-backup:backup', 'Backups']]);
+    expect(launchers(manifest.id).map(el => [el.dataset.settingsPageId, el.textContent.trim()])).toEqual([['plugin:globnotes-backup:backup', 'Open settings']]);
     launchers(manifest.id)[0].click(); await flushPromises();
     expect(document.body.textContent).toContain('Retained versions');
     expect(document.body.textContent).toContain('Backup base path');
     expect(getPluginSettings).toHaveBeenCalledWith(manifest.id, 'backup');
     assertNoMutation();
   });
-  it("renders every normalized page once in registry order and keeps permissions separate", async () => {
+  it("renders one inventory launcher and every normalized page once as ordered tabs, with permissions separate", async () => {
     const second = { ...page, id: 'second', label: 'Several words for preferences' };
     pluginCatalog.value.plugins[0].pages = [page, second, page];
     pluginCatalog.value.plugins.push({ id: 'zero', name: 'No settings', enabled: true, pages: [], runtime: { server: true } });
     await open('core:plugins');
-    expect(launchers('a').map(el => el.dataset.settingsPageId)).toEqual(['plugin:a:p', 'plugin:a:second']);
-    expect([...item('a').querySelectorAll('[data-settings-actions-start] button')].map(el => el.textContent.trim())).toEqual([page.label, second.label]);
-    expect(item('a').querySelector('[data-settings-actions-end] button').textContent.trim()).toBe('Permissions');
+    expect(launchers('a').map(el => el.dataset.settingsPageId)).toEqual(['plugin:a:p']);
+    expect(launchers('a')[0].textContent.trim()).toBe('Open settings');
+    expect(item('a').querySelector('button[aria-expanded]')).not.toBeNull();
     expect(launchers('zero')).toHaveLength(0);
-    expect(item('zero').querySelector('[data-settings-actions-start]')).toBeNull();
-    expect(item('zero').querySelector('[data-settings-actions-end] button').textContent.trim()).toBe('Permissions');
-    launchers('a')[1].click(); await flushPromises();
+    expect(item('zero').querySelector('[data-settings-page-id]')).toBeNull();
+    expect(item('zero').querySelector('button[aria-expanded]')).not.toBeNull();
+    launchers('a')[0].click(); await flushPromises();
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    expect(tabs.map(el => el.dataset.settingsTabId)).toEqual(['plugin:a:p','plugin:a:second']);
+    expect(tabs.map(el => el.textContent.trim())).toEqual([page.label,second.label]);
+    tabs[1].click(); await flushPromises();
     expect(getPluginSettings).toHaveBeenLastCalledWith('a', 'second');
     assertNoMutation();
   });
@@ -307,7 +319,7 @@ describe("registry-owned inventory page launchers", () => {
     await flushPromises();
     expect(document.querySelector('#settings-field-limit').value).toBe('');
     expect(document.body.textContent).toContain('This page is unavailable');
-    expect([...document.querySelectorAll('[aria-label="Settings pages"] button')].map(el => el.textContent.trim())).toContain(page.label);
+    expect([...document.querySelectorAll('[role="tab"]')].map(el => el.textContent.trim())).toContain(page.label);
     const departure = wrapper.vm.selectPage('core:plugins'); await flushPromises();
     button('Keep editing', document.querySelector('[data-modal-top=true]')).click();
     expect(await departure).toBe(false); await flushPromises();
@@ -316,27 +328,30 @@ describe("registry-owned inventory page launchers", () => {
     const discard = wrapper.vm.selectPage('core:plugins'); await flushPromises();
     button('Discard', document.querySelector('[data-modal-top=true]')).click(); expect(await discard).toBe(true); await flushPromises();
     expect(launchers('a').map(el => el.dataset.settingsPageId)).toEqual(['plugin:a:new']);
-    expect([...document.querySelectorAll('[aria-label="Settings pages"] button')].map(el => el.textContent.trim())).not.toContain(page.label);
+    expect([...document.querySelectorAll('[role="tab"]')].map(el => el.textContent.trim())).not.toContain(page.label);
     assertNoMutation();
   });
-  it("Permissions invokes the existing review owner for the selected item, without mutations", async () => {
+  it("disclosure loads the existing permission owner for the selected item, without mutations", async () => {
     getPluginPermissions.mockImplementation(async id => ({ pluginId: id, revision: 0, signature: 'p0', allowNetwork: false, rows: [], approvedNetwork: [], approvedImports: [], pendingRequests: [], reload: { state: 'none' } }));
     await open('core:plugins');
     const owner = document.querySelector('#settings-modal-title');
-    button('Permissions', item('a')).click(); await flushPromises();
-    expect(document.querySelector('[data-permission-review]').textContent).toContain('Fixture');
+    item('a').querySelector('button[aria-expanded]').click(); await flushPromises();
+    expect(item('a').textContent).toContain('Fixture');
+    expect(item('a').querySelector('[role="region"]').textContent).toContain('Allow network');
     expect(getPluginPermissions).toHaveBeenCalledWith('a');
-    button('Close review', document.querySelector('[data-permission-review]')).click(); await flushPromises();
-    expect(document.querySelector('[data-permission-review]')).toBeNull();
+    item('a').querySelector('button[aria-expanded]').click(); await flushPromises();
+    expect(item('a').querySelector('[role="region"]')).toBeNull();
     expect(document.querySelector('#settings-modal-title')).toBe(owner);
     expect(item('a')).not.toBeNull(); assertNoMutation();
   });
-  it("keeps the captured definition's navigation label while a same-ID schema replacement needs draft recovery", async () => {
+  it("keeps the captured definition's tab label while a same-ID schema replacement needs draft recovery", async () => {
+    const sibling = { ...page, id:'other', label:'Other preferences' };
+    pluginCatalog.value.plugins[0].pages = [page,sibling];
     await open('plugin:a:p');
     await wrapper.find('#settings-field-limit').setValue('');
-    pluginCatalog.value = { ...pluginCatalog.value, plugins: [{ ...pluginCatalog.value.plugins[0], pages: [{ ...page, label: 'Replacement definition', fields: [{ key: 'new', label: 'New field', type: 'text', default: 'new default' }] }] }] };
+    pluginCatalog.value = { ...pluginCatalog.value, plugins: [{ ...pluginCatalog.value.plugins[0], pages: [{ ...page, label: 'Replacement definition', fields: [{ key: 'new', label: 'New field', type: 'text', default: 'new default' }] },sibling] }] };
     await flushPromises();
-    const navigation = [...document.querySelectorAll('[aria-label="Settings pages"] button')].map(el => el.textContent.trim());
+    const navigation = [...document.querySelectorAll('[role="tab"]')].map(el => el.textContent.trim());
     expect(navigation).toContain(page.label);
     expect(navigation).not.toContain('Replacement definition');
     expect(document.querySelector('#settings-field-limit').value).toBe('');

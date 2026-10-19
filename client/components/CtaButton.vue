@@ -6,8 +6,7 @@
        Layout attrs (type=submit, aria-*, class) fall through to the button. -->
   <CustomButton
     :label="label"
-    :variant="intent === 'danger' ? 'danger' : 'cta'"
-    prominent
+    variant="cta"
     wrap-label
     :disabled="disabled"
     class="w-full"
@@ -24,10 +23,5 @@ defineProps({
   // submit handler owns the action; click and Enter both reach it).
   callback: { type: Function, default: undefined },
   disabled: { type: Boolean, default: false },
-  intent: {
-    type: String,
-    default: "primary",
-    validator: value => ["primary", "danger"].includes(value),
-  },
 });
 </script>

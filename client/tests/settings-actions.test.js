@@ -22,9 +22,9 @@ describe("shared Settings action consumers", () => {
     expect(clicked).toHaveBeenCalledTimes(1);
   });
 
-  it("danger keeps semantic colors with the same prominent geometry as primary", () => {
+  it("restores main-app danger borders and retains the full-width submit wrapper geometry", () => {
     const primary = mounted(CtaButton, { props: { label: "Save" } }).get("button");
-    const danger = mounted(CtaButton, { props: { label: "Discard", intent: "danger" } }).get("button");
+    const danger = mounted(CustomButton, { props: { label: "Discard", variant: "danger", prominent: true }, attrs: { class: 'w-full' } }).get("button");
     for (const button of [primary, danger]) {
       expect(button.classes()).toEqual(expect.arrayContaining(["w-full", "px-4", "py-2.5", "font-semibold"]));
     }
@@ -76,7 +76,12 @@ describe("shared Settings action consumers", () => {
       attachTo: document.body, global: { directives: { focus: { mounted: el => el.focus() } } } });
     const decisions = [...document.querySelectorAll("button")];
     expect(decisions.every(button => button.type === "button")).toBe(true);
-    expect(decisions.every(button => button.classList.contains("py-2.5"))).toBe(true);
+    expect(decisions.find(button=>button.textContent.trim()==='Keep editing').classList.contains('bg-theme-brand')).toBe(false);
+    expect(decisions.find(button=>button.textContent.trim()==='Discard').classList.contains('text-theme-danger')).toBe(true);
+    expect(decisions.find(button=>button.textContent.trim()==='Discard').closest('[data-settings-actions-start]')).not.toBeNull();
+    expect(decisions.find(button=>button.textContent.trim()==='Save / Retry').closest('[data-settings-actions-end]')).not.toBeNull();
+    expect(decisions.filter(button=>button.classList.contains('bg-theme-brand'))).toHaveLength(1);
+    expect(grouped.find('h2').text()).toBe('Confirmation');
     expect(decisions.find(button => button.textContent.trim() === "Save / Retry").disabled).toBe(true);
     decisions.find(button => button.textContent.trim() === "Keep editing").click();
     expect(grouped.emitted("cancel")).toHaveLength(1);
@@ -86,21 +91,24 @@ describe("shared Settings action consumers", () => {
 
   it("Branding footer preserves callback admission and writable newer drafts while pending", async () => {
     const onReset = vi.fn(), onSave = vi.fn(), onCancel = vi.fn(), onEdit = vi.fn();
-    const snapshot = { writable: true, busy: false, hasBranding: true, dirty: true, unknown: false, name: "Brand", accent: "#123456", files: { logo: {}, icon: {} } };
+    const snapshot = { writable: true, busy: false, canCancel:true, canSave:true, canReset:true, slots:[], hasBranding: true, dirty: true, unknown: false, name: "Brand", accent: "#123456", files: { logo: {}, icon: {} } };
     const wrapper = mounted(BrandingSettingsPage, { props: { snapshot, onReset, onSave, onCancel, onEdit } });
     const button = label => wrapper.findAll("button").find(button => button.text() === label);
-    for (const label of ["Reset", "Save", "Cancel"]) {
+    for (const label of ["Reset branding…", "Save branding", "Cancel changes"]) {
       expect(button(label).attributes("type")).toBe("button");
-      expect(button(label).classes()).toContain("py-2.5");
+      expect(button(label).classes()).toContain('focus-ring');
     }
-    await button("Reset").trigger("click"); expect(onReset).toHaveBeenCalledTimes(1);
-    await button("Save").trigger("click"); expect(onSave).toHaveBeenCalledTimes(1);
-    await wrapper.setProps({ snapshot: { ...snapshot, busy: true } });
-    expect(button("Save").element.disabled).toBe(true);
-    expect(button("Reset").element.disabled).toBe(true);
+    await button("Reset branding…").trigger("click"); expect(onReset).toHaveBeenCalledTimes(1);
+    await button("Save branding").trigger("click"); expect(onSave).toHaveBeenCalledTimes(1);
+    await wrapper.setProps({ snapshot: { ...snapshot, busy: true,canSave:false,canReset:false } });
+    expect(button("Save branding").element.disabled).toBe(true);
+    expect(button("Reset branding…").element.disabled).toBe(true);
     expect(wrapper.get("#brand-name").element.readOnly).toBe(false);
     await wrapper.get("#brand-name").setValue("Newer brand");
     expect(onEdit).toHaveBeenCalledWith("name", "Newer brand");
-    await button("Cancel").trigger("click"); expect(onCancel).toHaveBeenCalledTimes(1);
+    await button("Cancel changes").trigger("click"); expect(onCancel).toHaveBeenCalledTimes(1);
+    await wrapper.setProps({snapshot:{...snapshot,busy:true,canSave:false,canReset:false,canCancel:false}});
+    expect(button('Cancel changes').element.disabled).toBe(true);
+    button('Cancel changes').element.click();expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });

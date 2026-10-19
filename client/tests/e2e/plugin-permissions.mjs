@@ -27,7 +27,7 @@ async function launch(fixture) {
   const args = ["run", "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env",
     ...(fixture.importParent ? [`--allow-import=jsr.io:443,${fixture.authority}`, `--lock=${fixture.privateLock}`] : []), `${ROOT}/server/main.ts`];
   const child = new Deno.Command(Deno.execPath(), { args, cwd: ROOT, stdout: "piped", stderr: "piped", clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", NO_COLOR: "1", GLOBNOTES_PATH: fixture.vault,
+    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES_INDEX_PATH: fixture.state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_HOST: hostname, GLOBNOTES_PORT: String(port) } }).spawn();
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${fixture.directory}/server-${fixture.launchCount}-${name}.log`, { createNew: true, write: true });
@@ -143,31 +143,37 @@ async function readyReload() {
 async function click(session, selector) { await session.poll(`!!document.querySelector(${JSON.stringify(selector)})`); await session.click(selector); }
 async function dismissPrompt(session = current.session) {
   await session.poll("!!document.querySelector('#permission-request-title')");
-  await session.button("Cancel", '[data-modal-top="true"]');
+  await session.button("Review later", '[data-modal-top="true"]');
   await session.poll("!document.querySelector('#permission-request-title')");
+}
+async function openAttentionRequest(session=current.session) {
+  await session.click('[data-settings-attention] button');
+  await session.poll("!!document.querySelector('#permission-request-title')");
 }
 async function inventory(session = current.session) {
   if (!await session.evaluate("!!document.querySelector('[aria-label=Settings]')?.getBoundingClientRect().width")) await click(session, '[title="Open sidebar"]');
   await session.poll("!!document.querySelector('[aria-label=Settings]')?.getBoundingClientRect().width");
-  await click(session, '[aria-label="Settings"]'); await session.button("Plugins", '[aria-label="Settings pages"]');
+  if(!await session.evaluate("!!document.querySelector('#settings-modal-title')"))await click(session, '[aria-label="Settings"]');
+  await session.button("Plugins", '[aria-label="Settings pages"]');
   await session.poll("!!document.querySelector('[data-plugin-inventory-id=networked]')");
 }
 async function review(session = current.session) {
   await inventory(session);
-  await session.button("Permissions", '[data-plugin-inventory-id=networked]');
-  await session.poll("!!document.querySelector('[data-permission-review] [data-plugin-permission-panel]')");
+  const selector='[data-plugin-inventory-id=networked] button[aria-expanded]';
+  if(await session.evaluate(`document.querySelector('${selector}')?.getAttribute('aria-expanded')!=='true'`))await session.click(selector);
+  await session.poll("!!document.querySelector('[data-plugin-inventory-id=networked] [data-plugin-permission-panel] [role=switch]')");
 }
 async function master(session = current.session) {
   const before = await view();
-  await session.poll("[...document.querySelectorAll('[data-permission-review] button')].some(button=>button.textContent.trim()==='Allow network' && !button.disabled && !button.closest('[inert]') && button.getBoundingClientRect().width)");
-  const admission = await session.evaluate("(()=>{const button=[...document.querySelectorAll('[data-permission-review] button')].find(button=>button.textContent.trim()==='Allow network');const r=button.getBoundingClientRect();return {disabled:button.disabled,pressed:button.getAttribute('aria-pressed'),hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('button')===button};})()");
+  await session.poll("(()=>{const button=document.querySelector('[data-plugin-inventory-id=networked] [data-plugin-permission-panel] [role=switch]');if(!button||button.disabled||button.closest('[inert]'))return false;button.scrollIntoView({block:'center'});return !!button.getBoundingClientRect().width;})()");
+  const admission = await session.evaluate("(()=>{const button=document.querySelector('[data-plugin-inventory-id=networked] [data-plugin-permission-panel] [role=switch]');const r=button.getBoundingClientRect();return {disabled:button.disabled,pressed:button.getAttribute('aria-checked'),hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('button')===button};})()");
   assert(admission.hit && !admission.disabled, "master control not natively interactable at admission");
   await Deno.writeTextFile(`${current.directory}/master-admission-${before.revision}.json`, JSON.stringify(admission, null, 2));
-  await session.button("Allow network", '[data-permission-review]');
+  await session.click('[data-plugin-inventory-id=networked] [data-plugin-permission-panel] [role=switch]');
   await committed(value => value.allowNetwork === !before.allowNetwork && value.revision > before.revision, "explicit master change"); await readyReload();
 }
-function rowSelector(kind) { return `[data-permission-review] [data-permission-kind=${kind}][data-permission-scope="host:${current.authority}"]`; }
-async function closeReview(session = current.session) { await session.button("Close review", '[data-modal-top="true"]'); }
+function rowSelector(kind) { return `[data-plugin-inventory-id=networked] [data-permission-kind=${kind}][data-permission-scope="host:${current.authority}"]`; }
+async function closeReview(session = current.session) { await session.click('[data-plugin-inventory-id=networked] button[aria-expanded]'); await session.poll("!document.querySelector('[data-plugin-inventory-id=networked] [data-plugin-permission-panel]')"); }
 async function capture(label, session = current.session) {
   const { data } = await session.send("Page.captureScreenshot", { format: "png" });
   await Deno.writeFile(`${current.directory}/${label}.png`, Uint8Array.from(atob(data), ch => ch.charCodeAt(0)));
@@ -205,7 +211,7 @@ try {
   await dismissPrompt(); await invoke("networked", "request");
   await review();
   assert(await current.session.evaluate("document.querySelector('[data-plugin-inventory] [data-plugin-trust-notice]')?.textContent.includes('server Workers only')"), "inventory trust boundary missing");
-  assert(await current.session.evaluate("!!document.querySelector('[data-plugin-inventory-id=disabled-editor] [data-plugin-browser-badge]')"), "disabled custom editor badge missing");
+   assert(await current.session.evaluate("document.querySelector('[data-plugin-inventory-id=disabled-editor] .plugin-row-browser')?.textContent==='Runs in browser'"), "disabled custom editor label missing");
   await capture("inventory-review");
   await outcome("PERMISSIONS-01 INVENTORY TRUST OK", { disabledCustomBadge: true, reviewNotice: true });
   const unrelated = (await invoke("unrelated", "inspect")).body.result.instance;
@@ -222,7 +228,7 @@ try {
   await master(); value = await view(); assert(!value.allowNetwork && value.approvedNetwork.length === 1, "off discarded approval");
   assert((await invoke("networked", "fetch")).status === 500 && current.traffic() === 1, "off retained raw authority");
   await master(); assert((await invoke("networked", "fetch")).status === 200 && current.traffic() === 2, "on did not restore remembered requested approval");
-  await current.session.button("Delete approval", rowSelector("network")); await committed(value => !value.approvedNetwork.length, "delete approval"); await readyReload(); value = await view();
+  await current.session.button("Remove", rowSelector("network")); await committed(value => !value.approvedNetwork.length, "delete approval"); await readyReload(); value = await view();
   assert(!value.approvedNetwork.length && value.rows.some(row => row.kind === "network" && row.requested && !row.approved), "delete lost request or retained approval");
   assert((await invoke("networked", "fetch")).status === 500 && current.traffic() === 2, "delete failed to revoke traffic");
   await current.session.button("Approve", rowSelector("imports")); await committed(value => value.approvedImports.length === 1, "import approval"); await readyReload(); value = await view();
@@ -249,8 +255,8 @@ try {
   await second.goto(`${current.server.base}/NoteA`); await second.poll("!!document.querySelector('.toast-viewer')");
   if (await second.evaluate("!!document.querySelector('#permission-request-title')")) await dismissPrompt(second);
    await review(second);
-   await second.poll(`document.querySelector(${JSON.stringify(rowSelector("network"))})?.textContent.includes('Approved — effective')`);
-   assert(await second.evaluate(`document.querySelector('[data-permission-kind=network][data-permission-scope="host:${current.extraAuthority}"]')?.textContent.includes('Unapproved')`), "second context lost denied new-scope intent");
+   await second.poll(`document.querySelector(${JSON.stringify(rowSelector("network"))})?.textContent.includes('Approved, active')`);
+   assert(await second.evaluate(`document.querySelector('[data-permission-kind=network][data-permission-scope="host:${current.extraAuthority}"]')?.textContent.includes('Requested')`), "second context lost denied new-scope intent");
   await closeReview(second);
   await current.server.close(); current.server = await launch(current);
   value = await view(); assert(JSON.stringify(value.approvedNetwork) === JSON.stringify(beforeRestart.approvedNetwork) && value.allowNetwork, "approval did not survive normal server restart");
@@ -259,7 +265,7 @@ try {
   // Verify no browser isolation/badge suppression: the metadata remains despite master off.
   await current.session.goto(`${current.server.base}/NoteA`); await current.session.poll("!!document.querySelector('.toast-viewer')");
   await review(); await master();
-  assert(await current.session.evaluate("!!document.querySelector('[data-permission-review] [data-plugin-browser-badge]') && document.querySelector('[data-permission-review] [data-plugin-trust-notice]').textContent.includes('Browser/editor plugin code')"), "master off hid browser trust metadata");
+  assert(await current.session.evaluate("!!document.querySelector('[data-plugin-inventory-id=networked] .plugin-row-browser') && document.querySelector('[data-plugin-trust-notice]').textContent.includes('Browser/editor plugin code')"), "master off hid browser trust metadata");
   await outcome("PERMISSIONS-08 BROWSER TRUST OK", { masterOff: true, badgeVisible: true });
   await finish();
   await fixture("isolated-import-parent", { importParent: true }); await dismissPrompt(); await review();
@@ -289,30 +295,31 @@ try {
   const oldWorker = (await invoke("networked", "inspect")).body.result.instance;
   const oldOther = (await invoke("unrelated", "inspect")).body.result.instance;
   const oldBrowser = await current.session.evaluate("document.querySelector('[data-permission-browser-nonce]')?.dataset.permissionBrowserNonce");
-  await inventory(); await current.session.button("Networked preferences", '[aria-label="Settings pages"]');
+  await inventory(); await current.session.click('[data-settings-nav-id="plugin:networked"]');
   await current.session.poll("!!document.querySelector('input[type=number]') && !document.querySelector('input[type=number]').readOnly && !document.querySelector('input[type=number]').disabled");
   await current.session.click('input[type=number]'); await current.session.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 }); await current.session.key("Backspace", { code: "Backspace", windowsVirtualKeyCode: 8 });
   await current.session.key("Tab", { code: "Tab", windowsVirtualKeyCode: 9 });
   await current.session.poll("document.body.textContent.includes('Enter a number')");
-  await current.session.button("Permissions", '[data-modal-top="true"]');
-  await current.session.button("Review access request", '[data-permission-review]');
-  await current.session.poll("!!document.querySelector('#permission-request-title')");
+  const retainedPage=await current.session.evaluate("({page:document.querySelector('[data-settings-content]').dataset.settingsCurrentPage,url:location.href})");
+  assert(await current.session.evaluate("document.querySelectorAll('[data-settings-attention] button').length===1"),'Postponed request is missing from Needs attention');
+  await openAttentionRequest();
   await promptFocus();
   await current.session.key("Escape", { code: "Escape", windowsVirtualKeyCode: 27 });
-  await current.session.poll("!document.querySelector('#permission-request-title') && !!document.querySelector('[data-permission-review]')");
-  await current.session.poll("document.activeElement?.textContent.trim() === 'Review access request' && !!document.activeElement.closest('[data-modal-top=true]')");
+  await current.session.poll("!document.querySelector('#permission-request-title') && !!document.querySelector('#settings-field-limit')");
+  await current.session.poll("document.activeElement?.matches('[data-settings-attention] button') && !!document.activeElement.closest('[data-modal-top=true]')");
+  assert(await current.session.evaluate(`document.querySelector('[data-settings-content]').dataset.settingsCurrentPage===${JSON.stringify(retainedPage.page)} && location.href===${JSON.stringify(retainedPage.url)} && !document.body.textContent.includes('Unsaved changes')`),'Attention opening navigated or ran a departure decision');
   assert(await current.session.evaluate("document.querySelector('.cm-content') === window.__permissionEditor && location.href === window.__permissionUrl && document.querySelector('.cm-content').textContent.includes('PERMISSION-D')"), "prompt Escape lost editor/URL/live D");
   assert(current.noteWrites.length === 1, "permission review dispatched queued B before A acknowledgement");
-  await current.session.button("Review access request", '[data-permission-review]');
-  await current.session.button("Allow network", '[data-permission-request-choices]');
-  await current.session.button("Approve selected request", '[data-modal-top="true"]');
+  await openAttentionRequest();
+  await current.session.click('[data-permission-request-choices] [role=switch]');
+  await current.session.button("Approve", '[data-modal-top="true"]');
   await current.session.poll("!document.querySelector('#permission-request-title')"); await readyReload();
   assert((await invoke("networked", "inspect")).body.result.instance !== oldWorker, "affected server owner did not replace");
   assert((await invoke("unrelated", "inspect")).body.result.instance === oldOther, "unrelated server replaced over dirty work");
   assert(await current.session.evaluate(`document.querySelector('[data-permission-browser-nonce]')?.dataset.permissionBrowserNonce === ${JSON.stringify(oldBrowser)} && document.querySelector('.cm-content') === window.__permissionEditor`), "server permission replaced browser/editor owner");
   assert((await invoke("networked", "fetch")).status === 200 && current.traffic() === 1, "dirty-work native approval did not reach receiver");
-  await closeReview();
   assert(await current.session.evaluate("document.querySelector('input[type=number]')?.value === '' && document.body.textContent.includes('Enter a number')"), "permission reload erased invalid settings draft");
+  assert(await current.session.evaluate("!document.querySelector('[data-settings-attention]')"),'Resolved request remained in Needs attention');
   await capture("dirty-settings-retained");
   current.noteWrites[0].release(); await write(1); current.noteWrites[1].release();
   await current.session.poll("!document.querySelector('.content-column .animate-spin')");

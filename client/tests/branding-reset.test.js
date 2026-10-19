@@ -58,7 +58,7 @@ describe("BrandingSettings reset", () => {
 
   it("opens the confirmation on Reset and does NOT post yet", async () => {
     const { app } = await openBranding();
-    const reset = findButton("Reset");
+    const reset = findButton("Reset branding…");
     expect(reset, "Reset button").toBeTruthy();
     reset.click();
     await nextTick();
@@ -78,14 +78,14 @@ describe("BrandingSettings reset", () => {
 
   it("confirm runs the reset POST with the clear payload", async () => {
     const { app } = await openBranding();
-    findButton("Reset").click();
+    findButton("Reset branding…").click();
     await nextTick();
     // The nested ConfirmModal's confirm button — find the dialog that
     // carries the "Reset branding?" title, then its Reset button.
     // The nested ConfirmModal's confirm button — it renders after the
     // Branding dialog's own buttons, so it's the LAST Reset on screen.
     const confirm = [...document.querySelectorAll("button")]
-      .filter((b) => b.textContent.trim() === "Reset")
+      .filter((b) => b.textContent.trim() === "Reset branding")
       .at(-1);
     expect(confirm, "confirm dialog Reset").toBeTruthy();
     confirm.click();
@@ -101,7 +101,7 @@ describe("BrandingSettings reset", () => {
 
   it("cancel posts nothing and leaves the Branding dialog intact", async () => {
     const { app } = await openBranding();
-    findButton("Reset").click();
+    findButton("Reset branding…").click();
     await nextTick();
     // Cancel lives in the nested ConfirmModal.
     const cancel = [...document.querySelectorAll("button")]
@@ -112,7 +112,7 @@ describe("BrandingSettings reset", () => {
     await nextTick();
     expect(postBrand).not.toHaveBeenCalled();
     // The Branding dialog is still open (Reset still present).
-    expect(findButton("Reset")).toBeTruthy();
+    expect(findButton("Reset branding…")).toBeTruthy();
     app.unmount();
   });
 });

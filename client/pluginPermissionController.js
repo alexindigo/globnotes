@@ -3,6 +3,7 @@ import { reactive, ref } from "vue";
 
 const copy = value => JSON.parse(JSON.stringify(value));
 export const permissionScopeKey = scope => scope.type === "all" ? "all" : `host:${scope.authority}`;
+export const permissionAttentionId=(pluginId,requestId)=>`plugin-access:${JSON.stringify([pluginId,requestId])}`;
 export const hasServerContribution = plugin => !!(plugin?.rendering || plugin?.runtime?.server || plugin?.endpoints);
 export function permissionControls(view) {
   return copy({ revision: view.revision, signature: view.signature,
@@ -12,6 +13,39 @@ export function permissionControls(view) {
 const sameSource = (left, right) => left.requestSourceKey === right.requestSourceKey && left.requestSourceRevision === right.requestSourceRevision;
 const sameAdmission = (left, right) => sameSource(left, right) && left.revision === right.revision && left.signature === right.signature;
 const bucket = kind => kind === "imports" ? "approvedImports" : "approvedNetwork";
+
+const hostLabel = scope => scope.type === 'all' ? 'All hosts and all ports' :
+  /:\d+$/.test(scope.authority) ? scope.authority : `${scope.authority} (all ports on this host)`;
+
+/** Shared host presentation, including the still-live read-only request summary. */
+export function permissionHostRows(view, kind, { available = true } = {}) {
+  return (view?.rows ?? []).filter(row => row.kind === kind).map(row => ({
+    ...row, sourceRow:row, key:permissionScopeKey(row.scope), label:hostLabel(row.scope),
+    actionLabel:`${row.approved ? 'Remove approval for' : 'Approve'} ${hostLabel(row.scope)}`,
+    status: !available ? (row.approved ? 'Remembered approval, plugin unavailable' : row.requested ? 'Requested, plugin unavailable' : 'Not approved, plugin unavailable') :
+      !row.approved ? (row.requested ? 'Requested' : 'Not approved') : row.effective ? 'Approved, active' :
+      row.blockedReasons.includes('master-off') ? 'Approved, Allow network is off' :
+      row.blockedReasons.includes('parent-unavailable') ? 'Approved, parent unavailable' : 'Remembered approval, not currently requested',
+    tone:row.effective && available ? 'success' : 'quiet',
+    action:row.approved ? { label:'Remove', kind:'remove', danger:true } : row.requested ? { label:'Approve', kind:'approve', danger:false } : null,
+    sourceText:row.sources.map(source => source === 'legacy' ? 'legacy request intent' : source).join(', '),
+    coverageText:row.approvalCoverage.map(hostLabel).join(', '),
+    broad:row.scope.type === 'all', parentUnavailable:row.blockedReasons.includes('parent-unavailable'),
+    warning:row.scope.type === 'all' ? 'All hosts and all ports. Broad approval requires a separate explicit confirmation.' :
+      row.blockedReasons.includes('parent-unavailable') ? "Approved, but unavailable under the server’s existing parent permissions." : '',
+  }));
+}
+
+export function permissionCanChange(state) {
+  return !!(state.writable && state.hasServer && state.view && !state.busy &&
+    (!state.unknown || state.readBack) && !state.needsReview);
+}
+
+export function permissionPendingText(state) {
+  if (state.unknown) return 'Waiting for the server to confirm…';
+  if (!state.busy) return '';
+  return state.status === 'saving' ? 'Saving permission decision…' : 'Waiting for the server to confirm…';
+}
 function intentControls(view, intent) {
   const controls = permissionControls(view);
   if (intent.type === "master") controls.allowNetwork = intent.value;
@@ -58,6 +92,21 @@ export function createPluginPermissionController({ readView, writeView, readPend
     const record = ensure(id);
     return { ...record, busy: record.pending > 0 || record.inFlight > 0, writable: writable.value && eligible.value && record.available,
       hasServer: hasServerContribution(record.plugin), controls: record.draft?.controls ?? (record.view ? permissionControls(record.view) : null) };
+  }
+  // Presentation is projected here so every permission consumer shares the same
+  // admission and honest status wording without rebuilding policy in templates.
+  function permissionView(id) {
+    const state = snapshot(id), view = state.view;
+    const canReviewStatus = eligible.value && state.available && !state.busy;
+    return { id, available:!!view, allowNetwork:view?.allowNetwork ?? false, canChange:permissionCanChange(state), canReviewStatus,
+      network:permissionHostRows(view,'network',{available:state.available}), imports:permissionHostRows(view,'imports',{available:state.available}),
+      requests:(view?.pendingRequests ?? []).map(request => ({ ...request, label:`${request.kind === 'imports' ? 'Remote code imports' : 'Network data'} — “${request.reason}”`, canReview:canReviewStatus && state.hasServer })),
+      error:state.error,
+      pendingText:permissionPendingText(state),
+      reloadText:view?.reload?.state && !['none','ready'].includes(view.reload.state) ? `Server reload: ${view.reload.state}${view.reload.detail ? ' — ' + view.reload.detail : ''}. Stored decisions and Worker readiness are separate.` : '',
+      recovery:state.draft ? { text:'Your permission choices are retained.', canReview:canReviewStatus,
+        canRetry:state.writable && state.hasServer && !state.busy && (!state.unknown || state.readBack),
+        canDiscard:!state.busy && (!state.unknown || state.readBack) } : null };
   }
   async function bounded(operation) {
     let timer;
@@ -233,7 +282,7 @@ export function createPluginPermissionController({ readView, writeView, readPend
     await Promise.all([...queues.values()]);
     return recordList.every(record => !record.pending && !record.inFlight && !record.unknown);
   }
-  return { snapshot, load, reconcile, setSession, refreshPending, pendingRequests, requestChoices, editRequest,
+  return { snapshot, permissionView, load, reconcile, setSession, refreshPending, pendingRequests, requestChoices, editRequest,
     approve: (id, kind, scope, expectedView) => admit(id, { type: "approve", kind, scope }, false, expectedView),
     remove: (id, kind, coverage, expectedView) => admit(id, { type: "remove", kind, coverage }, false, expectedView),
     setMaster: (id, value) => admit(id, { type: "master", value }),

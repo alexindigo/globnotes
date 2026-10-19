@@ -64,10 +64,10 @@ async function fixture(kind, label) {
   const token = kind === "password" ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
   const directory = `${artifacts}/${label}`;
   await Deno.mkdir(directory);
-  server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "" }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
   if (label === "cross-browser") server = createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
     const logsDir=`${directory}/backend-${count}`;await Deno.mkdir(logsDir);
-    return bootServer(vault,state,{env:{GLOBNOTES_AUTH_TYPE:""},logsDir,headers:{authorization:`Bearer ${token}`}});
+    return bootServer(vault,state,{env:{GLOBNOTES_AUTH_TYPE:"",TMPDIR:Deno.env.get('TMPDIR')},logsDir,headers:{authorization:`Bearer ${token}`}});
   } });
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
   const owned = { label, directory, vault, state, server, session, closed: false };
@@ -164,7 +164,7 @@ try {
   await fixture("none", "open-dismiss");
   await edit("GPS immediate dirty marker");
   await settings("Access");
-  await session.button("Change access mode");
+  await waitForAccessSummary(session); await session.button("Change access…");
   await session.poll("!!document.querySelector('#setup-title')");
   assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Opening the optional wizard destroyed the dirty editor instance");
   assert(await session.evaluate("document.querySelector('.cm-content').textContent.includes('GPS immediate dirty marker')"), "Optional wizard lost typed content");
@@ -179,7 +179,7 @@ try {
     const marker = blocked ? "GPS-blocked wizard" : `GPS ${label}`;
     await edit(marker);
     await settings("Access");
-    await session.button("Change access mode");
+    await waitForAccessSummary(session); await session.button("Change access…");
     await session.poll("!!document.querySelector('#access-current-password') && !document.querySelector('#setup-username').disabled && document.querySelector('#setup-username').value==='session-fixture'");
     await session.click("#setup-username"); await session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); await session.type("new-fixture");
     await session.click("#setup-password"); await session.type("new-fixture-secret");
@@ -251,3 +251,4 @@ finally {
   }
 }
 if (failure) throw failure;
+import { waitForAccessSummary } from './settings-access-native.mjs';

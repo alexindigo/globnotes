@@ -19,12 +19,19 @@ beforeEach(() => {
 afterEach(() => { adapter.dispose(); vi.useRealTimers(); });
 
 describe("Branding unknown-outcome recovery consumers", () => {
+  it('r2 A24 only enables Cancel changes for a dirty settled branding owner', async () => {
+    expect(adapter.brandSnapshot().canCancel).toBe(false);
+    adapter.editBrand('name','edited'); expect(adapter.brandSnapshot().canCancel).toBe(true);
+    adapter.discardBrand(); expect(adapter.brandSnapshot().canCancel).toBe(false);
+    adapter.editBrand('name','unknown'); writeBrand.mockRejectedValue(Error('lost'));
+    await adapter.saveBrand(); expect(adapter.brandSnapshot().canCancel).toBe(false);
+  });
   it("recognizes a lost-response name already persisted without replaying its write", async () => {
     adapter.editBrand("name", "persisted A");
     writeBrand.mockRejectedValue(new Error("response lost"));
     expect(await adapter.saveBrand()).toBe(false);
     readBrand.mockResolvedValue({ name: "persisted A", accent: "#53c729", files: [] });
-    expect(await adapter.retryBrand(), adapter.brandSnapshot().error).toBe(true);
+    expect(await adapter.reviewBrand(), adapter.brandSnapshot().error).toBe(true);
     expect(current.name).toBe("persisted A");
     expect(adapter.brandSnapshot().name).toBe("persisted A");
     expect(adapter.hasWork()).toBe(false);
@@ -43,7 +50,7 @@ describe("Branding unknown-outcome recovery consumers", () => {
     expect(adapter.brandSnapshot().accent).toBe("#eeaabb");
     expect(writeBrand).toHaveBeenCalledTimes(1);
     writeBrand.mockResolvedValue({ name: "newer D", accent: "#eeaabb", files: [] });
-    expect(await adapter.retryBrand()).toBe(true);
+    expect(await adapter.reviewBrand()).toBe(true); expect(await adapter.saveBrand()).toBe(true);
     expect(writeBrand.mock.calls[1][0].get("name")).toBe("newer D");
     expect(writeBrand.mock.calls[1][0].has("accent")).toBe(false);
     expect(current.name).toBe("newer D");
@@ -58,7 +65,7 @@ describe("Branding unknown-outcome recovery consumers", () => {
     await vi.advanceTimersByTimeAsync(5001);
     expect(await saving).toBe(false);
     expect(adapter.brandSnapshot().busy).toBe(true);
-    expect(await adapter.retryBrand()).toBe(false);
+    expect(await adapter.reviewBrand()).toBe(false);
     expect(adapter.discardBrand()).toBe(false);
     expect(writeBrand).toHaveBeenCalledTimes(1);
     adapter.editBrand("name", "newer D");

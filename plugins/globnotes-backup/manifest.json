@@ -8,11 +8,11 @@
   "settings": [{
     "id": "backup",
     "label": "Backups",
-    "description": "Best-effort previous Markdown text after managed changes. Adjacent backups are ordinary visible vault files: public readers can retrieve old or deleted text. Choose a dedicated base outside the vault to change their placement. Histories are path-based; changing this base does not move or delete old histories.",
+    "description": "Keeps earlier note text when you save, rename or delete a note. Backups beside notes are ordinary vault files: public readers can open old or deleted text. Choose a folder outside the vault to keep backups private. Each note path has its own history; changing the backup folder does not move or delete earlier backups.",
     "renderer": { "kind": "declarative-v1", "version": 1 },
     "fields": [
-      { "key": "retention", "label": "Retained versions", "type": "slider", "default": 2, "min": 1, "max": 10, "step": 1, "description": "Newest is .0.bak. Reducing the count prunes owned excess versions on the family's next successful capture." },
-      { "key": "basePath", "label": "Backup base path", "type": "folder", "default": "", "maxLength": 4096, "description": "Empty means adjacent. Relative paths are vault-relative; absolute paths select that directory. No shell or environment interpolation. Destination folders mirror the captured note's original path." }
+      { "key": "retention", "label": "Retained versions", "type": "slider", "default": 2, "min": 1, "max": 10, "step": 1, "description": "The newest backup ends in .0.bak. Lowering this count removes extra versions the next time that note is backed up successfully." },
+      { "key": "basePath", "label": "Backup base path", "type": "folder", "default": "", "maxLength": 4096, "description": "Leave empty to keep backups beside notes. Relative paths start at the vault; absolute paths choose a directory on the server. Folder names follow the note's original path. Shell shortcuts and environment variables are not expanded." }
     ]
   }],
   "capabilities": {

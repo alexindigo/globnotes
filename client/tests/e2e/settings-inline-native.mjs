@@ -59,11 +59,11 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
 
   await session.button("Branding");
   await replace("#brand-name", "Native inline brand");
-  await session.button("Save", "[data-branding-settings]");
+  await session.button("Save branding", "[data-branding-settings]");
   await session.poll("fetch('/_/api/config').then(r=>r.json()).then(c=>c.brand.name==='Native inline brand')");
   const config = JSON.parse(await Deno.readTextFile(`${state}/config.json`));
   assert(config.brand_name === "Native inline brand", "Inline branding did not reach persisted config");
-  await session.button("Reset", "[data-branding-settings]");
+  await session.button("Reset branding…", "[data-branding-settings]");
   await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?')");
   await session.key("Escape", { windowsVirtualKeyCode: 27 });
   await session.poll("!document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?')");
@@ -83,7 +83,7 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   assert(await inspect("document.querySelectorAll('#settings-modal-title').length===1 && document.querySelector('.cm-content')===window.__gpsEditor"), "Real SDK Settings dispatch did not reach the common retained dialog");
   await record({ name: "native-palette-sdk-settings-actions", builtInPalette: true, pluginSdkPage: "plugin:session-guard:preferences", sameEditor: true, instances: 1 });
 
-  await session.button("Native preferences", '[aria-label="Settings pages"]');
+  await session.click('[data-settings-nav-id="plugin:session-guard"]');
   await session.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
   await replace("#settings-field-message", "native committed message");
   await session.key("Enter", { windowsVirtualKeyCode: 13 });
@@ -98,16 +98,16 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   const beforeInvalid = await stored();
   await replace("#settings-field-limit", "");
   await session.button("Appearance");
-  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
-  assert(await inspect("[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Save / Retry').disabled"), "Invalid input was allowed to save");
+  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
+  assert(await inspect("[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Save').disabled"), "Invalid input was allowed to save");
   await session.key("Escape", { windowsVirtualKeyCode: 27 });
-  await session.poll("!!document.querySelector('#settings-field-limit') && !document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
+  await session.poll("!!document.querySelector('#settings-field-limit') && !document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
   assert(await inspect("document.querySelector('#settings-field-limit').value === ''"), "Escape discarded invalid raw input");
   await session.button("Appearance");
-  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
+  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
   await session.button("Discard", '[data-modal-top="true"]');
   await session.poll("!!document.querySelector('[data-appearance-settings]')");
-  await session.button("Native preferences", '[aria-label="Settings pages"]');
+  await session.click('[data-settings-nav-id="plugin:session-guard"]');
   await session.poll("document.querySelector('#settings-field-limit')?.value === '5'");
   assert((await stored()).revision === beforeInvalid.revision, "Invalid/Discard flow mutated persisted settings");
   await record({ name: "native-settings-ack-and-invalid-draft", values: acknowledged.values, revision: acknowledged.revision, command: command.result, topmostEscapeRetainedDraft: true });

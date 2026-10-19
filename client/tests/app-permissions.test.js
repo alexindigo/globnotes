@@ -3,6 +3,7 @@ import { nextTick, reactive, ref } from "vue";
 import { flushPromises } from "@vue/test-utils";
 import { createAppPermissions, permissionRequestKey } from "../appPermissions.js";
 import * as api from "../api.js";
+import { createAttentionRegistry } from '../attention.js';
 
 vi.mock("../api.js", () => ({ getPluginPermissions: vi.fn(), putPluginPermissions: vi.fn(), getPluginPermissionRequests: vi.fn(), decidePluginPermissionRequest: vi.fn() }));
 vi.mock("../pluginRuntime.js", async () => {
@@ -37,11 +38,77 @@ function fixture(options = {}) {
   owners.push(owner);
   // Production admits the session before a pending-request read can publish.
   function publish(value = request()) { inputs.ready = true; record.view = { pendingRequests: [value] }; pendingRequests.value = [value]; next.value = value; }
-  return { owner, inputs, catalog, modals, next, record, choices, permissions, createPermissions, refreshConfig, startRuntime, stopRuntime, publish };
+  return { owner, inputs, catalog, modals, next, pendingRequests, record, choices, permissions, createPermissions, refreshConfig, startRuntime, stopRuntime, publish };
 }
 async function opened() { const f = fixture(); f.publish(); await flushPromises(); expect(f.owner.state.activePermissionRequest?.id).toBe("request-A"); return f; }
 
 describe("App permission owner", () => {
+  it('r2 B5 retries late automatic discovery when a manual fresh read is rejected', async () => {
+    const f=fixture(), held=deferred(), manual=request('manual'), automatic=request('automatic');
+    f.inputs.ready=true; await nextTick(); f.record.view.pendingRequests=[manual,automatic];
+    f.permissions.load.mockReturnValueOnce(held.promise).mockResolvedValue({status:'accepted',current:()=>true});
+    const opening=f.owner.openRequestedPermissionReview(manual); await nextTick();
+    f.next.value=automatic; f.pendingRequests.value=[automatic]; await nextTick();
+    held.resolve({status:'error',current:()=>false}); await opening; await flushPromises();
+    expect(f.owner.state.activePermissionRequest?.id).toBe(automatic.id);
+    expect(f.permissions.load).toHaveBeenCalledTimes(2); expect(f.permissions.decide).not.toHaveBeenCalled();
+  });
+  it('r2 B7 publishes then retracts only after an accepted decision removes the request', async () => {
+    const attentionRegistry=createAttentionRegistry(),f=fixture({attentionRegistry}); f.publish(); await flushPromises();
+    expect(attentionRegistry.items.value).toHaveLength(1);
+    f.permissions.decide.mockImplementation(async()=>{f.pendingRequests.value=[];f.record.view.pendingRequests=[];return true;});
+    await f.owner.approvePermissionRequest(); await flushPromises(); expect(attentionRegistry.items.value).toEqual([]);
+  });
+  it('r2 B7 retracts publication synchronously across a login handoff even before another pending read', async () => {
+    const attentionRegistry=createAttentionRegistry(),f=fixture({attentionRegistry});
+    f.inputs.config.authType='password';f.inputs.token='old-user';f.publish();await flushPromises();
+    expect(attentionRegistry.items.value).toHaveLength(1);
+    // The controller clears admitted requests on a session change; the App owner must call it.
+    f.permissions.setSession.mockImplementation(()=>{f.pendingRequests.value=[];});
+    f.inputs.token='next-user';await nextTick();
+    expect(attentionRegistry.items.value).toEqual([]);
+  });
+  it('r2 B7 disposes its published items', async () => {
+    const attentionRegistry=createAttentionRegistry(),f=fixture({attentionRegistry});f.publish();await flushPromises();
+    expect(attentionRegistry.items.value).toHaveLength(1);f.owner.dispose();owners.pop();
+    expect(attentionRegistry.items.value).toEqual([]);
+  });
+  it.each(['available','hasServer'])('r2 B7 does not publish a request without %s', async key => {
+    const attentionRegistry=createAttentionRegistry(),f=fixture({attentionRegistry});f.record[key]=false;f.publish();await flushPromises();
+    expect(attentionRegistry.items.value).toEqual([]);
+  });
+  it('keeps narrow-host text and validation with their request instead of leaking into another decision', async () => {
+    const f=fixture(), a={...request('narrow-A'),scopes:[all]}, b={...request('narrow-B'),scopes:[all]};
+    f.publish(a); await flushPromises(); await f.owner.selectNarrowHost('https://wrong.test');
+    expect(f.owner.state.narrowError).toContain('exact host');
+    f.owner.deferPermissionRequest(); f.publish(b); f.pendingRequests.value=[a,b]; await flushPromises();
+    expect(f.owner.state.activePermissionRequest.id).toBe(b.id);
+    expect(f.owner.state.narrowError).toBe(''); expect(f.owner.state.narrowHostText).toBe('');
+    f.owner.deferPermissionRequest(); f.record.view.pendingRequests=[a];
+    await f.owner.openRequestedPermissionReview(a); await flushPromises();
+    expect(f.owner.state.narrowError).toContain('exact host'); expect(f.owner.state.narrowHostText).toBe('https://wrong.test');
+    expect(f.permissions.editRequest).not.toHaveBeenCalled(); expect(f.permissions.decide).not.toHaveBeenCalled();
+  });
+  it('manual Review survives late automatic discovery behind the same unrelated modal', async () => {
+    const f=fixture(), read=deferred(), value=request(); f.inputs.ready=true; f.modals.value=[{name:'confirm'}]; await nextTick();
+    f.record.view.pendingRequests=[value]; f.permissions.load.mockReturnValue(read.promise);
+    const opening=f.owner.openRequestedPermissionReview(value); await nextTick();
+    f.next.value=value; f.permissions.pendingRequests.value=[value]; await nextTick();
+    read.resolve({status:'accepted',current:()=>true}); await opening; await flushPromises();
+    expect(f.owner.state.activePermissionRequest?.id).toBe(value.id); expect(f.permissions.load).toHaveBeenCalledTimes(1);
+    expect(f.permissions.defer).not.toHaveBeenCalled(); expect(f.permissions.decide).not.toHaveBeenCalled();
+  });
+  it.each(['https://example.test','user@example.test','*.example.test','example.test/path','example.test:0','example.test:65536','example test','[::zz]:443',''])('rejects invalid narrow authority without editing consent: %s', async text => {
+    const f=await opened(); expect(typeof f.owner.selectNarrowHost).toBe('function');
+    expect(await f.owner.selectNarrowHost(text)).toBe(false); expect(f.owner.state.narrowError).toBeTruthy();
+    expect(f.permissions.editRequest).not.toHaveBeenCalled(); expect(f.permissions.decide).not.toHaveBeenCalled();
+  });
+  it.each([['ExAmPlE.test:00443','example.test:443'],['[2001:db8::1]:443','[2001:db8::1]:443'],['bücher.test','xn--bcher-kva.test']])('normalizes an explicit narrower host %s', async (text,authority) => {
+    const f=fixture(); f.publish({...request(),scopes:[all]}); await flushPromises();
+    expect(typeof f.owner.selectNarrowHost).toBe('function'); expect(await f.owner.selectNarrowHost(text)).toBe(true);
+    expect(f.choices.scopes).toContainEqual({type:'host',authority}); expect(f.choices.allowNetwork).toBe(false);
+    expect(f.permissions.decide).not.toHaveBeenCalled();
+  });
   it("binds default transport at its owning module", () => {
     const f = fixture();
     expect(f.createPermissions).toHaveBeenCalledWith(expect.objectContaining({ readView: api.getPluginPermissions,

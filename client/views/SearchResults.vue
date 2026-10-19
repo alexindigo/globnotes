@@ -51,7 +51,7 @@
             <span class="ml-2 text-theme-text-very-muted">→</span>
             <span class="ml-2">{{ f.newPath }}</span></span
           >
-          <CustomButton label="Fix" style="ghost" @click="search.fixSingleRef(f)" />
+          <CustomButton label="Fix" variant="text" @click="search.fixSingleRef(f)" />
         </li>
       </ul>
     </div>

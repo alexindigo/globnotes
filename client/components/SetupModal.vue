@@ -12,30 +12,28 @@
       v-if="dismissible"
       type="button"
       aria-label="Dismiss setup"
-      class="absolute right-4 top-4 rounded p-1 text-theme-text-muted hover:text-theme-brand"
+      class="focus-ring absolute right-4 top-4 rounded p-1 text-theme-text-muted hover:text-theme-brand"
       @click="dismiss"
     >
       <Icon :icon="tabClose" width="20" height="20" />
     </button>
-    <h1 id="setup-title" class="mb-1 text-2xl font-semibold">
+    <h1 id="setup-title" class="mb-1 text-lg font-semibold">
       {{ dismissible ? 'Access settings' : 'Welcome to globnotes' }}
     </h1>
     <p class="mb-5 text-theme-text-muted">
       Choose who can read and edit your notes.
     </p>
 
-    <form @submit.prevent="finish" @focusin="onCopyFocus" class="flex flex-1 shrink-0 flex-col">
+    <form @submit.prevent="finish" @focusin="onCopyFocus" class="flex min-w-0 flex-1 shrink-0 flex-col [overflow-wrap:anywhere]">
       <div class="grid min-w-0 flex-1 grid-cols-1 gap-6 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <fieldset class="sm:border-r sm:border-theme-border sm:pr-6">
+        <fieldset class="min-w-0 sm:border-r sm:border-theme-border sm:pr-6">
           <legend class="sr-only">Access mode</legend>
           <div class="flex flex-col gap-2">
             <label
               v-for="option in options"
               :key="option.mode"
-              class="flex cursor-pointer items-start gap-3 rounded-md border p-4"
-              :class="mode === option.mode
-                ? 'border-theme-brand bg-theme-background-elevated'
-                : 'border-theme-border opacity-50 transition-opacity hover:border-theme-text-very-muted hover:opacity-100'"
+              class="flex cursor-pointer items-start gap-3 rounded p-4"
+              :class="{'bg-theme-background-elevated':mode === option.mode}"
             >
               <input
                 type="radio"
@@ -45,9 +43,9 @@
                 :id="`setup-mode-${option.mode}`"
                 :disabled="state.disabled.mode"
                 :aria-describedby="`setup-desc-${option.mode}`"
-                class="mt-1 h-4 w-4 shrink-0 accent-theme-brand"
+                class="focus-ring mt-1 h-4 w-4 shrink-0 accent-theme-brand"
               />
-              <span>
+              <span class="min-w-0">
                 <span class="font-semibold">{{ option.title }}</span>
                 <span
                   :id="`setup-desc-${option.mode}`"
@@ -74,7 +72,7 @@
         >
           <div class="flex flex-col gap-2">
             <div>
-              <label for="setup-username" class="mb-1 block text-sm font-semibold"
+              <label for="setup-username" class="mb-1 block text-sm"
                 >Username</label
               >
               <TextInput
@@ -87,10 +85,10 @@
               />
             </div>
             <div>
-              <label for="setup-password" class="mb-1 block text-sm font-semibold"
+              <label for="setup-password" class="mb-1 block text-sm"
                 >{{ existingAccount ? 'New password (leave blank to keep it)' : 'Password' }}</label
               >
-              <div class="relative">
+              <div class="flex min-w-0 items-center gap-4">
                 <TextInput
                   id="setup-password"
                   ref="passwordInput"
@@ -99,11 +97,12 @@
                   autocomplete="new-password"
                   :disabled="state.disabled.password"
                   :aria-invalid="missingPassword ? 'true' : undefined"
-                  class="pr-10"
+                  class="flex-1"
                 />
-                <button
+                <CustomButton
                   type="button"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-theme-text-muted hover:text-theme-brand"
+                  variant="text"
+                  class="shrink-0"
                   :aria-pressed="showPassword"
                    :aria-label="showPassword ? 'Hide password' : 'Show password'"
                   :disabled="state.disabled.password"
@@ -114,7 +113,7 @@
                     width="20"
                     height="20"
                   />
-                </button>
+                </CustomButton>
               </div>
             </div>
             <div class="my-2 flex items-center justify-between gap-3 text-sm">
@@ -135,7 +134,7 @@
                 aria-labelledby="setup-totp-label"
                  aria-describedby="setup-totp-description"
                 :disabled="state.disabled.totp"
-                class="shrink-0 text-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-theme-brand disabled:cursor-not-allowed disabled:opacity-50"
+                class="focus-ring shrink-0 text-2xl disabled:cursor-not-allowed disabled:opacity-50"
                 @click="totpEnabled = !totpEnabled"
               />
             </div>
@@ -153,7 +152,7 @@
                     :aria-describedby="copyFeedback ? 'setup-totp-copy-feedback' : undefined"
                     :aria-busy="copying"
                     :disabled="state.disabled.qr"
-                    class="block w-full shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-theme-brand disabled:cursor-not-allowed"
+                    class="focus-ring block w-full shrink-0 disabled:cursor-not-allowed"
                     @click="copyTotpKey"
                     @blur="onCopyBlur"
                   >
@@ -178,7 +177,7 @@
                   <div>
                     <label
                       for="setup-totp-code"
-                      class="mb-1 block text-sm font-semibold"
+                      class="mb-1 block text-sm"
                       >{{ dismissible ? 'Code from the new authenticator' : 'Current code' }}</label
                     >
                     <TextInput
@@ -199,7 +198,7 @@
                 Generating enrolment key…
               </p>
             </div>
-            <button v-if="state.showReplacement" type="button" :disabled="state.disabled.replaceAuthenticator" class="text-left text-sm text-theme-brand disabled:opacity-50" @click="form.replaceAuthenticator">Set up a new authenticator</button>
+            <CustomButton v-if="state.showReplacement" type="button" variant="secondary" label="Set up a new authenticator" wrap-label :disabled="state.disabled.replaceAuthenticator" class="self-start" @click="form.replaceAuthenticator" />
           </div>
         </div>
 
@@ -245,7 +244,7 @@
                 v-model="acked"
                 :disabled="state.disabled.ack"
                 :aria-invalid="missingAck ? 'true' : undefined"
-                class="mt-0.5 h-4 w-4 shrink-0 accent-theme-brand"
+                class="focus-ring mt-0.5 h-4 w-4 shrink-0 accent-theme-brand"
               />
               <span>
                 I understand that anyone who can reach this server can change
@@ -268,14 +267,14 @@
         class="mb-1 mt-2 min-h-[1.25rem] text-sm text-theme-danger"
         role="alert"
       >{{ state.message }}</p>
-      <button v-if="state.needsReview" type="button" :disabled="state.disabled.review" class="text-sm text-theme-brand disabled:opacity-50" @click="form.review">Review current access</button>
+      <CustomButton v-if="state.needsReview" type="button" variant="secondary" label="Review current access" :disabled="state.disabled.review" class="self-start" @click="form.review" />
 
       <CtaButton
         type="submit"
-        :label="pending ? 'Setting up…' : dismissible ? 'Save access settings' : 'Finish setup'"
+        :label="state.submitLabel"
         :disabled="state.disabled.submit"
         :aria-busy="pending"
-        class="mt-1"
+        class="mt-1 w-full"
       />
     </form>
   </Modal>
@@ -286,6 +285,7 @@ import { computed, onBeforeUnmount, onMounted, ref, toRefs } from "vue";
 
 import { createSetupFormState, setupOptions as options } from "../setupFormState.js";
 import { tabClose, tabEye, tabEyeOff } from "../icons.js";
+import CustomButton from "./CustomButton.vue";
 import CtaButton from "./CtaButton.vue";
 import Icon from "./Icon.vue";
 import Modal from "./Modal.vue";
@@ -312,7 +312,7 @@ const form = createSetupFormState({
   completed: (...args) => emit("completed", ...args),
   focus(name) {
     const target = { username: usernameInput, password: passwordInput, totpCode: totpCodeInput, ack: ackCheckbox }[name]?.value;
-    (target?.$el ?? target)?.focus();
+    target?.focus();
   },
 });
 const state = form.state;

@@ -20,7 +20,7 @@ vi.mock("../api.js", () => ({
     approvedNetwork: [], approvedImports: [], requestedNetwork: [], requestedImports: [], effectiveNetwork: [], effectiveImports: [], rows: [], pendingRequests: [],
     reload: { state: "none", fingerprint: "none" }, runsInBrowser: true, browserComponents: ["editor"] })),
   putPluginPermissions: vi.fn(), getPluginPermissionRequests: vi.fn(async () => []), decidePluginPermissionRequest: vi.fn(),
-  getConfig: vi.fn(), postBrand: vi.fn(), getTree: vi.fn(),
+  getConfig: vi.fn(), getAccessSettings:vi.fn(), postBrand: vi.fn(), getTree: vi.fn(),
 }));
 let wrapper;
 beforeEach(() => setActivePinia(createPinia()));
@@ -45,14 +45,17 @@ describe("actual Settings permissions entry", () => {
     expect(document.body.textContent).toContain("These permission controls apply to sandboxed server Workers only.");
     expect(document.body.textContent).toContain("Browser network loads from rendered content");
   });
-  it("shows framework browser badges on mixed and disabled inventory", async () => {
+  it("shows inline browser labels on mixed and disabled inventory", async () => {
     await inventory();
-    expect([...document.querySelectorAll("[data-plugin-browser-badge]")].map(el => el.textContent.trim())).toEqual(["Runs in browser", "Runs in browser"]);
+    expect([...document.querySelectorAll(".plugin-row-browser")].map(el => el.textContent.trim())).toEqual(["Runs in browser", "Runs in browser"]);
   });
-  it("exposes review and framework permission pages without declared settings", async () => {
+  it("exposes server permission disclosure without declared settings and omits permission navigation pages", async () => {
     await inventory();
-    expect([...document.querySelectorAll('[data-plugin-inventory] button')].filter(el => el.textContent.trim() === "Permissions")).toHaveLength(2);
-    expect(document.querySelector('[data-permission-page="mixed"]')).not.toBeNull();
+    expect(document.querySelector('[data-plugin-inventory-id="mixed"] button[aria-expanded]')).not.toBeNull();
+    expect(document.querySelector('[data-plugin-inventory-id="disabled-editor"] button[aria-expanded]')).toBeNull();
+    expect(document.querySelector('[data-permission-page]')).toBeNull();
+    document.querySelector('[data-plugin-inventory-id="mixed"] button[aria-expanded]').click(); await flushPromises();
+    expect(document.querySelector('[data-plugin-inventory-id="mixed"] [data-plugin-permission-panel]')).not.toBeNull();
   });
 });
 
@@ -116,6 +119,7 @@ describe("permission controller ownership and actual mutation envelopes", () => 
     adapters.writeView.mockReturnValue(wire.promise);
     const mutation = controller.setMaster("p", true); await vi.advanceTimersByTimeAsync(101); await mutation;
     expect(controller.snapshot("p").unknown).toBe(true); expect(controller.snapshot("p").busy).toBe(true);
+    expect(controller.permissionView("p").pendingText).toBe("Waiting for the server to confirm…");
     expect(controller.discard("p")).toBe(false); expect(await controller.settle()).toBe(false);
     await controller.setMaster("p", false); expect(adapters.writeView).toHaveBeenCalledTimes(1);
     wire.resolve({ view: view("p", 1, { allowNetwork: true }) }); await flushPromises();
@@ -154,7 +158,8 @@ describe("permission controller ownership and actual mutation envelopes", () => 
   });
   it("removed owners retain recovery choices but cannot accept writes or reopen late requests", async () => {
     const request = { id: "r", pluginId: "p", state: "pending", kind: "network", scopes: [{ type: "host", authority: "service.example:443" }], source: view().source };
-    const { controller, adapters } = controllerFixture(view("p", 0, { pendingRequests: [request] }));
+    const row={kind:"network",scope:request.scopes[0],requested:true,approved:true,effective:true,approvalCoverage:request.scopes,sources:["static"],blockedReasons:[]};
+    const { controller, adapters } = controllerFixture(view("p", 0, { pendingRequests: [request],rows:[row] }));
     adapters.writeView.mockRejectedValue({ response: { status: 409, data: { code: "permission_revision_conflict" } } });
     await controller.setMaster("p", true);
     controller.reconcile({ plugins: [] });
@@ -163,41 +168,56 @@ describe("permission controller ownership and actual mutation envelopes", () => 
     expect(controller.snapshot("p").writable).toBe(false);
     expect(controller.snapshot("p").draft.intent.value).toBe(true);
     expect(controller.recoveryIds()).toEqual(["p"]);
+    expect(controller.permissionView("p")).toMatchObject({canChange:false,canReviewStatus:false,
+      network:[{status:"Remembered approval, plugin unavailable",tone:"quiet"}],requests:[{canReview:false}]});
+    expect(controller.snapshot("p").view.rows[0].effective).toBe(true); // Last accepted evidence is retained, not rewritten.
     await controller.setMaster("p", false);
     expect(adapters.writeView).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("operator confirmation through the reusable Settings review", () => {
+describe("operator confirmation through inline Settings permissions", () => {
   async function reviewFixture(permissionView) {
     const { controller, adapters } = controllerFixture(permissionView);
     pluginCatalog.value = { policy: { revision: 0, signature: "policy", effectiveAutoEnable: true }, plugins: [{ id: "p", name: "P", enabled: true, status: "ready", runtime: { server: true }, permissions: permissionView, pages: [], blocking: { actions: [] } }] };
     wrapper = mount(SettingsModal, { attachTo: document.body, props: { modelValue: true, permissionController: controller, writable: true }, global: { directives: { focus: { mounted: el => el.focus() } } } });
     await wrapper.vm.openSettings("core:plugins"); await flushPromises();
-    [...document.querySelectorAll('[data-plugin-inventory-id="p"] button')].find(el => el.textContent.trim() === "Permissions").click(); await flushPromises();
+    document.querySelector('[data-plugin-inventory-id="p"] button[aria-expanded]').click(); await flushPromises();
     return { controller, adapters };
   }
+  it("does not invent empty-host status before an accepted read and recovers without a permission write", async () => {
+    const {adapters}=await reviewFixture(null);
+    const panel=()=>document.querySelector('[data-plugin-inventory-id="p"] [data-plugin-permission-panel]');
+    expect(panel().textContent).toContain("Permission status unavailable");
+    expect(panel().textContent).not.toContain("None requested");
+    expect(panel().querySelector('[role="switch"]')).toBeNull();
+    adapters.readView.mockResolvedValue(view("p",0,{requestedNetwork:[]}));
+    [...panel().querySelectorAll('button')].find(button=>button.textContent.trim()==='Check current status').click();await flushPromises();
+    expect(panel().textContent).toContain("Allow network");
+    expect(panel().textContent).toContain("None requested");
+    expect(adapters.writeView).not.toHaveBeenCalled();
+  });
   it("all-host approval requires a distinct topmost confirmation and Cancel grants nothing", async () => {
     const all = { type: "all" };
     const row = { kind: "network", scope: all, requested: true, approved: false, effective: false, approvalCoverage: [], sources: ["static"], blockedReasons: ["unapproved", "master-off"] };
     const { adapters } = await reviewFixture(view("p", 0, { requestedNetwork: [all], rows: [row] }));
-    [...document.querySelectorAll('[data-permission-review] button')].find(el => el.textContent.trim() === "Approve").click(); await flushPromises();
+    [...document.querySelectorAll('[data-plugin-inventory-id="p"] [data-plugin-permission-panel] button')].find(el => el.textContent.trim() === "Approve").click(); await flushPromises();
     expect(document.querySelector('[data-modal-top=true]').textContent).toContain("Approve all hosts");
     expect(adapters.writeView).not.toHaveBeenCalled();
     [...document.querySelectorAll('[data-modal-top=true] button')].find(el => el.textContent.trim() === "Cancel").click(); await flushPromises();
     expect(adapters.writeView).not.toHaveBeenCalled();
-    expect(document.querySelector('[data-permission-review]')).not.toBeNull();
+    expect(document.querySelector('[data-plugin-inventory-id="p"] [data-plugin-permission-panel]')).not.toBeNull();
   });
   it("deleting a covered host explicitly names broader grants and removes every covering approval only on confirmation", async () => {
     const all = { type: "all" }, exact = { type: "host", authority: "service.example:443" };
     const row = { kind: "network", scope: exact, requested: true, approved: true, effective: true, approvalCoverage: [all, exact], sources: ["static"], blockedReasons: [] };
     const { adapters } = await reviewFixture(view("p", 0, { allowNetwork: true, approvedNetwork: [all, exact], rows: [row] }));
     adapters.writeView.mockResolvedValue({ view: view("p", 1, { allowNetwork: true }) });
-    [...document.querySelectorAll('[data-permission-review] button')].find(el => el.textContent.trim() === "Delete approval").click(); await flushPromises();
+    [...document.querySelectorAll('[data-plugin-inventory-id="p"] [data-plugin-permission-panel] button')].find(el => el.textContent.trim() === "Remove").click(); await flushPromises();
     expect(document.querySelector('[data-modal-top=true]').textContent).toContain("All hosts");
     expect(document.querySelector('[data-modal-top=true]').textContent).toContain("Other hosts covered");
     expect(adapters.writeView).not.toHaveBeenCalled();
-    [...document.querySelectorAll('[data-modal-top=true] button')].find(el => el.textContent.trim() === "Confirm permission change").click(); await flushPromises();
+    [...document.querySelectorAll('[data-modal-top=true] button')].find(el => el.textContent.trim() === "Remove approvals").click(); await flushPromises();
     expect(adapters.writeView.mock.calls[0][1].approvedNetwork).toEqual([]);
   });
 });

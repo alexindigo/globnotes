@@ -15,7 +15,8 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
       if (await peer.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await peer.click('[title="Open sidebar"]');
       await peer.click('[aria-label="Settings"]'); await peer.poll("!!document.querySelector('#settings-modal-title')");
     }
-    await peer.button(page, '[aria-label="Settings pages"]');
+    if(page==='Native preferences')await peer.click('[data-settings-nav-id="plugin:session-guard"]');
+    else await peer.button(page, '[aria-label="Settings pages"]');
     if (page === "Native preferences") await peer.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
   }
   async function editMessage(peer, value) {
@@ -107,10 +108,10 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   await replace(a, "#settings-field-message", "A retained conflict"); await a.key("Enter", { windowsVirtualKeyCode: 13 });
   await a.poll("document.querySelector('[data-modal-top=true]').textContent.includes('These settings changed elsewhere')");
   assert(await a.evaluate("document.querySelector('#settings-field-message').value==='A retained conflict' && document.querySelector('#settings-field-limit').value===''") , "Conflict erased invalid/newer local drafts");
-  await a.button("Appearance"); await a.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
+  await a.button("Appearance"); await a.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
   await a.key("Escape", { windowsVirtualKeyCode: 27 });
   await a.poll("document.querySelector('#settings-field-message')?.value==='A retained conflict' && document.querySelector('#settings-field-limit')?.value===''");
-  await a.button("Reload"); await a.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved settings')");
+  await a.button("Reload (discards your edits)…"); await a.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
   await a.button("Discard", '[data-modal-top="true"]');
   await a.poll("document.querySelector('#settings-field-message')?.value==='B newer revision' && document.querySelector('#settings-field-limit')?.value==='5'");
   await record({ name: "actual-cas-conflict-invalid-draft-recovery", retained: "A retained conflict", explicitDiscardReadBack: "B newer revision", topmostEscapeKeptDraft: true });
@@ -127,21 +128,21 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   const guarded = await api(b, "/_/api/notes/NoteA", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newContent: "GPS-blocked peer write" }) });
   assert(guarded.status === 409, "Enabled guard did not consume the persisted peer setting");
   await replace(a, "#settings-field-message", "A recovery after remote disable");
-  await open(b, "Plugins"); await b.button("Enabled", '[data-plugin-inventory-id="session-guard"]');
+  await open(b, "Plugins"); await b.click('[data-plugin-inventory-id="session-guard"] .plugin-row-actions [role=switch]');
   await a.poll("document.querySelector('#settings-field-message').readOnly && document.querySelector('[data-modal-top=true]').textContent.includes('This page is unavailable')");
   assert(await a.evaluate("document.querySelector('#settings-field-message').value==='A recovery after remote disable'"), "Remote disable lost the recovery draft");
   const disabledCommand = await api(b, "/_/api/plugin-host/session-guard/commands/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   const disabledEndpoint = await api(b, "/_/api/plugins/session-guard/ping");
   const unguarded = await api(b, "/_/api/notes/NoteA", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newContent: "GPS-blocked peer write" }) });
   assert(disabledCommand.status === 404 && disabledEndpoint.status === 404 && unguarded.status === 200, "Disable did not remove actual command/endpoint/guard admission");
-  const disabledInventory = await settleSettingsInventory(b, "document.querySelector('[data-plugin-inventory-id=\"session-guard\"] button')?.textContent.trim()==='Disabled'");
+  const disabledInventory = await settleSettingsInventory(b, "document.querySelector('[data-plugin-inventory-id=\"session-guard\"] .plugin-row-actions [role=switch]')?.getAttribute('aria-checked')==='false'");
   await open(b, "Appearance"); const beforeDisabledTheme = await b.evaluate("window.__settingsPeerThemeEvents"); await b.click('[data-theme-id="globnotes-dark"]');
   await b.poll("document.body.classList.contains('dark')"); assert(await b.evaluate("window.__settingsPeerThemeEvents") === beforeDisabledTheme, "Disabled managed browser subscription still fired");
   await open(b, "Keybindings"); assert(!await b.evaluate("!!document.querySelector('[data-command-binding=\"plugin:session-guard:sdk-settings\"]')"), "Disabled browser command remained registered");
-  await open(b, "Plugins"); await b.button("Disabled", '[data-plugin-inventory-id="session-guard"]');
+  await open(b, "Plugins"); await b.click('[data-plugin-inventory-id="session-guard"] .plugin-row-actions [role=switch]');
   await a.poll("!document.querySelector('#settings-field-message').readOnly");
   assert(await a.evaluate("document.querySelector('#settings-field-message').value==='A recovery after remote disable'"), "Re-enable discarded the recovery draft");
-  const enabledInventory = await settleSettingsInventory(b, "document.querySelector('[data-plugin-inventory-id=\"session-guard\"] button')?.textContent.trim()==='Enabled'");
+  const enabledInventory = await settleSettingsInventory(b, "document.querySelector('[data-plugin-inventory-id=\"session-guard\"] .plugin-row-actions [role=switch]')?.getAttribute('aria-checked')==='true'");
   // Explicitly focus the recovered field before admitting its retained edit.
   await a.click("#settings-field-message"); await a.key("Enter", { windowsVirtualKeyCode: 13 });
   await a.poll("fetch('/_/api/plugin-host/session-guard/settings/preferences').then(r=>r.json()).then(d=>d.values.message==='A recovery after remote disable')");

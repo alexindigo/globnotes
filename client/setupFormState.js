@@ -55,6 +55,10 @@ export function createSetupFormState({
     ...toRefs(fields),
     accessView, accessLoading, existingAccount, existingTotp, pending, disabled,
     needsReview: computed(() => access.state.needsReview),
+    submitLabel: computed(() => !dismissible() ? fields.submitting ? 'Setting up…' : 'Finish setup'
+      : access.state.reviewing || accessLoading.value ? 'Checking current access…'
+      : access.state.unknown ? 'Waiting for the server to confirm…'
+      : access.state.pending || access.state.inFlight ? 'Saving access settings…' : 'Save access settings'),
     message: computed(() => fields.feedback || access.state.error),
     showEnrolment: computed(() => !!(fields.totpEnabled && (!existingTotp.value || fields.replacingTotp || fields.totpKey))),
     showReplacement: computed(() => !!(fields.totpEnabled && existingTotp.value && !fields.replacingTotp)),

@@ -1,16 +1,14 @@
 <template>
   <div class="relative w-full">
     <!-- Input -->
-    <div
-      class="flex w-full rounded-md border border-theme-border bg-theme-background dark:bg-theme-background-elevated"
-      :class="{ 'px-3 py-2': !large, 'px-5 py-4': large }"
-    >
-      <input
+    <div class="flex w-full items-center gap-4">
+      <TextInput
         type="text"
         ref="input"
         v-model="searchTerm"
         v-focus
-        class="w-full bg-transparent focus:outline-none"
+        :variant="large ? 'search' : 'field'"
+        class="flex-1"
         :placeholder="placeholder"
         @keydown="keydownHandler"
         @keyup="stateChangeHandler"
@@ -20,14 +18,15 @@
         @keydown.up.prevent
       />
       <!-- Clear to "list all" -->
-      <button
+      <CustomButton
         type="button"
-        class="cursor-pointer text-theme-text-muted hover:bg-theme-background-elevated hover:text-theme-brand"
+        variant="text"
+        class="shrink-0"
         title="List all notes"
         @click="clearToAll"
       >
         <Icon icon="tabClose" size="1.25em" />
-      </button>
+      </CustomButton>
       <!-- Note: Default behaviour for up and down keys is prevented to stop cursor moving when tag menu is navigated. -->
     </div>
 
@@ -53,6 +52,8 @@
 
 <script setup>
 import Icon from "../components/Icon.vue";
+import TextInput from '../components/TextInput.vue';
+import CustomButton from '../components/CustomButton.vue';
 import { tabClose } from "../icons.js";
 import { useToast } from "primevue/usetoast";
 import { computed, ref, watch } from "vue";
@@ -107,7 +108,7 @@ function keydownHandler(event) {
 }
 
 function tagChosen(tag) {
-  searchTerm.value = completion.choose(searchTerm.value, input.value.selectionStart, tag);
+  searchTerm.value = completion.choose(searchTerm.value, input.value.selectionStart(), tag);
 }
 
 function clearToAll() {
@@ -131,7 +132,7 @@ function search() {
 }
 
 function stateChangeHandler() {
-  completion.update(searchTerm.value, input.value.selectionStart);
+  completion.update(searchTerm.value, input.value.selectionStart());
 }
 
 watch(

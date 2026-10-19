@@ -3,14 +3,13 @@
        sidebar is closed). Sits exactly where this panel's close button
        lands once open (aside py-2 + header pt-2, px-4) — the toggle
        never jumps. -->
-  <CustomButton
+  <div v-if="!state.sidebarVisible" class="fixed left-4 top-4 z-30 shadow-md print:hidden"><CustomButton
     v-if="!state.sidebarVisible"
     :iconPath="tabDockLeft"
     label=""
     title="Open sidebar"
-    class="fixed left-4 top-4 z-30 shadow-md print:hidden"
     @click="sidebar.openSidebar"
-  />
+  /></div>
   <!-- Backdrop: overlay mode only (unpinned) -->
   <div
     v-if="state.sidebarVisible && !state.sidebarPinned"
@@ -177,12 +176,7 @@
         :iconPath="tabClock"
         label=""
         title="Recent notes"
-        :class="[
-          'rounded-none border-t-2',
-          state.recentEnabled
-            ? 'text-theme-brand border-theme-brand'
-            : 'border-transparent',
-        ]"
+        :aria-pressed="state.recentEnabled"
         @click="sidebar.toggleRecent"
       />
       <CustomButton
