@@ -93,7 +93,16 @@ export async function writeClipboard(page, items) {
 export const readClipboardText = async page => (await captureClipboard(page)).find(item => item.type === "text/plain")?.data ?? "";
 export const writeClipboardText = (page, text) => writeClipboard(page, [{ type: "text/plain", data: text }]);
 
-export async function restoreClipboard(page, snapshot) {
-  await writeClipboard(page, snapshot);
-  if (JSON.stringify(await captureClipboard(page)) !== JSON.stringify(snapshot)) throw Error("Prior clipboard was not restored");
+/** Page JS cannot clear the system clipboard: empty offers are equivalent to
+ * an empty prior snapshot. Non-empty snapshots retain exact type/order/data. */
+export function clipboardRestored(snapshot, captured) {
+  return snapshot.length === 0
+    ? captured.every(item => item.data === "")
+    : JSON.stringify(captured) === JSON.stringify(snapshot);
+}
+
+export async function restoreClipboard(page, snapshot, { write = writeClipboard, capture = captureClipboard } = {}) {
+  // An empty copy payload leaves old data intact; explicitly replace it.
+  await write(page, snapshot.length ? snapshot : [{ type: "text/plain", data: "" }]);
+  if (!clipboardRestored(snapshot, await capture(page))) throw Error("Prior clipboard was not restored");
 }
