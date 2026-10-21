@@ -203,6 +203,38 @@ describe("note workflow ownership", () => {
     expect(f.controller.isDirty()).toBe(false); expect(createNote).not.toHaveBeenCalled();
     await f.controller.deleteConfirmedHandler(); expect(deleteNote).toHaveBeenCalledWith("folder/P");
   });
+  it("acknowledges its own caret URL write without selecting, but later history restores selection", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter(); f.location.hash = "#source";
+    const target = f.to("folder/P", "#source:L3");
+    f.router.replace.mockImplementation(async fullPath => {
+      expect(fullPath).toBe(target.fullPath);
+      expect(await f.controller.gateNavigation(target)).toBe(true);
+      f.router.currentRoute.value.fullPath = fullPath;
+    });
+    f.controller.onSourceSelection({ from: 3, to: 3 });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(f.router.replace).toHaveBeenCalledExactlyOnceWith(target.fullPath);
+    expect(f.port.selectLine).not.toHaveBeenCalled();
+    expect(await f.controller.gateNavigation(target)).toBe(true);
+    expect(f.port.selectLine).toHaveBeenCalledExactlyOnceWith({ from: 3, to: 3 });
+  });
+  it("publishes mode and exit state before their own push guards without replaying effects", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter(); f.location.hash = "#source";
+    f.router.push.mockImplementation(async fullPath => {
+      const hash = fullPath.includes("#") ? fullPath.slice(fullPath.indexOf("#")) : "";
+      expect(f.controller.state.editMode).toBe(!!hash);
+      if (hash) expect(f.controller.state.editorMode).toBe("wysiwyg");
+      expect(await f.controller.gateNavigation(f.to("folder/P", hash))).toBe(true);
+      f.router.currentRoute.value.fullPath = fullPath;
+      f.location.hash = hash;
+    });
+    f.controller.setEditorMode("wysiwyg"); await flush();
+    expect(f.port.selectLine).not.toHaveBeenCalled();
+    f.controller.toggleEditModeHandler(); await flush();
+    expect(f.router.push).toHaveBeenLastCalledWith("/folder/P");
+    expect(f.controller.state.editMode).toBe(false);
+    expect(f.adapters.publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_EDIT_END)).toHaveLength(1);
+  });
   it("dispose retires the pending caret URL write", async () => {
     const f = fixture(); await f.controller.mount(); f.enter(); f.location.hash = "#source";
     f.router.replace.mockClear(); f.router.push.mockClear();

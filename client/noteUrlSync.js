@@ -15,6 +15,25 @@ export function createNoteUrlSync({
   let caretSyncTimer = null;
   let acknowledgementTransition = null;
 
+  // Every state publication has one-shot guard authority. Save publications
+  // additionally carry resource/session authority for the resulting prop update.
+  async function writeRoute(fullPath, push, acknowledgement = null) {
+    const token = { ownerId, fullPath, nonce: createUuid(), guardConsumed: false, ...acknowledgement };
+    acknowledgementTransition = token;
+    let applied = false;
+    try {
+      if (push) await router.push(fullPath);
+      else await router.replace(fullPath);
+      applied = router.currentRoute.value.fullPath === fullPath;
+      if (acknowledgement && !applied) throw new Error("Save committed, but its canonical route could not be applied. Work is retained.");
+    } finally {
+      // Failed/duplicated/cancelled writes must not authorize a later visit to
+      // the same URL. An older completion cannot retire a newer publication.
+      if (acknowledgementTransition === token &&
+          (!acknowledgement || !applied || getPath() === token.path)) acknowledgementTransition = null;
+    }
+  }
+
   function currentFragment() {
     const state = getState();
     if (!state.editMode) return { mode: "view", line: state.viewLine };
@@ -29,12 +48,11 @@ export function createNoteUrlSync({
     const location = getLocation();
     if (location.hash === hash) return;
     const url = appRelativePath(location.pathname, router.options.history.base) + location.search + hash;
-    if (push) router.push(url);
-    else router.replace(url);
+    return writeRoute(url, push);
   }
 
   function writeCurrentFragment(push = false) {
-    writeFragment(currentFragment(), push);
+    return writeFragment(currentFragment(), push);
   }
 
   function clearCaretSyncTimer() {
@@ -58,11 +76,11 @@ export function createNoteUrlSync({
   }
 
   function consumeAcknowledgementGuard() {
-    acknowledgementTransition.guardConsumed = true;
+    if (acknowledgementTransition) acknowledgementTransition.guardConsumed = true;
   }
 
   function consumeAcknowledgedResource(path, sessionId) {
-    if (acknowledgementTransition?.guardConsumed && path === acknowledgementTransition.path && sessionId === acknowledgementTransition.sessionId) {
+    if (acknowledgementTransition?.submissionId != null && acknowledgementTransition.guardConsumed && path === acknowledgementTransition.path && sessionId === acknowledgementTransition.sessionId) {
       acknowledgementTransition = null;
       return true;
     }
@@ -73,11 +91,7 @@ export function createNoteUrlSync({
     const hash = serializeFragment(currentFragment());
     const fullPath = notePath(path) + hash;
     if (router.currentRoute.value.fullPath === fullPath) return;
-    const token = { ownerId, sessionId: snapshot.sessionId, submissionId: snapshot.submissionId, fullPath, path, nonce: createUuid(), guardConsumed: false };
-    acknowledgementTransition = token;
-    await router.replace(fullPath);
-    if (router.currentRoute.value.fullPath !== fullPath) throw new Error("Save committed, but its canonical route could not be applied. Work is retained.");
-    if (getPath() === path && acknowledgementTransition === token) acknowledgementTransition = null;
+    await writeRoute(fullPath, false, { sessionId: snapshot.sessionId, submissionId: snapshot.submissionId, path });
   }
 
   return {

@@ -106,6 +106,22 @@ describe("acknowledgement navigation authority", () => {
   const to = destination("note", "Canonical", "#source:L2-4");
   const transition = { ownerId: "owner", sessionId: "session", submissionId: 3, fullPath: to.fullPath, path: "Canonical", guardConsumed: false, nonce: "nonce" };
 
+  it.each([
+    ["own publication", {}, "acknowledge"],
+    ["consumed publication", { guardConsumed: true }, "sync-editor"],
+    ["another owner", { ownerId: "other" }, "sync-editor"],
+    ["another query", { fullPath: "/Folder/Note?q=other#source:L2-4" }, "sync-editor"],
+    ["another hash", { fullPath: "/Folder/Note#source:L3" }, "sync-editor"],
+  ])("%s distinguishes state output from external intent without mutation", (_, overrides, type) => {
+    const target = destination("note", "Folder/Note", "#source:L2-4");
+    const current = state({ editMode: true, acknowledgementTransition: Object.freeze({
+      ownerId: "owner", fullPath: target.fullPath, nonce: "fragment", guardConsumed: false, ...overrides,
+    }) });
+    const before = JSON.stringify(current);
+    expect(decideNavigation(current, target).type).toBe(type);
+    expect(JSON.stringify(current)).toBe(before);
+  });
+
   it("the exact active submission bypasses the dirty different-resource gate without consuming state", () => {
     const current = state({ editMode: true, dirty: true, acknowledgementTransition: Object.freeze({ ...transition }) });
     expect(decideNavigation(current, to)).toEqual({ type: "acknowledge" });

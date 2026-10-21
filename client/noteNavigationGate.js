@@ -17,7 +17,8 @@ function destinationResourceIdentity(to) {
 export function decideNavigation(state, to) {
   const transition = state.acknowledgementTransition;
   if (transition && !transition.guardConsumed && transition.ownerId === state.ownerId && transition.fullPath === to.fullPath &&
-      transition.sessionId === state.sessionId && transition.submissionId === state.activeSubmissionId) {
+      (transition.submissionId == null ||
+        (transition.sessionId === state.sessionId && transition.submissionId === state.activeSubmissionId))) {
     return { type: "acknowledge" };
   }
 

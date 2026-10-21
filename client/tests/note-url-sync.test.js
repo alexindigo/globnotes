@@ -20,6 +20,49 @@ function deferred() { let resolve; const promise = new Promise(yes => { resolve 
 afterEach(() => { vi.useRealTimers(); });
 
 describe("state-to-URL writes", () => {
+  it.each([false, true])("acknowledges only the caused navigation (push=%s), not subsequent history", async push => {
+    const { sync, router } = fixture();
+    const state = () => ({ ...sync.state(), ownerId: "owner", editMode: true,
+      resourceIdentity: JSON.stringify(["note", "Folder/My note"]), editorMode: "markdown" });
+    const to = { name: "note", params: { path: "Folder/My note" }, query: {},
+      hash: "#source:L2-4", fullPath: "/Folder/My%20note?x=one&x=two#source:L2-4" };
+    const external = { type: "sync-editor", mode: "markdown", line: { from: 2, to: 4 } };
+    router[push ? "push" : "replace"].mockImplementationOnce(async fullPath => {
+      expect(fullPath).toBe(to.fullPath);
+      expect(decideNavigation(state(), to)).toEqual({ type: "acknowledge" });
+      sync.consumeAcknowledgementGuard();
+      // Even while the router's promise is pending, authority is single-use.
+      expect(decideNavigation(state(), to)).toEqual(external);
+      expect(sync.consumeAcknowledgedResource("Folder/My note", undefined)).toBe(false);
+      router.currentRoute.value.fullPath = fullPath;
+    });
+    await sync.writeCurrentFragment(push);
+    expect(sync.state().acknowledgementTransition).toBeNull();
+    expect(decideNavigation(state(), to)).toEqual(external);
+  });
+
+  it.each(["rejected", "aborted", "duplicated"])("retires %s fragment writes before a later visit", async result => {
+    const { sync, router } = fixture();
+    router.replace.mockImplementationOnce(() => result === "rejected" ? Promise.reject(Error("router failed")) : Promise.resolve({ type: result }));
+    const write = sync.writeCurrentFragment();
+    if (result === "rejected") await expect(write).rejects.toThrow("router failed");
+    else await write;
+    expect(sync.state().acknowledgementTransition).toBeNull();
+  });
+
+  it("an older fragment completion cannot retire a newer pending publication", async () => {
+    const { sync, router, current } = fixture(); const first = deferred(), second = deferred();
+    router.replace.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const older = sync.writeCurrentFragment();
+    current.editorLine = { from: 8, to: 8 };
+    const newer = sync.writeCurrentFragment();
+    const token = sync.state().acknowledgementTransition;
+    first.resolve(); await older;
+    expect(sync.state().acknowledgementTransition).toEqual(token);
+    second.resolve(); await newer;
+    expect(sync.state().acknowledgementTransition).toBeNull();
+  });
+
   it.each([
     ["markdown", true, "#source:L2-4"],
     ["preview", true, "#source:L2-4"],
@@ -143,16 +186,16 @@ describe("canonical save route and acknowledgement token", () => {
     expect(sync.state().acknowledgementTransition).toBeNull();
   });
 
-  it("a rejected router write propagates and retains the transition", async () => {
+  it("a rejected router write propagates and retires navigation authority", async () => {
     const { sync, router } = fixture(); const error = Error("router unavailable");
     router.replace.mockRejectedValueOnce(error);
     await expect(sync.canonicalSaveRoute(snapshot, "Canonical")).rejects.toBe(error);
-    expect(sync.state().acknowledgementTransition.fullPath).toBe("/Canonical#source:L2-4");
+    expect(sync.state().acknowledgementTransition).toBeNull();
   });
 
-  it("an aborted canonical navigation reports committed work, retaining its transition", async () => {
+  it("an aborted canonical navigation reports committed work without leaving navigation authority", async () => {
     const { sync, router } = fixture(); router.replace.mockResolvedValueOnce(undefined);
     await expect(sync.canonicalSaveRoute(snapshot, "Canonical")).rejects.toThrow("Save committed, but its canonical route could not be applied. Work is retained.");
-    expect(sync.state().acknowledgementTransition.path).toBe("Canonical");
+    expect(sync.state().acknowledgementTransition).toBeNull();
   });
 });

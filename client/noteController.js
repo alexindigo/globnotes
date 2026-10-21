@@ -329,8 +329,9 @@ export function createNoteController({
   async function closeHandler() {
     if (!await resolveOwnedWork()) return;
     if (isNewNote.value) { exitEditState(); router.push({ name: "home" }); return; }
-    if (getLocation().hash === "") { exitEditState(); return; }
-    urlSync.writeFragment(null, true);
+    exitEditState();
+    if (getLocation().hash === "") return;
+    return urlSync.writeFragment(null, true);
   }
   function exitEditState() {
     saveOwner.revokeRenamePrompt(); clearEditTimers();

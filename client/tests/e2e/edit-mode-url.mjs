@@ -36,7 +36,23 @@ await page.poll(`location.hash === "#source"`);
 
 // 3. Caret move -> line aspect appears.
 await page.click(".cm-content");
+await page.key("Home", { modifiers: 2, windowsVirtualKeyCode: 36 });
+await page.key("ArrowRight", { windowsVirtualKeyCode: 39 });
+const sourceText = () => page.evaluate(`[...document.querySelectorAll('.cm-content .cm-line')].map(el => el.textContent).join('\\n')`);
+const beforeCaretWrite = await sourceText();
 await page.poll(`/^#source:L\\d+/.test(location.hash)`);
+await page.waitForTimeout(650);
+const caretAfterWrite = await page.evaluate(`({ collapsed: getSelection().isCollapsed, selected: getSelection().toString(), hash: location.hash })`);
+await page.send("Input.insertText", { text: "caret-probe" });
+await page.poll(`document.querySelector('.cm-content').textContent.includes('caret-probe')`);
+const afterCaretType = await sourceText();
+if (!caretAfterWrite.collapsed || !(await page.evaluate(`getSelection().isCollapsed`)) ||
+    afterCaretType !== beforeCaretWrite.slice(0, 1) + "caret-probe" + beforeCaretWrite.slice(1)) {
+  fail("own caret URL write selected or deleted text: " + JSON.stringify({ caretAfterWrite, beforeCaretWrite, afterCaretType }));
+}
+// Native undo returns the original clean buffer before exercising exit/history.
+await page.key("z", { modifiers: 2, code: "KeyZ", windowsVirtualKeyCode: 90 });
+await page.poll(`[...document.querySelectorAll('.cm-content .cm-line')].map(el => el.textContent).join('\\n') === ${JSON.stringify(beforeCaretWrite)}`);
 
 // 4. Toggle edit off from this clean session -> fragment cleared.
 // (Done before any WYSIWYG round-trip: a mode switch normalizes content,
@@ -60,6 +76,10 @@ await page.goto(`${BASE}/`);
 await page.goto(`${NOTE}#source:L2-4`);
 await page.poll(`!!document.querySelector(".cm-editor")`, { timeout: 15000 });
 await page.poll(`/^#source:L2(-4)?$/.test(location.hash)`);
+// A deep-linked editor starts unfocused; focus exposes its stored range to
+// the browser Selection API without moving the caret as a click would.
+await page.evaluate(`document.querySelector('.cm-content').focus()`);
+await page.poll(`getSelection().toString() === [...document.querySelectorAll('.cm-content .cm-line')].slice(1, 4).map(el => el.textContent).join('\\n')`);
 
 // 7. Unknown fragment (#L3) stays in view mode, URL untouched.
 await page.goto(`${BASE}/`);
@@ -86,11 +106,19 @@ await page.poll(`document.querySelector(".toastui-editor-contents") !== null`);
 await page.poll(`location.hash === ""`);
 await page.evaluate(`history.forward()`);
 await page.poll(`!!document.querySelector(".cm-editor")`);
+await page.click(".cm-content");
+await page.key("Home", { modifiers: 2, windowsVirtualKeyCode: 36 });
+await page.key("ArrowRight", { windowsVirtualKeyCode: 39 });
+await page.poll(`location.hash === '#source:L1'`);
+await page.waitForTimeout(250);
+if (!(await page.evaluate(`getSelection().isCollapsed`))) fail("history entry publication selected the caret line");
 await page.clickText("WYSIWYG");
 await page.poll(`!!document.querySelector(".ProseMirror")`, { timeout: 15000 });
 await page.evaluate(`history.back()`);
 await page.poll(`!!document.querySelector(".cm-editor")`, { timeout: 15000 });
 await page.poll(`/^#source/.test(location.hash)`);
+await page.evaluate(`document.querySelector('.cm-content').focus()`);
+await page.poll(`getSelection().toString() === document.querySelector('.cm-content .cm-line').textContent`);
 
 // 9. Same-document fragment changes (pasting a link into an open tab)
 // are reconciled without a reload: view -> source, source -> edit,
@@ -105,6 +133,8 @@ await page.poll(`!!document.querySelector(".ProseMirror")`, { timeout: 15000 });
 await page.goto(`${NOTE}#source:L3`);
 await page.poll(`!!document.querySelector(".cm-editor")`, { timeout: 15000 });
 await page.poll(`/^#source:L3/.test(location.hash)`);
+await page.evaluate(`document.querySelector('.cm-content').focus()`);
+await page.poll(`getSelection().toString() === document.querySelectorAll('.cm-content .cm-line')[2].textContent`);
 
 // 10. SPA-navigating to a different note while editing: the edit session
 // ends with the URL — no fragment, viewer shown, editor gone. Opening the
@@ -258,6 +288,6 @@ await page.poll(`document.querySelector(".toastui-editor-contents") !== null`, {
 console.log("pageerrors:", page.pageErrors.length ? page.pageErrors : "none");
 if (page.pageErrors.length) fail("page errors present");
 console.log("EDIT MODE URL OK");
-return { editFragments: true, history: true, dirtyNavigation: true, noDuplicateDraftPrompt: true };
+return { editFragments: true, caretTextPreserved: true, history: true, dirtyNavigation: true, noDuplicateDraftPrompt: true };
 }
 if (import.meta.main) await runCase("edit-mode-url", exercise);
