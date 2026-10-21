@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.4.1 (2026-10-21)
+
+### Fix
+
+In Source mode, moving the caret no longer selects the whole line a moment
+later. Before, the next keystroke replaced that line, deleting its text. The
+note's own address updates (caret line, editor mode, the saved note's address)
+are no longer treated as navigation; links, typed addresses and Back/Forward
+still select the line they point to.
+
 ## v2.4.0 (2026-10-19)
 
 ### Changed
