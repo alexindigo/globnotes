@@ -1,0 +1,28 @@
+{
+  "id": "globnotes-autosave-timer",
+  "name": "Autosave timer",
+  "version": "1.0.0",
+  "license": "LGPL-3.0-only",
+  "runtime": { "client": "app.js" },
+  "settings": [{
+    "id": "autosave",
+    "label": "Autosave",
+    "renderer": { "kind": "declarative-v1", "version": 1 },
+    "groups": [
+      {
+        "id": "safety",
+        "label": "Before you turn this on",
+        "tone": "warning",
+        "description": "Changes made elsewhere are overwritten. While a note is open for editing here, autosave keeps writing this copy. Edits made meanwhile in Obsidian, Syncthing or another tab are lost.\n\nBackups fill up quickly. With the backup plugin on, every autosave keeps a copy of the earlier text (2 by default). A few autosaves push out older versions. Raise Retained versions in the backup settings, or use \"Every N seconds\" with a longer interval.\n\nMistakes are saved too. An accidental deletion is written within seconds. Undo works while the note is open; after that, only backups can bring it back.",
+        "fields": ["enabled"]
+      },
+      { "id": "timing", "label": "Timing", "fields": ["mode", "pauseSeconds", "intervalSeconds"] }
+    ],
+    "fields": [
+      { "key": "enabled", "label": "Autosave", "type": "toggle", "default": false },
+      { "key": "mode", "label": "When to save", "type": "select", "default": "pause", "options": [{ "value": "pause", "label": "After I stop typing" }, { "value": "interval", "label": "Every N seconds" }] },
+      { "key": "pauseSeconds", "label": "Seconds after typing stops", "type": "number", "default": 2, "min": 1, "max": 60, "step": 1, "visibleWhen": { "field": "mode", "equals": "pause" } },
+      { "key": "intervalSeconds", "label": "Save every … seconds", "type": "number", "default": 30, "min": 5, "max": 3600, "step": 1, "visibleWhen": { "field": "mode", "equals": "interval" } }
+    ]
+  }]
+}

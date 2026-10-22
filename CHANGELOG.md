@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+The opt-in Autosave timer plugin saves after you stop typing or every N seconds
+(#12). Turn it on in Settings → Plugin settings → Autosave, inside the warning
+banner. It is off by default; the banner explains overwritten external edits,
+backup retention and accidental changes.
+
+Plugin authors can use warning-toned settings groups, the text-free
+retained `note:edit-state` fact (including whether editing is active) and the
+boolean return from `ctx.actions.dispatch` to track save readiness and action
+acceptance, even when a browser plugin loads after editing began.
+
+### Changed
+
+Save only saves the text and keeps the note open for editing. Saving unchanged
+text does nothing. Title and folder changes apply on Enter or when leaving the
+field; Discard reverts only the text, keeping an already-applied rename.
+
+### Fixed
+
+Opening a note in WYSIWYG and leaving without changes no longer counts as
+unsaved. When a rename updates the note's text (attachment links, heading) while
+you keep typing, globnotes keeps your text, stops automatic saves and asks you to
+review instead of writing old links back. In WYSIWYG the renamed note's updated
+links now reach the editor.
+
 ## v2.4.1 (2026-10-21)
 
 ### Fix

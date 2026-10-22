@@ -1,8 +1,8 @@
 # globnotes plugin authoring
 
-A globnotes plugin is a folder with a `manifest.json` and an ES-module entry. It
-runs **sandboxed** in its own Deno Worker and hooks into the markdown-it render
-pipeline.
+A globnotes plugin is a folder with a `manifest.json` and optional ES-module
+entries. Server code runs **sandboxed** in Deno Workers; browser code runs as
+trusted same-origin code. Plugins can extend rendering, editing and app workflows.
 
 ## Layout
 
@@ -178,7 +178,13 @@ is a per-plugin master that keeps remembered approvals when off. A prominent not
 and inline **Runs in browser** label disclose trusted editor/browser code;
 these server controls do not restrict it or browser loads from rendered content.
 
-## Rules of the sandbox
+## Shipped workflow plugins
+
+The browser-only [Autosave timer](../plugins/globnotes-autosave-timer/README.md)
+triggers the normal Save after typing pauses or at a fixed interval. Its Autosave
+switch is **off by default**: open **Settings → Plugin settings → Autosave** and
+read the warning banner before turning it on. Settings are vault-owned; detecting
+changes made elsewhere is planned for v3.
 
 The server-only [versioned backup plugin](../plugins/globnotes-backup/README.md)
 uses generic completion IO for best-effort previous-text history. Settings →
@@ -187,6 +193,8 @@ files remain visible vault files, including old/deleted text for public readers.
 Dedicated bases mirror the captured original path; rename/base changes do not
 migrate histories. Generic environment pins and filesystem grants are documented
 in [plugin-api.md](plugin-api.md).
+
+## Rules of the sandbox
 
 - A plugin that throws **abstains** — it can degrade a render, never kill it.
 - Each service Worker, initial render replica and admitted render replacement
