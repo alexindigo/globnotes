@@ -15,6 +15,7 @@ function entityTooLargeError(entity) {
 }
 
 export function noteSaveError(error, failure) {
+  if (error?.code === "rename_rebase_conflict") return { title: "Review renamed text", message: error.message };
   if (failure?.certainty === "unknown" || failure?.certainty === "known-committed") {
     return {
       title: "Save paused",

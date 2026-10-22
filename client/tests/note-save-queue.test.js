@@ -16,6 +16,33 @@ function fixture(overrides = {}) {
 async function ack(request, path = "P") { request.resolve({ path, content: request.snapshot.content }); await flushPromises(); }
 
 describe("per-note save FIFO", () => {
+  it("holds every queued snapshot behind a transformed rename without an owner merge", async () => {
+    const { queue, sent } = fixture();
+    queue.submit({ ...snapshot("# Old\n\nBody\n", 1, "Q"), intent: "rename" });
+    queue.submit(snapshot("# Old\n\nBody\nNew text\n", 1, "Q")); await flushPromises();
+    sent[0].resolve({ path: "Q", content: "# New\n\nBody\n" }); await flushPromises();
+    expect(sent).toHaveLength(1); expect(queue.state().rebaseConflict).toBe(true);
+    expect(queue.state().queued[0].snapshot.content).toBe("# Old\n\nBody\nNew text\n");
+  });
+  it("retires completed payloads after receipt and drain integration, retaining only the base", async () => {
+    const { queue } = fixture({ send: async snapshot => ({ path: "P", content: snapshot.content }) });
+    for (let i = 0; i < 100; i++) {
+      const text = `version ${i}\n` + "x".repeat(1000);
+      const receipt = queue.submit(snapshot(text));
+      expect(await receipt.completion).toMatchObject({ status: "acknowledged", result: { content: text } });
+      await flushPromises();
+      expect(queue.state().jobs).toHaveLength(0);
+      expect(queue.state().acknowledged.content).toBe(text);
+    }
+  });
+  it("retiring a completed drain never notifies a disposed session", async () => {
+    const drain = deferred(), changed = vi.fn();
+    const { queue, sent } = fixture({ changed, drained: () => drain.promise });
+    queue.submit(snapshot("A")); await flushPromises(); await ack(sent[0]);
+    expect(queue.state().jobs).toHaveLength(1); // integration still owns its payload
+    queue.dispose(); changed.mockClear(); drain.resolve(); await flushPromises();
+    expect(changed).not.toHaveBeenCalled();
+  });
   it("preparation currentness survives a waiter timeout but ends at send, observation timeout, discard or disposal", async () => {
     vi.useFakeTimers();
     const preparation = deferred(); let context;

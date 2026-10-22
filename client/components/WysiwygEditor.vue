@@ -14,7 +14,7 @@
       <MilkdownProvider>
         <WysiwygEditorInner
           ref="inner"
-          :initialValue="initialValue"
+          :initialValue="acknowledgedValue ?? initialValue"
           :addImageBlobHook="addImageBlobHook"
           @change="onChange"
           @activeChange="onActiveChange"
@@ -45,6 +45,7 @@ const wrapper = ref();
 const inner = ref();
 const toolbar = ref();
 const activeState = ref({});
+const acknowledgedValue = ref(null);
 let actionUnsubs = [];
 
 onBeforeUnmount(() => {
@@ -79,14 +80,20 @@ function getSnapshot() {
 }
 
 function setMarkdown(markdownText) {
+  acknowledgedValue.value = markdownText;
   inner.value?.setMarkdown(markdownText);
+}
+
+function applyAcknowledgement(text) {
+  acknowledgedValue.value = text;
+  return inner.value ? inner.value.applyAcknowledgement(text) : true;
 }
 
 function isWysiwygMode() {
   return true;
 }
 
-defineExpose({ getMarkdown, getSnapshot, setMarkdown, isWysiwygMode });
+defineExpose({ getMarkdown, getSnapshot, applyAcknowledgement, setMarkdown, isWysiwygMode });
 </script>
 
 <style>

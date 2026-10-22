@@ -69,6 +69,79 @@ function fixture(overrides = {}, useDefaults = false) {
 }
 
 describe("save owner submission and acknowledgement", () => {
+  it.each([false, true])("holds delayed rename results when newer prose exists (queued=%s)", async queued => {
+    const f = fixture();
+    const base = "# P\n\n![pic](assets/pic.png)\n\nBody\n";
+    const returned = base.replace("assets/", "../old/assets/");
+    f.owner.start(); f.edit(base, "new/P"); f.owner.rename(); await flush();
+    f.edit(base + "New paragraph\n"); if (queued) f.owner.save();
+    await f.ack(0, "new/P", returned);
+    expect(f.buffer()).toBe(base + "New paragraph\n");
+    expect(f.sent).toHaveLength(1); expect(f.owner.queueState().rebaseConflict).toBe(true);
+    f.owner.save(); await flush();
+    expect(f.sent[1].args).toEqual(["new/P", "new/P", base + "New paragraph\n", "none"]);
+    await f.ack(1, "new/P");
+    expect(f.current.note.content).toBe(base + "New paragraph\n");
+    expect(f.owner.contentNeedsSave()).toBe(false);
+  });
+  it.each([false, true])("holds overlapping rename edits until explicit Save (queued=%s)", async queued => {
+    const f = fixture();
+    const base = "![pic](assets/pic.png)\n", mine = "![pic](uploads/other.png)\n";
+    f.owner.start(); f.edit(base, "new/P"); f.owner.rename(); await flush();
+    f.edit(mine); if (queued) f.owner.save();
+    await f.ack(0, "new/P", "![pic](../old/assets/pic.png)\n");
+    expect(f.buffer()).toBe(mine); expect(f.sent).toHaveLength(1);
+    expect(f.owner.queueState().rebaseConflict).toBe(true);
+    expect(f.adapters.failed).toHaveBeenCalledWith(expect.objectContaining({ code: "rename_rebase_conflict" }));
+    f.owner.save(); await flush();
+    expect(f.sent[1].args).toEqual(["new/P", "new/P", mine, "none"]);
+    await f.ack(1, "new/P");
+    expect(f.current.note.content).toBe(mine);
+    expect(f.owner.queueState().rebaseConflict).toBe(false);
+  });
+  it("holds a queued snapshot even when the live text returned to the sent base", async () => {
+    const f = fixture(), base = "![pic](assets/pic.png)\n\nBody\n";
+    const returned = base.replace("assets/", "../old/assets/");
+    f.owner.start(); f.edit(base, "new/P"); f.owner.rename(); await flush();
+    f.edit(base.replace("assets/pic.png", "uploads/other.png")); f.owner.save();
+    f.edit(base); await f.ack(0, "new/P", returned);
+    expect(f.buffer()).toBe(returned); expect(f.sent).toHaveLength(1);
+    expect(f.owner.queueState().rebaseConflict).toBe(true);
+    f.owner.save(); await flush();
+    expect(f.sent[1].args[2]).toContain("uploads/other.png");
+    await f.ack(1, "new/P");
+    expect(f.sent[2].args[2]).toBe(returned);
+    await f.ack(2, "new/P");
+    expect(f.current.note.content).toBe(returned);
+  });
+  it.each([false, true])("holds repeated path segments without guessing an alignment (queued=%s)", async queued => {
+    const f = fixture(), base = "![pic](a/a/p.png)\n", mine = "![pic](b/a/p.png)\n";
+    f.owner.start(); f.edit(base, "old/a/P"); f.owner.rename(); await flush();
+    f.edit(mine); if (queued) f.owner.save();
+    await f.ack(0, "old/a/P", "![pic](a/p.png)\n");
+    expect(f.sent).toHaveLength(1); expect(f.buffer()).toBe(mine);
+    expect(f.owner.queueState().rebaseConflict).toBe(true);
+  });
+  it.each([false, true])("holds copied references introduced during rename (queued=%s)", async queued => {
+    const f = fixture(), base = "![pic](assets/pic.png)\n\nBody\n";
+    const mine = base + "![copy](assets/pic.png)\n";
+    f.owner.start(); f.edit(base, "new/P"); f.owner.rename(); await flush();
+    f.edit(mine); if (queued) f.owner.save();
+    await f.ack(0, "new/P", base.replace("assets/", "../old/assets/"));
+    expect(f.sent).toHaveLength(1); expect(f.buffer()).toBe(mine);
+    expect(f.owner.queueState().rebaseConflict).toBe(true);
+  });
+  it("does not release conflicting queued work when manual Save has an invalid current name", async () => {
+    const f = fixture(), base = "![pic](assets/pic.png)\n";
+    f.owner.start(); f.edit(base, "new/P"); f.owner.rename(); await flush();
+    f.edit(base.replace("assets/pic.png", "uploads/other.png")); f.owner.save();
+    await f.ack(0, "new/P", base.replace("assets/", "../old/assets/"));
+    f.edit(f.buffer(), "bad?"); f.owner.save(); await flush();
+    expect(f.sent).toHaveLength(1);
+    expect(f.owner.queueState().rebaseConflict).toBe(true);
+    expect(f.adapters.invalid).toHaveBeenCalled();
+  });
+
   it("has an idle read-only snapshot and safely settles before editing", async () => {
     const { owner } = fixture();
     expect(Object.isFrozen(owner.state())).toBe(true);
@@ -162,7 +235,9 @@ describe("save owner submission and acknowledgement", () => {
   it("preserves newer path intent while queued saves inherit acknowledged canonical identity", async () => {
     const { owner, edit, ack, sent, current, buffer } = fixture();
     owner.start(); edit("A", "Q"); owner.rename(); edit("B"); owner.save(); edit("C", "P"); owner.rename();
-    await flush(); await ack(0, "Canonical", "A normalized");
+    // This case isolates path lineage; conflicting content normalization is
+    // covered by the explicit rename-rebase cases above.
+    await flush(); await ack(0, "Canonical", "A");
     expect(sent[1].args).toEqual(["Canonical", "Canonical", "B", "none"]);
     expect(current.requestedPath).toBe("P"); expect(buffer()).toBe("C");
     await ack(1, "Canonical", "B"); expect(sent[2].args).toEqual(["Canonical", "P", "C", "none"]);

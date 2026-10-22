@@ -127,10 +127,12 @@ export function createNoteController({
     applyNote: result => { note.value = new Note(result); },
     applyPath: path => { newPath.value = path; editBasename.value = basenameOf(path ?? ""); editFolder.value = directoryFromPath(path ?? ""); },
     applyContentAcknowledgement: content => {
-      if (!editor) editorInitialValue.value = content;
-      else if (editor.applyAcknowledgement) {
+      editorInitialValue.value = content;
+      if (editor) {
         applyingAcknowledgement = true;
-        try { editor.applyAcknowledgement(content); }
+        try {
+          if (editor.applyAcknowledgement(content) === false) throw new Error("Editor declined applyAcknowledgement; saving is paused.");
+        }
         finally { applyingAcknowledgement = false; }
       }
     },
@@ -149,7 +151,10 @@ export function createNoteController({
     failed: noteSaveFailure,
   });
 
-  function registerEditor(port) { editor = port; }
+  function registerEditor(port) {
+    if (port && typeof port.applyAcknowledgement !== "function") throw new Error("Editor port requires applyAcknowledgement");
+    editor = port;
+  }
   function currentBuffer() {
     const snapshot = editor?.getSnapshot?.();
     if (snapshot) return snapshot.ready ? snapshot.content : editorInitialValue.value;
@@ -344,7 +349,7 @@ export function createNoteController({
   function refreshDirtyState() {
     const dirty = isDirty(); unsavedChanges.value = dirty; setUnload(dirty);
     const fact = { path: newPath.value ?? note.value.path, revision: contentRevision.value,
-      editing: editMode.value, unsaved: dirty, canSave: editMode.value && !notePathError(newPath.value) && queueState.value.status !== "paused" };
+      editing: editMode.value, unsaved: dirty, canSave: editMode.value && !notePathError(newPath.value) && queueState.value.status !== "paused" && !queueState.value.rebaseConflict };
     if (!lastEditState || Object.keys(fact).some(key => fact[key] !== lastEditState[key])) {
       lastEditState = fact;
       publishFact(TOPICS.NOTE_EDIT_STATE, fact);

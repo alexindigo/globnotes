@@ -55,6 +55,70 @@ function fixture(overrides = {}, contextValues = {}) {
 }
 
 describe("note workflow ownership", () => {
+  it("requires acknowledgement capability at editor registration", () => {
+    const f = fixture();
+    expect(() => f.controller.registerEditor({ getMarkdown: () => "text" })).toThrow(/applyAcknowledgement/);
+  });
+  it("retains acknowledged content with no mounted editor", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter();
+    f.input("Sent"); f.controller.setEditorMode("preview"); f.controller.registerEditor(null);
+    updateNote.mockResolvedValueOnce({ path: "folder/Q", content: "Returned" });
+    f.controller.setBasename("Q"); f.controller.onTitleInput(); f.controller.applyRename(); await flush();
+    expect(f.controller.currentBuffer()).toBe("Returned");
+  });
+  it.each([false, true])("retains acknowledgement when editor is initializing (declines=%s)", async declines => {
+    const f = fixture(); await f.controller.mount(); f.enter();
+    f.port.getSnapshot.mockReturnValue({ ready: false });
+    if (declines) f.port.applyAcknowledgement.mockReturnValue(false);
+    updateNote.mockResolvedValueOnce({ path: "folder/Q", content: "Returned" });
+    f.controller.setBasename("Q"); f.controller.onTitleInput(); f.controller.applyRename(); await flush();
+    expect(f.controller.currentBuffer()).toBe("Returned");
+    const fact = f.adapters.publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_EDIT_STATE).at(-1)[1];
+    expect(fact).toMatchObject({ revision: 0, canSave: !declines });
+    if (declines) expect(f.adapters.toast.add).toHaveBeenCalledWith(expect.objectContaining({ summary: "Save paused" }));
+  });
+  it("makes canSave false after overlapping rename acknowledgement, until explicit Save", async () => {
+    const response = deferred(), f = fixture();
+    updateNote.mockReturnValueOnce(response.promise);
+    await f.controller.mount(); f.enter(); f.input("![pic](assets/pic.png)\n");
+    f.controller.setFolder("new"); f.controller.syncTitle(); f.controller.applyRename(); await flush();
+    f.input("![pic](uploads/other.png)\n");
+    response.resolve({ path: "new/P", content: "![pic](../folder/assets/pic.png)\n" }); await flush();
+    expect(f.adapters.publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_EDIT_STATE).at(-1)[1]).toMatchObject({ unsaved: true, canSave: false });
+    expect(f.controller.currentBuffer()).toBe("![pic](uploads/other.png)\n");
+    expect(f.adapters.toast.add).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.stringContaining("Save") }));
+  });
+  it.each(["exit", "delete", "session"].flatMap(entry => ["save", "discard", "cancel"].map(choice => [entry, choice])))
+    ("settled rename conflict reaches %s's explicit %s decision", async (entry, choice) => {
+      const response = deferred(), f = fixture();
+      const base = "![pic](assets/pic.png)\n", mine = "![pic](uploads/other.png)\n", returned = "![pic](../folder/assets/pic.png)\n";
+      updateNote.mockReturnValueOnce(response.promise);
+      await f.controller.mount(); f.enter(); f.input(base);
+      f.controller.setFolder("new"); f.controller.syncTitle(); f.controller.applyRename(); await flush();
+      f.input(mine); response.resolve({ path: "new/P", content: returned }); await flush();
+      let attempt;
+      if (entry === "session") {
+        expect(await f.participant().settlePending()).toBe(true);
+        attempt = f.participant().requestDecision();
+      } else if (entry === "delete") attempt = f.controller.deleteHandler();
+      else f.controller.toggleEditModeHandler();
+      await flush();
+      expect(f.controller.state.isSaveChangesModalVisible).toBe(true);
+      expect(updateNote).toHaveBeenCalledTimes(1);
+      updateNote.mockImplementation(async (_, path, content) => ({ path, content }));
+      f.controller.onSaveChoice(choice); await flush();
+      if (entry === "session") {
+        expect(await attempt).toBe(choice);
+        if (choice === "discard") expect(await f.participant().discard()).toBe(true);
+        if (choice === "save") expect(await f.participant().save()).toBe(true);
+      } else if (attempt) await attempt;
+      expect(updateNote).toHaveBeenCalledTimes(choice === "save" ? 2 : 1);
+      expect(f.controller.currentBuffer()).toBe(choice === "discard" ? returned : mine);
+      if (choice === "cancel") expect(f.controller.isDirty()).toBe(true);
+      else expect(f.controller.isDirty()).toBe(false);
+      if (entry === "delete") expect(f.controller.state.isDeleteModalVisible).toBe(choice !== "cancel");
+    });
+
   it("loads into read-only state and publishes the resolved title and folder options", async () => {
     const f = fixture(); await f.controller.mount();
     expect(isReadonly(f.controller.state)).toBe(true);

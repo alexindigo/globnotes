@@ -104,7 +104,12 @@ export function createNoteSaveOwner({
     aliases.add(result.path);
     applyNote(result);
     if (ownsPath) applyPath(result.path);
-    if (ownsContent && getBuffer() !== result.content) applyContentAcknowledgement(result.content);
+    const live = getBuffer();
+    const transformedRename = context.sourcePath && context.sourcePath !== result.path && snapshot.content !== result.content;
+    // A text diff cannot certify reference coordinates in newer text. Keep it
+    // literally and require a decision; only the unchanged sent base takes ACK.
+    const rebaseConflict = !!transformedRename && live !== snapshot.content;
+    if (!rebaseConflict && (ownsContent || transformedRename) && live !== result.content) applyContentAcknowledgement(result.content);
     publishTitle();
     if (!context.sourcePath) publishFact(TOPICS.NOTE_CREATE, { path: result.path });
     else if (context.sourcePath !== result.path) publishFact(TOPICS.NOTE_RENAME, { oldPath: context.sourcePath, newPath: result.path });
@@ -112,6 +117,7 @@ export function createNoteSaveOwner({
     setMovedFiles(result.movedFiles ?? []);
     await urlSync.canonicalSaveRoute(snapshot, result.path);
     if (context.sourcePath && context.sourcePath !== result.path) updateRenamedLinks(context.sourcePath, result.path);
+    return { rebaseConflict };
   }
 
   function clearAcknowledgedDrafts(snapshot) {
@@ -180,6 +186,11 @@ export function createNoteSaveOwner({
   }
 
   function save() {
+    if (queue?.state().rebaseConflict) {
+      const error = notePathError(getState().requestedPath);
+      if (error) { invalid(error); return null; }
+    }
+    queue?.acceptRebaseConflict();
     if (!contentNeedsSave()) return null;
     return submit("save", "none");
   }
@@ -201,6 +212,7 @@ export function createNoteSaveOwner({
     if (!settlingQueue) return true;
     const before = settlingQueue.state();
     if (before.status === "paused") return before.canDiscard;
+    if (before.rebaseConflict && !before.active) return before.canDiscard;
     const result = await settlingQueue.awaitSettled({ deadline: Date.now() + NOTE_SAVE_OBSERVATION_MS });
     return settlingQueue === queue && result.safe === true;
   }

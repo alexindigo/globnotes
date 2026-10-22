@@ -12,6 +12,7 @@ import { getConfig, updateNote } from "../api.js";
 import { hasUnsavedWork } from "../sessionActions.js";
 
 import WysiwygEditorInner from "../components/WysiwygEditorInner.vue";
+import { callCommand } from "../components/milkdown-commands.js";
 
 const milkdown = vi.hoisted(() => ({
   editor: null,
@@ -104,6 +105,18 @@ describe("real App/Note/Milkdown immediate dirty consumer", () => {
     expect({ unsaved: hasUnsavedWork(), unload: typeof window.onbeforeunload }).toEqual({ unsaved: true, unload: "function" });
     expect(sessionStorage.getItem("globnotes:draft:NoteA")).toBeNull();
   });
+  it("real wrapper consumes rename acknowledgement without another Save or edit notification", async () => {
+    vi.useRealTimers();
+    updateNote.mockImplementationOnce(async (_, path) => ({ path, content: "Server acknowledgement" }));
+    await app.find('input[placeholder="Title"]').setValue("Renamed");
+    await app.find('input[placeholder="Title"]').trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(app.findComponent({ name: "WysiwygEditor" }).vm.getSnapshot()).toEqual({ ready: true, content: "Server acknowledgement" });
+    expect(hasUnsavedWork()).toBe(false);
+    const count = updateNote.mock.calls.length;
+    button("Save").click(); await flushPromises();
+    expect(updateNote).toHaveBeenCalledTimes(count);
+  });
 });
 vi.mock("../pluginLoader.js", async () => {
   const { ref } = await import("vue");
@@ -145,6 +158,36 @@ describe("WysiwygEditorInner dirty notifications", () => {
     expect(wrapper.emitted("change")).toBeUndefined();
     vi.advanceTimersByTime(250);
     expect(wrapper.emitted("change")).toBeUndefined();
+  });
+
+  it("applies server acknowledgement silently, maps the caret, and types at the same text", () => {
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 4)));
+    expect(wrapper.vm.applyAcknowledgement("Prefix Original")).toBe(true);
+    expect(wrapper.vm.getSnapshot()).toEqual({ ready: true, content: "Prefix Original" });
+    expect(view.state.selection.from).toBe(11);
+    expect(onChange).not.toHaveBeenCalled();
+    view.dispatch(view.state.tr.insertText("!"));
+    expect(wrapper.vm.getMarkdown()).toBe("Prefix Ori!ginal\n");
+    expect(onChange).toHaveBeenCalledOnce();
+  });
+  it("acknowledgement preserves undo of an unrelated earlier user edit", () => {
+    view.dispatch(view.state.tr.insertText(" local", view.state.doc.content.size - 1));
+    wrapper.vm.applyAcknowledgement("Changed local\n");
+    callCommand(milkdown.editor, "undo");
+    expect(wrapper.vm.getMarkdown()).toBe("Changed\n");
+  });
+  it("acknowledgement preserves middle-span undo and redo between separate server changes", () => {
+    const base = "# Old\n\nBody\n\n![pic](assets/pic.png)\n";
+    wrapper.vm.setMarkdown(base);
+    let body;
+    view.state.doc.descendants((node, pos) => { if (node.isText && node.text === "Body") body = pos; });
+    view.dispatch(view.state.tr.insertText(" local", body + 4));
+    const acknowledged = base.replace("# Old", "# Longer heading").replace("Body", "Body local").replace("assets/", "../old/assets/");
+    wrapper.vm.applyAcknowledgement(acknowledged);
+    callCommand(milkdown.editor, "undo");
+    expect(wrapper.vm.getMarkdown()).toBe(acknowledged.replace("Body local", "Body"));
+    callCommand(milkdown.editor, "redo");
+    expect(wrapper.vm.getMarkdown()).toBe(acknowledged);
   });
 
   it.each(["edit", "paste"])(

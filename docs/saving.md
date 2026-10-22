@@ -9,8 +9,9 @@ the preference instead. A new note's first Save creates its requested name
 Save is a no-op outside edit mode or when the buffer equals the latest submitted
 snapshot: the last queued job, otherwise the active job, otherwise acknowledged
 content. Equal-content clicks produce no request, write, on-save hook or backup,
-including when the queue is paused. Different snapshots remain literal FIFO jobs;
-intermediate snapshots are not skipped or replaced.
+including when the queue is paused. Different snapshots remain FIFO jobs;
+intermediate snapshots are not skipped or replaced. Completed payloads are retired
+after receipt and integration; the acknowledged base and unresolved work remain.
 
 You can continue editing and clicking Save while ordinary saving is active.
 The Save label stays unchanged; its icon spins while the pipeline is preparing
@@ -80,9 +81,14 @@ unresolved work retains the before-unload warning and the existing latest draft.
 
 Queued saves use the last acknowledged server path as their source. A new note
 is created once; subsequent snapshots update its actual returned identity.
-Canonical server paths do not override newer explicit filename intent. Each
-queued content snapshot stays literal, even when an earlier response normalized
-an H1 or attachment link.
+Canonical server paths do not override newer explicit filename intent. Snapshots
+stay literal: a rename response is never automatically merged into newer text.
+If the server returns different text (including an H1 or attachment-link rewrite)
+while newer live text or queued jobs exist, automatic saving stops at a retained
+reconciliation barrier. This includes plain prose, repeated path segments, and
+new/copied references: a text diff cannot certify their path coordinates. Queued
+jobs behind that rename remain held and unchanged. An unchanged live sent base
+can take the acknowledgement; queued jobs still need an explicit decision.
 
 Title and folder fields apply on **Enter or blur**, through one controller rename
 intent. Typing alone does not send a request; Save does not apply a rename.
@@ -91,7 +97,23 @@ Invalid names retain the field's text and send nothing.
 
 Rename jobs use the same FIFO and carry the current buffer and requested path.
 Server attachment-link rewrites are acknowledged into the editor, so the next
-Save uses those links. Folder moves use the existing attachment chooser. Its preview describes
+Save uses those links. Both editor ports must accept acknowledgements without
+reporting them as user edits; an initializing editor retains the acknowledged
+buffer. Acknowledgements apply as separate narrow changes, not one first-to-last
+replacement. Each editor maps selection and history through those changes, with
+the acknowledgement excluded from user undo history. WYSIWYG compares its serialized document to its own loaded baseline and
+exposes the original bytes until an actual edit changes that serialization.
+
+If a transformed rename encounters newer text, the user's text and queued jobs
+are retained, a message asks them to review the references, and `canSave` becomes
+false so autosave stops. An explicit **Save** accepts the user's text as-is and
+releases only this reconciliation barrier: already queued snapshots retain their
+FIFO order and literal text, followed by the current text if different.
+It never resumes a failed or uncertain write. A settled, known-committed conflict
+can reach Save/Discard/Cancel on exit-edit, Delete, navigation and session handoff
+(Logout/Access). Discard restores the acknowledged renamed content and removes
+held work without another write; Cancel retains everything. In-flight or unknown
+write outcomes still block unsafe handoffs. Folder moves use the existing attachment chooser. Its preview describes
 references in persisted content, not an invented preview of queued text. Preview
 errors and cancellation settle preparation without sending a mutation and pause
 the retained queue. Navigation/session saves retain their existing `none`

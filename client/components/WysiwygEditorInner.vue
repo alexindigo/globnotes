@@ -11,14 +11,12 @@ import {
   editorViewCtx,
   prosePluginsCtx,
   rootCtx,
-  serializerCtx,
 } from "@milkdown/core";
 import { history } from "@milkdown/plugin-history";
-import { listener } from "@milkdown/plugin-listener";
+import { listener, listenerCtx } from "@milkdown/plugin-listener";
 import { upload, uploadConfig } from "@milkdown/plugin-upload";
 import { commonmark } from "@milkdown/preset-commonmark";
 import { gfm } from "@milkdown/preset-gfm";
-import { replaceAll } from "@milkdown/utils";
 import { Milkdown, useEditor } from "@milkdown/vue";
 import { shallowRef, onMounted, onBeforeUnmount } from "vue";
 import { Plugin, PluginKey } from "prosemirror-state";
@@ -40,6 +38,7 @@ import {
 } from "../frontmatter-node.js";
 import { milkdownLayerKeymap } from "../keybindings/editor-keymap.js";
 import { callCommand, readActive, readLink, removeLinkCommand } from "./milkdown-commands.js";
+import { createWysiwygDocument } from "../wysiwygDocument.js";
 
 const props = defineProps({
   initialValue: String,
@@ -64,6 +63,7 @@ const { get: getEditor } = useEditor((root) =>
     .config((ctx) => {
       ctx.set(rootCtx, root);
       ctx.set(defaultValueCtx, props.initialValue ?? "");
+      ctx.get(listenerCtx).mounted(ctx => documentAdapter.mounted(ctx));
       ctx.update(uploadConfig.key, (prev) => ({
         ...prev,
         uploader: async (files, schema) => {
@@ -146,27 +146,13 @@ const { get: getEditor } = useEditor((root) =>
     .use(upload)
 );
 
-function getMarkdown() {
-  const editor = getEditor();
-  if (!editor) return "";
-  return editor.action((ctx) => {
-    const view = ctx.get(editorViewCtx);
-    return ctx.get(serializerCtx)(view.state.doc);
-  });
-}
-
-function getSnapshot() {
-  const editor = getEditor();
-  if (!editor) return { ready: false };
-  // The factory may exist while creation is still awaiting its context slices.
-  try { return { ready: true, content: getMarkdown() }; }
-  catch { return { ready: false }; }
-}
+const documentAdapter = createWysiwygDocument(getEditor, props.initialValue ?? "");
+const { getMarkdown, getSnapshot, applyAcknowledgement } = documentAdapter;
 
 function setMarkdown(markdownText) {
   settingMarkdown = true;
   try {
-    getEditor()?.action(replaceAll(markdownText));
+    applyAcknowledgement(markdownText);
   } finally {
     settingMarkdown = false;
   }
@@ -217,6 +203,7 @@ function insertLink(href, text) {
 defineExpose({
   getMarkdown,
   getSnapshot,
+  applyAcknowledgement,
   setMarkdown,
   command,
   active,

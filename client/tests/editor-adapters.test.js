@@ -6,6 +6,7 @@ import { toggleStrikethroughCommand } from "@milkdown/preset-gfm";
 import { undoCommand, redoCommand } from "@milkdown/plugin-history";
 import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
+import { undo, redo } from "@codemirror/commands";
 import { publish, TOPICS } from "../bus/index.js";
 import { registerModal } from "../modalState.js";
 import { wysiwygCommandMap, wysiwygToolbarActionMap } from "../wysiwygEditorActions.js";
@@ -70,6 +71,37 @@ describe("WYSIWYG plain-module topic adapters", () => {
 });
 
 describe("mounted editor action wiring", () => {
+  it("source acknowledgement maps an unchanged caret and the next typed character", () => {
+    wrapper = mount(MarkdownEditor, { props: { initialValue: "Original" } });
+    const view = EditorView.findFromDOM(wrapper.element.querySelector(".cm-editor"));
+    view.dispatch({ selection: EditorSelection.range(3, 3) });
+    expect(wrapper.vm.applyAcknowledgement("Prefix Original")).toBe(true);
+    expect(wrapper.vm.getMarkdown()).toBe("Prefix Original");
+    expect(view.state.selection.main.head).toBe(10);
+    expect(wrapper.emitted("change")).toBeUndefined();
+    view.dispatch(view.state.replaceSelection("!"));
+    expect(wrapper.vm.getMarkdown()).toBe("Prefix Ori!ginal");
+  });
+  it("source acknowledgement preserves middle-span undo and redo between separate server changes", () => {
+    const base = "# Old\n\nBody\n\n![pic](assets/pic.png)\n";
+    wrapper = mount(MarkdownEditor, { props: { initialValue: base } });
+    const view = EditorView.findFromDOM(wrapper.element.querySelector(".cm-editor"));
+    view.dispatch({ changes: { from: base.indexOf("Body") + 4, insert: " local" } });
+    const acknowledged = base.replace("# Old", "# Longer heading").replace("Body", "Body local").replace("assets/", "../old/assets/");
+    wrapper.vm.applyAcknowledgement(acknowledged);
+    expect(undo(view)).toBe(true);
+    expect(wrapper.vm.getMarkdown()).toBe(acknowledged.replace("Body local", "Body"));
+    expect(redo(view)).toBe(true);
+    expect(wrapper.vm.getMarkdown()).toBe(acknowledged);
+  });
+  it("WYSIWYG wrapper retains acknowledgements while its real inner adapter initializes", () => {
+    wrapper = mount(WysiwygEditor, { props: { initialValue: "Original" } });
+    expect(wrapper.vm.applyAcknowledgement("Retained before ready")).toBe(true);
+    expect(wrapper.vm.getSnapshot()).toEqual({ ready: false });
+    expect(wrapper.vm.getMarkdown()).toBe("Retained before ready");
+    expect(wrapper.emitted("change")).toBeUndefined();
+  });
+
   it("source edits and find reach the mounted editor, respect modal ownership and unsubscribe", () => {
     wrapper = mount(MarkdownEditor, { props: { initialValue: "word" } });
     const view = EditorView.findFromDOM(wrapper.element.querySelector(".cm-editor"));

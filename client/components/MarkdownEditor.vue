@@ -7,7 +7,7 @@ import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
+import { Compartment, EditorSelection, EditorState, Transaction } from "@codemirror/state";
 import { search, searchKeymap } from "@codemirror/search";
 import {
   EditorView,
@@ -23,6 +23,7 @@ import { subscribe, TOPICS } from "../bus/index.js";
 import { isActionAvailable } from "../modalState.js";
 import { cm6LayerKeymap } from "../keybindings/editor-keymap.js";
 import { sourceActionMap } from "../sourceEditorActions.js";
+import { textChanges } from "../editorChanges.js";
 
 const props = defineProps({
   initialValue: String,
@@ -35,6 +36,7 @@ const emit = defineEmits(["change", "selection"]);
 const editorElement = ref();
 let view;
 let actionUnsubs = [];
+let applyingAcknowledgement = false;
 
 // The active keybinding layer's keymap, reconfigurable on layer change.
 // It must stay the FIRST keymap so the layer's editor:save binding wins
@@ -210,7 +212,7 @@ onMounted(() => {
         theme,
         EditorView.lineWrapping,
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
+          if (update.docChanged && !applyingAcknowledgement) {
             emit("change");
           }
         }),
@@ -283,8 +285,10 @@ function getSnapshot() {
 
 function applyAcknowledgement(text) {
   if (!view) return false;
-  const ranges = view.state.selection.ranges.map(range => EditorSelection.range(Math.min(range.anchor, text.length), Math.min(range.head, text.length)));
-  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: EditorSelection.create(ranges, view.state.selection.mainIndex) });
+  applyingAcknowledgement = true;
+  try {
+    view.dispatch({ changes: textChanges(view.state.doc.toString(), text), annotations: Transaction.addToHistory.of(false) });
+  } finally { applyingAcknowledgement = false; }
   return true;
 }
 

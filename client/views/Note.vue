@@ -324,7 +324,7 @@ watch(editor, instance => controller.registerEditor(instance ? {
   getMarkdown: () => instance.getMarkdown(),
   setMarkdown: content => instance.setMarkdown(content),
   isWysiwygMode: () => instance.isWysiwygMode(),
-  applyAcknowledgement: instance.applyAcknowledgement ? content => instance.applyAcknowledgement(content) : undefined,
+  applyAcknowledgement: content => instance.applyAcknowledgement(content),
   selectLine: instance.selectLine ? line => instance.selectLine(line) : undefined,
 } : null), { flush: "sync" });
 watch(() => controller.state.loadStatus, status => {
