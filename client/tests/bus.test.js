@@ -35,4 +35,61 @@ describe("event bus", () => {
     expect(h1).toHaveBeenCalledWith({ path: "x" });
     expect(h2).toHaveBeenCalledWith({ path: "x" });
   });
+
+  it("replays retained state once on a microtask, then delivers live changes", async () => {
+    const state = { path: "Late", revision: 1, editing: true, unsaved: true, canSave: true };
+    publish(TOPICS.NOTE_EDIT_STATE, state);
+    const handler = vi.fn(), release = subscribe(TOPICS.NOTE_EDIT_STATE, handler);
+    expect(handler).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(handler).toHaveBeenCalledExactlyOnceWith(state);
+    const ended = { ...state, editing: false, unsaved: false, canSave: false };
+    publish(TOPICS.NOTE_EDIT_STATE, ended);
+    expect(handler).toHaveBeenLastCalledWith(ended);
+    release();
+    publish(TOPICS.NOTE_EDIT_STATE, state);
+    await Promise.resolve();
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("never replays event topics", async () => {
+    publish(TOPICS.NOTE_EDIT_START, { path: "Past" });
+    const handler = vi.fn(), release = subscribe(TOPICS.NOTE_EDIT_START, handler);
+    await Promise.resolve();
+    expect(handler).not.toHaveBeenCalled();
+    release();
+  });
+
+  it("cancels queued retained delivery when unsubscribed", async () => {
+    publish(TOPICS.NOTE_EDIT_STATE, { editing: true });
+    const handler = vi.fn(), release = subscribe(TOPICS.NOTE_EDIT_STATE, handler);
+    release(); await Promise.resolve();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("keeps live retained delivery current under synchronous reentrant publication", async () => {
+    const observed = [];
+    const a = subscribe(TOPICS.NOTE_EDIT_STATE, state => {
+      if (!state.editing) publish(TOPICS.NOTE_EDIT_STATE, { editing: true });
+    });
+    const b = subscribe(TOPICS.NOTE_EDIT_STATE, state => observed.push(state));
+    const late = vi.fn();
+    let release = () => {};
+    try {
+      publish(TOPICS.NOTE_EDIT_STATE, { editing: false });
+      release = subscribe(TOPICS.NOTE_EDIT_STATE, late);
+      await Promise.resolve();
+      expect(observed.at(-1)).toEqual({ editing: true });
+      expect(late).toHaveBeenLastCalledWith(observed.at(-1));
+    } finally { a(); b(); release(); }
+  });
+
+  it("does not replay stale state after a newer live publication", async () => {
+    publish(TOPICS.NOTE_EDIT_STATE, { editing: true });
+    const handler = vi.fn(), release = subscribe(TOPICS.NOTE_EDIT_STATE, handler);
+    publish(TOPICS.NOTE_EDIT_STATE, { editing: false });
+    await Promise.resolve();
+    expect(handler).toHaveBeenCalledExactlyOnceWith({ editing: false });
+    release();
+  });
 });

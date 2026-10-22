@@ -37,8 +37,8 @@ const TOPICS = {
   EDITOR_MODE_CHANGE: "editor:mode-change",
   NOTE_EDIT_START: "note:edit-start",
   NOTE_EDIT_END: "note:edit-end",
-  // Controller fact: { path, revision, unsaved, canSave }. No note text.
-  // Emitted when edit state changes; exit emits unsaved/canSave false.
+  // Retained controller state: { path, revision, editing, unsaved, canSave }.
+  // No note text. Exit/disposal emits editing/unsaved/canSave false.
   NOTE_EDIT_STATE: "note:edit-state",
 
   // Editor action channel — the single integration point for driving the
@@ -91,4 +91,8 @@ const TOPICS = {
   APP_OPEN_SETTINGS: "app:open-settings",
 };
 
-export { TOPICS };
+// State topics replay their current value to late subscribers on a microtask.
+// Event topics remain edge-triggered and are never replayed.
+const RETAINED_TOPICS = new Set([TOPICS.NOTE_EDIT_STATE]);
+
+export { RETAINED_TOPICS, TOPICS };

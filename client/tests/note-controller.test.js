@@ -268,13 +268,22 @@ describe("note workflow ownership", () => {
     const f = fixture(); await f.controller.mount(); f.enter();
     f.input("A"); f.input("B");
     const facts = () => f.adapters.publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_EDIT_STATE).map(([, fact]) => fact);
-    expect(facts().at(-1)).toEqual({ path: "folder/P", revision: 2, unsaved: true, canSave: true });
+    expect(facts().at(-1)).toEqual({ path: "folder/P", revision: 2, editing: true, unsaved: true, canSave: true });
     f.controller.setBasename("bad?"); f.controller.onTitleInput(); expect(facts().at(-1).canSave).toBe(false);
     f.controller.setBasename("P"); f.controller.onTitleInput(); f.controller.saveHandler(); await flush();
     wire.reject({ response: { data: { code: "plugin_cancelled" } } }); await flush();
     expect(facts().at(-1)).toMatchObject({ unsaved: true, canSave: false });
-    f.participant().discard(); expect(facts().at(-1)).toMatchObject({ unsaved: false, canSave: false });
-    expect(facts().every(fact => Object.keys(fact).sort().join() === "canSave,path,revision,unsaved")).toBe(true);
+    f.participant().discard(); expect(facts().at(-1)).toMatchObject({ editing: false, unsaved: false, canSave: false });
+    expect(facts().every(fact => Object.keys(fact).sort().join() === "canSave,editing,path,revision,unsaved")).toBe(true);
+  });
+  it("publishes inactive edit state on disposal without changing caret URL behavior", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter(); f.input("Unsaved");
+    f.adapters.publish.mockClear();
+    f.controller.dispose();
+    const facts = f.adapters.publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_EDIT_STATE).map(([, fact]) => fact);
+    expect(facts).toEqual([{ path: "folder/P", revision: 1, editing: false, unsaved: false, canSave: false }]);
+    f.controller.dispose();
+    expect(f.adapters.publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_EDIT_STATE)).toHaveLength(1);
   });
   it("save-close composes save, settlement and exit without closing over newer work", async () => {
     const wire = deferred(); updateNote.mockReturnValue(wire.promise);

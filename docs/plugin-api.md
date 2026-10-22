@@ -154,6 +154,16 @@ rejected adoption once. Retired activations cannot remove replacement commands o
 receive new managed deliveries. These checks do not cancel arbitrary trusted
 browser promises or sandbox same-origin code.
 
+Browser `ctx.events.on("note:edit-state", handler)` receives current retained
+state on a microtask after subscription, through the same managed,
+failure-isolated handler used for live facts. Unsubscribe, rejected ownership or
+generation retirement fences the queued delivery; a newer live publication
+supersedes it. The payload is `{ path, revision, editing, unsaved, canSave }`,
+never note text. Initialize and end session-dependent work from `editing`,
+including the replay at activation; `note:edit-start` / `note:edit-end` are
+non-replayed events. Exit/disposal publishes an inactive state. See
+[event-bus.md](event-bus.md) for the retained-topic contract.
+
 ## Deferred actions and invocation lifetime
 
 A saved server `ctx` belongs to its owning vault and Worker generation. It remains

@@ -344,7 +344,7 @@ export function createNoteController({
   function refreshDirtyState() {
     const dirty = isDirty(); unsavedChanges.value = dirty; setUnload(dirty);
     const fact = { path: newPath.value ?? note.value.path, revision: contentRevision.value,
-      unsaved: dirty, canSave: editMode.value && !notePathError(newPath.value) && queueState.value.status !== "paused" };
+      editing: editMode.value, unsaved: dirty, canSave: editMode.value && !notePathError(newPath.value) && queueState.value.status !== "paused" };
     if (!lastEditState || Object.keys(fact).some(key => fact[key] !== lastEditState[key])) {
       lastEditState = fact;
       publishFact(TOPICS.NOTE_EDIT_STATE, fact);
@@ -421,6 +421,7 @@ export function createNoteController({
   function routeHashChanged(hash) { if (!editMode.value) viewLine.value = viewLineFromFragment(parseFragment(hash), viewLine.value); }
   function captureEditorForRemount() { if (editMode.value && editorMode.value === "wysiwyg" && editor) editorInitialValue.value = currentBuffer(); }
   function dispose() {
+    if (editMode.value) { editMode.value = false; refreshDirtyState(); }
     clearEditTimers();
     preview.dispose();
     loadGeneration++; saveOwner.dispose(); disposeSessionParticipant();

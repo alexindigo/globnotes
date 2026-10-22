@@ -66,7 +66,9 @@ export function createPluginSdk({ pluginId, snapshot, own, assertActive = () => 
     createUuid,
     snapshot: frozenSnapshot,
     events: {
-      /** Managed bus subscription: failure-isolated, disposed on unload. */
+      /** Managed bus subscription: failure-isolated, disposed on unload.
+       * Retained state is replayed on a microtask through this same handler,
+       * after ownership admission; retirement/unsubscribe fences delivery. */
       on(topic, handler) {
         return managed(() => subscribe(topic, (payload) => {
           if (!current()) return;

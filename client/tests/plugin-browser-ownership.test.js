@@ -136,3 +136,38 @@ describe("review repairs: R17 reconciliation follows publication rather than pen
     expect(importedLater).not.toHaveBeenCalled(); expect(owner.browserGenerations.value.size).toBe(0);
   });
 });
+
+describe("managed retained state delivery", () => {
+  const stateTopic = "note:edit-state";
+  const state = { path: "Late", revision: 3, editing: true, unsaved: true, canSave: true };
+
+  it("replays current state through the SDK and isolates handler failure", async () => {
+    publish(stateTopic, state);
+    const disposers = [], received = vi.fn(() => { throw Error("retained handler failed"); });
+    const report = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sdk = createPluginSdk({ pluginId: "late-state", own: release => { disposers.push(release); return release; } });
+    sdk.events.on(stateTopic, received);
+    expect(received).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(received).toHaveBeenCalledExactlyOnceWith(state);
+    expect(report).toHaveBeenCalledWith("plugin 'late-state' event handler failed", expect.any(Error));
+    disposers.forEach(release => release());
+  });
+
+  it.each(["unsubscribe", "retire", "reject"])("%s fences a queued SDK replay", async ending => {
+    publish(stateTopic, state);
+    let active = true;
+    const received = vi.fn();
+    const sdk = createPluginSdk({ pluginId: "late-state", assertActive: () => { if (!active) throw Error("retired"); },
+      own: release => { if (ending === "reject") throw Error("adoption rejected"); return release; } });
+    if (ending === "reject") expect(() => sdk.events.on(stateTopic, received)).toThrow("adoption rejected");
+    else {
+      const release = sdk.events.on(stateTopic, received);
+      if (ending === "unsubscribe") release(); else active = false;
+      await Promise.resolve();
+      release();
+    }
+    await Promise.resolve();
+    expect(received).not.toHaveBeenCalled();
+  });
+});

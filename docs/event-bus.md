@@ -16,6 +16,17 @@ client/bus/topics.js   —  topic constants + payload docs
 on that topic. Unknown topics are silently ignored (mitt has no
 schema enforcement — the topics.js file IS the contract).
 
+`RETAINED_TOPICS` in `topics.js` declares state topics; currently only
+`note:edit-state` is retained. Publishing replaces that topic's current value.
+A new subscriber receives the current value once on a **microtask** after
+subscription, if one exists. Unsubscribing cancels that queued delivery. A newer
+live publication supersedes the queued snapshot, so subscribers never receive
+old state after new state. Live delivery uses the same publication-identity fence:
+if a subscriber synchronously publishes newer state, remaining listeners skip the
+superseded outer publication. Event topics retain mitt's synchronous delivery,
+including reentrant delivery; `note:edit-start`,
+`note:edit-end` and `note:save`, are never retained or replayed.
+
 ## Conventions
 
 - **Present tense** — topic strings read as "on X": `note:open`,
@@ -61,15 +72,18 @@ schema enforcement — the topics.js file IS the contract).
 | 26 | `note:edit-end` | `{ path }` | `noteController.js` exitEditState |
 | 27 | `app:open-settings` | `{ page? }` | gear / palette / keybindings / plugin SDK → the one openSettings handler |
 | 28 | `note:title-changed` | `{ title }` | `noteController.js` publishTitle (live buffer or loaded note) |
-| 29 | `note:edit-state` | `{ path, revision, unsaved, canSave }` | `noteController.js` refreshDirtyState |
+| 29 | `note:edit-state` (retained) | `{ path, revision, editing, unsaved, canSave }` | `noteController.js` refreshDirtyState |
 
 `note:edit-state` never carries note text. `path` is the current requested path;
 `revision` increases per content edit. The controller publishes whenever revision,
 unsaved state or save capability changes (also when the requested path changes).
-`unsaved` means the buffer differs from the latest submitted snapshot or the FIFO
+`editing` is true while a note is in edit mode. Late subscribers can initialize
+their session from the retained state, without depending on having observed
+`note:edit-start`. `unsaved` means the buffer differs from the latest submitted snapshot or the FIFO
 has unresolved work, excluding unapplied filename text. `canSave` is false outside
 edit mode, for an invalid current name or while the queue is paused. Exiting edit
-mode publishes `unsaved: false, canSave: false`.
+mode, or disposing its controller while editing, publishes
+`editing: false, unsaved: false, canSave: false`, retiring the retained session.
 
 ## Built-in consumers
 
