@@ -97,7 +97,7 @@ export function createNoteSaveQueue(adapters) {
         const job = queued.shift(); active = job; job.token = generation;
         const snapshot = job.snapshot;
         const context = Object.freeze({ acknowledged, sourcePath: acknowledged?.path ?? null,
-          targetPath: acknowledged && snapshot.pathRevision <= acknowledgedPathRevision ? acknowledged.path : snapshot.requestedPath,
+          targetPath: acknowledged && (snapshot.intent === "save" || snapshot.pathRevision <= acknowledgedPathRevision) ? acknowledged.path : snapshot.requestedPath,
           isPreparationCurrent: () => !disposed && active === job && job.token === generation && !job.timedOut && job.phase === "preparing" && status === "preparing" });
         job.phase = "preparing"; status = "preparing"; notify();
         let prepared;
@@ -122,6 +122,7 @@ export function createNoteSaveQueue(adapters) {
         // Known server success is recorded before applying fallible UI effects.
         acknowledged = result;
         acknowledgedPathRevision = snapshot.pathRevision;
+        job.phase = "acknowledging";
         const late = job.timedOut;
         try { await adapters.acknowledge?.(snapshot, result, { ...context, late }); }
         catch (error) { pause(job, error, "known-committed", "acknowledging"); break; }

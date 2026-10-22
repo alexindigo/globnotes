@@ -33,8 +33,7 @@ function fixture(overrides = {}, useDefaults = false) {
     getBuffer: () => buffer,
     isContentChanged: () => {
       const queue = owner.state().queue;
-      const base = queue.acknowledged ?? current.note;
-      return queue.unresolved || current.requestedPath !== base.path || buffer !== (base.content ?? "");
+      return queue.unresolved || owner.contentNeedsSave();
     },
     applyNote: vi.fn(result => { current.note = result; }),
     applyPath: vi.fn(path => { current.requestedPath = path; }),
@@ -98,7 +97,7 @@ describe("save owner submission and acknowledgement", () => {
     owner.start(); edit("A"); const a = owner.save();
     edit("B"); const b = owner.save(); edit("D");
     expect(a.submissionId).not.toBe(b.submissionId);
-    expect(owner.queueState().active.snapshot).toMatchObject({ content: "A", requestedPath: "P", contentRevision: 1, pathRevision: 0, draftRevision: 1, intent: "save", attachmentPolicy: "prompt" });
+    expect(owner.queueState().active.snapshot).toMatchObject({ content: "A", requestedPath: "P", contentRevision: 1, pathRevision: 0, draftRevision: 1, intent: "save", attachmentPolicy: "none" });
     expect(owner.queueState().active.snapshot).not.toHaveProperty("draftKey");
     expect(Object.isFrozen(owner.queueState().active.snapshot)).toBe(true);
     await flush(); expect(sent.map(item => item.args)).toEqual([["P", "P", "A", "none"]]);
@@ -108,25 +107,33 @@ describe("save owner submission and acknowledgement", () => {
     expect(adapters.drafts.clearAcknowledged).not.toHaveBeenCalled();
   });
 
-  it("keeps equal-content clicks distinct and prevents normalization from changing the next snapshot", async () => {
+  it("ignores equal-content clicks before, during and after saving", async () => {
     const { owner, sent, edit, ack } = fixture();
-    owner.start(); edit("same"); owner.save(); owner.save(); await flush();
-    await ack(0, "P", "normalized"); expect(sent[1].args[2]).toBe("same");
-    await ack(1); expect(sent).toHaveLength(2);
+    expect(owner.save()).toBeNull(); owner.start(); expect(owner.save()).toBeNull();
+    edit("same"); owner.save(); expect(owner.save()).toBeNull(); await flush();
+    edit("B"); owner.save(); expect(owner.save()).toBeNull();
+    await ack(0, "P", "normalized"); expect(sent[1].args[2]).toBe("B");
+    await ack(1); expect(owner.save()).toBeNull(); expect(sent).toHaveLength(2);
   });
 
-  it("validates before admission, after retaining the existing preference-save side effect", async () => {
+  it("validates before admission without saving a mode preference", async () => {
     const { owner, edit, sent, adapters } = fixture();
     owner.start(); edit("A"); owner.save(); await flush();
     edit("D", "bad?"); expect(owner.save(true)).toBeNull();
     expect(sent).toHaveLength(1); expect(owner.queueState().queued).toHaveLength(0);
     expect(adapters.invalid).toHaveBeenCalledWith(expect.any(String));
-    expect(adapters.saveEditorPreference).toHaveBeenCalledTimes(2);
+    expect(adapters.saveEditorPreference).not.toHaveBeenCalled();
+  });
+  it("a paused queue does not capture the same submitted text again", async () => {
+    const { owner, edit, sent, adapters } = fixture(); owner.start(); edit("A"); owner.save(); await flush();
+    sent[0].reject({ response: { data: { code: "plugin_cancelled" } } }); await flush();
+    expect(owner.save()).toBeNull(); expect(owner.queueState().jobs).toHaveLength(1);
+    expect(adapters.held).not.toHaveBeenCalled(); expect(sent).toHaveLength(1);
   });
 
   it("integrates owned normalization, moved files, route and rename facts in their existing order", async () => {
     const { owner, adapters, edit, ack, current, buffer } = fixture();
-    owner.start(); edit("literal", "Q"); owner.save(); await flush();
+    owner.start(); edit("literal", "Q"); owner.rename(); await flush();
     const snapshot = owner.queueState().active.snapshot;
     const movedFiles = [{ oldPath: "a.png", newPath: "b.png" }];
     await ack(0, "Canonical", "normalized", { movedFiles });
@@ -154,14 +161,14 @@ describe("save owner submission and acknowledgement", () => {
 
   it("preserves newer path intent while queued saves inherit acknowledged canonical identity", async () => {
     const { owner, edit, ack, sent, current, buffer } = fixture();
-    owner.start(); edit("A", "Q"); owner.save(); edit("B"); owner.save(); edit("C", "P"); owner.save();
+    owner.start(); edit("A", "Q"); owner.rename(); edit("B"); owner.save(); edit("C", "P"); owner.rename();
     await flush(); await ack(0, "Canonical", "A normalized");
     expect(sent[1].args).toEqual(["Canonical", "Canonical", "B", "none"]);
     expect(current.requestedPath).toBe("P"); expect(buffer()).toBe("C");
     await ack(1, "Canonical", "B"); expect(sent[2].args).toEqual(["Canonical", "P", "C", "none"]);
   });
 
-  it("creates once, uses real identity for B and only closes a clean new-note ordinary save", async () => {
+  it("creates once, uses real identity for B and never closes a new-note save", async () => {
     const { owner, current, edit, ack, sent, adapters } = fixture();
     current.isNewNote = true;
     owner.start(); edit("A"); owner.save(); edit("B"); owner.save(); await flush();
@@ -169,7 +176,7 @@ describe("save owner submission and acknowledgement", () => {
     await ack(0, "Created", "A");
     expect(sent[1]).toMatchObject({ kind: "update", args: ["Created", "Created", "B", "none"] });
     expect(adapters.closeNote).not.toHaveBeenCalled();
-    await ack(1, "Created", "B"); expect(adapters.closeNote).toHaveBeenCalledOnce();
+    await ack(1, "Created", "B"); expect(adapters.closeNote).not.toHaveBeenCalled();
     expect(adapters.publish.mock.calls).toEqual([[TOPICS.NOTE_CREATE, { path: "Created" }], [TOPICS.NOTE_SAVE, { path: "Created" }]]);
   });
 
@@ -177,7 +184,7 @@ describe("save owner submission and acknowledgement", () => {
     const { owner, current, edit, ack } = fixture({}, true);
     current.isNewNote = true; owner.start(); edit("A"); owner.save(); await flush();
     expect(createNote).toHaveBeenCalledExactlyOnceWith("P", "A");
-    await ack(0, "Created", "A"); edit("B", "folder/Q"); owner.save(); await flush();
+    await ack(0, "Created", "A"); edit("B", "folder/Q"); owner.rename(); await flush();
     expect(previewRename).toHaveBeenCalledExactlyOnceWith("Created", "folder/Q");
     expect(updateNote).toHaveBeenCalledExactlyOnceWith("Created", "folder/Q", "B", "none");
   });
@@ -185,7 +192,7 @@ describe("save owner submission and acknowledgement", () => {
   it("waits for canonical routing before rewriting links or sending queued work", async () => {
     const route = deferred();
     const { owner, edit, sent, ack, adapters } = fixture({ urlSync: { canonicalSaveRoute: vi.fn(() => route.promise) } });
-    owner.start(); edit("A", "Q"); owner.save(); edit("B"); owner.save(); await flush();
+    owner.start(); edit("A", "Q"); owner.rename(); edit("B"); owner.save(); await flush();
     await ack(0, "Q", "A");
     expect(sent).toHaveLength(1); expect(adapters.updateRenamedLinks).not.toHaveBeenCalled();
     route.resolve(); await flush();
@@ -195,11 +202,17 @@ describe("save owner submission and acknowledgement", () => {
   it("retains committed identity and held B on a canonical route failure without replay", async () => {
     const error = Error("route failed");
     const { owner, edit, sent, ack, adapters } = fixture({ urlSync: { canonicalSaveRoute: vi.fn(async () => { throw error; }) } });
-    owner.start(); edit("A", "Q"); owner.save(); edit("B"); owner.save(); await flush(); await ack(0, "Q", "A");
+    owner.start(); edit("A", "Q"); owner.rename(); edit("B"); owner.save(); await flush(); await ack(0, "Q", "A");
     expect(owner.queueState()).toMatchObject({ status: "paused", acknowledged: { path: "Q", content: "A" }, failure: { certainty: "known-committed" } });
     expect(sent).toHaveLength(1); expect(adapters.failed).toHaveBeenCalledWith(error);
     expect(adapters.updateRenamedLinks).not.toHaveBeenCalled();
     expect(adapters.drafts.clearAcknowledged).not.toHaveBeenCalled();
+  });
+  it("does not resubmit acknowledged normalized text after integration fails", async () => {
+    const { owner, edit, ack, buffer } = fixture({ urlSync: { canonicalSaveRoute: vi.fn(async () => { throw Error("route failed"); }) } });
+    owner.start(); edit("literal"); owner.save(); await flush(); await ack(0, "P", "normalized");
+    expect(buffer()).toBe("normalized"); expect(owner.queueState().failure.certainty).toBe("known-committed");
+    expect(owner.save()).toBeNull(); expect(owner.queueState().jobs).toHaveLength(1);
   });
 });
 
@@ -207,7 +220,7 @@ describe("save owner attachment preparation", () => {
   it.each(["move", "relink", "none"])("accepts the exact current prompt's %s choice for its original snapshot", async strategy => {
     const refs = [{ url: "image.png", kind: "image" }];
     const { owner, edit, sent, adapters } = fixture({ preview: vi.fn(async () => refs) });
-    owner.start(); edit("A", "folder/P"); owner.save(); edit("B"); owner.save(); await flush();
+    owner.start(); edit("A", "folder/P"); owner.rename(); edit("B"); owner.save(); await flush();
     const prompt = owner.state().pendingRenamePrompt;
     expect(Object.isFrozen(prompt)).toBe(true); expect(Object.isFrozen(prompt.identity)).toBe(true);
     expect(prompt.refs).toEqual(refs);
@@ -232,7 +245,7 @@ describe("save owner attachment preparation", () => {
 
   it.each([null, {}, "invalid"])("pauses invalid rename previews (%j) before mutation", async refs => {
     const { owner, edit, sent } = fixture({ preview: vi.fn(async () => refs) });
-    owner.start(); edit("A", "folder/P"); owner.save(); await flush();
+    owner.start(); edit("A", "folder/P"); owner.rename(); await flush();
     expect(sent).toHaveLength(0); expect(owner.state().pendingRenamePrompt).toBeNull();
     expect(owner.queueState()).toMatchObject({ status: "paused", failure: { certainty: "known-unsent", message: "Invalid rename preview; no write was sent." } });
   });
@@ -240,14 +253,14 @@ describe("save owner attachment preparation", () => {
   it("pauses on preview rejection without sending a mutation", async () => {
     const error = Error("preview failed");
     const { owner, edit, sent, adapters } = fixture({ preview: vi.fn(async () => { throw error; }) });
-    owner.start(); edit("A", "folder/P"); owner.save(); await flush();
+    owner.start(); edit("A", "folder/P"); owner.rename(); await flush();
     expect(owner.queueState().failure.certainty).toBe("known-unsent");
     expect(adapters.failed).toHaveBeenCalledWith(error); expect(sent).toHaveLength(0);
   });
 
   it("cancels only the current prompt and retains queued snapshots as held", async () => {
     const { owner, edit, sent, adapters } = fixture({ preview: vi.fn(async () => [{ url: "a" }]) });
-    owner.start(); edit("A", "folder/P"); owner.save(); edit("B"); owner.save(); await flush();
+    owner.start(); edit("A", "folder/P"); owner.rename(); edit("B"); owner.save(); await flush();
     owner.cancelRename(owner.state().pendingRenamePrompt.identity); await flush();
     expect(owner.queueState()).toMatchObject({ status: "paused", failure: { certainty: "cancelled-unsent" } });
     expect(owner.queueState().queued.map(job => job.snapshot.content)).toEqual(["B"]);
@@ -257,7 +270,7 @@ describe("save owner attachment preparation", () => {
 
   it("revokes an open prompt at the observation deadline and ignores its stale callbacks", async () => {
     const { owner, edit, sent, adapters } = fixture({ preview: vi.fn(async () => [{ url: "a" }]) });
-    owner.start(); edit("A", "folder/P"); owner.save(); await flush();
+    owner.start(); edit("A", "folder/P"); owner.rename(); await flush();
     const identity = owner.state().pendingRenamePrompt.identity;
     await vi.advanceTimersByTimeAsync(60_000);
     const failure = owner.queueState().failure;
@@ -270,7 +283,7 @@ describe("save owner attachment preparation", () => {
   it.each(["reset", "start", "dispose", "timeout"])("late previews after %s cannot open prompts or send writes", async action => {
     const preview = deferred();
     const { owner, edit, sent } = fixture({ preview: () => preview.promise });
-    owner.start(); edit("A", "folder/P"); owner.save();
+    owner.start(); edit("A", "folder/P"); owner.rename();
     if (action === "timeout") await vi.advanceTimersByTimeAsync(60_000);
     else owner[action]();
     preview.resolve([{ url: "obsolete" }]); await flush();
@@ -279,9 +292,9 @@ describe("save owner attachment preparation", () => {
 
   it("old prompt identities cannot resolve or hide a replacement session's prompt", async () => {
     const { owner, edit, sent } = fixture({ preview: vi.fn(async () => [{ url: "a" }]) });
-    owner.start(); edit("old", "folder/P"); owner.save(); await flush();
+    owner.start(); edit("old", "folder/P"); owner.rename(); await flush();
     const oldIdentity = owner.state().pendingRenamePrompt.identity;
-    owner.start(); edit("new", "next/P"); owner.save(); await flush();
+    owner.start(); edit("new", "next/P"); owner.rename(); await flush();
     const currentIdentity = owner.state().pendingRenamePrompt.identity;
     owner.confirmRename("none", oldIdentity); owner.cancelRename(oldIdentity); await flush();
     expect(owner.state().pendingRenamePrompt.identity).toBe(currentIdentity); expect(sent).toHaveLength(0);
@@ -295,9 +308,9 @@ describe("save owner settlement and decisions", () => {
     owner.start(); edit("draft", "Q"); const pending = owner.resolve(); await flush();
     expect(adapters.requestDecision).toHaveBeenCalledOnce();
     if (decision === "save") {
-      expect(sent[0].args).toEqual(["P", "Q", "draft", "none"]);
-      await ack(0, "Q"); expect(await pending).toBe(true);
-      expect(adapters.saveEditorPreference).toHaveBeenCalledOnce();
+      expect(sent[0].args).toEqual(["P", "P", "draft", "none"]);
+      await ack(0, "P"); expect(await pending).toBe(true);
+      expect(adapters.saveEditorPreference).not.toHaveBeenCalled();
     } else {
       expect(await pending).toBe(decision === "discard"); expect(sent).toHaveLength(0);
       expect(buffer()).toBe(decision === "discard" ? "old" : "draft");
@@ -330,16 +343,16 @@ describe("save owner settlement and decisions", () => {
 
   it("discard restores the latest acknowledged base instead of the original loaded note", async () => {
     const { owner, edit, ack, current, buffer, adapters } = fixture();
-    owner.start(); edit("saved", "Q"); owner.save(); await flush(); await ack(0, "Canonical", "normalized");
+    owner.start(); edit("saved", "Q"); owner.rename(); await flush(); await ack(0, "Canonical", "normalized");
     edit("newer", "Elsewhere"); expect(owner.discard()).toBe(true);
-    expect(current.requestedPath).toBe("Canonical"); expect(buffer()).toBe("normalized");
+    expect(current.requestedPath).toBe("Elsewhere"); expect(buffer()).toBe("normalized");
     expect(adapters.restoreContent).toHaveBeenCalledExactlyOnceWith("normalized");
   });
 
   it("new-note discard restores its unsaved initial note when no acknowledgement exists", () => {
     const { owner, current, edit, buffer } = fixture();
     current.isNewNote = true; current.note = { path: "Untitled" }; owner.start(); edit("draft", "New");
-    expect(owner.discard()).toBe(true); expect(current.requestedPath).toBe("Untitled"); expect(buffer()).toBe("");
+    expect(owner.discard()).toBe(true); expect(current.requestedPath).toBe("New"); expect(buffer()).toBe("");
   });
 
   it("navigation saves wait for settlement and refuse a clean handoff over newer edits", async () => {
@@ -353,7 +366,7 @@ describe("save owner settlement and decisions", () => {
     owner.start(); edit("A", "bad?"); expect(await owner.saveForNavigation()).toBe(false);
     edit("B", "P"); owner.save(); await flush(); sent[0].reject({ response: { data: { code: "plugin_cancelled" } } }); await flush();
     expect(await owner.saveForNavigation()).toBe(false); expect(sent).toHaveLength(1);
-    expect(adapters.held).toHaveBeenCalledOnce();
+    expect(adapters.held).not.toHaveBeenCalled();
   });
 
   it.each(["settle", "saveForNavigation"])("a replaced owner makes the old %s barrier unsafe", async method => {
@@ -366,26 +379,29 @@ describe("save owner settlement and decisions", () => {
     expect(adapters.applyNote).not.toHaveBeenCalled(); expect(owner.queueState().sessionId).toBe("owner:2");
   });
 
-  it("save-close waits for the final drain and a decision about unsent newer work", async () => {
+  it("explicit save then resolve waits for the final drain and a decision about unsent newer work", async () => {
     const decision = deferred();
     const { owner, edit, ack, adapters } = fixture({ requestDecision: vi.fn(() => decision.promise) });
-    owner.start(); edit("A"); owner.save(true); edit("B"); owner.save(); edit("D"); await flush();
+    owner.start(); edit("A"); owner.save(); const closing = owner.resolve(); edit("B"); owner.save(); edit("D"); await flush();
     await ack(0); expect(adapters.requestDecision).not.toHaveBeenCalled();
     await ack(1); expect(adapters.requestDecision).toHaveBeenCalledOnce(); expect(adapters.closeNote).not.toHaveBeenCalled();
-    decision.resolve("cancel"); await flush(); expect(adapters.closeNote).not.toHaveBeenCalled();
+    decision.resolve("cancel"); await flush(); expect(await closing).toBe(false); expect(adapters.closeNote).not.toHaveBeenCalled();
   });
 
-  it("save-close closes only its own clean session, never a replacement after a decision", async () => {
+  it("save settlement never closes a session, including after replacement", async () => {
     const { owner, edit, ack, adapters } = fixture();
-    owner.start(); edit("A"); owner.save(true); await flush(); await ack(0); expect(adapters.closeNote).toHaveBeenCalledOnce();
+    owner.start(); edit("A"); owner.save(); await flush(); await ack(0); expect(adapters.closeNote).not.toHaveBeenCalled();
     adapters.closeNote.mockClear(); const decision = deferred(); adapters.requestDecision.mockReturnValueOnce(decision.promise);
-    edit("B"); owner.save(true); edit("D"); await flush(); await ack(1);
-    owner.start(); decision.resolve("discard"); await flush(); expect(adapters.closeNote).not.toHaveBeenCalled();
+    edit("B"); owner.save(); const resolving = owner.resolve(); edit("D"); await flush(); await ack(1);
+    expect(adapters.requestDecision).toHaveBeenCalledOnce();
+    owner.start(); edit("Replacement work"); decision.resolve("discard"); await flush();
+    expect(await resolving).toBe(false); expect(adapters.restoreContent).not.toHaveBeenCalled();
+    expect(adapters.closeNote).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("late matching acknowledgement settles only its own work (newer buffer=%s) without reviving save-close", async newer => {
     const { owner, edit, sent, adapters } = fixture();
-    owner.start(); edit("A"); owner.save(true); await flush();
+    owner.start(); edit("A"); owner.save(); await flush();
     const wait = owner.settle(); await vi.advanceTimersByTimeAsync(60_000); expect(await wait).toBe(false);
     if (newer) edit("D");
     sent[0].resolve({ path: "P", content: "A" }); await flush();

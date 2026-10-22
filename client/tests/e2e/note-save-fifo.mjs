@@ -175,9 +175,9 @@ try {
   // Enter activates a focused native button via its character event. The
   // keyDown-only helper is sufficient for shortcuts but does not emit that.
   for (const type of ["keyDown", "keyUp"]) await current.session.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, ...(type === "keyDown" ? { text: "\r", unmodifiedText: "\r" } : {}) });
-  await current.session.poll("document.querySelector('[data-note-save-status]')?.textContent.includes('1 queued')");
-  await release(0); await request(1); await release(1); await current.session.poll("!document.querySelector('.content-column .animate-spin')");
-  assert(current.records.length === 2 && current.records[0].body.newContent === current.records[1].body.newContent, "Equal keyboard Save was coalesced"); await finishCase();
+  assert(current.records.length === 1, "Equal keyboard Save sent another mutation");
+  await release(0); await current.session.poll("!document.querySelector('.content-column .animate-spin')");
+  await save(); assert(current.records.length === 1, "Acknowledged equal Save sent another mutation"); await finishCase();
 
   await setup("creation-lineage", { create: true });
   await text("FIFO-create-A"); await save(); await request(0); await text("FIFO-create-B"); await save(); await text("FIFO-create-D");
@@ -188,7 +188,7 @@ try {
 
   await setup("rename-lineage"); await text("FIFO-rename-A");
   await current.session.click('input[placeholder="Title"]'); await current.session.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 }); await current.session.type("Q");
-  await save(); await request(0); await text("FIFO-rename-B"); await save();
+  await current.session.key("Enter", { windowsVirtualKeyCode: 13 }); await request(0); await text("FIFO-rename-B"); await save();
   await release(0); await request(1);
   assert(current.records[1].path.endsWith("/Q") && current.records[1].body.newPath === "Q", "Queued rename used stale identity");
   await release(1); await current.session.poll("location.pathname === '/Q' && !document.querySelector('.content-column .animate-spin')"); await finishCase();

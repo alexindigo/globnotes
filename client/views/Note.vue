@@ -81,6 +81,8 @@
               v-show="editMode"
               v-model.trim="editBasename"
               @input="onTitleInput"
+              @keydown.enter="controller.applyRename()"
+              @blur="controller.applyRename()"
               variant="plain"
               placeholder="Title"
             />
@@ -104,6 +106,8 @@
             <TextInput
               v-model="editFolder"
               @input="syncTitle"
+              @keydown.enter="controller.applyRename()"
+              @blur="controller.applyRename()"
               :list="folderDatalistId"
               class="grow"
               variant="plain-muted"

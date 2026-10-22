@@ -83,7 +83,7 @@ export function createPluginSdk({ pluginId, snapshot, own, assertActive = () => 
        * not completion — await a correlated fact for outcomes. */
       dispatch(action, payload) {
         assertActive();
-        dispatchAction(action, payload);
+        return dispatchAction(action, payload);
       },
     },
     commands: {

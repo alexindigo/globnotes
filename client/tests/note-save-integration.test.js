@@ -95,6 +95,10 @@ async function content(text) {
   editor.vm.setMarkdown(text); editor.vm.$emit("change"); await flushPromises();
 }
 async function clickSave() { button("Save").click(); await flushPromises(); }
+async function applyRename(field = "Folder (root)", event = "blur") {
+  await wrapper.find(`input[placeholder="${field}"]`).trigger(event === "Enter" ? "keydown" : event, event === "Enter" ? { key: "Enter" } : {});
+  await flushPromises();
+}
 async function acknowledge(index, path, text) { pending[index].resolve({ path, content: text }); await flushPromises(); }
 const live = () => document.querySelector(".cm-content")?.textContent;
 
@@ -175,7 +179,7 @@ describe("foreground FIFO through the real Note", () => {
     vi.useFakeTimers();
     try {
       const preview = deferred(); previewRename.mockImplementation(() => preview.promise);
-      await enter(); await content("A"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("folder"); await clickSave();
+      await enter(); await content("A"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("folder"); await applyRename();
       await vi.advanceTimersByTimeAsync(60_000);
       const failure = document.querySelector('[data-note-save-status]').textContent;
       preview.resolve([{ url: "obsolete.png", kind: "image" }]); await flushPromises();
@@ -188,7 +192,7 @@ describe("foreground FIFO through the real Note", () => {
     try {
       const oldPreview = deferred(), newPreview = deferred();
       previewRename.mockImplementationOnce(() => oldPreview.promise).mockImplementationOnce(() => newPreview.promise);
-      await enter(); await content("old snapshot"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("old-folder"); await clickSave();
+      await enter(); await content("old snapshot"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("old-folder"); await applyRename();
       await vi.advanceTimersByTimeAsync(60_000);
       button("Edit").click(); await flushPromises();
       button("Discard", document.querySelector('[data-modal-top="true"]')).click(); await flushPromises();
@@ -196,7 +200,7 @@ describe("foreground FIFO through the real Note", () => {
         await holder.router.push("/Other"); await flushPromises();
         await holder.router.push("/NoteA"); await flushPromises();
       }
-      await enter(); await content("new snapshot"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("new-folder"); await clickSave();
+      await enter(); await content("new snapshot"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("new-folder"); await applyRename();
       newPreview.resolve([{ url: "current.png", kind: "image" }]); await flushPromises();
       const prompt = wrapper.findComponent({ name: "RenameAssetsModal" });
       const callbacks = prompt.emitted("confirm");
@@ -214,7 +218,7 @@ describe("foreground FIFO through the real Note", () => {
     vi.useFakeTimers();
     try {
       previewRename.mockResolvedValue([{ url: "current.png", kind: "image" }]);
-      await enter(); await content("A"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("folder"); await clickSave();
+      await enter(); await content("A"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("folder"); await applyRename();
       const modal = wrapper.findComponent({ name: "RenameAssetsModal" });
       const identity = modal.props("promptIdentity") ?? modal.props("jobId");
       expect(document.querySelector("#rename-assets-title")).not.toBeNull();
@@ -230,13 +234,13 @@ describe("foreground FIFO through the real Note", () => {
     vi.useFakeTimers();
     try {
       previewRename.mockResolvedValue([{ url: "old.png", kind: "image" }]);
-      await enter(); await content("old snapshot"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("old-folder"); await clickSave();
+      await enter(); await content("old snapshot"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("old-folder"); await applyRename();
       const modal = wrapper.findComponent({ name: "RenameAssetsModal" });
       const oldIdentity = modal.props("promptIdentity");
       await vi.advanceTimersByTimeAsync(60_000);
       button("Edit").click(); await flushPromises(); button("Discard", document.querySelector('[data-modal-top="true"]')).click(); await flushPromises();
       previewRename.mockResolvedValue([{ url: "new.png", kind: "image" }]);
-      await enter(); await content("new snapshot"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("new-folder"); await clickSave();
+      await enter(); await content("new snapshot"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("new-folder"); await applyRename();
       const currentIdentity = modal.props("promptIdentity"); expect(currentIdentity).not.toBe(oldIdentity);
       modal.vm.$emit("confirm", "none", oldIdentity); modal.vm.$emit("cancel", oldIdentity); await flushPromises();
       expect(modal.props("promptIdentity")).toBe(currentIdentity); expect(document.querySelector('[data-modal-top="true"]').textContent).toContain("new.png"); expect(pending).toHaveLength(0);
@@ -300,7 +304,7 @@ describe("foreground FIFO through the real Note", () => {
     await wrapper.find('input[placeholder="Title"]').setValue("Renamed");
     getNotes.mockResolvedValueOnce(["NoteA", "Renamed", "Reference"].map(path => ({ path })));
     getNote.mockResolvedValueOnce({ path: "Reference", content: "[[NoteA]]" });
-    await clickSave(); await acknowledge(0, "Renamed", "Saved text");
+    await applyRename("Title", "Enter"); await acknowledge(0, "Renamed", "Saved text");
     expect(getNotes).toHaveBeenCalledWith("NoteA", undefined, undefined, undefined, true);
     expect(pending[1].args).toEqual(["Reference", "Reference", "[[Renamed]]"]);
     expect(live()).toBe("Saved text");
@@ -311,6 +315,7 @@ describe("foreground FIFO through the real Note", () => {
 
   it("the editor receives the extracted upload hook using the current folder and canonical image metadata", async () => {
     await enter(); await wrapper.find('input[placeholder="Folder (root)"]').setValue("uploads");
+    await applyRename();
     const file = { name: "image.png" }, callback = vi.fn();
     uploadFile.mockResolvedValueOnce({ url: "/uploads/image-1.png", filename: "image-1.png" });
     wrapper.findComponent({ name: "MarkdownEditor" }).props("addImageBlobHook")(file, callback);
@@ -320,10 +325,11 @@ describe("foreground FIFO through the real Note", () => {
     expect(toastConsumer.add).toHaveBeenCalledWith(expect.objectContaining({ summary: "Success", detail: "Attachment uploaded successfully ✓", severity: "success" }));
   });
 
-  it("equal-content Save clicks remain distinct foreground jobs", async () => {
+  it("equal-content Save clicks do not admit foreground jobs", async () => {
     await enter(); await content("Seed\n"); await clickSave(); await clickSave();
-    expect(pending).toHaveLength(1);
-    await acknowledge(0, "NoteA", "Seed\n"); expect(pending).toHaveLength(2);
+    expect(pending).toHaveLength(0);
+    await content("Changed"); await clickSave(); await clickSave(); expect(pending).toHaveLength(1);
+    await acknowledge(0, "NoteA", "Changed"); await clickSave(); expect(pending).toHaveLength(1);
   });
 
   it("a failed A retains B and further Save clicks without dispatching", async () => {
@@ -356,9 +362,9 @@ describe("foreground FIFO through the real Note", () => {
 
   it("rename lineage inherits A's canonical target but preserves a deliberate rename back", async () => {
     await enter(); await content("A");
-    await wrapper.find('input[placeholder="Title"]').setValue("Q"); await clickSave();
+    await wrapper.find('input[placeholder="Title"]').setValue("Q"); await applyRename("Title");
     await content("B"); await clickSave();
-    await wrapper.find('input[placeholder="Title"]').setValue("NoteA"); await content("C"); await clickSave();
+    await wrapper.find('input[placeholder="Title"]').setValue("NoteA"); await content("C"); await applyRename("Title");
     await acknowledge(0, "Q", "A");
     expect(pending[1].args).toEqual(["Q", "Q", "B", "none"]);
     expect(wrapper.find('input[placeholder="Title"]').element.value).toBe("NoteA");
@@ -377,13 +383,13 @@ describe("foreground FIFO through the real Note", () => {
   it("a rename preview rejection pauses before mutation rather than choosing none", async () => {
     await enter(); await content("A");
     await wrapper.find('input[placeholder="Folder (root)"]').setValue("folder");
-    previewRename.mockRejectedValue(new Error("preview failed")); await clickSave();
+    previewRename.mockRejectedValue(new Error("preview failed")); await applyRename();
     expect(pending).toHaveLength(0); expect(document.body.textContent).toContain("paused");
   });
 
   it("an attachment choice is job-owned and uses A's original content", async () => {
     const preview = deferred(); previewRename.mockImplementation(() => preview.promise);
-    await enter(); await content("A"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("folder"); await clickSave();
+    await enter(); await content("A"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("folder"); await applyRename();
     await content("B"); await clickSave();
     preview.resolve([{ url: "image.png", kind: "image" }]); await flushPromises();
     const choice = [...document.querySelectorAll('[data-modal-top="true"] button')].find(el => el.textContent.includes("Move files with the note"));
@@ -393,7 +399,7 @@ describe("foreground FIFO through the real Note", () => {
 
   it("Escape cancels attachment preparation, retains B, and settles without a write", async () => {
     const preview = deferred(); previewRename.mockImplementation(() => preview.promise);
-    await enter(); await content("A"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("folder"); await clickSave();
+    await enter(); await content("A"); await wrapper.find('input[placeholder="Folder (root)"]').setValue("folder"); await applyRename();
     await content("B"); await clickSave(); preview.resolve([{ url: "image.png", kind: "image" }]); await flushPromises();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true })); await flushPromises();
     expect(pending).toHaveLength(0); expect(live()).toBe("B"); expect(document.body.textContent).toContain("paused");

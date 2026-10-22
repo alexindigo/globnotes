@@ -102,15 +102,15 @@ describe("note workflow ownership", () => {
     await f.controller.mount(); f.handlers.get(TOPICS.EDITOR_TOGGLE_EDIT)();
     expect(f.controller.state.editMode).toBe(false);
   });
-  it("tracks literal buffer/path dirtiness immediately and saves the latest draft after debounce", async () => {
+  it("tracks literal buffer dirtiness, excludes unapplied paths and saves the latest draft after debounce", async () => {
     const f = fixture(); await f.controller.mount(); f.enter();
     expect(f.controller.isDirty()).toBe(false); f.input("Changed");
     expect(f.controller.state.unsavedChanges).toBe(true); expect(f.participant().hasUnsavedChanges()).toBe(true);
     await vi.advanceTimersByTimeAsync(1000);
     expect(f.drafts.save).toHaveBeenCalledWith("folder/P", "Changed", 1);
     f.input("Seed"); expect(f.controller.isDirty()).toBe(false);
-    f.controller.setBasename("Q"); f.controller.onTitleInput(); expect(f.controller.isDirty()).toBe(true);
-    expect(f.adapters.setUnload).toHaveBeenLastCalledWith(true);
+    f.controller.setBasename("Q"); f.controller.onTitleInput(); expect(f.controller.isDirty()).toBe(false);
+    expect(f.adapters.setUnload).toHaveBeenLastCalledWith(false);
   });
   it("transfers retained buffer to preview and an initializing editor without empty placeholder loss", async () => {
     const f = fixture(); await f.controller.mount(); f.enter(); f.input("Retained");
@@ -202,6 +202,91 @@ describe("note workflow ownership", () => {
     expect(updateNote).toHaveBeenCalledWith("folder/P", "folder/P", "Saved", "none");
     expect(f.controller.isDirty()).toBe(false); expect(createNote).not.toHaveBeenCalled();
     await f.controller.deleteConfirmedHandler(); expect(deleteNote).toHaveBeenCalledWith("folder/P");
+  });
+  it("save is a no-op outside editing and when text is already submitted, and never stores the editor mode", async () => {
+    updateNote.mockImplementation(async (source, path, content) => ({ path, content }));
+    const f = fixture(); await f.controller.mount(); f.controller.saveHandler();
+    f.enter(); f.controller.saveHandler(); expect(updateNote).not.toHaveBeenCalled();
+    f.input("Saved"); f.controller.saveHandler(); f.controller.saveHandler(); await flush();
+    expect(updateNote).toHaveBeenCalledTimes(1); expect(f.controller.state.editMode).toBe(true);
+    f.controller.saveHandler(); expect(updateNote).toHaveBeenCalledTimes(1);
+    expect(f.adapters.saveEditorPreference).not.toHaveBeenCalled();
+    f.controller.setEditorMode("wysiwyg"); expect(f.adapters.saveEditorPreference).toHaveBeenCalledExactlyOnceWith("wysiwyg");
+  });
+  it.each(["Untitled", "Heading"])("first save creates %s and stays editing", async title => {
+    createNote.mockImplementation(async (path, content) => ({ path, content }));
+    const f = fixture({}, { path: undefined, notePaths: [] }); await f.controller.mount(); f.controller.registerEditor(f.port);
+    f.input(title === "Heading" ? "# Heading" : "New text");
+    await vi.advanceTimersByTimeAsync(300); f.controller.saveHandler(); await flush();
+    expect(createNote).toHaveBeenCalledExactlyOnceWith(title, title === "Heading" ? "# Heading" : "New text");
+    expect(f.controller.state.editMode).toBe(true); expect(f.controller.isDirty()).toBe(false);
+  });
+  it("rename carries current text, applies acknowledgement and Discard reverts only later text", async () => {
+    updateNote.mockImplementation(async (source, path, content) => ({ path, content: content.replace("old.png", "new.png") }));
+    const f = fixture(); await f.controller.mount(); f.enter(); f.input("![image](old.png)");
+    f.controller.setBasename("Q"); f.controller.onTitleInput(); expect(updateNote).not.toHaveBeenCalled();
+    expect(f.controller.applyRename()).toBe(true); f.controller.applyRename(); await flush();
+    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/Q", "![image](old.png)", "none");
+    expect(f.controller.currentBuffer()).toBe("![image](new.png)");
+    f.input("Later"); f.participant().discard(); expect(f.controller.currentBuffer()).toBe("![image](new.png)");
+    expect(f.controller.state.note.path).toBe("folder/Q");
+  });
+  it("save writes the current file and leaves unapplied name input alone", async () => {
+    updateNote.mockImplementation(async (source, path, content) => ({ path, content }));
+    const f = fixture(); await f.controller.mount(); f.enter();
+    f.controller.setBasename("Q"); f.controller.onTitleInput(); f.input("Work");
+    f.controller.saveHandler(); await flush();
+    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/P", "Work", "none");
+    expect(f.controller.state.editBasename).toBe("Q"); expect(f.controller.isDirty()).toBe(false);
+    f.controller.applyRename(); await flush();
+    expect(updateNote).toHaveBeenLastCalledWith("folder/P", "folder/Q", "Work", "none");
+  });
+  it("navigation and session settlement apply pending renames even with clean text", async () => {
+    updateNote.mockImplementation(async (source, path, content) => ({ path, content }));
+    const f = fixture(); await f.controller.mount(); f.enter();
+    f.controller.setBasename("Q"); f.controller.onTitleInput();
+    expect(await f.participant().settlePending()).toBe(true);
+    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/Q", "Seed", "none");
+    f.controller.setBasename("R"); f.controller.onTitleInput();
+    f.location.hash = "#source";
+    expect(await f.controller.gateNavigation(f.to())).toBe(false); await flush();
+    expect(updateNote).toHaveBeenLastCalledWith("folder/Q", "folder/R", "Seed", "none");
+    expect(f.router.push).toHaveBeenCalledWith("/Other");
+  });
+  it("new-note rename changes only requested name; invalid rename retains fields and blocks exit/session", async () => {
+    const f = fixture({}, { path: undefined }); await f.controller.mount();
+    f.controller.setBasename("Manual"); f.controller.onTitleInput(); expect(f.controller.applyRename()).toBe(true);
+    expect(createNote).not.toHaveBeenCalled(); expect(updateNote).not.toHaveBeenCalled();
+    f.controller.setBasename("bad?"); f.controller.onTitleInput(); expect(f.controller.applyRename()).toBe(false);
+    expect(await f.participant().settlePending()).toBe(false);
+    expect(f.controller.state.editBasename).toBe("bad?");
+    expect(f.adapters.toast.add).toHaveBeenCalledWith(expect.objectContaining({ summary: "Invalid" }));
+    expect(f.controller.state.editMode).toBe(true);
+  });
+  it("publishes text-free revisions, invalid and paused capabilities, and the final clean exit", async () => {
+    const wire = deferred(); updateNote.mockReturnValue(wire.promise);
+    const f = fixture(); await f.controller.mount(); f.enter();
+    f.input("A"); f.input("B");
+    const facts = () => f.adapters.publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_EDIT_STATE).map(([, fact]) => fact);
+    expect(facts().at(-1)).toEqual({ path: "folder/P", revision: 2, unsaved: true, canSave: true });
+    f.controller.setBasename("bad?"); f.controller.onTitleInput(); expect(facts().at(-1).canSave).toBe(false);
+    f.controller.setBasename("P"); f.controller.onTitleInput(); f.controller.saveHandler(); await flush();
+    wire.reject({ response: { data: { code: "plugin_cancelled" } } }); await flush();
+    expect(facts().at(-1)).toMatchObject({ unsaved: true, canSave: false });
+    f.participant().discard(); expect(facts().at(-1)).toMatchObject({ unsaved: false, canSave: false });
+    expect(facts().every(fact => Object.keys(fact).sort().join() === "canSave,path,revision,unsaved")).toBe(true);
+  });
+  it("save-close composes save, settlement and exit without closing over newer work", async () => {
+    const wire = deferred(); updateNote.mockReturnValue(wire.promise);
+    const f = fixture(); await f.controller.mount(); f.enter(); f.input("A");
+    const closing = f.controller.saveHandler(true); await flush();
+    expect(f.controller.state.editMode).toBe(true); f.input("Later");
+    wire.resolve({ path: "folder/P", content: "A" }); await flush();
+    expect(f.controller.state.isSaveChangesModalVisible).toBe(true);
+    f.controller.onSaveChoice("cancel"); expect(await closing).toBe(false); expect(f.controller.currentBuffer()).toBe("Later");
+    updateNote.mockResolvedValue({ path: "folder/P", content: "Later" });
+    const cleanClose = f.controller.saveHandler(true); await flush();
+    expect(await cleanClose).toBe(true); expect(f.controller.state.editMode).toBe(false);
   });
   it("acknowledges its own caret URL write without selecting, but later history restores selection", async () => {
     const f = fixture(); await f.controller.mount(); f.enter(); f.location.hash = "#source";

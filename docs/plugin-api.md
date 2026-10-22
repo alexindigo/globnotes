@@ -83,7 +83,7 @@ filesystem envelope.
 | Server `ctx.permissions.requestAccess({kind,hosts,reason}, options?)` | prompt admission `{requestId,revision,status,blockedReasons}`; does not wait for a human or grant traffic |
 | Server `ctx.permissions.status()` | owning current request/approval/effective projection and source token |
 | `ctx.register(disposer)` / `ctx.timers` | generation-scoped cleanup, even when disposal throws |
-| Browser: `ctx.events.on` / `ctx.actions.dispatch` | managed bus facts/actions; admission is not completion |
+| Browser: `ctx.events.on` / `ctx.actions.dispatch` | managed bus facts/actions; dispatch returns the boolean from `dispatchAction` (`false` when refused, e.g. while a dialog is open); `true` is admission, not completion — observe facts for outcomes |
 
 `createUuid` is also exported by the browser's `@globnotes/plugin-sdk` module.
 Use this helper for plugin identities rather than the secure-context-only browser

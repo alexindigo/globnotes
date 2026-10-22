@@ -88,7 +88,7 @@ describe("per-note save FIFO", () => {
   });
   it("advances canonical identity while preserving explicit newer path intent", async () => {
     const { queue, sent } = fixture();
-    queue.submit(snapshot("A", 1, "Q")); queue.submit(snapshot("B", 1, "Q")); queue.submit(snapshot("C", 2, "P"));
+    queue.submit({ ...snapshot("A", 1, "Q"), intent: "rename" }); queue.submit(snapshot("B", 1, "Q")); queue.submit({ ...snapshot("C", 2, "P"), intent: "rename" });
     await flushPromises(); await ack(sent[0], "Canonical-Q");
     expect(sent[1].context).toMatchObject({ sourcePath: "Canonical-Q", targetPath: "Canonical-Q" });
     await ack(sent[1], "Canonical-Q"); expect(sent[2].context).toMatchObject({ sourcePath: "Canonical-Q", targetPath: "P" });

@@ -61,6 +61,15 @@ schema enforcement — the topics.js file IS the contract).
 | 26 | `note:edit-end` | `{ path }` | `noteController.js` exitEditState |
 | 27 | `app:open-settings` | `{ page? }` | gear / palette / keybindings / plugin SDK → the one openSettings handler |
 | 28 | `note:title-changed` | `{ title }` | `noteController.js` publishTitle (live buffer or loaded note) |
+| 29 | `note:edit-state` | `{ path, revision, unsaved, canSave }` | `noteController.js` refreshDirtyState |
+
+`note:edit-state` never carries note text. `path` is the current requested path;
+`revision` increases per content edit. The controller publishes whenever revision,
+unsaved state or save capability changes (also when the requested path changes).
+`unsaved` means the buffer differs from the latest submitted snapshot or the FIFO
+has unresolved work, excluding unapplied filename text. `canSave` is false outside
+edit mode, for an invalid current name or while the queue is paused. Exiting edit
+mode publishes `unsaved: false, canSave: false`.
 
 ## Built-in consumers
 

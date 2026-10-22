@@ -37,6 +37,9 @@ const TOPICS = {
   EDITOR_MODE_CHANGE: "editor:mode-change",
   NOTE_EDIT_START: "note:edit-start",
   NOTE_EDIT_END: "note:edit-end",
+  // Controller fact: { path, revision, unsaved, canSave }. No note text.
+  // Emitted when edit state changes; exit emits unsaved/canSave false.
+  NOTE_EDIT_STATE: "note:edit-state",
 
   // Editor action channel — the single integration point for driving the
   // mounted editor. Keybinding layers publish these today; the future

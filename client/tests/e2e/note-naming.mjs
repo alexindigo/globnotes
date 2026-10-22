@@ -22,7 +22,7 @@ let browser = null;
 try {
   server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" }, applicationServer());
   browser = await launchBrowser({ port: CDP_PORT });
-  const page = await connect({ port: CDP_PORT });
+  const page = await connect({ port: CDP_PORT, binding: browser });
 
   // New note: the title field starts Untitled; typing an H1 moves it.
   await page.goto(`${server.baseUrl}/_/new`);
@@ -51,6 +51,7 @@ try {
     const el = document.querySelector("input[placeholder=Title]");
     el.value = "My Note";
     el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     return true;
   })()`);
   await page.evaluate(`(() => {

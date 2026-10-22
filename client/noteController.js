@@ -21,6 +21,7 @@ import { createNoteSaveOwner } from "./noteSaveOwner.js";
 import { createNoteRenameLinks } from "./noteRenameLinks.js";
 import { createNoteAttachments } from "./noteAttachments.js";
 import { noteOperationError, noteSaveError } from "./noteErrors.js";
+import { notePathError } from "./validators.js";
 
 /** Owns a mounted note's workflow. Views supply route/context readers, effects
  * and an editor port; all decisions and buffer ownership remain here. */
@@ -100,6 +101,7 @@ export function createNoteController({
   const viewLine = ref(null);
   const unsavedChanges = ref(false);
   const contentRevision = ref(0), pathRevision = ref(0);
+  let lastEditState = null;
   const queueState = shallowRef({ status: "idle", unresolved: false, queued: [], jobs: [], canDiscard: true });
   const saving = computed(() => ["preparing", "sending"].includes(queueState.value.status));
   const saveFeedback = computed(() => queueState.value.status === "paused"
@@ -139,8 +141,7 @@ export function createNoteController({
       finally { applyingAcknowledgement = false; }
     },
     publishTitle, setMovedFiles: files => { lastMovedFiles.value = files; },
-    urlSync, updateRenamedLinks, drafts, requestDecision: requestNoteDecision, closeNote,
-    saveEditorPreference: saveDefaultEditorMode,
+    urlSync, updateRenamedLinks, drafts, requestDecision: requestNoteDecision,
     changed: state => { saveOwnerState.value = state; queueState.value = state.queue; },
     refreshDirtyState,
     invalid: message => notify(message, "Invalid", "error"),
@@ -218,10 +219,11 @@ export function createNoteController({
   }
   async function gateNavigation(to) {
     const saveState = saveOwner.queueState();
-    const action = decideNavigation({ ...urlSync.state(), ownerId,
+    const decide = () => decideNavigation({ ...urlSync.state(), ownerId,
       sessionId: saveState?.sessionId, activeSubmissionId: saveState?.active?.submissionId,
       resourceIdentity: resourceIdentity.value, editMode: editMode.value, editorMode: editorMode.value,
       canModify: canModify.value, queue: queueState.value, dirty: isDirty() }, to);
+    let action = decide();
     if (action.type === "acknowledge") { urlSync.consumeAcknowledgementGuard(); return true; }
     if (action.type === "allow") return true;
     if (action.type === "enter-edit") { pendingEditorMode = action.mode; pendingInitialLine = action.line; editHandler(); return true; }
@@ -230,6 +232,10 @@ export function createNoteController({
       if (editorMode.value !== action.mode) setEditorMode(action.mode, false);
       if (action.line) { await defer(); editor?.selectLine?.(action.line); }
       return true;
+    }
+    if (editMode.value) {
+      if (!applyRename()) return false;
+      action = decide();
     }
     if (action.type === "exit-edit") { exitEditState(); return true; }
     const navWasPop = getLocation().hash === to.hash;
@@ -253,9 +259,9 @@ export function createNoteController({
       .finally(() => { pendingDecisionPromise = null; });
     return pendingDecisionPromise;
   }
-  function settlePendingWrites() { return saveOwner.settle(); }
+  function settlePendingWrites() { return applyRename() ? saveOwner.settle() : Promise.resolve(false); }
   function discardOwnedWork() { return saveOwner.discard(); }
-  function resolveOwnedWork() { return saveOwner.resolve(); }
+  function resolveOwnedWork() { return applyRename() ? saveOwner.resolve() : Promise.resolve(false); }
   const disposeSessionParticipant = registerParticipant("note", {
     hasUnsavedChanges: isDirty, settlePending: settlePendingWrites, requestDecision: requestNoteDecision,
     save: saveForNavigation,
@@ -301,16 +307,17 @@ export function createNoteController({
     publishFact(TOPICS.NOTE_TITLE_CHANGED, { title: displayTitle(source, noteBasename.value) });
   }
   function scheduleTitleFollow() {
-    if (!isNewNote.value || titleTouched.value) return;
+    if (!isNewNote.value || saveOwner.queueState()?.acknowledged || titleTouched.value) return;
     if (titleFollowTimer) clearTimeout(titleFollowTimer);
     titleFollowTimer = setTimeout(() => {
       titleFollowTimer = null;
-      if (!isNewNote.value || titleTouched.value) return;
+      if (!isNewNote.value || saveOwner.queueState()?.acknowledged || titleTouched.value) return;
       const sanitized = followedBasename(currentBuffer());
       if (sanitized && sanitized !== editBasename.value) { editBasename.value = sanitized; syncTitle(); }
     }, 300);
   }
   function onTitleInput() { titleTouched.value = true; syncTitle(); }
+  function applyRename() { return !editMode.value || saveOwner.rename(); }
   function getInitialEditorValue() { const draftContent = loadDraft(); return draftContent !== null ? draftContent : note.value.content ?? ""; }
   async function deleteHandler() { if (!await resolveOwnedWork()) return; isDeleteModalVisible.value = true; }
   async function deleteConfirmedHandler() {
@@ -320,9 +327,28 @@ export function createNoteController({
       notify("Note deleted ✓", "Success", "success"); router.push({ name: "home" });
     }).catch(error => showNoteError(error, noteOperationError(error)));
   }
-  function saveHandler(close = false) { return saveOwner.save(close); }
+  function saveHandler(close = false) {
+    if (!close) return saveOwner.save();
+    return saveAndClose();
+  }
+  async function saveAndClose() {
+    if (!editMode.value) return false;
+    if (!applyRename()) return false;
+    const sessionId = saveOwner.queueState()?.sessionId;
+    const receipt = saveOwner.save();
+    if (receipt?.held || !await resolveOwnedWork()) return false;
+    if (sessionId !== saveOwner.queueState()?.sessionId) return false;
+    closeNote();
+    return true;
+  }
   function refreshDirtyState() {
     const dirty = isDirty(); unsavedChanges.value = dirty; setUnload(dirty);
+    const fact = { path: newPath.value ?? note.value.path, revision: contentRevision.value,
+      unsaved: dirty, canSave: editMode.value && !notePathError(newPath.value) && queueState.value.status !== "paused" };
+    if (!lastEditState || Object.keys(fact).some(key => fact[key] !== lastEditState[key])) {
+      lastEditState = fact;
+      publishFact(TOPICS.NOTE_EDIT_STATE, fact);
+    }
   }
   function noteSaveFailure(error) { showNoteError(error, noteSaveError(error, queueState.value.failure)); }
   function showNoteError(error, mapped) { if (mapped) notify(mapped.message, mapped.title, "error"); else failed(error); }
@@ -336,10 +362,13 @@ export function createNoteController({
   function exitEditState() {
     saveOwner.revokeRenamePrompt(); clearEditTimers();
     editMode.value = false; editorLine.value = null; editorInitialLine.value = null;
-    unsavedChanges.value = false; setUnload(false);
+    refreshDirtyState();
     publishTitle(); publishFact(TOPICS.NOTE_EDIT_END, { path: note.value.path }); saveOwner.end();
   }
-  function saveForNavigation() { return saveOwner.saveForNavigation(); }
+  async function saveForNavigation() {
+    if (!applyRename() || !await saveOwner.saveForNavigation()) return false;
+    return true;
+  }
   function closeNote() {
     if (isDirty() || queueState.value.unresolved) return;
     const acknowledgedPath = saveOwner.queueState()?.acknowledged?.path;
@@ -385,12 +414,9 @@ export function createNoteController({
     return init();
   }
   function createFromWikilink() { router.push(newNoteTarget({ path: getContext().path })); }
-  function saveDefaultEditorMode() { if (editor) saveEditorPreference(editor.isWysiwygMode() ? "wysiwyg" : "markdown"); }
   function isDirty() {
-    if (queueState.value.unresolved) return true;
     if (!editMode.value) return false;
-    const acknowledged = saveOwner.queueState()?.acknowledged ?? note.value;
-    return newPath.value !== acknowledged.path || currentBuffer() !== (acknowledged.content ?? "");
+    return queueState.value.unresolved || saveOwner.contentNeedsSave();
   }
   function routeHashChanged(hash) { if (!editMode.value) viewLine.value = viewLineFromFragment(parseFragment(hash), viewLine.value); }
   function captureEditorForRemount() { if (editMode.value && editorMode.value === "wysiwyg" && editor) editorInitialValue.value = currentBuffer(); }
@@ -411,7 +437,7 @@ export function createNoteController({
   return { state, mount, init, dispose, registerEditor, isDirty, currentBuffer, gateNavigation,
     routeHashChanged, captureEditorForRemount, addImageBlobHook,
     toggleEditModeHandler, setEditorMode, onEditorInput, onSourceSelection, setEditMode,
-    syncTitle, onTitleInput, deleteHandler, deleteConfirmedHandler, saveHandler, onSaveChoice,
+    syncTitle, onTitleInput, applyRename, deleteHandler, deleteConfirmedHandler, saveHandler, onSaveChoice,
     clearDraft, createFromWikilink,
     confirmRename: saveOwner.confirmRename, cancelRename: saveOwner.cancelRename,
     setBasename: value => { editBasename.value = value; },

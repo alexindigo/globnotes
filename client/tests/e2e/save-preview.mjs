@@ -155,9 +155,8 @@ try {
         await persisted();
         const path = action === "navigation" ? destination : title;
         await page.poll(`location.pathname === ${JSON.stringify(`/${path}`)}`, { timeout: 10000 });
-        // Main's new-note save commits its route and opens view mode;
-        // existing-note toolbar saves keep the current preview session.
-        await page.poll(action === "toolbar" && kind === "existing" ? "!!document.querySelector('.preview-buffer')"
+        // Every toolbar save keeps the current preview edit session.
+        await page.poll(action === "toolbar" ? "!!document.querySelector('.preview-buffer')"
           : "!!document.querySelector('.toast-viewer') && !document.querySelector('.preview-buffer, .cm-editor, .ProseMirror')");
         if (action !== "toolbar") assert(await page.evaluate("location.hash === ''"), "modal Save exits edit mode in the URL");
         assert(await page.evaluate("localStorage.getItem('defaultEditorMode')") === preference, "preview Save preserves the editor preference");
@@ -165,7 +164,7 @@ try {
         assert(!events.slice(errorStart).some(e => e.level === "error"), "no browser console errors during Save");
         // API/disk persistence can precede the browser's acknowledgement. The
         // next scenario must not navigate while the prior Save still owns work.
-        if (action === "toolbar" && kind === "existing") {
+        if (action === "toolbar") {
           await page.poll("(() => { const button = [...document.querySelectorAll('.content-column button')].find(button => button.textContent.trim() === 'Save'); return button?.getAttribute('aria-busy') === 'false' && !document.querySelector('.content-column .animate-spin'); })()", { timeout: 10000 });
         }
         pending = null;

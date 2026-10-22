@@ -24,8 +24,6 @@ export function createNoteSaveOwner({
   updateRenamedLinks,
   drafts,
   requestDecision,
-  closeNote,
-  saveEditorPreference,
   changed = () => {},
   refreshDirtyState = () => {},
   invalid = () => {},
@@ -39,7 +37,6 @@ export function createNoteSaveOwner({
   let queue = null;
   let queueSnapshot = idleState();
   let editSession = 0;
-  let closeIntent = null;
   let pendingRenamePrompt = null;
   const aliases = new Set();
 
@@ -125,7 +122,6 @@ export function createNoteSaveOwner({
   function start() {
     revokeRenamePrompt();
     queue?.dispose();
-    closeIntent = null;
     const current = getState();
     const startedNew = current.isNewNote;
     const sessionId = `${ownerId}:${++editSession}`;
@@ -143,15 +139,9 @@ export function createNoteSaveOwner({
         ? update(context.sourcePath, context.targetPath, snapshot.content, preparation.fileRefs)
         : create(context.targetPath, snapshot.content),
       acknowledge,
-      failed: error => { closeIntent = null; failed(error); },
+      failed: error => failed(error),
       canResolveLate: (_, result) => getBuffer() === result.content && getState().requestedPath === result.path,
-      drained: snapshot => {
-        clearAcknowledgedDrafts(snapshot);
-        if (closeIntent) {
-          closeIntent = null;
-          resolve().then(ok => { if (ok && queue?.state().sessionId === sessionId) closeNote(); });
-        } else if (startedNew && snapshot.intent === "save" && !isContentChanged()) closeNote();
-      },
+      drained: clearAcknowledgedDrafts,
     });
     queueSnapshot = queue.state();
     notify();
@@ -159,24 +149,51 @@ export function createNoteSaveOwner({
   }
 
   function submit(intent, attachmentPolicy) {
+    if (!queue) return null;
     const current = getState();
     const titleError = notePathError(current.requestedPath);
     if (titleError) {
       invalid(titleError);
       return null;
     }
-    const receipt = queue.submit({ content: getBuffer(), requestedPath: current.requestedPath,
-      contentRevision: current.contentRevision, pathRevision: current.pathRevision,
+    const latest = latestSubmitted();
+    const contentOnly = intent === "save" && latest;
+    const receipt = queue.submit({ content: getBuffer(), requestedPath: contentOnly ? (latest.requestedPath ?? latest.path) : current.requestedPath,
+      contentRevision: current.contentRevision, pathRevision: contentOnly ? (latest.pathRevision ?? Math.max(0, queue.state().acknowledgedPathRevision)) : current.pathRevision,
       draftRevision: current.contentRevision, intent, attachmentPolicy });
     if (receipt.held) held();
     return receipt;
   }
 
-  function save(close = false) {
-    saveEditorPreference();
-    const receipt = submit(close ? "save-close" : "save", "prompt");
-    if (receipt && close && !receipt.held) closeIntent = receipt.submissionId;
-    return receipt;
+  function latestSubmitted() {
+    const snapshot = queue?.state();
+    const pending = snapshot?.queued.at(-1) ?? snapshot?.active;
+    // A committed job's returned content/path is authoritative even while its
+    // fallible URL/UI integration is pending or paused. Unsent/uncertain jobs
+    // retain their literal submitted snapshot instead.
+    return pending && !["acknowledging", "acknowledged"].includes(pending.phase)
+      ? pending.snapshot : snapshot?.acknowledged;
+  }
+
+  function contentNeedsSave() {
+    return !!queue && getBuffer() !== latestSubmitted()?.content;
+  }
+
+  function save() {
+    if (!contentNeedsSave()) return null;
+    return submit("save", "none");
+  }
+
+  function rename() {
+    if (!queue) return true;
+    const current = getState();
+    const error = notePathError(current.requestedPath);
+    if (error) { invalid(error); return false; }
+    const latest = latestSubmitted();
+    // Before creation there is only a requested name, not a file to rename.
+    if (!latest) return true;
+    if (current.requestedPath === (latest.requestedPath ?? latest.path)) return true;
+    return !!submit("rename", "prompt");
   }
 
   async function settle() {
@@ -192,25 +209,26 @@ export function createNoteSaveOwner({
     if (!queue?.discard()) return false;
     drafts.clear();
     const base = queue.state().acknowledged ?? getState().note;
-    applyPath(base.path);
     restoreContent(base.content ?? "");
     refreshDirtyState();
     return true;
   }
 
   async function saveForNavigation() {
-    saveEditorPreference();
+    if (!queue) return true;
     const savingQueue = queue;
-    const receipt = submit("session", "none");
-    if (!receipt || receipt.held) return false;
+    const receipt = save();
+    if ((contentNeedsSave() && !receipt) || receipt?.held) return false;
     const outcome = await savingQueue.awaitSettled({ deadline: Date.now() + NOTE_SAVE_OBSERVATION_MS });
     return savingQueue === queue && outcome.safe && !isContentChanged();
   }
 
   async function resolve() {
-    if (!await settle()) return false;
+    const resolvingQueue = queue;
+    if (!await settle() || resolvingQueue !== queue) return false;
     if (!isContentChanged()) return true;
     const decision = await requestDecision();
+    if (resolvingQueue !== queue) return false;
     if (decision === "save") return saveForNavigation();
     if (decision === "discard") return discard();
     return false;
@@ -234,6 +252,6 @@ export function createNoteSaveOwner({
   }
 
   return { state, queueState: () => queue?.state(), start, reset, end, dispose,
-    save, settle, discard, resolve, saveForNavigation, confirmRename, cancelRename, revokeRenamePrompt,
+    save, rename, latestSubmitted, contentNeedsSave, settle, discard, resolve, saveForNavigation, confirmRename, cancelRename, revokeRenamePrompt,
     ownsPath: path => aliases.has(path) || path === queue?.state().acknowledged?.path };
 }

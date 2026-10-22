@@ -1,9 +1,16 @@
 # Saving notes
 
-Each editing session owns a FIFO save queue. Clicking **Save** captures the
-current content and filename immediately. If an earlier Save is still running,
-the new snapshot waits behind it. Every click remains a separate Save, including
-equal-content clicks; intermediate snapshots are not skipped or replaced.
+Each editing session owns a FIFO save queue. **Save** captures the current text
+and writes it to the current file. It never leaves edit mode, opens the attachment
+chooser or remembers an editor-mode preference. Switching editor modes remembers
+the preference instead. A new note's first Save creates its requested name
+(`Untitled` / `Untitled N`, or the first heading while its title is untouched).
+
+Save is a no-op outside edit mode or when the buffer equals the latest submitted
+snapshot: the last queued job, otherwise the active job, otherwise acknowledged
+content. Equal-content clicks produce no request, write, on-save hook or backup,
+including when the queue is paused. Different snapshots remain literal FIFO jobs;
+intermediate snapshots are not skipped or replaced.
 
 You can continue editing and clicking Save while ordinary saving is active.
 The Save label stays unchanged; its icon spins while the pipeline is preparing
@@ -37,6 +44,16 @@ the write outcome and newer unsaved work are resolved. A failure encountered
 while waiting aborts that attempt. Successful settlement is followed by the
 existing Save/Discard/Cancel decision if newer work remains.
 
+**Exit edit** is separate from Save. **Save & close** and the Save Changes dialog's
+Save save the text, await settlement and then exit edit or commit navigation.
+Before navigation, logout or exit, pending title/folder input is applied as a
+rename; an invalid name blocks with its validation error. Discard restores only
+text to the acknowledged content; an already-applied rename remains applied.
+
+The Save indicator, unload warning, Save Changes prompt and `note:edit-state`
+share one unsaved fact: buffer differs from the latest submitted content, or the
+queue has unresolved work. Unapplied filename input is not unsaved text.
+
 Configured Access updates are in place, not a setup reset. Password/2FA changes
 retire sessions only after the admitted work is resolved and the access update
 commits; a new authenticator must first be confirmed. An uncertain Access response
@@ -67,7 +84,14 @@ Canonical server paths do not override newer explicit filename intent. Each
 queued content snapshot stays literal, even when an earlier response normalized
 an H1 or attachment link.
 
-Toolbar folder moves use the existing attachment chooser. Its preview describes
+Title and folder fields apply on **Enter or blur**, through one controller rename
+intent. Typing alone does not send a request; Save does not apply a rename.
+Before a new note is created, applying its name only changes its requested path.
+Invalid names retain the field's text and send nothing.
+
+Rename jobs use the same FIFO and carry the current buffer and requested path.
+Server attachment-link rewrites are acknowledged into the editor, so the next
+Save uses those links. Folder moves use the existing attachment chooser. Its preview describes
 references in persisted content, not an invented preview of queued text. Preview
 errors and cancellation settle preparation without sending a mutation and pause
 the retained queue. Navigation/session saves retain their existing `none`

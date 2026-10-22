@@ -365,10 +365,7 @@ try {
   await page.poll(`location.pathname.includes("WizardOpen")`);
   await page.poll("fetch('/_/api/notes/WizardOpen').then(r=>r.json()).then(note=>note.path==='WizardOpen')");
   console.log("ok: open access creates a note via UI");
-  // After save the note shows in view mode — toggle Edit, then type into the
-  // actual editable element (CodeMirror .cm-content / .ProseMirror, NOT the
-  // view-mode preview div).
-  await page.clickText("Edit");
+  // Save keeps editing, including after creation; type into the actual editor.
   await page.poll(
     `document.querySelector(".cm-content, .ProseMirror") !== null`,
   );

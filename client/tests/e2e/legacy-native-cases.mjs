@@ -46,7 +46,9 @@ async function rename(f, folder, strategy) {
   const start = f.writes.length;
   await edit(f);
   const path = await f.page.evaluate(`(()=>{const el=[...document.querySelectorAll('input')].find(input=>input.value===${JSON.stringify(folder)});if(!el)throw Error('Missing folder field');el.value=${JSON.stringify(strategy.target)};el.dispatchEvent(new Event('input',{bubbles:true}));return location.pathname;})()`);
-  await f.page.button("Save", ".content-column");
+  assert(!f.writes.slice(start).some(row => decodeURIComponent(new URL(row.url).pathname) === "/_/api/notes/" + folder + "/moving-note"), "Typing a folder sent a mutation before Enter/blur");
+  await f.page.click('input[placeholder="Folder (root)"]');
+  await f.page.key("Enter", { windowsVirtualKeyCode: 13 });
   await f.page.poll("document.body.innerText.includes('Move note with attachments')");
   await f.page.button(strategy.label, '[data-modal-top="true"]');
   await f.page.poll(`location.pathname===${JSON.stringify('/' + strategy.target + '/moving-note')}`);
@@ -64,6 +66,10 @@ async function rename(f, folder, strategy) {
   assert(response.path === note.body.path, "Rename acknowledgement returned a different identity");
   assert((await f.api("notes/" + folder + "/moving-note")).status === 404, "Old note identity remains");
   assert(await Deno.readTextFile(f.vault + "/" + strategy.target + "/moving-note.md") === note.body.content, "Rename API/disk bytes differ");
+  await f.page.poll("!document.querySelector('.content-column .animate-spin')");
+  const writesAfterRename = f.writes.filter(row => decodeURIComponent(new URL(row.url).pathname) === "/_/api/notes/" + strategy.target + "/moving-note").length;
+  await f.page.button("Save", ".content-column");
+  assert(f.writes.filter(row => decodeURIComponent(new URL(row.url).pathname) === "/_/api/notes/" + strategy.target + "/moving-note").length === writesAfterRename, "Save resent already-acknowledged rename text");
   await f.page.button("Edit", ".content-column");
   await f.page.poll("!!document.querySelector('.toast-viewer') && !document.querySelector('.cm-content,.ProseMirror')");
   return { path, operation, returnedIdentity: response.path, note: note.body, immediate: await viewImage(f, strategy.loaded ?? true) };
@@ -200,7 +206,8 @@ export const cases = {
     assert((await f.api("notes", "POST", { path: "probe/link-source", content: "see [[probe/link-target]]" })).status === 200, "Link source fixture failed");
     assert((await f.api("notes", "POST", { path: "probe/link-target", content: "# link-target" })).status === 200, "Link target fixture failed");
     await open(f, "probe/link-target"); await edit(f);
-    await f.page.fill('input[placeholder="Title"]', "link-target-renamed"); await f.page.button("Save", ".content-column");
+    await f.page.fill('input[placeholder="Title"]', "link-target-renamed");
+    await f.page.click('input[placeholder="Title"]'); await f.page.key("Enter", { windowsVirtualKeyCode: 13 });
     await f.page.poll("location.pathname==='/probe/link-target-renamed'");
     await f.page.poll("fetch('/_/api/notes/probe/link-source').then(r=>r.json()).then(note=>note.content.includes('[[probe/link-target-renamed]]'))");
     await open(f, "probe/link-source"); await f.page.poll("!!document.querySelector('.toast-viewer a[href=\"/probe/link-target-renamed\"]')");
@@ -244,7 +251,9 @@ export const cases = {
     await f.page.goto(f.baseUrl + "/"); await f.page.poll("!!document.querySelector('aside')?.getBoundingClientRect().width");
     assert((await f.api("notes/SidebarProbe")).status === 404, "Live-refresh fixture is not fresh");
     await f.page.click('[title="New note"]'); await f.page.poll("!!document.querySelector('input[placeholder=Title]')");
-    await f.page.fill('input[placeholder="Title"]', "SidebarProbe"); await f.page.button("Save", ".content-column");
+    await f.page.fill('input[placeholder="Title"]', "SidebarProbe");
+    await f.page.click('input[placeholder="Title"]'); await f.page.key("Enter", { windowsVirtualKeyCode: 13 });
+    await f.page.button("Save", ".content-column");
     await f.page.poll(`location.pathname==='/SidebarProbe' && (${visibleElement.toString()})(document.querySelector('aside a[href="/SidebarProbe"]'))`);
     const note = await f.api("notes/SidebarProbe"); assert(note.status === 200, "Created note missing from API");
     assert(await Deno.readTextFile(f.vault + "/SidebarProbe.md") === note.body.content, "Sidebar-created note missing from disk");

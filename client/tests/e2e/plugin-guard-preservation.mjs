@@ -74,13 +74,13 @@ async function badges() {
   await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
   await session.button("Plugins");
   await session.poll("!!document.querySelector('[data-plugin-inventory-id=native-guard]') && !!document.querySelector('[data-plugin-inventory-id=native-observer]')");
-  assert(await session.evaluate("document.querySelector('[data-plugin-inventory-id=native-guard]').textContent.includes('Can block actions') && document.querySelector('[data-plugin-inventory-id=native-guard]').textContent.includes('delete') && !document.querySelector('[data-plugin-inventory-id=native-observer]').textContent.includes('Can block actions')"), "Blocking inventory badges do not distinguish pre/on-only plugins");
+  assert(await session.evaluate("document.querySelector('[data-plugin-inventory-id=native-guard]').textContent.includes('Can block: save, delete') && !document.querySelector('[data-plugin-inventory-id=native-observer]').textContent.includes('Can block:')"), "Blocking inventory badges do not distinguish pre/on-only plugins");
   await capture("only-pre-inventory-badge");
-  await session.button("Guard preferences"); await session.poll("!!document.querySelector('#settings-field-enabled')");
-  assert(await session.evaluate("document.querySelector('[data-modal-top=true]').textContent.includes('Can block actions') && document.querySelector('[data-modal-top=true]').textContent.includes('Errors or timeouts')"), "Actual guard page omitted blocking consequence");
+  await session.click('[data-settings-nav-id="plugin:native-guard"]'); await session.poll("document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='plugin:native-guard:preferences' && !!document.querySelector('#settings-field-enabled')");
+  assert(await session.evaluate("document.querySelector('[data-settings-content]').textContent.includes('Can block: save, delete') && document.querySelector('[data-settings-content]').textContent.includes('Errors or timeouts')"), "Actual guard page omitted blocking consequence");
   await capture("guard-page-badge");
-  await session.button("Observer preferences"); await session.poll("!!document.querySelector('#settings-field-enabled')");
-  assert(await session.evaluate("!document.querySelector('[data-modal-top=true]').textContent.includes('Can block actions')"), "On-only declarative page gained blocking badge");
+  await session.click('[data-settings-nav-id="plugin:native-observer"]'); await session.poll("document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='plugin:native-observer:preferences' && !!document.querySelector('#settings-field-enabled')");
+  assert(await session.evaluate("!document.querySelector('[data-settings-content]').textContent.includes('Can block:')"), "On-only declarative page gained blocking badge");
   await capture("observer-page-no-blocking-badge");
   await session.click('[aria-label="Close settings"]'); await session.poll("!document.querySelector('#settings-modal-title')");
   if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
@@ -143,7 +143,7 @@ try {
   assert(current.requests.length === 0 && beforeControl.body.result.saves === 0 && beforeControl.body.result.deletes === 0 && immediate.buffer === settled.buffer, "No-Save caret control executed an operation or changed the buffer");
   assert(JSON.stringify(await api("notes/NoteA")) === JSON.stringify(current.originalNote) && JSON.stringify(await api("note-index")) === JSON.stringify(current.originalIndex), "No-Save caret control changed note/index");
   await Deno.writeTextFile(`${current.directory}/no-save-caret-control.json`, JSON.stringify({ immediate, settled, nativeMutations: current.requests.length, guard: beforeControl.body.result, noteAndIndexUnchanged: true, navigation: current.navigation }, null, 2), { createNew: true });
-  await mark(); await current.session.button("Save", ".content-column");
+  await mark(); await current.session.key("Enter", { windowsVirtualKeyCode: 13 });
   await current.session.poll("!!document.querySelector('#rename-assets-title')");
   await current.session.click('[data-modal-top=true] button:first-of-type');
   const save = await response(); await retained(save);

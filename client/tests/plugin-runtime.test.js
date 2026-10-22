@@ -64,9 +64,10 @@ describe("pluginSdk facade", () => {
     expect(unsubscribe).toHaveBeenCalled();
   });
 
-  it("actions.dispatch funnels through the common action channel", () => {
+  it.each([true, false])("actions.dispatch returns common channel acceptance (%s)", accepted => {
     const sdk = createPluginSdk({ pluginId: "p", snapshot: {}, own });
-    sdk.actions.dispatch("app:open-settings", { page: "plugins" });
+    dispatchAction.mockReturnValue(accepted);
+    expect(sdk.actions.dispatch("app:open-settings", { page: "plugins" })).toBe(accepted);
     expect(dispatchAction).toHaveBeenCalledWith("app:open-settings", {
       page: "plugins",
     });
