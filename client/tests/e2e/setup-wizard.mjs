@@ -207,22 +207,27 @@ try {
   let interceptMode = "fail"; // "fail" → "slow" → "off" (single handler, no leaks)
   let slowRelease;
   const slowWait = new Promise((r) => (slowRelease = r));
+  // Paused-request events can still arrive after Fetch.disable; Chrome releases
+  // those requests itself, so a reply then is neither needed nor an error.
+  let intercepting = true;
+  const reply = (method, params) =>
+    page.send(method, params).catch((error) => {
+      if (intercepting) throw error;
+    });
   page.onEvent((msg) => {
-    if (msg.method !== "Fetch.requestPaused") return;
+    if (msg.method !== "Fetch.requestPaused" || !intercepting) return;
     const { requestId, request } = msg.params;
     if (!request.url.includes("/_/api/setup")) {
-      page.send("Fetch.continueRequest", { requestId });
+      reply("Fetch.continueRequest", { requestId });
       return;
     }
     if (interceptMode === "fail") {
       intercepted++;
-      page.send("Fetch.failRequest", { requestId, errorReason: "Failed" });
+      reply("Fetch.failRequest", { requestId, errorReason: "Failed" });
     } else if (interceptMode === "slow") {
-      slowWait.then(() =>
-        page.send("Fetch.continueRequest", { requestId })
-      );
+      slowWait.then(() => reply("Fetch.continueRequest", { requestId }));
     } else {
-      page.send("Fetch.continueRequest", { requestId });
+      reply("Fetch.continueRequest", { requestId });
     }
   });
   await page.send("Fetch.enable", {
@@ -266,6 +271,7 @@ try {
   // The held request continuing IS the completion path — routing to login
   // proves it landed; only then is the Fetch domain safe to disable.
   await page.poll(`location.pathname.includes("/_/login")`, { timeout: 15000 });
+  intercepting = false;
   await page.send("Fetch.disable");
   console.log("ok: routed to login after password setup (no reload)");
   await fillField(page, "#username", "wizard-user");
