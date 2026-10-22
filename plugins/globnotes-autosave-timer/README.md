@@ -7,7 +7,7 @@ New notes are created under their first heading, or as `Untitled` / `Untitled N`
 
 ## Turn it on
 
-Open **Settings → Plugin settings → Autosave**, read **Before you turn this on**,
+Open **Settings → Plugin settings → Autosave timer**, read **Before you turn this on**,
 then turn on the **Autosave** switch inside the warning banner. The plugin follows
 the vault's normal plugin enablement policy, but this switch is **off by default**.
 If the plugin is disabled, enable **Autosave timer** in **Settings → Plugins** too.

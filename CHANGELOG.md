@@ -1,12 +1,12 @@
 # Changelog
 
-## Unreleased
+## v2.5.0 (2026-10-21)
 
 ### Added
 
 The opt-in Autosave timer plugin saves after you stop typing or every N seconds
-(#12). Turn it on in Settings → Plugin settings → Autosave, inside the warning
-banner. It is off by default; the banner explains overwritten external edits,
+(#12). Turn it on in Settings → Plugin settings → Autosave timer, inside the
+warning banner. It is off by default; the banner explains overwritten external edits,
 backup retention and accidental changes.
 
 Plugin authors can use warning-toned settings groups, the text-free
@@ -20,7 +20,7 @@ Save only saves the text and keeps the note open for editing. Saving unchanged
 text does nothing. Title and folder changes apply on Enter or when leaving the
 field; Discard reverts only the text, keeping an already-applied rename.
 
-### Fixed
+### Fix
 
 Opening a note in WYSIWYG and leaving without changes no longer counts as
 unsaved. When a rename updates the note's text (attachment links, heading) while
