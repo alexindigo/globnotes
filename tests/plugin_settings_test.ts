@@ -3,6 +3,7 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { readManifest } from "../server/plugins/manifest.ts";
 import { PluginManager } from "../server/plugins/manager.ts";
+import { PluginContractError } from "../server/plugins/contracts.ts";
 import {
   effectivePageValues,
   validateSettingsPages,
@@ -156,6 +157,40 @@ Deno.test("plugin settings: supported controls, defaults, dependent visibility a
       }],
     }])
   );
+});
+
+Deno.test("plugin settings: groups accept only the optional warning tone", () => {
+  const group = {
+    id: "safety",
+    label: "Before you turn this on",
+    description: "Writes replace earlier changes.\n\nMistakes are saved too.",
+    fields: ["protect"],
+  };
+  const normal = { ...fixturePage, groups: [group] };
+  assertEquals<unknown>(validateSettingsPages([normal]), [normal]);
+  const warning = { ...fixturePage, groups: [{ ...group, tone: "warning" }] };
+  assertEquals<unknown>(validateSettingsPages([warning]), [warning]);
+  for (
+    const tone of ["danger", "normal", "", "Warning", null, false, 1, [], {}]
+  ) {
+    const error = assertThrows(
+      () =>
+        validateSettingsPages([{
+          ...fixturePage,
+          groups: [{ ...group, tone }],
+        }]),
+      PluginContractError,
+      "group tone must be warning",
+    );
+    assertEquals(error.status, 422);
+    assertEquals(error.code, "invalid_plugin_settings");
+  }
+  const backup = JSON.parse(
+    Deno.readTextFileSync(
+      new URL("../plugins/globnotes-backup/manifest.json", import.meta.url),
+    ),
+  );
+  assertEquals(validateSettingsPages(backup.settings), backup.settings);
 });
 
 Deno.test("plugin catalog: legacy directory identities retain v2 compatibility", async () => {

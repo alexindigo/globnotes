@@ -105,6 +105,24 @@ declarations while host-owned captured drafts remain reachable for explicit
 recovery. Renderer support stays `declarative-v1`; unsupported declarations are
 rejected when the plugin definition loads.
 
+Declarative page groups may set optional `"tone": "warning"` for risk notes about
+a plugin's behaviour. This is the only supported tone value; omit `tone` for a
+normal group. A warning group renders as a warning-tinted banner: its `label` is
+the heading, its `description` is the warning text, and its declared `fields`
+render inside the banner. Group descriptions are plain text (never HTML);
+blank-line-separated paragraphs (`\n\n`) render as separate paragraphs in both
+normal and warning groups. For example:
+
+```json
+{
+  "id": "safety",
+  "label": "Before you turn this on",
+  "tone": "warning",
+  "description": "Changes made elsewhere may be overwritten.\n\nMistakes are saved too.",
+  "fields": ["enabled"]
+}
+```
+
 Settings reads expose the current declared fields/pages with validated values and
 declared defaults. Removing a field/page from an updated descriptor preserves its
 raw saved data but omits it from current reads. Saving current fields retains that

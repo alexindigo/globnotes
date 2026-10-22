@@ -51,4 +51,16 @@ describe("Settings warning theme contract", () => {
     expect(wrapper.find("[data-plugin-trust-notice]").text()).toContain("server code");
     wrapper.unmount();
   });
+
+  it.each(THEMES.filter(theme => theme.mode))("$id keeps banner text readable on the warning tint", theme => {
+    setTheme(theme.id);
+    const token = name => document.documentElement.style.getPropertyValue(`--theme-${name}`).split(' ').map(Number);
+    const warning = token('warning'), background = token('background');
+    // SettingsSection's color-mix: 4% warning, 96% page surface (sRGB).
+    const surface = background.map((channel, i) => Math.round(channel * 0.96 + warning[i] * 0.04));
+    const hex = channels => '#' + channels.map(channel => channel.toString(16).padStart(2,'0')).join('');
+    for (const role of ['warning', 'text', 'text-muted', 'danger']) {
+      expect(contrast(hex(token(role)), hex(surface)), `${theme.id}/${role} on banner`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 });

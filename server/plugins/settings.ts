@@ -205,12 +205,15 @@ export function validateSettingsPages(value: unknown): SettingsPage[] {
       const assigned = new Set<string>();
       for (const input of page.groups) {
         const group = record(input, "group");
-        only(group, ["id", "label", "description", "fields"], "group");
+        only(group, ["id", "label", "description", "tone", "fields"], "group");
         const id = stableId(group.id, "group id");
         if (ids.has(id)) invalid("duplicate group id");
         ids.add(id);
         text(group.label, "group label");
         optionalText(group, "description");
+        if (group.tone !== undefined && group.tone !== "warning") {
+          invalid("group tone must be warning");
+        }
         for (const key of uniqueStrings(group.fields, "group fields")) {
           if (!fields.has(key) || assigned.has(key)) {
             invalid("group fields must be declared and assigned once");

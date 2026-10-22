@@ -137,6 +137,7 @@ export interface SettingsGroup {
   id: string;
   label: string;
   description?: string;
+  tone?: "warning";
   fields: string[];
 }
 export interface SettingsPage {

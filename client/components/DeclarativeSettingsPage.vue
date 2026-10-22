@@ -17,7 +17,7 @@
     </div>
     <p v-if="snapshot.status === 'saving'" class="text-[13px] text-theme-text-muted" role="status">Saving…</p>
     <div ref="fieldStart" tabindex="-1" class="flex flex-col gap-8">
-      <SettingsSection v-for="group in snapshot.fieldGroups" :key="group.id" :title="group.label" :help="group.description">
+      <SettingsSection v-for="group in snapshot.fieldGroups" :key="group.id" :title="group.label" :tone="group.tone" :help-paragraphs="group.descriptionParagraphs">
         <SettingsField v-for="field in group.fields" :key="field.key" :field="field" v-bind="snapshot.fieldViews[field.key]" :on-browse="onBrowse"
           @edit="$emit('edit',$event)" @commit="$emit('commit',$event)" />
       </SettingsSection>

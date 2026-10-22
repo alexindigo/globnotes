@@ -13,7 +13,7 @@ export function settingsFieldGroups(page, values) {
   for (const group of page.groups ?? []) {
     group.fields.forEach((key) => assigned.add(key));
     const fields = group.fields.map((key) => byKey.get(key)).filter(Boolean);
-    if (fields.length) groups.push({ ...group, fields });
+    if (fields.length) groups.push({ ...group, descriptionParagraphs: group.description?.split(/\r?\n\s*\r?\n/).filter(paragraph => paragraph.trim()) ?? [], fields });
   }
   const remaining = visibleFields.filter((field) => !assigned.has(field.key));
   if (remaining.length) groups.push({ id: "ungrouped", fields: remaining });

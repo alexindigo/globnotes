@@ -24,8 +24,8 @@ describe("declarative settings descriptor policy", () => {
       { id: "general", fields: ["enabled"] }];
     const page = { fields, groups }, before = JSON.stringify(page);
     expect(settingsFieldGroups(page, { enabled: true, count: 0 })).toEqual([
-      { ...groups[0], fields: [fields[3], fields[1]] },
-      { ...groups[1], fields: [fields[0]] },
+      { ...groups[0], descriptionParagraphs: ["Help"], fields: [fields[3], fields[1]] },
+      { ...groups[1], descriptionParagraphs: [], fields: [fields[0]] },
       { id: "ungrouped", fields: [fields[2]] },
     ]);
     expect(JSON.stringify(page)).toBe(before);
@@ -36,6 +36,15 @@ describe("declarative settings descriptor policy", () => {
   });
   it("preserves repeated declared membership instead of silently rewriting a descriptor", () => {
     const page = { fields: [fields[0]], groups: [{ id: "a", fields: ["enabled", "enabled"] }, { id: "b", fields: ["enabled"] }] };
-    expect(settingsFieldGroups(page, {})).toEqual([{ id: "a", fields: [fields[0], fields[0]] }, { id: "b", fields: [fields[0]] }]);
+    expect(settingsFieldGroups(page, {})).toEqual([{ id: "a", descriptionParagraphs: [], fields: [fields[0], fields[0]] }, { id: "b", descriptionParagraphs: [], fields: [fields[0]] }]);
+  });
+  it("preserves warning tone and splits plain descriptions without mutating descriptors", () => {
+    const group = { id: "risk", label: "Risk", tone: "warning", description: "First warning.\n\nSecond warning.\r\n \r\n<script>plain text</script>", fields: ["enabled"] };
+    const before = JSON.stringify(group);
+    const [view] = settingsFieldGroups({ fields, groups: [group] }, {});
+    expect(view.tone).toBe("warning");
+    expect(view.descriptionParagraphs).toEqual(["First warning.", "Second warning.", "<script>plain text</script>"]);
+    expect(view.fields).toEqual([fields[0]]);
+    expect(JSON.stringify(group)).toBe(before);
   });
 });
