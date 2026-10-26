@@ -5,8 +5,10 @@ on:
     tags: ["v*"]
 
 # Publish releases one at a time so the latest decision and the push happen in order.
+# Pending releases queue instead of replacing each other.
 concurrency:
   group: docker-publish
+  queue: max
   cancel-in-progress: false
 
 jobs:
