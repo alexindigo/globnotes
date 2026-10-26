@@ -16,11 +16,11 @@ released, the Docker tag `latest` moves to v3, so **pin a v2 tag** (`2`, `2.5`,
 | # | Area | v2 | v3 |
 |---|---|---|---|
 | 1 | Vaults | One notes tree per instance, mounted at `/data` | Several vaults per instance. `/data` (configurable) is the **base folder**, and each vault is a folder in it, e.g. `/data/notes/`. Vaults can also live elsewhere, declared by environment variable or config file |
-| 2 | Addresses | Notes at `/<path>` | Each vault has its own path under the instance address, e.g. `notes.home/dad/…` |
+| 2 | Addresses | Notes at `/<path>` | If the only vault is named `globnotes`, v2 note URLs stay at `/<note path>`, with no picker. Otherwise, notes are at `/<vault>/<note path>` |
 | 3 | Logins | One login for the whole instance (`none`, `read_only`, `password`, `totp`), stored in `<state>/config.json` | **Accounts** belong to the instance; each person has one. Each account chooses a password or password + TOTP. Each vault grants **Admin / Edit / View / None** per account, plus an "Everybody else" level (guest, i.e. not signed in) |
 | 4 | v2 login modes | `none` / `read_only` / `password` / `totp` | Per vault: "Everybody else: Edit" = old `none`; "Everybody else: View" = old `read_only`; "Everybody else: No access" plus named accounts = old `password` / `totp` |
 | 5 | App state per vault | `<notes>/.globnotes/`, or `GLOBNOTES_INDEX_PATH` | `<vault folder>/.globnotes/`, or under `GLOBNOTES_METADATA_PATH`: `<metadata>/<vault>/` |
-| 6 | Instance state (accounts, vault list) | — | `/data/.globnotes/`, or with `GLOBNOTES_METADATA_PATH`: `<metadata>/_/` (e.g. `/etc/globnotes/_/accounts`) |
+| 6 | Instance state (accounts, vault list) | — | With `GLOBNOTES_METADATA_PATH`: `<metadata>/_/` (e.g. `/etc/globnotes/_/accounts`). Without it: **Open** (assumed default: `/data/.globnotes/`) |
 | 7 | Configuration | Environment variables only | Layered: built-in defaults → optional TOML config file → environment variables. Unknown `GLOBNOTES_*` variables stop the server at boot with a list of problems |
 | 8 | Environment variable names | `GLOBNOTES_PATH`, `GLOBNOTES_AUTH_TYPE`, … | New names, no aliases (see "Environment variables" below) |
 | 9 | Plugins | Installed per instance; enabled and configured for the one vault | Still installed once per instance. Each vault turns them on and off and has its own plugin settings, approvals and data |
@@ -42,11 +42,15 @@ released, the Docker tag `latest` moves to v3, so **pin a v2 tag** (`2`, `2.5`,
    v3 doesn't detect or move old state. Relocating state is the operator's choice
    and responsibility.
 5. **Import your v2 data with the migration tool.** Upgrading doesn't reset
-   anything: your login (username, password, TOTP), branding, quick access, plugin
-   choices and settings, plugin data and backups carry over to v3. A one-time
+   anything: your login (username, password, TOTP), if any, branding, quick access,
+   plugin choices and settings, plugin data and backups carry over to v3. A one-time
    migration tool (name and exact arguments to be decided, e.g.
    `globnotes import-v2 <v2 folder> <vault>`) **copies** the v2 data into v3:
-   - the v2 login becomes your account and the admin of that vault;
+   - for `password` / `totp` installs, the v2 login becomes your account and the
+     admin of that vault;
+   - `none` / `read_only` installs have no login to import. **Open:** how the first
+     account and vault admin are created; setup could create the first account
+     and the tool could make it admin of the imported vault;
    - v2 settings, plugin data and backups go to their v3 places.
    It never changes or moves the v2 files, says what it did, and running it again
    doesn't import twice. The same tool also **restores a v2 backup into v3**: point
@@ -103,3 +107,5 @@ version:
 | 4 | Docker tag for the latest v2: the existing `2`, or also `v2` (decided: `latest` moves to v3) |
 | 5 | Unraid template: new or updated |
 | 6 | Mapping of `GLOBNOTES_READ_ONLY_SETTINGS` and `GLOBNOTES_PLUGIN_SETTINGS` |
+| 7 | **Open:** how the first account and vault admin are created for v2 `none` / `read_only` installs, which have no login to import |
+| 8 | **Open:** instance-state default without `GLOBNOTES_METADATA_PATH` (assumed `/data/.globnotes/`) |
