@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
 
+# Publish releases one at a time so the latest decision and the push happen in order.
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest

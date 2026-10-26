@@ -32,6 +32,7 @@ and runs `scripts/docker-latest-tag.sh <tag>` to decide whether to publish
 `latest`: the released tag's major must equal the highest major among stable
 `vX.Y.Z` tags, compared numerically. Other tags, including prereleases and old
 two-part version tags, do not count. Automatic `latest` tagging is disabled.
+Release publications are serialized so the `latest` decision and image push happen in order.
 
 Once `v3.0.0` exists, v3 releases update `latest`; a later v2.x maintenance
 release still updates `2` and `v2` but cannot move `latest` back to v2. Use `v2`
