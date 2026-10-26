@@ -7,12 +7,9 @@ as the v3 pieces are designed. Items marked **Open** are not decided yet.
 ## Staying on v2
 
 v3 is a major release with breaking changes. Nobody has to upgrade: v2 keeps
-working, and its fixes ship as v2.x releases. To stay on v2, pin the image tag `2`
-(or `2.5`, `2.5.0`) instead of `latest`.
-
-**Open:** whether `latest` moves to v3 at release. If it does, installs that pull
-`latest` would upgrade by surprise, so the v3 release notes and the README must say
-so plainly.
+working, and its fixes ship as v2.x releases from the `v2` branch. When v3 is
+released, the Docker tag `latest` moves to v3, so **pin a v2 tag** (`2`, `2.5`,
+`2.5.0`) to stay on v2.
 
 ## What changes, in one table
 
@@ -43,15 +40,21 @@ so plainly.
    to the v3 layout yourself: `<metadata>/<vault>/` under `GLOBNOTES_METADATA_PATH`.
    v3 doesn't detect or move old state. Relocating state is the operator's choice
    and responsibility.
-5. **Start v3 and sign in.** **Open:** whether the v2 login carries over (see
-   below). Without an import, first start runs setup: create your account. Then use
-   "New vault" with your folder's name, e.g. `notes`. globnotes asks whether to
-   adopt the existing folder, and you become its admin.
+5. **Import your v2 data with the migration tool.** Upgrading doesn't reset
+   anything: your login (username, password, TOTP), branding, quick access, plugin
+   choices and settings, plugin data and backups carry over to v3. A one-time
+   migration tool (name and exact arguments to be decided, e.g.
+   `globnotes import-v2 <v2 folder> <vault>`) **copies** the v2 data into v3:
+   - the v2 login becomes your account and the admin of that vault;
+   - v2 settings, plugin data and backups go to their v3 places.
+   It never changes or moves the v2 files, says what it did, and running it again
+   doesn't import twice. The same tool also **restores a v2 backup into v3**: point
+   it at a copied v2 notes folder (with its `.globnotes`, or the separate
+   `GLOBNOTES_INDEX_PATH` folder).
 6. **Set the vault's access:** add accounts for other people, and choose
    "Everybody else" (see row 4 of the table to match your v2 login mode).
-7. **Check plugins and settings** for the vault. **Open:** which v2 vault settings
-   (branding, quick access, plugin enablement and settings, backups) carry over
-   automatically when a folder with a v2 `.globnotes` is adopted.
+7. **Check plugins and settings** for the vault. They should match what you had
+   in v2.
 
 ## Environment variables
 
@@ -87,9 +90,9 @@ version:
 
 | # | Item |
 |---|---|
-| 1 | Does the v2 login carry over? (One-time import of `config.json` into the first account and vault admin, or sign up again) |
-| 2 | Which v2 vault settings carry over when a v2 folder is adopted |
+| 1 | Migration tool details (decided: a one-time tool that copies v2 data into v3 and also restores v2 backups; nothing is reset): its name, arguments and exact steps |
+| 2 | The exact list of v2 settings and data that carry over, and where each lands in v3 |
 | 3 | Final environment variable names |
-| 4 | Whether `latest` moves to v3 |
+| 4 | Docker tag for the latest v2: the existing `2`, or also `v2` (decided: `latest` moves to v3) |
 | 5 | Unraid template: new or updated |
 | 6 | Mapping of `GLOBNOTES_READ_ONLY_SETTINGS` and `GLOBNOTES_PLUGIN_SETTINGS` |
