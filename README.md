@@ -313,6 +313,14 @@ curl -H "Authorization: Bearer $TOKEN" \
   https://notes.example/_/api/files
 ```
 
+## Migrating from v2 to v3
+
+v3 is in development on `main`. It is a major release with breaking changes:
+several vaults per instance, accounts with per-vault access, layered configuration
+and new environment variable names. v2 stays available (image tag `2`) and keeps
+receiving fixes. [MIGRATION.md](MIGRATION.md) describes what changes and the upgrade
+steps; it is a draft until v3 is released.
+
 ## Migrating from flatnotes
 
 - Rename `FLATNOTES_*` env vars to `GLOBNOTES_*` (same names otherwise).
