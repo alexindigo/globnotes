@@ -122,7 +122,14 @@ services:
       TZ: "UTC"
 ```
 
-The image is published to both [Docker Hub](https://hub.docker.com/r/alexindigo/globnotes) (`alexindigo/globnotes`) and [GHCR](https://github.com/alexindigo/globnotes/pkgs/container/globnotes) (`ghcr.io/alexindigo/globnotes`) — same tags (`latest`, `1.0`, `1.0.1`, …), same content; use whichever registry you prefer.
+The image is published to both [Docker Hub](https://hub.docker.com/r/alexindigo/globnotes) (`alexindigo/globnotes`) and [GHCR](https://github.com/alexindigo/globnotes/pkgs/container/globnotes) (`ghcr.io/alexindigo/globnotes`) — same tags, same content; use whichever registry you prefer.
+
+Release images have exact-version (`2.5.1`), minor (`2.5`), and major (`2`,
+`v2`) tags. `latest` updates only for releases whose major is the numerically
+highest among the repository's stable `vX.Y.Z` tags; other tag formats are
+ignored. Once v3 ships, a later v2.x release updates `2` and `v2` without moving
+`latest` back. To stay on v2, use `:v2` (or `:2`); to pin one release, use its
+exact version. See [releasing](docs/releasing.md) for the tagging details.
 
 ### Keep application state outside your notes
 

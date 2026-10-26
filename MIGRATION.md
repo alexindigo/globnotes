@@ -8,8 +8,9 @@ as the v3 pieces are designed. Items marked **Open** are not decided yet.
 
 v3 is a major release with breaking changes. Nobody has to upgrade: v2 keeps
 working, and its fixes ship as v2.x releases from the `v2` branch. When v3 is
-released, the Docker tag `latest` moves to v3, so **pin a v2 tag** (`2`, `2.5`,
-`2.5.0`) to stay on v2.
+released, the Docker tag `latest` moves to v3, so **pin a v2 tag** (`v2`, `2`,
+`2.5`, `2.5.0`) to stay on v2. `v2` and `2` follow v2 maintenance releases;
+those releases cannot move `latest` back from v3.
 
 ## What changes, in one table
 
@@ -104,8 +105,7 @@ version:
 | 1 | Migration tool details (decided: a one-time tool that copies v2 data into v3 and also restores v2 backups; nothing is reset): its name, arguments and exact steps |
 | 2 | The exact list of v2 settings and data that carry over, and where each lands in v3 |
 | 3 | Final environment variable names |
-| 4 | Docker tag for the latest v2: the existing `2`, or also `v2` (decided: `latest` moves to v3) |
-| 5 | Unraid template: new or updated |
-| 6 | Mapping of `GLOBNOTES_READ_ONLY_SETTINGS` and `GLOBNOTES_PLUGIN_SETTINGS` |
-| 7 | **Open:** how the first account and vault admin are created for v2 `none` / `read_only` installs, which have no login to import |
-| 8 | **Open:** instance-state default without `GLOBNOTES_METADATA_PATH` (assumed `/data/.globnotes/`) |
+| 4 | Unraid template: new or updated |
+| 5 | Mapping of `GLOBNOTES_READ_ONLY_SETTINGS` and `GLOBNOTES_PLUGIN_SETTINGS` |
+| 6 | **Open:** how the first account and vault admin are created for v2 `none` / `read_only` installs, which have no login to import |
+| 7 | **Open:** instance-state default without `GLOBNOTES_METADATA_PATH` (assumed `/data/.globnotes/`) |

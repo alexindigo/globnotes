@@ -4,6 +4,7 @@
 
 The tracked root `VERSION` file is the release version: `MAJOR.MINOR` or
 `MAJOR.MINOR.PATCH` digits, for example `2.3.2`.
+Docker releases use the three-part `MAJOR.MINOR.PATCH` form (`vX.Y.Z` tags).
 
 1. Bump `VERSION` in the release's changelog commit, **before** tagging.
 2. Tag that commit `v` + the contents of `VERSION` (for example `v2.3.2`).
@@ -21,9 +22,20 @@ moving tags to the same image:
 
 | # | Tag | Tracks |
 |---|---|---|
-| 1 | `2` | Latest release in major version 2 |
+| 1 | `2`, `v2` | Latest release in major version 2 |
 | 2 | `2.3` | Latest release in minor version 2.3 |
-| 3 | `latest` | Latest release |
+| 3 | `latest` | Releases in the highest released major only |
+
+Every release publishes its exact version, minor and major tags, including the
+`v<major>` alias (`v2`, `v3`, and so on). The workflow fetches all repository tags
+and runs `scripts/docker-latest-tag.sh <tag>` to decide whether to publish
+`latest`: the released tag's major must equal the highest major among stable
+`vX.Y.Z` tags, compared numerically. Other tags, including prereleases and old
+two-part version tags, do not count. Automatic `latest` tagging is disabled.
+
+Once `v3.0.0` exists, v3 releases update `latest`; a later v2.x maintenance
+release still updates `2` and `v2` but cannot move `latest` back to v2. Use `v2`
+(or `2`) to stay on the v2 line, or an exact version to pin one release.
 
 ## What the running app shows
 
