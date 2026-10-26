@@ -12,18 +12,24 @@ export const SELECTION = [
   ["autosave-timer"],
 ];
 
+const DEFAULT_CHILD_TIMEOUT = 120000;
+const CHILD_TIMEOUTS = new Map([
+  // Deliberate real-time waits measured 118s normally / 156s at 50% CPU; allow shared-VM headroom.
+  ["autosave-timer", 300000],
+]);
+
 export async function runChildren(selection, execute) {
   assert(selection.length > 0, "No required native cases selected");
   const outcomes = [];
   for (const [name, ...args] of selection) {
-    const result = await execute(name, args);
+    const result = await execute(name, args, { timeout: CHILD_TIMEOUTS.get(name) ?? DEFAULT_CHILD_TIMEOUT });
     childSucceeded(result, [name, ...args].join(" "));
     outcomes.push({ name, args, code: result.code });
   }
   return outcomes;
 }
 
-export async function executeChild(args, { artifacts, label, timeout = 120000 }) {
+export async function executeChild(args, { artifacts, label, timeout = DEFAULT_CHILD_TIMEOUT }) {
   assert(/^[a-z0-9-]+$/.test(label), "Invalid child evidence label");
   const child = new Deno.Command(Deno.execPath(), {
     args, env: { GLOBNOTES_E2E_ARTIFACTS: artifacts }, stdout: "piped", stderr: "piped",
@@ -50,8 +56,8 @@ export async function executeChild(args, { artifacts, label, timeout = 120000 })
 if (import.meta.main) {
   const artifacts = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "globnotes-native-suite-" });
   await Deno.mkdir(artifacts, { recursive: true, mode: 0o700 });
-  const outcomes = await runChildren(SELECTION, async (name, args) => {
-    return executeChild(["run", "--cached-only", "--frozen", "--config=deno.json", "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run", "--allow-sys", new URL(name + ".mjs", import.meta.url).pathname, ...args], { artifacts, label: [name, ...args].join("-") });
+  const outcomes = await runChildren(SELECTION, async (name, args, options) => {
+    return executeChild(["run", "--cached-only", "--frozen", "--config=deno.json", "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run", "--allow-sys", new URL(name + ".mjs", import.meta.url).pathname, ...args], { ...options, artifacts, label: [name, ...args].join("-") });
   });
   await Deno.writeTextFile(artifacts + "/suite.json", JSON.stringify({ selection: SELECTION, outcomes }, null, 2), { createNew: true });
   console.log("NATIVE SUITE: all selected children completed successfully", artifacts);
