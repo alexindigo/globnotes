@@ -119,7 +119,7 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
   function discardBrand() { if (state.pending || state.inFlight || state.reviewing || (state.unknown && !state.readBack)) return false; state.unknown = false; state.loaded = false; loadBrand(); return true; }
   function resetMessage() { const parts = []; if (state.committed.name) parts.push(`name "${state.committed.name}"`); if (state.committed.accent) parts.push(`accent ${state.committed.accent}`); if (state.committed.files?.length) parts.push(`${state.committed.files.length} uploaded files (${state.committed.files.join(", ")})`); return `This clears ${parts.join(", ")}. Unsaved branding choices are also replaced only when this reset succeeds. The instance returns to default globnotes branding.`; }
 
-  const layers = LAYER_ORDER.map(id => id === CUSTOM_LAYER_ID ? { id, label: "Custom", description: "Starts as a copy of Legacy; overrides are stored in this browser." } : LAYERS[id]);
+  const layers = LAYER_ORDER.map(id => id === CUSTOM_LAYER_ID ? { id, label: "Custom", description: `Starts as a copy of ${LAYERS[CUSTOM_BASE_LAYER_ID].label}; overrides are stored in this browser.` } : LAYERS[id]);
   function display(binding) { if (!binding) return "Unassigned"; const key = platformKey(binding); return binding.alias ? `${key} or ${display(binding.alias)}` : key; }
   const bindings = computed(() => {
     const effective = effectiveBindings(), overrides = customOverridesMap(), base = LAYERS[CUSTOM_BASE_LAYER_ID].bindings, groups = new Map();

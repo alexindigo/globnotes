@@ -131,8 +131,8 @@ const quickSwitcherFocusEvent = ref(null);
 initDebugNotifications(toast);
 
 // Keyboard input: app-level keys are bound by the keybinding dispatcher
-// from the active layer (legacy Flatnotes restores Ctrl+Alt+N/H and adds
-// per-layer keys); this root component owns the routing effects.
+// from the active layer (all layers share Ctrl+Alt+N/H and add per-layer
+// keys); this root component owns the routing effects.
 initDispatcher();
 
 // App-level action channel: input sources publish app:* topics, this root

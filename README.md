@@ -321,12 +321,6 @@ and new environment variable names. v2 stays available (image tag `2`) and keeps
 receiving fixes. [MIGRATION.md](MIGRATION.md) describes what changes and the upgrade
 steps; it is a draft until v3 is released.
 
-## Migrating from flatnotes
-
-- Rename `FLATNOTES_*` env vars to `GLOBNOTES_*` (same names otherwise).
-- Your `/data` works as-is: flat notes keep their titles, and the search index is rebuilt automatically. globnotes uses `.globnotes` for application state by default, not just an index cache: **do not delete the whole directory to rebuild search**. Preserve its configuration, branding and plugins; see [state relocation](#moving-an-existing-installation).
-- The special `attachments/` directory is gone as a concept — existing `attachments/x.jpg` links keep working (it's now just a directory, served like any other). New uploads land beside the note being edited.
-
 ## Plugins
 
 Plugins can contribute rendering, server workflows and guards, browser/editor
@@ -360,13 +354,13 @@ Components communicate over a mitt-based client-side event bus — publishers an
 
 ## Keybindings
 
-Keyboard shortcuts are a **switchable layer** — **Settings → Keybindings** shows a segmented selector with five named layers (**Legacy Flatnotes**, **Obsidian**, **Notion**, **Typora**, **VS Code-lite**) plus a **Custom** layer, followed by the active layer's bindings.
+Keyboard shortcuts are a **switchable layer** — **Settings → Keybindings** shows four named layers (**Obsidian**, **Notion**, **Typora**, **VS Code-lite**) plus a **Custom** layer, followed by the active layer's bindings. **Obsidian is the default**, including when a previously saved layer is no longer available.
 
 - **Cross-layer constants:** `Ctrl+Alt+N` (new note) and `Ctrl+Alt+H` (home) work everywhere — every app's own new-note key is browser-reserved.
-- **Save:** Legacy keeps `Ctrl/Cmd+Enter`; the other layers use `Mod+S` with `Ctrl/Cmd+Enter` kept as an alias. Legacy also restores Flatnotes' `/` for the quick switcher.
+- **Save:** all layers use `Mod+S` with `Ctrl/Cmd+Enter` kept as an alias (`Mod` means Ctrl on Windows/Linux, Cmd on macOS).
 - **Host commands:** Obsidian's `Mod+P` and VS Code-lite's `Mod+Shift+P` open the command palette, including registered plugin commands. Notion's slash-menu action remains unimplemented.
 - **Both editors, one channel:** keys reach the editors as `editor:*` actions on the event bus, so source mode and WYSIWYG handle the same layer — formatting actions that WYSIWYG applies natively are applied in source mode as markdown-syntax edits (Typora-style). The layer also fixes latent keymap conflicts: `Mod+Enter` saves instead of inserting a blank line, `Mod+I` toggles italic, and Escape collapses a multi-cursor selection before exiting.
-- **Custom layer:** starts as a copy of Legacy; click any binding and press a new key to remap it (modified entries have a **Reset** action). Overrides are stored per-browser in `localStorage`, same as the theme choice.
+- **Custom layer:** starts as a copy of the default Obsidian layer; click any binding and press a new key to remap it (modified entries have a **Reset** action). Overrides are stored per-browser in `localStorage`, same as the theme choice.
 
 ## Branding
 

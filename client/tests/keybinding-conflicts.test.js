@@ -52,7 +52,7 @@ function keydown(view, key, options = {}) {
 
 describe("editor keymap latent conflicts", () => {
   it("Mod-Enter runs save instead of insertBlankLine", () => {
-    setLayer("legacy");
+    setLayer("obsidian");
     const events = [];
     const unsub = subscribe(TOPICS.EDITOR_SAVE, () => events.push(true));
     const view = makeView("one two\nthree");
@@ -79,7 +79,7 @@ describe("editor keymap latent conflicts", () => {
   });
 
   it("Escape collapses a multi-cursor selection before exiting", () => {
-    setLayer("legacy");
+    setLayer("obsidian");
     const exits = [];
     const unsub = subscribe(TOPICS.EDITOR_EXIT_EDIT, () => exits.push(true));
     const view = makeView("one two\nthree");
@@ -100,7 +100,7 @@ describe("editor keymap latent conflicts", () => {
   });
 
   it("Escape exits when the selection is already simple", () => {
-    setLayer("legacy");
+    setLayer("obsidian");
     const exits = [];
     const unsub = subscribe(TOPICS.EDITOR_EXIT_EDIT, () => exits.push(true));
     const view = makeView("one two\nthree");

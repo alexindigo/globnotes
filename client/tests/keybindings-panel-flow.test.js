@@ -12,7 +12,7 @@ afterEach(()=>{wrapper?.unmount();wrapper=null;localStorage.clear();});
 describe("keybindings panel flow", () => {
   beforeEach(() => {
     localStorage.clear();
-    setActivePinia(createPinia());setLayer('legacy');localStorage.removeItem('globnotes-keybindings');
+    setActivePinia(createPinia());setLayer('obsidian');localStorage.removeItem('globnotes-keybindings');
   });
 
   it("opens the panel, switches to Custom via the rail, remaps a binding", async () => {
@@ -22,9 +22,8 @@ describe("keybindings panel flow", () => {
     expect(panel, "keybindings panel").toBeTruthy();
     expect(localStorage.getItem("globnotes-keybindings")).toBe(null);
 
-    // The rail lists all six layers as rows, in order.
+    // The rail lists all five layers as rows, in order.
     const railLabels = [
-      "Legacy Flatnotes",
       "Obsidian",
       "Notion",
       "Typora",
@@ -38,6 +37,8 @@ describe("keybindings panel flow", () => {
       railRows.map((b) => b.textContent.trim()),
       "rail rows",
     ).toEqual(railLabels);
+    expect(panel.querySelector('[aria-current="true"]').textContent.trim()).toBe("Obsidian");
+    expect(panel.textContent).not.toContain("Legacy Flatnotes");
 
     // Clicking a rail row switches the active layer.
     const notionRow = railRows.find((b) => b.textContent.trim() === "Notion");
@@ -49,13 +50,14 @@ describe("keybindings panel flow", () => {
     // Switch to the Custom layer (last rail row).
     const customRow = railRows.find((b) => b.textContent.trim() === "Custom");
     expect(customRow, "custom rail row").toBeTruthy();
+    expect(customRow.title).toContain("Starts as a copy of Obsidian");
     customRow.click();
     await flushPromises();
     expect(localStorage.getItem("globnotes-keybindings")).toBe("custom");
 
     // Remap "Save note": click its binding button, press Ctrl+Shift+S.
     const saveButton = Array.from(panel.querySelectorAll("button")).find(
-      (b) => (b.textContent || "").includes("Ctrl+Enter"),
+      (b) => (b.textContent || "").includes("Ctrl+S or Ctrl+Enter"),
     );
     expect(saveButton, "save binding button").toBeTruthy();
     saveButton.click();
@@ -87,8 +89,8 @@ describe("keybindings panel flow", () => {
 
     // Untouched rows keep the base binding.
     expect(effectiveBindings()[TOPICS.EDITOR_TOGGLE_EDIT]).toEqual({
-      mac: "E",
-      other: "E",
+      mac: "Cmd+E",
+      other: "Ctrl+E",
     });
 
   }, 15000);

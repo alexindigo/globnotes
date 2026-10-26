@@ -6,7 +6,7 @@
  * - Active layer id: localStorage "globnotes-keybindings".
  * - Custom-layer overrides: localStorage "globnotes-keybindings-custom"
  *   (JSON map action → binding). The Custom layer's effective bindings
- *   are the base layer (Legacy) merged under the overrides.
+ *   are the default layer merged under the overrides.
  */
 
 import { ref } from "vue";
@@ -14,8 +14,8 @@ import { publish, TOPICS } from "../bus/index.js";
 import {
   CUSTOM_BASE_LAYER_ID,
   CUSTOM_LAYER_ID,
+  DEFAULT_LAYER_ID,
   LAYERS,
-  LEGACY_LAYER_ID,
 } from "./layers.js";
 
 const LAYER_STORAGE_KEY = "globnotes-keybindings";
@@ -24,7 +24,7 @@ const CUSTOM_STORAGE_KEY = "globnotes-keybindings-custom";
 function loadLayerId() {
   const id = localStorage.getItem(LAYER_STORAGE_KEY);
   if (id === CUSTOM_LAYER_ID) return id;
-  return LAYERS[id] ? id : LEGACY_LAYER_ID;
+  return LAYERS[id] ? id : DEFAULT_LAYER_ID;
 }
 
 function loadOverrides() {
@@ -44,7 +44,7 @@ const customOverrides = ref(loadOverrides());
 
 /** Layer meta (id/label/description) for the active layer. */
 export function currentLayer() {
-  return LAYERS[currentLayerId.value] ?? LAYERS[LEGACY_LAYER_ID];
+  return LAYERS[currentLayerId.value] ?? LAYERS[DEFAULT_LAYER_ID];
 }
 
 /** Effective bindings for the active layer. For Custom, the base layer's

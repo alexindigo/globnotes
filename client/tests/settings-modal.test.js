@@ -38,7 +38,7 @@ beforeEach(() => {
   pluginCatalog.value = { policy: { revision: 0, signature: "policy", effectiveAutoEnable: true }, plugins: [{ id: "a", name: "Fixture", enabled: true, runtime: { server: true }, pages: [page], blocking: { actions: [] } }] };
   getPluginSettings.mockResolvedValue({ revision: 0, values: { message: "stored", enabled: false, limit: 5, folder: "" } });
   putPluginSettings.mockImplementation(async (id, p, values, revision) => ({ values, revision: revision + 1 }));
-  postBrand.mockResolvedValue({ name: null, accent: null, files: [] }); saveViewLineNumbers(false); debugEnabled.value = false; setLayer("legacy");
+  postBrand.mockResolvedValue({ name: null, accent: null, files: [] }); saveViewLineNumbers(false); debugEnabled.value = false; setLayer("obsidian");
   getTree.mockResolvedValue({folders:[],notes:[]});
 });
 afterEach(() => { wrapper?.unmount(); wrapper = null; pluginCatalog.value = null; removeCommandOwner("settings-fixture"); URL.createObjectURL=originalCreateUrl;URL.revokeObjectURL=originalRevokeUrl;vi.clearAllMocks(); });
@@ -74,7 +74,8 @@ describe("actual retained Settings entry and inline pages", () => {
   it("shows the real inline layer rail and registered plugin command remapping", async () => {
     registerPluginCommand("settings-fixture", { id: "inspect", label: "Fixture live command", target: "browser" }, () => "consumer");
     await open("core:keybindings");
-    expect(document.body.textContent).toContain("Legacy Flatnotes");
+    expect(document.body.textContent).toContain("Obsidian");
+    expect(document.body.textContent).not.toContain("Legacy Flatnotes");
     expect(document.body.textContent).toContain("Save note");
     expect(document.body.textContent).toContain("Fixture live command");
     button("Custom").click(); await flushPromises(); expect(currentLayerId.value).toBe("custom");

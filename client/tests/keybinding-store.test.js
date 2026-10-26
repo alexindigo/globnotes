@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TOPICS } from "../bus/topics.js";
-import { LAYERS, LEGACY_LAYER_ID } from "../keybindings/layers.js";
+import { DEFAULT_LAYER_ID, LAYERS } from "../keybindings/layers.js";
 
 async function freshStore() {
   vi.resetModules();
@@ -17,22 +17,39 @@ describe("keybinding store", () => {
     localStorage.removeItem("globnotes-keybindings-custom");
   });
 
-  it("defaults to the legacy layer", async () => {
+  it("defaults to the Obsidian layer", async () => {
     const store = await freshStore();
-    expect(store.currentLayerId.value).toBe(LEGACY_LAYER_ID);
-    expect(store.effectiveBindings()).toEqual(LAYERS.legacy.bindings);
+    expect(store.currentLayerId.value).toBe(DEFAULT_LAYER_ID);
+    expect(store.effectiveBindings()).toEqual(LAYERS.obsidian.bindings);
   });
 
   it("restores the persisted layer id", async () => {
-    localStorage.setItem("globnotes-keybindings", "obsidian");
+    localStorage.setItem("globnotes-keybindings", "typora");
     const store = await freshStore();
-    expect(store.currentLayerId.value).toBe("obsidian");
+    expect(store.currentLayerId.value).toBe("typora");
   });
 
-  it("falls back to legacy for an unknown persisted id", async () => {
+  it("falls back to Obsidian for a saved legacy choice without losing custom overrides", async () => {
+    localStorage.setItem("globnotes-keybindings", "legacy");
+    const binding = { mac: "Cmd+Shift+S", other: "Ctrl+Shift+S" };
+    localStorage.setItem("globnotes-keybindings-custom", JSON.stringify({ [TOPICS.EDITOR_SAVE]: binding }));
+    const store = await freshStore();
+    expect(store.currentLayerId.value).toBe("obsidian");
+    expect(store.currentLayer()).toEqual(LAYERS.obsidian);
+    expect(store.effectiveBindings()).toEqual(LAYERS.obsidian.bindings);
+    store.setLayer("custom");
+    expect(store.effectiveBindings()[TOPICS.EDITOR_SAVE]).toEqual(binding);
+    store.removeCustomBinding(TOPICS.EDITOR_SAVE);
+    expect(store.effectiveBindings()).toEqual(LAYERS.obsidian.bindings);
+    store.setLayer("notion");
+    expect(localStorage.getItem("globnotes-keybindings")).toBe("notion");
+    expect((await freshStore()).currentLayerId.value).toBe("notion");
+  });
+
+  it("falls back to the default for an unknown persisted id", async () => {
     localStorage.setItem("globnotes-keybindings", "vim");
     const store = await freshStore();
-    expect(store.currentLayerId.value).toBe(LEGACY_LAYER_ID);
+    expect(store.currentLayerId.value).toBe(DEFAULT_LAYER_ID);
   });
 
   it("setLayer persists and publishes a change event", async () => {
@@ -47,16 +64,16 @@ describe("keybinding store", () => {
     expect(events).toEqual([{ id: "typora" }]);
   });
 
-  it("the custom layer merges overrides over the legacy base", async () => {
+  it("the custom layer merges overrides over the default base", async () => {
     const store = await freshStore();
     store.setLayer("custom");
-    expect(store.effectiveBindings()).toEqual(LAYERS.legacy.bindings);
+    expect(store.effectiveBindings()).toEqual(LAYERS.obsidian.bindings);
     const binding = { mac: "Cmd+Shift+1", other: "Ctrl+Shift+1" };
     store.setCustomBinding(TOPICS.EDITOR_SAVE, binding);
     expect(store.effectiveBindings()[TOPICS.EDITOR_SAVE]).toEqual(binding);
     // Untouched actions keep the base binding.
     expect(store.effectiveBindings()[TOPICS.APP_NEW_NOTE]).toEqual(
-      LAYERS.legacy.bindings[TOPICS.APP_NEW_NOTE],
+      LAYERS.obsidian.bindings[TOPICS.APP_NEW_NOTE],
     );
   });
 
@@ -89,13 +106,13 @@ describe("keybinding store", () => {
     store.setCustomBinding(TOPICS.EDITOR_SAVE, { mac: "X", other: "X" });
     store.removeCustomBinding(TOPICS.EDITOR_SAVE);
     expect(store.effectiveBindings()[TOPICS.EDITOR_SAVE]).toEqual(
-      LAYERS.legacy.bindings[TOPICS.EDITOR_SAVE],
+      LAYERS.obsidian.bindings[TOPICS.EDITOR_SAVE],
     );
   });
 
   it("custom edits are ignored while a named layer is active", async () => {
     const store = await freshStore();
-    store.setLayer("legacy");
+    store.setLayer(DEFAULT_LAYER_ID);
     store.setCustomBinding(TOPICS.EDITOR_SAVE, { mac: "X", other: "X" });
     expect(localStorage.getItem("globnotes-keybindings-custom")).toBe(null);
   });
@@ -105,6 +122,6 @@ describe("keybinding store", () => {
     localStorage.setItem("globnotes-keybindings-custom", "{not json");
     const store = await freshStore();
     expect(store.customOverridesMap()).toEqual({});
-    expect(store.effectiveBindings()).toEqual(LAYERS.legacy.bindings);
+    expect(store.effectiveBindings()).toEqual(LAYERS.obsidian.bindings);
   });
 });

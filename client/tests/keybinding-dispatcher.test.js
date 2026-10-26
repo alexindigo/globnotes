@@ -54,7 +54,7 @@ describe("dispatcher", () => {
     // Restore the default layer through the store (localStorage is only
     // read at module load; setLayer drives the rebind subscription).
     const { setLayer } = await import("../keybindings/store.js");
-    setLayer("legacy");
+    setLayer("obsidian");
   });
 
   afterEach(() => {
@@ -70,33 +70,35 @@ describe("dispatcher", () => {
     expect(goHome).toHaveLength(1);
   });
 
-  it("the legacy layer binds E to toggle edit", () => {
+  it("the default layer binds Mod+E to toggle edit", () => {
     const toggle = collect(TOPICS.EDITOR_TOGGLE_EDIT);
-    pressKey(69);
+    pressKey(69, { ctrlKey: true });
     expect(toggle).toHaveLength(1);
   });
 
-  it("the legacy layer opens the switcher on /", () => {
-    // The regression fix: '/' re-opens the quick switcher. Bare key,
-    // bound (not globally) so typing '/' in an editor never triggers it.
+  it("the default layer opens the switcher on Mod+O and leaves / unbound", () => {
     const switcher = collect(TOPICS.APP_OPEN_SWITCHER);
     pressKey("/".charCodeAt(0));
+    expect(switcher).toHaveLength(0);
+    pressKey(79, { ctrlKey: true });
     expect(switcher).toHaveLength(1);
   });
 
   it("rebinds when the layer changes", async () => {
     const switcher = collect(TOPICS.APP_OPEN_SWITCHER);
     const toggle = collect(TOPICS.EDITOR_TOGGLE_EDIT);
-    // Obsidian layer: Ctrl+E toggles edit, Ctrl+O opens the switcher.
+    // Notion layer: Ctrl+P opens the switcher; Obsidian keys are unbound.
     const { setLayer } = await import("../keybindings/store.js");
-    setLayer("obsidian");
+    setLayer("notion");
     pressKey(69, { ctrlKey: true });
-    expect(toggle).toHaveLength(1);
+    expect(toggle).toHaveLength(0);
     pressKey(79, { ctrlKey: true });
+    expect(switcher).toHaveLength(0);
+    pressKey(80, { ctrlKey: true });
     expect(switcher).toHaveLength(1);
-    // Bare E is no longer bound in obsidian — no toggle fires.
+    // Bare E is unbound too — no toggle fires.
     pressKey(69);
-    expect(toggle).toHaveLength(1);
+    expect(toggle).toHaveLength(0);
   });
 
   it("bare E does nothing in layers that do not bind it", async () => {

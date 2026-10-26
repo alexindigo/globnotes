@@ -5,10 +5,11 @@ import { describe, expect, it } from "vitest";
 import { TOPICS } from "../bus/topics.js";
 import {
   ACTIONS,
+  CUSTOM_BASE_LAYER_ID,
   CUSTOM_LAYER_ID,
+  DEFAULT_LAYER_ID,
   LAYERS,
   LAYER_ORDER,
-  LEGACY_LAYER_ID,
 } from "../keybindings/layers.js";
 import { isBareKey, toCm6, toMousetrap } from "../keybindings/keys.js";
 
@@ -65,8 +66,8 @@ describe("keybinding layer matrix", () => {
     }
   });
 
-  it("non-legacy layers save with Mod+S and keep Ctrl/Cmd+Enter as alias", () => {
-    for (const id of ["obsidian", "notion", "typora", "vscode-lite"]) {
+  it("all layers save with Mod+S and keep Ctrl/Cmd+Enter as alias", () => {
+    for (const id of Object.keys(LAYERS)) {
       const save = LAYERS[id].bindings[TOPICS.EDITOR_SAVE];
       expect(save, `${id} Mod+S`).toEqual({
         mac: "Cmd+S",
@@ -74,11 +75,6 @@ describe("keybinding layer matrix", () => {
         alias: { mac: "Cmd+Enter", other: "Ctrl+Enter" },
       });
     }
-    // Legacy is Enter-only.
-    expect(LAYERS[LEGACY_LAYER_ID].bindings[TOPICS.EDITOR_SAVE]).toEqual({
-      mac: "Cmd+Enter",
-      other: "Ctrl+Enter",
-    });
   });
 
   it("descriptions resolve the Mod token per platform", () => {
@@ -89,27 +85,26 @@ describe("keybinding layer matrix", () => {
         "Mod+",
       );
     }
-    expect(LAYERS[LEGACY_LAYER_ID].description).toContain("Ctrl+Enter");
     expect(LAYERS.obsidian.description).toContain("Ctrl+E toggles edit/view");
   });
 
-  it("the legacy layer binds E to toggle edit", () => {
-    expect(LAYERS[LEGACY_LAYER_ID].bindings[TOPICS.EDITOR_TOGGLE_EDIT]).toEqual({
-      mac: "E",
-      other: "E",
+  it("the default and Custom base are Obsidian, with Mod+E to toggle edit", () => {
+    expect(DEFAULT_LAYER_ID).toBe("obsidian");
+    expect(CUSTOM_BASE_LAYER_ID).toBe(DEFAULT_LAYER_ID);
+    expect(LAYERS[DEFAULT_LAYER_ID].bindings[TOPICS.EDITOR_TOGGLE_EDIT]).toEqual({
+      mac: "Cmd+E",
+      other: "Ctrl+E",
     });
   });
 
-  it("the legacy layer restores / for the quick switcher", () => {
-    // The regression fix: the rewrite dropped the Flatnotes/upstream
-    // quick-switcher key.
-    expect(LAYERS[LEGACY_LAYER_ID].bindings[TOPICS.APP_OPEN_SWITCHER]).toEqual({
-      mac: "/",
-      other: "/",
+  it("the default layer opens the quick switcher with Mod+O, not a bare key", () => {
+    expect(LAYERS[DEFAULT_LAYER_ID].bindings[TOPICS.APP_OPEN_SWITCHER]).toEqual({
+      mac: "Cmd+O",
+      other: "Ctrl+O",
     });
-    // It is a bare key, so the dispatcher binds it (not globally) and it
-    // never fires while typing.
-    expect(isBareKey(LAYERS[LEGACY_LAYER_ID].bindings[TOPICS.APP_OPEN_SWITCHER].other)).toBe(true);
+    expect(isBareKey(LAYERS[DEFAULT_LAYER_ID].bindings[TOPICS.APP_OPEN_SWITCHER].other)).toBe(false);
+    expect(LAYER_ORDER).not.toContain("legacy");
+    expect(LAYERS.legacy).toBeUndefined();
   });
 });
 

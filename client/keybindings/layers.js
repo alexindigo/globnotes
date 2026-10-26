@@ -42,25 +42,7 @@ const CROSS_LAYER = {
   [TOPICS.EDITOR_FIND]: mod("F"),
 };
 
-const legacyBindings = {
-  ...CROSS_LAYER,
-  [TOPICS.EDITOR_TOGGLE_EDIT]: same("E"),
-  [TOPICS.EDITOR_SAVE]: mod("Enter"),
-  // The rewrite dropped the Flatnotes/upstream quick-switcher key;
-  // Legacy restores it. Bare key → Mousetrap plain bind, so it never
-  // fires while typing in the editors or search inputs.
-  [TOPICS.APP_OPEN_SWITCHER]: same("/"),
-};
-
 export const LAYERS = {
-  legacy: {
-    id: "legacy",
-    label: "Legacy Flatnotes",
-    description:
-      `The original Flatnotes keymap: E to edit, ${MOD}+Enter to save, ` +
-      `/ for the quick switcher.`,
-    bindings: legacyBindings,
-  },
   obsidian: {
     id: "obsidian",
     label: "Obsidian",
@@ -154,14 +136,13 @@ export const LAYERS = {
   },
 };
 
-/** The Custom layer starts as a copy of Legacy; per-binding overrides are
+/** The Custom layer starts as a copy of the default; per-binding overrides are
  * persisted by the store (store.js) and merged on top of this base. */
+export const DEFAULT_LAYER_ID = "obsidian";
 export const CUSTOM_LAYER_ID = "custom";
-export const CUSTOM_BASE_LAYER_ID = "legacy";
-export const LEGACY_LAYER_ID = "legacy";
+export const CUSTOM_BASE_LAYER_ID = DEFAULT_LAYER_ID;
 
 export const LAYER_ORDER = [
-  "legacy",
   "obsidian",
   "notion",
   "typora",

@@ -24,6 +24,7 @@ released, the Docker tag `latest` moves to v3, so **pin a v2 tag** (`2`, `2.5`,
 | 7 | Configuration | Environment variables only | Layered: built-in defaults → optional TOML config file → environment variables. Unknown `GLOBNOTES_*` variables stop the server at boot with a list of problems |
 | 8 | Environment variable names | `GLOBNOTES_PATH`, `GLOBNOTES_AUTH_TYPE`, … | New names, no aliases (see "Environment variables" below) |
 | 9 | Plugins | Installed per instance; enabled and configured for the one vault | Still installed once per instance. Each vault turns them on and off and has its own plugin settings, approvals and data |
+| 10 | Flatnotes compatibility | Flatnotes migration instructions and a Legacy Flatnotes keymap | Compatibility is dropped: no `FLATNOTES_*` names or Legacy Flatnotes keymap. Obsidian is the default keymap and the base for Custom; a saved Legacy choice falls back to Obsidian |
 
 ## Steps (as decided so far)
 
@@ -55,6 +56,12 @@ released, the Docker tag `latest` moves to v3, so **pin a v2 tag** (`2`, `2.5`,
    "Everybody else" (see row 4 of the table to match your v2 login mode).
 7. **Check plugins and settings** for the vault. They should match what you had
    in v2.
+8. **Check your keyboard shortcuts** in Settings → Keybindings. The Legacy
+   Flatnotes keymap is gone; a saved Legacy choice now uses Obsidian. Save with
+   Ctrl/Cmd+S (Ctrl/Cmd+Enter remains an alias), toggle edit with Ctrl/Cmd+E,
+   and open the quick switcher with Ctrl/Cmd+O. Custom starts from Obsidian and
+   keeps your saved overrides. Flatnotes migration instructions and
+   `FLATNOTES_*` environment variable names are no longer supported.
 
 ## Environment variables
 

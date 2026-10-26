@@ -158,7 +158,11 @@ export const cases = {
     }
   },
   async "editor-modes"(f) {
-    await open(f); await edit(f);
+    // A stored, removed layer must resolve before either editor consumes keys.
+    await f.page.addInitScript("localStorage.setItem('globnotes-keybindings','legacy');");
+    await open(f);
+    await f.page.key("e", { code: "KeyE", modifiers: 2, windowsVirtualKeyCode: 69 });
+    await f.page.button("Source", ".content-column");
     await f.page.poll("document.querySelector('.cm-content')?.textContent.includes('def greet')");
     await f.page.button("WYSIWYG", ".content-column");
     await f.page.poll("!!document.querySelector('.ProseMirror pre') && document.querySelector('.ProseMirror').textContent.includes('def greet')");
@@ -168,7 +172,17 @@ export const cases = {
     await f.page.poll("(()=>{const pm=document.querySelector('.ProseMirror'),selection=getSelection();return pm.contains(document.activeElement)&&!!pm.querySelector('strong')&&!selection.isCollapsed&&selection.toString().length>0;})()");
     await f.page.button("Source", ".content-column");
     await f.page.poll("document.querySelector('.cm-content')?.textContent.includes('def greet')");
-    return { bothEditorsReadContent: true, toolbarPreservedSelection: true, sourceRoundTrip: true };
+    const marker = "Stored keymap fallback saved through Obsidian";
+    await f.page.click(".cm-content");
+    await f.page.key("End", { code: "End", modifiers: 2, windowsVirtualKeyCode: 35 });
+    await f.page.type("\n\n" + marker);
+    await f.page.key("s", { code: "KeyS", modifiers: 2, windowsVirtualKeyCode: 83 });
+    await f.page.poll(`fetch('/_/api/notes/rendering/code-blocks').then(r=>r.json()).then(note=>note.content.includes(${JSON.stringify(marker)}))`);
+    assert((await Deno.readTextFile(f.vault + "/rendering/code-blocks.md")).includes(marker), "Default Mod+S did not persist the edited note");
+    await f.page.key("e", { code: "KeyE", modifiers: 2, windowsVirtualKeyCode: 69 });
+    await f.page.poll(`document.querySelector('.toast-viewer')?.textContent.includes(${JSON.stringify(marker)})`);
+    return { bothEditorsReadContent: true, toolbarPreservedSelection: true, sourceRoundTrip: true,
+      storedLegacyFallback: "obsidian", defaultSaveReachedDiskAndViewer: true };
   },
   async "rename-options"(f, option = "move") {
     assert(["move", "relink", "none"].includes(option), "Invalid rename strategy");
