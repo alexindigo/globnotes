@@ -1509,7 +1509,11 @@ Deno.test("lifecycle: policy epoch change during a suspended operation rejects w
 });
 
 Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action", async () => {
-  const b = await bundle({ limits: { queuedJobs: 4, serviceCallMs: 60 } });
+  // Service limits also govern the healthy recorder's observers/commands.
+  // Give them scheduling headroom; the hanger never resolves at any deadline.
+  const serviceCallMs = 5000;
+  const queuedJobs = 4;
+  const b = await bundle({ limits: { queuedJobs, serviceCallMs } });
   try {
     // A SEPARATE on-only observer: slow/hanging deliveries and queue
     // overflow must degrade it visibly — never block the note action.
@@ -1528,7 +1532,38 @@ Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action
     ) {
       await new Promise((r) => setTimeout(r, 5));
     }
+    assertEquals(b.runtime.status("hanger")?.status, "ready");
     await b.operations.createNote({ path: "a", content: "one" }, api());
+    // Fill the observer lane synchronously: one active hanging delivery,
+    // queuedJobs waiting deliveries, then an overflow. Target only the hanger
+    // so the healthy recorder still observes exactly the real note actions.
+    for (let i = 0; i < queuedJobs + 2; i++) {
+      const operationId = `overflow-${i}`;
+      b.runtime.post(
+        "on-save",
+        {
+          operationId,
+          action: "save",
+          origin: "api",
+          timestamp: new Date().toISOString(),
+          path: "a",
+        },
+        { operationId, action: "save" },
+        "hanger",
+      );
+    }
+    // Rejected admission reports on a microtask, without waiting for a timer.
+    await Promise.resolve();
+    const overflow = b.runtime.status("hanger");
+    assert(overflow !== null);
+    assertEquals(overflow.status, "ready");
+    assert(overflow.deliveryFailures >= 1);
+    assert(
+      overflow.diagnostics.some((d) =>
+        d.code === "plugin_delivery_failed" &&
+        d.operationId === `overflow-${queuedJobs + 1}`
+      ),
+    );
     await b.operations.updateNote("a", { newContent: "two" }, "none", api());
     await b.operations.updateNote("a", { newContent: "three" }, "none", api());
     await b.operations.updateNote("a", { newContent: "four" }, "none", api());
@@ -1541,10 +1576,10 @@ Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action
     assertEquals(saves.length, 3);
     // The hanger's observer deadline failure is recorded — host failed,
     // diagnostic visible — and the note actions were never blocked.
-    const hangDeadline = Date.now() + 3000;
+    const hangDeadline = Date.now() + serviceCallMs + 5000;
     while (Date.now() < hangDeadline) {
       const s = b.runtime.status("hanger");
-      if (s && (s.status === "failed" || s.deliveryFailures > 0)) break;
+      if (s?.status === "failed") break;
       await new Promise((r) => setTimeout(r, 20));
     }
     const status = b.runtime.status("hanger");
@@ -1554,12 +1589,18 @@ Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action
       `hanger state: ${JSON.stringify(status)}`,
     );
     assert(status.diagnostics.length >= 1);
+    assertEquals(status.status, "failed");
+    assert(status.diagnostics.some((d) => d.code === "plugin_runtime_failed"));
     // On-only failure does not acquire blocking authority: more saves pass.
     await b.operations.updateNote("a", { newContent: "five" }, "none", api());
     assertEquals(
       Deno.readTextFileSync(path.join(b.fixture.vault, "a.md")),
       "five",
     );
+    const laterSaves = (await b.facts()).filter((f) => f.kind === "on-save");
+    assertEquals(laterSaves.length, 4);
+    assertEquals(b.runtime.status("recorder")?.status, "ready");
+    assertEquals(b.runtime.status("recorder")?.deliveryFailures, 0);
   } finally {
     await b.dispose();
   }
