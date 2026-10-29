@@ -51,10 +51,13 @@ including a no-effect failure. This does not change save semantics or provide
 filesystem CAS against outside programs.
 
 If actual storage effects occurred but hub reconciliation cannot be verified,
-the operation reports `operation_partial` with its actual effects; it does not
-acknowledge an unrecorded version as success. Derived projections are isolated
-per entry: a failed index update or fact read is logged without dropping the
-remaining entries and their sync boundary.
+the operation reports `operation_partial` rather than acknowledging an unrecorded
+version as success. The public HTTP error's `partial` object contains
+`completedPaths` and an optional `failedPath`; detailed storage-effect journals
+are attached to lifecycle fact metadata instead.
+
+Derived projections are isolated per entry: a failed index update or fact read
+is logged without dropping the remaining entries and their sync boundary.
 
 Auxiliary plugin filesystem publication still has separate write/rename/remove/
 mkdir branches and asynchronous temporary-file preparation. M1 leaves those
