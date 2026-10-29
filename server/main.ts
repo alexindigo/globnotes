@@ -16,6 +16,7 @@ import { LocalAuth } from "./auth/local.ts";
 import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
 import { NoteOperations } from "./notes/operations.ts";
+import { VaultHub } from "./hub/hub.ts";
 import { PluginActions } from "./plugins/actions.ts";
 import { AuxiliaryFilesystem } from "./plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "./plugins/data.ts";
@@ -48,6 +49,7 @@ const globalConfig = new GlobalConfig();
 const notes = new FileSystemNotes(globalConfig.notesPath);
 const indexer = new Fts5Indexer(globalConfig.statePath);
 const fileServing = new FileServing(globalConfig.notesPath);
+const hub = new VaultHub(globalConfig.notesPath, globalConfig.statePath);
 const plugins = new PluginManager(
   globalConfig.notesPath,
   undefined,
@@ -67,7 +69,7 @@ const auth = globalConfig.authType === AuthType.PASSWORD ||
     globalConfig.authType === AuthType.TOTP
   ? new LocalAuth(globalConfig)
   : null;
-initState(globalConfig, auth, notes, indexer, fileServing, plugins);
+initState(globalConfig, auth, notes, indexer, fileServing, plugins, hub);
 
 // Guarded-operation bundle: lifecycle (epochs/gates) → operations facade →
 // deferred action queue → authoritative service runtime. Service
@@ -78,6 +80,7 @@ const operations = new NoteOperations({
   notes,
   files: fileServing,
   indexer,
+  hub,
   runtime: () => plugins.runtime,
   lifecycle,
 });
@@ -155,6 +158,7 @@ if (!globalConfig.setupRequired) {
     logger.error(`plugin runtime reconciliation failed: ${e}`)
   );
 }
+hub.start();
 indexer.startBackgroundSync();
 // Render pools still start lazily on the first render call.
 

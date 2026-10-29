@@ -12,6 +12,7 @@ import { createUuid } from "../../shared/uuid.ts";
 import { HttpError } from "@pathfinder/pathfinder";
 import type { FileServing } from "../files/file_serving.ts";
 import type { Indexer } from "../state.ts";
+import type { VaultHub } from "../hub/hub.ts";
 import { guessType } from "../files/mimetypes.ts";
 import { FileSystemNotes, type StorageEffect } from "./file_system.ts";
 import type { Note, NoteCreate, NoteUpdate } from "./models.ts";
@@ -46,6 +47,7 @@ export interface OperationAdapters {
   notes: FileSystemNotes;
   files: FileServing;
   indexer: Indexer | null;
+  hub?: VaultHub;
   runtime(): PluginRuntime | null;
   lifecycle: PluginLifecycle;
 }
@@ -242,6 +244,8 @@ export class NoteOperations {
             ctx,
             () => this.adapters.notes.commitCreate(prepared),
             actualEffects,
+            prepared.requiredPaths,
+            requester?.pluginId,
           ),
         operationId,
         ctx,
@@ -364,6 +368,8 @@ export class NoteOperations {
             () =>
               this.adapters.notes.commitUpdate(prepared, requester?.canPrune),
             actualEffects,
+            prepared.requiredPaths,
+            requester?.pluginId,
           ),
         operationId,
         ctx,
@@ -440,6 +446,8 @@ export class NoteOperations {
             ctx,
             () => this.adapters.notes.delete(notePath, requester?.canPrune),
             actualEffects,
+            effects,
+            requester?.pluginId,
           ),
         operationId,
         ctx,
@@ -489,14 +497,20 @@ export class NoteOperations {
         [{ hook: "pre-upload", leases }],
         () => this.adapters.files.revalidateCreate(prepared),
         () =>
-          this.#captureStorage(operationId, ctx, () => {
-            const uploaded = this.adapters.files.commitCreate(prepared, body);
-            actualEffects.push({ kind: "write", path: prepared.filepath });
-            if (uploaded.filename.endsWith(MARKDOWN_EXT)) {
-              this.adapters.notes.reconcileEffects(actualEffects);
-            }
-            return uploaded;
-          }, actualEffects),
+          this.#captureStorage(
+            operationId,
+            ctx,
+            () => {
+              const uploaded = this.adapters.files.commitCreate(prepared, body);
+              actualEffects.push({ kind: "write", path: prepared.filepath });
+              if (uploaded.filename.endsWith(MARKDOWN_EXT)) {
+                this.adapters.notes.reconcileEffects(actualEffects);
+              }
+              return uploaded;
+            },
+            actualEffects,
+            [prepared.filepath],
+          ),
         operationId,
         ctx,
       );
@@ -614,6 +628,7 @@ export class NoteOperations {
             ctx,
             () => this.adapters.notes.applyRefsRewrite(changes),
             actualEffects,
+            changes.map((change) => change.path),
           ),
         operationId,
         ctx,
@@ -714,6 +729,7 @@ export class NoteOperations {
       const deadline = Date.now() +
         this.adapters.runtime()!.limits.preOperationMs;
       const leases = await this.#guard("pre-file-write", fact, deadline);
+      const actualEffects: StorageEffect[] = [];
       await this.#commitGate(
         capturedEpoch,
         [{ hook: "pre-file-write", leases }],
@@ -740,7 +756,18 @@ export class NoteOperations {
             }
           }
         },
-        () => Deno.writeFileSync(target.absolutePath, bytes),
+        () =>
+          this.#captureStorage(
+            operationId,
+            ctx,
+            () => {
+              Deno.writeFileSync(target.absolutePath, bytes);
+              actualEffects.push({ kind: "write", path: target.absolutePath });
+            },
+            actualEffects,
+            [target.absolutePath],
+            requester?.pluginId,
+          ),
         operationId,
         ctx,
         requester,
@@ -781,9 +808,23 @@ export class NoteOperations {
     ctx: OperationOrigin,
     callback: () => T,
     effects: StorageEffect[] = [],
+    expectedPaths: readonly string[] = [],
+    pluginId = ctx.causalPlugin,
   ): T {
+    const hub = this.adapters.hub;
+    const token = hub?.expect(expectedPaths);
     try {
-      return this.adapters.notes.captureEffects(effects, callback);
+      try {
+        return this.adapters.notes.captureEffects(effects, callback);
+      } finally {
+        if (token) {
+          hub!.record(
+            token,
+            effects,
+            ctx.origin === "plugin" ? `plugin:${pluginId}` : ctx.origin,
+          );
+        }
+      }
     } catch (error) {
       if (!effects.length) throw error;
       this.adapters.notes.reconcileEffects(effects);

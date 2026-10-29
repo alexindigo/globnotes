@@ -20,6 +20,7 @@ import type { PluginLifecycle } from "./plugins/lifecycle.ts";
 import type { PluginManager } from "./plugins/manager.ts";
 import type { PluginNetworkRequests } from "./plugins/network_requests.ts";
 import type { AppVersion } from "./version.ts";
+import type { VaultHub } from "./hub/hub.ts";
 
 /** Implemented by the FTS5 commit; unset until then (storage still works,
  * index hooks are simply skipped). */
@@ -61,6 +62,7 @@ export interface ServerState {
   auth: LocalAuth | null;
   notes: FileSystemNotes;
   indexer: Indexer | null;
+  hub: VaultHub | null;
   files: FileServing;
   /** Plugin manager; null only in unit tests that never start one. */
   plugins: PluginManager | null;
@@ -91,6 +93,7 @@ export const state: ServerState = {
   pluginEndpoints: null,
   pluginNetwork: null,
   version: null,
+  hub: null,
 } as ServerState;
 
 export function initState(
@@ -100,6 +103,7 @@ export function initState(
   indexer: Indexer | null,
   files: FileServing,
   plugins: PluginManager | null = null,
+  hub: VaultHub | null = null,
 ): void {
   state.config = config;
   state.auth = auth;
@@ -107,6 +111,7 @@ export function initState(
   state.indexer = indexer;
   state.files = files;
   state.plugins = plugins;
+  state.hub = hub;
   state.lifecycle = null;
   state.operations = null;
   state.actions = null;
