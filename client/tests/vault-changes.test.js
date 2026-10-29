@@ -1,11 +1,40 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../api.js", () => ({ openVaultChanges: vi.fn() }));
-import { createVaultChanges } from "../vaultChanges.js";
+import { acquireVaultChanges, createVaultChanges } from "../vaultChanges.js";
+import { openVaultChanges } from "../api.js";
 import { TOPICS } from "../bus/index.js";
 
 afterEach(() => vi.useRealTimers());
 const flush = () => vi.advanceTimersByTimeAsync(0);
 describe("vault change owner", () => {
+  it("suspends document-owned wires and resumes once from the accepted cursor", async () => {
+    vi.useFakeTimers();
+    const calls = [], disposers = [], publish = vi.fn();
+    const owner = createVaultChanges({ publish, open: async options => {
+      calls.push(options); const close = vi.fn(); disposers.push(close); return close;
+    } });
+    const first = owner.acquire(); await flush();
+    calls[0].onEvent({ event: "change", data: { seq: 7, path: "note.md" } });
+    owner.suspendDocument();
+    expect(calls[0].signal.aborted).toBe(true); expect(disposers[0]).toHaveBeenCalledTimes(1);
+    const second = owner.acquire();
+    calls[0].onEvent({ event: "change", data: { seq: 99 } }); calls[0].onClose("ended");
+    await vi.advanceTimersByTimeAsync(60_000); expect(calls).toHaveLength(1); expect(owner.state().seq).toBe(7);
+    owner.resumeDocument(); await flush(); owner.resumeDocument(); await flush();
+    expect(calls).toHaveLength(2); expect(calls[1].since).toBe(7);
+    first(); second(); expect(disposers[1]).toHaveBeenCalledTimes(1);
+  });
+  it("the app singleton releases pagehide streams and reconnects after pageshow", async () => {
+    vi.useFakeTimers(); const closes = [], calls = [];
+    openVaultChanges.mockImplementation(async options => { calls.push(options); const close = vi.fn(); closes.push(close); return close; });
+    const release = acquireVaultChanges(); await flush();
+    try {
+      window.dispatchEvent(new Event("pagehide"));
+      expect(calls[0].signal.aborted).toBe(true); expect(closes[0]).toHaveBeenCalledTimes(1);
+      window.dispatchEvent(new Event("pageshow")); await flush();
+      expect(calls).toHaveLength(2);
+    } finally { release(); window.dispatchEvent(new Event("pageshow")); }
+  });
   it("shares one connection, publishes once, resumes the cursor, and fences retired delivery", async () => {
     vi.useFakeTimers();
     const calls = [], disposers = [], publish = vi.fn();

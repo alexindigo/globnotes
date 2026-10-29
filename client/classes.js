@@ -7,6 +7,8 @@ class Note {
     this.lastModified = note?.lastModified;
     this.content = note?.content;
     this.movedFiles = note?.movedFiles;
+    this.version = note?.version;
+    this.saveResult = note?.saveResult;
   }
 
   get lastModifiedAsDate() {

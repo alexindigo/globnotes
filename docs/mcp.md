@@ -366,11 +366,12 @@ from a search result). If the note has changed since (for example, someone saved
 browser in the meantime), the tool writes nothing and asks the agent to re-read the note.
 Agents should always pass it.
 
-The check is best effort. globnotes compares the note on disk just before the write and
-has no merge of concurrent edits yet, so a save that lands between the check and the write
-can still be overwritten. A note changed within the same millisecond also isn't detected.
-The vault hub's versions aren't used for this check yet; base-aware saves (planned as M2)
-will strengthen it.
+The check is best effort. globnotes compares the note on disk just before the write, so
+a save that lands between the check and the write can still be overwritten. A note changed
+within the same millisecond also isn't detected. The web editor's own saves are base-aware
+(they merge with changes made elsewhere or keep a conflict copy, see `docs/saving.md`), so
+a browser save after an agent's edit no longer overwrites it; MCP writes don't use the
+vault hub's versions yet.
 
 ## Security
 

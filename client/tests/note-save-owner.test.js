@@ -69,6 +69,72 @@ function fixture(overrides = {}, useDefaults = false) {
 }
 
 describe("save owner submission and acknowledgement", () => {
+  it.each([false, true])("merged acknowledgements adopt only unchanged text and keep the correct next base (newer=%s)", async newer => {
+    const f = fixture(); f.owner.start(); f.edit("A"); f.owner.save(); await flush();
+    expect(f.sent[0].args[4]).toBe("old");
+    if (newer) f.edit("B");
+    await f.ack(0, "P", "A plus theirs", { saveResult: { status: "merged" } });
+    expect(f.buffer()).toBe(newer ? "B" : "A plus theirs");
+    expect(f.owner.contentNeedsSave()).toBe(newer);
+    if (!newer) f.edit("C");
+    f.owner.save(); await flush();
+    expect(f.sent[1].args[4]).toBe(newer ? "A" : "A plus theirs");
+    expect(f.owner.queueState().rebaseConflict).toBe(false);
+  });
+  it.each(["clean", "typing", "queued"])("conflict adopts the copy and preserves newer work (%s)", async mode => {
+    const f = fixture(); f.owner.start(); f.edit("A"); f.owner.save(); await flush();
+    if (mode !== "clean") f.edit("B");
+    if (mode === "queued") { f.owner.save(); f.edit("C"); f.owner.save(); }
+    const snapshot = f.owner.queueState().active.snapshot;
+    await f.ack(0, "P.conflict-copy", "A", { saveResult: { status: "conflict", conflictCopyPath: "P.conflict-copy" } });
+    expect(f.current.note.path).toBe("P.conflict-copy");
+    expect(f.buffer()).toBe(mode === "clean" ? "A" : mode === "typing" ? "B" : "C");
+    expect(f.adapters.urlSync.canonicalSaveRoute).toHaveBeenCalledWith(snapshot, "P.conflict-copy");
+    expect(f.adapters.publish).toHaveBeenCalledWith(TOPICS.NOTE_CREATE, { path: "P.conflict-copy" });
+    expect(f.adapters.updateRenamedLinks).not.toHaveBeenCalled();
+    expect(f.owner.queueState().rebaseConflict).toBe(false);
+    if (mode === "typing") { expect(f.owner.contentNeedsSave()).toBe(true); f.owner.save(); await flush(); }
+    if (mode !== "clean") {
+      expect(f.sent[1].args).toEqual(["P.conflict-copy", "P.conflict-copy", "B", "none", "A"]);
+      let settled = false; const departure = f.owner.settle().then(value => { settled = value; }); await flush();
+      expect(settled).toBe(false);
+      await f.ack(1, "P.conflict-copy", "B");
+      if (mode === "queued") {
+        expect(f.sent[2].args).toEqual(["P.conflict-copy", "P.conflict-copy", "C", "none", "B"]);
+        expect(settled).toBe(false); await f.ack(2, "P.conflict-copy", "C");
+      }
+      await departure; expect(settled).toBe(true);
+    }
+    expect(f.owner.contentNeedsSave()).toBe(false);
+  });
+  it("explicit Discard after a merge starts later edits from the actual merged acknowledgement", async () => {
+    const f = fixture(); f.owner.start(); f.edit("A"); f.owner.save(); await flush(); f.edit("B");
+    await f.ack(0, "P", "A plus theirs", { saveResult: { status: "merged" } });
+    expect(f.owner.discard()).toBe(true); expect(f.buffer()).toBe("A plus theirs");
+    f.edit("C based on merged content"); f.owner.save(); await flush();
+    expect(f.sent[1].args[4]).toBe("A plus theirs");
+  });
+  it("returning the live buffer to the merged acknowledgement aligns the base for subsequent edits", async () => {
+    const f = fixture(); f.owner.start(); f.edit("A"); f.owner.save(); await flush(); f.edit("B");
+    await f.ack(0, "P", "A plus theirs", { saveResult: { status: "merged" } });
+    f.edit("A plus theirs"); f.owner.observeBuffer();
+    expect(f.owner.contentNeedsSave()).toBe(false);
+    f.edit("C based on merged content"); f.owner.save(); await flush();
+    expect(f.sent[1].args[4]).toBe("A plus theirs");
+  });
+  it("an unchanged deleted-note recreation is admitted once, including repeated Save clicks while pending", async () => {
+    const f = fixture(); f.owner.start();
+    expect(f.owner.save()).toBeNull(); expect(f.owner.save(true)).not.toBeNull();
+    expect(f.owner.save(true)).toBeNull(); await flush(); expect(f.sent).toHaveLength(1);
+    expect(f.sent[0].args).toEqual(["P", "P", "old", "none", "old"]);
+  });
+  it("settlement does not invent renames before or after a queued filename intent is acknowledged", async () => {
+    const f = fixture(); f.owner.start(); f.edit("A", "Q"); f.owner.rename(); f.edit("B"); f.owner.save();
+    expect(f.owner.rename()).toBe(true); expect(f.owner.queueState().queued).toHaveLength(1); await flush();
+    await f.ack(0, "Canonical-Q", "A");
+    expect(f.owner.rename()).toBe(true); expect(f.owner.queueState().queued).toHaveLength(0);
+    await f.ack(1, "Canonical-Q", "B"); expect(f.sent).toHaveLength(2);
+  });
   it.each([false, true])("holds delayed rename results when newer prose exists (queued=%s)", async queued => {
     const f = fixture();
     const base = "# P\n\n![pic](assets/pic.png)\n\nBody\n";
@@ -79,7 +145,7 @@ describe("save owner submission and acknowledgement", () => {
     expect(f.buffer()).toBe(base + "New paragraph\n");
     expect(f.sent).toHaveLength(1); expect(f.owner.queueState().rebaseConflict).toBe(true);
     f.owner.save(); await flush();
-    expect(f.sent[1].args).toEqual(["new/P", "new/P", base + "New paragraph\n", "none"]);
+    expect(f.sent[1].args).toEqual(["new/P", "new/P", base + "New paragraph\n", "none", returned]);
     await f.ack(1, "new/P");
     expect(f.current.note.content).toBe(base + "New paragraph\n");
     expect(f.owner.contentNeedsSave()).toBe(false);
@@ -94,7 +160,7 @@ describe("save owner submission and acknowledgement", () => {
     expect(f.owner.queueState().rebaseConflict).toBe(true);
     expect(f.adapters.failed).toHaveBeenCalledWith(expect.objectContaining({ code: "rename_rebase_conflict" }));
     f.owner.save(); await flush();
-    expect(f.sent[1].args).toEqual(["new/P", "new/P", mine, "none"]);
+    expect(f.sent[1].args).toEqual(["new/P", "new/P", mine, "none", "![pic](../old/assets/pic.png)\n"]);
     await f.ack(1, "new/P");
     expect(f.current.note.content).toBe(mine);
     expect(f.owner.queueState().rebaseConflict).toBe(false);
@@ -173,8 +239,8 @@ describe("save owner submission and acknowledgement", () => {
     expect(owner.queueState().active.snapshot).toMatchObject({ content: "A", requestedPath: "P", contentRevision: 1, pathRevision: 0, draftRevision: 1, intent: "save", attachmentPolicy: "none" });
     expect(owner.queueState().active.snapshot).not.toHaveProperty("draftKey");
     expect(Object.isFrozen(owner.queueState().active.snapshot)).toBe(true);
-    await flush(); expect(sent.map(item => item.args)).toEqual([["P", "P", "A", "none"]]);
-    await ack(0); expect(sent[1].args).toEqual(["P", "P", "B", "none"]);
+    await flush(); expect(sent.map(item => item.args)).toEqual([["P", "P", "A", "none", "old"]]);
+    await ack(0); expect(sent[1].args).toEqual(["P", "P", "B", "none", "A"]);
     await ack(1); expect(buffer()).toBe("D");
     expect(adapters.applyContentAcknowledgement).not.toHaveBeenCalled();
     expect(adapters.drafts.clearAcknowledged).not.toHaveBeenCalled();
@@ -238,9 +304,9 @@ describe("save owner submission and acknowledgement", () => {
     // This case isolates path lineage; conflicting content normalization is
     // covered by the explicit rename-rebase cases above.
     await flush(); await ack(0, "Canonical", "A");
-    expect(sent[1].args).toEqual(["Canonical", "Canonical", "B", "none"]);
+    expect(sent[1].args).toEqual(["Canonical", "Canonical", "B", "none", "A"]);
     expect(current.requestedPath).toBe("P"); expect(buffer()).toBe("C");
-    await ack(1, "Canonical", "B"); expect(sent[2].args).toEqual(["Canonical", "P", "C", "none"]);
+    await ack(1, "Canonical", "B"); expect(sent[2].args).toEqual(["Canonical", "P", "C", "none", "B"]);
   });
 
   it("creates once, uses real identity for B and never closes a new-note save", async () => {
@@ -249,7 +315,7 @@ describe("save owner submission and acknowledgement", () => {
     owner.start(); edit("A"); owner.save(); edit("B"); owner.save(); await flush();
     expect(sent[0]).toMatchObject({ kind: "create", args: ["P", "A"] });
     await ack(0, "Created", "A");
-    expect(sent[1]).toMatchObject({ kind: "update", args: ["Created", "Created", "B", "none"] });
+    expect(sent[1]).toMatchObject({ kind: "update", args: ["Created", "Created", "B", "none", "A"] });
     expect(adapters.closeNote).not.toHaveBeenCalled();
     await ack(1, "Created", "B"); expect(adapters.closeNote).not.toHaveBeenCalled();
     expect(adapters.publish.mock.calls).toEqual([[TOPICS.NOTE_CREATE, { path: "Created" }], [TOPICS.NOTE_SAVE, { path: "Created" }]]);
@@ -261,7 +327,7 @@ describe("save owner submission and acknowledgement", () => {
     expect(createNote).toHaveBeenCalledExactlyOnceWith("P", "A");
     await ack(0, "Created", "A"); edit("B", "folder/Q"); owner.rename(); await flush();
     expect(previewRename).toHaveBeenCalledExactlyOnceWith("Created", "folder/Q");
-    expect(updateNote).toHaveBeenCalledExactlyOnceWith("Created", "folder/Q", "B", "none");
+    expect(updateNote).toHaveBeenCalledExactlyOnceWith("Created", "folder/Q", "B", "none", "A");
   });
 
   it("waits for canonical routing before rewriting links or sending queued work", async () => {
@@ -306,7 +372,7 @@ describe("save owner attachment preparation", () => {
     owner.confirmRename(strategy, {}); expect(sent).toHaveLength(0);
     owner.confirmRename(strategy, prompt.identity); await flush();
     expect(owner.state().pendingRenamePrompt).toBeNull();
-    expect(sent[0].args).toEqual(["P", "folder/P", "A", strategy]);
+    expect(sent[0].args).toEqual(["P", "folder/P", "A", strategy, "old"]);
   });
 
   it.each(["new", "same-folder", "session"])("skips previews for %s saves", async kind => {
@@ -373,7 +439,7 @@ describe("save owner attachment preparation", () => {
     const currentIdentity = owner.state().pendingRenamePrompt.identity;
     owner.confirmRename("none", oldIdentity); owner.cancelRename(oldIdentity); await flush();
     expect(owner.state().pendingRenamePrompt.identity).toBe(currentIdentity); expect(sent).toHaveLength(0);
-    owner.confirmRename("move", currentIdentity); await flush(); expect(sent[0].args).toEqual(["P", "next/P", "new", "move"]);
+    owner.confirmRename("move", currentIdentity); await flush(); expect(sent[0].args).toEqual(["P", "next/P", "new", "move", "old"]);
   });
 });
 
@@ -383,7 +449,7 @@ describe("save owner settlement and decisions", () => {
     owner.start(); edit("draft", "Q"); const pending = owner.resolve(); await flush();
     expect(adapters.requestDecision).toHaveBeenCalledOnce();
     if (decision === "save") {
-      expect(sent[0].args).toEqual(["P", "P", "draft", "none"]);
+      expect(sent[0].args).toEqual(["P", "P", "draft", "none", "old"]);
       await ack(0, "P"); expect(await pending).toBe(true);
       expect(adapters.saveEditorPreference).not.toHaveBeenCalled();
     } else {

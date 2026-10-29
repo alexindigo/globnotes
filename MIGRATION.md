@@ -26,6 +26,25 @@ those releases cannot move `latest` back from v3.
 | 8 | Environment variable names | `GLOBNOTES_PATH`, `GLOBNOTES_AUTH_TYPE`, … | New names, no aliases (see "Environment variables" below) |
 | 9 | Plugins | Installed per instance; enabled and configured for the one vault | Still installed once per instance. Each vault turns them on and off and has its own plugin settings, approvals and data |
 | 10 | Flatnotes compatibility | Flatnotes migration instructions and a Legacy Flatnotes keymap | Compatibility is dropped: no `FLATNOTES_*` names or Legacy Flatnotes keymap. Obsidian is the default keymap and the base for Custom; a saved Legacy choice falls back to Obsidian |
+| 11 | Concurrent editor saves | A save replaces current file contents | Editor saves merge independent line edits; overlapping edits create a neighboring conflict copy and move the editing session to it, preserving newer typing and queued saves |
+
+### Safe saves and live updates
+
+The editor sends its base text with each update. The server uses it once for
+three-way merging, then forgets it; the hub retains metadata only. Conflict
+copies use `<stem>.conflict-YYYYMMDD-HHMMSS-globnotes.md` (UTC, numbered on
+collision) in the original folder. The original is not replaced on conflict.
+A banner on the copy links back to the original through normal navigation.
+Conflict records are stored in schema-v2 hub metadata; version 1 migrates in
+place. The conflict inbox arrives separately in M3.
+
+Open notes receive outside-change notifications over ordinary HTTP. Viewing and
+clean editing refresh in place; dirty editing keeps its buffer. An outside
+deletion is shown, and explicitly saving the retained editor text recreates the
+note. Outside renames are currently treated as deletion rather than followed.
+Legacy callers that omit a base still replace contents until their M4 migration;
+this is not a real-time co-editing protocol or external filesystem CAS. See
+[Saving notes](docs/saving.md) for the complete FIFO and departure behavior.
 
 ## Steps (as decided so far)
 

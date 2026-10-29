@@ -49,6 +49,11 @@
   />
 
   <LoadingIndicator ref="loadingIndicator" class="flex h-full flex-col">
+    <p v-if="vaultNotice" role="status" data-vault-notice class="mb-3 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-3 text-sm">{{ vaultNotice }}</p>
+    <div v-if="conflictOriginal" role="status" data-conflict-banner class="mb-3 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-3 text-sm">
+      <p>Your version was saved here because ‹{{ conflictOriginal }}› changed elsewhere.</p>
+      <button type="button" class="mt-2 text-theme-brand hover:underline" @click="controller.openConflictOriginal">Open original</button>
+    </div>
     <!-- 404 / Not Found -->
     <div
       v-if="isNoteNotFound"
@@ -176,7 +181,8 @@
     <!-- Content (scrolls internally; the header never moves) -->
     <div class="min-h-0 flex-1 overflow-y-auto print:overflow-visible">
       <ServerViewer
-        v-if="!editMode"
+        v-if="!editMode && !isNoteNotFound"
+        :key="viewerRevision"
         :title="note.path"
         :line="viewLine"
         class="toast-viewer pb-4"
@@ -302,6 +308,7 @@ const {
   noteDirName, noteBasename, noteDirBreadcrumbs, renameAssetsModalVisible, renameRefs,
   renamePromptIdentity, lastMovedFiles, rewriteScanLink, editorMode, editorInitialValue,
   editorInitialLine, viewLine, previewHtml, unsavedChanges, saving, saveFeedback, saveChangesMessage,
+  vaultNotice, conflictOriginal, viewerRevision,
 } = toRefs(controller.state);
 const {
   toggleEditModeHandler, setEditorMode, onEditorInput, onSourceSelection, setEditMode,

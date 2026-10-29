@@ -29,6 +29,7 @@ export function createNoteSaveOwner({
   invalid = () => {},
   held = () => {},
   failed = () => {},
+  saved = () => {},
   create = createNote,
   update = updateNote,
   preview = previewRename,
@@ -105,19 +106,22 @@ export function createNoteSaveOwner({
     applyNote(result);
     if (ownsPath) applyPath(result.path);
     const live = getBuffer();
-    const transformedRename = context.sourcePath && context.sourcePath !== result.path && snapshot.content !== result.content;
+    const conflict = result.saveResult?.status === "conflict";
+    const merged = result.saveResult?.status === "merged";
+    const transformedRename = !conflict && context.sourcePath && context.sourcePath !== result.path && snapshot.content !== result.content;
     // A text diff cannot certify reference coordinates in newer text. Keep it
     // literally and require a decision; only the unchanged sent base takes ACK.
     const rebaseConflict = !!transformedRename && live !== snapshot.content;
-    if (!rebaseConflict && (ownsContent || transformedRename) && live !== result.content) applyContentAcknowledgement(result.content);
+    if (!rebaseConflict && (ownsContent || transformedRename || (merged && live === snapshot.content)) && live !== result.content) applyContentAcknowledgement(result.content);
     publishTitle();
-    if (!context.sourcePath) publishFact(TOPICS.NOTE_CREATE, { path: result.path });
+    if (!context.sourcePath || conflict) publishFact(TOPICS.NOTE_CREATE, { path: result.path });
     else if (context.sourcePath !== result.path) publishFact(TOPICS.NOTE_RENAME, { oldPath: context.sourcePath, newPath: result.path });
     else publishFact(TOPICS.NOTE_SAVE, { path: result.path });
     setMovedFiles(result.movedFiles ?? []);
+    saved(result, { originalPath: context.sourcePath, snapshot, newer: newer.length > 0 || live !== snapshot.content });
     await urlSync.canonicalSaveRoute(snapshot, result.path);
-    if (context.sourcePath && context.sourcePath !== result.path) updateRenamedLinks(context.sourcePath, result.path);
-    return { rebaseConflict };
+    if (!conflict && context.sourcePath && context.sourcePath !== result.path) updateRenamedLinks(context.sourcePath, result.path);
+    return { rebaseConflict, baseContent: merged && (newer.length > 0 || live !== snapshot.content) ? snapshot.content : result.content };
   }
 
   function clearAcknowledgedDrafts(snapshot) {
@@ -142,7 +146,7 @@ export function createNoteSaveOwner({
       },
       prepare,
       send: (snapshot, context, preparation) => context.sourcePath
-        ? update(context.sourcePath, context.targetPath, snapshot.content, preparation.fileRefs)
+        ? update(context.sourcePath, context.targetPath, snapshot.content, preparation.fileRefs, context.baseContent)
         : create(context.targetPath, snapshot.content),
       acknowledge,
       failed: error => failed(error),
@@ -185,13 +189,18 @@ export function createNoteSaveOwner({
     return !!queue && getBuffer() !== latestSubmitted()?.content;
   }
 
-  function save() {
+  function observeBuffer() {
+    const current = queue?.state();
+    if (current && !current.unresolved && getBuffer() === current.acknowledged?.content) queue.adopt(current.acknowledged);
+  }
+
+  function save(force = false) {
     if (queue?.state().rebaseConflict) {
       const error = notePathError(getState().requestedPath);
       if (error) { invalid(error); return null; }
     }
     queue?.acceptRebaseConflict();
-    if (!contentNeedsSave()) return null;
+    if (!contentNeedsSave() && (!force || queue?.state().unresolved)) return null;
     return submit("save", "none");
   }
 
@@ -203,7 +212,8 @@ export function createNoteSaveOwner({
     const latest = latestSubmitted();
     // Before creation there is only a requested name, not a file to rename.
     if (!latest) return true;
-    if (current.requestedPath === (latest.requestedPath ?? latest.path)) return true;
+    const effectivePath = latest.requestedPath === undefined ? latest.path : queue.admittedPath(latest);
+    if (current.requestedPath === effectivePath) return true;
     return !!submit("rename", "prompt");
   }
 
@@ -264,6 +274,8 @@ export function createNoteSaveOwner({
   }
 
   return { state, queueState: () => queue?.state(), start, reset, end, dispose,
+    adopt: note => queue?.adopt(note) ?? false,
+    observeBuffer,
     save, rename, latestSubmitted, contentNeedsSave, settle, discard, resolve, saveForNavigation, confirmRename, cancelRename, revokeRenamePrompt,
     ownsPath: path => aliases.has(path) || path === queue?.state().acknowledged?.path };
 }

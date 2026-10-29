@@ -28,12 +28,22 @@ API, files and MCP), which stops DNS rebinding. Without a login (`none` or
 `read_only`) and without the setting, globnotes logs a warning at startup, or when
 setup or the access settings switch to such a mode.
 
+Open notes follow changes made elsewhere over the vault change stream, with a
+polling fallback. Clean editors refresh in place; dirty editors keep their text
+and explain that the next save will merge it.
+
 ### Changed
 
 Search follows committed hub changes instead of scanning the folder before
 each query. A filesystem watcher notices outside changes, backed by periodic
 full scans. Managed saves remain searchable immediately. Existing external-change
 plugin notifications are preserved without repeating globnotes' own writes.
+
+Editor saves now include their starting text. Independent edits merge; overlapping
+edits keep both versions by saving your text as a conflict copy next to the
+original. The editor moves to the copy, explains what happened and keeps any
+newer typing and queued saves. Saving a note deleted elsewhere re-creates it
+with a notice. No previous versions or base text are stored in the hub.
 
 ### Fixed
 

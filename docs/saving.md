@@ -20,6 +20,46 @@ only the snapshot it saved: it cannot replace newer edits or falsely mark them
 clean. Preview uses its retained buffer; an editor still initializing does not
 replace that buffer with an empty placeholder.
 
+## Changes made elsewhere (v3)
+
+Each editor session sends the text it started from as `baseContent`. After an
+acknowledgement, the next FIFO request uses that session's accepted base, chosen
+when the request is sent, not when Save was clicked. The server uses this text
+only for that request; the hub stores no note content or previous versions.
+
+If the file changed elsewhere, independent line edits are merged. The editor
+adopts the merged result without marking it dirty when its buffer still equals
+the submitted snapshot; both editor ports map the caret through their existing
+acknowledgement path. Preview also renders the acknowledged text. Newer typing
+is kept literally, with the sent snapshot as its next merge base. The notice
+says **Merged with changes made elsewhere**.
+
+If edits overlap, the original stays untouched and the submitted text is saved
+next to it as `<stem>.conflict-YYYYMMDD-HHMMSS-globnotes.md` (UTC; occupied names
+receive `-2`, `-3`, …). The session and URL move to that copy together, replacing
+history rather than adding a visit. Newer text is kept in the same editor, and
+queued saves follow the copy in FIFO order with the saved snapshot as base.
+Normal unsaved/FIFO/departure protection remains until newer work is saved.
+With no newer work the copy is clean immediately. A session banner explains
+which original changed, with **Open original** through ordinary navigation.
+It does not rename the original or rewrite links to point at the copy.
+
+An open viewing note updates in place when the vault change stream reports a
+new version. A clean editor likewise refreshes its text and base. A dirty editor
+keeps its text and shows **This note changed elsewhere. Your changes will be
+merged when you save.** Own acknowledged versions do not produce outside-change
+notices. A deleted viewing note shows the existing not-found view; an editor
+retains its text and shows **Deleted elsewhere — saving will re-create it**.
+Explicit Save can recreate even an unchanged retained buffer. Successful
+recreation is disclosed. Outside renames are treated as deletion of the old path.
+
+The change connection resumes its cursor after reconnect, with polling when
+streaming is unavailable. A gap invalidates the snapshot and causes a fresh
+read, still fenced against newer typing and saves. This is not real-time
+co-editing or filesystem CAS: a change during server guard waits can reject a
+request under the existing retained-error contract. Legacy non-editor callers
+without a base keep replacement semantics until their M4 migration.
+
 ## Paused saves
 
 A rejected request, cancelled attachment choice or uncertain write pauses the

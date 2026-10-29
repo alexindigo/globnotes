@@ -6,6 +6,7 @@ import { publish, TOPICS } from "./bus/index.js";
 export function createVaultChanges({ open = options => openVaultChanges(options), publish: emit = publish,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   let owners = 0, generation = 0, seq = 0, attempts = 0, polling = false;
+  let documentActive = true;
   let timer = null, close = null, abort = null;
   function retire() {
     generation++;
@@ -14,11 +15,11 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     close?.(); close = null;
   }
   async function connect() {
-    if (!owners) return;
+    if (!owners || !documentActive) return;
     retire();
     const own = generation;
     abort = new AbortController();
-    const current = () => owners > 0 && generation === own;
+    const current = () => owners > 0 && documentActive && generation === own;
     const reconnect = reason => {
       if (!current() || timer !== null) return;
       polling = reason === "poll" || reason !== "ended" || polling;
@@ -49,6 +50,15 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     }
   }
   return {
+    suspendDocument() {
+      if (!documentActive) return;
+      documentActive = false; retire();
+    },
+    resumeDocument() {
+      if (documentActive) return;
+      documentActive = true;
+      if (owners) connect();
+    },
     acquire() {
       if (++owners === 1) connect();
       let released = false;
@@ -60,3 +70,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
 
 const vaultChanges = createVaultChanges();
 export const acquireVaultChanges = () => vaultChanges.acquire();
+// As with the plugin runtime, full-document navigation/BFCache suspension is
+// a lifetime boundary even when Vue never unmounts its components.
+window.addEventListener("pagehide", () => vaultChanges.suspendDocument());
+window.addEventListener("pageshow", () => vaultChanges.resumeDocument());

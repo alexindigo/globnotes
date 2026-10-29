@@ -22,6 +22,10 @@ import { createNoteRenameLinks } from "./noteRenameLinks.js";
 import { createNoteAttachments } from "./noteAttachments.js";
 import { noteOperationError, noteSaveError } from "./noteErrors.js";
 import { notePathError } from "./validators.js";
+import { acquireVaultChanges } from "./vaultChanges.js";
+
+// Ephemeral tab-session metadata, retained when the Note view is unmounted.
+const conflictBanners = new Map();
 
 /** Owns a mounted note's workflow. Views supply route/context readers, effects
  * and an editor port; all decisions and buffer ownership remain here. */
@@ -41,6 +45,7 @@ export function createNoteController({
   attachmentsFactory = createNoteAttachments,
   getEditorPreference = () => defaultEditorMode.value,
   saveEditorPreference = setDefaultEditorMode,
+  acquireChanges = acquireVaultChanges,
   failed = error => apiErrorHandler(error, toast),
   ownerId = createUuid(),
 }) {
@@ -53,6 +58,10 @@ export function createNoteController({
   const isNoteNotFound = ref(false);
   const loadStatus = ref("loading");
   const note = ref({});
+  const vaultNotice = ref("");
+  let deletedElsewhere = false;
+  const conflictOriginal = computed(() => conflictBanners.get(note.value.path) ?? "");
+  const viewerRevision = ref(0);
   const newPath = ref();
   const editBasename = ref("");
   const editFolder = ref("");
@@ -111,6 +120,7 @@ export function createNoteController({
     ? "Save work is retained. Discard removes queued saves and current unsaved changes only when all sent writes have a known outcome."
     : "Do you want to save your changes?");
   let applyingAcknowledgement = false, loadGeneration = 0;
+  let releaseChanges = null, externalRead = 0, pendingVaultEntry = null, pendingVaultReset = false;
   let contentChangedTimeout = null, titleFollowTimer = null;
   let pendingNavTarget = null, pendingSessionDecision = null, pendingDecisionPromise = null;
   const resourceIdentity = computed(() => noteResourceIdentity(getContext().path, getContext().query));
@@ -128,6 +138,7 @@ export function createNoteController({
     applyPath: path => { newPath.value = path; editBasename.value = basenameOf(path ?? ""); editFolder.value = directoryFromPath(path ?? ""); },
     applyContentAcknowledgement: content => {
       editorInitialValue.value = content;
+      if (editorMode.value === "preview") schedulePreviewRefresh();
       if (editor) {
         applyingAcknowledgement = true;
         try {
@@ -138,13 +149,28 @@ export function createNoteController({
     },
     restoreContent: content => {
       editorInitialValue.value = content;
+      if (editorMode.value === "preview") schedulePreviewRefresh();
       applyingAcknowledgement = true;
       try { editor?.setMarkdown(content); }
       finally { applyingAcknowledgement = false; }
     },
     publishTitle, setMovedFiles: files => { lastMovedFiles.value = files; },
     urlSync, updateRenamedLinks, drafts, requestDecision: requestNoteDecision,
-    changed: state => { saveOwnerState.value = state; queueState.value = state.queue; },
+    changed: state => {
+      saveOwnerState.value = state; queueState.value = state.queue;
+      if (pendingVaultEntry && !state.queue.inFlight && !["preparing", "sending"].includes(state.queue.status)) {
+        const entry = pendingVaultEntry; pendingVaultEntry = null;
+        Promise.resolve().then(() => onVaultChange(entry));
+      }
+    },
+    saved: (result, { originalPath }) => {
+      externalRead++;
+      deletedElsewhere = false;
+      vaultNotice.value = "";
+      if (result.saveResult?.status === "conflict") conflictBanners.set(result.path, originalPath);
+      if (result.saveResult?.status === "merged") vaultNotice.value = "Merged with changes made elsewhere";
+      if (result.saveResult?.recreated) vaultNotice.value = `‹${result.path}› was deleted elsewhere; your save re-created it`;
+    },
     refreshDirtyState,
     invalid: message => notify(message, "Invalid", "error"),
     held: () => notify("This Save was captured and held. The queue is paused; no retry or resume was performed.", "Save held", "error"),
@@ -175,6 +201,7 @@ export function createNoteController({
   function onEditorInput() {
     if (applyingAcknowledgement) return;
     contentRevision.value++;
+    saveOwner.observeBuffer();
     refreshDirtyState(); startContentChangedTimeout(); schedulePreviewRefresh(); scheduleTitleFollow(); publishTitle();
   }
   function schedulePreviewRefresh() {
@@ -186,6 +213,7 @@ export function createNoteController({
     if (urlSync.consumeAcknowledgedResource(getContext().path, saveOwner.queueState()?.sessionId)) return;
     clearEditTimers();
     saveOwner.reset();
+    externalRead++; pendingVaultEntry = null; pendingVaultReset = false; vaultNotice.value = ""; deletedElsewhere = false;
     const generation = ++loadGeneration, resource = resourceIdentity.value;
     const isCurrentLoad = () => generation === loadGeneration && resource === resourceIdentity.value;
     drafts.release();
@@ -195,9 +223,10 @@ export function createNoteController({
         if (!isCurrentLoad()) return;
         note.value = data; refreshDirtyState(); loadStatus.value = "loaded"; publishTitle(); enterEditFromFragment();
         viewLine.value = viewLineFromFragment(parseFragment(getLocation().hash));
+        followPendingVaultChange();
       }).catch(error => {
         if (!isCurrentLoad()) return;
-        if (error.response?.status === 404) { isNoteNotFound.value = true; loadStatus.value = "loaded"; }
+        if (error.response?.status === 404) { isNoteNotFound.value = true; loadStatus.value = "loaded"; followPendingVaultChange(); }
         else { loadStatus.value = "failed"; failed(error); }
       });
     }
@@ -333,14 +362,14 @@ export function createNoteController({
     }).catch(error => showNoteError(error, noteOperationError(error)));
   }
   function saveHandler(close = false) {
-    if (!close) return saveOwner.save();
+    if (!close) return saveOwner.save(deletedElsewhere);
     return saveAndClose();
   }
   async function saveAndClose() {
     if (!editMode.value) return false;
     if (!applyRename()) return false;
     const sessionId = saveOwner.queueState()?.sessionId;
-    const receipt = saveOwner.save();
+    const receipt = saveOwner.save(deletedElsewhere);
     if (receipt?.held || !await resolveOwnedWork()) return false;
     if (sessionId !== saveOwner.queueState()?.sessionId) return false;
     closeNote();
@@ -401,6 +430,71 @@ export function createNoteController({
   }
   function clearDraft() { drafts.clear(); }
   function loadDraft() { return drafts.load(newPath.value, contentRevision.value); }
+  function openConflictOriginal() {
+    const original = conflictBanners.get(note.value.path);
+    if (original) return router.push({ path: notePath(original), hash: "" });
+  }
+  function openVaultPath() {
+    return loadStatus.value !== "loaded" || isNoteNotFound.value ? getContext().path : note.value.path;
+  }
+  function followPendingVaultChange() {
+    const entry = pendingVaultEntry, reset = pendingVaultReset;
+    pendingVaultEntry = null; pendingVaultReset = false;
+    if (reset) refreshFromVault();
+    else if (entry) onVaultChange(entry);
+  }
+  async function refreshFromVault() {
+    const path = openVaultPath();
+    if (!path) return;
+    if (loadStatus.value === "loading") { pendingVaultReset = true; return; }
+    if (loadStatus.value !== "loaded") return;
+    const ticket = ++externalRead, generation = loadGeneration, version = note.value.version;
+    try {
+      const fresh = await read(path);
+      if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path) return;
+      if (!deletedElsewhere && !isNoteNotFound.value && fresh.version && fresh.version === note.value.version) return;
+      if (editMode.value && isDirty()) {
+        vaultNotice.value = "This note changed elsewhere. Your changes will be merged when you save.";
+        return;
+      }
+      if (note.value.version !== version) return;
+      if (editMode.value) {
+        editorInitialValue.value = fresh.content ?? "";
+        if (editorMode.value === "preview") schedulePreviewRefresh();
+        applyingAcknowledgement = true;
+        try {
+          if (editor?.applyAcknowledgement(fresh.content ?? "") === false) throw new Error("Editor declined external update");
+        } finally { applyingAcknowledgement = false; }
+        saveOwner.adopt(fresh);
+      }
+      note.value = fresh; isNoteNotFound.value = false; deletedElsewhere = false; viewerRevision.value++;
+      publishTitle(); refreshDirtyState();
+      vaultNotice.value = "Updated with changes from elsewhere";
+    } catch (error) {
+      if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path) return;
+      if (error.response?.status === 404) markDeletedElsewhere();
+      else failed(error);
+    }
+  }
+  function markDeletedElsewhere() {
+    externalRead++;
+    deletedElsewhere = true;
+    vaultNotice.value = editMode.value ? "Deleted elsewhere — saving will re-create it" : "This note was deleted elsewhere";
+    if (!editMode.value) isNoteNotFound.value = true;
+  }
+  function onVaultChange(entry) {
+    const path = openVaultPath();
+    if (!path || (entry.path !== `${path}.md` && entry.oldPath !== `${path}.md`)) return;
+    if (loadStatus.value === "loading") { pendingVaultEntry = entry; return; }
+    if (queueState.value.inFlight || ["preparing", "sending"].includes(queueState.value.status)) { pendingVaultEntry = entry; return; }
+    if (entry.kind === "deleted" || (entry.kind === "renamed" && entry.oldPath === `${path}.md`)) { markDeletedElsewhere(); return; }
+    if (!deletedElsewhere && !isNoteNotFound.value && entry.hash && entry.hash === note.value.version) return;
+    if (editMode.value && isDirty()) {
+      vaultNotice.value = "This note changed elsewhere. Your changes will be merged when you save.";
+      return;
+    }
+    return refreshFromVault();
+  }
   let editorActionUnsubs = [];
   function mount() {
     editorActionUnsubs = [
@@ -415,8 +509,12 @@ export function createNoteController({
         if (!actionAvailable(TOPICS.EDITOR_TOGGLE_SOURCE_MODE)) return;
         if (editMode.value) setEditorMode(editorMode.value === "markdown" ? "wysiwyg" : "markdown");
       }),
+      subscribeAction(TOPICS.VAULT_CHANGE, onVaultChange),
+      subscribeAction(TOPICS.VAULT_RESET, refreshFromVault),
     ];
-    return init();
+    const loading = init();
+    releaseChanges = acquireChanges();
+    return loading;
   }
   function createFromWikilink() { router.push(newNoteTarget({ path: getContext().path })); }
   function isDirty() {
@@ -429,6 +527,7 @@ export function createNoteController({
     if (editMode.value) { editMode.value = false; refreshDirtyState(); }
     clearEditTimers();
     preview.dispose();
+    externalRead++; releaseChanges?.(); releaseChanges = null;
     loadGeneration++; saveOwner.dispose(); disposeSessionParticipant();
     if (pendingSessionDecision) { pendingSessionDecision("cancel"); pendingSessionDecision = null; }
     editorActionUnsubs.forEach(fn => fn()); editorActionUnsubs = [];
@@ -439,12 +538,14 @@ export function createNoteController({
     noteDirName, noteBasename, noteDirBreadcrumbs, renameAssetsModalVisible, renameRefs, renamePromptIdentity,
     lastMovedFiles, rewriteScanLink, editorMode, editorInitialValue, editorInitialLine, viewLine,
     previewHtml, unsavedChanges, saving, saveFeedback, saveChangesMessage, resourceIdentity,
+    vaultNotice, conflictOriginal, viewerRevision,
   }));
   return { state, mount, init, dispose, registerEditor, isDirty, currentBuffer, gateNavigation,
     routeHashChanged, captureEditorForRemount, addImageBlobHook,
     toggleEditModeHandler, setEditorMode, onEditorInput, onSourceSelection, setEditMode,
     syncTitle, onTitleInput, applyRename, deleteHandler, deleteConfirmedHandler, saveHandler, onSaveChoice,
     clearDraft, createFromWikilink,
+    openConflictOriginal,
     confirmRename: saveOwner.confirmRename, cancelRename: saveOwner.cancelRename,
     setBasename: value => { editBasename.value = value; },
     setFolder: value => { editFolder.value = value; },

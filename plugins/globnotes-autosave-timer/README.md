@@ -16,9 +16,10 @@ you enter edit mode. Re-enter edit mode to apply changed timing or toggle settin
 
 ## Before you turn this on
 
-**Changes made elsewhere are overwritten.** While a note is open for editing here,
-autosave keeps writing this copy. Edits made meanwhile in Obsidian, Syncthing or
-another tab are lost.
+**Changes made elsewhere can create conflict copies.** Autosave uses the normal
+base-aware Save: independent line edits merge, while overlapping edits keep your
+text in a neighboring conflict copy. Editing then follows that copy; check its
+banner to open the original.
 
 **Backups fill up quickly.** With the backup plugin on, every autosave keeps a copy
 of the earlier text (2 by default). A few autosaves push out older versions. Raise
@@ -28,8 +29,8 @@ interval.
 **Mistakes are saved too.** An accidental deletion is written within seconds. Undo
 works while the note is open; after that, only backups can bring it back.
 
-Detecting changes made elsewhere is planned for **v3**. This timer does not add
-conflict detection.
+Conflict handling belongs to the editor's save owner and the hub, not this timer.
+The timer still neither reads note text nor writes files itself.
 
 ## Timing
 

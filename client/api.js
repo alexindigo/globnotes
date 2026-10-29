@@ -199,13 +199,14 @@ export async function getPlugins() {
   }
 }
 
-export async function updateNote(path, newPath, newContent, fileRefs = "none") {
+export async function updateNote(path, newPath, newContent, fileRefs = "none", baseContent) {
   try {
     const response = await api.patch(
       `notes/${encodeURIComponent(path)}`,
       {
         newPath: newPath,
         newContent: newContent,
+        ...(baseContent === undefined ? {} : { baseContent }),
       },
       { params: { file_refs: fileRefs } },
     );

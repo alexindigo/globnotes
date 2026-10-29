@@ -55,6 +55,86 @@ function fixture(overrides = {}, contextValues = {}) {
 }
 
 describe("note workflow ownership", () => {
+  it.each(["change", "reset"])("an initial read cannot swallow an earlier stream %s", async event => {
+    const initial = deferred();
+    const f = fixture({ read: vi.fn().mockReturnValueOnce(initial.promise)
+      .mockResolvedValue({ path: "folder/P", content: "Elsewhere", version: "v2" }) });
+    const loading = f.controller.mount();
+    if (event === "change") f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    else f.handlers.get(TOPICS.VAULT_RESET)({ next: 10 });
+    initial.resolve({ path: "folder/P", content: "Seed", version: "v1" }); await loading; await flush();
+    expect(f.controller.state.note.content).toBe("Elsewhere"); expect(f.adapters.read).toHaveBeenCalledTimes(2);
+  });
+  it.each(["view", "clean", "dirty"])("external changes refresh or retain the open note (%s)", async mode => {
+    const f = fixture({ read: vi.fn().mockResolvedValueOnce({ path: "folder/P", content: "Seed", version: "v1" })
+      .mockResolvedValue({ path: "folder/P", content: "Elsewhere", version: "v2" }) });
+    await f.controller.mount();
+    if (mode !== "view") f.enter();
+    if (mode === "dirty") f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2", peer: "local" }); await flush();
+    if (mode === "dirty") {
+      expect(f.controller.currentBuffer()).toBe("Mine");
+      expect(f.controller.state.vaultNotice).toContain("will be merged");
+      expect(f.adapters.read).toHaveBeenCalledTimes(1);
+    } else {
+      expect(f.controller.state.note.content).toBe("Elsewhere");
+      expect(f.controller.state.vaultNotice).toBe("Updated with changes from elsewhere");
+      if (mode === "clean") {
+        expect(f.controller.currentBuffer()).toBe("Elsewhere"); expect(f.controller.isDirty()).toBe(false);
+        f.input("Next"); updateNote.mockResolvedValueOnce({ path: "folder/P", content: "Next", version: "v3" });
+        f.controller.saveHandler(); await flush(); expect(updateNote.mock.calls.at(-1)[4]).toBe("Elsewhere");
+      }
+    }
+  });
+  it("ignores own versions and fences external reads against typing", async () => {
+    const slow = deferred();
+    const f = fixture({ read: vi.fn().mockResolvedValueOnce({ path: "folder/P", content: "Seed", version: "v1" }).mockReturnValueOnce(slow.promise) });
+    await f.controller.mount(); f.enter();
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v1" });
+    expect(f.adapters.read).toHaveBeenCalledTimes(1); expect(f.controller.state.vaultNotice).toBe("");
+    const reading = f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    f.input("Mine"); slow.resolve({ path: "folder/P", content: "Elsewhere", version: "v2" }); await reading;
+    expect(f.controller.currentBuffer()).toBe("Mine"); expect(f.controller.state.note.version).toBe("v1");
+    expect(f.controller.state.vaultNotice).toContain("will be merged");
+  });
+  it("defers a save's early stream echo until its acknowledged version can identify it", async () => {
+    const wire = deferred(), f = fixture({ read: vi.fn(async () => ({ path: "folder/P", content: "Seed", version: "v1" })) });
+    updateNote.mockReturnValueOnce(wire.promise);
+    await f.controller.mount(); f.enter(); f.input("A"); f.controller.saveHandler(); await flush();
+    f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    wire.resolve({ path: "folder/P", content: "A", version: "v2", saveResult: { status: "saved" } }); await flush();
+    expect(f.controller.state.vaultNotice).toBe(""); expect(f.adapters.read).toHaveBeenCalledTimes(1);
+    expect(f.controller.isDirty()).toBe(false);
+  });
+  it("a recreation with identical bytes clears a deleted viewing snapshot", async () => {
+    const f = fixture({ read: vi.fn(async () => ({ path: "folder/P", content: "Seed", version: "v1" })) });
+    await f.controller.mount();
+    f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "deleted" });
+    expect(f.controller.state.isNoteNotFound).toBe(true);
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "created", hash: "v1" });
+    expect(f.controller.state.isNoteNotFound).toBe(false); expect(f.controller.state.vaultNotice).toBe("Updated with changes from elsewhere");
+  });
+  it.each(["view", "clean", "dirty"])("deletion and rename-away retain the right protections (%s)", async mode => {
+    const f = fixture(); await f.controller.mount();
+    if (mode !== "view") f.enter(); if (mode === "dirty") f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "Elsewhere.md", oldPath: "folder/P.md", kind: "renamed" });
+    expect(f.controller.state.isNoteNotFound).toBe(mode === "view");
+    expect(f.controller.state.vaultNotice).toBe(mode === "view" ? "This note was deleted elsewhere" : "Deleted elsewhere — saving will re-create it");
+    if (mode !== "view") {
+      updateNote.mockResolvedValueOnce({ path: "folder/P", content: mode === "dirty" ? "Mine" : "Seed", version: "recreated", saveResult: { status: "saved", recreated: true } });
+      f.controller.saveHandler(); await flush();
+      expect(updateNote.mock.calls.at(-1)[4]).toBe("Seed");
+      expect(f.controller.state.vaultNotice).toContain("your save re-created it");
+    }
+  });
+  it("explicit Save & close recreates an unchanged deleted note before exiting", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter();
+    f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "deleted" });
+    updateNote.mockResolvedValueOnce({ path: "folder/P", content: "Seed", saveResult: { status: "saved", recreated: true } });
+    expect(await f.controller.saveHandler(true)).toBe(true);
+    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/P", "Seed", "none", "Seed");
+    expect(f.controller.state.editMode).toBe(false);
+  });
   it("requires acknowledgement capability at editor registration", () => {
     const f = fixture();
     expect(() => f.controller.registerEditor({ getMarkdown: () => "text" })).toThrow(/applyAcknowledgement/);
@@ -206,7 +286,7 @@ describe("note workflow ownership", () => {
     f.controller.onSaveChoice(choice); await flush();
     expect(f.controller.state.editMode).toBe(choice === "cancel");
     expect(f.router.push.mock.calls).toEqual(choice === "cancel" ? [] : [["/Other"]]);
-    expect(updateNote.mock.calls).toEqual(choice === "save" ? [["folder/P", "folder/P", "Work", "none"]] : []);
+    expect(updateNote.mock.calls).toEqual(choice === "save" ? [["folder/P", "folder/P", "Work", "none", "Seed"]] : []);
     if (choice === "cancel") expect(f.controller.currentBuffer()).toBe("Work");
   });
   it("a reverted dirty browser pop replaces its destination after explicit discard", async () => {
@@ -251,11 +331,11 @@ describe("note workflow ownership", () => {
   });
   it("modal-gated actions decline and subscriptions release at disposal", async () => {
     const f = fixture(); await f.controller.mount(); f.adapters.actionAvailable.mockReturnValue(false);
-    for (const handler of f.handlers.values()) handler(); expect(f.controller.state.editMode).toBe(false);
+    for (const [topic, handler] of f.handlers) if (topic.startsWith("editor:")) handler(); expect(f.controller.state.editMode).toBe(false);
     f.adapters.actionAvailable.mockReturnValue(true); f.handlers.get(TOPICS.EDITOR_TOGGLE_EDIT)();
     expect(f.controller.state.editMode).toBe(true); f.handlers.get(TOPICS.EDITOR_TOGGLE_SOURCE_MODE)();
     expect(f.controller.state.editorMode).toBe("wysiwyg");
-    f.controller.dispose(); expect(f.handlers.size).toBe(0); expect(f.unsubs).toHaveLength(5);
+    f.controller.dispose(); expect(f.handlers.size).toBe(0); expect(f.unsubs).toHaveLength(7);
   });
   it("wires its default load/delete/save transports without a view import", async () => {
     getNote.mockResolvedValue({ path: "folder/P", content: "Seed" }); deleteNote.mockResolvedValue({});
@@ -263,7 +343,7 @@ describe("note workflow ownership", () => {
     const f = fixture({ read: undefined, remove: undefined }); await f.controller.mount();
     expect(getNote).toHaveBeenCalledWith("folder/P"); f.enter(); f.input("Saved");
     f.controller.saveHandler(); await flush();
-    expect(updateNote).toHaveBeenCalledWith("folder/P", "folder/P", "Saved", "none");
+    expect(updateNote).toHaveBeenCalledWith("folder/P", "folder/P", "Saved", "none", "Seed");
     expect(f.controller.isDirty()).toBe(false); expect(createNote).not.toHaveBeenCalled();
     await f.controller.deleteConfirmedHandler(); expect(deleteNote).toHaveBeenCalledWith("folder/P");
   });
@@ -290,7 +370,7 @@ describe("note workflow ownership", () => {
     const f = fixture(); await f.controller.mount(); f.enter(); f.input("![image](old.png)");
     f.controller.setBasename("Q"); f.controller.onTitleInput(); expect(updateNote).not.toHaveBeenCalled();
     expect(f.controller.applyRename()).toBe(true); f.controller.applyRename(); await flush();
-    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/Q", "![image](old.png)", "none");
+    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/Q", "![image](old.png)", "none", "Seed");
     expect(f.controller.currentBuffer()).toBe("![image](new.png)");
     f.input("Later"); f.participant().discard(); expect(f.controller.currentBuffer()).toBe("![image](new.png)");
     expect(f.controller.state.note.path).toBe("folder/Q");
@@ -300,21 +380,21 @@ describe("note workflow ownership", () => {
     const f = fixture(); await f.controller.mount(); f.enter();
     f.controller.setBasename("Q"); f.controller.onTitleInput(); f.input("Work");
     f.controller.saveHandler(); await flush();
-    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/P", "Work", "none");
+    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/P", "Work", "none", "Seed");
     expect(f.controller.state.editBasename).toBe("Q"); expect(f.controller.isDirty()).toBe(false);
     f.controller.applyRename(); await flush();
-    expect(updateNote).toHaveBeenLastCalledWith("folder/P", "folder/Q", "Work", "none");
+    expect(updateNote).toHaveBeenLastCalledWith("folder/P", "folder/Q", "Work", "none", "Work");
   });
   it("navigation and session settlement apply pending renames even with clean text", async () => {
     updateNote.mockImplementation(async (source, path, content) => ({ path, content }));
     const f = fixture(); await f.controller.mount(); f.enter();
     f.controller.setBasename("Q"); f.controller.onTitleInput();
     expect(await f.participant().settlePending()).toBe(true);
-    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/Q", "Seed", "none");
+    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/Q", "Seed", "none", "Seed");
     f.controller.setBasename("R"); f.controller.onTitleInput();
     f.location.hash = "#source";
     expect(await f.controller.gateNavigation(f.to())).toBe(false); await flush();
-    expect(updateNote).toHaveBeenLastCalledWith("folder/Q", "folder/R", "Seed", "none");
+    expect(updateNote).toHaveBeenLastCalledWith("folder/Q", "folder/R", "Seed", "none", "Seed");
     expect(f.router.push).toHaveBeenCalledWith("/Other");
   });
   it("new-note rename changes only requested name; invalid rename retains fields and blocks exit/session", async () => {

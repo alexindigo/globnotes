@@ -33,6 +33,7 @@ export function createNoteSaveQueue(adapters) {
   let serial = 0, generation = 0, failureSerial = 0;
   let status = "idle", active = null, failure = null, disposed = false, rebaseConflict = false;
   let acknowledged = adapters.initial ? immutable(adapters.initial) : null;
+  let baseContent = acknowledged?.content;
   let acknowledgedPathRevision = -1;
   const queued = [];
   const jobs = new Set();
@@ -95,6 +96,10 @@ export function createNoteSaveQueue(adapters) {
     notify();
     adapters.failed?.(Object.assign(new Error("Rename changed the saved text while newer edits or queued saves exist. Autosave is stopped; your text and queued saves are retained. Review the attachment references, then press Save explicitly to write your text as-is, or choose Discard to keep the renamed saved text."), { code: "rename_rebase_conflict" }));
   }
+  function admittedPath(snapshot) {
+    return acknowledged && snapshot.pathRevision <= acknowledgedPathRevision
+      ? acknowledged.path : snapshot.requestedPath;
+  }
   async function pump() {
     if (pumping || disposed || status === "paused" || rebaseConflict) return;
     pumping = true;
@@ -104,8 +109,8 @@ export function createNoteSaveQueue(adapters) {
       while (!disposed && status !== "paused" && !rebaseConflict && queued.length) {
         const job = queued.shift(); active = job; job.token = generation;
         const snapshot = job.snapshot;
-        const context = Object.freeze({ acknowledged, sourcePath: acknowledged?.path ?? null,
-          targetPath: acknowledged && (snapshot.intent === "save" || snapshot.pathRevision <= acknowledgedPathRevision) ? acknowledged.path : snapshot.requestedPath,
+        const context = Object.freeze({ acknowledged, baseContent, sourcePath: acknowledged?.path ?? null,
+          targetPath: acknowledged && snapshot.intent === "save" ? acknowledged.path : admittedPath(snapshot),
           isPreparationCurrent: () => !disposed && active === job && job.token === generation && !job.timedOut && job.phase === "preparing" && status === "preparing" });
         job.phase = "preparing"; status = "preparing"; notify();
         let prepared;
@@ -129,12 +134,14 @@ export function createNoteSaveQueue(adapters) {
         if (disposed || job.token !== generation) break;
         // Known server success is recorded before applying fallible UI effects.
         acknowledged = result;
+        baseContent = result.content;
         acknowledgedPathRevision = snapshot.pathRevision;
-        const holdQueued = context.sourcePath && context.sourcePath !== result.path && snapshot.content !== result.content && queued.length > 0;
+        const holdQueued = result.saveResult?.status !== "conflict" && context.sourcePath && context.sourcePath !== result.path && snapshot.content !== result.content && queued.length > 0;
         job.phase = "acknowledging";
         const late = job.timedOut;
         try {
           const integration = await adapters.acknowledge?.(snapshot, result, { ...context, late });
+          baseContent = integration?.baseContent ?? result.content;
           if (holdQueued || integration?.rebaseConflict) blockRebase();
         }
         catch (error) { pause(job, error, "known-committed", "acknowledging"); break; }
@@ -186,6 +193,12 @@ export function createNoteSaveQueue(adapters) {
       return receipt;
     },
     state,
+    admittedPath,
+    adopt(note) {
+      if (state().unresolved || disposed) return false;
+      acknowledged = immutable(note); baseContent = note.content;
+      notify(); return true;
+    },
     // Explicit Save is the user's decision to keep conflicting text as-is. It
     // releases only this reconciliation barrier, never a failed/uncertain write.
     acceptRebaseConflict() {
@@ -208,6 +221,7 @@ export function createNoteSaveQueue(adapters) {
       generation++;
       for (const job of [active, ...queued].filter(Boolean)) { clearTimer(job.observationTimer); finishReceipt(job, { status: "discarded", safe: true }); }
       pumping = false;
+      baseContent = acknowledged?.content;
       active = null; queued.length = 0; jobs.clear(); failure = null; rebaseConflict = false; status = "idle"; notify();
       return true;
     },

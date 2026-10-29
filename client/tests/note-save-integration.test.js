@@ -103,6 +103,47 @@ async function acknowledge(index, path, text) { pending[index].resolve({ path, c
 const live = () => document.querySelector(".cm-content")?.textContent;
 
 describe("foreground FIFO through the real Note", () => {
+  it("Open original waits for retargeted FIFO work through the existing navigation gate", async () => {
+    await enter(); await content("A"); await clickSave(); await content("B"); await clickSave();
+    pending[0].resolve({ path: "NoteA.conflict-copy", content: "A", saveResult: { status: "conflict", conflictCopyPath: "NoteA.conflict-copy" } });
+    await flushPromises();
+    button("Open original").click(); await flushPromises();
+    expect(holder.router.currentRoute.value.fullPath).toBe("/NoteA.conflict-copy#source");
+    expect(live()).toBe("B"); expect(hasUnsavedWork()).toBe(true); expect(pending).toHaveLength(2);
+    await acknowledge(1, "NoteA.conflict-copy", "B"); await flushPromises();
+    expect(pending.map(request => request.args.slice(0, 3))).toEqual([
+      ["NoteA", "NoteA", "A"], ["NoteA.conflict-copy", "NoteA.conflict-copy", "B"],
+    ]);
+    expect(holder.router.currentRoute.value.fullPath).toBe("/NoteA"); expect(hasUnsavedWork()).toBe(false);
+  });
+  it.each(["clean", "typing", "queued"])("conflict reply replaces history and keeps the same editor/session (%s)", async mode => {
+    await enter(); await content("A"); await clickSave();
+    const editor = document.querySelector(".cm-content"), reads = getNote.mock.calls.length;
+    const replace = vi.spyOn(holder.router, "replace"), push = vi.spyOn(holder.router, "push");
+    if (mode !== "clean") await content("B");
+    if (mode === "queued") { await clickSave(); await content("C"); await clickSave(); }
+    pending[0].resolve({ path: "NoteA.conflict-copy", content: "A", version: "copy-a",
+      saveResult: { status: "conflict", conflictCopyPath: "NoteA.conflict-copy" } }); await flushPromises();
+    expect(holder.router.currentRoute.value.fullPath).toBe("/NoteA.conflict-copy#source");
+    expect(replace).toHaveBeenCalledWith("/NoteA.conflict-copy#source"); expect(push).not.toHaveBeenCalled();
+    expect(document.querySelector(".cm-content")).toBe(editor); expect(getNote).toHaveBeenCalledTimes(reads);
+    expect(document.querySelector("[data-conflict-banner]").textContent).toContain("‹NoteA› changed elsewhere");
+    expect(live()).toBe(mode === "clean" ? "A" : mode === "typing" ? "B" : "C");
+    expect(hasUnsavedWork()).toBe(mode !== "clean");
+    if (mode === "typing") await clickSave();
+    if (mode !== "clean") {
+      expect(pending[1].args).toEqual(["NoteA.conflict-copy", "NoteA.conflict-copy", "B", "none", "A"]);
+      expect(window.onbeforeunload).toBeTypeOf("function");
+      await acknowledge(1, "NoteA.conflict-copy", "B");
+      if (mode === "queued") {
+        expect(hasUnsavedWork()).toBe(true);
+        expect(pending[2].args).toEqual(["NoteA.conflict-copy", "NoteA.conflict-copy", "C", "none", "B"]);
+        await acknowledge(2, "NoteA.conflict-copy", "C");
+      }
+      expect(hasUnsavedWork()).toBe(false); expect(window.onbeforeunload).toBeNull();
+    }
+    replace.mockRestore(); push.mockRestore();
+  });
   it("query-only push and history preserve the exact A/B/C owner, editor and unsent D", async () => {
     await enter(); await content("A"); await clickSave();
     await content("B"); await clickSave(); await content("C"); await clickSave(); await content("D");
@@ -210,7 +251,7 @@ describe("foreground FIFO through the real Note", () => {
       expect(document.querySelector('[data-modal-top="true"]').textContent).not.toContain("obsolete.png");
       expect(prompt.emitted("confirm")).toBe(callbacks);
       [...document.querySelectorAll('[data-modal-top="true"] button')].find(el => el.textContent.includes("Move files with the note")).click(); await flushPromises();
-      expect(pending).toHaveLength(1); expect(pending[0].args).toEqual(["NoteA", "new-folder/NoteA", "new snapshot", "move"]);
+      expect(pending).toHaveLength(1); expect(pending[0].args).toEqual(["NoteA", "new-folder/NoteA", "new snapshot", "move", "Seed\n"]);
     } finally { vi.useRealTimers(); }
   });
 
@@ -245,7 +286,7 @@ describe("foreground FIFO through the real Note", () => {
       modal.vm.$emit("confirm", "none", oldIdentity); modal.vm.$emit("cancel", oldIdentity); await flushPromises();
       expect(modal.props("promptIdentity")).toBe(currentIdentity); expect(document.querySelector('[data-modal-top="true"]').textContent).toContain("new.png"); expect(pending).toHaveLength(0);
       [...document.querySelectorAll('[data-modal-top="true"] button')].find(el => el.textContent.includes("Move files with the note")).click(); await flushPromises();
-      expect(pending).toHaveLength(1); expect(pending[0].args).toEqual(["NoteA", "new-folder/NoteA", "new snapshot", "move"]);
+      expect(pending).toHaveLength(1); expect(pending[0].args).toEqual(["NoteA", "new-folder/NoteA", "new snapshot", "move", "Seed\n"]);
     } finally { vi.useRealTimers(); }
   });
 
@@ -284,7 +325,7 @@ describe("foreground FIFO through the real Note", () => {
     await content("B"); await clickSave();
     await content("C"); await clickSave(); await content("D");
     expect(pending).toHaveLength(1);
-    expect(pending[0].args).toEqual(["NoteA", "NoteA", "A", "none"]);
+    expect(pending[0].args).toEqual(["NoteA", "NoteA", "A", "none", "Seed\n"]);
     await acknowledge(0, "NoteA", "A");
     expect(live()).toBe("D"); expect(pending).toHaveLength(2);
     expect(pending[1].args[2]).toBe("B");
@@ -347,7 +388,7 @@ describe("foreground FIFO through the real Note", () => {
     expect(createNote).toHaveBeenCalledTimes(1);
     await acknowledge(0, firstPath, "A");
     expect(createNote).toHaveBeenCalledTimes(1); expect(updateNote).toHaveBeenCalledTimes(1);
-    expect(pending[1].args).toEqual([firstPath, firstPath, "B", "none"]);
+    expect(pending[1].args).toEqual([firstPath, firstPath, "B", "none", "A"]);
     expect(live()).toBe("B");
   });
 
@@ -366,10 +407,10 @@ describe("foreground FIFO through the real Note", () => {
     await content("B"); await clickSave();
     await wrapper.find('input[placeholder="Title"]').setValue("NoteA"); await content("C"); await applyRename("Title");
     await acknowledge(0, "Q", "A");
-    expect(pending[1].args).toEqual(["Q", "Q", "B", "none"]);
+    expect(pending[1].args).toEqual(["Q", "Q", "B", "none", "A"]);
     expect(wrapper.find('input[placeholder="Title"]').element.value).toBe("NoteA");
     await acknowledge(1, "Q", "B");
-    expect(pending[2].args).toEqual(["Q", "NoteA", "C", "none"]);
+    expect(pending[2].args).toEqual(["Q", "NoteA", "C", "none", "B"]);
     expect(live()).toBe("C");
   });
 
@@ -394,7 +435,7 @@ describe("foreground FIFO through the real Note", () => {
     preview.resolve([{ url: "image.png", kind: "image" }]); await flushPromises();
     const choice = [...document.querySelectorAll('[data-modal-top="true"] button')].find(el => el.textContent.includes("Move files with the note"));
     choice.click(); await flushPromises();
-    expect(pending).toHaveLength(1); expect(pending[0].args).toEqual(["NoteA", "folder/NoteA", "A", "move"]);
+    expect(pending).toHaveLength(1); expect(pending[0].args).toEqual(["NoteA", "folder/NoteA", "A", "move", "Seed\n"]);
   });
 
   it("Escape cancels attachment preparation, retains B, and settles without a write", async () => {
@@ -427,7 +468,7 @@ describe("foreground FIFO through the real Note", () => {
       expect(getStoredToken()).toBe("auth-token");
       expect(isCurrentTokenStored()).toBe(persist);
       await clickSave();
-      expect(pending[0].args).toEqual(["token", "token", "token note work", "none"]);
+      expect(pending[0].args).toEqual(["token", "token", "token note work", "none", "Seed\n"]);
       await acknowledge(0, "token", "token note work");
       expect(live()).toBe("token note work");
       expect((persist ? localStorage : sessionStorage).getItem("globnotes:draft:token")).toBeNull();
