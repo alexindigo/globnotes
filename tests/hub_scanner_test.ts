@@ -20,6 +20,42 @@ function fixture() {
     },
   };
 }
+
+/** Real chmod denial for ordinary users; privileged readers exercise the same
+ * error boundary with a scoped fault, without skipping the contract assertions
+ * or requiring the extra allow-sys permission that Deno.uid() needs. */
+function lockDirectory(directory: string): () => void {
+  Deno.chmodSync(directory, 0);
+  const read = Deno.readDirSync;
+  let privileged = false;
+  try {
+    [...read(directory)];
+    privileged = true;
+  } catch (error) {
+    if (!(error instanceof Deno.errors.PermissionDenied)) {
+      Deno.chmodSync(directory, 0o700);
+      throw error;
+    }
+  }
+  if (privileged) {
+    Deno.readDirSync = (name) => {
+      if (name === directory) {
+        throw new Deno.errors.PermissionDenied(
+          "scoped directory-read fault for privileged reader",
+        );
+      }
+      return read(name);
+    };
+  }
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    if (privileged) Deno.readDirSync = read;
+    Deno.chmodSync(directory, 0o700);
+  };
+}
+
 Deno.test("hub scanner: external create/modify/delete/rename, stat-only skip, hidden files and state exclusion", () => {
   const f = fixture();
   try {
@@ -60,23 +96,24 @@ Deno.test("hub scanner: external create/modify/delete/rename, stat-only skip, hi
 });
 Deno.test("hub scanner: unreadable subtree is unknown, readable sibling still changes", () => {
   const f = fixture();
+  let unlock = () => {};
   try {
     Deno.mkdirSync(`${f.vault}/locked`);
     Deno.writeTextFileSync(`${f.vault}/locked/keep.md`, "keep");
     Deno.writeTextFileSync(`${f.vault}/sibling.md`, "remove");
     f.hub.scanNow();
-    Deno.chmodSync(`${f.vault}/locked`, 0);
+    unlock = lockDirectory(`${f.vault}/locked`);
     Deno.removeSync(`${f.vault}/sibling.md`);
     const stats = f.hub.scanNow();
     assertEquals(stats.unknown, ["locked"]);
     assert(f.hub.fileState("locked/keep.md"));
     assertEquals(f.hub.fileState("sibling.md"), null);
-    Deno.chmodSync(`${f.vault}/locked`, 0o700);
+    unlock();
     Deno.removeSync(`${f.vault}/locked/keep.md`);
     f.hub.scanNow();
     assertEquals(f.hub.fileState("locked/keep.md"), null);
   } finally {
-    Deno.chmodSync(`${f.vault}/locked`, 0o700);
+    unlock();
     f.close();
   }
 });
@@ -247,12 +284,13 @@ Deno.test("hub scanner: expect targets raw file spellings and directories, then 
 
 Deno.test("hub scanner: expect preserves unknown subtrees and excludes state and symlink ancestors", () => {
   const f = fixture();
+  let unlock = () => {};
   try {
     Deno.mkdirSync(`${f.vault}/locked`);
     Deno.writeTextFileSync(`${f.vault}/locked/keep.md`, "known");
     f.hub.scanNow();
     Deno.removeSync(`${f.vault}/locked/keep.md`);
-    Deno.chmodSync(`${f.vault}/locked`, 0);
+    unlock = lockDirectory(`${f.vault}/locked`);
     Deno.writeTextFileSync(`${f.vault}/.globnotes/private.md`, "host state");
     Deno.mkdirSync(`${f.root}/outside/nested`, { recursive: true });
     Deno.writeTextFileSync(
@@ -269,11 +307,11 @@ Deno.test("hub scanner: expect preserves unknown subtrees and excludes state and
     assertEquals(f.hub.fileState(".globnotes/private.md"), null);
     assertEquals(f.hub.fileState("link/nested/hidden.md"), null);
     f.hub.record(token, [], "api");
-    Deno.chmodSync(`${f.vault}/locked`, 0o700);
+    unlock();
     f.hub.scanNow(["locked"]);
     assertEquals(f.hub.fileState("locked/keep.md"), null);
   } finally {
-    Deno.chmodSync(`${f.vault}/locked`, 0o700);
+    unlock();
     f.close();
   }
 });

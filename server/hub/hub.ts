@@ -16,6 +16,7 @@ export class VaultHub {
   readonly #subscribers = new Set<(entries: ChangeEntry[]) => void>();
   readonly #intervalMs: number;
   readonly #stateRoot: string;
+  readonly #configuredRoot: string;
   #timer?: ReturnType<typeof setInterval>;
   #debounce?: ReturnType<typeof setTimeout>;
   #watcher?: Deno.FsWatcher;
@@ -24,6 +25,7 @@ export class VaultHub {
   #scanning = false;
   readonly root: string;
   constructor(notesPath: string, statePath: string) {
+    this.#configuredRoot = path.resolve(notesPath);
     this.root = Deno.realPathSync(notesPath);
     this.#intervalMs =
       Number(getEnv("GLOBNOTES_HUB_SCAN_INTERVAL", { default: "60" })) * 1000;
@@ -70,11 +72,13 @@ export class VaultHub {
         if (!this.#started) break;
         if (event.kind === "access") continue;
         for (const absolute of event.paths) {
+          const relative = this.relativePath(absolute);
           if (
-            !within(this.root, absolute) || within(this.#stateRoot, absolute)
+            relative === null ||
+            within(this.#stateRoot, path.join(this.root, relative))
           ) continue;
-          const relative = path.relative(this.root, path.dirname(absolute));
-          this.#hints.add(relative);
+          const directory = path.dirname(relative);
+          this.#hints.add(directory === "." ? "" : directory);
         }
         if (!this.#hints.size) continue;
         clearTimeout(this.#debounce);
@@ -109,8 +113,8 @@ export class VaultHub {
     }
   }
   expect(absolutePaths: readonly string[]): Expectation {
-    const paths = absolutePaths.filter((p) => within(this.root, p))
-      .map((p) => path.relative(this.root, p));
+    const paths = absolutePaths.map((p) => this.relativePath(p))
+      .filter((p): p is string => p !== null);
     // Folder observation has one owner. Ingest the actual file/directory targets
     // before reservation, preserving local versions and facts before our effect.
     if (paths.length) this.scanNow(paths);
@@ -131,12 +135,10 @@ export class VaultHub {
       // Fold repeated writes and rename+write to one resulting file observation.
       const mutations = new Map<string, Mutation>();
       for (const effect of effects) {
-        if (effect.kind === "mkdir" || !within(this.root, effect.path)) {
-          continue;
-        }
-        const relative = path.relative(this.root, effect.path);
-        const old = effect.oldPath && within(this.root, effect.oldPath)
-          ? path.relative(this.root, effect.oldPath)
+        const relative = this.relativePath(effect.path);
+        if (effect.kind === "mkdir" || relative === null) continue;
+        const old = effect.oldPath
+          ? this.relativePath(effect.oldPath) ?? undefined
           : undefined;
         if (effect.kind === "rename" && old) {
           // Directory attachment moves are represented by a single storage effect.
@@ -203,6 +205,18 @@ export class VaultHub {
   }
   fileState(name: string) {
     return this.store.fileState(name);
+  }
+  /** One vault coordinate system for canonical storage effects and configured-root walks. */
+  relativePath(absolute: string): string | null {
+    const resolved = path.resolve(absolute);
+    // A configured alias can itself live inside the real root and point to an
+    // ancestor. Prefer that explicit root spelling before the enclosing real one.
+    for (const root of [this.#configuredRoot, this.root]) {
+      if (within(root, resolved)) {
+        return path.relative(root, resolved).split(path.SEPARATOR).join("/");
+      }
+    }
+    return null;
   }
   collisions() {
     return this.#scanner.collisions();

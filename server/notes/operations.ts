@@ -556,12 +556,13 @@ export class NoteOperations {
       );
       this.#admission(ctx, operationId);
       if (changes.length === 0) return;
-      const vaultRoot = this.adapters.notes.storagePath;
-      const toNotePath = (absolute: string) =>
-        path.relative(vaultRoot, absolute).replace(/\\/g, "/").slice(
-          0,
-          -MARKDOWN_EXT.length,
-        );
+      const toNotePath = (absolute: string) => {
+        const relative = this.#vaultRelative(absolute);
+        if (relative === null) {
+          throw new Error("Reference rewrite escaped the vault");
+        }
+        return relative.slice(0, -MARKDOWN_EXT.length);
+      };
       const originals = new Map<string, string>();
       for (const change of changes) {
         originals.set(change.path, Deno.readTextFileSync(change.path));
@@ -836,10 +837,9 @@ export class NoteOperations {
       );
       const completedPaths: string[] = [];
       for (const filename of noteEffects) {
-        const notePath = path.relative(
-          this.adapters.notes.storagePath,
-          filename,
-        ).replace(/\\/g, "/").slice(0, -MARKDOWN_EXT.length);
+        const relative = this.#vaultRelative(filename);
+        if (relative === null) continue;
+        const notePath = relative.slice(0, -MARKDOWN_EXT.length);
         completedPaths.push(notePath);
         try {
           const after = this.adapters.notes.get(notePath);
@@ -869,7 +869,7 @@ export class NoteOperations {
       throw new OperationError(
         500,
         "operation_partial",
-        "Storage effects were partially applied; recorded paths and index reflect the actual outcome.",
+        "Storage effects were applied, but the operation could not be fully reconciled; inspect the actual effects before retrying.",
         { operationId, partial: { completedPaths } },
       );
     }
@@ -882,7 +882,6 @@ export class NoteOperations {
     effects: readonly StorageEffect[],
   ): void {
     if (!effects.length) return;
-    const root = this.adapters.notes.storagePath;
     const changedPaths = new Set<string>();
     for (const effect of effects) {
       if (effect.kind === "mkdir") continue;
@@ -892,11 +891,8 @@ export class NoteOperations {
           ...(effect.oldPath ? [effect.oldPath] : []),
         ]
       ) {
-        const relative = path.relative(root, filename).replace(/\\/g, "/");
-        if (
-          !relative.endsWith(MARKDOWN_EXT) || relative.startsWith("../") ||
-          path.isAbsolute(relative)
-        ) continue;
+        const relative = this.#vaultRelative(filename);
+        if (relative === null || !relative.endsWith(MARKDOWN_EXT)) continue;
         changedPaths.add(relative.slice(0, -MARKDOWN_EXT.length));
       }
     }
@@ -905,6 +901,16 @@ export class NoteOperations {
       changedPaths: [...changedPaths],
       metadata: { effects: effects.map((effect) => ({ ...effect })) },
     }));
+  }
+
+  #vaultRelative(filename: string): string | null {
+    if (this.adapters.hub) return this.adapters.hub.relativePath(filename);
+    const relative = path.relative(this.adapters.notes.storagePath, filename)
+      .replace(/\\/g, "/");
+    return relative === ".." || relative.startsWith("../") ||
+        path.isAbsolute(relative)
+      ? null
+      : relative;
   }
 
   #exists(notePath: string): boolean {

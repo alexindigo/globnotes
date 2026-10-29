@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assertEquals, assertRejects } from "@std/assert";
-import { subscribeExternalFacts } from "../server/hub/subscribers.ts";
+import { assert, assertEquals, assertRejects } from "@std/assert";
+import {
+  subscribeExternalFacts,
+  subscribeIndex,
+} from "../server/hub/subscribers.ts";
 import { setupState } from "./helpers/state.ts";
 import { state } from "../server/state.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
+import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
+import { Fts5Indexer } from "../server/search/fts5.ts";
 
 Deno.test("hub search: outside write/scan/delete updates index; managed save visible immediately without scanning", async () => {
   const vault = Deno.makeTempDirSync(), previous = { ...state };
@@ -173,5 +178,32 @@ Deno.test("hub facts: pre-effect reconciliation publishes the real outside creat
     s.hub.stop();
     Object.assign(state, previous);
     Deno.removeSync(vault, { recursive: true });
+  }
+});
+
+Deno.test("hub projections: a vanished first entry does not drop later index values, facts or sync", () => {
+  const f = hubOperationsFixture();
+  const indexer = new Fts5Indexer(f.config.statePath);
+  const facts: OperationFact[] = [], syncs: OperationFact[] = [];
+  f.hub.subscribe(() => Deno.removeSync(`${f.vault}/a-gone.md`));
+  subscribeIndex(f.hub, indexer);
+  subscribeExternalFacts(f.hub, f.lifecycle);
+  f.lifecycle.onFact((fact) => facts.push(fact));
+  f.lifecycle.onSync((fact) => syncs.push(fact));
+  try {
+    Deno.writeTextFileSync(`${f.vault}/a-gone.md`, "projectionneedle gone");
+    Deno.writeTextFileSync(`${f.vault}/b-kept.md`, "projectionneedle kept");
+    f.hub.scanNow();
+    assertEquals(indexer.search("projectionneedle").map((hit) => hit.path), [
+      "b-kept",
+    ]);
+    assertEquals(
+      facts.map((fact) => [fact.action, fact.path, fact.after?.content]),
+      [["create", "b-kept", "projectionneedle kept"]],
+    );
+    assertEquals(syncs.length, 1);
+    assert(syncs[0].changedPaths?.includes("b-kept"));
+  } finally {
+    f.close();
   }
 });

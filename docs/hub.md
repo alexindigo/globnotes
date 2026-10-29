@@ -28,6 +28,10 @@ Real disk spelling is retained. NFC collisions are reported through
 `collisions()` and warned once per key; one selected file is tracked, without
 merging, renaming or changing disk files.
 
+A configured vault root may be a symlink. `relativePath()` maps both that spelling
+and the real root into the same vault coordinates for expected paths, actual
+journals, watcher hints and operation facts. Descendant symlinks are still skipped.
+
 ## Managed effects
 
 `NoteOperations` announces canonical paths with `expect()` immediately before
@@ -45,6 +49,12 @@ renames. A globnotes write increments its vector dimension and never echoes
 back as a local change on the next scan. Callers must always settle expectations,
 including a no-effect failure. This does not change save semantics or provide
 filesystem CAS against outside programs.
+
+If actual storage effects occurred but hub reconciliation cannot be verified,
+the operation reports `operation_partial` with its actual effects; it does not
+acknowledge an unrecorded version as success. Derived projections are isolated
+per entry: a failed index update or fact read is logged without dropping the
+remaining entries and their sync boundary.
 
 Auxiliary plugin filesystem publication still has separate write/rename/remove/
 mkdir branches and asynchronous temporary-file preparation. M1 leaves those

@@ -12,6 +12,6 @@ export function anonymousPath(secret: string, value: string): string {
 export function within(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return relative === "" ||
-    (relative !== ".." && !relative.startsWith("../") &&
+    (relative !== ".." && !relative.startsWith(`..${path.SEPARATOR}`) &&
       !path.isAbsolute(relative));
 }

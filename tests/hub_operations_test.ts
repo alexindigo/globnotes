@@ -1,79 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { GlobalConfig } from "../server/config.ts";
-import { FileServing } from "../server/files/file_serving.ts";
-import { VaultHub } from "../server/hub/hub.ts";
-import type { ChangeEntry } from "../server/hub/types.ts";
-import {
-  FileSystemNotes,
-  type StorageProbes,
-} from "../server/notes/file_system.ts";
-import { NoteOperations } from "../server/notes/operations.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { requesterAuthority } from "../server/plugins/lifecycle.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
-import type { PluginRuntime } from "../server/plugins/runtime.ts";
-import { initState, state } from "../server/state.ts";
-import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
-
-export function hubOperationsFixture(probes: StorageProbes = {}) {
-  const previous = { ...state }, env = { ...Deno.env.toObject() };
-  const root = Deno.makeTempDirSync();
-  Deno.mkdirSync(`${root}/vault`);
-  Deno.env.set("GLOBNOTES_PATH", `${root}/vault`);
-  Deno.env.set("GLOBNOTES_INDEX_PATH", `${root}/state`);
-  Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-  const config = new GlobalConfig(),
-    notes = new FileSystemNotes(config.notesPath, probes);
-  const files = new FileServing(config.notesPath),
-    hub = new VaultHub(config.notesPath, config.statePath);
-  initState(config, null, notes, null, files, null, hub);
-  const lifecycle = new PluginLifecycle(config);
-  state.lifecycle = lifecycle;
-  const runtime = {
-    limits: { preOperationMs: 5000 },
-    guard: () => [],
-    assertGuardAuthority: () => {},
-  } as unknown as PluginRuntime;
-  const operations = new NoteOperations({
-    notes,
-    files,
-    hub,
-    indexer: null,
-    lifecycle,
-    runtime: () => runtime,
-  });
-  state.operations = operations;
-  const batches: ChangeEntry[][] = [];
-  hub.subscribe((entries) => batches.push(entries));
-  return {
-    root,
-    vault: config.notesPath,
-    config,
-    notes,
-    files,
-    lifecycle,
-    operations,
-    hub,
-    batches,
-    api: () => fixtureApiOrigin(lifecycle),
-    close() {
-      hub.stop();
-      Object.assign(state, previous);
-      for (
-        const key of [
-          "GLOBNOTES_PATH",
-          "GLOBNOTES_INDEX_PATH",
-          "GLOBNOTES_AUTH_TYPE",
-        ]
-      ) {
-        if (env[key] === undefined) Deno.env.delete(key);
-        else Deno.env.set(key, env[key]);
-      }
-      Deno.removeSync(root, { recursive: true });
-    },
-  };
-}
+import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 
 Deno.test("hub operations: create/save/rename/delete and uploads are globnotes with no forced-scan echo", async () => {
   const f = hubOperationsFixture();
@@ -463,6 +392,94 @@ Deno.test("hub operations: recreation reconciles an unscanned outside deletion b
     const count = f.batches.length;
     f.hub.scanNow();
     assertEquals(f.batches.length, count);
+  } finally {
+    f.close();
+  }
+});
+
+for (const alias of ["sibling", "ancestor"] as const) {
+  Deno.test(`hub aliases: ${alias} configured root reconciles a deletion before the watcher`, async () => {
+    const f = hubOperationsFixture({}, { alias });
+    try {
+      Deno.writeTextFileSync(`${f.vault}/unobserved.md`, "new outside note");
+      await f.operations.deleteNote("unobserved", f.api());
+      assertEquals(
+        f.batches.flat().map((entry) => [entry.peer, entry.kind, entry.path]),
+        [
+          ["local", "created", "unobserved.md"],
+          ["globnotes", "deleted", "unobserved.md"],
+        ],
+      );
+      assertEquals(
+        f.hub.store.db.prepare("SELECT COUNT(*) AS n FROM tombstones").get()!.n,
+        1,
+      );
+    } finally {
+      f.close();
+    }
+  });
+
+  Deno.test(`hub aliases: ${alias} configured root journals reference rewrites and sync paths`, async () => {
+    const f = hubOperationsFixture({}, { alias });
+    const syncPaths: string[][] = [];
+    f.lifecycle.onSync((fact) => syncPaths.push(fact.changedPaths ?? []));
+    try {
+      await f.operations.uploadFile(
+        "",
+        "old.png",
+        new Uint8Array([1]),
+        f.api(),
+      );
+      await f.operations.createNote({
+        path: "note",
+        content: "![asset](old.png)",
+      }, f.api());
+      await f.operations.rewriteRefs("old.png", "new.png", f.api());
+      assertEquals(
+        f.batches.flat().filter((entry) => entry.path?.endsWith(".md")).map((
+          entry,
+        ) => [entry.peer, entry.kind]),
+        [
+          ["globnotes", "created"],
+          ["globnotes", "modified"],
+        ],
+      );
+      assertEquals(syncPaths, [[], ["note"], ["note"]]);
+      const count = f.batches.length;
+      f.hub.scanNow();
+      assertEquals(
+        f.batches.length,
+        count,
+        "a configured-root write has no local echo",
+      );
+    } finally {
+      f.close();
+    }
+  });
+}
+
+Deno.test("hub operations: a failed authoritative metadata commit does not acknowledge an unversioned write", async () => {
+  const f = hubOperationsFixture();
+  const apply = f.hub.store.apply.bind(f.hub.store);
+  f.hub.store.apply = (mutations, peer, origin) => {
+    if (peer === "globnotes") {
+      throw new Error("metadata commit unavailable fixture");
+    }
+    return apply(mutations, peer, origin);
+  };
+  try {
+    const outcome = await f.operations.createNote({
+      path: "note",
+      content: "completed storage bytes",
+    }, f.api()).catch((error) => error);
+    assertEquals(outcome.code, "operation_partial");
+    assertEquals(outcome.partial.completedPaths, ["note"]);
+    assertEquals(
+      Deno.readTextFileSync(`${f.vault}/note.md`),
+      "completed storage bytes",
+    );
+    assertEquals(f.hub.fileState("note.md"), null);
+    assert(outcome.message.includes("could not be fully reconciled"));
   } finally {
     f.close();
   }
