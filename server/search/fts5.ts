@@ -171,33 +171,6 @@ export class Fts5Indexer implements Indexer {
     state.lifecycle?.syncCompleted(fact);
   }
 
-  /** External-change observation: the scan already knows what changed on
-   * disk; publish truthful on-* facts with prior content explicitly marked
-   * unavailable. Managed writes carry signatures and are skipped. */
-  #observeExternal(
-    action: "create" | "save" | "delete",
-    filename: string,
-    content: string | null,
-  ): void {
-    const notePath = this.#stripExt(filename);
-    const fact = {
-      operationId: createUuid(),
-      action,
-      origin: "external" as const,
-      timestamp: new Date().toISOString(),
-      path: notePath,
-      before: action === "create"
-        ? null
-        : { path: notePath, contentAvailable: false },
-      after: action === "delete" ? null : {
-        path: notePath,
-        content: content ?? undefined,
-        contentAvailable: content !== null,
-      },
-    };
-    state.lifecycle?.observe(fact);
-  }
-
   /** Insert/replace a note in the FTS table, the raw-tag table, and the
    * display-metadata table. */
   #upsertNote(
@@ -343,76 +316,7 @@ export class Fts5Indexer implements Indexer {
     }
   }
 
-  /** Incremental sync before each search/tags call (Python
-   * sync_index_with_retry after initial complete). Adds new notes,
-   * removes deleted, updates modified. Emits external on-* observations;
-   * host-managed operations carry signatures and are not double-reported. */
-  syncIndex(): void {
-    const indexed = this.#allIndexedFilenames();
-    const fsFiles = state.notes.listAllNoteFilenames();
-    const indexedSet = new Set(indexed);
-    const deleted = new Set<string>();
-    const changedPaths: string[] = [];
-    for (const filename of indexedSet) {
-      // Python stats each indexed file directly (cache can't hide deletes).
-      if (!this.#fileExists(filename)) {
-        this.#deleteByFilename(filename);
-        deleted.add(filename);
-        logger.info(`'${filename}' removed from index`);
-        if (!state.lifecycle?.consumeManaged(filename, 0)) {
-          changedPaths.push(this.#stripExt(filename));
-          this.#observeExternal("delete", filename, null);
-        }
-      }
-    }
-    for (const filename of fsFiles) {
-      // Skip anything phase 1 just deleted (the scan cache may be stale).
-      if (deleted.has(filename)) continue;
-      if (!indexedSet.has(filename)) {
-        try {
-          const fsMtime =
-            (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
-              ?.getTime() ?? 0) / 1000;
-          this.#indexFile(filename);
-          logger.info(`'${filename}' added to index`);
-          if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
-            changedPaths.push(this.#stripExt(filename));
-            this.#observeExternal(
-              "create",
-              filename,
-              Deno.readTextFileSync(
-                path.join(state.config.notesPath, filename),
-              ),
-            );
-          }
-        } catch {
-          // Tolerate deletions mid-scan (Python: continue on NotFound).
-        }
-      } else {
-        const fsMtime =
-          (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
-            ?.getTime() ?? 0) / 1000;
-        if (fsMtime !== this.#indexedMtime(filename)) {
-          this.#indexFile(filename);
-          logger.info(`'${filename}' updated`);
-          if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
-            changedPaths.push(this.#stripExt(filename));
-            this.#observeExternal(
-              "save",
-              filename,
-              Deno.readTextFileSync(
-                path.join(state.config.notesPath, filename),
-              ),
-            );
-          }
-        }
-      }
-    }
-    if (changedPaths.length > 0) this.#batchSynced(changedPaths, false);
-  }
-
   getTags(): string[] {
-    if (this.#status.initial) this.syncIndex();
     return this.#db
       .prepare("SELECT DISTINCT tag FROM notes_tags ORDER BY tag")
       .all()
@@ -429,10 +333,6 @@ export class Fts5Indexer implements Indexer {
     nested = true,
     folder?: string,
   ): SearchResult[] {
-    // Python: sync_index_with_retry before every search, but only after
-    // the initial sync completed (before that, only priority-reindexed
-    // notes are visible).
-    if (this.#status.initial) this.syncIndex();
     if (folder !== undefined) {
       isValidNotePath(folder);
     }

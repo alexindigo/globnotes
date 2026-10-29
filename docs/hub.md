@@ -35,6 +35,7 @@ storage effects. `expect()` first synchronously reconciles those file paths and
 directory descendants through the ordinary scanner, then reserves them. Previously
 unobserved outside creates/modifications/deletions therefore enter the log as
 `local`, with their own sequence and vector increment, before the managed effect.
+These local observations also reach the existing external-fact projection.
 There is no parallel before-metadata path or synthetic vector seed.
 Its existing effect journal supplies `record()` in `finally`,
 including completed effects preceding a partial failure. Repeated writes and
@@ -64,3 +65,17 @@ predates retained history. The newest 100,000 entries are retained.
 synchronously, with failing subscribers isolated. Live deletion notifications
 carry the path for consumers; the persisted log has only its anonymous key.
 The hub retains no content for replay.
+
+At startup `main.ts` inventories the vault before admitting subscribers, then
+starts the existing background index rebuild. `server/hub/subscribers.ts`
+contains two ordered projections: the FTS5 subscriber first updates `.md`
+entries (including delete-old/reindex-new on rename), then the external-facts
+subscriber preserves existing local `on-create`/`on-save`/`on-delete` and one
+noninitial sync per changed scan batch. An outside rename remains a delete plus
+create for these legacy hooks. Managed-peer batches are ignored by that second
+subscriber. No new hook kinds or driver APIs are introduced in M1.
+
+Search and tag queries read the index without a filesystem scan. The index's
+initial build remains available for rebuilds. An own save's hub commit and index
+notification complete synchronously before the operation's lifecycle facts and
+return, including reconciliation of actual partial effects.

@@ -293,18 +293,22 @@ Deno.test("search: terms with syntax chars (slashes, colons)", async () => {
 });
 
 Deno.test("search: odd-titled files are indexed (Python parity)", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const vault = await Deno.makeTempDir();
+  // Real vaults contain titles the note API can't address; the index
+  // must not die on them (Python's sync reads by filename).
+  await Deno.writeTextFile(
+    `${vault}/*TODO.md`,
+    "wildcard title needle",
+  );
+  await Deno.writeTextFile(
+    `${vault}/what now?.md`,
+    "question title needle",
+  );
+  const server = await bootServer({
+    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_PATH: vault,
+  });
   try {
-    // Real vaults contain titles the note API can't address; the index
-    // must not die on them (Python's sync reads by filename).
-    await Deno.writeTextFile(
-      `${server.vault}/*TODO.md`,
-      "wildcard title needle",
-    );
-    await Deno.writeTextFile(
-      `${server.vault}/what now?.md`,
-      "question title needle",
-    );
     await api(server, "/_/api/notes", {
       method: "POST",
       headers: { "content-type": "application/json" },

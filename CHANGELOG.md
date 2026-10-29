@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (v3)
+
+### Added
+
+A per-vault hub tracks file hashes, versions and an ordered change log for
+outside programs and globnotes writes. Deleted files leave anonymous keyed-path
+tombstones; the hub retains no note content or previous versions.
+
+### Changed
+
+Search follows committed hub changes instead of scanning the folder before
+each query. A filesystem watcher notices outside changes, backed by periodic
+full scans. Managed saves remain searchable immediately. Existing external-change
+plugin notifications are preserved without repeating globnotes' own writes.
+
 ## v2.5.0 (2026-10-21)
 
 ### Added

@@ -20,10 +20,12 @@ async function withState(
   fn: (s: UnitState & { vault: string }) => void | Promise<void>,
 ): Promise<void> {
   const vault = await Deno.makeTempDir();
+  let s: UnitState | undefined;
   try {
-    const s = setupState(vault);
+    s = setupState(vault);
     await fn({ ...s, vault });
   } finally {
+    s?.hub.stop();
     await Deno.remove(vault, { recursive: true });
   }
 }
@@ -198,11 +200,13 @@ Deno.test("index: search matches path segment", () =>
   }));
 
 Deno.test("index: external delete is removed from the index", () =>
-  withState(async ({ indexer, notes, vault }) => {
+  withState(async ({ indexer, notes, vault, hub }) => {
     notes.create({ path: "gone/soon", content: "x" });
     indexer.startBackgroundSync();
     await awaitIndexReady(indexer);
+    hub.scanNow();
     Deno.removeSync(path.join(vault, "gone", "soon.md"));
+    hub.scanNow();
     const titles = indexer.search("*").map((r) => r.path);
     assert(!titles.includes("gone/soon"));
   }));
@@ -216,25 +220,36 @@ Deno.test("index: tags still work", () =>
   }));
 
 Deno.test("priority reindex: create searchable without any sync", () =>
-  withState(({ indexer, notes }) => {
+  withState(async ({ indexer, operations, api }) => {
     // No startBackgroundSync — the create's priority reindex must land.
-    notes.create({ path: "fresh/note", content: "needle" });
+    await operations.createNote(
+      { path: "fresh/note", content: "needle" },
+      api(),
+    );
     const results = indexer.search("needle");
     assert(results.some((r) => r.path === "fresh/note"));
   }));
 
 Deno.test("priority reindex: delete unsearchable without any sync", () =>
-  withState(({ indexer, notes }) => {
-    notes.create({ path: "gone/note", content: "needle" });
-    notes.delete("gone/note");
+  withState(async ({ indexer, operations, api }) => {
+    await operations.createNote(
+      { path: "gone/note", content: "needle" },
+      api(),
+    );
+    await operations.deleteNote("gone/note", api());
     const results = indexer.search("needle");
     assert(!results.some((r) => r.path === "gone/note"));
   }));
 
 Deno.test("priority reindex: rename removes old title from index", () =>
-  withState(({ indexer, notes }) => {
-    notes.create({ path: "old/name", content: "needle" });
-    notes.update("old/name", { newPath: "new/name" });
+  withState(async ({ indexer, operations, api }) => {
+    await operations.createNote({ path: "old/name", content: "needle" }, api());
+    await operations.updateNote(
+      "old/name",
+      { newPath: "new/name" },
+      "none",
+      api(),
+    );
     const titles = indexer.search("needle").map((r) => r.path);
     assert(titles.includes("new/name"));
     assert(!titles.includes("old/name"));

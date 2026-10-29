@@ -17,6 +17,7 @@ import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
 import { NoteOperations } from "./notes/operations.ts";
 import { VaultHub } from "./hub/hub.ts";
+import { subscribeExternalFacts, subscribeIndex } from "./hub/subscribers.ts";
 import { PluginActions } from "./plugins/actions.ts";
 import { AuxiliaryFilesystem } from "./plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "./plugins/data.ts";
@@ -159,6 +160,8 @@ if (!globalConfig.setupRequired) {
   );
 }
 hub.start();
+subscribeIndex(hub, indexer);
+subscribeExternalFacts(hub, lifecycle);
 indexer.startBackgroundSync();
 // Render pools still start lazily on the first render call.
 

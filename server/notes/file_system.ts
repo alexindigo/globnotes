@@ -3,8 +3,8 @@
 /**
  * File-system notes storage, ported line-for-line from the Python
  * FileSystemNotes (server/notes/file_system/file_system.py).
- * Index hooks (reindex / delete-from-index / sync) are forwarded
- * through the optional `state.indexer` — a no-op until commit 5.
+ * Application writes are journalled by NoteOperations; the hub's committed
+ * change stream owns index updates, not this storage layer.
  */
 
 import type { FileRef, Note, NoteCreate, NoteUpdate } from "./models.ts";
@@ -24,7 +24,6 @@ import {
   rewriteFirstH1,
   sanitizeBasename,
 } from "@server/search/titles.ts";
-import { state } from "@server/state.ts";
 import { logger } from "@server/logger.ts";
 import { walk } from "@std/fs/walk";
 import * as nodePath from "@std/path";
@@ -182,7 +181,6 @@ export class FileSystemNotes {
       }
       throw e;
     }
-    state.indexer?.reindexNote(path);
     this.#invalidateScanCache();
     return this.#noteFromFile(path, filepath);
   }
@@ -524,8 +522,6 @@ export class FileSystemNotes {
       oldPath: o,
       newPath: n,
     }));
-    if (oldPath !== path) state.indexer?.deleteFromIndex(oldPath);
-    state.indexer?.reindexNote(path);
     this.#invalidateScanCache();
     return {
       ...this.#noteFromFile(path, filepath),
@@ -646,7 +642,6 @@ export class FileSystemNotes {
       throw e;
     }
     this.#pruneEmptyParents(nodePath.dirname(filepath), canPrune);
-    state.indexer?.deleteFromIndex(path);
     this.#invalidateScanCache();
   }
 
@@ -787,26 +782,7 @@ export class FileSystemNotes {
       this.#recordEffect({ kind: "mkdir", path: directory });
     }
   }
-  reconcileEffects(effects: readonly StorageEffect[]): void {
-    const paths = new Set(
-      effects.flatMap(
-        (effect) => [effect.path, ...(effect.oldPath ? [effect.oldPath] : [])],
-      ),
-    );
-    for (const filename of paths) {
-      if (!filename.endsWith(MARKDOWN_EXT)) continue;
-      const notePath = nodePath.relative(this.storagePath, filename).replace(
-        /\\/g,
-        "/",
-      ).slice(0, -MARKDOWN_EXT.length);
-      try {
-        if (Deno.statSync(filename).isFile) {
-          state.indexer?.reindexNote(notePath);
-        }
-      } catch {
-        state.indexer?.deleteFromIndex(notePath);
-      }
-    }
+  reconcileEffects(_effects: readonly StorageEffect[]): void {
     this.#invalidateScanCache();
   }
 

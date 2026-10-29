@@ -179,6 +179,12 @@ Deno.test("render: default plugins", async (t) => {
           path: "real/note",
           content: "---\naliases: [Friendly Alias]\n---\nbody",
         });
+        // Raw fixture writes bypass the managed hub path; build their metadata
+        // before asking the renderer's alias consumer to resolve them.
+        state.indexer!.startBackgroundSync();
+        while (state.indexer!.indexStatus.syncing) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
         const html = await renderMarkdown("see [[Friendly Alias]]");
         assertStringIncludes(html, '<a href="/real/note">');
       });

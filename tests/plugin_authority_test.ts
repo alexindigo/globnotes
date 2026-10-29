@@ -2,6 +2,8 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { GlobalConfig } from "../server/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
+import { VaultHub } from "../server/hub/hub.ts";
+import { subscribeIndex } from "../server/hub/subscribers.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginActions } from "../server/plugins/actions.ts";
@@ -126,10 +128,14 @@ async function bundle(
     network,
   }, { disposalMs: 20, ...fixtureOptions.runtimeLimits });
   initState(config, null, notes, indexer, files, null as never);
+  const hub = new VaultHub(fixture.vault, fixture.statePath);
+  subscribeIndex(hub, indexer);
+  state.hub = hub;
   const operations = new NoteOperations({
     notes,
     files,
     indexer,
+    hub,
     lifecycle,
     runtime: () => runtime,
   });
@@ -199,6 +205,7 @@ async function bundle(
         args,
       }) as { requestId: string }).requestId,
     async dispose() {
+      hub.stop();
       retirement.resolve();
       await runtime.close();
       for (const [key, value] of previous) {

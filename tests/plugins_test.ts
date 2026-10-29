@@ -536,8 +536,11 @@ Deno.test("plugins: pluginRpc resolves against real state", async () => {
     };
     assertEquals(new TextDecoder().decode(file.body), "bytes");
 
-    // Search needs an initial sync; run it synchronously via syncIndex.
-    indexer.syncIndex();
+    // Search needs the initial index build; subsequent changes follow the hub.
+    indexer.startBackgroundSync();
+    while (indexer.indexStatus.syncing) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
     const hits = await pluginRpc("search", ["hi"]) as { path: string }[];
     assertEquals(hits.length, 1);
     assertEquals(hits[0].path, "hello");

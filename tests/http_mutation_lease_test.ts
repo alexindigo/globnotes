@@ -136,6 +136,11 @@ async function fixture() {
     content: "original victim [attachment](old.png)",
   });
   Deno.writeTextFileSync(`${vault}/old.png`, "original attachment");
+  // Raw fixture setup bypasses managed writes; seed its derived index explicitly.
+  indexer.startBackgroundSync();
+  while (indexer.indexStatus.syncing) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
   let secret = "fixture-only-secret-A";
   function protect(rotate = false) {
     if (rotate) secret = "fixture-only-secret-B";

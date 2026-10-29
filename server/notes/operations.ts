@@ -646,7 +646,6 @@ export class NoteOperations {
       for (const written of applied.written) {
         const notePath = toNotePath(written);
         this.#recordManaged(notePath);
-        this.adapters.indexer?.reindexNote(notePath);
         this.adapters.lifecycle.observe(
           this.#fact(operationId, "save", ctx, {
             path: notePath,

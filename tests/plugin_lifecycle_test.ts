@@ -10,6 +10,11 @@ import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { GlobalConfig } from "../server/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
+import { VaultHub } from "../server/hub/hub.ts";
+import {
+  subscribeExternalFacts,
+  subscribeIndex,
+} from "../server/hub/subscribers.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginActions } from "../server/plugins/actions.ts";
@@ -106,6 +111,7 @@ interface Bundle {
   operations: NoteOperations;
   actions: PluginActions;
   indexer: Fts5Indexer;
+  hub: VaultHub;
   runtime: PluginRuntime;
   manager: PluginManager;
   facts(): Promise<{ kind: string; fact: RecordedFact }[]>;
@@ -145,6 +151,9 @@ async function bundle(opts: {
     const notes = new FileSystemNotes(fixture.vault, opts.probes ?? {});
     const indexer = new Fts5Indexer(fixture.statePath);
     const files = new FileServing(fixture.vault);
+    const hub = new VaultHub(fixture.vault, fixture.statePath);
+    hub.scanNow(); // Initial inventory precedes subscriber admission, as at boot.
+    subscribeIndex(hub, indexer);
     const manager = new PluginManager(
       fixture.vault,
       undefined,
@@ -154,10 +163,12 @@ async function bundle(opts: {
     );
     initState(config, null, notes, indexer, files, manager);
     const lifecycle = new PluginLifecycle(config);
+    subscribeExternalFacts(hub, lifecycle);
     const operations = new NoteOperations({
       notes,
       files,
       indexer,
+      hub,
       runtime: () => manager.runtime,
       lifecycle,
     });
@@ -214,6 +225,7 @@ async function bundle(opts: {
       operations,
       actions,
       indexer,
+      hub,
       runtime,
       manager,
       facts: async () =>
@@ -224,6 +236,7 @@ async function bundle(opts: {
       clearFacts: () =>
         runtime.invokeCommand("recorder", "clear", {}).then(() => undefined),
       dispose: async () => {
+        hub.stop();
         await runtime.close();
         manager.stop();
         if (prevPath === undefined) Deno.env.delete("GLOBNOTES_PATH");
@@ -344,6 +357,8 @@ for (
         `${b.fixture.vault}/Sync-barrier`,
         "real owned RPC barrier bytes",
       );
+      // These raw setup writes are startup inventory, before consumers activate.
+      b.hub.scanNow();
       await b.fixture.install("sync-cache", {
         runtime: { server: "service.js" },
         hooks: ["on-sync"],
@@ -636,7 +651,7 @@ for (
         assertEquals(narrow.metadata?.effects, []);
       }
       const afterScan = syncs.length;
-      b.indexer.syncIndex();
+      b.hub.scanNow();
       await Promise.all(deliveries);
       assertEquals(
         syncs.length,
@@ -664,10 +679,12 @@ Deno.test("review repairs: R19 scanner acknowledges a managed observation but st
       facts.push(fact);
     });
     const filename = `${b.fixture.vault}/Managed.md`;
+    const token = b.hub.expect([filename]);
     Deno.writeTextFileSync(filename, "managed scanner observation");
     const mtime = (Deno.statSync(filename).mtime?.getTime() ?? 0) / 1000;
     b.lifecycle.recordManaged("Managed.md", mtime);
-    b.indexer.syncIndex();
+    b.hub.record(token, [{ kind: "write", path: filename }], "api");
+    b.hub.scanNow();
     assertEquals(b.indexer.search("managed").map((entry) => entry.path), [
       "Managed",
     ]);
@@ -679,7 +696,7 @@ Deno.test("review repairs: R19 scanner acknowledges a managed observation but st
     );
     Deno.writeTextFileSync(filename, "genuine later outside edit");
     Deno.utimeSync(filename, mtime + 1, mtime + 1);
-    b.indexer.syncIndex();
+    b.hub.scanNow();
     assertEquals(facts.length, 1);
     assertEquals(facts[0].origin, "external");
     assertEquals(syncs.length, 1);
@@ -1124,7 +1141,7 @@ Deno.test("lifecycle: external changes are observed; managed writes are not doub
     // emit a duplicate external create.
     await b.operations.createNote({ path: "managed", content: "# M\n" }, api());
     await b.clearFacts();
-    b.indexer.syncIndex();
+    b.hub.scanNow();
     assertEquals(
       (await b.facts()).filter((f) => f.kind !== "on-sync").length,
       0,
@@ -1135,12 +1152,12 @@ Deno.test("lifecycle: external changes are observed; managed writes are not doub
     const extFile = path.join(b.fixture.vault, "ext.md");
     Deno.writeTextFileSync(extFile, "# External\n");
     Deno.utimeSync(extFile, new Date(), new Date(Date.now() + 2000));
-    b.indexer.syncIndex();
+    b.hub.scanNow();
     Deno.writeTextFileSync(extFile, "# External 2\n");
     Deno.utimeSync(extFile, new Date(), new Date(Date.now() + 4000));
-    b.indexer.syncIndex();
+    b.hub.scanNow();
     Deno.removeSync(extFile);
-    b.indexer.syncIndex();
+    b.hub.scanNow();
     const facts = (await b.facts()).filter((f) => f.kind !== "on-sync");
     assertEquals(facts.map((f) => f.kind), [
       "on-create",
