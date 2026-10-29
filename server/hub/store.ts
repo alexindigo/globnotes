@@ -214,6 +214,12 @@ export class HubStore {
   checkpoint(): void {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
+  sequence(): number {
+    return Number(
+      this.db.prepare("SELECT seq FROM sqlite_sequence WHERE name='changes'")
+        .get()?.seq ?? 0,
+    );
+  }
   recordConflict(conflict: Conflict): void {
     if (!conflict.path || !conflict.copyPath) {
       throw new Error("Conflict paths required");

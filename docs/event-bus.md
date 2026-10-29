@@ -73,6 +73,8 @@ including reentrant delivery; `note:edit-start`,
 | 27 | `app:open-settings` | `{ page? }` | gear / palette / keybindings / plugin SDK → the one openSettings handler |
 | 28 | `note:title-changed` | `{ title }` | `noteController.js` publishTitle (live buffer or loaded note) |
 | 29 | `note:edit-state` (retained) | `{ path, revision, editing, unsaved, canSave }` | `noteController.js` refreshDirtyState |
+| 30 | `vault:change` | `{ seq, path, kind, oldPath?, hash?, peer }` (paths include extensions) | `vaultChanges.js` accepted stream/poll entry |
+| 31 | `vault:reset` | `{ next }` — re-read consumer snapshots after a history gap | `vaultChanges.js` accepted reset |
 
 `note:edit-state` never carries note text. `path` is the current requested path;
 `revision` increases per content edit. The controller publishes whenever revision,

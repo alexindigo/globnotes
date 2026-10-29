@@ -1,4 +1,8 @@
 const TOPICS = {
+  // Metadata only: { seq, path (including extension), kind, oldPath?, hash?, peer }.
+  VAULT_CHANGE: "vault:change",
+  // Log gap / anonymous deletion replay: consumers must re-read their snapshot.
+  VAULT_RESET: "vault:reset",
   NOTE_OPEN: "note:open",
   NOTE_TITLE_CHANGED: "note:title-changed",
   NOTE_CREATE: "note:create",

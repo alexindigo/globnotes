@@ -439,3 +439,52 @@ export async function openPluginHostEvents({ onEvent, onClose, signal }) {
     reader.cancel().catch(() => undefined);
   };
 }
+
+/** Fetch-based SSE carries bearer authority on ordinary HTTP. */
+export async function openVaultChanges({ since = 0, poll = false, onEvent, onClose, signal }) {
+  const controller = new AbortController();
+  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
+  const headers = { accept: poll ? "application/json" : "text/event-stream" };
+  const token = getStoredToken();
+  if (token) headers.authorization = `Bearer ${token}`;
+  const response = await fetch(`${pathPrefix}/_/api/changes?since=${since}${poll ? "&poll=1" : ""}`, { headers, signal: requestSignal });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw Object.assign(new Error(`Vault changes failed: ${response.status}`), { status: response.status });
+  }
+  if (!response.headers.get("content-type")?.includes("text/event-stream")) {
+    const packet = await response.json();
+    let timer;
+    if (!requestSignal.aborted) {
+      if (packet.gap) onEvent({ event: "reset", data: { next: packet.next } });
+      else for (const entry of packet.entries) onEvent({ event: "change", data: entry });
+      onEvent({ event: "cursor", data: { next: packet.next } });
+      timer = setTimeout(() => { if (!requestSignal.aborted) onClose?.("poll"); }, 1000);
+    }
+    return () => { clearTimeout(timer); controller.abort(); };
+  }
+  if (!response.body?.getReader) {
+    await response.body?.cancel();
+    return openVaultChanges({ since, poll: true, onEvent, onClose, signal: requestSignal });
+  }
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  (async () => {
+    let buffer = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary;
+        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+          const chunk = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
+          const event = /^event: (.+)$/m.exec(chunk)?.[1];
+          const data = /^data: (.+)$/m.exec(chunk)?.[1];
+          if (event && data && !requestSignal.aborted) onEvent({ event, data: JSON.parse(data) });
+        }
+      }
+      if (!requestSignal.aborted) onClose?.("ended");
+    } catch (error) { if (!requestSignal.aborted) onClose?.(error); }
+  })();
+  return () => { controller.abort(); reader.cancel().catch(() => {}); };
+}

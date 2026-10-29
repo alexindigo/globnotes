@@ -213,6 +213,9 @@ export class VaultHub {
   changesSince(cursor: number) {
     return this.store.changesSince(cursor);
   }
+  sequence(): number {
+    return this.store.sequence();
+  }
   fileState(name: string) {
     return this.store.fileState(name);
   }

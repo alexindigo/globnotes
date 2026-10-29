@@ -116,3 +116,22 @@ recreated?}`. A conflict response describes the copy, not the original.
 (vault-relative paths including extensions). Deleting either member closes the
 record and nulls both plaintext paths in the deletion transaction, with the same
 secure-delete/checkpoint policy as the change log. Anonymous path keys remain.
+
+## Browser changes
+
+`GET /_/api/changes` with `Accept: text/event-stream` emits `change` frames
+with a sequence `id` and `{seq,path,kind,oldPath?,hash?,peer}`. Resume through
+`Last-Event-ID` or `?since=N`. Comment heartbeats run every 25 seconds.
+`?since=N&poll=1` returns `{entries,next}` or `{gap:true,next}`. Cursors older
+than retained history, cursors beyond the current log, and replay containing
+anonymous deleted names require a snapshot reset. Live deletion frames retain
+their transient path. Neither transport discloses anonymous keys or origins.
+
+Read authorization is the same as note reads, rechecked before stream emissions
+and heartbeats; expiry and policy changes close streams. Each connection owns
+one hub subscription, disposed on disconnect. Hidden paths, reserved app paths,
+canonical state and paths outside the ordinary note/file read namespace are
+filtered. Renames crossing that boundary disclose only the visible side.
+`client/vaultChanges.js` is the single reference-counted connection owner,
+publishes bus facts, resumes its cursor and reconnects with capped backoff;
+`client/api.js` owns fetch streaming and the JSON polling fallback.
