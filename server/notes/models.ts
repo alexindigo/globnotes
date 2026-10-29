@@ -12,6 +12,12 @@ export interface Note {
   title: string;
   /** Python's Note model serializes this always (default []). */
   movedFiles: { oldPath: string; newPath: string }[];
+  version?: string;
+  saveResult?: {
+    status: "saved" | "merged" | "conflict";
+    conflictCopyPath?: string;
+    recreated?: boolean;
+  };
 }
 
 export interface NoteCreate {
@@ -22,6 +28,7 @@ export interface NoteCreate {
 export interface NoteUpdate {
   newPath?: string | null;
   newContent?: string | null;
+  baseContent?: string;
 }
 
 export interface SearchResult {

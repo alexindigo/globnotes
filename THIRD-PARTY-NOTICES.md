@@ -78,6 +78,8 @@ design:
   permission-narrowed plugin Workers)
 - **[SQLite FTS5](https://sqlite.org/fts5.html)** via Node's built-in
   `node:sqlite` — full-text search indexing (porter stemming, BM25)
+- **[node-diff3](https://github.com/bhousel/node-diff3)** (MIT) — request-local
+  three-way line merging for base-aware saves
 - **[markdown-it](https://github.com/markdown-it/markdown-it)** — the
   markdown parser behind the render pipeline and plugin selectors
 - **[Prism](https://prismjs.com/)** — code syntax highlighting

@@ -113,3 +113,107 @@ Deno.test("hub store: compaction keeps newest 100000 and reports cursor gaps", (
     Deno.removeSync(root, { recursive: true });
   }
 });
+
+Deno.test("hub store: a late conflict record cannot reintroduce an already-deleted name", () => {
+  const root = Deno.makeTempDirSync(), store = new HubStore(root);
+  try {
+    const original = "late-private-original.md", copy = "live-copy.md";
+    store.apply(
+      [original, copy].map((name) => ({ path: name, file: observation(name) })),
+      "local",
+      null,
+    );
+    store.apply([{ path: original }], "local", null);
+    store.recordConflict({
+      id: crypto.randomUUID(),
+      path: original,
+      copyPath: copy,
+      peer: "globnotes",
+      reason: "overlapping-edits",
+      state: "open",
+      createdAt: "now",
+      resolvedAt: null,
+    });
+    assertEquals(store.conflicts()[0].path, null);
+    assertEquals(store.conflicts()[0].copyPath, null);
+    assertEquals(store.conflicts()[0].state, "resolved");
+    store.checkpoint();
+    for (const suffix of ["", "-wal"]) {
+      assert(
+        !new TextDecoder().decode(
+          Deno.readFileSync(`${root}/hub.sqlite${suffix}`),
+        ).includes(original),
+      );
+    }
+  } finally {
+    store.close();
+    Deno.removeSync(root, { recursive: true });
+  }
+});
+
+Deno.test("hub store: migrates v1 metadata in place and scrubs conflicts on either deletion", () => {
+  const root = Deno.makeTempDirSync();
+  let store = new HubStore(root);
+  try {
+    store.apply(
+      [{ path: "secret-original.md", file: observation("secret-original.md") }],
+      "local",
+      null,
+    );
+    const secret = store.secret;
+    store.db.exec(
+      "DROP TABLE conflicts; UPDATE meta SET value='1' WHERE key='schema_version'",
+    );
+    store.close();
+    store = new HubStore(root);
+    assertEquals(store.secret, secret);
+    assertEquals(store.fileState("secret-original.md")!.vector, { local: 1 });
+    assertEquals(
+      store.db.prepare("SELECT value FROM meta WHERE key='schema_version'")
+        .get()!.value,
+      "2",
+    );
+    for (const deleted of ["secret-original.md", "secret-copy.md"]) {
+      store.apply(
+        ["secret-original.md", "secret-copy.md"].map((name) => ({
+          path: name,
+          file: observation(name),
+        })),
+        "local",
+        null,
+      );
+      store.recordConflict({
+        id: deleted,
+        path: "secret-original.md",
+        copyPath: "secret-copy.md",
+        peer: "globnotes",
+        reason: "overlapping-edits",
+        state: "open",
+        createdAt: "now",
+        resolvedAt: null,
+      });
+      // IDs are normally UUIDs; use an anonymous ID here too so the name cannot linger there.
+      store.db.prepare("UPDATE conflicts SET id=? WHERE id=?").run(
+        crypto.randomUUID(),
+        deleted,
+      );
+      store.apply([{ path: deleted }], "local", null);
+      assert(
+        store.conflicts().every((c) =>
+          c.path === null && c.copyPath === null && c.state === "resolved" &&
+          c.resolvedAt
+        ),
+      );
+      for (const suffix of ["", "-wal"]) {
+        assert(
+          !new TextDecoder().decode(
+            Deno.readFileSync(`${root}/hub.sqlite${suffix}`),
+          ).includes(deleted),
+        );
+      }
+    }
+  } finally {
+    store.close();
+    Deno.removeSync(root, { recursive: true });
+  }
+});

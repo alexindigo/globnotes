@@ -17,6 +17,11 @@ export default async function (request: PathfinderRequest<{ path: string }>) {
   try {
     const lease = await noteMutationLease(request._raw);
     const data = (await request.body.json()) as NoteUpdate;
+    if (
+      data.baseContent !== undefined && typeof data.baseContent !== "string"
+    ) {
+      throw new HttpError(400, "baseContent must be a string");
+    }
     const fileRefs = request.query.get("file_refs") ?? "none";
     if (data.newPath !== undefined && data.newPath !== null) {
       data.newPath = validateNotePath(data.newPath, "newPath");

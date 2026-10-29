@@ -51,6 +51,7 @@
     "mermaid": "npm:mermaid@^11.16.1",
     "mitt": "npm:mitt@^3.0.1",
     "mousetrap": "npm:mousetrap@1.6.5",
+    "node-diff3": "npm:node-diff3@3.2.0",
     "otplib": "npm:otplib@^12.0.1",
     "pinia": "npm:pinia@4.0.2",
     "postcss": "npm:postcss@8.5.25",

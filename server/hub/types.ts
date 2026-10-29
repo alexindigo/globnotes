@@ -2,6 +2,16 @@
 
 export type Vector = Record<string, number>;
 export type Peer = "local" | "globnotes";
+export interface Conflict {
+  id: string;
+  path: string | null;
+  copyPath: string | null;
+  peer: Peer;
+  reason: string;
+  state: "open" | "resolved";
+  createdAt: string;
+  resolvedAt: string | null;
+}
 export interface FileState {
   key: string;
   diskPath: string;

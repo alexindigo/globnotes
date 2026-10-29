@@ -13,9 +13,15 @@ import { HttpError } from "@pathfinder/pathfinder";
 import type { FileServing } from "../files/file_serving.ts";
 import type { Indexer } from "../state.ts";
 import type { VaultHub } from "../hub/hub.ts";
+import { contentVersion, mergeText } from "../hub/merge.ts";
 import { guessType } from "../files/mimetypes.ts";
 import { FileSystemNotes, type StorageEffect } from "./file_system.ts";
-import type { Note, NoteCreate, NoteUpdate } from "./models.ts";
+import {
+  type Note,
+  type NoteCreate,
+  NoteNotFoundError,
+  type NoteUpdate,
+} from "./models.ts";
 import type {
   HookName,
   NoteSnapshot,
@@ -51,6 +57,7 @@ export interface OperationAdapters {
   hub?: VaultHub;
   runtime(): PluginRuntime | null;
   lifecycle: PluginLifecycle;
+  now?(): Date;
 }
 
 const MARKDOWN_EXT = ".md";
@@ -202,67 +209,81 @@ export class NoteOperations {
   ): Promise<Note> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);
-    return await this.#lock.run(async () => {
-      this.#admission(ctx, operationId);
-      const capturedEpoch = ctx.origin === "api"
-        ? ctx.lease.epoch
-        : this.adapters.lifecycle.epoch;
-      const notePath = (data.path ?? "").trim();
-      const content = data.content ?? "";
-      const prepared = this.adapters.notes.prepareCreate(data);
-      const effects = prepared.requiredPaths;
-      requester?.authorize(effects, operationId);
-      // Prepare: existence signature. A pre-existing note is NOT a conflict —
-      // commit surfaces the legacy NoteExistsError mapping; only a change
-      // between prepare and commit is operation_conflict.
-      const existedAtPrepare = this.#exists(notePath);
-      const fact = this.#fact(operationId, "create", ctx, {
-        path: notePath,
-        proposed: { path: notePath, content, contentAvailable: true },
-      });
-      const deadline = processClock.now() +
-        this.adapters.runtime()!.limits.preOperationMs;
-      const leases = await this.#guard("pre-create", fact, deadline);
-      const actualEffects: StorageEffect[] = [];
-      const note = await this.#commitGate(
-        capturedEpoch,
-        [{ hook: "pre-create", leases }],
-        () => {
-          const current = this.adapters.notes.prepareCreate(data);
-          requester?.authorize(current.requiredPaths, operationId);
-          if (current.filename !== prepared.filename) {
-            throw new Error("canonical destination changed");
-          }
-          if (!existedAtPrepare && this.#exists(notePath)) {
-            throw new Error(
-              `'${notePath}' appeared while the operation was pending`,
-            );
-          }
-        },
-        () =>
-          this.#captureStorage(
-            operationId,
-            ctx,
-            () => this.adapters.notes.commitCreate(prepared),
-            actualEffects,
-            prepared.requiredPaths,
-            requester?.pluginId,
-          ),
-        operationId,
-        ctx,
-        requester,
-        effects,
-      );
-      this.#recordManaged(note.path);
-      this.adapters.lifecycle.observe(
-        this.#fact(operationId, "create", ctx, {
-          path: note.path,
-          after: snapshot(note),
-        }),
-      );
-      this.#syncEffects(operationId, ctx, actualEffects);
-      return note;
+    return await this.#lock.run(() =>
+      this.#createNoteLocked(data, ctx, requester, operationId)
+    );
+  }
+
+  /** Reused by stale saves without reacquiring the non-reentrant note lock. */
+  async #createNoteLocked(
+    data: NoteCreate,
+    ctx: OperationOrigin,
+    requester: RequesterAuthority | undefined,
+    operationId: string,
+  ): Promise<Note> {
+    this.#admission(ctx, operationId);
+    const capturedEpoch = ctx.origin === "api"
+      ? ctx.lease.epoch
+      : this.adapters.lifecycle.epoch;
+    const notePath = (data.path ?? "").trim();
+    const content = data.content ?? "";
+    const prepared = this.adapters.notes.prepareCreate(data);
+    const effects = prepared.requiredPaths;
+    requester?.authorize(effects, operationId);
+    // Prepare: existence signature. A pre-existing note is NOT a conflict —
+    // commit surfaces the legacy NoteExistsError mapping; only a change
+    // between prepare and commit is operation_conflict.
+    const existedAtPrepare = this.#exists(notePath);
+    const fact = this.#fact(operationId, "create", ctx, {
+      path: notePath,
+      proposed: { path: notePath, content, contentAvailable: true },
     });
+    const deadline = processClock.now() +
+      this.adapters.runtime()!.limits.preOperationMs;
+    const leases = await this.#guard("pre-create", fact, deadline);
+    const actualEffects: StorageEffect[] = [];
+    const note = await this.#commitGate(
+      capturedEpoch,
+      [{ hook: "pre-create", leases }],
+      () => {
+        const current = this.adapters.notes.prepareCreate(data);
+        requester?.authorize(current.requiredPaths, operationId);
+        if (current.filename !== prepared.filename) {
+          throw new Error("canonical destination changed");
+        }
+        if (!existedAtPrepare && this.#exists(notePath)) {
+          throw new Error(
+            `'${notePath}' appeared while the operation was pending`,
+          );
+        }
+      },
+      () =>
+        this.#captureStorage(
+          operationId,
+          ctx,
+          () => this.adapters.notes.commitCreate(prepared),
+          actualEffects,
+          prepared.requiredPaths,
+          requester?.pluginId,
+        ),
+      operationId,
+      ctx,
+      requester,
+      effects,
+    );
+    this.#recordManaged(note.path);
+    this.adapters.lifecycle.observe(
+      this.#fact(operationId, "create", ctx, {
+        path: note.path,
+        after: snapshot(note),
+      }),
+    );
+    this.#syncEffects(operationId, ctx, actualEffects);
+    return this.#saveResponse(note, { status: "saved" });
+  }
+
+  #saveResponse(note: Note, saveResult: NonNullable<Note["saveResult"]>): Note {
+    return { ...note, version: contentVersion(note.content ?? ""), saveResult };
   }
 
   async updateNote(
@@ -277,6 +298,77 @@ export class NoteOperations {
     this.#requesterRequired(ctx, requester, operationId);
     return await this.#lock.run(async () => {
       this.#admission(ctx, operationId);
+      let status: "saved" | "merged" = "saved";
+      if (
+        typeof data.baseContent === "string" &&
+        typeof data.newContent === "string"
+      ) {
+        this.adapters.hub?.scanNow([notePath + MARKDOWN_EXT]);
+        let current: Note;
+        try {
+          current = this.adapters.notes.get(notePath);
+        } catch (error) {
+          if (!(error instanceof NoteNotFoundError)) throw error;
+          const recreated = await this.#createNoteLocked(
+            { path: notePath, content: data.newContent },
+            ctx,
+            requester,
+            operationId,
+          );
+          return this.#saveResponse(recreated, {
+            status: "saved",
+            recreated: true,
+          });
+        }
+        if (current.content !== data.baseContent) {
+          const merged = mergeText(
+            data.baseContent,
+            data.newContent,
+            current.content ?? "",
+          );
+          if (merged === null) {
+            const stamp = (this.adapters.now?.() ?? new Date()).toISOString()
+              .replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+            const stem = `${notePath}.conflict-${stamp}-globnotes`;
+            let copyPath = stem, suffix = 1;
+            // Count every occupied filesystem entry, not just readable notes.
+            for (;;) {
+              const prepared = this.adapters.notes.prepareCreate({
+                path: copyPath,
+              });
+              try {
+                Deno.lstatSync(prepared.filename);
+              } catch (error) {
+                if (error instanceof Deno.errors.NotFound) break;
+                throw error;
+              }
+              copyPath = `${stem}-${++suffix}`;
+            }
+            const copy = await this.#createNoteLocked(
+              { path: copyPath, content: data.newContent },
+              ctx,
+              requester,
+              operationId,
+            );
+            this.adapters.hub?.recordConflict({
+              id: createUuid(),
+              path: notePath + MARKDOWN_EXT,
+              copyPath: copy.path + MARKDOWN_EXT,
+              peer: "globnotes",
+              reason: "overlapping-edits",
+              state: "open",
+              createdAt: new Date().toISOString(),
+              resolvedAt: null,
+            });
+            return this.#saveResponse(copy, {
+              status: "conflict",
+              conflictCopyPath: copy.path,
+            });
+          }
+          data = { ...data, newContent: merged };
+          status = "merged";
+        }
+      }
       const capturedEpoch = ctx.origin === "api"
         ? ctx.lease.epoch
         : this.adapters.lifecycle.epoch;
@@ -401,7 +493,7 @@ export class NoteOperations {
         );
       }
       this.#syncEffects(operationId, ctx, actualEffects);
-      return note;
+      return this.#saveResponse(note, { status });
     });
   }
 

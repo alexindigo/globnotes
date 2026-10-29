@@ -1,10 +1,10 @@
-# Vault hub (v3, M1)
+# Vault hub (v3)
 
 `server/hub/hub.ts` owns one vault's file metadata and ordered change log.
 The vault folder is the only content store. `hub.sqlite` in the configured
 state directory stores hashes, sizes, mtimes, vectors and change metadata,
 never note contents or previous versions. It uses `node:sqlite`, WAL, and
-schema version 1. Peers are `local` (outside programs) and `globnotes`
+schema version 2 (version 1 migrates in place). Peers are `local` (outside programs) and `globnotes`
 (managed writes, with `api` or `plugin:<id>` origin detail).
 
 ## Observations
@@ -92,3 +92,27 @@ Search and tag queries read the index without a filesystem scan. The index's
 initial build remains available for rebuilds. An own save's hub commit and index
 notification complete synchronously before the operation's lifecycle facts and
 return, including reconciliation of actual partial effects.
+
+## Base-aware editor saves (M2)
+
+Note updates may send `baseContent` alongside `newContent`. Under the existing
+note lock, an equal base writes normally; a stale base receives a request-local,
+line-based three-way merge (`node-diff3`, MIT). Clean merges preserve the current
+file's line ending. Neither the base nor any patch is persisted in the hub.
+The existing guard/commit revalidation still rejects changes during guard waits;
+this is not filesystem CAS against outside programs.
+
+Overlapping edits leave the original untouched and create the submitted text
+next to it as `<stem>.conflict-YYYYMMDD-HHMMSS-globnotes.md` (UTC), using the normal
+guarded, create-exclusive path. Occupied names receive `-2`, `-3`, etc. before
+`.md`. No requested rename is applied on conflict. A missing original is
+recreated through guarded creation. Cancellation/failure retains existing error
+semantics. Legacy callers without a base retain replacement semantics until M4.
+
+GET/save responses include `version`, the SHA-256 of the returned content;
+updates add `saveResult: {status: saved|merged|conflict, conflictCopyPath?,
+recreated?}`. A conflict response describes the copy, not the original.
+`hub.recordConflict()` and `hub.conflicts()` own metadata-only conflict records
+(vault-relative paths including extensions). Deleting either member closes the
+record and nulls both plaintext paths in the deletion transaction, with the same
+secure-delete/checkpoint policy as the change log. Anonymous path keys remain.

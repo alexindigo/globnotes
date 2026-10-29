@@ -4,10 +4,12 @@ import { invalid_note_path, note_not_found } from "@server/api_messages.ts";
 import { InvalidPathError, NoteNotFoundError } from "@server/notes/models.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
+import { contentVersion } from "@server/hub/merge.ts";
 
 export default function (request: PathfinderRequest<{ path: string }>) {
   try {
-    return state.notes.get(request.params.path);
+    const note = state.notes.get(request.params.path);
+    return { ...note, version: contentVersion(note.content ?? "") };
   } catch (e) {
     // Python: the path-param title reaches storage, ValueError maps to the
     // constant message (not the validation detail).

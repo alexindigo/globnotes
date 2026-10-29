@@ -4,6 +4,7 @@ import * as path from "@std/path";
 import { anonymousPath, pathKey } from "./paths.ts";
 import type {
   ChangeEntry,
+  Conflict,
   FileState,
   Mutation,
   Peer,
@@ -37,11 +38,18 @@ export class HubStore {
     const version = this.db.prepare(
       "SELECT value FROM meta WHERE key='schema_version'",
     ).get();
-    if (version && version.value !== "1") {
+    if (version && !["1", "2"].includes(version.value as string)) {
       throw new Error("Unsupported hub schema");
     }
-    this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('schema_version','1')")
-      .run();
+    this.db.exec(`BEGIN IMMEDIATE;
+      CREATE TABLE IF NOT EXISTS conflicts(id TEXT PRIMARY KEY, path TEXT,
+        path_key TEXT NOT NULL, copy_path TEXT, copy_path_key TEXT NOT NULL,
+        peer TEXT NOT NULL, reason TEXT NOT NULL, state TEXT NOT NULL,
+        created_at TEXT NOT NULL, resolved_at TEXT);
+      CREATE INDEX IF NOT EXISTS conflicts_path_key ON conflicts(path_key);
+      CREATE INDEX IF NOT EXISTS conflicts_copy_path_key ON conflicts(copy_path_key);
+      INSERT OR REPLACE INTO meta VALUES ('schema_version','2');
+      COMMIT;`);
     const secret = [...crypto.getRandomValues(new Uint8Array(32))]
       .map((v) => v.toString(16).padStart(2, "0")).join("");
     this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('path_secret',?)").run(
@@ -161,6 +169,9 @@ export class HubStore {
           this.db.prepare(
             "UPDATE changes SET old_path=NULL WHERE old_path_key=?",
           ).run(keyed);
+          this.db.prepare(`UPDATE conflicts SET path=NULL, copy_path=NULL,
+            state='resolved', resolved_at=? WHERE path_key=? OR copy_path_key=?`)
+            .run(entry.at, keyed, keyed);
           scrubbed = true;
         }
         // Transient committed notifications retain deleted names; persisted history does not.
@@ -202,6 +213,38 @@ export class HubStore {
   }
   checkpoint(): void {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  }
+  recordConflict(conflict: Conflict): void {
+    if (!conflict.path || !conflict.copyPath) {
+      throw new Error("Conflict paths required");
+    }
+    const live = this.fileState(conflict.path)?.diskPath === conflict.path &&
+      this.fileState(conflict.copyPath)?.diskPath === conflict.copyPath;
+    this.db.prepare("INSERT INTO conflicts VALUES(?,?,?,?,?,?,?,?,?,?)").run(
+      conflict.id,
+      live ? conflict.path : null,
+      anonymousPath(this.secret, conflict.path),
+      live ? conflict.copyPath : null,
+      anonymousPath(this.secret, conflict.copyPath),
+      conflict.peer,
+      conflict.reason,
+      live ? conflict.state : "resolved",
+      conflict.createdAt,
+      live ? conflict.resolvedAt : new Date().toISOString(),
+    );
+  }
+  conflicts(): Conflict[] {
+    return this.db.prepare("SELECT * FROM conflicts ORDER BY created_at,id")
+      .all().map((r) => ({
+        id: r.id as string,
+        path: r.path as string | null,
+        copyPath: r.copy_path as string | null,
+        peer: r.peer as Conflict["peer"],
+        reason: r.reason as string,
+        state: r.state as Conflict["state"],
+        createdAt: r.created_at as string,
+        resolvedAt: r.resolved_at as string | null,
+      }));
   }
   close(): void {
     this.db.close();

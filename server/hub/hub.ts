@@ -7,7 +7,7 @@ import type { StorageEffect } from "../notes/file_system.ts";
 import { pathKey, within } from "./paths.ts";
 import { HubScanner, observeFile } from "./scanner.ts";
 import { HubStore } from "./store.ts";
-import type { ChangeEntry, Mutation, ScanStats } from "./types.ts";
+import type { ChangeEntry, Conflict, Mutation, ScanStats } from "./types.ts";
 
 export type Expectation = symbol;
 export class VaultHub {
@@ -215,6 +215,17 @@ export class VaultHub {
   }
   fileState(name: string) {
     return this.store.fileState(name);
+  }
+  recordConflict(conflict: Conflict): void {
+    // A guard awaited while creating the copy may let the watcher observe a
+    // deletion first. Reconcile both members before admitting plaintext names.
+    this.scanNow(
+      [conflict.path, conflict.copyPath].filter((p): p is string => p !== null),
+    );
+    this.store.recordConflict(conflict);
+  }
+  conflicts(): Conflict[] {
+    return this.store.conflicts();
   }
   /** One vault coordinate system for canonical storage effects and configured-root walks. */
   relativePath(absolute: string): string | null {
