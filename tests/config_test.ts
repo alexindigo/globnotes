@@ -4,6 +4,13 @@ import { assert, assertEquals } from "@std/assert";
 import { AuthType } from "../server/config.ts";
 import { command } from "./helpers/process.ts";
 
+/** An owned, empty vault: GlobalConfig reads <vault>/.globnotes/config.json,
+ * so a fixed shared path could carry another run's stored config. */
+const VAULT = Deno.makeTempDirSync({ prefix: "globnotes-config-vault-" });
+globalThis.addEventListener("unload", () => {
+  Deno.removeSync(VAULT, { recursive: true });
+});
+
 // GlobalConfig reads process env at construction time, so these tests
 // spawn subprocesses with controlled environments.
 
@@ -44,8 +51,8 @@ async function loadConfig(
 }
 
 Deno.test("config: defaults", async () => {
-  const c = await loadConfig({ GLOBNOTES_PATH: "/tmp/vault" });
-  assertEquals(c.notesPath, "/tmp/vault");
+  const c = await loadConfig({ GLOBNOTES_PATH: VAULT });
+  assertEquals(c.notesPath, VAULT);
   assertEquals(c.authType, null);
   assertEquals(c.setupRequired, true);
   assertEquals(c.pathPrefix, "");
@@ -61,7 +68,7 @@ Deno.test("config: defaults", async () => {
 
 Deno.test("config: auto-enable plugins env off", async () => {
   const c = await loadConfig({
-    GLOBNOTES_PATH: "/tmp/vault",
+    GLOBNOTES_PATH: VAULT,
     GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
   });
   assertEquals(c.autoEnablePlugins, false);
@@ -69,7 +76,7 @@ Deno.test("config: auto-enable plugins env off", async () => {
 
 Deno.test("config: env auth type wins", async () => {
   const c = await loadConfig({
-    GLOBNOTES_PATH: "/tmp/vault",
+    GLOBNOTES_PATH: VAULT,
     GLOBNOTES_AUTH_TYPE: "none",
   });
   assertEquals(c.authType, AuthType.NONE);
@@ -112,7 +119,7 @@ Deno.test("config: env overrides stored config", async () => {
 
 Deno.test("config: path prefix validated", async () => {
   const ok = await loadConfig({
-    GLOBNOTES_PATH: "/tmp/vault",
+    GLOBNOTES_PATH: VAULT,
     GLOBNOTES_PATH_PREFIX: "/notes",
   });
   assertEquals(ok.pathPrefix, "/notes");
@@ -125,7 +132,7 @@ Deno.test("config: invalid path prefix exits", async () => {
   `;
   const cmd = command(Deno.execPath(), {
     args: ["eval", script],
-    env: { GLOBNOTES_PATH: "/tmp/vault", GLOBNOTES_PATH_PREFIX: "bad" },
+    env: { GLOBNOTES_PATH: VAULT, GLOBNOTES_PATH_PREFIX: "bad" },
     stdout: "null",
     stderr: "null",
   });
@@ -135,7 +142,7 @@ Deno.test("config: invalid path prefix exits", async () => {
 
 Deno.test("config: deprecated GLOBNOTES_HIDE_RECENTLY_MODIFIED still works", async () => {
   const c = await loadConfig({
-    GLOBNOTES_PATH: "/tmp/vault",
+    GLOBNOTES_PATH: VAULT,
     GLOBNOTES_HIDE_RECENTLY_MODIFIED: "true",
   });
   assertEquals(c.quickAccessHide, true);
@@ -143,7 +150,7 @@ Deno.test("config: deprecated GLOBNOTES_HIDE_RECENTLY_MODIFIED still works", asy
 
 Deno.test("config: quick access settings", async () => {
   const c = await loadConfig({
-    GLOBNOTES_PATH: "/tmp/vault",
+    GLOBNOTES_PATH: VAULT,
     GLOBNOTES_QUICK_ACCESS_TITLE: "Pinned",
     GLOBNOTES_QUICK_ACCESS_SORT: "title",
     GLOBNOTES_QUICK_ACCESS_LIMIT: "9",
@@ -155,7 +162,7 @@ Deno.test("config: quick access settings", async () => {
 
 Deno.test("config: brand from env", async () => {
   const c = await loadConfig({
-    GLOBNOTES_PATH: "/tmp/vault",
+    GLOBNOTES_PATH: VAULT,
     GLOBNOTES_BRAND_NAME: "Acme Notes",
     GLOBNOTES_BRAND_ACCENT: "#ff6600",
   });

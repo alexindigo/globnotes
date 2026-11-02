@@ -58,6 +58,13 @@ const RULES: Rule[] = [
       "only the server launcher (tests/helpers/boot.ts) sets a server's port",
   },
   {
+    id: "no-fixed-tmp-paths",
+    scope: "tests",
+    pattern: /["'`]\/tmp\//,
+    why:
+      "fixed shared paths can carry another run's data; tests create owned temp dirs (servers also refuse a cwd inside the checkout, tests/helpers/boot.ts)",
+  },
+  {
     id: "single-process-env-owner",
     scope: "server",
     pattern: /Deno\.env\b/,

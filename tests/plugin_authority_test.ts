@@ -1107,15 +1107,13 @@ Deno.test("plugin authority: independent narrow observers receive only authorize
  * clean environment, self-chosen port and lifetime; this fixture adds the
  * admission deadline and the launch record. No permission repair. */
 async function launchBackgroundFixture(env: Record<string, string>) {
-  const root = new URL("../", import.meta.url).pathname;
   const deadline = Date.now() + 10000;
-  const server = await bootServer(env, { cwd: root, readyMs: 10000 });
+  const server = await bootServer(env, { readyMs: 10000 });
   console.log(JSON.stringify({
     fixtureLaunch: {
       pid: server.pid,
       executable: Deno.execPath(),
       args: server.args,
-      cwd: root,
       env,
       inheritsEnvironment: false,
       loggingDelta: "stdout piped; stderr exposed; both continuously drained",
