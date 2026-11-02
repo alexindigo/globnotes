@@ -26,7 +26,7 @@ def quiet(value):
 
 
 def dates(commit):
-    fields = git('show', '-s', '--format=%aI%x00%cI', commit).stdout.strip().split('\0')
+    fields = git('show', '-s', '--format=%aI%x00%cI', f'{commit}^{{commit}}').stdout.strip().split('\0')
     return tuple(datetime.fromisoformat(value).astimezone(ZONE) for value in fields)
 
 
@@ -36,11 +36,11 @@ def check_range(base, commits):
     previous = dates(base) if base else None
     for commit in commits:
         current = dates(commit)
-        for label, value in zip(('author', 'committer'), current):
+        for label, value in zip(('author', 'committer'), current, strict=True):
             if quiet(value):
                 problems.append(f'{commit[:12]}: {label} date {value.isoformat()} is inside weekday 09:00-18:00 Pacific')
         if previous:
-            for label, value, before in zip(('author', 'committer'), current, previous):
+            for label, value, before in zip(('author', 'committer'), current, previous, strict=True):
                 if value < before:
                     problems.append(f'{commit[:12]}: {label} date {value.isoformat()} is before its predecessor\'s {before.isoformat()}')
         previous = current
