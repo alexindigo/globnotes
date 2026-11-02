@@ -24,6 +24,14 @@ jobs:
           .devcontainer/run.sh
           --run-dir "$RUNNER_TEMP/globnotes/timing"
           -- bash scripts/gates.sh --timing
+      - name: "Upload failure diagnostics"
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-failure-diagnostics
+          path: |
+            ${{ runner.temp }}/globnotes/*/logs/
+            ${{ runner.temp }}/globnotes/*/artifacts/**/*.json
 
   docker-build:
     runs-on: ubuntu-latest
