@@ -17,9 +17,49 @@ import {
   selectChecks,
   type Selection,
   STATIC_GATES,
+  validateSelection,
 } from "../scripts/select-checks.ts";
 
 const E2E = "client/tests/e2e/";
+
+Deno.test("select-checks: malformed or contradictory selections fail closed", () => {
+  const valid = selectChecks([{
+    status: "M",
+    path: "deno.json",
+    removed: false,
+  }], fixture());
+  validateSelection(valid);
+  for (
+    const patch of [
+      { version: 2 },
+      { browser: "false" },
+      { browser: true },
+      { gates: [] },
+      { gates: [...valid.gates, "misspelled"] },
+      { serverTests: [] },
+      { clientTests: null },
+      { timingTests: ["all"] },
+      { contractTests: ["one\ntwo"] },
+      { browserCases: "all" },
+    ]
+  ) {
+    assertThrows(
+      () => validateSelection({ ...valid, ...patch }),
+      Error,
+      "invalid selection",
+    );
+  }
+});
+
+Deno.test("select-checks: missing browser graph conservatively selects all cases", () => {
+  const selected = selectChecks(
+    [{ status: "M", path: `${E2E}alpha.mjs`, removed: false }],
+    fixture({ refs: null, graphError: "fixture graph failure" }),
+  );
+  assertEquals(selected.browserCases, "all");
+  assertEquals(selected.browser, true);
+  validateSelection(selected);
+});
 
 const FILES = [
   ".devcontainer/run.sh",

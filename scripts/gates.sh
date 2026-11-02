@@ -91,6 +91,9 @@ gate() {
 
 shell_syntax() {
     local file first
+    local list="$TMPDIR/shell-files.z"
+    find . \( -path ./node_modules -o -path ./client/dist -o -path ./.git \) -prune -o \
+        -type f \( -name '*.sh' -o -path './.githooks/*' \) -print0 | sort -z > "$list"
     while IFS= read -r -d '' file; do
         IFS= read -r first < "$file" || true
         case "$first" in
@@ -98,8 +101,7 @@ shell_syntax() {
             *) sh -n "$file" ;;
         esac
         printf 'ok %s\n' "$file"
-    done < <(find . \( -path ./node_modules -o -path ./client/dist -o -path ./.git \) -prune -o \
-        -type f \( -name '*.sh' -o -path './.githooks/*' \) -print0 | sort -z)
+    done < "$list"
 }
 # Link every browser-suite module statically (esbuild, through deno bundle):
 # a duplicate binding, a missing module or a missing named export fails here
@@ -113,9 +115,11 @@ e2e_modules() {
 }
 handlers() {
     local file
+    local list="$TMPDIR/handler-files.z"
+    find server/api/endpoints -name '*.ts' -print0 | sort -z > "$list"
     while IFS= read -r -d '' file; do
         deno check --cached-only --frozen --config=deno.json "$file"
-    done < <(find server/api/endpoints -name '*.ts' -print0 | sort -z)
+    done < "$list"
 }
 cdp_ready() {
     deno eval 'const r = await fetch("http://127.0.0.1:9335/json/version").catch(() => null);
@@ -168,6 +172,15 @@ field() {
     deno run --cached-only --frozen --config=deno.json --allow-read="$logs" \
         scripts/select-checks.ts --field "$selection" "$1"
 }
+# Process substitutions hide the producer's status. Capture first, then split
+# the validated field; an empty list is legitimate only for an unselected gate.
+field_lines() {
+    local text
+    local -n values="$2"
+    text="$(field "$1")" || { printf 'selection field %s failed\n' "$1" >&2; exit 1; }
+    values=()
+    if [[ -n "$text" ]]; then mapfile -t values <<< "$text"; fi
+}
 
 case "$mode" in
     plan)
@@ -176,29 +189,39 @@ case "$mode" in
         gate select bash -c 'deno run --cached-only --frozen --config=deno.json --allow-read --allow-write --allow-run --allow-env \
             scripts/select-checks.ts --staged "$1" --files "$2" > "$3"' select "$staged" "$files" "$logs/selection.json"
         selection="$logs/selection.json"
-        if [[ "$(field browser)" == true ]]; then : > "$logs/browser-required"; fi
-        printf 'selected: %s\n' "$(field gates | paste -sd, -)"
+        failed=selection
+        browser_required="$(field browser)"
+        field_lines gates gates
+        if [[ "$browser_required" == true ]]; then : > "$logs/browser-required"; fi
+        printf 'selected: %s\n' "$(IFS=,; printf '%s' "${gates[*]}")"
+        failed=""
         ;;
     select)
         unset GLOBNOTES_E2E_CASES
         [[ -f "$selection" ]] || { printf 'missing selection %s\n' "$selection" >&2; exit 2; }
-        mapfile -t gates < <(field gates)
-        mapfile -t contracts < <(field contractTests)
+        failed=selection
+        # Read every field before starting any selected workload. A late field
+        # failure must not turn into an empty test/case list either.
+        field_lines gates gates
+        field_lines contractTests contracts
+        field_lines serverTests server_files
+        field_lines timingTests timing_files
+        field_lines clientTests related
+        field_lines browserCases cases
+        browser_required="$(field browser)"
+        failed=""
         selected() { local g; for g in "${gates[@]}"; do [[ "$g" == "$1" ]] && return 0; done; return 1; }
-        if [[ "$(field browser)" == true ]]; then gate browser-ready cdp_ready; fi
+        if [[ "$browser_required" == true ]]; then gate browser-ready cdp_ready; fi
         static_gates "${contracts[@]}"
         if selected server; then
-            mapfile -t tests < <(field serverTests)
-            if [[ "${tests[*]}" == all ]]; then tests=(--ignore=tests/timing/ tests/); fi
-            gate server server_tests "${tests[@]}"
+            if [[ "${server_files[*]}" == all ]]; then server_files=(--ignore=tests/timing/ tests/); fi
+            gate server server_tests "${server_files[@]}"
         fi
         if selected timing; then
-            mapfile -t tests < <(field timingTests)
-            if [[ "${tests[*]}" == all ]]; then tests=(tests/timing/); fi
-            gate timing deno test "${test_flags[@]}" "${tests[@]}"
+            if [[ "${timing_files[*]}" == all ]]; then timing_files=(tests/timing/); fi
+            gate timing deno test "${test_flags[@]}" "${timing_files[@]}"
         fi
         if selected client; then
-            mapfile -t related < <(field clientTests)
             if [[ "${related[*]}" == all ]]; then
                 gate client env VITEST_MAX_WORKERS=4 deno task test:client
             else
@@ -213,7 +236,6 @@ case "$mode" in
         if selected build; then build_gates; fi
         if selected unit-controls; then unit_controls; fi
         if selected native; then
-            mapfile -t cases < <(field browserCases)
             if [[ "${cases[*]}" != all ]]; then
                 GLOBNOTES_E2E_CASES="$(IFS=,; printf '%s' "${cases[*]}")"
                 export GLOBNOTES_E2E_CASES
