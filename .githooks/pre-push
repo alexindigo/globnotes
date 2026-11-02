@@ -1,4 +1,4 @@
 #!/bin/sh
+# Pre-push: commit-date checks only (docs/testing.md); the tests ran at commit time.
 set -eu
-ROOT=$(git rev-parse --show-toplevel)
-exec python3 -B "$ROOT/scripts/verify-in-vm.py" pre-push --root "$ROOT" --remote "$1" --url "$2"
+exec python3 -B "$(git rev-parse --show-toplevel)/scripts/check-push-dates.py" "$@"
