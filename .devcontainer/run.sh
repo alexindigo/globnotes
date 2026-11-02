@@ -52,6 +52,21 @@ mkdir -p "$run_dir/engine-tmp"
 export TMPDIR="$run_dir/engine-tmp"
 export GLOBNOTES_CONTAINER_ENGINE="$engine"
 
+# Build caps: Podman and the legacy Docker builder take --memory; BuildKit's
+# docker build takes --resource where its daemon supports per-step limits.
+build_caps=(--memory=4g)
+if [[ "$backend" == docker ]]; then
+    build_help="$(timeout 20 "$engine" build --help 2>&1)" || build_help=""
+    if [[ "$build_help" == *--memory* ]]; then
+        build_caps=(--memory=4g)
+    elif [[ "$build_help" == *--resource* ]]; then
+        build_caps=(--resource memory=4g --resource memory-swap=4g)
+    else
+        build_caps=()
+    fi
+fi
+printf 'build caps: %s\n' "${build_caps[*]:-none (engine has no build resource flag)}" > "$run_dir/logs/build-caps.txt"
+
 build_image() {
     local kind="$1" file="$2" hash start end elapsed image status
     hash="$(sha256sum "$file")"
@@ -62,7 +77,7 @@ build_image() {
         printf '{"image":"%s","built":false,"seconds":0}\n' "$image" >> "$run_dir/logs/build-timings.jsonl"
     else
         status=0
-        timeout 1200 "$engine" build --memory=4g --file "$file" --tag "$image" "$(dirname "$file")" > "$run_dir/logs/build-$kind.log" 2>&1 || status=$?
+        timeout 1200 "$engine" build "${build_caps[@]}" --file "$file" --tag "$image" "$(dirname "$file")" > "$run_dir/logs/build-$kind.log" 2>&1 || status=$?
         end="$EPOCHREALTIME"
         elapsed=$(( ${end/./} - ${start/./} ))
         printf '{"image":"%s","built":true,"seconds":%d.%06d,"exit":%d}\n' "$image" "$((elapsed / 1000000))" "$((elapsed % 1000000))" "$status" >> "$run_dir/logs/build-timings.jsonl"
@@ -91,13 +106,18 @@ dev_args=(--rm "${DEV_CAPS[@]}" --network globnotes-test --hostname globnotes.te
     --volume "$source_dir:/workspace:rw" --volume "$run_dir/tmp:/run-tmp:rw"
     --volume "$run_dir/logs:/run-logs:rw"
     --volume "$run_dir/artifacts:/artifacts:rw"
-    --volume globnotes-deno-cache:/deno-dir
     --env TMPDIR=/run-tmp --env DENO_DIR=/deno-dir --env GLOBNOTES_TEST_HOST=globnotes.test
     --env CDP_PORT=9335 --env NO_COLOR=1 --env VITEST_MAX_WORKERS=1)
 if [[ "$backend" == podman ]]; then
-    dev_args+=(--userns=keep-id:uid=1000,gid=1000 --user dev)
+    dev_args+=(--userns=keep-id:uid=1000,gid=1000 --user dev --volume globnotes-deno-cache:/deno-dir)
 else
-    dev_args+=(--user "$(id -u):$(id -g)")
+    # Docker runs as the invoking user, who owns neither the image's dev home nor
+    # a new named volume (copied from the image as uid 1000): give it a cache
+    # directory and a HOME it owns, with the image's default-cache link.
+    cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/globnotes-run/deno-dir"
+    mkdir -p "$cache_dir" "$run_dir/tmp/home/.cache" "$run_dir/tmp/chromium-home"
+    ln -sfn /deno-dir "$run_dir/tmp/home/.cache/deno"
+    dev_args+=(--user "$(id -u):$(id -g)" --volume "$cache_dir:/deno-dir:rw" --env HOME=/run-tmp/home)
 fi
 if ! "$browser"; then
     exec timeout 3600 "$engine" run "${dev_args[@]}" "$dev_image" "$@"
@@ -133,7 +153,7 @@ browser_args=(--rm --detach --name "$chromium_name" --network "container:$name"
 if [[ "$backend" == podman ]]; then
     browser_args+=(--userns=keep-id:uid=1000,gid=1000 --user chromium)
 else
-    browser_args+=(--user "$(id -u):$(id -g)")
+    browser_args+=(--user "$(id -u):$(id -g)" --env HOME=/run-tmp/chromium-home)
 fi
 chromium_flags=()
 if [[ "${GLOBNOTES_CHROMIUM_NO_SANDBOX:-0}" == 1 ]]; then

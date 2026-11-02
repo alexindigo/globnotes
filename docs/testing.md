@@ -3,7 +3,7 @@
 Every test and browser check runs inside the project's devcontainer,
 started by `.devcontainer/run.sh`. Nothing runs Deno, Chromium or the test
 suites directly on the host. The pre-commit hook runs the checks related to a
-commit; the full suite runs with `scripts/gates.sh --all`.
+commit; GitHub CI runs the full suite (`scripts/gates.sh --all --browser`).
 
 ## The devcontainer
 
@@ -13,8 +13,8 @@ commit; the full suite runs with `scripts/gates.sh --all`.
 | 2 | Browser image | `.devcontainer/chromium/Dockerfile`: headless Chromium, user `chromium`, CDP on `127.0.0.1:9335`. Started only with `--browser`, in the dev container's network namespace |
 | 3 | Resource caps | Dev container: 8 GB memory = memory+swap, 512 PIDs, 4 CPUs (`DEV_CAPS` in `run.sh`, equal to `runArgs` in `devcontainer.json`; `tests/devcontainer_caps_test.ts` keeps them equal). Chromium: 2 GB, 512 PIDs, 2 CPUs, 1 GB shared memory |
 | 4 | Network | Own network `globnotes-test`; no published ports. The dev container's hostname is `globnotes.test` |
-| 5 | Mounts | `/workspace` = the source directory, `/run-tmp` (`TMPDIR`), `/run-logs`, `/artifacts` = the run directory's `tmp`, `logs`, `artifacts`; `/deno-dir` = the dependency cache volume `globnotes-deno-cache` |
-| 6 | Engine | Rootless Podman when installed, else Docker; `GLOBNOTES_CONTAINER_ENGINE=podman\|docker` chooses. Podman maps the host user to `dev` (`--userns=keep-id`) |
+| 5 | Mounts | `/workspace` = the source directory, `/run-tmp` (`TMPDIR`), `/run-logs`, `/artifacts` = the run directory's `tmp`, `logs`, `artifacts`; `/deno-dir` = the dependency cache (row 6) |
+| 6 | Engine | Rootless Podman when installed, else Docker; `GLOBNOTES_CONTAINER_ENGINE=podman\|docker` chooses. Podman maps the host user to `dev` (`--userns=keep-id`) and uses the cache volume `globnotes-deno-cache`; Docker runs as the host user with the cache in `~/.cache/globnotes-run/deno-dir` (see CI) |
 
 `devcontainer.json` uses the same image and caps for an editor session.
 
@@ -186,9 +186,46 @@ America/Los_Angeles, or when either date is earlier than the previous
 commit's (starting from the remote tip). It also rejects updates that do not
 contain the remote tip. Deletions pass.
 
+## CI: `.github/workflows/ci.yml`
+
+GitHub CI runs everything it can, in the same devcontainer, with rootless
+Podman (`GLOBNOTES_CONTAINER_ENGINE=podman`), matching the ark commit check,
+so a commit whose hook was skipped is still checked. Podman is preinstalled
+on the [GitHub-hosted Ubuntu runner](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md):
+
+```sh
+export GLOBNOTES_CONTAINER_ENGINE=podman
+.devcontainer/run.sh --browser --run-dir "$RUNNER_TEMP/globnotes/all" -- bash scripts/gates.sh --all --browser
+.devcontainer/run.sh --run-dir "$RUNNER_TEMP/globnotes/timing" -- bash scripts/gates.sh --timing
+```
+
+The first runs every gate, including the browser suite with its Chromium
+sidecar; the second the timing tests, serially. Chromium's sandbox stays
+enabled. CI uses Podman because Docker's default isolation on the hosted
+runner blocks the namespace creation Chromium needs for its sandbox.
+The `docker-build` job builds the production image.
+
+The Podman launcher requires rootless operation and maps the invoking user
+to container UID/GID 1000 with `--userns=keep-id:uid=1000,gid=1000` (Podman
+4.3 or newer). It uses a named bridge network and shares the dev container's
+network namespace with Chromium, keeping CDP internal. Image builds use
+`--memory=4g`; rootless memory limits require cgroups v2. There is no
+version-specific fallback or automatic relaxation of sandbox settings.
+
+Contributors can still select `GLOBNOTES_CONTAINER_ENGINE=docker`. Under
+Docker the launcher runs the containers as the invoking user, with a cache
+directory and `HOME` that user owns, and caps image builds with `--memory`
+or BuildKit's `--resource`, whichever the engine offers
+(`run/logs/build-caps.txt`).
+
+On failure, the launcher names the failing step and prints log tails. CI
+also uploads `test-failure-diagnostics`, containing the all/timing run
+directories' `logs/` and JSON artifacts.
+
 ## Evidence
 
 | # | Run | Where |
 |---|---|---|
 | 1 | Commit check | `~/TemporaryFiles/globnotes/validation/<stamp>-pre-commit-<tree12>/`: `tree.txt`, `base.txt`, `run/logs/` (`staged.z`, `files.z`, `selection.json`, gate logs, `timings.jsonl`, `summary.txt`, launcher logs) and JSON results under `run/artifacts/` |
 | 2 | Manual `run.sh` | The `--run-dir` (default `~/.cache/globnotes-run/run.*`) |
+| 3 | CI | The job log: every gate's output and its `== gate` header, the summary line |
