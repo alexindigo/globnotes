@@ -8,26 +8,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GLOBNOTES_CONTAINER_ENGINE: docker
     steps:
       - uses: actions/checkout@v7
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - name: "Install dependencies"
-        run: deno install
-      - name: "Server: lint"
-        run: deno lint server/ tests/
-      - name: "Server: type check"
-        run: deno check server/main.ts tests/**/*.ts
-      - name: "Server: tests"
+      # Everything runs in the devcontainer (docs/testing.md), as the commit check does.
+      - name: "All gates, with the browser suite"
         run: >-
-          deno test --unstable-worker-options
-          --allow-read --allow-write --allow-env --allow-run --allow-net
-          tests/
-      - name: "Client: unit tests"
-        run: deno task test:client
-      - name: "Client: build"
-        run: deno task build:client
+          .devcontainer/run.sh --browser
+          --run-dir "$RUNNER_TEMP/globnotes/all"
+          -- bash scripts/gates.sh --all --browser
+      - name: "Timing tests, serially"
+        run: >-
+          .devcontainer/run.sh
+          --run-dir "$RUNNER_TEMP/globnotes/timing"
+          -- bash scripts/gates.sh --timing
 
   docker-build:
     runs-on: ubuntu-latest
