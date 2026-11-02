@@ -10,6 +10,7 @@
 import type { LocalAuth } from "./auth/local.ts";
 import type { GlobalConfig } from "./config.ts";
 import type { FileServing } from "./files/file_serving.ts";
+import type { McpEndpoint } from "./mcp/endpoint.ts";
 import type { FileSystemNotes } from "./notes/file_system.ts";
 import type { SearchResult } from "./notes/models.ts";
 import type { NoteOperations } from "./notes/operations.ts";
@@ -79,6 +80,9 @@ export interface ServerState {
   /** Release identity read once at startup; null only in unit tests that
    * never start the server. */
   version: AppVersion | null;
+  /** The MCP endpoint (server/mcp/); null when GLOBNOTES_MCP_ENABLED=false
+   * and in unit tests that never start one. */
+  mcp: McpEndpoint | null;
 }
 
 // Assigned by initState() before the server starts listening; endpoints only
@@ -91,6 +95,7 @@ export const state: ServerState = {
   pluginEndpoints: null,
   pluginNetwork: null,
   version: null,
+  mcp: null,
 } as ServerState;
 
 export function initState(
@@ -114,4 +119,5 @@ export function initState(
   state.pluginEndpoints = null;
   state.pluginNetwork = null;
   state.version = null;
+  state.mcp = null;
 }

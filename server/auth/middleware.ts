@@ -38,10 +38,24 @@ export async function enforceAuth(req: Request): Promise<void> {
 export async function enforceAuthMetadata(
   req: Request,
 ): Promise<{ expiresAt: number | null }> {
+  return await authenticate(req, req.method !== "GET");
+}
+
+/** The same rules for a request that only reads, whatever its HTTP method:
+ * MCP sends every call as POST, so its read-only gate is per tool
+ * (server/mcp/), not per method. Writes still need noteMutationLease. */
+export async function enforceReadAuth(req: Request): Promise<void> {
+  await authenticate(req, false);
+}
+
+async function authenticate(
+  req: Request,
+  writes: boolean,
+): Promise<{ expiresAt: number | null }> {
   if (state.config.setupRequired) {
     throw new HttpError(503, "setup_required");
   }
-  if (state.config.authType === AuthType.READ_ONLY && req.method !== "GET") {
+  if (state.config.authType === AuthType.READ_ONLY && writes) {
     throw new HttpError(403, "read-only mode");
   }
   if (state.auth !== null) {

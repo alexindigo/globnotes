@@ -26,6 +26,7 @@ import { servicePluginRpc } from "./plugins/rpc.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { logger } from "./logger.ts";
+import { createMcpEndpoint } from "./mcp/endpoint.ts";
 import { initState, state } from "./state.ts";
 import { Fts5Indexer } from "./search/fts5.ts";
 import { readAppVersion } from "./version.ts";
@@ -118,6 +119,9 @@ const auxiliaryFilesystem = new AuxiliaryFilesystem({
 });
 state.pluginEndpoints = new PluginEndpoints(() => plugins.runtime);
 state.pluginNetwork = plugins.network;
+// The MCP endpoint (docs/mcp.md): the same authentication, write path and
+// plugin guards as the REST API. Disabled, /_/mcp answers 404.
+state.mcp = globalConfig.mcpEnabled ? createMcpEndpoint() : null;
 lifecycle.onFact((fact) => {
   const runtime = plugins.runtime;
   if (!runtime) return;
