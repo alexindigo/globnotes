@@ -23,7 +23,7 @@ import type {
   OperationFact,
 } from "../server/plugins/contracts.ts";
 import { testEnvironment } from "./helpers/environment.ts";
-import { command } from "./helpers/process.ts";
+import { bootServer } from "./helpers/boot.ts";
 
 const api = () => fixtureApiOrigin(state.lifecycle!);
 async function wait(predicate: () => boolean) {
@@ -1103,97 +1103,32 @@ Deno.test("plugin authority: independent narrow observers receive only authorize
   }
 });
 
-/** This fixture alone owns its child identity/output/deadline. Launch args,
- * inherited environment and cwd match helpers/boot.ts; no permission repair. */
+/** Background-fixture server: the shared launcher (helpers/boot.ts) owns its
+ * clean environment, self-chosen port and lifetime; this fixture adds the
+ * admission deadline and the launch record. No permission repair. */
 async function launchBackgroundFixture(env: Record<string, string>) {
   const root = new URL("../", import.meta.url).pathname;
-  const listener = Deno.listen({ port: 0, hostname: "127.0.0.1" });
-  const port = listener.addr.port;
-  listener.close();
-  const args = [
-    "run",
-    "--unstable-worker-options",
-    "--allow-net",
-    "--allow-read",
-    "--allow-write",
-    "--allow-env",
-    `${root}server/main.ts`,
-  ];
-  const launchEnv = {
-    ...env,
-    GLOBNOTES_PORT: String(port),
-    GLOBNOTES_HOST: "127.0.0.1",
-    NO_COLOR: "1",
-  };
-  const child = command(Deno.execPath(), {
-    args,
-    cwd: root,
-    env: launchEnv,
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const output = { stdout: "", stderr: "" };
-  const drains = ["stdout", "stderr"].map(async (name) => {
-    const stream = name === "stdout" ? child.stdout : child.stderr;
-    for await (const chunk of stream) {
-      output[name as keyof typeof output] += new TextDecoder().decode(chunk);
-    }
-  });
-  let status: Deno.CommandStatus | null = null;
-  child.status.then((value) => {
-    status = value;
-  });
-  let closed = false;
   const deadline = Date.now() + 10000;
-  const server = {
-    pid: child.pid,
-    baseUrl: `http://127.0.0.1:${port}`,
-    status: () => status,
-    output,
-    deadline,
-    async close() {
-      if (closed) return;
-      closed = true;
-      if (!status) child.kill("SIGTERM");
-      await child.status;
-      await Promise.all(drains);
-    },
-  };
+  const server = await bootServer(env, { cwd: root, readyMs: 10000 });
   console.log(JSON.stringify({
     fixtureLaunch: {
-      pid: child.pid,
+      pid: server.pid,
       executable: Deno.execPath(),
-      args,
+      args: server.args,
       cwd: root,
-      env: launchEnv,
-      inheritsEnvironment: true,
+      env,
+      inheritsEnvironment: false,
       loggingDelta: "stdout piped; stderr exposed; both continuously drained",
     },
   }));
-  try {
-    while (true) {
-      const exited = server.status();
-      if (exited) {
-        throw Error(`Background fixture server exited: ${exited.code}`);
-      }
-      try {
-        const response = await fetch(`${server.baseUrl}/_/api/health`, {
-          signal: AbortSignal.timeout(
-            Math.max(1, Math.min(3000, deadline - Date.now())),
-          ),
-        });
-        await response.body?.cancel();
-        if (response.ok) return server;
-      } catch { /* bounded readiness retry */ }
-      if (Date.now() >= deadline) {
-        throw Error("Background fixture health deadline");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  } catch (error) {
-    await server.close();
-    throw error;
-  }
+  return {
+    pid: server.pid,
+    baseUrl: server.baseUrl,
+    status: server.status,
+    output: server.output,
+    deadline,
+    close: server.close,
+  };
 }
 
 async function waitBackgroundAdmission(

@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** Boot a real globnotes server subprocess for integration tests,
- * mirroring how the Python suite used FastAPI's TestClient. */
+ * mirroring how the Python suite used FastAPI's TestClient.
+ *
+ * The launcher owns the child's resources: a clean environment
+ * (tests/helpers/process.ts), its port — the server binds port 0 itself and
+ * reports the bound port on its "globnotes listening on" line, so no other
+ * process can take it between choice and bind — and its lifetime (an early
+ * exit fails with the server's own stderr). */
 
 import { command, DENO } from "./process.ts";
 
 const SERVER_MAIN = new URL("../../server/main.ts", import.meta.url).pathname;
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
+const LISTENING = /globnotes listening on http:\/\/\S*:(\d+)/;
 
 /** Auto-created vault dirs, swept at test-process unload so a test that
  * forgets to clean up still leaves no /tmp/globnotes-test-vault-*
@@ -27,19 +34,19 @@ globalThis.addEventListener?.("unload", () => {
 export interface TestServer {
   baseUrl: string;
   vault: string;
+  /** The port the server bound (it chose it itself). */
+  port: number;
   pid: number;
-  /** Output captured from the server process so far. */
-  logs: () => { stderr: string };
+  /** The exact `deno` arguments the server was started with. */
+  args: string[];
+  /** Live output captured from the server process. */
+  output: { stdout: string; stderr: string };
+  logs: () => { stdout: string; stderr: string };
+  /** The exit status once the server process has exited, else null. */
+  status: () => Deno.CommandStatus | null;
   /** Stops the server. Fails, with the server's stderr, when the server had
    * already exited on its own. */
   close: () => Promise<void>;
-}
-
-function freePort(hostname: string): number {
-  const listener = Deno.listen({ port: 0, hostname });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
-  return port;
 }
 
 /** Server tests listen on loopback. Browser tests pass the local test domain's
@@ -50,49 +57,56 @@ export async function bootServer(
     cwd?: string;
     host?: string;
     origin?: (port: number) => string;
+    /** Extra `deno run` flags placed before the server entry point. */
+    denoArgs?: string[];
+    /** Readiness deadline (listening line and health). */
+    readyMs?: number;
   } = {},
 ): Promise<TestServer> {
   const hostname = opts.host ?? "127.0.0.1";
-  const port = freePort(hostname);
   const ownsVault = !env.GLOBNOTES_PATH;
   const vault = env.GLOBNOTES_PATH ??
     (await Deno.makeTempDir({ prefix: "globnotes-test-vault-" }));
   if (ownsVault) trackedVaults.add(vault);
-  let stderrText = "";
+  const args = [
+    "run",
+    "--unstable-worker-options",
+    "--allow-net",
+    "--allow-read",
+    "--allow-write",
+    "--allow-env",
+    ...(opts.denoArgs ?? []),
+    SERVER_MAIN,
+  ];
   // Clean environment: exactly `env` plus the launcher's base, never the
   // test process's (shared, concurrently mutated) environment.
   const child = command(DENO, {
-    args: [
-      "run",
-      "--unstable-worker-options",
-      "--allow-net",
-      "--allow-read",
-      "--allow-write",
-      "--allow-env",
-      SERVER_MAIN,
-    ],
+    args,
     cwd: opts.cwd ?? REPO_ROOT,
     env: {
       ...env,
       GLOBNOTES_PATH: vault,
-      GLOBNOTES_PORT: String(port),
+      GLOBNOTES_PORT: "0",
       GLOBNOTES_HOST: hostname,
     },
-    stdout: "null",
+    stdout: "piped",
     stderr: "piped",
   }).spawn();
 
-  // Drain stderr so the child never blocks on a full pipe buffer.
-  const draining = child.stderr
-    .pipeThrough(new TextDecoderStream())
-    .pipeTo(
-      new WritableStream({
-        write(chunk) {
-          stderrText += chunk;
-        },
-      }),
-    )
-    .catch(() => {});
+  // Drain both pipes so the child never blocks on a full pipe buffer.
+  const output = { stdout: "", stderr: "" };
+  const drain = (name: "stdout" | "stderr") =>
+    child[name]
+      .pipeThrough(new TextDecoderStream())
+      .pipeTo(
+        new WritableStream({
+          write(chunk) {
+            output[name] += chunk;
+          },
+        }),
+      )
+      .catch(() => {});
+  const draining = Promise.all([drain("stdout"), drain("stderr")]);
   let exited: Deno.CommandStatus | null = null;
   const status = child.status.then((value) => {
     exited = value;
@@ -103,45 +117,62 @@ export async function bootServer(
     await draining;
     return `${what} (pid ${child.pid}, exit code ${code}${
       signal ? `, signal ${signal}` : ""
-    }). stderr:\n${stderrText}`;
+    }). stderr:\n${output.stderr}`;
   };
 
-  const baseUrl = opts.origin?.(port) ?? `http://127.0.0.1:${port}`;
   // With a path prefix the router only answers under it.
   const prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + (opts.readyMs ?? 15_000);
+  let port: number | null = null;
   let up = false;
   while (Date.now() < deadline) {
     if (exited) {
       throw new Error(await exitDetail("server exited before it was healthy"));
     }
-    try {
-      const res = await fetch(`${baseUrl}${prefix}/_/api/health`);
-      await res.body?.cancel();
-      if (res.ok) {
-        up = true;
-        break;
+    port ??= Number(LISTENING.exec(output.stdout)?.[1]) || null;
+    if (port !== null) {
+      try {
+        const res = await fetch(
+          `${opts.origin?.(port) ?? `http://127.0.0.1:${port}`}${prefix}` +
+            "/_/api/health",
+          { signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) },
+        );
+        await res.body?.cancel();
+        if (res.ok) {
+          up = true;
+          break;
+        }
+      } catch {
+        // not up yet
       }
-    } catch {
-      // not up yet
     }
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, port === null ? 20 : 100));
   }
-  if (!up) {
+  if (!up || port === null) {
     try {
       child.kill("SIGKILL");
     } catch {
       // exited on its own meanwhile; exitDetail reports how
     }
-    throw new Error(await exitDetail("server failed to boot within 15 s"));
+    throw new Error(
+      await exitDetail(
+        port === null
+          ? "server never reported its listening port"
+          : "server failed to become healthy in time",
+      ),
+    );
   }
 
   let closed = false;
   return {
-    baseUrl,
+    baseUrl: opts.origin?.(port) ?? `http://127.0.0.1:${port}`,
     vault,
+    port,
     pid: child.pid,
-    logs: () => ({ stderr: stderrText }),
+    args,
+    output,
+    logs: () => ({ ...output }),
+    status: () => exited,
     close: async () => {
       if (closed) return;
       closed = true;
