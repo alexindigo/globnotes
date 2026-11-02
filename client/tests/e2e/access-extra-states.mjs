@@ -2,7 +2,7 @@
 import { nativeSession } from "./native-cdp-session.mjs";
 import { captureClipboard, closeClipboardWitness, prepareClipboardWitness, readClipboardText, restoreClipboard, writeClipboardText } from "./native-clipboard.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
-import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
+import { done as waitDone, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
 import { SignJWT } from "jose";
 
@@ -15,7 +15,7 @@ const assert = (value, message) => { if (!value) throw Error(message); };
 const password = "extra-access-password", username = "extra-access-fixture";
 const outcomes = []; let current, failure;
 function wait(predicate) {
-  return waitUntil(() => predicate() ? done() : pending({ condition: String(predicate) }), { label: "Access extra-state observation", intervalMs: 25 });
+  return waitUntil(() => predicate() ? waitDone() : waitPending({ condition: String(predicate) }), { label: "Access extra-state observation", intervalMs: 25 });
 }
 async function api(route, method = "GET", body) {
   const response = await fetch(`${current.server.baseUrl}/_/api/${route}`, { method, headers: { ...(current.token ? { authorization: `Bearer ${current.token}` } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(5000) });
