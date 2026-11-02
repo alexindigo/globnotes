@@ -1,6 +1,6 @@
 # Testing
 
-Every build, test and browser check runs inside the project's devcontainer,
+Every test and browser check runs inside the project's devcontainer,
 started by `.devcontainer/run.sh`. Nothing runs Deno, Chromium or the test
 suites directly on the host. The pre-commit hook runs the checks related to a
 commit; GitHub CI runs the full suite (`scripts/gates.sh --all --browser`).
