@@ -10,10 +10,8 @@ async function bootNetworkServer(
   importAuthority?: string,
   privateLockPath?: string,
 ) {
-  const root = new URL("../", import.meta.url).pathname;
   // jsr.io:443 is an existing normal-parent import right needed by the host graph.
   const server = await bootServer(env, {
-    cwd: root,
     readyMs: 10000,
     denoArgs: [
       ...importAuthority
@@ -27,7 +25,6 @@ async function bootNetworkServer(
       networkFixtureParent: {
         pid: server.pid,
         args: server.args,
-        cwd: root,
         isolatedImportControl: !!importAuthority,
       },
     }),

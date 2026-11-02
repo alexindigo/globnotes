@@ -6,13 +6,18 @@
  * The launcher owns the child's resources: a clean environment
  * (tests/helpers/process.ts), its port — the server binds port 0 itself and
  * reports the bound port on its "globnotes listening on" line, so no other
- * process can take it between choice and bind — and its lifetime (an early
+ * process can take it between choice and bind — its working directory (a
+ * scratch dir per boot, never the checkout: the server rewrites the
+ * cwd-relative client/dist/index.html at boot) — and its lifetime (an early
  * exit fails with the server's own stderr). */
 
+import { copy, existsSync } from "@std/fs";
+import * as path from "@std/path";
 import { command, DENO } from "./process.ts";
 
 const SERVER_MAIN = new URL("../../server/main.ts", import.meta.url).pathname;
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
+const REPO_DIST = path.join(REPO_ROOT, "client", "dist");
 const LISTENING = /globnotes listening on http:\/\/\S*:(\d+)/;
 
 /** Auto-created vault dirs, swept at test-process unload so a test that
@@ -49,11 +54,29 @@ export interface TestServer {
   close: () => Promise<void>;
 }
 
+/** A scratch working directory for one server. When the checkout has a
+ * client build, the server gets a private copy of it to serve and stamp. */
+async function scratchCwd(): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "globnotes-test-cwd-" });
+  if (existsSync(REPO_DIST)) {
+    await copy(REPO_DIST, path.join(dir, "client", "dist"));
+  }
+  return dir;
+}
+
+function insideCheckout(dir: string): boolean {
+  const root = Deno.realPathSync(REPO_ROOT);
+  const real = Deno.realPathSync(dir);
+  return real === root || real.startsWith(root + path.SEPARATOR);
+}
+
 /** Server tests listen on loopback. Browser tests pass the local test domain's
  * address as `host` and its browser-facing `origin` (client/tests/e2e/http-origin.mjs). */
 export async function bootServer(
   env: Record<string, string>,
   opts: {
+    /** Caller-owned app directory (e.g. a fixture client/dist). Default: a
+     * scratch dir owned by this server. Never inside the checkout. */
     cwd?: string;
     host?: string;
     origin?: (port: number) => string;
@@ -68,6 +91,13 @@ export async function bootServer(
   const vault = env.GLOBNOTES_PATH ??
     (await Deno.makeTempDir({ prefix: "globnotes-test-vault-" }));
   if (ownsVault) trackedVaults.add(vault);
+  if (opts.cwd !== undefined && insideCheckout(opts.cwd)) {
+    throw new Error(
+      `test servers must not run in the checkout (cwd ${opts.cwd}): the ` +
+        "server rewrites the cwd-relative client/dist/index.html at boot",
+    );
+  }
+  const ownedCwd = opts.cwd === undefined ? await scratchCwd() : null;
   const args = [
     "run",
     "--unstable-worker-options",
@@ -82,7 +112,7 @@ export async function bootServer(
   // test process's (shared, concurrently mutated) environment.
   const child = command(DENO, {
     args,
-    cwd: opts.cwd ?? REPO_ROOT,
+    cwd: opts.cwd ?? ownedCwd!,
     env: {
       ...env,
       GLOBNOTES_PATH: vault,
@@ -112,9 +142,16 @@ export async function bootServer(
     exited = value;
     return value;
   });
+  let cwdReleased = false;
+  const releaseCwd = async () => {
+    if (!ownedCwd || cwdReleased) return;
+    cwdReleased = true;
+    await Deno.remove(ownedCwd, { recursive: true });
+  };
   const exitDetail = async (what: string) => {
     const { code, signal } = await status;
     await draining;
+    await releaseCwd();
     return `${what} (pid ${child.pid}, exit code ${code}${
       signal ? `, signal ${signal}` : ""
     }). stderr:\n${output.stderr}`;
@@ -190,6 +227,7 @@ export async function bootServer(
       }
       await status;
       await draining;
+      await releaseCwd();
       // The vault is deliberately NOT removed here: restart-style tests
       // reuse the same vault across close()s. Auto-created vault paths
       // are tracked instead and swept at process unload (below), so
