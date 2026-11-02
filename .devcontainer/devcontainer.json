@@ -8,6 +8,7 @@
   "runArgs": ["--memory=8g", "--memory-swap=8g", "--pids-limit=512", "--cpus=4"],
   "remoteUser": "dev",
   "containerUser": "dev",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
   "customizations": {
     "vscode": {
