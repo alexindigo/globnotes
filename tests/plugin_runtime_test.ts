@@ -2,7 +2,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { PluginHost } from "../server/plugins/host.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { PluginDataStore } from "../server/plugins/data.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
@@ -347,7 +347,7 @@ Deno.test("plugin runtime: service activation without rendering, settings consum
 
 Deno.test("plugin runtime: legacy initial and later sync reach every retained replica", async () => {
   const fixture = await pluginFixture();
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     () => Promise.resolve(null),
     2,
@@ -393,7 +393,7 @@ Deno.test("plugin runtime: legacy initial and later sync reach every retained re
 
 Deno.test("plugin runtime: service sync is delivered once without a rendering pool", async () => {
   const fixture = await pluginFixture();
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     () => Promise.resolve(null),
     2,

@@ -2,7 +2,8 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
-import { PluginManager } from "../server/plugins/manager.ts";
+import type { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { PluginHost, type RpcAuthority } from "../server/plugins/host.ts";
 import { PluginDataStore } from "../server/plugins/data.ts";
 import { fixturePage } from "./helpers/plugin_fixture.ts";
@@ -64,12 +65,18 @@ async function fixtureBundle(
   });
   state.config = new GlobalConfig(env);
   state.auth = null;
-  const manager = new PluginManager(fixture.vault, rpc, 2, fixture.statePath, {
-    env,
-    internalRoot: `${fixture.root}/empty-internal`,
-    autoEnable: true,
-    persistence: { commit: (effect) => effect() },
-  });
+  const manager = createPluginManager(
+    fixture.vault,
+    rpc,
+    2,
+    fixture.statePath,
+    {
+      env,
+      internalRoot: `${fixture.root}/empty-internal`,
+      autoEnable: true,
+      persistence: { commit: (effect) => effect() },
+    },
+  );
   state.plugins = manager;
   state.lifecycle = null;
   const runtime = manager.configureRuntime({

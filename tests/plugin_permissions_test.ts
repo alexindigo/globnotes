@@ -12,7 +12,7 @@ import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginActions } from "../server/plugins/actions.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { servicePluginRpc } from "../server/plugins/rpc.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { initState, state } from "../server/state.ts";
@@ -39,7 +39,7 @@ async function serviceBundle(opts: {
   const notes = new FileSystemNotes(fixture.vault, {}, environment);
   const indexer = new Fts5Indexer(fixture.statePath, environment);
   const files = new FileServing(fixture.vault);
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     undefined,
     1,

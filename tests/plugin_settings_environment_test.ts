@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { auxiliaryFixture } from "./helpers/auxiliary_fixture.ts";
 import { PluginDataStore } from "../server/plugins/data.ts";
@@ -45,7 +45,7 @@ Deno.test("backup settings: environment reaches the actual service settings cons
       "export function getSelectors(){return []} export async function parseNode(node,ctx){return ctx.settings.read()}",
   });
   const ready = Promise.withResolvers<void>();
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     undefined,
     1,
@@ -262,7 +262,7 @@ Deno.test("backup settings: restart pin changes retire only their source request
   }
   async function start(raw?: string) {
     const ready = Promise.withResolvers<void>();
-    const manager = new PluginManager(
+    const manager = createPluginManager(
       fixture.vault,
       undefined,
       0,

@@ -97,6 +97,14 @@ const RULES: Rule[] = [
       "children start through tests/helpers/process.ts (clearEnv plus an explicit environment), never inheriting the shared test-process environment",
   },
   {
+    id: "scoped-plugin-manager",
+    scopes: ["tests"],
+    pattern: /new\s+PluginManager\s*\(/,
+    owners: ["tests/helpers/plugin_manager.ts"],
+    why:
+      "test managers are created by tests/helpers/plugin_manager.ts, which supplies a scoped Environment instead of processEnvironment",
+  },
+  {
     id: "no-port-probing",
     scopes: ["tests"],
     pattern: /Deno\.listen\s*\(\s*\{[^}]*\bport:\s*0\b/,

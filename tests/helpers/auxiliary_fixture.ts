@@ -2,7 +2,7 @@
 import { assertEquals } from "@std/assert";
 import { AuxiliaryFilesystem } from "../../server/plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "../../server/plugins/data.ts";
-import { PluginManager } from "../../server/plugins/manager.ts";
+import { createPluginManager } from "./plugin_manager.ts";
 import {
   type PluginManifest,
   readManifest,
@@ -75,7 +75,7 @@ export async function auxiliaryFixture(options: {
   });
   const commit = options.commit ??
     (async <T>(effect: () => T | Promise<T>): Promise<T> => await effect());
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     undefined,
     0,

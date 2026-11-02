@@ -20,7 +20,7 @@ import {
   requestedScopes,
 } from "../server/plugins/network_store.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 
 Deno.test("plugin network: declarations without operator consent delegate neither kind", async () => {
   const fixture = await pluginFixture();
@@ -491,7 +491,7 @@ Deno.test("plugin network: worker-free browser metadata ignores suppression and 
     },
   );
   const authority = `127.0.0.1:${receiver.addr.port}`;
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     () => Promise.resolve(null),
     0,

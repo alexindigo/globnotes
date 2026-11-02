@@ -18,7 +18,7 @@ import {
   pending as waitPending,
   waitUntil,
 } from "./helpers/wait.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { PluginDataStore } from "../server/plugins/data.ts";
 import { AsyncLock } from "../server/plugins/lifecycle.ts";
 
@@ -291,7 +291,7 @@ Deno.test("review repairs: R04 abort and stream failure release the reader and d
 Deno.test("review repairs: R04 body wait admitted to A cannot invoke B reused endpoint identity", async () => {
   const fixture = await pluginFixture();
   const gate = new AsyncLock();
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     () => Promise.resolve(null),
     1,

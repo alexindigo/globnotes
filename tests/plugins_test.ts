@@ -18,7 +18,7 @@ import {
   workerPermissions,
 } from "../server/plugins/manifest.ts";
 import { PluginHost } from "../server/plugins/host.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { pluginRpc } from "../server/plugins/rpc.ts";
 import { initState } from "../server/state.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
@@ -309,7 +309,7 @@ Deno.test("plugins: manager discovery skips broken plugins", async () => {
     );
     Deno.writeTextFileSync(path.join(bad, "main.js"), "");
 
-    const manager = new PluginManager(vault, nullRpc, 1);
+    const manager = createPluginManager(vault, nullRpc, 1);
     try {
       await manager.start();
       assert(manager.hosts.has("good"));
@@ -401,7 +401,7 @@ Deno.test("plugins: listPlugins flags dual-mode plugins", async () => {
       JSON.stringify({ disabled: ["single"] }),
     );
 
-    const manager = new PluginManager(vault, nullRpc, 0);
+    const manager = createPluginManager(vault, nullRpc, 0);
     const listed = manager.listPlugins();
     assertEquals(
       listed.find((p) => p.id === "dual"),

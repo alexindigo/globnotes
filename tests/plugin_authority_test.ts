@@ -6,7 +6,7 @@ import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginActions } from "../server/plugins/actions.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { PluginNetworkRequests } from "../server/plugins/network_requests.ts";
 import {
   PluginRuntime,
@@ -1258,7 +1258,7 @@ Deno.test("plugin authority: real Worker HTTP timer without file hooks persists 
         imports: false,
       },
     }, { "service.js": content });
-    const operator = new PluginManager(
+    const operator = createPluginManager(
       fixture.vault,
       undefined,
       0,

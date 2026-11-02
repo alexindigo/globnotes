@@ -6,7 +6,7 @@ import {
   PluginContractError,
 } from "../server/plugins/contracts.ts";
 import { PluginDataStore } from "../server/plugins/data.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
 import { command } from "./helpers/process.ts";
@@ -231,7 +231,7 @@ Deno.test("review repairs: R18 schema evolution actual Worker activation and lat
     "service.js":
       "export async function activate(ctx){const initial=await ctx.settings.read();ctx.commands.register({id:'inspect',label:'Inspect evolved settings',target:'server'},async()=>({initial,current:await ctx.settings.read()}));}",
   });
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     b.fixture.vault,
     () => Promise.resolve(null),
     0,
