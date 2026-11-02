@@ -1,7 +1,8 @@
 // VM-only native operator consent. Each fixture/context and normal parent is owned.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
-import { parseArguments } from "./harness-helpers.mjs";
+import { awaitHealthy, awaitPluginReady, parseArguments } from "./harness-helpers.mjs";
+import { done, failed, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 
 let options;
 try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -36,22 +37,8 @@ async function launch(fixture) {
   fixture.launchCount++;
   const base = httpOrigin(port);
   await Deno.writeTextFile(`${fixture.directory}/parent-${fixture.launchCount}.json`, JSON.stringify({ pid: child.pid, args, cwd: ROOT, isolatedImportParent: fixture.importParent }, null, 2));
-  const deadline = Date.now() + 30000;
-  for (;;) {
-    try {
-      const response = await fetch(`${base}/_/api/health`, { signal: AbortSignal.timeout(3000) }); await response.body?.cancel();
-      if (response.ok) break;
-    } catch { /* bounded owned startup */ }
-    if (Date.now() > deadline) throw Error("Owned permission server health deadline");
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-  for (;;) {
-    const response = await fetch(`${base}/_/api/plugin-host`, { signal: AbortSignal.timeout(3000) });
-    const catalog = await response.json(), plugin = catalog.plugins.find(plugin => plugin.id === "networked");
-    if (plugin?.status === "ready") break;
-    if (plugin?.status === "failed" || Date.now() > deadline) throw Error(`Owned permission activation failed: ${JSON.stringify(plugin)}`);
-    await new Promise(resolve => setTimeout(resolve, 30));
-  }
+  await awaitHealthy(base, { label: "Owned permission server health", child, intervalMs: 50 });
+  await awaitPluginReady(base, "networked", { label: "Owned permission activation", child, intervalMs: 30 });
   return { child, base, args, async close() { child.kill("SIGTERM"); await child.status; await Promise.all(drains); } };
 }
 
@@ -133,12 +120,10 @@ async function json(path, init) {
 const invoke = (id, command) => json(`plugin-host/${id}/commands/${command}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
 async function view() { const result = await json("plugin-host/networked/permissions"); assert(result.status === 200, "permission GET rejected"); return result.body; }
 async function committed(predicate, detail) {
-  const end = Date.now() + 10000;
-  for (;;) { const value = await view(); if (predicate(value)) return value; if (Date.now() > end) throw Error(`Permission commit deadline: ${detail}; ${JSON.stringify(value)}`); await new Promise(resolve => setTimeout(resolve, 30)); }
+  return waitUntil(async () => { const value = await view(); return predicate(value) ? done(value) : pending(value); }, { label: `Permission commit: ${detail}`, intervalMs: 30 });
 }
 async function readyReload() {
-  const end = Date.now() + 10000;
-  for (;;) { const value = await view(); if (["none", "ready"].includes(value.reload.state)) return value; if (value.reload.state === "failed" || Date.now() > end) throw Error("affected server reload failed"); await new Promise(resolve => setTimeout(resolve, 30)); }
+  return waitUntil(async () => { const value = await view(); if (["none", "ready"].includes(value.reload.state)) return done(value); if (value.reload.state === "failed") return failed("affected server reload failed", value); return pending(value); }, { label: "affected server reload settled", intervalMs: 30 });
 }
 async function click(session, selector) { await session.poll(`!!document.querySelector(${JSON.stringify(selector)})`); await session.click(selector); }
 async function dismissPrompt(session = current.session) {
@@ -283,9 +268,7 @@ try {
     await current.session.poll(`document.querySelector('.cm-content')?.textContent.includes(${JSON.stringify(text)})`);
   };
   const write = async index => {
-    const end = Date.now() + 10000;
-    while (!current.noteWrites[index]) { if (Date.now() > end) throw Error("real dirty-note write not reached"); await new Promise(resolve => setTimeout(resolve, 20)); }
-    return current.noteWrites[index];
+    return waitUntil(() => current.noteWrites[index] ? done(current.noteWrites[index]) : pending({ index, writes: current.noteWrites.length }), { label: "real dirty-note write reached", intervalMs: 20 });
   };
   await typeNote("PERMISSION-A"); await current.session.button("Save", ".content-column"); await write(0);
   await typeNote("PERMISSION-B"); await current.session.button("Save", ".content-column"); await typeNote("PERMISSION-D");
@@ -337,8 +320,7 @@ try {
    await current.session.poll("!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width");
    await current.session.button("Edit", ".content-column"); await current.session.button("Source", ".content-column");
    await typeNote("GUARD-PERMISSION-A"); await current.session.button("Save", ".content-column");
-   const guardDeadline = Date.now() + 10000;
-   while (!current.guardEntered()) { if (Date.now() > guardDeadline) throw Error("real pre-save guard did not enter"); await new Promise(resolve => setTimeout(resolve, 20)); }
+   await waitUntil(() => current.guardEntered() ? done() : pending({ guardEntered: false, writes: current.noteWrites.length }), { label: "real pre-save guard entered", intervalMs: 20 });
    assert(current.noteWrites.length === 0 && await Deno.readTextFile(`${current.vault}/NoteA.md`) === "Seed content.\n", "guard wait already changed storage");
    await typeNote("GUARD-PERMISSION-B"); await current.session.button("Save", ".content-column"); await typeNote("GUARD-PERMISSION-D");
    await current.session.poll("location.hash === '#source:L1'");

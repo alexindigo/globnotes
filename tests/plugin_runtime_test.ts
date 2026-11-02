@@ -12,6 +12,8 @@ import {
   type RuntimeSource,
 } from "../server/plugins/runtime.ts";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
+import { pluginSettled } from "./helpers/plugin_ready.ts";
+import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
 
 /** DIAG_R09_FINAL_CAS is test-only; restore the exact Deno.stat function in
  * finally. Observe original authority check → async CAS → actual worker
@@ -63,11 +65,7 @@ Deno.test("review repairs: R09 private data cannot commit after real worker reti
     const manifest = readManifest(dir);
     sources.push({ id: manifest.id, enabled: true, manifest, hooks: [] });
     await runtime.reconcile();
-    const readyUntil = Date.now() + 3000;
-    while (
-      runtime.status(manifest.id)?.status === "starting" &&
-      Date.now() < readyUntil
-    ) await new Promise((resolve) => setTimeout(resolve, 2));
+    await pluginSettled(runtime, manifest.id, "ready");
     assertEquals(runtime.status(manifest.id)?.status, "ready");
     Deno.stat = ((input: string | URL) => {
       const current = originalStat(input);
@@ -190,11 +188,7 @@ Deno.test("review repairs: R09 final preparation followed by real deadline or cr
           hooks: manifest.hooks,
         });
         await runtime.reconcile();
-        const readyUntil = Date.now() + 3000;
-        while (
-          runtime.status(manifest.id)?.status === "starting" &&
-          Date.now() < readyUntil
-        ) await new Promise((resolve) => setTimeout(resolve, 2));
+        await pluginSettled(runtime, manifest.id, "ready");
         assertEquals(runtime.status(manifest.id)?.status, "ready");
         writing = runtime.invokeCommand(manifest.id, "write", {}).catch((
           error,
@@ -213,20 +207,16 @@ Deno.test("review repairs: R09 final preparation followed by real deadline or cr
         assertEquals(reloaded.revision, 1);
         assertEquals(reloaded.values, { private: "unchanged" });
         assertEquals(Deno.readTextFileSync(file), before);
-        let residue = [
-          ...Deno.readDirSync(
-            `${fixture.statePath}/plugin-data/prepared-authority`,
-          ),
-        ].filter((entry) => entry.name.startsWith(".plugin-"));
-        const cleanupUntil = Date.now() + 1000;
-        while (residue.length && Date.now() < cleanupUntil) {
-          await new Promise((resolve) => setTimeout(resolve, 2));
-          residue = [
+        const residue = await waitUntil(() => {
+          const left = [
             ...Deno.readDirSync(
               `${fixture.statePath}/plugin-data/prepared-authority`,
             ),
           ].filter((entry) => entry.name.startsWith(".plugin-"));
-        }
+          return left.length
+            ? waitPending({ residue: left.map((entry) => entry.name) })
+            : done(left);
+        }, { label: "prepared-authority private residue removed" });
         assertEquals(residue, []);
         console.log(
           JSON.stringify({
@@ -282,10 +272,7 @@ Deno.test("plugin runtime: service activation without rendering, settings consum
       hooks: manifest.hooks,
     });
     await runtime.reconcile();
-    const deadline = Date.now() + 3000;
-    while (
-      runtime.status("service")?.status === "starting" && Date.now() < deadline
-    ) await new Promise((resolve) => setTimeout(resolve, 5));
+    await pluginSettled(runtime, "service", "ready");
     assertEquals(runtime.status("service")?.status, "ready");
     const generation = runtime.status("service")?.generation;
     assertEquals(runtime.commands().map((command) => command.fullId), [
@@ -342,10 +329,7 @@ Deno.test("plugin runtime: service activation without rendering, settings consum
     await assertRejects(() => runtime.invokeCommand("service", "inspect", {}));
     sources[0].enabled = true;
     await runtime.reconcile();
-    while (
-      runtime.status("service")?.status === "starting" &&
-      Date.now() < deadline + 3000
-    ) await new Promise((resolve) => setTimeout(resolve, 5));
+    await pluginSettled(runtime, "service");
     const reopened = await runtime.invokeCommand(
       "service",
       "inspect",
@@ -433,11 +417,7 @@ Deno.test("plugin runtime: service sync is delivered once without a rendering po
       }`,
     });
     await runtime.reconcile();
-    const deadline = Date.now() + 3000;
-    while (
-      runtime.status("service-sync")?.status === "starting" &&
-      Date.now() < deadline
-    ) await new Promise((resolve) => setTimeout(resolve, 5));
+    await pluginSettled(runtime, "service-sync");
     assertEquals(manager.hosts.size, 0);
     await manager.syncAll({
       operationId: "sync-test",
@@ -544,10 +524,7 @@ Deno.test("plugin runtime: late private-data commit is rejected after owner revo
     const manifest = readManifest(dir);
     sources.push({ id: manifest.id, enabled: true, manifest, hooks: [] });
     await runtime.reconcile();
-    const deadline = Date.now() + 3000;
-    while (
-      runtime.status("revoked")?.status === "starting" && Date.now() < deadline
-    ) await new Promise((resolve) => setTimeout(resolve, 5));
+    await pluginSettled(runtime, "revoked");
     const writing = runtime.invokeCommand("revoked", "write", {}).catch((
       error,
     ) => error);

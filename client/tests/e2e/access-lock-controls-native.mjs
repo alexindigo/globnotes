@@ -1,4 +1,5 @@
 // Callback-injected actual Settings/permission/local-preference consumers.
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 export async function exerciseLockedControls({ session, api, baseUrl, state, vault, openAccess, capture }) {
   const assert = (value, message) => { if (!value) throw Error(message); };
   const id = "access-workflow", settingsRoute = `plugin-host/${id}/settings/preferences`;
@@ -108,13 +109,10 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
   await session.poll("fetch('/_/api/notes/Seed').then(r=>r.json()).then(note=>note.content.includes('Locked controls public note consumer'))");
   await session.poll("(()=>{const button=[...document.querySelectorAll('.content-column button')].find(button=>button.textContent.trim()==='Save');return button?.getAttribute('aria-busy')==='false'&&!button.querySelector('.animate-spin');})()");
   assert((await Deno.readTextFile(`${vault}/Seed.md`)).includes("Locked controls public note consumer"), "Locked controls prevented actual public note persistence");
-  let report;
-  for (let end = Date.now() + 5000;;) {
-    report = (await api(`plugin-host/${id}/commands/report`, "POST", {})).body.result;
-    if (report.content?.includes("Locked controls public note consumer")) break;
-    if (Date.now() >= end) throw Error("Locked public hook/private-data consumer deadline");
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
+  const report = await waitUntil(async () => {
+    const report = (await api(`plugin-host/${id}/commands/report`, "POST", {})).body.result;
+    return report.content?.includes("Locked controls public note consumer") ? done(report) : pending(report);
+  }, { label: "Locked public hook/private-data consumer", intervalMs: 50 });
   assert(report.owner === owner && report.message === "locked retained settings consumer", "Settings lock/local preferences replaced owner or lost real settings/hook consumer");
   assert(JSON.parse(await Deno.readTextFile(`${state}/plugin-data/${id}/data.json`)).values.content.includes("Locked controls public note consumer"), "Locked workflow private data did not persist");
   const sourceUrl = await session.evaluate("location.href");

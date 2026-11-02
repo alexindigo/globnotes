@@ -17,6 +17,7 @@ import { GlobalConfig } from "../server/config.ts";
 import { state } from "../server/state.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { command } from "./helpers/process.ts";
+import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 const settingsPut = (await import(
   new URL(
@@ -74,19 +75,12 @@ async function settingsTransitionFixture(
     "main.js":
       "export function getSelectors(){return[]};export function parseNode(){return'unchanged'}",
   });
-  const until = async (predicate: () => boolean | Promise<boolean>) => {
-    const deadline = Date.now() + 3000;
-    while (!await predicate()) {
-      if (Date.now() > deadline) {
-        throw Error(
-          `settings transition readiness failed ${
-            JSON.stringify(runtime.status("transition"))
-          }`,
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-  };
+  const until = (predicate: () => boolean | Promise<boolean>) =>
+    waitUntil(async () =>
+      await predicate() ? done() : pending({
+        transition: runtime.status("transition"),
+        "unrelated-transition": runtime.status("unrelated-transition"),
+      }), { label: "settings transition readiness" });
   await runtime.reconcile();
   await until(() =>
     runtime.status("transition")?.status === "ready" &&

@@ -4,6 +4,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { PluginManager } from "../../server/plugins/manager.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
+import { done as waitDone, pending as waitPending, waitUntil } from "./wait.ts";
 
 const [kind, evidence] = Deno.args;
 assert(["missing-source", "constructor"].includes(kind));
@@ -87,10 +88,13 @@ try {
   release.resolve();
   const failed = await pending;
   assert(failed instanceof Error);
-  const until = Date.now() + 3000;
-  while (victim.generations.length && Date.now() < until) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+  await waitUntil(
+    () =>
+      victim.generations.length
+        ? waitPending({ generations: [...victim.generations] })
+        : waitDone(),
+    { label: "failed render pool retired its generations", intervalMs: 5 },
+  );
   assertEquals(
     victim.generations.length,
     0,

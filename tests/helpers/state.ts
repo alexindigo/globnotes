@@ -9,6 +9,7 @@ import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import type { PluginManager } from "../../server/plugins/manager.ts";
 import { Fts5Indexer } from "../../server/search/fts5.ts";
 import { initState } from "../../server/state.ts";
+import { done, pending, waitUntil } from "./wait.ts";
 
 export interface UnitState {
   config: GlobalConfig;
@@ -34,15 +35,9 @@ export function setupState(
 }
 
 /** Poll until the indexer's background sync reports complete. */
-export async function awaitIndexReady(
-  indexer: Fts5Indexer,
-  timeoutMs = 10_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+export function awaitIndexReady(indexer: Fts5Indexer): Promise<void> {
+  return waitUntil(() => {
     const s = indexer.indexStatus;
-    if (!s.syncing && !s.initial) return;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error("index sync did not complete in time");
+    return !s.syncing && !s.initial ? done() : pending({ ...s });
+  }, { label: "index background sync complete", intervalMs: 50 });
 }

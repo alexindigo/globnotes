@@ -2,6 +2,7 @@
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 
 let options;
 try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -12,13 +13,7 @@ await Deno.mkdir(artifacts, { mode: 0o700 });
 const outcomes = [];
 let current, failure;
 const assert = (condition, detail) => { if (!condition) throw new Error(detail); };
-const wait = async predicate => {
-  const end = Date.now() + 15000;
-  while (!predicate()) {
-    if (Date.now() >= end) throw new Error("Owned transport deadline");
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
-};
+const wait = predicate => waitUntil(() => predicate() ? done() : pending({ condition: String(predicate) }), { label: "Owned transport observation", intervalMs: 25 });
 
 async function setup(name, { view = false, readonly = false, create = false } = {}) {
   const directory = `${artifacts}/${name}`;

@@ -13,6 +13,8 @@ import eventsHandler from "../server/api/endpoints/_/api/plugin-host/events/get.
 import { state } from "../server/state.ts";
 import { AuthType } from "../server/config.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
+import { catalogPluginReady } from "./helpers/plugin_ready.ts";
+import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
 
 const ENDPOINT_PLUGIN = {
   manifest: {
@@ -52,15 +54,10 @@ async function pluginApiServer(opts: Record<string, string> = {}) {
     ...opts,
   });
   // Wait until the service runtime reports ready through the catalog.
-  const deadline = Date.now() + 8000;
-  for (;;) {
-    const res = await fetch(`${server.baseUrl}/_/api/plugin-host`);
-    const catalog = await res.json();
-    const ep = catalog.plugins.find((p: { id: string }) => p.id === "ep");
-    if (ep?.status === "ready") return { fixture, server, catalog };
-    if (Date.now() > deadline) throw new Error("plugin never became ready");
-    await new Promise((r) => setTimeout(r, 100));
-  }
+  await catalogPluginReady(server, "ep");
+  const catalog = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
+    .json();
+  return { fixture, server, catalog };
 }
 
 Deno.test("plugin api: root/rest routes, decoded params, query data and actual results", async () => {
@@ -199,19 +196,17 @@ Deno.test("plugin api: 404/405/Allow semantics and disabled-plugin unavailabilit
     );
     assertEquals(enable.status, 200);
     await enable.body?.cancel();
-    const deadline = Date.now() + 5000;
-    let ok = false;
-    while (Date.now() < deadline) {
-      const res = await fetch(`${server.baseUrl}/_/api/plugins/ep/item/x`);
-      if (res.status === 200) {
-        ok = true;
-        await res.body?.cancel();
-        break;
-      }
+    await waitUntil(async (signal) => {
+      const res = await fetch(`${server.baseUrl}/_/api/plugins/ep/item/x`, {
+        signal,
+      });
       await res.body?.cancel();
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    assert(ok, "plugin endpoint never came back after re-enable");
+      return res.status === 200 ? done() : waitPending({ status: res.status });
+    }, {
+      label: "plugin endpoint back after re-enable",
+      intervalMs: 100,
+      children: [server],
+    });
   } finally {
     await server.close();
     await fixture.dispose();
@@ -372,15 +367,7 @@ Deno.test("plugin api: invalidation stream delivers changes and closes on policy
     assertEquals(setup.status, 200);
     await setup.body?.cancel();
     // Wait for the service runtime after setup-completion reconciliation.
-    const readyDeadline = Date.now() + 8000;
-    for (;;) {
-      const res = await fetch(`${server.baseUrl}/_/api/plugin-host`);
-      const catalog = await res.json();
-      const ep = catalog.plugins.find((p: { id: string }) => p.id === "ep");
-      if (ep?.status === "ready") break;
-      if (Date.now() > readyDeadline) throw new Error("plugin never ready");
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    await catalogPluginReady(server, "ep");
     const controller = new AbortController();
     const res = await fetch(`${server.baseUrl}/_/api/plugin-host/events`, {
       signal: controller.signal,
@@ -390,9 +377,8 @@ Deno.test("plugin api: invalidation stream delivers changes and closes on policy
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    const nextEvent = async (name: string, timeoutMs = 8000) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
+    const nextEvent = (name: string) =>
+      waitUntil<string | null>(async () => {
         const marker = `event: ${name}\n`;
         const index = buffer.indexOf(marker);
         if (index >= 0) {
@@ -400,15 +386,14 @@ Deno.test("plugin api: invalidation stream delivers changes and closes on policy
           if (end >= 0) {
             const chunk = buffer.slice(index, end + 2);
             buffer = buffer.slice(end + 2);
-            return chunk;
+            return done(chunk);
           }
         }
-        const { value, done } = await reader.read();
-        if (done) return null;
+        const { value, done: ended } = await reader.read();
+        if (ended) return done(null);
         buffer += decoder.decode(value, { stream: true });
-      }
-      return null;
-    };
+        return waitPending({ awaited: name, buffered: buffer.slice(-2000) });
+      }, { label: `event stream frame '${name}'`, intervalMs: 0 });
     assert(await nextEvent("hello") !== null, "no hello frame");
 
     // A catalog change produces an invalidation frame.
@@ -519,22 +504,7 @@ for (const invalidate of [false, true]) {
     const controller = new AbortController();
     let drained: Promise<void> | undefined;
     try {
-      const readyDeadline = Date.now() + 8000;
-      for (;;) {
-        const res = await fetch(`${server.baseUrl}/_/api/plugin-host`, {
-          headers,
-          signal: AbortSignal.timeout(3000),
-        });
-        const catalog = await res.json();
-        if (
-          catalog.plugins.find((p: { id: string }) => p.id === "ep")?.status ===
-            "ready"
-        ) break;
-        if (Date.now() > readyDeadline) {
-          throw Error("Expiry fixture did not become ready");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      await catalogPluginReady(server, "ep", { headers });
       const expiry = Math.floor(Date.now() / 1000) + 2;
       const short = await token(expiry);
       const res = await fetch(`${server.baseUrl}/_/api/plugin-host/events`, {

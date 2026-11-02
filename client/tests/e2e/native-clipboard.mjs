@@ -74,7 +74,7 @@ export async function captureClipboard(page) {
   const key = { key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86, modifiers: 2 };
   await session.send("Input.dispatchKeyEvent", { type: "keyDown", ...key });
   await session.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
-  await session.poll(`window.__pastes.length > ${before}`, { timeout: 5000 });
+  await session.poll(`window.__pastes.length > ${before}`);
   const paste = await session.evaluate(`window.__pastes[${before}]`);
   if (!paste.trusted) throw Error("Clipboard witness paste was not a trusted browser paste");
   return paste.items;
@@ -85,7 +85,7 @@ export async function writeClipboard(page, items) {
   await session.evaluate(`window.__items = ${JSON.stringify(items)}; window.__written = null; true`);
   try {
     await session.send("Runtime.evaluate", { expression: "document.getElementById('write').click()", userGesture: true });
-    await session.poll("window.__written !== null", { timeout: 5000 });
+    await session.poll("window.__written !== null");
     if (await session.evaluate("window.__written") !== true) throw Error("Clipboard witness write was refused");
   } finally { await session.evaluate("window.__items = null; true"); }
 }

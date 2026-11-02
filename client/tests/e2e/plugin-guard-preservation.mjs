@@ -1,6 +1,7 @@
 // Feature-owned native Save/Delete -> real guard -> UI/API/disk/index consumers.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 
 let options;
 try { options = parseArguments(Deno.args); }
@@ -19,12 +20,8 @@ const api = async (path, options = {}) => {
   const text = await response.text();
   return { status: response.status, body: response.headers.get("content-type")?.includes("application/json") ? JSON.parse(text) : text };
 };
-async function wait(predicate) {
-  const end = Date.now() + 15000;
-  while (!predicate()) {
-    if (Date.now() >= end) throw Error("Native mutation-response observation deadline");
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
+function wait(predicate) {
+  return waitUntil(() => predicate() ? done() : pending({ condition: String(predicate) }), { label: "Native mutation-response observation", intervalMs: 50 });
 }
 async function capture(label) {
   const { data } = await current.session.send("Page.captureScreenshot", { format: "png" });

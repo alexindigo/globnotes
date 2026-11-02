@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert } from "@std/assert";
 import type { WorkerMessage } from "../../server/plugins/contracts.ts";
+import { done, pending, waitUntil } from "./wait.ts";
 
 export async function bounded<T>(
   promise: Promise<T>,
@@ -23,11 +24,10 @@ export async function bounded<T>(
   }
 }
 export async function until(predicate: () => boolean, label: string) {
-  const end = performance.now() + 5000;
-  while (!predicate()) {
-    assert(performance.now() < end, `liveness fixture containment: ${label}`);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+  await waitUntil(
+    () => predicate() ? done() : pending({ condition: String(predicate) }),
+    { label: `liveness fixture containment: ${label}`, intervalMs: 5 },
+  );
 }
 
 /** Hold selected real native message deliveries, never replace the Worker or its sender. */

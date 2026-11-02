@@ -4,9 +4,11 @@
  * Fail-first coverage for the v2-owned app glue — plugin APIs under a path
  * prefix require intact queries. */
 
-import { assert, assertEquals } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
+import { catalogPluginReady } from "./helpers/plugin_ready.ts";
+import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 Deno.test("prefix: segment boundaries, retained queries and protected plugin routes", async () => {
   const fixture = await pluginFixture();
@@ -34,20 +36,19 @@ Deno.test("prefix: segment boundaries, retained queries and protected plugin rou
       await searched.body?.cancel();
 
       // Plugin endpoints under the prefix keep their query data.
-      const deadline = Date.now() + 8000;
-      let pluginRes: Response | null = null;
-      while (Date.now() < deadline) {
+      await catalogPluginReady(server, "ep", { prefix: "/notes" });
+      const pluginRes = await waitUntil(async (signal) => {
         const res = await fetch(
           `${server.baseUrl}/notes/_/api/plugins/ep/item/a%20b?x=1`,
+          { signal },
         );
-        if (res.status === 200) {
-          pluginRes = res;
-          break;
-        }
-        await res.body?.cancel();
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      assert(pluginRes !== null, "plugin endpoint never answered under prefix");
+        if (res.status === 200) return done(res);
+        return pending({ status: res.status, body: await res.text() });
+      }, {
+        label: "plugin endpoint answering under prefix",
+        intervalMs: 100,
+        children: [server],
+      });
       const body = await pluginRes.json();
       assertEquals(body.name, "a b");
       assertEquals(body.query, [["x", "1"]]);

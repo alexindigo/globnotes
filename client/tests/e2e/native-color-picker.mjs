@@ -1,5 +1,6 @@
 // Browser popup keys can leave CDP's page widget. The approved visible-VM
 // path uses the compositor's keyboard and verifies the exact owned window.
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 export async function chooseNativeColor(session, selector, previous) {
   const socket = Deno.env.get("GLOBNOTES_E2E_WAYLAND_SOCKET");
   await session.click(selector);
@@ -19,14 +20,11 @@ export async function chooseNativeColor(session, selector, previous) {
     return new TextDecoder().decode(result.stdout);
   }
   async function key(args) {
-    const deadline = Date.now() + 5000;
-    let owned;
-    do {
+    const owned = await waitUntil(async () => {
       const windows = JSON.parse(await command("/usr/bin/niri", ["msg", "--json", "windows"]));
-      owned = windows.filter(window => window.title === marker + " - Chromium" && window.app_id === "chromium");
-      if (owned.length === 1) break;
-      await new Promise(resolve => setTimeout(resolve, 50));
-    } while (Date.now() < deadline);
+      const owned = windows.filter(window => window.title === marker + " - Chromium" && window.app_id === "chromium");
+      return owned.length === 1 ? done(owned) : pending({ marker, owned });
+    }, { label: "native picker's unique owned window", intervalMs: 50 });
     if (owned.length !== 1 || !owned[0].is_focused) throw Error("Native picker requires its unique focused owned window");
     await command("/usr/bin/wtype", args);
   }

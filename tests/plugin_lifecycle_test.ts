@@ -30,6 +30,8 @@ import {
   type RecordedFact,
   RECORDER_SERVICE,
 } from "./helpers/plugin_lifecycle.ts";
+import { pluginSettled } from "./helpers/plugin_ready.ts";
+import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
 
 for (
   const change of [
@@ -287,12 +289,7 @@ Deno.test("lifecycle: unavailable required guard rejects with plugin_guard_faile
     );
     await b.manager.runtime!.suspend();
     await b.runtime.reconcile();
-    const deadline = Date.now() + 3000;
-    while (Date.now() < deadline) {
-      const s = b.runtime.status("recorder")?.status;
-      if (s === "failed" || s === "ready") break;
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    await pluginSettled(b.runtime, "recorder", "failed");
     assertEquals(b.runtime.status("recorder")?.status, "failed");
     const error = await b.operations
       .createNote({ path: "blocked", content: "x" }, api())
@@ -305,13 +302,7 @@ Deno.test("lifecycle: unavailable required guard rejects with plugin_guard_faile
     // Failed enabled guard stays an expected blocker until recovery.
     Deno.writeTextFileSync(path.join(dir, "service.js"), service);
     await b.runtime.reconcile();
-    const deadline2 = Date.now() + 3000;
-    while (
-      b.runtime.status("recorder")?.status === "starting" &&
-      Date.now() < deadline2
-    ) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    await pluginSettled(b.runtime, "recorder", "ready");
     assertEquals(b.runtime.status("recorder")?.status, "ready");
     await b.operations.createNote({ path: "blocked", content: "x" }, api());
     assert(Deno.statSync(path.join(b.fixture.vault, "blocked.md")).isFile);
@@ -555,26 +546,19 @@ Deno.test("lifecycle: initial indexing is inventory plus on-sync, not fake creat
         }),
       });
       await runtime.reconcile();
-      const deadline = Date.now() + 5000;
-      while (
-        runtime.status("recorder")?.status === "starting" &&
-        Date.now() < deadline
-      ) {
-        await new Promise((r) => setTimeout(r, 5));
-      }
+      await pluginSettled(runtime, "recorder");
       indexer.startBackgroundSync();
       // startBackgroundSync is async internally; wait until the initial
       // on-sync fact actually reaches the observer.
-      const waitDeadline = Date.now() + 5000;
-      let facts: { kind: string; fact: RecordedFact }[] = [];
-      while (Date.now() < waitDeadline) {
-        facts = await runtime.invokeCommand("recorder", "facts", {}) as {
+      const facts = await waitUntil(async () => {
+        const facts = await runtime.invokeCommand("recorder", "facts", {}) as {
           kind: string;
           fact: RecordedFact;
         }[];
-        if (facts.some((f) => f.kind === "on-sync")) break;
-        await new Promise((r) => setTimeout(r, 25));
-      }
+        return facts.some((f) => f.kind === "on-sync")
+          ? done(facts)
+          : waitPending({ facts });
+      }, { label: "initial on-sync fact observed by 'recorder'" });
       const creates = facts.filter((f) => f.kind === "on-create");
       assertEquals(creates.length, 0);
       const syncs = facts.filter((f) => f.kind === "on-sync");
@@ -626,13 +610,7 @@ Deno.test("lifecycle: nested note mutation during a pre-hook is rejected; deferr
     );
     await b.runtime.suspend();
     await b.runtime.reconcile();
-    const deadline = Date.now() + 5000;
-    while (
-      b.runtime.status("recorder")?.status === "starting" &&
-      Date.now() < deadline
-    ) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    await pluginSettled(b.runtime, "recorder");
 
     await b.operations.createNote({ path: "n", content: "# N\n" }, api());
     await b.operations.updateNote(
@@ -659,15 +637,14 @@ Deno.test("lifecycle: nested note mutation during a pre-hook is rejected; deferr
       "none",
       api(),
     );
-    const spawnDeadline = Date.now() + 5000;
-    while (Date.now() < spawnDeadline) {
+    await waitUntil(() => {
       try {
         Deno.statSync(path.join(b.fixture.vault, "spawned.md"));
-        break;
-      } catch {
-        await new Promise((r) => setTimeout(r, 20));
+        return done();
+      } catch (error) {
+        return waitPending({ "spawned.md": String(error) });
       }
-    }
+    }, { label: "deferred action wrote spawned.md" });
     assert(Deno.statSync(path.join(b.fixture.vault, "spawned.md")).isFile);
     // The correlated receipt is queryable and reports completion.
     const receipt = await b.runtime.invokeCommand(
@@ -702,13 +679,7 @@ Deno.test("lifecycle: causal chain beyond the limit is rejected visibly", async 
     );
     await b.runtime.suspend();
     await b.runtime.reconcile();
-    const deadline = Date.now() + 5000;
-    while (
-      b.runtime.status("recorder")?.status === "starting" &&
-      Date.now() < deadline
-    ) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    await pluginSettled(b.runtime, "recorder");
     await b.operations.createNote({ path: "seed", content: "x" }, api());
     await new Promise((r) => setTimeout(r, 800));
     const chainFiles = [...Deno.readDirSync(b.fixture.vault)]
@@ -752,22 +723,21 @@ Deno.test("lifecycle: wire envelope over HTTP carries structured codes; rewrite 
       assertEquals(create.status, 200);
       await create.body?.cancel();
 
-      let blocked: Response | null = null;
-      const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) {
+      const blocked = await waitUntil(async (signal) => {
         const res = await fetch(`${server.baseUrl}/_/api/notes/doc`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ newContent: "#BLOCK#" }),
+          signal,
         });
-        if (res.status === 409) {
-          blocked = res;
-          break;
-        }
-        await res.body?.cancel();
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      assert(blocked !== null, "guard never enforced over HTTP");
+        if (res.status === 409) return done(res);
+        const body = await res.text();
+        return waitPending({ status: res.status, body });
+      }, {
+        label: "guard enforced over HTTP",
+        intervalMs: 100,
+        children: [server],
+      });
       const body = await blocked.json();
       assertEquals(blocked.status, 409);
       assertEquals(body.code, "plugin_cancelled");
@@ -850,12 +820,7 @@ Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action
       }`,
     });
     await b.runtime.reconcile();
-    const deadline = Date.now() + 5000;
-    while (
-      b.runtime.status("hanger")?.status !== "ready" && Date.now() < deadline
-    ) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    await pluginSettled(b.runtime, "hanger", "ready");
     assertEquals(b.runtime.status("hanger")?.status, "ready");
     await b.operations.createNote({ path: "a", content: "one" }, api());
     // Fill the observer lane synchronously: one active hanging delivery,
@@ -946,12 +911,7 @@ Deno.test("lifecycle: read grants strip undisclosed snapshot contents", async ()
       }`,
     });
     await b.runtime.reconcile();
-    const deadline = Date.now() + 5000;
-    while (
-      b.runtime.status("narrow")?.status !== "ready" && Date.now() < deadline
-    ) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    await pluginSettled(b.runtime, "narrow", "ready");
     await b.operations.createNote({
       path: "outside-sub",
       content: "secret body",

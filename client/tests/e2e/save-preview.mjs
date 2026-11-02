@@ -1,5 +1,6 @@
 // VM-only port of main's preview-save regression. Use native Chromium on CDP_PORT.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { done, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect } from "./cdp.mjs";
 
@@ -63,24 +64,20 @@ async function button(label, scope = ".content-column") {
 
 async function persisted() {
   const { title, marker, seed } = pending;
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
+  const note = await waitUntil(async (signal) => {
     const response = await fetch(`${server.baseUrl}/_/api/notes/${encodeURIComponent(title)}`, {
-      cache: "no-store", signal: AbortSignal.timeout(5000),
+      cache: "no-store", signal,
     });
     const note = response.ok ? await response.json() : null;
     if (!response.ok) await response.body?.cancel();
-    if (note?.content.includes(marker)) {
-      assert(!seed || note.content.includes(seed), "existing content survives the save");
-      const disk = await Deno.readTextFile(`${vault}/${title}.md`);
-      assert(disk === note.content, "API and disk carry the same saved buffer");
-      console.log(`ok: ${phase}: API + disk include ${marker}`);
-      return;
-    }
+    if (note?.content.includes(marker)) return done(note);
     assert(response.ok || response.status === 404, `note GET returned ${response.status}`);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`${phase}: typed buffer never reached saved-note API`);
+    return waitPending({ status: response.status, content: note?.content });
+  }, { label: `${phase}: typed buffer reached the saved-note API`, intervalMs: 100, children: [server] });
+  assert(!seed || note.content.includes(seed), "existing content survives the save");
+  const disk = await Deno.readTextFile(`${vault}/${title}.md`);
+  assert(disk === note.content, "API and disk carry the same saved buffer");
+  console.log(`ok: ${phase}: API + disk include ${marker}`);
 }
 
 try {

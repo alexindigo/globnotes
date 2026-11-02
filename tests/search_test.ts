@@ -5,17 +5,15 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
+import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 /** Poll the index-status endpoint until the initial sync completes. */
-async function awaitIndexReady(baseUrl: string): Promise<void> {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    const res = await fetch(`${baseUrl}/_/api/index-status`);
+function awaitIndexReady(baseUrl: string): Promise<void> {
+  return waitUntil(async (signal) => {
+    const res = await fetch(`${baseUrl}/_/api/index-status`, { signal });
     const status = await res.json();
-    if (!status.initial) return;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error("index sync never completed");
+    return status.initial ? pending(status) : done();
+  }, { label: "initial index sync complete", intervalMs: 100 });
 }
 
 function api(

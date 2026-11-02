@@ -1,7 +1,7 @@
 // Feature-owned native access consumers; shared browser/runner helpers unchanged.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
-import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { awaitHealthy, bootServer, parseArguments } from "./harness-helpers.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { authenticatorCode, unusedWindowCode } from "../../../tests/helpers/totp.ts";
 import { SignJWT } from "jose";
@@ -29,12 +29,7 @@ async function bootFirstRun(vault, state, directory, prefix) {
     try { for await (const chunk of child[name]) { let offset = 0; while (offset < chunk.length) offset += await file.write(chunk.subarray(offset)); } } finally { file.close(); }
   });
   const baseUrl = httpOrigin(port);
-  const end = Date.now() + 30000;
-  for (;;) {
-    try { const response = await fetch(`${baseUrl}${prefix}/_/api/health`, { signal: AbortSignal.timeout(5000) }); await response.body?.cancel(); if (response.ok) break; } catch { /* readiness only */ }
-    if (Date.now() >= end) throw Error(`First-run server startup deadline; retained PID ${child.pid}`);
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  await awaitHealthy(`${baseUrl}${prefix}`, { label: `First-run server startup (retained PID ${child.pid})`, child });
   return { baseUrl, pid: child.pid, async close() { child.kill("SIGTERM"); await child.status; await Promise.all(drains); } };
 }
 async function fixture(label, protectedMode) {

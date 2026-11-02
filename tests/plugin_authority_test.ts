@@ -24,14 +24,20 @@ import type {
 } from "../server/plugins/contracts.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { bootServer } from "./helpers/boot.ts";
+import {
+  done,
+  failed,
+  pending,
+  READINESS_MS,
+  waitUntil,
+} from "./helpers/wait.ts";
 
 const api = () => fixtureApiOrigin(state.lifecycle!);
-async function wait(predicate: () => boolean) {
-  const end = Date.now() + 2000;
-  while (!predicate()) {
-    if (Date.now() > end) throw new Error("authority consumer deadline");
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
+function wait(predicate: () => boolean) {
+  return waitUntil(
+    () => predicate() ? done() : pending({ condition: String(predicate) }),
+    { label: "authority consumer condition", intervalMs: 2 },
+  );
 }
 /** Operator-side consent under generated fixture state; never an SDK grant. */
 async function approveFixtureNetwork(
@@ -48,17 +54,14 @@ async function approveFixtureNetwork(
     approvedNetwork: view.requestedNetwork,
     approvedImports: [],
   });
-  const deadline = Date.now() + 2000;
-  for (;;) {
+  await waitUntil(async () => {
     const current = await network.view(id);
-    if (current.reload.state === "ready") return;
-    if (current.reload.state === "failed" || Date.now() >= deadline) {
-      throw new Error(
-        `fixture consent admission failed: ${JSON.stringify(current.reload)}`,
-      );
+    if (current.reload.state === "ready") return done();
+    if (current.reload.state === "failed") {
+      return failed("fixture consent admission failed", current);
     }
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
+    return pending(current);
+  }, { label: `fixture consent admission for '${id}'`, intervalMs: 2 });
 }
 async function bundle(
   write: string[] = ["vault"],
@@ -904,23 +907,17 @@ Deno.test("plugin authority: both completion routes retain bounded host causalit
           operationId: "forged",
           causalDepth: -900,
         }) as { requestId: string };
-        let observed: { n: number; stopped: boolean } = {
-          n: 0,
-          stopped: false,
-        };
-        const end = Date.now() + 2000;
-        while (!observed.stopped) {
-          observed = await b.runtime.invokeCommand(
+        const observed = await waitUntil(async () => {
+          const observed = await b.runtime.invokeCommand(
             "requester",
             "state",
             {},
-          ) as typeof observed;
-          if (Date.now() > end) {
-            throw new Error(
-              "completion chain did not reach explicit depth rejection",
-            );
-          }
-        }
+          ) as { n: number; stopped: boolean };
+          return observed.stopped ? done(observed) : pending(observed);
+        }, {
+          label: "completion chain reached explicit depth rejection",
+          intervalMs: 0,
+        });
         if (!fails) {
           assertEquals(observed.n, 4);
           assertEquals(b.notes.getPaths().sort(), [
@@ -1105,10 +1102,9 @@ Deno.test("plugin authority: independent narrow observers receive only authorize
 
 /** Background-fixture server: the shared launcher (helpers/boot.ts) owns its
  * clean environment, self-chosen port and lifetime; this fixture adds the
- * admission deadline and the launch record. No permission repair. */
+ * launch record. No permission repair. */
 async function launchBackgroundFixture(env: Record<string, string>) {
-  const deadline = Date.now() + 10000;
-  const server = await bootServer(env, { readyMs: 10000 });
+  const server = await bootServer(env);
   console.log(JSON.stringify({
     fixtureLaunch: {
       pid: server.pid,
@@ -1124,45 +1120,27 @@ async function launchBackgroundFixture(env: Record<string, string>) {
     baseUrl: server.baseUrl,
     status: server.status,
     output: server.output,
-    deadline,
     close: server.close,
   };
 }
 
-async function waitBackgroundAdmission(
+/** Admission through the shared readiness wait: a rejected catalog, a
+ * failed, disabled or missing plugin and an exited child fail at once. */
+function waitBackgroundAdmission(
   server: Awaited<ReturnType<typeof launchBackgroundFixture>>,
   fetched: () => boolean,
-  bound = 10000,
 ) {
-  const deadline = Math.min(server.deadline, Date.now() + bound);
-  while (true) {
-    if (server.status()) {
-      throw Error(`Background fixture child exited: ${server.status()!.code}`);
-    }
-    let response: Response;
-    try {
-      response = await fetch(`${server.baseUrl}/_/api/plugin-host`, {
-        signal: AbortSignal.timeout(
-          Math.max(1, Math.min(3000, deadline - Date.now())),
-        ),
-      });
-    } catch (error) {
-      // The request's timeout is capped by the same deadline: expiry while
-      // a request is in flight is the deadline, reported as such.
-      if (Date.now() >= deadline) {
-        throw Error("Background fixture startup-fetch deadline");
-      }
-      throw error;
-    }
-    let plugin;
-    if (response.ok) {
-      plugin = (await response.json()).plugins.find((entry: { id: string }) =>
-        entry.id === "timer"
-      );
-    } else {
+  return waitUntil(async (signal) => {
+    const response = await fetch(`${server.baseUrl}/_/api/plugin-host`, {
+      signal,
+    });
+    if (!response.ok) {
       await response.body?.cancel();
       throw Error(`Background fixture catalog rejected: ${response.status}`);
     }
+    const plugin = (await response.json()).plugins.find((
+      entry: { id: string },
+    ) => entry.id === "timer");
     if (!plugin || ["failed", "disabled"].includes(plugin.status)) {
       console.log(
         JSON.stringify({
@@ -1175,20 +1153,26 @@ async function waitBackgroundAdmission(
           childOutput: server.output,
         }),
       );
-      throw Error(
+      return failed(
         `Background fixture activation failed: ${
           plugin?.diagnostics?.map((diagnostic: { detail: string }) =>
             diagnostic.detail
           ).join("; ") ?? "required plugin missing"
         }`,
+        { plugin },
       );
     }
-    if (fetched() && plugin.status === "ready") return;
-    if (Date.now() >= deadline) {
-      throw Error("Background fixture startup-fetch deadline");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
+    const observed = fetched();
+    if (observed && plugin.status === "ready") return done();
+    return pending({ plugin, fetched: observed });
+  }, {
+    label: "Background fixture startup-fetch",
+    children: [{
+      pid: server.pid,
+      status: server.status,
+      logs: () => server.output,
+    }],
+  });
 }
 
 Deno.test("plugin authority: fixture admission fails fast on catalog failure, child exit and startup deadline", async () => {
@@ -1209,12 +1193,12 @@ Deno.test("plugin authority: fixture admission fails fast on catalog failure, ch
     status: () => null,
     pid: 0,
     output: { stdout: "", stderr: "" },
-    deadline: Date.now() + 10000,
     close: async () => {},
   };
+  const realNow = Date.now;
   try {
     await assertRejects(
-      () => waitBackgroundAdmission(server, () => false, 100),
+      () => waitBackgroundAdmission(server, () => false),
       Error,
       "fixture activation failure",
     );
@@ -1223,18 +1207,24 @@ Deno.test("plugin authority: fixture admission fails fast on catalog failure, ch
         waitBackgroundAdmission({
           ...server,
           status: () => ({ code: 1, success: false, signal: null }),
-        }, () =>
-          false, 100),
+        }, () => false),
       Error,
       "child exited",
     );
     pluginStatus = "ready";
     await assertRejects(
-      () => waitBackgroundAdmission(server, () => false, 20),
+      () =>
+        waitBackgroundAdmission(server, () => {
+          // The readiness bound elapses while the fetch is still unobserved.
+          const shifted = realNow() + READINESS_MS;
+          Date.now = () => shifted;
+          return false;
+        }),
       Error,
-      "startup-fetch deadline",
+      "Background fixture startup-fetch: readiness bound exceeded",
     );
   } finally {
+    Date.now = realNow;
     await receiver.shutdown();
   }
 });
@@ -1301,13 +1291,12 @@ Deno.test("plugin authority: real Worker HTTP timer without file hooks persists 
     let state = await invoke();
     assertEquals((state.result ?? state).receipt, null);
     begin.resolve();
-    const end = Date.now() + 3000;
-    do {
-      state = await invoke();
-      if (Date.now() > end) {
-        throw new Error("background HTTP consumer deadline");
-      }
-    } while ((state.result ?? state).completion?.status !== "completed");
+    state = await waitUntil(async () => {
+      const state = await invoke();
+      return (state.result ?? state).completion?.status === "completed"
+        ? done(state)
+        : pending(state);
+    }, { label: "background HTTP consumer completed", intervalMs: 0 });
     const consumer = state.result ?? state;
     assertEquals(consumer.query.operationId, consumer.completion.operationId);
     assert(consumer.query.operationId !== consumer.receipt.requestId);

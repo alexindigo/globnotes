@@ -6,6 +6,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
+import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 function api(
   server: { baseUrl: string },
@@ -246,15 +247,11 @@ Deno.test("title: resolution order", async () => {
   }
 });
 
-async function awaitIndexReadyServer(baseUrl: string): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const res = await fetch(`${baseUrl}/_/api/index-status`);
-    if (res.ok) {
-      const s = await res.json();
-      if (!s.syncing && !s.initial) return;
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error("index sync did not complete");
+function awaitIndexReadyServer(baseUrl: string): Promise<void> {
+  return waitUntil(async (signal) => {
+    const res = await fetch(`${baseUrl}/_/api/index-status`, { signal });
+    if (!res.ok) return pending({ status: res.status, body: await res.text() });
+    const s = await res.json();
+    return !s.syncing && !s.initial ? done() : pending(s);
+  }, { label: "index sync complete", intervalMs: 50 });
 }

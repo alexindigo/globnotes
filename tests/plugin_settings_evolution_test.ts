@@ -10,6 +10,7 @@ import { PluginManager } from "../server/plugins/manager.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
 import { command } from "./helpers/process.ts";
+import { pluginSettled } from "./helpers/plugin_ready.ts";
 
 const writable = { commit: <T>(effect: () => Promise<T>) => effect() };
 const retiredPage = {
@@ -244,11 +245,7 @@ Deno.test("review repairs: R18 schema evolution actual Worker activation and lat
   });
   try {
     await runtime.reconcile();
-    const deadline = Date.now() + 5000;
-    while (runtime.status("evolving")?.status === "starting") {
-      assert(Date.now() < deadline, "Worker activation deadline");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+    await pluginSettled(runtime, "evolving", "ready");
     assertEquals(runtime.status("evolving")?.status, "ready");
     const initial = await runtime.invokeCommand("evolving", "inspect", {}) as {
       initial: RevisionedValues;
