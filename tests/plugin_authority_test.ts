@@ -1146,11 +1146,21 @@ async function waitBackgroundAdmission(
     if (server.status()) {
       throw Error(`Background fixture child exited: ${server.status()!.code}`);
     }
-    const response = await fetch(`${server.baseUrl}/_/api/plugin-host`, {
-      signal: AbortSignal.timeout(
-        Math.max(1, Math.min(3000, deadline - Date.now())),
-      ),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${server.baseUrl}/_/api/plugin-host`, {
+        signal: AbortSignal.timeout(
+          Math.max(1, Math.min(3000, deadline - Date.now())),
+        ),
+      });
+    } catch (error) {
+      // The request's timeout is capped by the same deadline: expiry while
+      // a request is in flight is the deadline, reported as such.
+      if (Date.now() >= deadline) {
+        throw Error("Background fixture startup-fetch deadline");
+      }
+      throw error;
+    }
     let plugin;
     if (response.ok) {
       plugin = (await response.json()).plugins.find((entry: { id: string }) =>
