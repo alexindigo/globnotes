@@ -230,7 +230,7 @@ const app = await pathfinder({
   roots: [new URL("./api/endpoints/", import.meta.url)],
 });
 
-Deno.serve({ hostname, port }, (req, info) => {
+const httpServer = Deno.serve({ hostname, port }, (req, info) => {
   if (!prefix) return app(req, info);
   const url = new URL(req.url);
   // Exact segment matching: /notes-other is NOT the /notes app.
@@ -243,6 +243,9 @@ Deno.serve({ hostname, port }, (req, info) => {
   target.search = url.search;
   return app(new Request(target, req), info);
 });
+// The bound port: equal to GLOBNOTES_PORT, or the OS-assigned one when that
+// is 0 (test launchers read it from this line).
+const boundPort = (httpServer.addr as Deno.NetAddr).port;
 logger.info(
-  `globnotes listening on http://${hostname}:${port}${globalConfig.pathPrefix}`,
+  `globnotes listening on http://${hostname}:${boundPort}${globalConfig.pathPrefix}`,
 );
