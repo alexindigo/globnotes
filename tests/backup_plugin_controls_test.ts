@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals } from "@std/assert";
+import { command } from "./helpers/process.ts";
 for (
   const kind of [
     "count",
@@ -38,7 +39,7 @@ for (
         mode,
         directory,
       ];
-      const child = new Deno.Command(Deno.execPath(), {
+      const child = command(Deno.execPath(), {
         args: argv,
         stdout: "piped",
         stderr: "piped",

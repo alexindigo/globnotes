@@ -35,6 +35,14 @@ const RULES: Rule[] = [
       "tests configure in-process objects with tests/helpers/environment.ts and children through the launcher, never the shared process environment",
   },
   {
+    id: "single-child-launcher",
+    scope: "tests",
+    pattern: /new Deno\.Command\s*\(/,
+    owners: ["tests/helpers/process.ts"],
+    why:
+      "children start through tests/helpers/process.ts (clearEnv plus an explicit environment), never inheriting the shared test-process environment",
+  },
+  {
     id: "single-process-env-owner",
     scope: "server",
     pattern: /Deno\.env\b/,

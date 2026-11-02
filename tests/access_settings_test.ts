@@ -3,7 +3,8 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { GlobalConfig } from "../server/config.ts";
 import { hashPassword } from "../server/helpers.ts";
-import { bootServer } from "./helpers/boot.ts";
+import { bootServer, type TestServer } from "./helpers/boot.ts";
+import { writeFailureReport } from "./helpers/failure_report.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import {
   authenticatorCode,
@@ -18,19 +19,32 @@ import { PluginDataStore, PluginPolicyStore } from "../server/plugins/data.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { fixturePage } from "./helpers/plugin_fixture.ts";
 
+/** A failed integration retains its vault, writes the failure details
+ * beside it (tests/helpers/failure_report.ts) and fails immediately. */
 async function retainedFailure(
+  test: string,
   error: unknown,
   vault: string,
-  pidInfo: unknown,
+  server: TestServer,
 ): Promise<never> {
-  console.error(
-    `ACCESS FAILURE: ${
-      error instanceof Error ? error.stack : error
-    }; retained vault ${vault}; ${JSON.stringify(pidInfo)}`,
-  );
-  // Preserve the owning test process/server on a failed integration, matching
-  // continuation custody. No release marker or success exit is synthesized.
-  await new Promise(() => {});
+  let closeError: unknown = null;
+  try {
+    await server.close();
+  } catch (failure) {
+    closeError = failure;
+  }
+  await writeFailureReport({
+    test,
+    error: closeError
+      ? new AggregateError([error, closeError], "test and server failed")
+      : error,
+    retained: { vault },
+    server: {
+      url: server.baseUrl,
+      pid: server.pid,
+      stderr: server.logs().stderr,
+    },
+  });
   throw error;
 }
 
@@ -409,11 +423,11 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
     );
     await server.close();
   } catch (error) {
-    await retainedFailure(error, vault, { url: server.baseUrl });
+    await retainedFailure(t.name, error, vault, server);
   }
 });
 
-Deno.test("access: pinned signing authority cannot pretend to revoke sessions with an ineffective stored override", async () => {
+Deno.test("access: pinned signing authority cannot pretend to revoke sessions with an ineffective stored override", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "access-signing-pin-" });
   await Deno.mkdir(`${vault}/.globnotes`);
   const file = `${vault}/.globnotes/config.json`;
@@ -469,11 +483,11 @@ Deno.test("access: pinned signing authority cannot pretend to revoke sessions wi
     await check.body?.cancel();
     await server.close();
   } catch (error) {
-    await retainedFailure(error, vault, { url: server.baseUrl });
+    await retainedFailure(t.name, error, vault, server);
   }
 });
 
-Deno.test("access: initial public default and explicit locked choice survive prefix and restart", async () => {
+Deno.test("access: initial public default and explicit locked choice survive prefix and restart", async (t) => {
   for (const lock of [false, true]) {
     const vault = await Deno.makeTempDir({ prefix: "access-public-setup-" });
     const env = {
@@ -506,7 +520,7 @@ Deno.test("access: initial public default and explicit locked choice survive pre
       );
       await server.close();
     } catch (error) {
-      await retainedFailure(error, vault, { url: server.baseUrl });
+      await retainedFailure(t.name, error, vault, server);
     }
   }
 });
@@ -613,7 +627,7 @@ Deno.test("access: admitted settings writes recheck at commit without blocking p
   }
 });
 
-Deno.test("access: external same-revision bytes cannot be overwritten and restart merges the deployment edit", async () => {
+Deno.test("access: external same-revision bytes cannot be overwritten and restart merges the deployment edit", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "access-external-cas-" });
   await Deno.mkdir(`${vault}/.globnotes`);
   const file = `${vault}/.globnotes/config.json`;
@@ -723,11 +737,11 @@ Deno.test("access: external same-revision bytes cannot be overwritten and restar
     }));
     await server.close();
   } catch (error) {
-    await retainedFailure(error, vault, { url: server.baseUrl });
+    await retainedFailure(t.name, error, vault, server);
   }
 });
 
-Deno.test("access: competing same-CAS requests have one durable receipt and cannot erase another writer", async () => {
+Deno.test("access: competing same-CAS requests have one durable receipt and cannot erase another writer", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "access-competing-cas-" });
   await Deno.mkdir(`${vault}/.globnotes`);
   const file = `${vault}/.globnotes/config.json`;
@@ -794,6 +808,6 @@ Deno.test("access: competing same-CAS requests have one durable receipt and cann
     );
     await server.close();
   } catch (error) {
-    await retainedFailure(error, vault, { url: server.baseUrl });
+    await retainedFailure(t.name, error, vault, server);
   }
 });

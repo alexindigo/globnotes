@@ -9,6 +9,7 @@ import { PluginDataStore } from "../server/plugins/data.ts";
 import { PluginManager } from "../server/plugins/manager.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
+import { command } from "./helpers/process.ts";
 
 const writable = { commit: <T>(effect: () => Promise<T>) => effect() };
 const retiredPage = {
@@ -117,7 +118,7 @@ Deno.test("review repairs: R18 schema evolution writes preserve removed fields a
       JSON.stringify([b.original, b.removed])
     })}));`,
   );
-  const child = await new Deno.Command(Deno.execPath(), {
+  const child = await command(Deno.execPath(), {
     args: [
       "run",
       "--cached-only",

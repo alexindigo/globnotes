@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assert, assertEquals } from "@std/assert";
+import { command } from "./helpers/process.ts";
 
 const SCRIPT = new URL("../scripts/check-release-version.sh", import.meta.url);
 
@@ -14,7 +15,7 @@ async function check(
     await Deno.mkdir(`${root}/scripts`);
     await Deno.copyFile(SCRIPT, `${root}/scripts/check-release-version.sh`);
     await Deno.writeTextFile(`${root}/VERSION`, version);
-    const result = await new Deno.Command("bash", {
+    const result = await command("bash", {
       args: [`${root}/scripts/check-release-version.sh`, tag],
       stdout: "piped",
       stderr: "piped",

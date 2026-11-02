@@ -14,6 +14,7 @@ import {
   until,
   WorkerDeliveryGate,
 } from "./helpers/worker_liveness.ts";
+import { command } from "./helpers/process.ts";
 
 // Baseline-compatible: unchanged HostOptions and real native activation/watchdog timers.
 Deno.test("startup liveness: native ready-before-heartbeat beyond1000ms", async () => {
@@ -589,7 +590,7 @@ for (
     const evidence = await Deno.makeTempDir({
       prefix: `liveness-child-${kind}-`,
     });
-    const child = new Deno.Command(Deno.execPath(), {
+    const child = command(Deno.execPath(), {
       args: [
         "run",
         "--cached-only",

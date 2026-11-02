@@ -13,8 +13,10 @@ import {
 } from "../server/plugins/network_store.ts";
 import brandHandler from "../server/api/endpoints/_/api/brand/post.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { writeFailureReport } from "./helpers/failure_report.ts";
 
 async function settingsFixture(
+  test: string,
   label: string,
   run: (
     fixture: {
@@ -52,12 +54,12 @@ async function settingsFixture(
       }),
     );
   } catch (error) {
-    console.error(
-      `ACCESS COMMIT GUARD FAILURE: ${
-        error instanceof Error ? error.stack : error
-      }; retained ${vault}; PID ${Deno.pid}`,
-    );
-    await new Promise(() => {});
+    // The vault is retained; its failure details land beside it.
+    await writeFailureReport({
+      test: `${test} [${label}]`,
+      error,
+      retained: { vault },
+    });
     throw error;
   } finally {
     for (const key of ["config", "auth", "lifecycle"]) {
@@ -80,8 +82,8 @@ function barrier() {
   return { arrived, release, reached, waiting };
 }
 
-Deno.test("access commit: admitted Branding upload/removal cannot change real files after settings lock", async () => {
-  await settingsFixture("branding", async ({ config, lifecycle }) => {
+Deno.test("access commit: admitted Branding upload/removal cannot change real files after settings lock", async (t) => {
+  await settingsFixture(t.name, "branding", async ({ config, lifecycle }) => {
     const directory = `${config.statePath}/brand`;
     await Deno.mkdir(directory);
     const originalLogo =
@@ -162,7 +164,7 @@ Deno.test("access commit: admitted Branding upload/removal cannot change real fi
 Deno.test("access commit: prepared operator approval and real pending-request decision retain exact ledger after lock", async (t) => {
   for (const kind of ["approval", "decision"] as const) {
     await t.step(kind, async () => {
-      await settingsFixture(kind, async ({ config, lifecycle }) => {
+      await settingsFixture(t.name, kind, async ({ config, lifecycle }) => {
         const hold = barrier();
         let paused = false, committedWrites = 0;
         const scope = canonicalScopes(["127.0.0.1:9"]);

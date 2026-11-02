@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assert, assertEquals } from "@std/assert";
+import { command } from "./helpers/process.ts";
 
 const SCRIPT = new URL("../scripts/docker-latest-tag.sh", import.meta.url);
 
@@ -9,7 +10,7 @@ async function check(tags: string[], args: string[], githubOutput = true) {
   const root = await Deno.makeTempDir({ prefix: "globnotes-docker-latest-" });
   try {
     const git = async (...args: string[]): Promise<string> => {
-      const result = await new Deno.Command("git", {
+      const result = await command("git", {
         args,
         cwd: root,
         stdin: "null",
@@ -29,7 +30,7 @@ async function check(tags: string[], args: string[], githubOutput = true) {
     await Deno.mkdir(`${root}/scripts`);
     await Deno.copyFile(SCRIPT, `${root}/scripts/docker-latest-tag.sh`);
     const outputFile = `${root}/github-output`;
-    const result = await new Deno.Command("bash", {
+    const result = await command("bash", {
       args: [`${root}/scripts/docker-latest-tag.sh`, ...args],
       cwd: root,
       env: { GITHUB_OUTPUT: githubOutput ? outputFile : "" },

@@ -2,6 +2,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { AuthType } from "../server/config.ts";
+import { command } from "./helpers/process.ts";
 
 // GlobalConfig reads process env at construction time, so these tests
 // spawn subprocesses with controlled environments.
@@ -29,20 +30,9 @@ async function loadConfig(
       brandAccent: c.brandAccent,
     }));
   `;
-  const cmd = new Deno.Command(Deno.execPath(), {
+  const cmd = command(Deno.execPath(), {
     args: ["eval", script],
-    env: {
-      ...env,
-      NO_COLOR: "1",
-      // Never inherit the parent's GLOBNOTES_* (other tests set them
-      // in-process), but keep the basics the child needs to run.
-      PATH: Deno.env.get("PATH") ?? "",
-      HOME: Deno.env.get("HOME") ?? "",
-      ...(Deno.env.get("DENO_DIR")
-        ? { DENO_DIR: Deno.env.get("DENO_DIR")! }
-        : {}),
-    },
-    clearEnv: true,
+    env,
     stdout: "piped",
     stderr: "piped",
   });
@@ -133,7 +123,7 @@ Deno.test("config: invalid path prefix exits", async () => {
     import { GlobalConfig } from "${SERVER_DIR}config.ts";
     new GlobalConfig();
   `;
-  const cmd = new Deno.Command(Deno.execPath(), {
+  const cmd = command(Deno.execPath(), {
     args: ["eval", script],
     env: { GLOBNOTES_PATH: "/tmp/vault", GLOBNOTES_PATH_PREFIX: "bad" },
     stdout: "null",
