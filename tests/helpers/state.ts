@@ -9,6 +9,7 @@ import { subscribeIndex } from "../../server/hub/subscribers.ts";
 import { NoteOperations } from "../../server/notes/operations.ts";
 import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
+import { testEnvironment } from "./environment.ts";
 import { fixtureApiOrigin } from "./plugin_fixture.ts";
 import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import type { PluginManager } from "../../server/plugins/manager.ts";
@@ -31,14 +32,16 @@ export function setupState(
   plugins: PluginManager | null = null,
   probes: ConstructorParameters<typeof FileSystemNotes>[1] = {},
 ): UnitState {
-  Deno.env.set("GLOBNOTES_PATH", vault);
-  Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-  const config = new GlobalConfig();
-  const notes = new FileSystemNotes(vault, probes);
-  const indexer = new Fts5Indexer(vault);
+  const env = testEnvironment({
+    GLOBNOTES_PATH: vault,
+    GLOBNOTES_AUTH_TYPE: "none",
+  });
+  const config = new GlobalConfig(env);
+  const notes = new FileSystemNotes(vault, probes, env);
+  const indexer = new Fts5Indexer(vault, env);
   const files = new FileServing(vault);
   initState(config, null, notes, indexer, files, plugins);
-  const hub = new VaultHub(vault, config.statePath);
+  const hub = new VaultHub(vault, config.statePath, env);
   subscribeIndex(hub, indexer);
   const lifecycle = new PluginLifecycle(config);
   const runtime = {

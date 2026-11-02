@@ -17,6 +17,7 @@ import { PluginManager } from "../server/plugins/manager.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { initState, state } from "../server/state.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 // Match the existing filesystem loader's runtime import seam. Encode the #
 // directory as a URL path segment, not a fragment. The old core handlers are
 // intentionally preserved here; their typed roots are repaired in R01 scope.
@@ -84,34 +85,25 @@ async function fixture() {
   const vault = `${root}/vault`, storage = `${root}/state`;
   await Deno.mkdir(vault);
   await Deno.mkdir(storage);
-  const keys = [
-    "GLOBNOTES_PATH",
-    "GLOBNOTES_INDEX_PATH",
-    "GLOBNOTES_AUTH_TYPE",
-    "GLOBNOTES_USERNAME",
-    "GLOBNOTES_PASSWORD",
-    "GLOBNOTES_SECRET_KEY",
-    "GLOBNOTES_TOTP_KEY",
-    "GLOBNOTES_READ_ONLY_SETTINGS",
-    "GLOBNOTES_SCAN_CACHE_TTL",
-  ];
-  const previousEnv = keys.map((key) => Deno.env.get(key));
   const previousState = { ...state };
-  for (const key of keys) Deno.env.delete(key);
-  Deno.env.set("GLOBNOTES_PATH", vault);
-  Deno.env.set("GLOBNOTES_INDEX_PATH", storage);
-  Deno.env.set("GLOBNOTES_USERNAME", "lease-fixture");
-  Deno.env.set("GLOBNOTES_PASSWORD", "fixture-only-password");
-  Deno.env.set("GLOBNOTES_SCAN_CACHE_TTL", "0");
+  const env = testEnvironment({
+    GLOBNOTES_PATH: vault,
+    GLOBNOTES_INDEX_PATH: storage,
+    GLOBNOTES_USERNAME: "lease-fixture",
+    GLOBNOTES_PASSWORD: "fixture-only-password",
+    GLOBNOTES_SCAN_CACHE_TTL: "0",
+  });
   Deno.writeTextFileSync(
     `${storage}/config.json`,
     JSON.stringify({ auth_type: "none", secret_key: "fixture-only-secret-A" }),
   );
-  const config = new GlobalConfig();
-  const notes = new FileSystemNotes(vault), files = new FileServing(vault);
-  const indexer = new Fts5Indexer(storage);
+  const config = new GlobalConfig(env);
+  const notes = new FileSystemNotes(vault, {}, env),
+    files = new FileServing(vault);
+  const indexer = new Fts5Indexer(storage, env);
   const manager = new PluginManager(vault, undefined, 1, storage, {
     internalRoot: `${root}/internal`,
+    env,
   });
   initState(config, null, notes, indexer, files, manager);
   const lifecycle = new PluginLifecycle(config);
@@ -198,11 +190,6 @@ async function fixture() {
         }
       }
       Object.assign(state, previousState);
-      keys.forEach((key, index) =>
-        previousEnv[index] === undefined
-          ? Deno.env.delete(key)
-          : Deno.env.set(key, previousEnv[index]!)
-      );
       // Generated evidence survives both red and green; only owned runtime closes.
       console.log(
         JSON.stringify({ fixture: "R01", root, evidenceRetained: true }),
@@ -793,8 +780,9 @@ Deno.test("HTTP lease controls: verified admission completion binds auth config 
         pending = outcome(update(req));
         await bounded(hold.reached);
         if (replacement === "auth") state.auth = new LocalAuth(f.config);
-        else if (replacement === "config") state.config = new GlobalConfig();
-        else state.lifecycle = new PluginLifecycle(f.config);
+        else if (replacement === "config") {
+          state.config = new GlobalConfig(f.config.environment);
+        } else state.lifecycle = new PluginLifecycle(f.config);
         hold.release();
         const observed = await bounded(pending);
         assertEquals(observed.status, replacement === "auth" ? 401 : 409);

@@ -15,6 +15,7 @@ import { PluginManager } from "../server/plugins/manager.ts";
 import { AsyncLock, PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { GlobalConfig } from "../server/config.ts";
 import { state } from "../server/state.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 const settingsPut = (await import(
   new URL(
@@ -208,19 +209,14 @@ Deno.test("review repairs: R02 publication failure reports persisted revision, f
     plugins: state.plugins,
     pluginData: state.pluginData,
   };
-  const keys = [
-    "GLOBNOTES_PATH",
-    "GLOBNOTES_INDEX_PATH",
-    "GLOBNOTES_AUTH_TYPE",
-    "GLOBNOTES_READ_ONLY_SETTINGS",
-  ];
-  const previousEnv = keys.map((key) => Deno.env.get(key));
   try {
-    Deno.env.set("GLOBNOTES_PATH", b.fixture.vault);
-    Deno.env.set("GLOBNOTES_INDEX_PATH", b.fixture.statePath);
-    Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-    Deno.env.delete("GLOBNOTES_READ_ONLY_SETTINGS");
-    state.config = new GlobalConfig();
+    state.config = new GlobalConfig(
+      testEnvironment({
+        GLOBNOTES_PATH: b.fixture.vault,
+        GLOBNOTES_INDEX_PATH: b.fixture.statePath,
+        GLOBNOTES_AUTH_TYPE: "none",
+      }),
+    );
     state.auth = null;
     state.lifecycle = new PluginLifecycle(state.config);
     state.plugins = b.manager;
@@ -327,11 +323,6 @@ Deno.test("review repairs: R02 publication failure reports persisted revision, f
     Deno.renameSync = originalRename;
     await b.close();
     Object.assign(state, previousState);
-    keys.forEach((key, index) => {
-      const value = previousEnv[index];
-      if (value === undefined) Deno.env.delete(key);
-      else Deno.env.set(key, value);
-    });
   }
 });
 

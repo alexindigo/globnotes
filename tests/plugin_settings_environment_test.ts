@@ -12,17 +12,18 @@ import {
 import { state } from "../server/state.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import settingsGet from "../server/api/endpoints/_/api/plugin-host/%23id/settings/%23page/get.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 Deno.test("backup settings: environment reaches the actual service settings consumer", async () => {
   const fixture = await pluginFixture();
   const previousState = { ...state };
-  const original = Deno.env.get("GLOBNOTES_PLUGIN_SETTINGS");
-  Deno.env.set(
-    "GLOBNOTES_PLUGIN_SETTINGS",
-    JSON.stringify({
+  // The deployment's environment (as the server receives it) carries the
+  // operator settings; the manager reads them through its configured input.
+  const env = testEnvironment({
+    GLOBNOTES_PLUGIN_SETTINGS: JSON.stringify({
       configured: { preferences: { location: "operator-selected" } },
     }),
-  );
+  });
   await fixture.install("configured", {
     runtime: { server: "service.js" },
     capabilities: { read: [], write: [], network: false, imports: false },
@@ -52,6 +53,7 @@ Deno.test("backup settings: environment reaches the actual service settings cons
     {
       internalRoot: `${fixture.root}/empty-internal`,
       persistence: { commit: (effect) => effect() },
+      env,
     },
   );
   const runtime = manager.configureRuntime({
@@ -106,8 +108,6 @@ Deno.test("backup settings: environment reaches the actual service settings cons
     manager.stop();
     await runtime.close();
     Object.assign(state, previousState);
-    if (original === undefined) Deno.env.delete("GLOBNOTES_PLUGIN_SETTINGS");
-    else Deno.env.set("GLOBNOTES_PLUGIN_SETTINGS", original);
     console.log(JSON.stringify({ retainedEnvironmentFixture: fixture.root }));
   }
 });

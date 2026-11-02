@@ -16,16 +16,19 @@ import { renderMarkdown } from "../server/render/pipeline.ts";
 import { initState } from "../server/state.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 function setupState(vault: string, plugins: PluginManager | null): void {
-  Deno.env.set("GLOBNOTES_PATH", vault);
-  Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-  const config = new GlobalConfig();
+  const env = testEnvironment({
+    GLOBNOTES_PATH: vault,
+    GLOBNOTES_AUTH_TYPE: "none",
+  });
+  const config = new GlobalConfig(env);
   initState(
     config,
     null,
-    new FileSystemNotes(vault),
-    new Fts5Indexer(vault),
+    new FileSystemNotes(vault, {}, env),
+    new Fts5Indexer(vault, env),
     new FileServing(vault),
     plugins,
   );

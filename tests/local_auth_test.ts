@@ -8,6 +8,7 @@ import { encodeBase32 } from "@std/encoding/base32";
 import { SignJWT } from "jose";
 import { LocalAuth, totpSecretFromRawKey } from "../server/auth/local.ts";
 import { GlobalConfig } from "../server/config.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 import { authenticatorCode, settledTotpNow } from "./helpers/totp.ts";
 
 async function makeConfig(
@@ -16,15 +17,18 @@ async function makeConfig(
   const vault = await Deno.makeTempDir();
   const saved: Record<string, string> = { GLOBNOTES_PATH: vault };
   for (const [k, v] of Object.entries(env)) saved[k] = v;
-  for (const [k, v] of Object.entries(saved)) Deno.env.set(k, v);
-  return new GlobalConfig();
+  return new GlobalConfig(testEnvironment(saved));
 }
 
 function authFor(
   config: GlobalConfig,
   env: Record<string, string>,
 ): LocalAuth {
-  for (const [k, v] of Object.entries(env)) Deno.env.set(k, v);
+  // LocalAuth reads its credentials from the config's own environment.
+  assertEquals(
+    Object.entries(env).every(([k, v]) => config.environment.get(k) === v),
+    true,
+  );
   return new LocalAuth(config);
 }
 
@@ -56,8 +60,15 @@ Deno.test("LocalAuth: token for a different username is rejected", async () => {
   const auth = authFor(config, env);
   const token = await auth.login({ username: "alice", password: "secret" });
 
-  Deno.env.set("GLOBNOTES_USERNAME", "mallory");
-  const other = new LocalAuth(config);
+  const other = new LocalAuth(
+    new GlobalConfig(
+      testEnvironment({
+        ...env,
+        GLOBNOTES_PATH: config.notesPath,
+        GLOBNOTES_USERNAME: "mallory",
+      }),
+    ),
+  );
   // Same secret (shared vault) but a different configured username.
   await assertRejects(() => other.validateToken(token.access_token));
   await auth.validateToken(token.access_token);
@@ -183,18 +194,7 @@ Deno.test("LocalAuth: stored-hash login (setup wizard path)", async () => {
       secret_key: "storedsecret",
     }),
   );
-  for (
-    const k of [
-      "GLOBNOTES_USERNAME",
-      "GLOBNOTES_PASSWORD",
-      "GLOBNOTES_SECRET_KEY",
-      "GLOBNOTES_AUTH_TYPE",
-    ]
-  ) {
-    Deno.env.delete(k);
-  }
-  Deno.env.set("GLOBNOTES_PATH", vault);
-  const config = new GlobalConfig();
+  const config = new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: vault }));
   const auth = new LocalAuth(config);
   const token = await auth.login({ username: "Carol", password: "hunter2" });
   await auth.validateToken(token.access_token);
@@ -222,19 +222,9 @@ Deno.test("LocalAuth: wizard-enrolled TOTP (stored key + password hash)", async 
       totp_key: totpKey,
     }),
   );
-  for (
-    const k of [
-      "GLOBNOTES_USERNAME",
-      "GLOBNOTES_PASSWORD",
-      "GLOBNOTES_SECRET_KEY",
-      "GLOBNOTES_AUTH_TYPE",
-      "GLOBNOTES_TOTP_KEY",
-    ]
-  ) {
-    Deno.env.delete(k);
-  }
-  Deno.env.set("GLOBNOTES_PATH", vault);
-  const auth = new LocalAuth(new GlobalConfig());
+  const auth = new LocalAuth(
+    new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: vault })),
+  );
   assert(auth.isTotpEnabled);
   assert(!auth.totpKeyFromEnv);
 

@@ -11,13 +11,14 @@ import { NoteOperations } from "../../server/notes/operations.ts";
 import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
 import { initState, state } from "../../server/state.ts";
+import { testEnvironment } from "./environment.ts";
 import { fixtureApiOrigin } from "./plugin_fixture.ts";
 
 export function hubOperationsFixture(
   probes: StorageProbes = {},
   options: { alias?: "sibling" | "ancestor" } = {},
 ) {
-  const previous = { ...state }, env = { ...Deno.env.toObject() };
+  const previous = { ...state };
   const root = Deno.makeTempDirSync();
   const realVault = `${root}/vault`;
   Deno.mkdirSync(realVault);
@@ -28,13 +29,15 @@ export function hubOperationsFixture(
       : `${realVault}/alias`;
     Deno.symlinkSync(realVault, vault);
   }
-  Deno.env.set("GLOBNOTES_PATH", vault);
-  Deno.env.set("GLOBNOTES_INDEX_PATH", `${root}/state`);
-  Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-  const config = new GlobalConfig(),
-    notes = new FileSystemNotes(config.notesPath, probes);
+  const env = testEnvironment({
+    GLOBNOTES_PATH: vault,
+    GLOBNOTES_INDEX_PATH: `${root}/state`,
+    GLOBNOTES_AUTH_TYPE: "none",
+  });
+  const config = new GlobalConfig(env),
+    notes = new FileSystemNotes(config.notesPath, probes, env);
   const files = new FileServing(config.notesPath),
-    hub = new VaultHub(config.notesPath, config.statePath);
+    hub = new VaultHub(config.notesPath, config.statePath, env);
   initState(config, null, notes, null, files, null, hub);
   const lifecycle = new PluginLifecycle(config);
   state.lifecycle = lifecycle;
@@ -69,16 +72,6 @@ export function hubOperationsFixture(
     close() {
       hub.stop();
       Object.assign(state, previous);
-      for (
-        const key of [
-          "GLOBNOTES_PATH",
-          "GLOBNOTES_INDEX_PATH",
-          "GLOBNOTES_AUTH_TYPE",
-        ]
-      ) {
-        if (env[key] === undefined) Deno.env.delete(key);
-        else Deno.env.set(key, env[key]);
-      }
       Deno.removeSync(root, { recursive: true });
     },
   };

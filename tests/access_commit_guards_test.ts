@@ -12,6 +12,7 @@ import {
   PluginNetworkStore,
 } from "../server/plugins/network_store.ts";
 import brandHandler from "../server/api/endpoints/_/api/brand/post.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 async function settingsFixture(
   label: string,
@@ -24,19 +25,8 @@ async function settingsFixture(
   ) => Promise<void>,
 ) {
   const vault = await Deno.makeTempDir({ prefix: `access-final-${label}-` });
-  const keys = [
-    "GLOBNOTES_PATH",
-    "GLOBNOTES_AUTH_TYPE",
-    "GLOBNOTES_INDEX_PATH",
-    "GLOBNOTES_READ_ONLY_SETTINGS",
-    "GLOBNOTES_BRAND_NAME",
-    "GLOBNOTES_BRAND_ACCENT",
-  ];
-  const previousEnv = keys.map((key) => Deno.env.get(key)),
-    previousState = { ...state };
+  const previousState = { ...state };
   try {
-    for (const key of keys) Deno.env.delete(key);
-    Deno.env.set("GLOBNOTES_PATH", vault);
     await Deno.mkdir(`${vault}/.globnotes`);
     await Deno.writeTextFile(
       `${vault}/.globnotes/config.json`,
@@ -48,7 +38,8 @@ async function settingsFixture(
         unrelated_guard_fixture: { retained: true },
       }),
     );
-    const config = new GlobalConfig(), lifecycle = new PluginLifecycle(config);
+    const config = new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: vault })),
+      lifecycle = new PluginLifecycle(config);
     state.config = config;
     state.auth = null;
     state.lifecycle = lifecycle;
@@ -75,11 +66,6 @@ async function settingsFixture(
       }
     }
     Object.assign(state, previousState);
-    keys.forEach((key, index) =>
-      previousEnv[index] === undefined
-        ? Deno.env.delete(key)
-        : Deno.env.set(key, previousEnv[index]!)
-    );
   }
 }
 

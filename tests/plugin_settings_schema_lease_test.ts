@@ -16,6 +16,7 @@ import { readManifest } from "../server/plugins/manifest.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { state } from "../server/state.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 const settingsPut = (await import(
   new URL(
@@ -39,13 +40,6 @@ const descriptor = (maximum: number) => ({
 
 async function bundle() {
   const fixture = await pluginFixture();
-  const keys = [
-    "GLOBNOTES_PATH",
-    "GLOBNOTES_INDEX_PATH",
-    "GLOBNOTES_AUTH_TYPE",
-    "GLOBNOTES_READ_ONLY_SETTINGS",
-  ];
-  const env = keys.map((key) => Deno.env.get(key));
   const previous = {
     config: state.config,
     auth: state.auth,
@@ -53,11 +47,14 @@ async function bundle() {
     plugins: state.plugins,
     pluginData: state.pluginData,
   };
-  Deno.env.set("GLOBNOTES_PATH", fixture.vault);
-  Deno.env.set("GLOBNOTES_INDEX_PATH", fixture.statePath);
-  Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-  Deno.env.delete("GLOBNOTES_READ_ONLY_SETTINGS");
-  const config = new GlobalConfig(), lifecycle = new PluginLifecycle(config);
+  const config = new GlobalConfig(
+      testEnvironment({
+        GLOBNOTES_PATH: fixture.vault,
+        GLOBNOTES_INDEX_PATH: fixture.statePath,
+        GLOBNOTES_AUTH_TYPE: "none",
+      }),
+    ),
+    lifecycle = new PluginLifecycle(config);
   const commit = <T>(effect: () => Promise<T>) => lifecycle.gate.run(effect);
   const oldPage = validateSettingsPages([descriptor(100)])[0];
   const dir = await fixture.install("coherent", {
@@ -140,11 +137,6 @@ async function bundle() {
       manager.stop();
       await runtime.close();
       Object.assign(state, previous);
-      keys.forEach((key, index) =>
-        env[index] === undefined
-          ? Deno.env.delete(key)
-          : Deno.env.set(key, env[index]!)
-      );
     },
   };
 }

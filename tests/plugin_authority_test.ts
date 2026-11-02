@@ -24,6 +24,7 @@ import type {
   ActionReceipt,
   OperationFact,
 } from "../server/plugins/contracts.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 const api = () => fixtureApiOrigin(state.lifecycle!);
 async function wait(predicate: () => boolean) {
@@ -76,18 +77,15 @@ async function bundle(
 ) {
   const fixture = await pluginFixture();
   const retirement = Promise.withResolvers<void>();
-  const previous = new Map(
-    ["GLOBNOTES_PATH", "GLOBNOTES_INDEX_PATH", "GLOBNOTES_AUTH_TYPE"].map(
-      (key) => [key, Deno.env.get(key)],
-    ),
-  );
-  Deno.env.set("GLOBNOTES_PATH", fixture.vault);
-  Deno.env.set("GLOBNOTES_INDEX_PATH", fixture.statePath);
-  Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-  const config = new GlobalConfig(),
-    notes = new FileSystemNotes(fixture.vault, probes),
+  const env = testEnvironment({
+    GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_INDEX_PATH: fixture.statePath,
+    GLOBNOTES_AUTH_TYPE: "none",
+  });
+  const config = new GlobalConfig(env),
+    notes = new FileSystemNotes(fixture.vault, probes, env),
     files = new FileServing(fixture.vault),
-    indexer = new Fts5Indexer(fixture.statePath),
+    indexer = new Fts5Indexer(fixture.statePath, env),
     lifecycle = new PluginLifecycle(config);
   const sources: RuntimeSource[] = [], facts: OperationFact[] = [];
   const rpc = servicePluginRpc({
@@ -128,7 +126,7 @@ async function bundle(
     network,
   }, { disposalMs: 20, ...fixtureOptions.runtimeLimits });
   initState(config, null, notes, indexer, files, null as never);
-  const hub = new VaultHub(fixture.vault, fixture.statePath);
+  const hub = new VaultHub(fixture.vault, fixture.statePath, env);
   subscribeIndex(hub, indexer);
   state.hub = hub;
   const operations = new NoteOperations({
@@ -208,11 +206,6 @@ async function bundle(
       hub.stop();
       retirement.resolve();
       await runtime.close();
-      for (const [key, value] of previous) {
-        if (value === undefined) {
-          Deno.env.delete(key);
-        } else Deno.env.set(key, value);
-      }
       if (!fixtureOptions.retain) await fixture.dispose();
     },
   };

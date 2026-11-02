@@ -3,24 +3,23 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { GlobalConfig, StoredConfigConflict } from "../server/config.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { testEnvironment } from "./helpers/environment.ts";
+
+/** The fixture deployment: vault and (by default) state under `root`. */
+function deployment(root: string, statePath = `${root}/state`) {
+  return testEnvironment({
+    GLOBNOTES_PATH: `${root}/vault`,
+    GLOBNOTES_INDEX_PATH: statePath,
+  });
+}
 
 for (const absolute of [false, true]) {
   Deno.test(`review repairs: R07 ${absolute ? "absolute" : "relative"} config file link retains identity and persists into real target`, async () => {
     const root = await Deno.makeTempDir({ prefix: "review-config-link-" });
-    const keys = [
-      "GLOBNOTES_PATH",
-      "GLOBNOTES_INDEX_PATH",
-      "GLOBNOTES_AUTH_TYPE",
-      "GLOBNOTES_READ_ONLY_SETTINGS",
-    ];
-    const env = keys.map((key) => Deno.env.get(key));
     try {
-      for (const key of keys) Deno.env.delete(key);
       await Deno.mkdir(`${root}/vault`);
       await Deno.mkdir(`${root}/state`);
       await Deno.mkdir(`${root}/deployment`);
-      Deno.env.set("GLOBNOTES_PATH", `${root}/vault`);
-      Deno.env.set("GLOBNOTES_INDEX_PATH", `${root}/state`);
       const target = `${root}/deployment/config.json`,
         link = `${root}/state/config.json`;
       await Deno.writeTextFile(
@@ -34,7 +33,8 @@ for (const absolute of [false, true]) {
       );
       const text = absolute ? target : "../deployment/config.json";
       await Deno.symlink(text, link);
-      const before = Deno.lstatSync(link), config = new GlobalConfig();
+      const before = Deno.lstatSync(link),
+        config = new GlobalConfig(deployment(root));
       config.saveStoredConfig({
         ...config.storedConfig,
         brand_name: "persisted target consumer",
@@ -57,7 +57,7 @@ for (const absolute of [false, true]) {
         "persisted target consumer",
       );
       assertEquals(
-        new GlobalConfig().storedConfig?.brand_name,
+        new GlobalConfig(deployment(root)).storedConfig?.brand_name,
         "persisted target consumer",
       );
       assertEquals(JSON.parse(await Deno.readTextFile(target)).unknown, {
@@ -70,9 +70,6 @@ for (const absolute of [false, true]) {
         0,
       );
     } finally {
-      keys.forEach((key, i) =>
-        env[i] === undefined ? Deno.env.delete(key) : Deno.env.set(key, env[i]!)
-      );
       console.log(JSON.stringify({ retainedConfigLinkFixture: root }));
     }
   });
@@ -82,24 +79,12 @@ async function persistenceFixture(
   run: (root: string, config: GlobalConfig) => Promise<void> | void,
 ) {
   const root = await Deno.makeTempDir({ prefix: "review-config-persistence-" });
-  const keys = [
-    "GLOBNOTES_PATH",
-    "GLOBNOTES_INDEX_PATH",
-    "GLOBNOTES_AUTH_TYPE",
-  ];
-  const env = keys.map((key) => Deno.env.get(key));
   try {
-    for (const key of keys) Deno.env.delete(key);
     await Deno.mkdir(`${root}/vault`);
     await Deno.mkdir(`${root}/state`);
     await Deno.mkdir(`${root}/deployment`);
-    Deno.env.set("GLOBNOTES_PATH", `${root}/vault`);
-    Deno.env.set("GLOBNOTES_INDEX_PATH", `${root}/state`);
-    await run(root, new GlobalConfig());
+    await run(root, new GlobalConfig(deployment(root)));
   } finally {
-    keys.forEach((key, i) =>
-      env[i] === undefined ? Deno.env.delete(key) : Deno.env.set(key, env[i]!)
-    );
     console.log(JSON.stringify({ retainedConfigPersistenceFixture: root }));
   }
 }
@@ -118,7 +103,7 @@ Deno.test("review repairs: R07 chained file and configured directory links updat
     Deno.symlinkSync("../deployment/config.json", `${root}/state/chain.json`);
     Deno.symlinkSync("chain.json", file);
     Deno.symlinkSync("state", directory);
-    Deno.env.set("GLOBNOTES_INDEX_PATH", directory);
+    const env = deployment(root, directory);
     const links = [directory, file, `${root}/state/chain.json`].map((
       location,
     ) => ({
@@ -126,12 +111,12 @@ Deno.test("review repairs: R07 chained file and configured directory links updat
       ino: Deno.lstatSync(location).ino,
       text: Deno.readLinkSync(location),
     }));
-    const config = new GlobalConfig();
+    const config = new GlobalConfig(env);
     config.saveStoredConfig({
       ...config.storedConfig,
       read_only_settings: true,
     });
-    assertEquals(new GlobalConfig().settingsWritable, false);
+    assertEquals(new GlobalConfig(env).settingsWritable, false);
     // Deployment recovery updates the same external target and is consumed on restart.
     Deno.writeTextFileSync(
       target,
@@ -140,7 +125,7 @@ Deno.test("review repairs: R07 chained file and configured directory links updat
         brand_name: "deployment recovery",
       }),
     );
-    const recovered = new GlobalConfig();
+    const recovered = new GlobalConfig(env);
     assertEquals(recovered.settingsWritable, true);
     assertEquals(recovered.brandName, "deployment recovery");
     for (const link of links) {
@@ -158,20 +143,20 @@ Deno.test("review repairs: R07 chained file and configured directory links updat
 
 Deno.test("review repairs: R07 absent config parents and dangling file link preserve their distinct creation paths", async () => {
   await persistenceFixture((root) => {
-    Deno.env.set("GLOBNOTES_INDEX_PATH", `${root}/state/first/run`);
-    const first = new GlobalConfig(), before = first.captureStoredConfig();
+    let env = deployment(root, `${root}/state/first/run`);
+    const first = new GlobalConfig(env), before = first.captureStoredConfig();
     first.saveStoredConfig(deploymentConfig, before);
-    assertEquals(new GlobalConfig().storedConfig, deploymentConfig);
-    Deno.env.set("GLOBNOTES_INDEX_PATH", `${root}/state`);
+    assertEquals(new GlobalConfig(env).storedConfig, deploymentConfig);
+    env = deployment(root);
     const link = `${root}/state/config.json`,
       target = `${root}/deployment/new.json`;
     Deno.symlinkSync("../deployment/new.json", link);
-    const ino = Deno.lstatSync(link).ino, dangling = new GlobalConfig();
+    const ino = Deno.lstatSync(link).ino, dangling = new GlobalConfig(env);
     dangling.saveStoredConfig(deploymentConfig, dangling.captureStoredConfig());
     assertEquals(Deno.lstatSync(link).ino, ino);
     assert(Deno.lstatSync(link).isSymlink);
     assertEquals(JSON.parse(Deno.readTextFileSync(target)), deploymentConfig);
-    assertEquals(new GlobalConfig().storedConfig, deploymentConfig);
+    assertEquals(new GlobalConfig(env).storedConfig, deploymentConfig);
   });
 });
 
@@ -192,7 +177,8 @@ for (
       Deno.writeTextFileSync(target, bytes);
       Deno.writeTextFileSync(other, bytes);
       Deno.symlinkSync(target, link);
-      const config = new GlobalConfig(), before = config.captureStoredConfig();
+      const config = new GlobalConfig(deployment(root)),
+        before = config.captureStoredConfig();
       const retarget = () => {
         Deno.removeSync(link);
         Deno.symlinkSync(other, link);
@@ -256,7 +242,8 @@ Deno.test("review repairs: R07 denied target write cannot borrow writable link d
     Deno.writeTextFileSync(target, bytes);
     Deno.symlinkSync(target, link);
     Deno.chmodSync(target, 0o444);
-    const config = new GlobalConfig(), ino = Deno.lstatSync(link).ino;
+    const config = new GlobalConfig(deployment(root)),
+      ino = Deno.lstatSync(link).ino;
     assertThrows(
       () =>
         config.saveStoredConfig({ ...deploymentConfig, brand_name: "denied" }),
@@ -268,7 +255,7 @@ Deno.test("review repairs: R07 denied target write cannot borrow writable link d
     Deno.chmodSync(target, 0o640);
     config.saveStoredConfig({ ...deploymentConfig, brand_name: "permitted" });
     assertEquals(Deno.statSync(target).mode! & 0o777, 0o640);
-    assertEquals(new GlobalConfig().brandName, "permitted");
+    assertEquals(new GlobalConfig(deployment(root)).brandName, "permitted");
   });
 });
 
@@ -283,6 +270,7 @@ Deno.test("review repairs: R07 cycles nonregular and dangling-directory targets 
   ) {
     await t.step(kind, () =>
       persistenceFixture((root) => {
+        let env = deployment(root);
         const link = `${root}/state/config.json`;
         if (kind === "cycle") Deno.symlinkSync("config.json", link);
         if (kind === "directory") Deno.symlinkSync(`${root}/deployment`, link);
@@ -294,12 +282,13 @@ Deno.test("review repairs: R07 cycles nonregular and dangling-directory targets 
             `${root}/unowned-parent`,
             `${root}/configured-state`,
           );
-          Deno.env.set("GLOBNOTES_INDEX_PATH", `${root}/configured-state`);
+          env = deployment(root, `${root}/configured-state`);
         }
         const configured = kind === "dangling-directory"
           ? `${root}/configured-state`
           : link;
-        const ino = Deno.lstatSync(configured).ino, config = new GlobalConfig();
+        const ino = Deno.lstatSync(configured).ino,
+          config = new GlobalConfig(env);
         assertThrows(() => config.saveStoredConfig(deploymentConfig));
         assert(Deno.lstatSync(configured).isSymlink);
         assertEquals(Deno.lstatSync(configured).ino, ino);
@@ -321,7 +310,7 @@ Deno.test("review repairs: R07 actual target rename failure retains bytes memory
       bytes = JSON.stringify(deploymentConfig);
     Deno.writeTextFileSync(target, bytes);
     Deno.symlinkSync(target, link);
-    const config = new GlobalConfig(),
+    const config = new GlobalConfig(deployment(root)),
       rename = Deno.renameSync,
       ino = Deno.lstatSync(link).ino;
     try {

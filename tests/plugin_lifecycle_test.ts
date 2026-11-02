@@ -28,6 +28,7 @@ import { Fts5Indexer } from "../server/search/fts5.ts";
 import { initState, state } from "../server/state.ts";
 import { bootServer } from "./helpers/boot.ts";
 import { fixtureApiOrigin, pluginFixture } from "./helpers/plugin_fixture.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 const RECORDER_SERVICE = `export function activate(ctx) {
   globalThis.__facts = [];
@@ -136,22 +137,20 @@ async function bundle(opts: {
       capabilities: { read: ["vault"], write: ["vault"] },
     }, { "service.js": RECORDER_SERVICE });
   }
-  const prevPath = Deno.env.get("GLOBNOTES_PATH");
-  const prevIndex = Deno.env.get("GLOBNOTES_INDEX_PATH");
-  const prevAuth = Deno.env.get("GLOBNOTES_AUTH_TYPE");
-  Deno.env.set("GLOBNOTES_PATH", fixture.vault);
-  Deno.env.set("GLOBNOTES_INDEX_PATH", fixture.statePath);
-  Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-  // External writes bypass the storage layer; scans must see them
-  // immediately rather than through the 15s scan-cache TTL.
-  const prevTtl = Deno.env.get("GLOBNOTES_SCAN_CACHE_TTL");
-  Deno.env.set("GLOBNOTES_SCAN_CACHE_TTL", opts.scanCacheTtl ?? "0");
+  const env = testEnvironment({
+    GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_INDEX_PATH: fixture.statePath,
+    GLOBNOTES_AUTH_TYPE: "none",
+    // External writes bypass the storage layer; scans must see them
+    // immediately rather than through the 15s scan-cache TTL.
+    GLOBNOTES_SCAN_CACHE_TTL: opts.scanCacheTtl ?? "0",
+  });
   try {
-    const config = new GlobalConfig();
-    const notes = new FileSystemNotes(fixture.vault, opts.probes ?? {});
-    const indexer = new Fts5Indexer(fixture.statePath);
+    const config = new GlobalConfig(env);
+    const notes = new FileSystemNotes(fixture.vault, opts.probes ?? {}, env);
+    const indexer = new Fts5Indexer(fixture.statePath, env);
     const files = new FileServing(fixture.vault);
-    const hub = new VaultHub(fixture.vault, fixture.statePath);
+    const hub = new VaultHub(fixture.vault, fixture.statePath, env);
     hub.scanNow(); // Initial inventory precedes subscriber admission, as at boot.
     subscribeIndex(hub, indexer);
     const manager = new PluginManager(
@@ -159,7 +158,7 @@ async function bundle(opts: {
       undefined,
       opts.workers ?? 1,
       fixture.statePath,
-      { internalRoot: path.join(fixture.root, "internal") },
+      { internalRoot: path.join(fixture.root, "internal"), env },
     );
     initState(config, null, notes, indexer, files, manager);
     const lifecycle = new PluginLifecycle(config);
@@ -239,14 +238,6 @@ async function bundle(opts: {
         hub.stop();
         await runtime.close();
         manager.stop();
-        if (prevPath === undefined) Deno.env.delete("GLOBNOTES_PATH");
-        else Deno.env.set("GLOBNOTES_PATH", prevPath);
-        if (prevIndex === undefined) Deno.env.delete("GLOBNOTES_INDEX_PATH");
-        else Deno.env.set("GLOBNOTES_INDEX_PATH", prevIndex);
-        if (prevAuth === undefined) Deno.env.delete("GLOBNOTES_AUTH_TYPE");
-        else Deno.env.set("GLOBNOTES_AUTH_TYPE", prevAuth);
-        if (prevTtl === undefined) Deno.env.delete("GLOBNOTES_SCAN_CACHE_TTL");
-        else Deno.env.set("GLOBNOTES_SCAN_CACHE_TTL", prevTtl);
         // Keep generated lifecycle proof vaults by default, including failures.
         if (opts.retain === false) await fixture.dispose();
       },
@@ -1187,17 +1178,16 @@ Deno.test("lifecycle: initial indexing is inventory plus on-sync, not fake creat
       hooks: HOOKS,
       capabilities: { read: ["vault"], write: ["vault"] },
     }, { "service.js": RECORDER_SERVICE });
-    const prevPath = Deno.env.get("GLOBNOTES_PATH");
-    const prevIndex = Deno.env.get("GLOBNOTES_INDEX_PATH");
-    const prevAuth = Deno.env.get("GLOBNOTES_AUTH_TYPE");
-    Deno.env.set("GLOBNOTES_PATH", fixture.vault);
-    Deno.env.set("GLOBNOTES_INDEX_PATH", fixture.statePath);
-    Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
+    const env = testEnvironment({
+      GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_INDEX_PATH: fixture.statePath,
+      GLOBNOTES_AUTH_TYPE: "none",
+    });
     let manager: PluginManager | null = null;
     try {
-      const config = new GlobalConfig();
-      const notes = new FileSystemNotes(fixture.vault);
-      const indexer = new Fts5Indexer(fixture.statePath);
+      const config = new GlobalConfig(env);
+      const notes = new FileSystemNotes(fixture.vault, {}, env);
+      const indexer = new Fts5Indexer(fixture.statePath, env);
       const files = new FileServing(fixture.vault);
       manager = new PluginManager(
         fixture.vault,
@@ -1270,12 +1260,6 @@ Deno.test("lifecycle: initial indexing is inventory plus on-sync, not fake creat
       await runtime.close();
     } finally {
       manager?.stop();
-      if (prevPath === undefined) Deno.env.delete("GLOBNOTES_PATH");
-      else Deno.env.set("GLOBNOTES_PATH", prevPath);
-      if (prevIndex === undefined) Deno.env.delete("GLOBNOTES_INDEX_PATH");
-      else Deno.env.set("GLOBNOTES_INDEX_PATH", prevIndex);
-      if (prevAuth === undefined) Deno.env.delete("GLOBNOTES_AUTH_TYPE");
-      else Deno.env.set("GLOBNOTES_AUTH_TYPE", prevAuth);
     }
   } finally {
     await fixture.dispose();

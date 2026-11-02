@@ -4,6 +4,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { GlobalConfig } from "../server/config.ts";
 import { hashPassword } from "../server/helpers.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 import {
   authenticatorCode,
   settledTotpNow,
@@ -35,41 +36,34 @@ async function retainedFailure(
 
 Deno.test("access: settings lock projection separates public notes from settings", async () => {
   const vault = await Deno.makeTempDir({ prefix: "access-lock-projection-" });
-  const keys = [
-    "GLOBNOTES_PATH",
-    "GLOBNOTES_AUTH_TYPE",
-    "GLOBNOTES_INDEX_PATH",
-    "GLOBNOTES_READ_ONLY_SETTINGS",
-  ];
-  const previous = keys.map((key) => Deno.env.get(key));
   let passed = false;
   try {
-    for (const key of keys) Deno.env.delete(key);
-    Deno.env.set("GLOBNOTES_PATH", vault);
     await Deno.mkdir(`${vault}/.globnotes`);
     await Deno.writeTextFile(
       `${vault}/.globnotes/config.json`,
       JSON.stringify({ auth_type: "none", read_only_settings: true }),
     );
-    const config = new GlobalConfig();
+    const env = testEnvironment({ GLOBNOTES_PATH: vault });
+    const config = new GlobalConfig(env);
     assertEquals(config.authType, "none");
     assertEquals(config.setupRequired, false);
     assertEquals(config.settingsWritable, false);
-    Deno.env.set("GLOBNOTES_READ_ONLY_SETTINGS", "false");
-    assertEquals(new GlobalConfig().settingsWritable, true);
-    Deno.env.delete("GLOBNOTES_READ_ONLY_SETTINGS");
+    assertEquals(
+      new GlobalConfig(
+        testEnvironment({
+          GLOBNOTES_PATH: vault,
+          GLOBNOTES_READ_ONLY_SETTINGS: "false",
+        }),
+      ).settingsWritable,
+      true,
+    );
     await Deno.writeTextFile(
       `${vault}/.globnotes/config.json`,
       JSON.stringify({ auth_type: "none" }),
     );
-    assertEquals(new GlobalConfig().settingsWritable, true);
+    assertEquals(new GlobalConfig(env).settingsWritable, true);
     passed = true;
   } finally {
-    keys.forEach((key, index) =>
-      previous[index] === undefined
-        ? Deno.env.delete(key)
-        : Deno.env.set(key, previous[index]!)
-    );
     if (passed) await Deno.remove(vault, { recursive: true });
     else console.error(`Retained failed projection fixture: ${vault}`);
   }
@@ -520,22 +514,14 @@ Deno.test("access: initial public default and explicit locked choice survive pre
 Deno.test("access: admitted settings writes recheck at commit without blocking private plugin data", async () => {
   const vault = await Deno.makeTempDir({ prefix: "access-commit-guard-" });
   const previousState = { ...state };
-  const keys = [
-    "GLOBNOTES_PATH",
-    "GLOBNOTES_AUTH_TYPE",
-    "GLOBNOTES_INDEX_PATH",
-    "GLOBNOTES_READ_ONLY_SETTINGS",
-  ];
-  const previous = keys.map((key) => Deno.env.get(key));
   try {
-    for (const key of keys) Deno.env.delete(key);
-    Deno.env.set("GLOBNOTES_PATH", vault);
     await Deno.mkdir(`${vault}/.globnotes`);
     await Deno.writeTextFile(
       `${vault}/.globnotes/config.json`,
       JSON.stringify({ auth_type: "none" }),
     );
-    const config = new GlobalConfig(), lifecycle = new PluginLifecycle(config);
+    const config = new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: vault })),
+      lifecycle = new PluginLifecycle(config);
     state.config = config;
     state.auth = null;
     state.lifecycle = lifecycle;
@@ -624,11 +610,6 @@ Deno.test("access: admitted settings writes recheck at commit without blocking p
     assertEquals((await policy.read()).metadata, before.metadata);
   } finally {
     Object.assign(state, previousState);
-    keys.forEach((key, index) =>
-      previous[index] === undefined
-        ? Deno.env.delete(key)
-        : Deno.env.set(key, previous[index]!)
-    );
   }
 });
 

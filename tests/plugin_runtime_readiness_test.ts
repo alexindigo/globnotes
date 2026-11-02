@@ -14,6 +14,7 @@ import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 Deno.test("plugin runtime: failed Worker cannot become ready after final policy await", async () => {
   const fixture = await pluginFixture();
@@ -228,21 +229,12 @@ for (const boundary of ["operation", "per-plugin"] as const) {
       "service.js":
         `export function activate(ctx){ctx.hooks.on('pre-create',()=>{});}`,
     });
-    const keys = [
-        "GLOBNOTES_PATH",
-        "GLOBNOTES_INDEX_PATH",
-        "GLOBNOTES_AUTH_TYPE",
-      ],
-      old = keys.map((key) => Deno.env.get(key));
-    Deno.env.set(keys[0], fixture.vault);
-    Deno.env.set(keys[1], fixture.statePath);
-    Deno.env.set(keys[2], "none");
-    const config = new GlobalConfig();
-    keys.forEach((key, index) =>
-      old[index] === undefined
-        ? Deno.env.delete(key)
-        : Deno.env.set(key, old[index]!)
-    );
+    const env = testEnvironment({
+      GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_INDEX_PATH: fixture.statePath,
+      GLOBNOTES_AUTH_TYPE: "none",
+    });
+    const config = new GlobalConfig(env);
     const lifecycle = new PluginLifecycle(config);
     const manager = new PluginManager(
       fixture.vault,
@@ -270,7 +262,7 @@ for (const boundary of ["operation", "per-plugin"] as const) {
       const guarded = boundary === "operation"
         ? runtime.guard("pre-create", {}, Date.now() + 100)
         : new NoteOperations({
-          notes: new FileSystemNotes(fixture.vault),
+          notes: new FileSystemNotes(fixture.vault, {}, env),
           files: new FileServing(fixture.vault),
           indexer: null,
           runtime: () => runtime,

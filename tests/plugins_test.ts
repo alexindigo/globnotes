@@ -23,6 +23,7 @@ import { pluginRpc } from "../server/plugins/rpc.ts";
 import { initState } from "../server/state.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 function writePlugin(
   vault: string,
@@ -508,17 +509,17 @@ Deno.test("plugins: app.js endpoint serves the browser runtime entry for enabled
 
 Deno.test("plugins: pluginRpc resolves against real state", async () => {
   const vault = await Deno.makeTempDir();
-  const prevPath = Deno.env.get("GLOBNOTES_PATH");
-  const prevAuth = Deno.env.get("GLOBNOTES_AUTH_TYPE");
   try {
-    Deno.env.set("GLOBNOTES_PATH", vault);
-    Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
+    const env = testEnvironment({
+      GLOBNOTES_PATH: vault,
+      GLOBNOTES_AUTH_TYPE: "none",
+    });
     Deno.writeTextFileSync(path.join(vault, "hello.md"), "hi there");
     Deno.writeTextFileSync(path.join(vault, "data.bin"), "bytes");
 
-    const config = new GlobalConfig();
-    const notes = new FileSystemNotes(vault);
-    const indexer = new Fts5Indexer(vault);
+    const config = new GlobalConfig(env);
+    const notes = new FileSystemNotes(vault, {}, env);
+    const indexer = new Fts5Indexer(vault, env);
     const files = new FileServing(vault);
     initState(config, null, notes, indexer, files);
 
@@ -547,10 +548,6 @@ Deno.test("plugins: pluginRpc resolves against real state", async () => {
 
     assertEquals(config.authType, AuthType.NONE);
   } finally {
-    if (prevPath === undefined) Deno.env.delete("GLOBNOTES_PATH");
-    else Deno.env.set("GLOBNOTES_PATH", prevPath);
-    if (prevAuth === undefined) Deno.env.delete("GLOBNOTES_AUTH_TYPE");
-    else Deno.env.set("GLOBNOTES_AUTH_TYPE", prevAuth);
     await Deno.remove(vault, { recursive: true });
   }
 });

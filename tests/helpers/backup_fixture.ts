@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { testEnvironment } from "./environment.ts";
 import { AuthType, GlobalConfig } from "../../server/config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { FileSystemNotes } from "../../server/notes/file_system.ts";
@@ -54,21 +55,16 @@ export async function backupFixture(options: {
     await Deno.readTextFile(new URL("manifest.json", source)),
   );
   const dir = await fixture.install(id, manifest, files);
-  const env = ["GLOBNOTES_PATH", "GLOBNOTES_INDEX_PATH", "GLOBNOTES_AUTH_TYPE"],
-    previousEnv = env.map((key) => Deno.env.get(key));
-  Deno.env.set(env[0], fixture.vault);
-  Deno.env.set(env[1], fixture.statePath);
-  Deno.env.set(env[2], "none");
-  const config = new GlobalConfig();
-  env.forEach((key, index) =>
-    previousEnv[index] === undefined
-      ? Deno.env.delete(key)
-      : Deno.env.set(key, previousEnv[index]!)
-  );
+  const env = testEnvironment({
+    GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_INDEX_PATH: fixture.statePath,
+    GLOBNOTES_AUTH_TYPE: "none",
+  });
+  const config = new GlobalConfig(env);
   config.authType = AuthType.NONE;
   const previousState = { ...state };
   const lifecycle = new PluginLifecycle(config),
-    notes = new FileSystemNotes(fixture.vault),
+    notes = new FileSystemNotes(fixture.vault, {}, env),
     fileServing = new FileServing(fixture.vault);
   const manager = new PluginManager(
     fixture.vault,
@@ -79,6 +75,7 @@ export async function backupFixture(options: {
       internalRoot: `${fixture.root}/no-internal`,
       settingsEnvironment: new PluginSettingsEnvironment(options.environment),
       persistence: { commit: (effect) => lifecycle.gate.run(effect) },
+      env,
     },
   );
   initState(config, null, notes, null, fileServing, manager);

@@ -2,11 +2,12 @@
 import { assert, assertEquals } from "@std/assert";
 import { VaultHub } from "../server/hub/hub.ts";
 import type { ChangeEntry } from "../server/hub/types.ts";
+import { type Environment, testEnvironment } from "./helpers/environment.ts";
 
-function fixture() {
+function fixture(env: Environment = testEnvironment()) {
   const root = Deno.makeTempDirSync();
   Deno.mkdirSync(`${root}/vault`);
-  const hub = new VaultHub(`${root}/vault`, `${root}/vault/.globnotes`);
+  const hub = new VaultHub(`${root}/vault`, `${root}/vault/.globnotes`, env);
   const batches: ChangeEntry[][] = [];
   hub.subscribe((entries) => batches.push(entries));
   return {
@@ -188,17 +189,18 @@ Deno.test("hub scanner: NFC directory aliases cannot replace the first file owne
 });
 
 Deno.test("hub scanner: periodic fallback survives unavailable watcher and reads interval once", async () => {
-  const previous = Deno.env.get("GLOBNOTES_HUB_SCAN_INTERVAL"),
-    watch = Deno.watchFs;
-  Deno.env.set("GLOBNOTES_HUB_SCAN_INTERVAL", "0.05");
-  const f = fixture();
+  const watch = Deno.watchFs;
+  // A live (mutable) environment: the later change proves the hub read the
+  // interval once, at construction.
+  const values = new Map([["GLOBNOTES_HUB_SCAN_INTERVAL", "0.05"]]);
+  const f = fixture({ get: (key) => values.get(key) });
   try {
     Deno.watchFs = () => {
       throw new Error("watcher unavailable fixture");
     };
     f.hub.start();
     Deno.watchFs = watch;
-    Deno.env.set("GLOBNOTES_HUB_SCAN_INTERVAL", "60");
+    values.set("GLOBNOTES_HUB_SCAN_INTERVAL", "60");
     Deno.writeTextFileSync(`${f.vault}/periodic.md`, "periodic");
     const deadline = Date.now() + 1500;
     while (!f.hub.fileState("periodic.md") && Date.now() < deadline) {
@@ -207,8 +209,6 @@ Deno.test("hub scanner: periodic fallback survives unavailable watcher and reads
     assert(f.hub.fileState("periodic.md"));
   } finally {
     Deno.watchFs = watch;
-    if (previous === undefined) Deno.env.delete("GLOBNOTES_HUB_SCAN_INTERVAL");
-    else Deno.env.set("GLOBNOTES_HUB_SCAN_INTERVAL", previous);
     f.close();
   }
 });

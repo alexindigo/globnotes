@@ -17,6 +17,7 @@ import { servicePluginRpc } from "../server/plugins/rpc.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { initState, state } from "../server/state.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 async function serviceBundle(opts: {
   manifest: Record<string, unknown>;
@@ -32,14 +33,10 @@ async function serviceBundle(opts: {
     GLOBNOTES_INDEX_PATH: fixture.statePath,
     GLOBNOTES_AUTH_TYPE: opts.authType ?? "none",
   };
-  const prev: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(env)) {
-    prev[key] = Deno.env.get(key);
-    Deno.env.set(key, value);
-  }
-  const config = new GlobalConfig();
-  const notes = new FileSystemNotes(fixture.vault);
-  const indexer = new Fts5Indexer(fixture.statePath);
+  const environment = testEnvironment(env);
+  const config = new GlobalConfig(environment);
+  const notes = new FileSystemNotes(fixture.vault, {}, environment);
+  const indexer = new Fts5Indexer(fixture.statePath, environment);
   const files = new FileServing(fixture.vault);
   const manager = new PluginManager(
     fixture.vault,
@@ -49,6 +46,7 @@ async function serviceBundle(opts: {
     {
       internalRoot: path.join(fixture.root, "internal"),
       renderWritable: () => lifecycle.writable(),
+      env: environment,
     },
   );
   initState(config, null, notes, indexer, files, manager);
@@ -88,6 +86,7 @@ async function serviceBundle(opts: {
   }
   return {
     fixture,
+    env,
     runtime,
     lifecycle,
     manager,
@@ -95,10 +94,6 @@ async function serviceBundle(opts: {
     async dispose() {
       await runtime.close();
       manager.stop();
-      for (const [key, value] of Object.entries(prev)) {
-        if (value === undefined) Deno.env.delete(key);
-        else Deno.env.set(key, value);
-      }
       if (!opts.retain) await fixture.dispose();
     },
   };
@@ -222,8 +217,9 @@ for (const stateInVault of [false, true]) {
       // configuration is replaced; note/files/index consumers remain this fixture's.
       const alien = `${b.fixture.root}/alien-state`;
       Deno.mkdirSync(alien);
-      Deno.env.set("GLOBNOTES_INDEX_PATH", alien);
-      state.config = new GlobalConfig();
+      state.config = new GlobalConfig(
+        testEnvironment({ ...b.env, GLOBNOTES_INDEX_PATH: alien }),
+      );
       const stateDirectory = stateInVault ? "State" : "../relocated-state";
       if (stateInVault) {
         assert(
