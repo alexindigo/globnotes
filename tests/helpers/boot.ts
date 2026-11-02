@@ -22,6 +22,8 @@ const SERVER_MAIN = new URL("../../server/main.ts", import.meta.url).pathname;
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
 const REPO_DIST = path.join(REPO_ROOT, "client", "dist");
 const LISTENING = /globnotes listening on http:\/\/\S*:(\d+)/;
+/** Port protocol shared with subprocess fixtures that emulate the server. */
+export const SERVER_PORT_ENV = "GLOBNOTES_PORT";
 
 /** Auto-created vault dirs, swept at test-process unload so a test that
  * forgets to clean up still leaves no /tmp/globnotes-test-vault-*
@@ -117,7 +119,7 @@ export async function bootServer(
     env: {
       ...env,
       GLOBNOTES_PATH: vault,
-      GLOBNOTES_PORT: "0",
+      [SERVER_PORT_ENV]: "0",
       GLOBNOTES_HOST: hostname,
     },
     stdout: "piped",

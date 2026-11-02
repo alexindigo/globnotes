@@ -53,8 +53,17 @@ try {
 } catch (error) {
   failure = error;
 } finally {
-  child.kill("SIGTERM");
-  const status = await child.status;
+  // Always retain startup diagnostics, including when exit races with kill.
+  const killTimer = setTimeout(() => {
+    try { child.kill("SIGKILL"); } catch { /* already exited */ }
+  }, 5000);
+  try { child.kill("SIGTERM"); } catch { /* already exited */ }
+  let status;
+  try {
+    status = await child.status;
+  } finally {
+    clearTimeout(killTimer);
+  }
   const [stdout, stderr] = await output;
   console.log(`SERVER STDOUT\n${stdout}\nSERVER STDERR\n${stderr}`);
   console.log(JSON.stringify({ serverStatus: status, retainedFixture: fixture }));

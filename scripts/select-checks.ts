@@ -476,6 +476,9 @@ export function selectChecks(changes: Change[], context: Context): Selection {
         `no case map (${context.caseError ?? "unavailable"})`,
       );
     }
+    if (!graph) {
+      return wholeBrowser(change, "row 4", "no dependency graph");
+    }
     if (change.removed) {
       return wholeBrowser(change, "row 4/9", "removed browser file");
     }
@@ -875,20 +878,66 @@ export async function loadContext(
   return context;
 }
 
+/** Validate at the producer/consumer boundary, before any fields are printed.
+ * Malformed/partial JSON must never be interpreted as fewer checks. */
+export function validateSelection(value: unknown): asserts value is Selection {
+  const fail = (detail: string): never => {
+    throw new Error(`invalid selection: ${detail}`);
+  };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail("expected an object");
+  }
+  const selection = value as Record<string, unknown>;
+  if (selection.version !== 1) fail("unsupported version");
+  const strings = (name: string): string[] => {
+    const list = selection[name];
+    if (
+      !Array.isArray(list) || list.some((item) =>
+        typeof item !== "string" || !item || /[\r\n\0]/.test(item)
+      )
+    ) fail(`${name} must be a list of nonempty lines`);
+    return list as string[];
+  };
+  const gates = strings("gates");
+  if (
+    gates.some((gate) => !GATE_ORDER.includes(gate as Gate)) ||
+    new Set(gates).size !== gates.length ||
+    STATIC_GATES.some((gate) => !gates.includes(gate))
+  ) fail("unknown, repeated or missing static gates");
+  const browser = gates.some((gate) => BROWSER_GATES.includes(gate as Gate));
+  if (selection.browser !== browser) fail("browser flag disagrees with gates");
+  strings("contractTests");
+  for (
+    const [field, selected] of [
+      ["serverTests", gates.includes("server")],
+      ["timingTests", gates.includes("timing")],
+      ["clientTests", gates.includes("client")],
+      ["browserCases", gates.includes("native") || gates.includes("native-controls")],
+    ] as const
+  ) {
+    const list = selection[field] === "all" ? ["all"] : strings(field);
+    if (selected !== (list.length > 0)) fail(`${field} disagrees with gates`);
+  }
+  if (gates.includes("build") !== gates.includes("cold-load")) {
+    fail("build and cold-load must be selected together");
+  }
+  if (!Array.isArray(selection.reasons)) fail("missing reasons");
+}
+
 /** Print a selection field, one value per line (for scripts/gates.sh). */
 function printField(selection: Selection, field: string): void {
   const value = (selection as unknown as Record<string, unknown>)[field];
-  if (value === undefined) throw new Error(`unknown selection field: ${field}`);
+  if (!Object.hasOwn(selection, field) || value === undefined) {
+    throw new Error(`unknown selection field: ${field}`);
+  }
   const values = Array.isArray(value) ? value : [value];
   for (const item of values) console.log(String(item));
 }
 
 async function main(args: string[]): Promise<void> {
   if (args[0] === "--field" && args.length === 3) {
-    const selection = JSON.parse(await Deno.readTextFile(args[1])) as Selection;
-    if (selection.version !== 1) {
-      throw new Error("unsupported selection version");
-    }
+    const selection: unknown = JSON.parse(await Deno.readTextFile(args[1]));
+    validateSelection(selection);
     return printField(selection, args[2]);
   }
   if (args.length !== 4 || args[0] !== "--staged" || args[2] !== "--files") {
@@ -900,7 +949,9 @@ async function main(args: string[]): Promise<void> {
   const changes = parseNameStatus(await Deno.readTextFile(args[1]));
   const files = (await Deno.readTextFile(args[3])).split("\0").filter(Boolean);
   const context = await loadContext(root, files);
-  console.log(JSON.stringify(selectChecks(changes, context), null, 2));
+  const selection = selectChecks(changes, context);
+  validateSelection(selection);
+  console.log(JSON.stringify(selection, null, 2));
 }
 
 if (import.meta.main) await main(Deno.args);

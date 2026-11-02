@@ -41,7 +41,7 @@ def check_range(base, commits):
                 problems.append(f'{commit[:12]}: {label} date {value.isoformat()} is inside weekday 09:00-18:00 Pacific')
         if previous:
             for label, value, before in zip(('author', 'committer'), current, previous, strict=True):
-                if value < before:
+                if value.timestamp() < before.timestamp():
                     problems.append(f'{commit[:12]}: {label} date {value.isoformat()} is before its predecessor\'s {before.isoformat()}')
         previous = current
     return problems
