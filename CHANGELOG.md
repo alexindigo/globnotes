@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+AI agents can work with the vault over the Model Context Protocol (MCP). The
+globnotes server now serves an MCP endpoint at `<prefix>/_/mcp` with seven tools:
+search notes, read a note, list a folder, list tags, and create, update (or
+rename) and delete a note. It uses the same login token, write path and plugin
+guards as the web app; in `read_only` mode it offers only the read tools. Update
+and delete can take the `last_modified` the agent read, and then refuse to
+overwrite a note changed since. It works over plain HTTP and is on by default;
+`GLOBNOTES_MCP_ENABLED=false` turns it off. See `docs/mcp.md` for client setup.
+
 ## v2.5.0 (2026-10-21)
 
 ### Added
