@@ -42,16 +42,21 @@ async function apiFixture(
   let afterGateTraffic = 0;
   const held = Promise.withResolvers<void>(),
     releaseHeld = Promise.withResolvers<void>();
+  // Remote modules live under a per-fixture path: Deno caches remote modules
+  // by URL in the shared, persistent DENO_DIR, and the receiver's ephemeral
+  // port recurs across runs — a reused URL would be served from that cache
+  // without reaching this receiver.
+  const modules = `/${crypto.randomUUID()}`;
   const receiver = Deno.serve(
     { hostname: "127.0.0.1", port: 0, onListen() {} },
     async (request) => {
       traffic++;
       const path = new URL(request.url).pathname;
-      if (path === "/held" || path === "/held-module.js") {
+      if (path === "/held" || path === `${modules}/held-module.js`) {
         held.resolve();
         await releaseHeld.promise;
       }
-      if (path === "/after-held" || path === "/after-module.js") {
+      if (path === "/after-held" || path === `${modules}/after-module.js`) {
         afterGateTraffic++;
       }
       return path.endsWith("module.js")
@@ -102,12 +107,12 @@ async function apiFixture(
       ctx.commands.register({id:'request',label:'Request',target:'server'},()=>ctx.permissions.requestAccess({kind:'network',hosts:['${authority}'],reason:'Read service status'}));
       ctx.commands.register({id:'fresh-declare',label:'Fresh declaration',target:'server'},async()=>{const view=await ctx.permissions.status();const settings=await ctx.settings.read();if(view.source.settingsRevision!==settings.revision)throw Error('settings source mismatch');await ctx.permissions.declare({network:['${authority}'],imports:false},{source:view.source});return {instance,source:view.source,settingsRevision:settings.revision}});
       ctx.commands.register({id:'old-declare',label:'Old declaration',target:'server'},async()=>{try{await ctx.permissions.declare({network:['${authority}'],imports:false});return {unexpected:true}}catch(error){return {code:error.code,status:error.status}}});
-      ctx.commands.register({id:'import',label:'Import',target:'server'},async()=>{const module=await import('http://${authority}/module.js');return {value:module.value,network:Deno.permissions.querySync({name:'net',host:'${authority}'}).state,imports:Deno.permissions.querySync({name:'import',host:'${authority}'}).state}});
+      ctx.commands.register({id:'import',label:'Import',target:'server'},async()=>{const module=await import('http://${authority}${modules}/module.js');return {value:module.value,network:Deno.permissions.querySync({name:'net',host:'${authority}'}).state,imports:Deno.permissions.querySync({name:'import',host:'${authority}'}).state}});
       ctx.commands.register({id:'held-fetch',label:'Held fetch',target:'server'},async()=>{await(await fetch('http://${authority}/held')).text();return await(await fetch('http://${authority}/after-held')).text()});
       ${
         runtimeOnly
           ? `ctx.commands.register({id:'state',label:'Settings consumer',target:'server'},async()=>({instance,settings:await ctx.settings.read()}));
-      ctx.commands.register({id:'held-import',label:'Held import',target:'server'},async()=>{const base='http://${authority}';await import(base+'/held-module.js');return (await import(base+'/after-module.js')).value;});`
+      ctx.commands.register({id:'held-import',label:'Held import',target:'server'},async()=>{const base='http://${authority}${modules}';await import(base+'/held-module.js');return (await import(base+'/after-module.js')).value;});`
           : ""
       }
     }`,
@@ -203,6 +208,7 @@ async function apiFixture(
       return base;
     },
     authority,
+    modules,
     privateLockPath,
     get,
     view,
@@ -640,7 +646,7 @@ Deno.test("plugin network api: remote imports need independent consent and alrea
           argument.startsWith("--lock=")
         );
         assertEquals(lockArgs, [`--lock=${privateLockPath}`]);
-        const moduleUrl = `http://${b.authority}/module.js`;
+        const moduleUrl = `http://${b.authority}${b.modules}/module.js`;
         const moduleChecksum = await digest(
           new TextEncoder().encode("export const value='approved remote code'"),
         );
