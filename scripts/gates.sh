@@ -101,6 +101,16 @@ shell_syntax() {
     done < <(find . \( -path ./node_modules -o -path ./client/dist -o -path ./.git \) -prune -o \
         -type f \( -name '*.sh' -o -path './.githooks/*' \) -print0 | sort -z)
 }
+# Link every browser-suite module statically (esbuild, through deno bundle):
+# a duplicate binding, a missing module or a missing named export fails here
+# without running a script. The suite only loads the scripts it selects.
+e2e_modules() {
+    local out="$TMPDIR/e2e-modules"
+    rm -rf "$out"
+    deno bundle --frozen --config=deno.json --external vitest --outdir "$out" \
+        client/tests/e2e/*.mjs client/tests/e2e/*.js
+    rm -rf "$out"
+}
 handlers() {
     local file
     while IFS= read -r -d '' file; do
@@ -128,6 +138,7 @@ static_gates() {
     gate worker deno check --cached-only --frozen --config=deno.json server/plugins/worker_entry.ts
     gate handlers handlers
     gate shell shell_syntax
+    gate e2e-modules e2e_modules
     # Never an empty list: `deno test` without paths would run the whole suite.
     if (($#)); then gate contracts deno test "${test_flags[@]}" "$@"; fi
 }

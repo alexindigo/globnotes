@@ -62,19 +62,20 @@ One gate list serves the hook and full runs. Each gate logs to
 | 5 | worker | `deno check` of `server/plugins/worker_entry.ts` |
 | 6 | handlers | `deno check` of each `server/api/endpoints/**/*.ts`, which main loads only at run time |
 | 7 | shell | `bash -n` / `sh -n` of every `*.sh` file and `.githooks/*` |
-| 8 | contracts | `tests/test_isolation_contract_test.ts`, `tests/devcontainer_caps_test.ts` |
-| 9 | server | `deno test --parallel` (`DENO_JOBS=4`) of the server tests, not `tests/timing/` |
-| 10 | timing | `deno test` of `tests/timing/`, serially |
-| 11 | client | Vitest with `VITEST_MAX_WORKERS=4`: the whole suite, or `vitest related` of changed files |
-| 12 | build | `deno task build:client` |
-| 13 | cold-load | `scripts/cold-load.mjs`: the built server answers health, index, assets and a note |
-| 14 | unit-controls | `unit-consumer-controls.mjs`: broken keymap, Tab and hydration producers in fresh source copies are rejected by their actual client tests |
-| 15 | native | The native browser suite, `client/tests/e2e/run.sh`; `GLOBNOTES_E2E_CASES=<case,…>` restricts it to named cases |
-| 16 | native-results | `native-result-controls.mjs`: real nonzero children with misleading success output, missing startup, timeout with zero exit, a completed child |
-| 17 | native-controls | `native-consumer-controls.mjs`: wrong clipboard/token/image/link/identity/tag/palette/visibility/geometry consumers fail, equivalent CSS passes; follows `GLOBNOTES_E2E_CASES` for case-owned controls |
-| 18 | entrypoint-results | `runner-entrypoint-controls.mjs`: the shell entrypoint with a misleading nonzero child and a completed zero-exit child |
+| 8 | e2e-modules | `deno bundle` (esbuild) of every `client/tests/e2e/*.mjs` and `*.js` into a scratch directory: links each module graph without running it, so a duplicate binding, a missing module or a missing named export fails even in a script the native suite doesn't select |
+| 9 | contracts | `tests/test_isolation_contract_test.ts`, `tests/devcontainer_caps_test.ts` |
+| 10 | server | `deno test --parallel` (`DENO_JOBS=4`) of the server tests, not `tests/timing/` |
+| 11 | timing | `deno test` of `tests/timing/`, serially |
+| 12 | client | Vitest with `VITEST_MAX_WORKERS=4`: the whole suite, or `vitest related` of changed files |
+| 13 | build | `deno task build:client` |
+| 14 | cold-load | `scripts/cold-load.mjs`: the built server answers health, index, assets and a note |
+| 15 | unit-controls | `unit-consumer-controls.mjs`: broken keymap, Tab and hydration producers in fresh source copies are rejected by their actual client tests |
+| 16 | native | The native browser suite, `client/tests/e2e/run.sh`; `GLOBNOTES_E2E_CASES=<case,…>` restricts it to named cases |
+| 17 | native-results | `native-result-controls.mjs`: real nonzero children with misleading success output, missing startup, timeout with zero exit, a completed child |
+| 18 | native-controls | `native-consumer-controls.mjs`: wrong clipboard/token/image/link/identity/tag/palette/visibility/geometry consumers fail, equivalent CSS passes; follows `GLOBNOTES_E2E_CASES` for case-owned controls |
+| 19 | entrypoint-results | `runner-entrypoint-controls.mjs`: the shell entrypoint with a misleading nonzero child and a completed zero-exit child |
 
-Gates 15–18 need the Chromium sidecar; a selection or `--browser` run checks
+Gates 16–19 need the Chromium sidecar; a selection or `--browser` run checks
 the CDP endpoint first. The native suite records each child's actual exit and
 timeout state; printed PASS/OK words cannot grant success.
 
