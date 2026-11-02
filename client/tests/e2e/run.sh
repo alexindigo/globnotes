@@ -1,5 +1,6 @@
 #!/bin/sh
-# Guest-only native entrypoint. One suite owns selection, fixtures and results.
+# Container native entrypoint. One suite owns selection, fixtures and results.
+# GLOBNOTES_E2E_CASES is inherited unchanged; unset runs the full selection.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 cd "$ROOT"

@@ -3,7 +3,7 @@
 import { runCase } from "./legacy-fixture.mjs";
 import { cases } from "./legacy-native-cases.mjs";
 import { exercise as geometry } from "./test-quality-geometry.mjs";
-import { executeChild, runChildren } from "./legacy-native-suite.mjs";
+import { caseName, executeChild, runChildren, selectCases } from "./legacy-native-suite.mjs";
 import { assert } from "./test-outcomes.mjs";
 
 const style = css => `document.addEventListener('DOMContentLoaded',()=>{const style=document.createElement('style');style.textContent=${JSON.stringify(css)};document.head.append(style);});`;
@@ -32,10 +32,13 @@ if (Deno.args[0] === "case") {
     return (control.driver === "test-quality-geometry" ? geometry : cases[control.driver])(f, ...(control.args ?? []));
   }, { empty: control.empty ?? false });
 } else {
+  const selected = new Set(selectCases(Deno.env.get("GLOBNOTES_E2E_CASES")).map(caseName));
   const artifacts = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "globnotes-consumer-controls-" });
   await Deno.mkdir(artifacts, { recursive: true, mode: 0o700 });
   const outcomes = [];
   for (const [name, control] of Object.entries(mutations)) {
+    // A control with no driver is shared; driver controls follow their case.
+    if (control.driver && !selected.has(caseName([control.driver, ...(control.args ?? [])]))) continue;
     const result = await executeChild(["run", "--cached-only", "--frozen", "--config=deno.json", "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run", "--allow-sys", new URL(import.meta.url).pathname, "case", name], { artifacts, label: name });
     let accepted = false;
     try { await runChildren([[name]], async () => result); accepted = true; }
