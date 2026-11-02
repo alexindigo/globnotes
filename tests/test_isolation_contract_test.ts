@@ -65,6 +65,13 @@ const RULES: Rule[] = [
       "fixed shared paths can carry another run's data; tests create owned temp dirs (servers also refuse a cwd inside the checkout, tests/helpers/boot.ts)",
   },
   {
+    id: "unique-remote-module-urls",
+    scope: "tests",
+    pattern: /import\(\s*['"`]https?:\/\/(?![^'"`]*\$\{modules\})/,
+    why:
+      "remote modules are cached by URL in the shared, persistent DENO_DIR; fixtures serve them under a per-fixture path (`${modules}`) so no run is answered from another run's cache",
+  },
+  {
     id: "single-process-env-owner",
     scope: "server",
     pattern: /Deno\.env\b/,
