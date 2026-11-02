@@ -2,7 +2,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
-import { command } from "./helpers/process.ts";
+import { bootServer } from "./helpers/boot.ts";
 
 /** Feature-owned normal launcher; importAuthority is an isolated positive control only. */
 async function bootNetworkServer(
@@ -11,90 +11,28 @@ async function bootNetworkServer(
   privateLockPath?: string,
 ) {
   const root = new URL("../", import.meta.url).pathname;
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = listener.addr.port;
-  listener.close();
   // jsr.io:443 is an existing normal-parent import right needed by the host graph.
-  const args = [
-    "run",
-    "--unstable-worker-options",
-    "--allow-net",
-    "--allow-read",
-    "--allow-write",
-    "--allow-env",
-    ...importAuthority ? [`--allow-import=jsr.io:443,${importAuthority}`] : [],
-    ...privateLockPath ? [`--lock=${privateLockPath}`] : [],
-    `${root}server/main.ts`,
-  ];
-  const child = command(Deno.execPath(), {
-    args,
+  const server = await bootServer(env, {
     cwd: root,
-    env: {
-      ...env,
-      GLOBNOTES_PORT: String(port),
-      GLOBNOTES_HOST: "127.0.0.1",
-      NO_COLOR: "1",
-    },
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const output = { stdout: "", stderr: "" };
-  const drains = ["stdout", "stderr"].map(async (name) => {
-    for await (const bytes of name === "stdout" ? child.stdout : child.stderr) {
-      output[name as keyof typeof output] += new TextDecoder().decode(bytes);
-    }
+    readyMs: 10000,
+    denoArgs: [
+      ...importAuthority
+        ? [`--allow-import=jsr.io:443,${importAuthority}`]
+        : [],
+      ...privateLockPath ? [`--lock=${privateLockPath}`] : [],
+    ],
   });
-  let status: Deno.CommandStatus | null = null;
-  child.status.then((value) => {
-    status = value;
-  });
-  const readStatus = (): Deno.CommandStatus | null => status;
-  const baseUrl = `http://127.0.0.1:${port}`,
-    prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
-  let closed = false;
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    if (!status) child.kill("SIGTERM");
-    await child.status;
-    await Promise.all(drains);
-  };
-  try {
-    const deadline = Date.now() + 10000;
-    for (;;) {
-      const exited = readStatus();
-      if (exited) {
-        throw Error(
-          `owned network fixture exited ${exited.code}: ${output.stderr}`,
-        );
-      }
-      try {
-        const response = await fetch(`${baseUrl}${prefix}/_/api/health`, {
-          signal: AbortSignal.timeout(1000),
-        });
-        await response.body?.cancel();
-        if (response.ok) break;
-      } catch { /* bounded startup admission */ }
-      if (Date.now() > deadline) {
-        throw Error(`owned network fixture health deadline: ${output.stderr}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    console.log(
-      JSON.stringify({
-        networkFixtureParent: {
-          pid: child.pid,
-          args,
-          cwd: root,
-          isolatedImportControl: !!importAuthority,
-        },
-      }),
-    );
-    return { baseUrl, close, output, pid: child.pid, args };
-  } catch (error) {
-    await close();
-    throw error;
-  }
+  console.log(
+    JSON.stringify({
+      networkFixtureParent: {
+        pid: server.pid,
+        args: server.args,
+        cwd: root,
+        isolatedImportControl: !!importAuthority,
+      },
+    }),
+  );
+  return server;
 }
 
 async function apiFixture(

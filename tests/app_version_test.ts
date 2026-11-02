@@ -4,9 +4,7 @@ import { assert, assertEquals, assertThrows } from "@std/assert";
 import { readAppVersion } from "../server/version.ts";
 import { formatVersion } from "../shared/version.ts";
 import { bootServer } from "./helpers/boot.ts";
-import { command } from "./helpers/process.ts";
 
-const SERVER_MAIN = new URL("../server/main.ts", import.meta.url).pathname;
 const RELEASE = Deno.readTextFileSync(new URL("../VERSION", import.meta.url))
   .trim();
 const REVISION = "0123456789abcdef0123456789abcdef01234567";
@@ -161,48 +159,16 @@ Deno.test("/_/api/config returns a null revision when none is supplied", async (
 
 Deno.test("startup logs the version before the listening line", async () => {
   const vault = await Deno.makeTempDir({ prefix: "globnotes-version-vault-" });
-  const listener = Deno.listen({ port: 0, hostname: "127.0.0.1" });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
-  const child = command(Deno.execPath(), {
-    args: [
-      "run",
-      "--unstable-worker-options",
-      "--allow-net",
-      "--allow-read",
-      "--allow-write",
-      "--allow-env",
-      SERVER_MAIN,
-    ],
-    env: {
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_HOST: "127.0.0.1",
-      GLOBNOTES_PORT: String(port),
-      GLOBNOTES_REVISION: "",
-      NO_COLOR: "1",
-    },
-    stdout: "piped",
-    stderr: "null",
-  }).spawn();
-  const reader = child.stdout.pipeThrough(new TextDecoderStream())
-    .getReader();
-  let output = "";
-  const deadline = Date.now() + 15_000;
-  try {
-    while (
-      !output.includes("globnotes listening on") && Date.now() < deadline
-    ) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += value;
-    }
-  } finally {
-    await reader.cancel();
-    child.kill("SIGTERM");
-    await child.status;
-    await Deno.remove(vault, { recursive: true });
-  }
+  // bootServer returns once the server reported its listening line (and is
+  // healthy); the version line must already precede it on stdout.
+  const server = await bootServer({
+    GLOBNOTES_PATH: vault,
+    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_REVISION: "",
+  });
+  const output = server.logs().stdout;
+  await server.close();
+  await Deno.remove(vault, { recursive: true });
   const lines = output.split("\n");
   const versionAt = lines.findIndex((line) =>
     line.endsWith(`]: globnotes v${RELEASE}-dev`)

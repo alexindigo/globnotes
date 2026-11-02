@@ -3,14 +3,12 @@
 /**
  * WS1 (issue #5): GLOBNOTES_INDEX_PATH relocates the state dir (index,
  * config, brand, plugins) away from the vault; unset keeps the legacy
- * <vault>/.globnotes layout byte-identical. Own-spawn for the boot
- * warning step (bootServer drains stderr without exposing it).
+ * <vault>/.globnotes layout byte-identical.
  */
 
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { bootServer } from "./helpers/boot.ts";
-import { command } from "./helpers/process.ts";
 
 Deno.test("state dir: GLOBNOTES_INDEX_PATH relocates state", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "gn-vault-" });
@@ -109,51 +107,25 @@ Deno.test("state dir: legacy vault config warns loudly at boot", async () => {
     JSON.stringify({ auth_type: "none" }),
   );
 
-  const listener = Deno.listen({ port: 0, hostname: "127.0.0.1" });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
-
-  const child = command(Deno.execPath(), {
-    args: [
-      "run",
-      "--unstable-worker-options",
-      "--allow-net",
-      "--allow-read",
-      "--allow-write",
-      "--allow-env",
-      "server/main.ts",
-    ],
-    env: {
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_INDEX_PATH: stateDir,
-      GLOBNOTES_PORT: String(port),
-      GLOBNOTES_HOST: "127.0.0.1",
-      NO_COLOR: "1",
-    },
-    stdout: "null",
-    stderr: "piped",
-  }).spawn();
-
+  const server = await bootServer({
+    GLOBNOTES_PATH: vault,
+    GLOBNOTES_INDEX_PATH: stateDir,
+  });
   try {
-    let seen = "";
+    // The warning is logged during boot; wait for it on the server's stderr.
     const deadline = Date.now() + 15_000;
-    const reader = child.stderr.getReader();
-    const decoder = new TextDecoder();
-    while (Date.now() < deadline) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      seen += decoder.decode(value);
-      if (seen.includes("GLOBNOTES_INDEX_PATH is set")) break;
-    }
-    reader.releaseLock();
+    while (
+      !server.logs().stderr.includes("GLOBNOTES_INDEX_PATH is set") &&
+      Date.now() < deadline
+    ) await new Promise((r) => setTimeout(r, 20));
+    const seen = server.logs().stderr;
     assert(
       seen.includes("GLOBNOTES_INDEX_PATH is set"),
       `boot warning missing; stderr was:\n${seen}`,
     );
     assert(seen.includes("mv "), "warning includes the mv command");
   } finally {
-    child.kill("SIGKILL");
-    await child.status.catch(() => {});
+    await server.close();
     Deno.removeSync(vault, { recursive: true });
     Deno.removeSync(stateDir, { recursive: true });
   }

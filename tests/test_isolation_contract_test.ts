@@ -43,6 +43,21 @@ const RULES: Rule[] = [
       "children start through tests/helpers/process.ts (clearEnv plus an explicit environment), never inheriting the shared test-process environment",
   },
   {
+    id: "no-port-probing",
+    scope: "tests",
+    pattern: /Deno\.listen\s*\(\s*\{[^}]*\bport:\s*0\b/,
+    why:
+      "a probed-and-released port can be taken before the child binds it; servers bind port 0 themselves and report the port (tests/helpers/boot.ts)",
+  },
+  {
+    id: "single-port-owner",
+    scope: "tests",
+    pattern: /GLOBNOTES_PORT\b/,
+    owners: ["tests/helpers/boot.ts"],
+    why:
+      "only the server launcher (tests/helpers/boot.ts) sets a server's port",
+  },
+  {
     id: "single-process-env-owner",
     scope: "server",
     pattern: /Deno\.env\b/,
