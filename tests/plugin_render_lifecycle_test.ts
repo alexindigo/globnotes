@@ -15,6 +15,7 @@ import {
   until,
   WorkerDeliveryGate,
 } from "./helpers/worker_liveness.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 const enabledUrl = new URL(
   "../server/api/endpoints/_/api/plugin-host/%23id/enabled/put.ts",
@@ -50,20 +51,15 @@ async function fixtureBundle(
     plugins: state.plugins,
     lifecycle: state.lifecycle,
   };
-  const keys = [
-    "GLOBNOTES_PATH",
-    "GLOBNOTES_INDEX_PATH",
-    "GLOBNOTES_AUTH_TYPE",
-    "GLOBNOTES_READ_ONLY_SETTINGS",
-  ];
-  const previousEnv = keys.map((key) => Deno.env.get(key));
-  Deno.env.set("GLOBNOTES_PATH", fixture.vault);
-  Deno.env.set("GLOBNOTES_INDEX_PATH", fixture.statePath);
-  Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-  Deno.env.delete("GLOBNOTES_READ_ONLY_SETTINGS");
-  state.config = new GlobalConfig();
+  const env = testEnvironment({
+    GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_INDEX_PATH: fixture.statePath,
+    GLOBNOTES_AUTH_TYPE: "none",
+  });
+  state.config = new GlobalConfig(env);
   state.auth = null;
   const manager = new PluginManager(fixture.vault, rpc, 2, fixture.statePath, {
+    env,
     internalRoot: `${fixture.root}/empty-internal`,
     autoEnable: true,
     persistence: { commit: (effect) => effect() },
@@ -111,11 +107,6 @@ async function fixtureBundle(
         );
       } else await fixture.dispose();
       Object.assign(state, previousState);
-      keys.forEach((key, index) => {
-        const value = previousEnv[index];
-        if (value === undefined) Deno.env.delete(key);
-        else Deno.env.set(key, value);
-      });
     },
   };
 }

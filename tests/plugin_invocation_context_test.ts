@@ -17,6 +17,7 @@ import { FileServing } from "../server/files/file_serving.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { servicePluginRpc } from "../server/plugins/rpc.ts";
 import { PluginRuntime } from "../server/plugins/runtime.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 function deferred<T>() {
   return Promise.withResolvers<T>();
@@ -135,21 +136,12 @@ for (const outcome of ["qualified", "expired", "disabled"] as const) {
         `let admission;export async function activate(ctx){admission=await ctx.actions.request('create',{path:'consumer',content:'combined-ready-effect'});ctx.commands.register({id:'receipt',label:'Receipt',target:'server'},()=>ctx.actions.result(admission.requestId));}`,
     });
     const manifest = readManifest(dir);
-    const keys = [
-        "GLOBNOTES_PATH",
-        "GLOBNOTES_INDEX_PATH",
-        "GLOBNOTES_AUTH_TYPE",
-      ],
-      old = keys.map((key) => Deno.env.get(key));
-    Deno.env.set(keys[0], fixture.vault);
-    Deno.env.set(keys[1], fixture.statePath);
-    Deno.env.set(keys[2], "none");
-    const config = new GlobalConfig();
-    keys.forEach((key, index) =>
-      old[index] === undefined
-        ? Deno.env.delete(key)
-        : Deno.env.set(key, old[index]!)
-    );
+    const env = testEnvironment({
+      GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_INDEX_PATH: fixture.statePath,
+      GLOBNOTES_AUTH_TYPE: "none",
+    });
+    const config = new GlobalConfig(env);
     const lifecycle = new PluginLifecycle(config);
     let effects = 0;
     lifecycle.onFact(() => {
@@ -163,7 +155,7 @@ for (const outcome of ["qualified", "expired", "disabled"] as const) {
       commit: (effect) => lifecycle.gate.run(effect),
     });
     const operations = new NoteOperations({
-      notes: new FileSystemNotes(fixture.vault),
+      notes: new FileSystemNotes(fixture.vault, {}, env),
       files: new FileServing(fixture.vault),
       indexer: null,
       runtime: () => runtime,

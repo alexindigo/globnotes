@@ -4,6 +4,7 @@
 
 import { GlobalConfig } from "../../server/config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
+import { testEnvironment } from "./environment.ts";
 import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import type { PluginManager } from "../../server/plugins/manager.ts";
 import { Fts5Indexer } from "../../server/search/fts5.ts";
@@ -20,11 +21,13 @@ export function setupState(
   vault: string,
   plugins: PluginManager | null = null,
 ): UnitState {
-  Deno.env.set("GLOBNOTES_PATH", vault);
-  Deno.env.set("GLOBNOTES_AUTH_TYPE", "none");
-  const config = new GlobalConfig();
-  const notes = new FileSystemNotes(vault);
-  const indexer = new Fts5Indexer(vault);
+  const env = testEnvironment({
+    GLOBNOTES_PATH: vault,
+    GLOBNOTES_AUTH_TYPE: "none",
+  });
+  const config = new GlobalConfig(env);
+  const notes = new FileSystemNotes(vault, {}, env);
+  const indexer = new Fts5Indexer(vault, env);
   const files = new FileServing(vault);
   initState(config, null, notes, indexer, files, plugins);
   return { config, notes, indexer, files };

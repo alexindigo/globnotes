@@ -10,23 +10,11 @@ import { hashPassword } from "../server/helpers.ts";
 import { LocalAuth } from "../server/auth/local.ts";
 import setupHandler from "../server/api/endpoints/_/api/setup/post.ts";
 import brandHandler from "../server/api/endpoints/_/api/brand/post.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 
 async function accessSnapshotFixture() {
   const root = await Deno.makeTempDir({ prefix: "review-access-snapshot-" });
-  const keys = [
-    "GLOBNOTES_PATH",
-    "GLOBNOTES_INDEX_PATH",
-    "GLOBNOTES_AUTH_TYPE",
-    "GLOBNOTES_USERNAME",
-    "GLOBNOTES_PASSWORD",
-    "GLOBNOTES_TOTP_KEY",
-    "GLOBNOTES_SECRET_KEY",
-    "GLOBNOTES_READ_ONLY_SETTINGS",
-  ];
-  const previousEnv = keys.map((key) => Deno.env.get(key));
   const previousState = { ...state };
-  for (const key of keys) Deno.env.delete(key);
-  Deno.env.set("GLOBNOTES_PATH", root);
   await Deno.mkdir(`${root}/.globnotes`);
   const file = `${root}/.globnotes/config.json`;
   const initial = {
@@ -37,7 +25,7 @@ async function accessSnapshotFixture() {
     unrelated: { keep: true },
   };
   await Deno.writeTextFile(file, JSON.stringify(initial));
-  const config = new GlobalConfig();
+  const config = new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: root }));
   state.config = config;
   state.auth = null;
   state.lifecycle = new PluginLifecycle(config);
@@ -51,11 +39,6 @@ async function accessSnapshotFixture() {
       new Request("http://fixture/_/api/access", { method: "PUT" }),
     close() {
       Object.assign(state, previousState);
-      keys.forEach((key, i) =>
-        previousEnv[i] === undefined
-          ? Deno.env.delete(key)
-          : Deno.env.set(key, previousEnv[i]!)
-      );
       console.log(JSON.stringify({ retainedAccessSnapshotFixture: root }));
     },
   };
@@ -105,7 +88,10 @@ Deno.test("review repairs: R05 non-string access modes reject before config memo
         assertEquals(f.config.storedConfig, memory);
         assertEquals(state.lifecycle!.epoch, epoch);
         assertEquals(state.auth, null);
-        assertEquals(new GlobalConfig().authType, f.config.authType);
+        assertEquals(
+          new GlobalConfig(f.config.environment).authType,
+          f.config.authType,
+        );
       } finally {
         await f.close();
       }
@@ -195,7 +181,7 @@ Deno.test("review repairs: R06 real current credential confirmation cannot overw
       secret_key: "fixture-only-signing-key",
     };
     f.config.saveStoredConfig(account);
-    f.config.authType = new GlobalConfig().authType;
+    f.config.authType = new GlobalConfig(f.config.environment).authType;
     const auth = new LocalAuth(f.config);
     state.auth = auth;
     const token =
@@ -268,7 +254,7 @@ Deno.test("review repairs: R06 setup carries original config through real passwo
   try {
     const initial = { brand_name: "pending setup", unknown_setup_option: true };
     Deno.writeTextFileSync(f.file, JSON.stringify(initial));
-    state.config = new GlobalConfig();
+    state.config = new GlobalConfig(f.config.environment);
     state.lifecycle = new PluginLifecycle(state.config);
     crypto.subtle.deriveBits =
       ((...args: Parameters<typeof crypto.subtle.deriveBits>) => {
