@@ -412,7 +412,7 @@ deno task build:client
 deno task test:client
 ```
 
-Local development can also use the [VM-backed Git hooks and native browser checks](docs/vm-testing.md).
+All checks, including the native browser suite, also run in a capped devcontainer; the commit hook and CI use it ([testing](docs/testing.md)).
 
 ## Credit
 

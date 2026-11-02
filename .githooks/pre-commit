@@ -1,4 +1,74 @@
-#!/bin/sh
-set -eu
-ROOT=$(git rev-parse --show-toplevel)
-exec python3 -B "$ROOT/scripts/verify-in-vm.py" pre-commit --root "$ROOT"
+#!/usr/bin/env bash
+# Commit check (docs/testing.md): run the checks related to the staged change,
+# in the devcontainer, on the exact staged tree. The host side is git
+# plumbing, tar and the launcher; the selection and every check run in the
+# container. Activate with: git config --worktree core.hooksPath .githooks
+# GLOBNOTES_CHECK_BASE=<commit-or-tree> selects against that base, not HEAD.
+set -euo pipefail
+
+fail() { printf 'pre-commit: %s\n' "$*" >&2; exit 1; }
+started="$EPOCHREALTIME"
+[[ -z "$(git ls-files --unmerged)" ]] || fail 'the index has unmerged paths'
+tree="$(git write-tree)"
+while IFS= read -r -d '' entry; do
+    case "${entry%% *}" in
+        120000) fail "symlinks are not supported in the checked tree: ${entry#*$'\t'}" ;;
+        160000) fail "submodules are not supported in the checked tree: ${entry#*$'\t'}" ;;
+    esac
+done < <(git ls-tree -r -z --full-tree "$tree")
+
+base="${GLOBNOTES_VALIDATION_DIR:-$HOME/TemporaryFiles/globnotes/validation}"
+run="$base/$(date -u +%Y%m%dT%H%M%SZ)-pre-commit-${tree:0:12}"
+mkdir -p "$base"
+mkdir "$run"
+mkdir -p "$run/host-tmp" "$run/source" "$run/run/logs"
+export TMPDIR="$run/host-tmp"
+printf '%s\n' "$tree" > "$run/tree.txt"
+git archive "$tree" | tar -x -C "$run/source"
+# The change under check: the staged tree against HEAD (empty before the first
+# commit), or against GLOBNOTES_CHECK_BASE.
+if [[ -n "${GLOBNOTES_CHECK_BASE:-}" ]]; then
+    check_base="$(git rev-parse --verify "$GLOBNOTES_CHECK_BASE^{tree}")"
+elif ! check_base="$(git rev-parse -q --verify 'HEAD^{tree}')"; then
+    check_base="$(git hash-object -t tree /dev/null)"
+fi
+printf '%s\n' "$check_base" > "$run/base.txt"
+git diff --cached --name-status -M -z "$check_base" > "$run/run/logs/staged.z"
+git ls-tree -r -z --name-only --full-tree "$tree" > "$run/run/logs/files.z"
+# git archive honours export-ignore attributes; the snapshot must be the whole tree.
+tracked=0 extracted=0
+while IFS= read -r -d '' _; do tracked=$((tracked + 1)); done < "$run/run/logs/files.z"
+while IFS= read -r -d '' _; do extracted=$((extracted + 1)); done < <(find "$run/source" -type f -print0)
+((tracked == extracted)) || fail "snapshot has $extracted files, the tree $tracked; see $run"
+
+launcher=(bash "$run/source/.devcontainer/run.sh")
+status=0
+"${launcher[@]}" --source "$run/source" --run-dir "$run/run" -- \
+    bash scripts/gates.sh --plan /run-logs/staged.z /run-logs/files.z || status=$?
+if ((status == 0)); then
+    browser=()
+    [[ ! -e "$run/run/logs/browser-required" ]] || browser=(--browser)
+    "${launcher[@]}" "${browser[@]}" --source "$run/source" --run-dir "$run/run" -- \
+        bash scripts/gates.sh --select /run-logs/selection.json || status=$?
+fi
+
+elapsed=$(( ${EPOCHREALTIME/./} - ${started/./} ))
+seconds="$((elapsed / 1000000)).$(( (elapsed % 1000000) / 100000 ))"
+summary="no gate summary"
+if [[ -s "$run/run/logs/summary.txt" ]]; then
+    while IFS= read -r line; do summary="$line"; done < "$run/run/logs/summary.txt"
+fi
+verdict=PASS
+((status == 0)) || verdict=FAIL
+printf 'pre-commit: %s in %ss (%s); run directory %s\n' "$verdict" "$seconds" "$summary" "$run" >&2
+if ((elapsed > 300000000)); then
+    printf 'pre-commit: warning: %ss exceeds the 300 s commit-check budget; per-gate times in %s\n' \
+        "$seconds" "$run/run/logs/timings.jsonl" >&2
+fi
+if ((status == 0)); then
+    # Keep the logs, selection and timings; drop the source and bulky artifacts.
+    rm -rf "$run/source" "$run/host-tmp" "$run/run/tmp" "$run/run/engine-tmp"
+    find "$run/run/artifacts" -type f ! -name '*.json' -delete
+    find "$run/run/artifacts" -mindepth 1 -type d -empty -delete
+fi
+exit "$status"
