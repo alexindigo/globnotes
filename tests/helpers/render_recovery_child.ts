@@ -2,7 +2,7 @@
 
 /** Owned child: a thrown host callback must be observed as a real process exit. */
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { PluginManager } from "../../server/plugins/manager.ts";
+import { createPluginManager } from "./plugin_manager.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
 import { done as waitDone, pending as waitPending, waitUntil } from "./wait.ts";
 
@@ -12,7 +12,7 @@ assert(evidence && Deno.statSync(evidence).isDirectory);
 const fixture = await pluginFixture();
 const entered = Promise.withResolvers<void>();
 const release = Promise.withResolvers<void>();
-const manager = new PluginManager(
+const manager = createPluginManager(
   fixture.vault,
   async (method, args) => {
     if (method === "readNote" && args[0] === "crash-after-source-barrier") {

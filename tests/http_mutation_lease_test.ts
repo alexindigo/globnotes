@@ -13,7 +13,7 @@ import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { initState, state } from "../server/state.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
@@ -101,7 +101,7 @@ async function fixture() {
   const notes = new FileSystemNotes(vault, {}, env),
     files = new FileServing(vault);
   const indexer = new Fts5Indexer(storage, env);
-  const manager = new PluginManager(vault, undefined, 1, storage, {
+  const manager = createPluginManager(vault, undefined, 1, storage, {
     internalRoot: `${root}/internal`,
     env,
   });

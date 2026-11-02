@@ -2,7 +2,7 @@
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { readManifest } from "../server/plugins/manifest.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { PluginContractError } from "../server/plugins/contracts.ts";
 import {
   effectivePageValues,
@@ -195,7 +195,7 @@ Deno.test("plugin settings: groups accept only the optional warning tone", () =>
 
 Deno.test("plugin catalog: legacy directory identities retain v2 compatibility", async () => {
   const fixture = await pluginFixture();
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     () => Promise.resolve(null),
     0,
@@ -224,7 +224,7 @@ Deno.test("plugin catalog: legacy directory identities retain v2 compatibility",
 
 Deno.test("plugin catalog: disabled/failed inventory, blocking metadata and optional contributions", async () => {
   const fixture = await pluginFixture();
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     () => Promise.resolve(null),
     0,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import {
   bounded as livenessBounded,
@@ -29,7 +29,7 @@ Deno.test("plugin runtime: failed Worker cannot become ready after final policy 
       setTimeout(()=>{console.log('POLICY_WAIT_FIXTURE_THROW');throw Error('real policy-wait Worker crash');},500);
     }`,
   });
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     () => Promise.resolve(null),
     1,
@@ -144,7 +144,7 @@ Deno.test("startup liveness: service catalog commands endpoints and SDK permissi
     "endpoints/get.js":
       `export default()=>({status:200,body:'actual endpoint consumer'})`,
   });
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     undefined,
     1,
@@ -233,7 +233,7 @@ for (const boundary of ["operation", "per-plugin"] as const) {
     });
     const config = new GlobalConfig(env);
     const lifecycle = new PluginLifecycle(config);
-    const manager = new PluginManager(
+    const manager = createPluginManager(
       fixture.vault,
       undefined,
       1,
@@ -241,6 +241,7 @@ for (const boundary of ["operation", "per-plugin"] as const) {
       {
         internalRoot: `${fixture.root}/empty`,
         persistence: { commit: (effect) => effect() },
+        env,
       },
     );
     const runtime = manager.configureRuntime({

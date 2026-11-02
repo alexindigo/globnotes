@@ -11,7 +11,7 @@ import {
   type SettingsCommitChange,
 } from "../server/plugins/data.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { state } from "../server/state.ts";
@@ -73,7 +73,7 @@ async function bundle() {
   });
   await new PluginDataStore(fixture.statePath, { commit }).forPlugin("coherent")
     .savePage(oldPage, { limit: 5 }, 0);
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     () => Promise.resolve(null),
     0,

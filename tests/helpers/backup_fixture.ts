@@ -7,7 +7,7 @@ import { NoteOperations } from "../../server/notes/operations.ts";
 import { AuxiliaryFilesystem } from "../../server/plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "../../server/plugins/data.ts";
 import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
-import { PluginManager } from "../../server/plugins/manager.ts";
+import { createPluginManager } from "./plugin_manager.ts";
 import { readManifest } from "../../server/plugins/manifest.ts";
 import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { PluginSettingsEnvironment } from "../../server/plugins/settings_environment.ts";
@@ -66,7 +66,7 @@ export async function backupFixture(options: {
   const lifecycle = new PluginLifecycle(config),
     notes = new FileSystemNotes(fixture.vault, {}, env),
     fileServing = new FileServing(fixture.vault);
-  const manager = new PluginManager(
+  const manager = createPluginManager(
     fixture.vault,
     undefined,
     0,

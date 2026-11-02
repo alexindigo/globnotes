@@ -12,7 +12,8 @@ import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import { NoteOperations } from "../../server/notes/operations.ts";
 import { PluginActions } from "../../server/plugins/actions.ts";
 import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
-import { PluginManager } from "../../server/plugins/manager.ts";
+import type { PluginManager } from "../../server/plugins/manager.ts";
+import { createPluginManager } from "./plugin_manager.ts";
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
 import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { Fts5Indexer } from "../../server/search/fts5.ts";
@@ -144,7 +145,7 @@ export async function bundle(opts: {
     const hub = new VaultHub(fixture.vault, fixture.statePath, env);
     hub.scanNow(); // Initial inventory precedes subscriber admission, as at boot.
     subscribeIndex(hub, indexer);
-    const manager = new PluginManager(
+    const manager = createPluginManager(
       fixture.vault,
       undefined,
       opts.workers ?? 1,

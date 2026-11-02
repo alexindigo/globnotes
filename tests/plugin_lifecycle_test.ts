@@ -15,7 +15,8 @@ import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginActions } from "../server/plugins/actions.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import type { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
 import { servicePluginRpc } from "../server/plugins/rpc.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
@@ -503,13 +504,14 @@ Deno.test("lifecycle: initial indexing is inventory plus on-sync, not fake creat
       const notes = new FileSystemNotes(fixture.vault, {}, env);
       const indexer = new Fts5Indexer(fixture.statePath, env);
       const files = new FileServing(fixture.vault);
-      manager = new PluginManager(
+      manager = createPluginManager(
         fixture.vault,
         undefined,
         1,
         fixture.statePath,
         {
           internalRoot: path.join(fixture.root, "internal"),
+          env,
         },
       );
       initState(config, null, notes, indexer, files, manager);

@@ -11,7 +11,8 @@ import * as path from "@std/path";
 import { GlobalConfig } from "../server/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import type { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { renderMarkdown } from "../server/render/pipeline.ts";
 import { initState } from "../server/state.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
@@ -76,7 +77,7 @@ Deno.test("render: default markdown-it output (no plugins)", async () => {
 Deno.test("render: default plugins", async (t) => {
   const vault = await Deno.makeTempDir();
   try {
-    const manager = new PluginManager(vault, undefined, 1);
+    const manager = createPluginManager(vault, undefined, 1);
     setupState(vault, manager);
     try {
       await t.step("comments stripped, fences untouched", async () => {
@@ -249,7 +250,7 @@ Deno.test("render: vault plugin dispatch + plugins.json", async (t) => {
          return { parts: ['<div class="jsonbox">' + node.content + '</div>'] };
        }`,
     );
-    const manager = new PluginManager(vault, undefined, 1);
+    const manager = createPluginManager(vault, undefined, 1);
     setupState(vault, manager);
     try {
       await t.step("vault plugin renders its selector", async () => {
@@ -263,7 +264,7 @@ Deno.test("render: vault plugin dispatch + plugins.json", async (t) => {
           JSON.stringify({ disabled: ["jsonbox"] }),
         );
         manager.stop();
-        const manager2 = new PluginManager(vault, undefined, 1);
+        const manager2 = createPluginManager(vault, undefined, 1);
         setupState(vault, manager2);
         try {
           const html = await renderMarkdown('```json\n{"a":1}\n```');

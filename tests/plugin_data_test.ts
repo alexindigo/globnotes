@@ -11,7 +11,7 @@ import {
 } from "../server/plugins/data.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
-import { PluginManager } from "../server/plugins/manager.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { AsyncLock, PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { GlobalConfig } from "../server/config.ts";
 import { state } from "../server/state.ts";
@@ -40,10 +40,16 @@ async function settingsTransitionFixture(
   const fixture = await pluginFixture();
   const gate = new AsyncLock();
   const commit = <T>(effect: () => Promise<T>) => gate.run(effect);
-  const manager = new PluginManager(fixture.vault, rpc, 1, fixture.statePath, {
-    internalRoot: `${fixture.root}/empty-internal`,
-    persistence: { commit },
-  });
+  const manager = createPluginManager(
+    fixture.vault,
+    rpc,
+    1,
+    fixture.statePath,
+    {
+      internalRoot: `${fixture.root}/empty-internal`,
+      persistence: { commit },
+    },
+  );
   const runtime = manager.configureRuntime({
     operational: () => true,
     writable: () => true,
@@ -265,7 +271,7 @@ Deno.test("review repairs: R02 publication failure reports persisted revision, f
     assertEquals(failedLedger, true);
     Deno.renameSync = originalRename;
     // A new host at the between-files boundary must retire old intent before spawn.
-    const restarted = new PluginManager(
+    const restarted = createPluginManager(
       b.fixture.vault,
       () => Promise.resolve(null),
       1,
