@@ -43,9 +43,11 @@ const pinKeys = {
   readOnlySettings: "GLOBNOTES_READ_ONLY_SETTINGS",
   sessions: "GLOBNOTES_SECRET_KEY",
 };
-function pins() {
+function pins(config: GlobalConfig) {
   return Object.fromEntries(
-    Object.entries(pinKeys).map(([key, name]) => [key, getEnv(name)]),
+    Object.entries(pinKeys).map((
+      [key, name],
+    ) => [key, getEnv(name, {}, config.environment)]),
   ) as Record<keyof typeof pinKeys, string>;
 }
 function assertPersistence(
@@ -73,7 +75,7 @@ async function captureAccessSnapshot() {
   const config = state.config, auth = state.auth, lifecycle = state.lifecycle;
   const epoch = lifecycle?.epoch, stored = JSON.stringify(config.storedConfig);
   const authType = config.authType, setupRequired = config.setupRequired;
-  const capturedPins = pins(), readOnlySettings = config.readOnlySettings;
+  const capturedPins = pins(config), readOnlySettings = config.readOnlySettings;
   const settingsWritable = config.settingsWritable,
     savedRevision = revision(config);
   const persistence = config.captureStoredConfig(), raw = persistence.raw;
@@ -105,7 +107,7 @@ async function captureAccessSnapshot() {
       config.setupRequired !== setupRequired ||
       JSON.stringify(config.storedConfig) !== stored ||
       revision(config) !== savedRevision ||
-      JSON.stringify(pins()) !== JSON.stringify(capturedPins) ||
+      JSON.stringify(pins(config)) !== JSON.stringify(capturedPins) ||
       config.readOnlySettings !== readOnlySettings ||
       config.settingsWritable !== settingsWritable
     ) conflict("Access settings changed while this request was pending.");

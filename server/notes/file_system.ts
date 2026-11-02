@@ -7,6 +7,7 @@
  * change stream owns index updates, not this storage layer.
  */
 
+import { type Environment, processEnvironment } from "../environment.ts";
 import type { FileRef, Note, NoteCreate, NoteUpdate } from "./models.ts";
 import {
   InvalidPathError,
@@ -124,11 +125,15 @@ export class FileSystemNotes {
   #scanCache: { ts: number; names: string[] } | null = null;
   #scanCacheTtl: number;
 
-  constructor(storagePath: string, probes: StorageProbes = {}) {
+  constructor(
+    storagePath: string,
+    probes: StorageProbes = {},
+    environment: Environment = processEnvironment,
+  ) {
     this.storagePath = storagePath;
     this.probes = probes;
     this.#scanCacheTtl = Number(
-      Deno.env.get("GLOBNOTES_SCAN_CACHE_TTL") ?? "15",
+      environment.get("GLOBNOTES_SCAN_CACHE_TTL") ?? "15",
     );
   }
 

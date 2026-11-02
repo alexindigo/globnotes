@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import * as path from "@std/path";
+import { type Environment, processEnvironment } from "../environment.ts";
 import { getEnv } from "../helpers.ts";
 import { logger } from "../logger.ts";
 import type { StorageEffect } from "../notes/file_system.ts";
@@ -24,11 +25,20 @@ export class VaultHub {
   #started = false;
   #scanning = false;
   readonly root: string;
-  constructor(notesPath: string, statePath: string) {
+  constructor(
+    notesPath: string,
+    statePath: string,
+    environment: Environment = processEnvironment,
+  ) {
     this.#configuredRoot = path.resolve(notesPath);
     this.root = Deno.realPathSync(notesPath);
-    this.#intervalMs =
-      Number(getEnv("GLOBNOTES_HUB_SCAN_INTERVAL", { default: "60" })) * 1000;
+    this.#intervalMs = Number(
+      getEnv(
+        "GLOBNOTES_HUB_SCAN_INTERVAL",
+        { default: "60" },
+        environment,
+      ),
+    ) * 1000;
     if (!(this.#intervalMs > 0) || !Number.isFinite(this.#intervalMs)) {
       throw new Error("GLOBNOTES_HUB_SCAN_INTERVAL must be positive");
     }

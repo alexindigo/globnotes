@@ -6,6 +6,8 @@
  * a release build was made from. Builds without it are development builds.
  */
 
+import { type Environment, processEnvironment } from "./environment.ts";
+
 export interface AppVersion {
   version: string;
   /** Full commit hash supplied by the build, or null. */
@@ -18,10 +20,10 @@ const REVISION_PATTERN = /^[0-9a-f]{7,40}$/;
 export function readAppVersion(
   {
     file = new URL("../VERSION", import.meta.url),
-    env = Deno.env,
+    env = processEnvironment,
   }: {
     file?: URL | string;
-    env?: { get(name: string): string | undefined };
+    env?: Environment;
   } = {},
 ): AppVersion {
   const location = file instanceof URL ? file.pathname : file;
