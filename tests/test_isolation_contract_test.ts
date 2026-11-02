@@ -18,25 +18,91 @@ const SELF = path.fromFileUrl(import.meta.url);
 
 interface Rule {
   id: string;
-  /** Directory (relative to the repo root) whose source files are scanned. */
-  scope: string;
+  /** Directories (relative to the repo root) whose source files are scanned. */
+  scopes: string[];
   pattern: RegExp;
   /** Files (relative to the repo root) that own the resource. */
   owners?: string[];
+  /** Paths (files or directories, relative to the repo root) the rule does
+   * not cover, each with its reason. */
+  exempt?: { path: string; reason: string }[];
+  /** Individual source lines (trimmed, exact) the rule tolerates, each with
+   * its reason. An entry that no longer matches a line fails the rule. */
+  allowed?: { file: string; line: string; reason: string }[];
   why: string;
 }
+
+/** Lines where a wall-clock bound is part of what the test asserts, or an
+ * ambiguous loop kept as is (plans/commit-check notes/readiness-handoff.md). */
+const READINESS_ALLOWED: NonNullable<Rule["allowed"]> = [
+  {
+    file: "client/tests/e2e/autosave-timer.mjs",
+    line: "} while (Date.now() - start < timeout);",
+    reason:
+      "asserted timing: disk() fails when the autosave does not reach disk within its budget (5 s, 7 s for interval mode); the budget is the autosave behaviour under test",
+  },
+  {
+    file: "client/tests/e2e/autosave-timer.mjs",
+    line:
+      'assert(mutations("readme").length === pauseCount + 1 && Date.now() - pauseStart < 5000, "Pause autosave did not complete once within 5s");',
+    reason: "asserted timing: pause autosave completes exactly once within 5 s",
+  },
+  {
+    file: "client/tests/e2e/autosave-timer.mjs",
+    line: "while (Date.now() - continuousStart < 6000) {",
+    reason:
+      "asserted timing: the 6 s continuous-typing window in which pause mode must not write",
+  },
+  {
+    file: "client/tests/e2e/autosave-timer.mjs",
+    line: "while (Date.now() - intervalStart < 11500) {",
+    reason:
+      "asserted timing: the 11.5 s window in which interval mode must write its ticks",
+  },
+  {
+    file: "client/tests/e2e/plugin-prefix-auth.mjs",
+    line:
+      'for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, "Prefix/auth consumer observation deadline"); await new Promise(resolve => setTimeout(resolve, 25)); }',
+    reason:
+      "ambiguous, kept as is: the 3.5 s bound may be part of the expiry claim (a 2 s signed expiry closes the stream promptly, before any heartbeat)",
+  },
+  {
+    file: "client/tests/e2e/settings-pending-native.mjs",
+    line: "const deadline = Date.now() + 15000;",
+    reason:
+      "ambiguous, kept as is: pollGate's bound must outlast the product's pending-response window it also waits through (`Date.now() - gate.response.at > 11000`)",
+  },
+  {
+    file: "tests/hub_scanner_test.ts",
+    line: "const deadline = Date.now() + 1500;",
+    reason:
+      "ambiguous, kept as is: the 1.5 s bound tells the 0.05 s fallback interval read at construction from the later 60 s value",
+  },
+  {
+    file: "tests/hub_scanner_test.ts",
+    line: "const deadline = Date.now() + 2500;",
+    reason:
+      "ambiguous, kept as is: the 2.5 s bound tells watcher delivery from the 60 s default periodic scan",
+  },
+  {
+    file: "tests/plugin_lifecycle_test.ts",
+    line: "const hangDeadline = Date.now() + serviceCallMs + 5000;",
+    reason:
+      "ambiguous, kept as is: the bound is the product's call deadline (serviceCallMs) plus margin and its expiry is not a failure (the test then accepts failed or deliveryFailures >= 1)",
+  },
+];
 
 const RULES: Rule[] = [
   {
     id: "no-process-env-writes",
-    scope: "tests",
+    scopes: ["tests"],
     pattern: /Deno\.env\.(set|delete)\s*\(/,
     why:
       "tests configure in-process objects with tests/helpers/environment.ts and children through the launcher, never the shared process environment",
   },
   {
     id: "single-child-launcher",
-    scope: "tests",
+    scopes: ["tests"],
     pattern: /new Deno\.Command\s*\(/,
     owners: ["tests/helpers/process.ts"],
     why:
@@ -44,14 +110,14 @@ const RULES: Rule[] = [
   },
   {
     id: "no-port-probing",
-    scope: "tests",
+    scopes: ["tests"],
     pattern: /Deno\.listen\s*\(\s*\{[^}]*\bport:\s*0\b/,
     why:
       "a probed-and-released port can be taken before the child binds it; servers bind port 0 themselves and report the port (tests/helpers/boot.ts)",
   },
   {
     id: "single-port-owner",
-    scope: "tests",
+    scopes: ["tests"],
     pattern: /GLOBNOTES_PORT\b/,
     owners: ["tests/helpers/boot.ts"],
     why:
@@ -59,25 +125,42 @@ const RULES: Rule[] = [
   },
   {
     id: "no-fixed-tmp-paths",
-    scope: "tests",
+    scopes: ["tests"],
     pattern: /["'`]\/tmp\//,
     why:
       "fixed shared paths can carry another run's data; tests create owned temp dirs (servers also refuse a cwd inside the checkout, tests/helpers/boot.ts)",
   },
   {
     id: "unique-remote-module-urls",
-    scope: "tests",
+    scopes: ["tests"],
     pattern: /import\(\s*['"`]https?:\/\/(?![^'"`]*\$\{modules\})/,
     why:
       "remote modules are cached by URL in the shared, persistent DENO_DIR; fixtures serve them under a per-fixture path (`${modules}`) so no run is answered from another run's cache",
   },
   {
     id: "single-process-env-owner",
-    scope: "server",
+    scopes: ["server"],
     pattern: /Deno\.env\b/,
     owners: ["server/environment.ts", "server/logger.ts"],
     why:
       "server components receive an Environment (server/environment.ts); logger.ts reads LOGLEVEL once at import",
+  },
+  {
+    id: "single-readiness-bound",
+    scopes: ["tests", "client/tests/e2e"],
+    // Deadline arithmetic (`deadline = Date.now() + n`, also inside
+    // Math.min/max) and elapsed-time loop bounds (`Date.now() - start < n`).
+    pattern:
+      /[=:]\s*(?:Math\.(?:min|max)\([^;]*)?\b(?:Date|performance)\.now\(\)\s*\+|\b(?:Date|performance)\.now\(\)\s*-\s*\w+\s*<=?/,
+    owners: ["tests/helpers/wait.ts"],
+    exempt: [{
+      path: "tests/timing",
+      reason:
+        "timing-budget tests: the bound is the asserted property (phase-1 decision row 6); they run serially",
+    }],
+    allowed: READINESS_ALLOWED,
+    why:
+      "readiness waits go through waitUntil (tests/helpers/wait.ts): one bound, terminal states fail at once, the last observed state is reported. A bound that is the asserted property lives in tests/timing/ or is listed in READINESS_ALLOWED with its reason",
   },
 ];
 
@@ -93,19 +176,40 @@ async function* sources(dir: string): AsyncGenerator<string> {
   }
 }
 
-for (const rule of RULES) {
-  Deno.test(`isolation contract: ${rule.id}`, async () => {
-    const violations: string[] = [];
-    for await (const file of sources(path.join(ROOT, rule.scope))) {
+const within = (relative: string, prefix: string) =>
+  relative === prefix || relative.startsWith(prefix + path.SEPARATOR);
+
+/** The rule's violations, plus allowlist entries that matched nothing. */
+async function scan(rule: Rule): Promise<string[]> {
+  const violations: string[] = [];
+  const used = new Set<number>();
+  for (const scope of rule.scopes) {
+    for await (const file of sources(path.join(ROOT, scope))) {
       const relative = path.relative(ROOT, file);
       if (file === SELF || rule.owners?.includes(relative)) continue;
+      if (rule.exempt?.some((entry) => within(relative, entry.path))) continue;
       const lines = (await Deno.readTextFile(file)).split("\n");
       lines.forEach((line, index) => {
-        if (rule.pattern.test(line)) {
-          violations.push(`${relative}:${index + 1}: ${line.trim()}`);
-        }
+        if (!rule.pattern.test(line)) return;
+        const allowed = rule.allowed?.findIndex((entry) =>
+          entry.file === relative && entry.line === line.trim()
+        ) ?? -1;
+        if (allowed >= 0) {
+          used.add(allowed);
+        } else violations.push(`${relative}:${index + 1}: ${line.trim()}`);
       });
     }
-    assertEquals(violations, [], `${rule.id}: ${rule.why}`);
+  }
+  rule.allowed?.forEach((entry, index) => {
+    if (!used.has(index)) {
+      violations.push(`stale allowlist entry ${entry.file}: ${entry.line}`);
+    }
+  });
+  return violations;
+}
+
+for (const rule of RULES) {
+  Deno.test(`isolation contract: ${rule.id}`, async () => {
+    assertEquals(await scan(rule), [], `${rule.id}: ${rule.why}`);
   });
 }
