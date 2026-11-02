@@ -3,9 +3,10 @@
 /** Boot a real globnotes server subprocess for integration tests,
  * mirroring how the Python suite used FastAPI's TestClient. */
 
+import { command, DENO } from "./process.ts";
+
 const SERVER_MAIN = new URL("../../server/main.ts", import.meta.url).pathname;
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
-const DENO = Deno.execPath();
 
 /** Auto-created vault dirs, swept at test-process unload so a test that
  * forgets to clean up still leaves no /tmp/globnotes-test-vault-*
@@ -26,6 +27,11 @@ globalThis.addEventListener?.("unload", () => {
 export interface TestServer {
   baseUrl: string;
   vault: string;
+  pid: number;
+  /** Output captured from the server process so far. */
+  logs: () => { stderr: string };
+  /** Stops the server. Fails, with the server's stderr, when the server had
+   * already exited on its own. */
   close: () => Promise<void>;
 }
 
@@ -53,7 +59,9 @@ export async function bootServer(
     (await Deno.makeTempDir({ prefix: "globnotes-test-vault-" }));
   if (ownsVault) trackedVaults.add(vault);
   let stderrText = "";
-  const child = new Deno.Command(DENO, {
+  // Clean environment: exactly `env` plus the launcher's base, never the
+  // test process's (shared, concurrently mutated) environment.
+  const child = command(DENO, {
     args: [
       "run",
       "--unstable-worker-options",
@@ -69,7 +77,6 @@ export async function bootServer(
       GLOBNOTES_PATH: vault,
       GLOBNOTES_PORT: String(port),
       GLOBNOTES_HOST: hostname,
-      NO_COLOR: "1",
     },
     stdout: "null",
     stderr: "piped",
@@ -86,6 +93,18 @@ export async function bootServer(
       }),
     )
     .catch(() => {});
+  let exited: Deno.CommandStatus | null = null;
+  const status = child.status.then((value) => {
+    exited = value;
+    return value;
+  });
+  const exitDetail = async (what: string) => {
+    const { code, signal } = await status;
+    await draining;
+    return `${what} (pid ${child.pid}, exit code ${code}${
+      signal ? `, signal ${signal}` : ""
+    }). stderr:\n${stderrText}`;
+  };
 
   const baseUrl = opts.origin?.(port) ?? `http://127.0.0.1:${port}`;
   // With a path prefix the router only answers under it.
@@ -93,6 +112,9 @@ export async function bootServer(
   const deadline = Date.now() + 15_000;
   let up = false;
   while (Date.now() < deadline) {
+    if (exited) {
+      throw new Error(await exitDetail("server exited before it was healthy"));
+    }
     try {
       const res = await fetch(`${baseUrl}${prefix}/_/api/health`);
       await res.body?.cancel();
@@ -106,21 +128,37 @@ export async function bootServer(
     await new Promise((r) => setTimeout(r, 100));
   }
   if (!up) {
-    child.kill("SIGKILL");
-    await draining;
-    throw new Error(`server failed to boot. stderr:\n${stderrText}`);
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // exited on its own meanwhile; exitDetail reports how
+    }
+    throw new Error(await exitDetail("server failed to boot within 15 s"));
   }
 
+  let closed = false;
   return {
     baseUrl,
     vault,
+    pid: child.pid,
+    logs: () => ({ stderr: stderrText }),
     close: async () => {
-      child.kill("SIGTERM");
-      try {
-        await child.status;
-      } catch {
-        // already gone
+      if (closed) return;
+      closed = true;
+      if (exited) {
+        throw new Error(
+          await exitDetail("server exited on its own before close()"),
+        );
       }
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        throw new Error(
+          await exitDetail("server exited on its own before close()"),
+        );
+      }
+      await status;
+      await draining;
       // The vault is deliberately NOT removed here: restart-style tests
       // reuse the same vault across close()s. Auto-created vault paths
       // are tracked instead and swept at process unload (below), so

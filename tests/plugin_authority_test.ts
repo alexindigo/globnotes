@@ -23,6 +23,7 @@ import type {
   OperationFact,
 } from "../server/plugins/contracts.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { command } from "./helpers/process.ts";
 
 const api = () => fixtureApiOrigin(state.lifecycle!);
 async function wait(predicate: () => boolean) {
@@ -1124,7 +1125,7 @@ async function launchBackgroundFixture(env: Record<string, string>) {
     GLOBNOTES_HOST: "127.0.0.1",
     NO_COLOR: "1",
   };
-  const child = new Deno.Command(Deno.execPath(), {
+  const child = command(Deno.execPath(), {
     args,
     cwd: root,
     env: launchEnv,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { command } from "./helpers/process.ts";
 
 Deno.test("production acceptance CLI: help and malformed flags cannot start fixtures", async () => {
   const entry = new URL(
@@ -17,7 +18,7 @@ Deno.test("production acceptance CLI: help and malformed flags cannot start fixt
       [["--artifacts", "/one", "--artifacts", "/two"], 2],
     ] as [string[], number][]
   ) {
-    const result = await new Deno.Command(Deno.execPath(), {
+    const result = await command(Deno.execPath(), {
       args: [
         "run",
         "--cached-only",

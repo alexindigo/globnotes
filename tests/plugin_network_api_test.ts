@@ -2,6 +2,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
+import { command } from "./helpers/process.ts";
 
 /** Feature-owned normal launcher; importAuthority is an isolated positive control only. */
 async function bootNetworkServer(
@@ -25,7 +26,7 @@ async function bootNetworkServer(
     ...privateLockPath ? [`--lock=${privateLockPath}`] : [],
     `${root}server/main.ts`,
   ];
-  const child = new Deno.Command(Deno.execPath(), {
+  const child = command(Deno.execPath(), {
     args,
     cwd: root,
     env: {

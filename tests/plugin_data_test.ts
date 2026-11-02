@@ -16,6 +16,7 @@ import { AsyncLock, PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { GlobalConfig } from "../server/config.ts";
 import { state } from "../server/state.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { command } from "./helpers/process.ts";
 
 const settingsPut = (await import(
   new URL(
@@ -780,7 +781,7 @@ Deno.test("plugin persistence: relocated owner, defaults, CAS and restart read-b
           JSON.stringify(fixture.statePath)
         }, {commit: (effect) => effect()}); console.log(JSON.stringify(await store.forPlugin("alpha").load()));`,
       );
-      const child = await new Deno.Command(Deno.execPath(), {
+      const child = await command(Deno.execPath(), {
         args: [
           "run",
           "--cached-only",

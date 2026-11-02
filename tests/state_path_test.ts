@@ -10,17 +10,12 @@
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { bootServer } from "./helpers/boot.ts";
-
-// The suite's shared process env carries GLOBNOTES_* leftovers from other
-// test files (render_test sets AUTH_TYPE=none at import). Empty string
-// neutralizes: getEnv treats "" as unset per the env-wins rule.
-const CLEAN_ENV = { GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_PATH_PREFIX: "" };
+import { command } from "./helpers/process.ts";
 
 Deno.test("state dir: GLOBNOTES_INDEX_PATH relocates state", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "gn-vault-" });
   const stateDir = await Deno.makeTempDir({ prefix: "gn-state-" });
   const server = await bootServer({
-    ...CLEAN_ENV,
     GLOBNOTES_PATH: vault,
     GLOBNOTES_INDEX_PATH: stateDir,
   });
@@ -118,7 +113,7 @@ Deno.test("state dir: legacy vault config warns loudly at boot", async () => {
   const port = (listener.addr as Deno.NetAddr).port;
   listener.close();
 
-  const child = new Deno.Command(Deno.execPath(), {
+  const child = command(Deno.execPath(), {
     args: [
       "run",
       "--unstable-worker-options",
@@ -129,7 +124,6 @@ Deno.test("state dir: legacy vault config warns loudly at boot", async () => {
       "server/main.ts",
     ],
     env: {
-      ...CLEAN_ENV,
       GLOBNOTES_PATH: vault,
       GLOBNOTES_INDEX_PATH: stateDir,
       GLOBNOTES_PORT: String(port),
@@ -167,7 +161,7 @@ Deno.test("state dir: legacy vault config warns loudly at boot", async () => {
 
 Deno.test("state dir: unset var keeps the legacy vault layout", async () => {
   const vault = await Deno.makeTempDir({ prefix: "gn-legacy-default-" });
-  const server = await bootServer({ ...CLEAN_ENV, GLOBNOTES_PATH: vault });
+  const server = await bootServer({ GLOBNOTES_PATH: vault });
   try {
     const res = await fetch(`${server.baseUrl}/_/api/setup`, {
       method: "POST",

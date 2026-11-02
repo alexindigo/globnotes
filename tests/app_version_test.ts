@@ -4,6 +4,7 @@ import { assert, assertEquals, assertThrows } from "@std/assert";
 import { readAppVersion } from "../server/version.ts";
 import { formatVersion } from "../shared/version.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { command } from "./helpers/process.ts";
 
 const SERVER_MAIN = new URL("../server/main.ts", import.meta.url).pathname;
 const RELEASE = Deno.readTextFileSync(new URL("../VERSION", import.meta.url))
@@ -163,7 +164,7 @@ Deno.test("startup logs the version before the listening line", async () => {
   const listener = Deno.listen({ port: 0, hostname: "127.0.0.1" });
   const port = (listener.addr as Deno.NetAddr).port;
   listener.close();
-  const child = new Deno.Command(Deno.execPath(), {
+  const child = command(Deno.execPath(), {
     args: [
       "run",
       "--unstable-worker-options",

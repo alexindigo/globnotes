@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assert, assertEquals } from "@std/assert";
+import { command } from "./helpers/process.ts";
 
 for (const kind of ["missing-source", "constructor"]) {
   Deno.test(`review repairs: R03 actual ${kind} respawn failure preserves host process and unrelated renderer`, async () => {
     const evidence = await Deno.makeTempDir({ prefix: `review-r03-${kind}-` });
-    const child = new Deno.Command(Deno.execPath(), {
+    const child = command(Deno.execPath(), {
       args: [
         "run",
         "--cached-only",
