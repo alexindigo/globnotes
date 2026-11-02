@@ -7,7 +7,8 @@
  */
 
 import * as path from "@std/path";
-import { getEnv } from "./helpers.ts";
+import { type Environment, processEnvironment } from "./environment.ts";
+import { getEnv, type GetEnvOptions } from "./helpers.ts";
 import { logger } from "./logger.ts";
 
 export enum AuthType {
@@ -180,12 +181,17 @@ export class GlobalConfig {
   brandName: string | null;
   brandAccent: string | null;
 
-  constructor() {
+  /** Configuration input; every env-derived value of this deployment
+   * (including later reads by auth and plugins) comes from here. */
+  readonly environment: Environment;
+
+  constructor(environment: Environment = processEnvironment) {
+    this.environment = environment;
     logger.debug("Loading global config...");
-    this.notesPath = getEnv("GLOBNOTES_PATH", { mandatory: true });
+    this.notesPath = this.#env("GLOBNOTES_PATH", { mandatory: true });
     // getEnv returns "" for unset vars — `||` treats that (and an
     // explicitly empty value) as absent, per the env-wins rule.
-    this.statePath = getEnv("GLOBNOTES_INDEX_PATH") ||
+    this.statePath = this.#env("GLOBNOTES_INDEX_PATH") ||
       path.join(this.notesPath, ".globnotes");
     this.storedConfig = this.#loadStoredConfig();
     this.authType = this.#loadAuthType();
@@ -195,7 +201,7 @@ export class GlobalConfig {
     this.quickAccessTerm = this.#quickAccessTerm();
     this.quickAccessSort = this.#quickAccessSort();
     this.quickAccessLimit = this.#quickAccessLimit();
-    this.autoEnablePlugins = getEnv("GLOBNOTES_AUTO_ENABLE_PLUGINS", {
+    this.autoEnablePlugins = this.#env("GLOBNOTES_AUTO_ENABLE_PLUGINS", {
       castBool: true,
       default: true,
     }) ===
@@ -203,10 +209,14 @@ export class GlobalConfig {
     this.pathPrefix = this.#loadPathPrefix();
     // getEnv returns "" for unset vars — `||` treats that (and an
     // explicitly empty value) as absent, per the env-wins rule.
-    this.brandName = getEnv("GLOBNOTES_BRAND_NAME") ||
+    this.brandName = this.#env("GLOBNOTES_BRAND_NAME") ||
       this.storedConfig?.brand_name || null;
-    this.brandAccent = getEnv("GLOBNOTES_BRAND_ACCENT") ||
+    this.brandAccent = this.#env("GLOBNOTES_BRAND_ACCENT") ||
       this.storedConfig?.brand_accent || null;
+  }
+
+  #env(key: string, opts: GetEnvOptions = {}): string {
+    return getEnv(key, opts, this.environment);
   }
 
   get configPath(): string {
@@ -224,8 +234,8 @@ export class GlobalConfig {
 
   /** Public settings policy is independent of public note writability. */
   get readOnlySettings(): boolean {
-    return getEnv("GLOBNOTES_READ_ONLY_SETTINGS")
-      ? getEnv("GLOBNOTES_READ_ONLY_SETTINGS", { castBool: true }) === "true"
+    return this.#env("GLOBNOTES_READ_ONLY_SETTINGS")
+      ? this.#env("GLOBNOTES_READ_ONLY_SETTINGS", { castBool: true }) === "true"
       : this.storedConfig?.read_only_settings === true;
   }
 
@@ -354,7 +364,7 @@ export class GlobalConfig {
 
   #loadAuthType(): AuthType | null {
     const key = "GLOBNOTES_AUTH_TYPE";
-    const value = getEnv(key);
+    const value = this.#env(key);
     if (value) {
       const authType = Object.values(AuthType).find((t) =>
         t === value.toLowerCase()
@@ -388,10 +398,10 @@ export class GlobalConfig {
 
   #quickAccessHide(): boolean {
     const key = "GLOBNOTES_QUICK_ACCESS_HIDE";
-    let value = getEnv(key, { castBool: true, default: false }) === "true";
+    let value = this.#env(key, { castBool: true, default: false }) === "true";
     if (!value) {
       const deprecatedKey = "GLOBNOTES_HIDE_RECENTLY_MODIFIED";
-      const deprecated = getEnv(deprecatedKey, {
+      const deprecated = this.#env(deprecatedKey, {
         castBool: true,
         default: false,
       }) === "true";
@@ -406,18 +416,18 @@ export class GlobalConfig {
   }
 
   #quickAccessTitle(): string {
-    return getEnv("GLOBNOTES_QUICK_ACCESS_TITLE", {
+    return this.#env("GLOBNOTES_QUICK_ACCESS_TITLE", {
       default: "RECENTLY MODIFIED",
     });
   }
 
   #quickAccessTerm(): string {
-    return getEnv("GLOBNOTES_QUICK_ACCESS_TERM", { default: "*" });
+    return this.#env("GLOBNOTES_QUICK_ACCESS_TERM", { default: "*" });
   }
 
   #quickAccessSort(): string {
     const key = "GLOBNOTES_QUICK_ACCESS_SORT";
-    const value = getEnv(key, { default: "lastModified" });
+    const value = this.#env(key, { default: "lastModified" });
     const validValues = ["score", "title", "lastModified"];
     if (!validValues.includes(value)) {
       logger.error(
@@ -431,13 +441,13 @@ export class GlobalConfig {
 
   #quickAccessLimit(): number {
     return Number(
-      getEnv("GLOBNOTES_QUICK_ACCESS_LIMIT", { castInt: true, default: 4 }),
+      this.#env("GLOBNOTES_QUICK_ACCESS_LIMIT", { castInt: true, default: 4 }),
     );
   }
 
   #loadPathPrefix(): string {
     const key = "GLOBNOTES_PATH_PREFIX";
-    const value = getEnv(key);
+    const value = this.#env(key);
     if (value && (!value.startsWith("/") || value.endsWith("/"))) {
       logger.error(
         `Invalid value '${value}' for ${key}. Must start with '/' and not end with '/'.`,

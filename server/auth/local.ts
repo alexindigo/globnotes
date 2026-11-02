@@ -64,11 +64,16 @@ export class LocalAuth {
     // Credentials come from environment variables when set (env always
     // wins), otherwise from the stored first-run setup config.
     const stored = globalConfig.storedConfig ?? {};
-    this.username = (getEnv("GLOBNOTES_USERNAME") || stored.username || "")
-      .toLowerCase();
-    this.password = getEnv("GLOBNOTES_PASSWORD") || null;
+    this.username =
+      (getEnv("GLOBNOTES_USERNAME", {}, globalConfig.environment) ||
+        stored.username || "")
+        .toLowerCase();
+    this.password =
+      getEnv("GLOBNOTES_PASSWORD", {}, globalConfig.environment) || null;
     this.passwordHash = this.password ? null : (stored.password_hash ?? null);
-    this.secretKey = getEnv("GLOBNOTES_SECRET_KEY") || stored.secret_key || "";
+    this.secretKey =
+      getEnv("GLOBNOTES_SECRET_KEY", {}, globalConfig.environment) ||
+      stored.secret_key || "";
     if (
       !this.username || !(this.password || this.passwordHash) || !this.secretKey
     ) {
@@ -79,7 +84,11 @@ export class LocalAuth {
       Deno.exit(1);
     }
     this.sessionExpiryDays = Number(
-      getEnv("GLOBNOTES_SESSION_EXPIRY_DAYS", { castInt: true, default: 30 }),
+      getEnv(
+        "GLOBNOTES_SESSION_EXPIRY_DAYS",
+        { castInt: true, default: 30 },
+        globalConfig.environment,
+      ),
     );
 
     // TOTP — key from the environment, falling back to the stored
@@ -96,7 +105,7 @@ export class LocalAuth {
         );
         Deno.exit(1);
       }
-      const envKey = getEnv("GLOBNOTES_TOTP_KEY");
+      const envKey = getEnv("GLOBNOTES_TOTP_KEY", {}, globalConfig.environment);
       const rawKey = envKey || stored.totp_key;
       if (!rawKey) {
         logger.error(

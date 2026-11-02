@@ -3,6 +3,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createUuid } from "../../shared/uuid.ts";
 import * as path from "@std/path";
+import { type Environment, processEnvironment } from "@server/environment.ts";
 import type { Indexer } from "@server/state.ts";
 import { isValidNotePath } from "@server/helpers.ts";
 import { logger } from "@server/logger.ts";
@@ -37,8 +38,10 @@ export class Fts5Indexer implements Indexer {
   #db: DatabaseSync;
   #indexPath: string;
   #status = { syncing: false, initial: false, done: 0, total: 0 };
+  readonly #environment: Environment;
 
-  constructor(stateDir: string) {
+  constructor(stateDir: string, environment: Environment = processEnvironment) {
+    this.#environment = environment;
     // The arg IS the state dir (index.sqlite's home) — no join; the
     // caller resolves GLOBNOTES_INDEX_PATH vs <vault>/.globnotes.
     Deno.mkdirSync(stateDir, { recursive: true });
@@ -310,10 +313,11 @@ export class Fts5Indexer implements Indexer {
         .sort((a, b) => a.split("/").length - b.split("/").length);
       this.#status.total = newFiles.length;
       const batchSize = Number(
-        Deno.env.get("GLOBNOTES_INDEX_BATCH_SIZE") ?? "200",
+        this.#environment.get("GLOBNOTES_INDEX_BATCH_SIZE") ?? "200",
       );
       const batchDelay =
-        Number(Deno.env.get("GLOBNOTES_INDEX_BATCH_DELAY") ?? "0.1") * 1000;
+        Number(this.#environment.get("GLOBNOTES_INDEX_BATCH_DELAY") ?? "0.1") *
+        1000;
       for (let i = 0; i < newFiles.length; i += batchSize) {
         const batch = newFiles.slice(i, i + batchSize);
         for (const filename of batch) {

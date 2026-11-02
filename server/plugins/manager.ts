@@ -3,6 +3,7 @@
 /** One catalog of optional contributions. Rendering is a lazy compatibility adapter. */
 import * as path from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
+import { type Environment, processEnvironment } from "../environment.ts";
 import { getEnv } from "../helpers.ts";
 import { logger } from "../logger.ts";
 import {
@@ -91,6 +92,9 @@ export interface PluginManagerOptions {
   internalRoot?: string;
   autoEnable?: boolean;
   environment?: boolean;
+  /** Configuration input for env-derived defaults (render worker count,
+   * GLOBNOTES_PLUGIN_SETTINGS, GLOBNOTES_AUTO_ENABLE_PLUGINS). */
+  env?: Environment;
   persistence?: PersistenceAdapters;
   /** Evaluated at pool start/respawn: all worker roles get write:false
    * while setup is pending or the vault is read-only. */
@@ -126,6 +130,7 @@ export class PluginManager {
     statePath?: string,
     options: PluginManagerOptions = {},
   ) {
+    const env = options.env ?? processEnvironment;
     this.vaultPath = vaultPath;
     this.statePath = statePath ?? path.join(vaultPath, ".globnotes");
     this.rpc = rpc;
@@ -134,11 +139,13 @@ export class PluginManager {
       statePath: this.statePath,
     });
     this.workerCount = workerCount ??
-      Number(getEnv("GLOBNOTES_RENDER_WORKERS", { castInt: true, default: 2 }));
+      Number(
+        getEnv("GLOBNOTES_RENDER_WORKERS", { castInt: true, default: 2 }, env),
+      );
     this.internalRoot = options.internalRoot ?? INTERNAL_PLUGINS_DIR;
     this.options = options;
     this.settingsEnvironment = options.settingsEnvironment ??
-      new PluginSettingsEnvironment(Deno.env.get("GLOBNOTES_PLUGIN_SETTINGS"));
+      new PluginSettingsEnvironment(env.get("GLOBNOTES_PLUGIN_SETTINGS"));
     this.networkCommit = (effect) =>
       options.persistence?.commit(effect) ??
         Promise.reject(
@@ -146,7 +153,7 @@ export class PluginManager {
             "permission persistence requires the owning host commit adapter",
           ),
         );
-    const statedDefault = getEnv("GLOBNOTES_AUTO_ENABLE_PLUGINS");
+    const statedDefault = getEnv("GLOBNOTES_AUTO_ENABLE_PLUGINS", {}, env);
     this.policy = new PluginPolicyStore(
       this.statePath,
       {
@@ -162,7 +169,11 @@ export class PluginManager {
         autoEnable: options.autoEnable ?? true,
         environment: options.environment ??
           (statedDefault
-            ? getEnv("GLOBNOTES_AUTO_ENABLE_PLUGINS", { castBool: true }) ===
+            ? getEnv(
+              "GLOBNOTES_AUTO_ENABLE_PLUGINS",
+              { castBool: true },
+              env,
+            ) ===
               "true"
             : undefined),
       },

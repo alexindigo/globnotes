@@ -7,6 +7,7 @@
  */
 
 import * as path from "@std/path";
+import { type Environment, processEnvironment } from "./environment.ts";
 import { logger } from "./logger.ts";
 
 export function camelCase(snakeCaseStr: string): string {
@@ -268,10 +269,15 @@ export interface GetEnvOptions {
   castBool?: boolean;
 }
 
-/** Get an environment variable. Exits the process when mandatory and unset,
- * matching the Python server's get_env contract. */
-export function getEnv(key: string, opts: GetEnvOptions = {}): string {
-  const raw = Deno.env.get(key);
+/** Get an environment variable from `env` (the process environment by
+ * default). Exits the process when mandatory and unset, matching the Python
+ * server's get_env contract. */
+export function getEnv(
+  key: string,
+  opts: GetEnvOptions = {},
+  env: Environment = processEnvironment,
+): string {
+  const raw = env.get(key);
   if (raw === undefined || raw === "") {
     if (opts.mandatory) {
       logger.error(`Environment variable ${key} must be set.`);

@@ -45,8 +45,9 @@ const appVersion = readAppVersion();
 logger.info(`globnotes ${formatVersion(appVersion)}`);
 
 const globalConfig = new GlobalConfig();
-const notes = new FileSystemNotes(globalConfig.notesPath);
-const indexer = new Fts5Indexer(globalConfig.statePath);
+const environment = globalConfig.environment;
+const notes = new FileSystemNotes(globalConfig.notesPath, {}, environment);
+const indexer = new Fts5Indexer(globalConfig.statePath, environment);
 const fileServing = new FileServing(globalConfig.notesPath);
 const plugins = new PluginManager(
   globalConfig.notesPath,
@@ -61,6 +62,7 @@ const plugins = new PluginManager(
     persistence: {
       commit: (effect) => state.lifecycle!.gate.run(effect),
     },
+    env: environment,
   },
 );
 const auth = globalConfig.authType === AuthType.PASSWORD ||
@@ -191,7 +193,7 @@ try {
 // move; never auto-copy (partial cross-filesystem copies of credentials
 // are the failure mode).
 if (
-  getEnv("GLOBNOTES_INDEX_PATH") &&
+  getEnv("GLOBNOTES_INDEX_PATH", {}, environment) &&
   !fileExists(path.join(globalConfig.statePath, "config.json")) &&
   fileExists(path.join(globalConfig.notesPath, ".globnotes", "config.json"))
 ) {
@@ -218,8 +220,10 @@ if (auth?.isTotpEnabled && auth.totpKeyFromEnv) {
   await auth.displayTotpEnrolment();
 }
 
-const hostname = getEnv("GLOBNOTES_HOST", { default: "0.0.0.0" });
-const port = Number(getEnv("GLOBNOTES_PORT", { castInt: true, default: 8080 }));
+const hostname = getEnv("GLOBNOTES_HOST", { default: "0.0.0.0" }, environment);
+const port = Number(
+  getEnv("GLOBNOTES_PORT", { castInt: true, default: 8080 }, environment),
+);
 const prefix = globalConfig.pathPrefix;
 
 const app = await pathfinder({
