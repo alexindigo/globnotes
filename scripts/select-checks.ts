@@ -42,6 +42,7 @@ export const GATE_ORDER = [
   "worker",
   "handlers",
   "shell",
+  "e2e-modules",
   "contracts",
   "server",
   "timing",
@@ -64,6 +65,7 @@ export const STATIC_GATES: Gate[] = [
   "worker",
   "handlers",
   "shell",
+  "e2e-modules",
   "contracts",
 ];
 export const BROWSER_GATES: Gate[] = [
