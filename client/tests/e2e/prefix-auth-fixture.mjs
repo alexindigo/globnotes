@@ -1,6 +1,8 @@
 // Feature-owned production cwd: prefix stamping never changes donor assets.
 const ROOT = new URL("../../..", import.meta.url).pathname;
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
+import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
+import { awaitHealthy } from "./harness-helpers.mjs";
 const assert = (value, message) => { if (!value) throw Error(message); };
 const hash = async bytes => [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
 
@@ -60,29 +62,19 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
     await Promise.all(drains);
     for (const row of assets) assert(await hash(await Deno.readFile(`${ROOT}/client/dist/${row.path}`)) === row.sha256, "Donor production assets changed during prefix fixture");
   }
-  const deadline = Date.now() + 30000;
+  const children = [watchChild(child, () => logs)];
   try {
-    for (;;) {
-      let ready = false;
-      try {
-        const response = await fetch(`${baseUrl}${prefix}/_/api/health`, { signal: AbortSignal.timeout(5000) });
-        ready = response.ok; await response.body?.cancel();
-      } catch { /* bounded startup only */ }
-      if (ready) break;
-      assert(Date.now() < deadline, "Prefix fixture health startup deadline");
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    for (;;) {
-      const response = await fetch(`${baseUrl}${prefix}/_/api/plugin-host`, { headers, signal: AbortSignal.timeout(5000) });
+    await awaitHealthy(`${baseUrl}${prefix}`, { label: "Prefix fixture health", child, logs: () => logs, intervalMs: 50 });
+    await waitUntil(async signal => {
+      const response = await fetch(`${baseUrl}${prefix}/_/api/plugin-host`, { headers, signal });
       const catalog = await response.json();
-      if (setup) { assert(response.status === 503, "Setup catalogue did not reject before runtime"); break; }
+      if (setup) { assert(response.status === 503, "Setup catalogue did not reject before runtime"); return done(); }
       assert(response.ok, `Prefix catalogue rejected: ${response.status}`);
       const plugin = catalog.plugins.find(plugin => plugin.id === "gps08");
-      assert(plugin?.status !== "failed", "Prefix fixture Worker failed rather than becoming ready");
-      if (plugin?.status === "ready" && plugin.commands.some(command => command.id === "consume")) break;
-      assert(Date.now() < deadline, "Prefix fixture actual command readiness deadline");
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
+      if (plugin?.status === "failed") return failed("Prefix fixture Worker failed rather than becoming ready", plugin);
+      if (plugin?.status === "ready" && plugin.commands.some(command => command.id === "consume")) return done();
+      return pending(plugin ?? { id: "gps08", status: "absent" });
+    }, { label: "Prefix fixture actual command readiness", intervalMs: 50, children });
   } catch (error) { await close(); throw error; }
   return { baseUrl, pid: child.pid, logs, close, cwd, assets };
 }

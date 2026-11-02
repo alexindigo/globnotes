@@ -9,11 +9,14 @@
  * process can take it between choice and bind — its working directory (a
  * scratch dir per boot, never the checkout: the server rewrites the
  * cwd-relative client/dist/index.html at boot) — and its lifetime (an early
- * exit fails with the server's own stderr). */
+ * exit fails with the server's own stderr). Readiness (listening line and
+ * health) is one shared wait with the suite's single bound
+ * (tests/helpers/wait.ts). */
 
 import { copy, existsSync } from "@std/fs";
 import * as path from "@std/path";
 import { command, DENO } from "./process.ts";
+import { done, pending, waitUntil } from "./wait.ts";
 
 const SERVER_MAIN = new URL("../../server/main.ts", import.meta.url).pathname;
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
@@ -82,8 +85,6 @@ export async function bootServer(
     origin?: (port: number) => string;
     /** Extra `deno run` flags placed before the server entry point. */
     denoArgs?: string[];
-    /** Readiness deadline (listening line and health). */
-    readyMs?: number;
   } = {},
 ): Promise<TestServer> {
   const hostname = opts.host ?? "127.0.0.1";
@@ -159,52 +160,52 @@ export async function bootServer(
 
   // With a path prefix the router only answers under it.
   const prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
-  const deadline = Date.now() + (opts.readyMs ?? 15_000);
   let port: number | null = null;
-  let up = false;
-  while (Date.now() < deadline) {
-    if (exited) {
-      throw new Error(await exitDetail("server exited before it was healthy"));
-    }
-    port ??= Number(LISTENING.exec(output.stdout)?.[1]) || null;
-    if (port !== null) {
+  try {
+    await waitUntil(async (signal) => {
+      port ??= Number(LISTENING.exec(output.stdout)?.[1]) || null;
+      if (port === null) return pending({ port: null });
       try {
         const res = await fetch(
           `${opts.origin?.(port) ?? `http://127.0.0.1:${port}`}${prefix}` +
             "/_/api/health",
-          { signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) },
+          { signal },
         );
         await res.body?.cancel();
-        if (res.ok) {
-          up = true;
-          break;
-        }
-      } catch {
-        // not up yet
+        return res.ok ? done() : pending({ port, health: res.status });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        return pending({ port, health: String(error) }); // not up yet
       }
+    }, {
+      label: `test server ${child.pid} healthy`,
+      intervalMs: 50,
+      children: [{ pid: child.pid, status: () => exited }],
+    });
+  } catch (error) {
+    if (exited) {
+      throw new Error(await exitDetail("server exited before it was healthy"));
     }
-    await new Promise((r) => setTimeout(r, port === null ? 20 : 100));
-  }
-  if (!up || port === null) {
     try {
       child.kill("SIGKILL");
     } catch {
       // exited on its own meanwhile; exitDetail reports how
     }
     throw new Error(
-      await exitDetail(
+      `${await exitDetail(
         port === null
           ? "server never reported its listening port"
           : "server failed to become healthy in time",
-      ),
+      )}\n${error instanceof Error ? error.message : error}`,
     );
   }
+  const boundPort: number = port!;
 
   let closed = false;
   return {
-    baseUrl: opts.origin?.(port) ?? `http://127.0.0.1:${port}`,
+    baseUrl: opts.origin?.(boundPort) ?? `http://127.0.0.1:${boundPort}`,
     vault,
-    port,
+    port: boundPort,
     pid: child.pid,
     args,
     output,

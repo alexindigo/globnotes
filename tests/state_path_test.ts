@@ -9,6 +9,7 @@
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { bootServer } from "./helpers/boot.ts";
+import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 Deno.test("state dir: GLOBNOTES_INDEX_PATH relocates state", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "gn-vault-" });
@@ -113,11 +114,12 @@ Deno.test("state dir: legacy vault config warns loudly at boot", async () => {
   });
   try {
     // The warning is logged during boot; wait for it on the server's stderr.
-    const deadline = Date.now() + 15_000;
-    while (
-      !server.logs().stderr.includes("GLOBNOTES_INDEX_PATH is set") &&
-      Date.now() < deadline
-    ) await new Promise((r) => setTimeout(r, 20));
+    await waitUntil(() => {
+      const { stderr } = server.logs();
+      return stderr.includes("GLOBNOTES_INDEX_PATH is set")
+        ? done()
+        : pending({ stderr });
+    }, { label: "boot warning on the server's stderr", children: [server] });
     const seen = server.logs().stderr;
     assert(
       seen.includes("GLOBNOTES_INDEX_PATH is set"),

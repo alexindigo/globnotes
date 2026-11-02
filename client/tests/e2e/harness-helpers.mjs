@@ -2,6 +2,7 @@
 // to have run (client/dist present); boots server/main.ts on a free port of
 // the local test domain's address (http-origin.mjs).
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
+import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
 const ROOT = new URL("../../..", import.meta.url).pathname;
 
 export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFailed = false, headers = {} } = {}) {
@@ -60,39 +61,53 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFail
   }
   const baseUrl = httpOrigin(port);
   const prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
-  const deadline = Date.now() + 30000;
+  const children = [watchChild(child, () => logs)];
   try {
-  for (;;) {
-    try {
-      const res = await fetch(`${baseUrl}${prefix}/_/api/health`, { signal: AbortSignal.timeout(5000) });
-      await res.body?.cancel();
-      if (res.ok) break;
-    } catch { /* not up */ }
-    if (Date.now() > deadline) {
-      throw new Error("e2e server never came up");
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  // Wait for plugin runtime readiness through the catalog.
-  const readyDeadline = Date.now() + 15000;
-  for (;;) {
-    const res = await fetch(`${baseUrl}${prefix}/_/api/plugin-host`, { headers, signal: AbortSignal.timeout(5000) });
-    if (!res.ok) { await res.body?.cancel(); throw new Error(`Catalog rejected: ${res.status}`); }
-    const catalog = await res.json();
-    if (
-      catalog.plugins.every((p) =>
-        !p.enabled || !p.runtime?.server || p.status === "ready" ||
-        (allowFailed && p.status === "failed")
-      )
-    ) break;
-    if (Date.now() > readyDeadline) throw new Error("plugins never ready");
-    await new Promise((r) => setTimeout(r, 100));
-  }
+    await awaitHealthy(`${baseUrl}${prefix}`, { label: "e2e server healthy", child, logs: () => logs });
+    // Wait for plugin runtime readiness through the catalog.
+    await waitUntil(async signal => {
+      const res = await fetch(`${baseUrl}${prefix}/_/api/plugin-host`, { headers, signal });
+      if (!res.ok) return failed(`catalog rejected: ${res.status}`, { status: res.status, body: await res.text() });
+      const catalog = await res.json();
+      const servers = catalog.plugins.filter(p => p.enabled && p.runtime?.server);
+      const failing = servers.filter(p => p.status === "failed");
+      if (failing.length && !allowFailed) return failed(`plugin ${failing.map(p => `'${p.id}'`).join(", ")} failed`, servers);
+      if (servers.every(p => p.status === "ready" || (allowFailed && p.status === "failed"))) return done();
+      return pending(servers);
+    }, { label: "e2e server plugins ready", intervalMs: 100, children });
   } catch (error) { await close(); throw error; }
   return {
     baseUrl,
     close, pid: child.pid, logs,
   };
+}
+
+/** Wait (tests/helpers/wait.ts) until `${base}/_/api/health` answers OK. An
+ * exited `child` fails the wait at once with its output (`logs`). */
+export function awaitHealthy(base, { label, child, logs, intervalMs = 100 }) {
+  return waitUntil(async signal => {
+    try {
+      const response = await fetch(`${base}/_/api/health`, { signal });
+      await response.body?.cancel();
+      return response.ok ? done() : pending({ health: response.status });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return pending({ health: String(error) }); // not up yet
+    }
+  }, { label, intervalMs, children: child ? [watchChild(child, logs)] : [] });
+}
+
+/** Wait until plugin `id` is ready in `${base}/_/api/plugin-host`; a failed
+ * plugin, a rejected catalog or an exited `child` fails at once. */
+export function awaitPluginReady(base, id, { label = `plugin '${id}' ready`, child, logs, headers = {}, intervalMs = 50 } = {}) {
+  return waitUntil(async signal => {
+    const response = await fetch(`${base}/_/api/plugin-host`, { headers, signal });
+    if (!response.ok) return failed(`catalog rejected: ${response.status}`, { status: response.status, body: await response.text() });
+    const plugin = (await response.json()).plugins.find(entry => entry.id === id);
+    if (plugin?.status === "ready") return done(plugin);
+    if (plugin?.status === "failed") return failed(`plugin '${id}' failed`, plugin);
+    return pending(plugin ?? { id, status: "absent" });
+  }, { label, intervalMs, children: child ? [watchChild(child, logs)] : [] });
 }
 
 export function parseArguments(args) {

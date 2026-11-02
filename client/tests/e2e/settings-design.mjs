@@ -2,6 +2,7 @@
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { formatVersion } from "../../../shared/version.ts";
 import { assertSettingsHeaderRuleEdge, assertSettingsActionHierarchy, assertSettingRowAlignment, assertSettingRowErrors, assertSettingsVisualLanes } from "./settings-frame-native.mjs";
 import { exerciseAppearanceDesign } from "./settings-appearance-native.mjs";
@@ -297,7 +298,7 @@ try {
   // Held inventory policy request must block the new injected navigation path.
   await session.send("Fetch.enable", { patterns: [{ urlPattern: `*/_/api/plugin-host/${zero.id}/enabled`, requestStage: "Request" }] });
   holdNextPolicy = true; await session.click(`${item(zero.id)} .plugin-row-actions [role=switch]`);
-  for (const deadline = Date.now() + 15000; !heldPolicy;) { assert(Date.now() < deadline, "Owned policy request was not intercepted"); await new Promise(resolve => setTimeout(resolve, 50)); }
+  await waitUntil(() => heldPolicy ? done() : pending({ heldPolicy: null }), { label: "Owned policy request intercepted", intervalMs: 50 });
   await session.click(pageButton(multi.id, "new"));
   await session.poll("document.querySelector('[data-plugin-inventory]')?.textContent.includes('outcome is unknown')");
   assert(await inspect("!!document.querySelector('[data-plugin-inventory]') && !document.querySelector('#settings-field-message') && !document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')"), "Held inventory policy allowed page departure or unresolved-wire discard"); await invariant();

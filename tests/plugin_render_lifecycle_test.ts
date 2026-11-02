@@ -16,6 +16,12 @@ import {
   WorkerDeliveryGate,
 } from "./helpers/worker_liveness.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import {
+  done as waitDone,
+  failed as waitFailed,
+  pending as waitPending,
+  waitUntil,
+} from "./helpers/wait.ts";
 
 const enabledUrl = new URL(
   "../server/api/endpoints/_/api/plugin-host/%23id/enabled/put.ts",
@@ -110,21 +116,30 @@ async function fixtureBundle(
     },
   };
 }
+/** Wait until the probe's permission reload is no longer scheduled or
+ * reloading and return the view. */
+function reloadSettled<V extends { reload: { state: string } }>(
+  network: { view(id: string): Promise<V> },
+): Promise<V> {
+  return waitUntil(async () => {
+    const view = await network.view("probe");
+    return ["scheduled", "reloading"].includes(view.reload.state)
+      ? waitPending(view)
+      : waitDone(view);
+  }, { label: "probe permission reload settled" });
+}
 async function ready(
   runtime: ReturnType<PluginManager["configureRuntime"]>,
   id: string,
 ) {
-  const deadline = Date.now() + 3000;
-  while (runtime.status(id)?.status !== "ready") {
-    if (runtime.status(id)?.status === "failed" || Date.now() >= deadline) {
-      throw new Error(
-        `service ${id} did not become ready: ${
-          JSON.stringify(runtime.status(id))
-        }`,
-      );
+  await waitUntil(() => {
+    const status = runtime.status(id);
+    if (status?.status === "ready") return waitDone();
+    if (status?.status === "failed") {
+      return waitFailed(`service ${id} failed`, status);
     }
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+    return waitPending(status);
+  }, { label: `service ${id} ready` });
 }
 
 async function reviewRenderBarrier(
@@ -255,15 +270,7 @@ Deno.test("review repairs: R22 failed demanded render construction cannot be rep
       approvedNetwork: [{ type: "host", authority: "127.0.0.1:8123" }],
       approvedImports: [],
     });
-    let current = await b.manager.network.view("probe");
-    const deadline = Date.now() + 3000;
-    while (
-      ["scheduled", "reloading"].includes(current.reload.state) &&
-      Date.now() < deadline
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      current = await b.manager.network.view("probe");
-    }
+    const current = await reloadSettled(b.manager.network);
     const failed = (await b.manager.catalog()).plugins.find((plugin) =>
       plugin.id === "probe"
     )!;
@@ -368,10 +375,13 @@ Deno.test("review repairs: R03 held same-code recovery binds fresh settings sour
       "recovery pending",
     );
     recoveryRelease.resolve();
-    const deadline = Date.now() + 3000;
-    while (!host.available && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await waitUntil(
+      () =>
+        host.available
+          ? waitDone()
+          : waitPending({ available: false, generations: host.generations }),
+      { label: "recovered render host available", intervalMs: 5 },
+    );
     assert(host.available);
     assertEquals(b.manager.hosts.get("probe"), host);
     assertEquals(
@@ -540,15 +550,7 @@ for (const ending of ["ready", "retired"] as const) {
       );
       if (ending === "retired") await b.enable("probe", false);
       release.resolve();
-      let current = await b.manager.network.view("probe");
-      const deadline = Date.now() + 3000;
-      while (
-        ["scheduled", "reloading"].includes(current.reload.state) &&
-        Date.now() < deadline
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        current = await b.manager.network.view("probe");
-      }
+      const current = await reloadSettled(b.manager.network);
       assertEquals(
         current.reload.state,
         ending === "ready" ? "ready" : "failed",
@@ -1090,19 +1092,15 @@ Deno.test("render owner: permission-only replacement retains source requests and
       approvedImports: [],
     });
   };
-  const reloadReady = async () => {
-    const deadline = Date.now() + 3000;
-    for (;;) {
+  const reloadReady = () =>
+    waitUntil(async () => {
       const view = await b.manager.network.view("probe");
-      if (view.reload.state === "ready") return view;
-      if (view.reload.state === "failed" || Date.now() >= deadline) {
-        throw new Error(
-          `permission replacement not ready: ${JSON.stringify(view.reload)}`,
-        );
+      if (view.reload.state === "ready") return waitDone(view);
+      if (view.reload.state === "failed") {
+        return waitFailed("permission replacement reload failed", view);
       }
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-  };
+      return waitPending(view);
+    }, { label: "permission replacement ready" });
   try {
     const dir = await b.fixture.install("probe", {
       version: "same",
@@ -1345,23 +1343,23 @@ Deno.test("render owner: on-load and initial-sync permission expansions return a
       approvedNetwork: [{ type: "host", authority }],
       approvedImports: [],
     });
-    const waitReload = async () => {
-      const deadline = Date.now() + 5000;
-      for (;;) {
+    const waitReload = () =>
+      waitUntil(async () => {
         const current = await b.manager.network.view("probe");
+        const state = {
+          view: current,
+          status: b.runtime.status("probe"),
+          host: b.manager.hosts.has("probe"),
+        };
         if (
           current.reload.state === "ready" &&
-          b.runtime.status("probe")?.status === "ready" &&
-          b.manager.hosts.has("probe")
-        ) return current;
-        if (current.reload.state === "failed" || Date.now() > deadline) {
-          throw Error(
-            `expansion replacement failed ${JSON.stringify(current.reload)}`,
-          );
+          state.status?.status === "ready" && state.host
+        ) return waitDone(current);
+        if (current.reload.state === "failed") {
+          return waitFailed("expansion replacement reload failed", state);
         }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-    };
+        return waitPending(state);
+      }, { label: "expansion replacement ready" });
     await waitReload();
     const data = new PluginDataStore(b.fixture.statePath, {
       commit: (effect) => effect(),

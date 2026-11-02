@@ -18,6 +18,7 @@ import { Fts5Indexer } from "../server/search/fts5.ts";
 import { initState, state } from "../server/state.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { pluginSettled } from "./helpers/plugin_ready.ts";
 
 async function serviceBundle(opts: {
   manifest: Record<string, unknown>;
@@ -78,12 +79,7 @@ async function serviceBundle(opts: {
     }),
   });
   await runtime.reconcile();
-  const deadline = Date.now() + 5000;
-  while (
-    runtime.status("svc")?.status === "starting" && Date.now() < deadline
-  ) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  await pluginSettled(runtime, "svc");
   return {
     fixture,
     env,

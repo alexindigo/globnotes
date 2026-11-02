@@ -1,6 +1,7 @@
 // GPS08: native production consumers and actual HTTP auth/stream boundaries.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { parseArguments } from "./harness-helpers.mjs";
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { bootPrefixAuthFixture } from "./prefix-auth-fixture.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { SignJWT } from "jose";
@@ -16,12 +17,8 @@ const username = "gps08-fixture", password = "gps08-original-password", nextPass
 const seed = "GPS08 seed.\n", outcomes = [];
 let current, failure;
 
-async function wait(predicate, timeout = 5000) {
-  const end = Date.now() + timeout;
-  while (!predicate()) {
-    assert(Date.now() < end, "Prefix/auth consumer observation deadline");
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
+function wait(predicate) {
+  return waitUntil(() => predicate() ? done() : pending({ condition: String(predicate) }), { label: "Prefix/auth consumer observation", intervalMs: 25 });
 }
 async function privateBytes() {
   try { return await Deno.readTextFile(`${current.state}/plugin-data/gps08/data.json`); }
@@ -209,17 +206,18 @@ async function configured() {
   assert(note.content === disk && disk.includes(marker), "Actual prefixed native Save lost exact API/disk content");
   let data = JSON.parse(await Deno.readTextFile(`${state}/plugin-data/gps08/data.json`)).values;
   await Deno.writeTextFile(`${directory}/private-hook-first-observation.json`, JSON.stringify(data, null, 2), { createNew: true });
-  for (const deadline = Date.now() + 5000; data.saves !== 1 || data.content !== disk;) {
-    assert(Date.now() < deadline, "Actual private on-save consumer observation deadline");
-    await new Promise(resolve => setTimeout(resolve, 25));
-    data = JSON.parse(await Deno.readTextFile(`${state}/plugin-data/gps08/data.json`)).values;
-  }
+  data = await waitUntil(async () => {
+    const values = JSON.parse(await Deno.readTextFile(`${state}/plugin-data/gps08/data.json`)).values;
+    return values.saves === 1 && values.content === disk ? done(values) : pending(values);
+  }, { label: "Actual private on-save consumer observation", intervalMs: 25 });
   assert(data.commands === 1 && data.saves === 1 && data.message === message && data.content === disk, "Saved settings/content did not reach real private hook consumer");
   await Deno.writeTextFile(`${directory}/private-hook-consumer.json`, JSON.stringify(data, null, 2), { createNew: true });
   assert(!JSON.stringify((await api("/_/api/plugin-host")).body).includes("GPS08_PRIVATE_PROOF"), "Catalogue leaked private plugin data");
   if (mode === "password") {
     const expiry = Math.floor(Date.now() / 1000) + 2, short = await signed(current.secret, expiry), expired = await stream(short);
-    await wait(() => expired.state.closed, 3500); await expired.drained;
+    // Kept as is (asserted bound): the 2 s signed expiry must close the stream within 3.5 s.
+    for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, "Prefix/auth consumer observation deadline"); await new Promise(resolve => setTimeout(resolve, 25)); }
+    await expired.drained;
     assert(expired.state.text.includes('event: close') && expired.state.text.includes('unauthorized') && !expired.state.text.includes('event: heartbeat'), "Real signed expiry did not close before heartbeat");
     const invalidation = await api("/_/api/plugin-host/gps08/settings/preferences", "PUT", { revision: 1, values: { message: "GPS08 post-expiry invalidation" } });
     assert(invalidation.status === 200 && !expired.state.text.includes('event: invalidate'), "Expired stream received an authorized later invalidation");

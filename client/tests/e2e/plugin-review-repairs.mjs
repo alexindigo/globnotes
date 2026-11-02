@@ -4,6 +4,7 @@
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
 import { authenticatorCode } from "../../../tests/helpers/totp.ts";
 
@@ -20,9 +21,8 @@ const cdpPort = Number(Deno.env.get("CDP_PORT"));
 assert(Number.isSafeInteger(cdpPort) && cdpPort > 0, "Verified owned CDP_PORT required");
 let current;
 
-async function until(predicate, detail, timeout = 15000) {
-  const end = Date.now() + timeout;
-  while (!await predicate()) { assert(Date.now() < end, detail); await delay(30); }
+function until(predicate, detail) {
+  return waitUntil(async () => await predicate() ? done() : pending({ condition: String(predicate) }), { label: detail, intervalMs: 30 });
 }
 async function sessionAt(base) {
   const session = await nativeSession({ port: cdpPort }); current.sessions.push(session);

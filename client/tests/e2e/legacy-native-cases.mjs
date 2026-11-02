@@ -3,6 +3,7 @@ import { CHAIN } from "./legacy-fixture.mjs";
 import { assert, copiedText, renamedConsumer, tokenColors } from "./test-outcomes.mjs";
 import { visibleElement } from "./native-actions.mjs";
 import { captureClipboard, prepareClipboardWitness, restoreClipboard } from "./native-clipboard.mjs";
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 
 const PALETTES = [
   ["globnotes-light", false, "ffffff", "0284c7", "2c3139", "eceef0"],
@@ -59,8 +60,7 @@ async function rename(f, folder, strategy) {
   assert(operations.length === 1, `Rename did not send exactly one source mutation: ${JSON.stringify(f.writes.slice(start))}`);
   const operation = operations[0];
   assert(operation.body.newPath === strategy.target + "/moving-note" && new URL(operation.url).searchParams.get("file_refs") === strategy.fileRefs && operation.status === 200, "Rename wire/strategy/status differs from the chosen operation");
-  const deadline = Date.now() + 15000;
-  while (!operation.finished && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+  await waitUntil(() => operation.finished ? done() : pending({ operation: operation.id, finished: false }), { label: "Rename response finished", intervalMs: 50 });
   assert(operation.finished, "Rename response did not finish");
   const response = JSON.parse((await f.page.send("Network.getResponseBody", { requestId: operation.id })).body);
   assert(response.path === note.body.path, "Rename acknowledgement returned a different identity");
@@ -148,8 +148,10 @@ export const cases = {
     try {
       const expected = await f.page.evaluate("document.querySelector('.toast-viewer pre code').textContent");
       await f.page.click(".code-copy-btn");
-      const deadline = Date.now() + 15000;
-      while (await f.page.readClipboard() !== expected && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+      await waitUntil(async () => {
+        const clipboard = await f.page.readClipboard();
+        return clipboard === expected ? done() : pending({ clipboard, expected });
+      }, { label: "copied code block reached the clipboard", intervalMs: 100 });
       copiedText(await f.page.readClipboard(), expected);
       assert(expected.includes("def greet"), "Code fixture changed");
       return { copiedSelectedBlock: true, characters: expected.length };

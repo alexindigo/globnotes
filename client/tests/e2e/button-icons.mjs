@@ -1,5 +1,6 @@
 // VM-only acceptance. Uses an already running native Chromium on CDP_PORT (9333).
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { done, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect } from "./cdp.mjs";
 import { tabSave, tabToggleLeft, tabToggleRight } from "../../icons.js";
@@ -216,22 +217,14 @@ async function savePending() {
   await page.click(saveSelector);
   await moveAway();
   const noteUrl = `${server.baseUrl}/_/api/notes/${encodeURIComponent(title)}`;
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    const response = await fetch(noteUrl, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(5000),
-    });
+  await waitUntil(async (signal) => {
+    const response = await fetch(noteUrl, { cache: "no-store", signal });
     assert(response.ok, `saved-note consumer GET returned ${response.status}`);
     const note = await response.json();
-    if (note.content.includes(marker)) {
-      pendingMarker = null;
-      console.log(`saved-note consumer GET includes ${marker}`);
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`saved-note consumer GET never received ${marker}`);
+    return note.content.includes(marker) ? done() : waitPending({ marker, content: note.content });
+  }, { label: `saved-note consumer GET receives ${marker}`, intervalMs: 100, children: [server] });
+  pendingMarker = null;
+  console.log(`saved-note consumer GET includes ${marker}`);
 }
 
 function checkDiagnostics() {

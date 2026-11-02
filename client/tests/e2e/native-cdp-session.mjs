@@ -1,5 +1,6 @@
 // Feature-owned native CDP; all targets/contexts are explicitly owned.
 import { assertHttpTestUrl } from "./http-origin.mjs";
+import { done, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
 export function connectSocket(url, { timeout = 15000, Socket = WebSocket } = {}) {
   return new Promise((resolve, reject) => {
     const socket = new Socket(url);
@@ -109,13 +110,11 @@ export async function nativeSession({ port = 9333, width = 1280, height = 900, d
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
     return result.result?.value;
   }
-  async function poll(expression, { timeout = 15000 } = {}) {
-    const end = Date.now() + timeout;
-    do {
-      if (await evaluate(expression)) return;
-      await new Promise(resolve => setTimeout(resolve, 50));
-    } while (Date.now() < end);
-    throw new Error(`Consumer deadline: ${expression}`);
+  function poll(expression) {
+    return waitUntil(async () => {
+      const value = await evaluate(expression);
+      return value ? done() : waitPending({ expression, value });
+    }, { label: "page condition", intervalMs: 50 });
   }
   async function click(selector) {
     const point = await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Missing control'); el.scrollIntoView({block:'center',inline:'center'}); const r = el.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`);

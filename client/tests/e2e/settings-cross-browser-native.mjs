@@ -1,3 +1,4 @@
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 
@@ -56,13 +57,10 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
     await b.button("Save", ".content-column");
     await b.poll(`fetch('/_/api/notes/Persistence').then(r=>r.json()).then(note=>note.content===${JSON.stringify(literal)})`);
     await b.poll("(()=>{const button=[...document.querySelectorAll('.content-column button')].find(button=>button.textContent.trim()==='Save');return button?.getAttribute('aria-busy')==='false'&&!button.querySelector('.animate-spin');})()");
-    let consumed;
-    for (const deadline = Date.now() + 5000;;) {
-      consumed = await api(b, reportRoute, reportOptions);
-      if (consumed.status === 200 && consumed.body.result.hookLast?.content === literal) break;
-      if (Date.now() >= deadline) throw Error(`${label}: real on-save/private-data consumer deadline`);
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
+    const consumed = await waitUntil(async () => {
+      const consumed = await api(b, reportRoute, reportOptions);
+      return consumed.status === 200 && consumed.body.result.hookLast?.content === literal ? done(consumed) : pending(consumed);
+    }, { label: `${label}: real on-save/private-data consumer`, intervalMs: 50 });
     const result = consumed.body.result;
     assert(result.hookRuns === (before.body.result.hookRuns ?? 0) + 1 && result.hookLast.path === "Persistence" && ["message", "limit", "protect"].every(key => result.hookLast[key] === values[key] && result[key] === values[key]), `${label}: hook/command consumer differs from acknowledged settings`);
     assert(await Deno.readTextFile(`${vault}/Persistence.md`) === literal, `${label}: native Save did not reach exact note disk bytes`);

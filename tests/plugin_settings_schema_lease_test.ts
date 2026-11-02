@@ -17,6 +17,12 @@ import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { state } from "../server/state.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import {
+  done,
+  failed,
+  pending as waitPending,
+  waitUntil,
+} from "./helpers/wait.ts";
 
 const settingsPut = (await import(
   new URL(
@@ -95,13 +101,15 @@ async function bundle() {
     plugins: manager,
     pluginData: data,
   });
-  const untilReady = async () => {
-    const deadline = Date.now() + 5000;
-    while (runtime.status("coherent")?.status !== "ready") {
-      assert(Date.now() < deadline, JSON.stringify(runtime.status("coherent")));
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  };
+  const untilReady = () =>
+    waitUntil(() => {
+      const status = runtime.status("coherent");
+      if (status?.status === "ready") return done();
+      if (status?.status === "failed") {
+        return failed("plugin 'coherent' failed", status);
+      }
+      return waitPending(status);
+    }, { label: "plugin 'coherent' ready" });
   await runtime.reconcile();
   await untilReady();
   const file = `${fixture.statePath}/plugin-data/coherent/settings.json`,

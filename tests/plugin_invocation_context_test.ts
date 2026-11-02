@@ -18,6 +18,7 @@ import { NoteOperations } from "../server/notes/operations.ts";
 import { servicePluginRpc } from "../server/plugins/rpc.ts";
 import { PluginRuntime } from "../server/plugins/runtime.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
 
 function deferred<T>() {
   return Promise.withResolvers<T>();
@@ -404,12 +405,10 @@ Deno.test("plugin context: detached native timer cannot borrow generation after 
     const handler = (id: string) =>
       [...host.registrations].find(([, value]) => value.id === id)![0];
     await host.invoke(handler("detach"), []);
-    let outcome;
-    const end = Date.now() + 2000;
-    do {
-      outcome = await host.invoke(handler("inspect"), []);
-      if (Date.now() > end) throw new Error("detached continuation deadline");
-    } while (outcome === "pending");
+    const outcome = await waitUntil(async () => {
+      const outcome = await host.invoke(handler("inspect"), []);
+      return outcome === "pending" ? waitPending({ outcome }) : done(outcome);
+    }, { label: "detached continuation settled", intervalMs: 0 });
     assertEquals(outcome, "closed");
     assertEquals(accepted, 0);
   } finally {

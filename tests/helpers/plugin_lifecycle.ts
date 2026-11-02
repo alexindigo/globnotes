@@ -19,6 +19,7 @@ import { Fts5Indexer } from "../../server/search/fts5.ts";
 import { initState, state } from "../../server/state.ts";
 import { fixtureApiOrigin, pluginFixture } from "./plugin_fixture.ts";
 import { testEnvironment } from "./environment.ts";
+import { pluginSettled } from "./plugin_ready.ts";
 
 export const RECORDER_SERVICE = `export function activate(ctx) {
   globalThis.__facts = [];
@@ -200,14 +201,7 @@ export async function bundle(opts: {
         : rpc,
     }, opts.limits);
     await runtime.reconcile();
-    const deadline = Date.now() + 5000;
-    while (
-      opts.recorder !== false &&
-      runtime.status("recorder")?.status === "starting" &&
-      Date.now() < deadline
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    if (opts.recorder !== false) await pluginSettled(runtime, "recorder");
     return {
       fixture,
       lifecycle,

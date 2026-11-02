@@ -3,6 +3,7 @@
 // Real settings, native input, PATCH receipts and disk consumers on plain HTTP.
 import { runCase } from "./legacy-fixture.mjs";
 import { assert } from "./test-outcomes.mjs";
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 
 const settingsRoute = "plugin-host/globnotes-autosave-timer/settings/autosave";
 const editor = ".cm-content[contenteditable=true]";
@@ -65,7 +66,7 @@ async function lateActivation(f) {
     // Editor mounting and the asynchronous module request have no ordering.
     // Wait for the interception itself, while keeping activation blocked.
     const waiting = Date.now();
-    while (!held && Date.now() - waiting < 5000) await sleep(25);
+    await waitUntil(() => held ? done() : pending({ held: null }), { label: "browser plugin module request held", intervalMs: 25 });
     const moduleRequestWaitMs = Date.now() - waiting;
     assert(held, "Late-activation scenario did not hold the browser plugin module");
     await replace(f, editor, text);
@@ -161,8 +162,7 @@ export async function renameReconciliation(f, scenarios = [
       const rewritten = kind === "repeated" ? original.replace("a/a/", "a/") : original.replace("assets/", "../review-old/assets/");
       let mine, expected;
       if (delayed) {
-        const deadline = Date.now() + 5000;
-        while (!held && Date.now() < deadline) await sleep(25);
+        await waitUntil(() => held ? done() : pending({ held: null }), { label: "rename response held", intervalMs: 25 });
         assert(held, "Rename response was not held");
         mine = kind === "repeated" ? original.replace("a/a/", "b/a/") : kind === "copy" ? original + "![copy](assets/pic.png)\n" : overlap ? original.replace("assets/pic.png", "uploads/other.png") : original + "New paragraph\n";
         expected = overlap ? mine : rewritten;
@@ -260,7 +260,7 @@ export async function autosaveTimer(f) {
     const pauseCount = mutations("readme").length, pauseStart = Date.now();
     await replace(f, editor, pauseText);
     const pause = await disk(f, "readme", pauseText);
-    await f.page.poll(clean, { timeout: 5000 });
+    await f.page.poll(clean);
     assert(mutations("readme").length === pauseCount + 1 && Date.now() - pauseStart < 5000, "Pause autosave did not complete once within 5s");
     await capture(f, "note-after-autosave-light", { header: ".content-column > div", editor: ".cm-editor", navigation: "nav" });
     results.push({ case: "pause", ...pause, clean: true, patches: 1 });

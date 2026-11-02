@@ -2,6 +2,7 @@
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
 import { SignJWT } from "jose";
 
@@ -19,13 +20,7 @@ const owned = [];
 const outcomes = [];
 let current, failure;
 const assert = (condition, detail) => { if (!condition) throw new Error(detail); };
-const wait = async predicate => {
-  const end = Date.now() + 15000;
-  while (!predicate()) {
-    if (Date.now() >= end) throw new Error("Proxy consumer deadline");
-    await new Promise(resolve => setTimeout(resolve, 30));
-  }
-};
+const wait = predicate => waitUntil(() => predicate() ? done() : pending({ condition: String(predicate) }), { label: "Proxy consumer observation", intervalMs: 30 });
 
 async function setup(label, { password = false, create = false } = {}) {
   const directory = `${artifacts}/${label}`;

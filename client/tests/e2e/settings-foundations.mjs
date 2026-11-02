@@ -1,6 +1,7 @@
 // Feature-owned real Settings foundation consumers; shared native helpers stay unchanged.
 import { nativeSession } from "./native-cdp-session.mjs";
-import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { awaitHealthy, bootServer, parseArguments } from "./harness-helpers.mjs";
+import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
 
 let options;
@@ -52,24 +53,16 @@ async function bootWarningServer(vault, state, logsDir) {
   const baseUrl = origin(port);
   try {
     await Deno.writeTextFile(`${logsDir}/parent.json`, JSON.stringify({ pid: child.pid, args, cwd: root, explicitImportParent: true }, null, 2), { createNew: true });
-    const healthDeadline = Date.now() + 30000;
-    for (;;) {
-      try { const response = await fetch(`${baseUrl}/_/api/health`, { signal: AbortSignal.timeout(5000) }); await response.body?.cancel(); if (response.ok) break; }
-      catch { /* bounded owned startup */ }
-      assert(Date.now() < healthDeadline, "Owned warning fixture health deadline");
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    const readyDeadline = Date.now() + 15000;
-    for (;;) {
-      const response = await fetch(`${baseUrl}/_/api/plugin-host`, { signal: AbortSignal.timeout(5000) });
+    await awaitHealthy(baseUrl, { label: "Owned warning fixture health", child });
+    await waitUntil(async signal => {
+      const response = await fetch(`${baseUrl}/_/api/plugin-host`, { signal });
       assert(response.ok, "Owned warning fixture catalog rejected");
       const catalog = await response.json();
       const fixture = catalog.plugins.find(plugin => plugin.id === "foundation-guard");
-      assert(fixture?.status !== "failed", `Owned warning fixture activation failed: ${JSON.stringify(fixture)}`);
-      if (fixture?.enabled && fixture.status === "ready" && catalog.plugins.every(plugin => !plugin.enabled || !plugin.runtime?.server || plugin.status === "ready")) break;
-      assert(Date.now() < readyDeadline, "Owned warning fixture plugin readiness deadline");
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
+      if (fixture?.status === "failed") return failed("Owned warning fixture activation failed", fixture);
+      if (fixture?.enabled && fixture.status === "ready" && catalog.plugins.every(plugin => !plugin.enabled || !plugin.runtime?.server || plugin.status === "ready")) return done();
+      return pending(catalog.plugins);
+    }, { label: "Owned warning fixture plugin readiness", intervalMs: 100, children: [watchChild(child)] });
   } catch (error) { await close(); throw error; }
   return { pid: child.pid, baseUrl, close };
 }
@@ -336,8 +329,7 @@ try {
   holdBrand = true;
   await replace("#brand-name", "Foundation persisted A");
   await session.button("Save branding", "[data-branding-settings]");
-  const deadline = Date.now() + 15000;
-  while (!heldBrand) { assert(Date.now() < deadline, "Owned Branding response did not arrive"); await new Promise(resolve => setTimeout(resolve, 50)); }
+  await waitUntil(() => heldBrand ? done() : pending({ heldBrand: null }), { label: "Owned Branding response held", intervalMs: 50 });
   assert(heldBrand.responseStatusCode === 200, "Held Branding write failed upstream");
   await replace("#brand-name", "Foundation newer B");
   assert(await inspect("!document.querySelector('#brand-name').readOnly && !document.querySelector('#brand-name').disabled"), "Pending Branding disabled newer draft editing");

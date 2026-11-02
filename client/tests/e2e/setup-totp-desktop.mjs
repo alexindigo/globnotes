@@ -1,6 +1,7 @@
 // Desktop-only TOTP wizard acceptance: actual layout, switch/QR activation,
 // and clipboard outcome. Run in the test VM, never on the host.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { join } from "node:path";
@@ -204,10 +205,10 @@ try {
         "document.querySelector('.setup-totp-enrolment')?.textContent.includes('Generating')",
       );
       stable(before, await shell(), `${label} loading`);
-      const loadingDeadline = Date.now() + 5000;
-      while (!heldEnrolment && Date.now() < loadingDeadline) {
-        await new Promise((r) => setTimeout(r, 25));
-      }
+      await waitUntil(
+        () => heldEnrolment ? done() : pending({ heldEnrolment: null }),
+        { label: `${label}: enrolment request held`, intervalMs: 25 },
+      );
       assert(
         heldEnrolment,
         `${label}: enrolment request held for loading check`,
@@ -217,10 +218,10 @@ try {
       await page.poll(
         "document.querySelector('#setup-totp-qr img')?.complete && document.querySelector('#setup-totp-qr img')?.naturalWidth > 0",
       );
-      const deadline = Date.now() + 5000;
-      while (!bundle && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 25));
-      }
+      await waitUntil(
+        () => bundle ? done() : pending({ bundle: null }),
+        { label: `${label}: enrolment response observed`, intervalMs: 25 },
+      );
       assert(bundle?.secret, `${label}: observed enrolment response`);
       assert(
         await page.evaluate(

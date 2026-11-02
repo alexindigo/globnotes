@@ -12,6 +12,12 @@ import type { PluginRuntime } from "../server/plugins/runtime.ts";
 import { state } from "../server/state.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { bootServer } from "./helpers/boot.ts";
+import {
+  done,
+  failed,
+  pending as waitPending,
+  waitUntil,
+} from "./helpers/wait.ts";
 import { PluginManager } from "../server/plugins/manager.ts";
 import { PluginDataStore } from "../server/plugins/data.ts";
 import { AsyncLock } from "../server/plugins/lifecycle.ts";
@@ -310,22 +316,15 @@ Deno.test("review repairs: R04 body wait admitted to A cannot invoke B reused en
     },
   }, { highWaterMark: 0 });
   let pending: Promise<Response | HttpError> | undefined;
-  const ready = async () => {
-    const deadline = Date.now() + 3000;
-    while (runtime.status("transport")?.status !== "ready") {
-      if (
-        runtime.status("transport")?.status === "failed" ||
-        Date.now() > deadline
-      ) {
-        throw Error(
-          `body-race fixture activation failed ${
-            JSON.stringify(runtime.status("transport"))
-          }`,
-        );
+  const ready = () =>
+    waitUntil(() => {
+      const status = runtime.status("transport");
+      if (status?.status === "ready") return done();
+      if (status?.status === "failed") {
+        return failed("plugin 'transport' failed", status);
       }
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-  };
+      return waitPending(status);
+    }, { label: "body-race fixture plugin 'transport' ready" });
   try {
     const code = (label: string) =>
       `export default async(req,ctx)=>{const data=await ctx.data.load();await ctx.data.save({owner:'${label}'},data.revision);return{owner:'${label}'}}`;
@@ -466,32 +465,53 @@ async function endpointFixture(prefix = "", invalid?: "grammar" | "shape") {
     GLOBNOTES_PATH_PREFIX: prefix,
   });
   const base = `${server.baseUrl}${prefix}`;
-  let current: { status: string; diagnostics: unknown[] } | undefined;
-  const until = Date.now() + 5000;
-  for (;;) {
-    const catalog = await (await fetch(`${base}/_/api/plugin-host`)).json();
-    current = catalog.plugins.find((plugin: { id: string }) =>
-      plugin.id === "transport"
-    );
-    const unrelated = catalog.plugins.find((plugin: { id: string }) =>
-      plugin.id === "transport-unrelated"
-    );
-    if (
-      ["ready", "failed"].includes(current?.status ?? "") &&
-      unrelated?.status === "ready"
-    ) break;
-    if (Date.now() > until) {
-      throw Error(
-        `endpoint fixture did not settle: ${JSON.stringify(current)}`,
+  type Entry = { id: string; status: string; diagnostics: unknown[] };
+  let current: Entry;
+  try {
+    // `transport` must reach its expected terminal state (R24's invalid
+    // tables fail activation) and the unrelated plugin must be ready. The
+    // other terminal state fails at once; both states are always reported.
+    const expected = invalid ? "failed" : "ready";
+    current = await waitUntil(async (signal) => {
+      const catalog = await (await fetch(`${base}/_/api/plugin-host`, {
+        signal,
+      })).json();
+      const find = (id: string) =>
+        catalog.plugins.find((plugin: Entry) => plugin.id === id) as
+          | Entry
+          | undefined;
+      const state = {
+        transport: find("transport"),
+        "transport-unrelated": find("transport-unrelated"),
+      };
+      if (state["transport-unrelated"]?.status === "failed") {
+        return failed("plugin 'transport-unrelated' failed", state);
+      }
+      const settled = ["ready", "failed"].includes(
+        state.transport?.status ?? "",
       );
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5));
+      if (settled && state.transport!.status !== expected) {
+        return failed(
+          `plugin 'transport' is ${
+            state.transport!.status
+          }, expected ${expected}`,
+          state,
+        );
+      }
+      if (settled && state["transport-unrelated"]?.status === "ready") {
+        return done(state.transport!);
+      }
+      return waitPending(state);
+    }, { label: "endpoint fixture settled", children: [server] });
+  } catch (error) {
+    await server.close().catch(() => {});
+    throw error;
   }
   return {
     fixture,
     server,
     base,
-    current: current!,
+    current,
     async close() {
       await server.close();
       console.log(

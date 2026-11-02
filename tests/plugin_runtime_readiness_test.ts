@@ -15,6 +15,7 @@ import { FileServing } from "../server/files/file_serving.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
 
 Deno.test("plugin runtime: failed Worker cannot become ready after final policy await", async () => {
   const fixture = await pluginFixture();
@@ -78,14 +79,10 @@ Deno.test("plugin runtime: failed Worker cannot become ready after final policy 
       finalPolicy.promise,
       "Final real policy read was not reached",
     );
-    const deadline = Date.now() + 3000;
-    while (runtime.status("waiting-observer")?.status !== "failed") {
-      assert(
-        Date.now() < deadline,
-        "Real Worker did not fail during policy await",
-      );
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await waitUntil(() => {
+      const status = runtime.status("waiting-observer");
+      return status?.status === "failed" ? done() : waitPending(status);
+    }, { label: "real Worker failed during policy await" });
     const before = runtime.status("waiting-observer");
     assert(
       before?.diagnostics.some((item) => item.code === "plugin_runtime_failed"),

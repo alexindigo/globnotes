@@ -3,6 +3,13 @@
 import { assert, assertEquals } from "@std/assert";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { catalogPluginReady } from "./helpers/plugin_ready.ts";
+import {
+  done,
+  failed,
+  pending as waitPending,
+  waitUntil,
+} from "./helpers/wait.ts";
 
 /** Feature-owned normal launcher; importAuthority is an isolated positive control only. */
 async function bootNetworkServer(
@@ -12,7 +19,6 @@ async function bootNetworkServer(
 ) {
   // jsr.io:443 is an existing normal-parent import right needed by the host graph.
   const server = await bootServer(env, {
-    readyMs: 10000,
     denoArgs: [
       ...importAuthority
         ? [`--allow-import=jsr.io:443,${importAuthority}`]
@@ -30,6 +36,23 @@ async function bootNetworkServer(
     }),
   );
   return server;
+}
+
+/** Wait until the plugin's permission view reports a reload state in
+ * `accept`; a failed reload fails at once with the full view. */
+function reloadSettled<V extends { reload: { state: string } }>(
+  view: () => Promise<V>,
+  label: string,
+  accept: string[] = ["ready"],
+): Promise<V> {
+  return waitUntil(async () => {
+    const current = await view();
+    if (accept.includes(current.reload.state)) return done(current);
+    if (current.reload.state === "failed") {
+      return failed("reload failed", current);
+    }
+    return waitPending(current);
+  }, { label });
 }
 
 async function apiFixture(
@@ -184,20 +207,7 @@ async function apiFixture(
       signal: AbortSignal.timeout(3000),
     });
   const ready = async () => {
-    const deadline = Date.now() + 5000;
-    for (;;) {
-      const catalog = await (await fetch(`${base}/_/api/plugin-host`, {
-        signal: AbortSignal.timeout(3000),
-      })).json();
-      const plugin = catalog.plugins.find((entry: { id: string }) =>
-        entry.id === "networked"
-      );
-      if (plugin?.status === "ready") return;
-      if (plugin?.status === "failed" || Date.now() > deadline) {
-        throw Error(`fixture activation failed ${JSON.stringify(plugin)}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await catalogPluginReady(server, "networked", { prefix });
   };
   return {
     fixture,
@@ -302,19 +312,10 @@ Deno.test("review repairs: R02 settings commit stops runtime-only raw traffic wi
         }));
         assertEquals(granted.status, 200);
         await granted.body?.cancel();
-        const deadline = Date.now() + 5000;
-        for (;;) {
-          const view = await b.view();
-          if (view.reload.state === "ready") break;
-          if (view.reload.state === "failed" || Date.now() > deadline) {
-            throw Error(
-              `DIAG_R02_IMPORT_SETUP runtime-only approval did not reach ready: ${
-                JSON.stringify(view.reload)
-              }`,
-            );
-          }
-          await new Promise((resolve) => setTimeout(resolve, 5));
-        }
+        await reloadSettled(
+          b.view,
+          "DIAG_R02_IMPORT_SETUP runtime-only approval reload ready",
+        );
         running = b.invoke(kind === "network" ? "held-fetch" : "held-import");
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
@@ -398,15 +399,7 @@ Deno.test("review repairs: R08 reader-detected settings retirement arranges same
     );
     assertEquals(granted.status, 200);
     await granted.body?.cancel();
-    const deadline = Date.now() + 5000;
-    for (;;) {
-      const view = await b.view();
-      if (view.reload.state === "ready") break;
-      if (view.reload.state === "failed" || Date.now() > deadline) {
-        throw Error("runtime-only fixture approval failed");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await reloadSettled(b.view, "runtime-only fixture approval reload ready");
     const initial = await b.invoke("state");
     assertEquals(initial.status, 200);
     const original = (await initial.json()).result;
@@ -442,16 +435,17 @@ Deno.test("review repairs: R08 reader-detected settings retirement arranges same
         values: { preferences: { message: string } };
       };
     } | undefined;
-    const recoverUntil = Date.now() + 1000;
-    while (Date.now() < recoverUntil) {
+    await waitUntil(async () => {
       current = await b.invoke("state");
       if (current.ok) {
         value = (await current.json()).result;
-        break;
+        return done();
       }
-      await current.body?.cancel();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+      return waitPending({
+        status: current.status,
+        body: await current.text(),
+      });
+    }, { label: "reader-driven recovery answers 'state'" });
     console.log(
       JSON.stringify({
         originalInstance: original.instance,
@@ -510,19 +504,11 @@ Deno.test("plugin network api: persisted approvals survive normal restart and ma
     );
     assertEquals(changed.status, 200);
     await changed.body?.cancel();
-    const readyReload = async () => {
-      const deadline = Date.now() + 5000;
-      for (;;) {
-        const current = await b.view();
-        if (
-          current.reload.state === "ready" || current.reload.state === "none"
-        ) return current;
-        if (current.reload.state === "failed" || Date.now() > deadline) {
-          throw Error("persisted consent reload failed");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-    };
+    const readyReload = () =>
+      reloadSettled(b.view, "persisted consent reload settled", [
+        "ready",
+        "none",
+      ]);
     await readyReload();
     await b.restart();
     await b.ready();
@@ -618,14 +604,7 @@ Deno.test("plugin network api: remote imports need independent consent and alrea
           !b.server.args.some((argument) => argument.startsWith("--lock=")),
         );
       } else {
-        const deadline = Date.now() + 5000;
-        do {
-          view = await b.view();
-          if (view.reload.state === "failed" || Date.now() > deadline) {
-            throw Error(`import reload failed ${JSON.stringify(view.reload)}`);
-          }
-          await new Promise((resolve) => setTimeout(resolve, 5));
-        } while (view.reload.state !== "ready");
+        view = await reloadSettled(b.view, "import reload ready");
         const imported = await b.invoke("import");
         assertEquals(imported.status, 200);
         const result = (await imported.json()).result;
@@ -781,15 +760,10 @@ Deno.test("plugin network api: operator grant, stale CAS, off and delete reach r
   const b = await apiFixture();
   try {
     await b.ready();
-    const deadline = Date.now() + 5000;
-    let value = await b.view();
-    while (!value.pendingRequests.length) {
-      if (Date.now() > deadline) {
-        throw Error("runtime access request not published");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      value = await b.view();
-    }
+    let value = await waitUntil(async () => {
+      const value = await b.view();
+      return value.pendingRequests.length ? done(value) : waitPending(value);
+    }, { label: "runtime access request published" });
     const denied = await b.invoke("fetch");
     assertEquals(denied.status, 500);
     await denied.body?.cancel();
@@ -806,13 +780,7 @@ Deno.test("plugin network api: operator grant, stale CAS, off and delete reach r
     const stale = await b.put(b.controls(value, { allowNetwork: false }));
     assertEquals(stale.status, 409);
     assertEquals((await stale.json()).code, "permission_revision_conflict");
-    do {
-      value = await b.view();
-      if (value.reload.state === "failed" || Date.now() > deadline) {
-        throw Error(`network reload failed ${JSON.stringify(value.reload)}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    } while (value.reload.state !== "ready");
+    value = await reloadSettled(b.view, "network reload ready");
     const fetched = await b.invoke("fetch");
     assertEquals(fetched.status, 200);
     assertEquals((await fetched.json()).result, "approved API receiver");

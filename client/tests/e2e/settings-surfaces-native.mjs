@@ -1,6 +1,6 @@
 // Feature-owned complete Settings surface matrix. Ordinary HTTP; no test hooks in views.
 import { nativeSession } from './native-cdp-session.mjs';
-import { bootServer } from './harness-helpers.mjs';
+import { awaitHealthy, bootServer } from './harness-helpers.mjs';
 import { applicationServer } from './http-origin.mjs';
 import { hashPassword } from '../../../server/helpers.ts';
 import { SignJWT } from 'jose';
@@ -66,7 +66,7 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
       const child=new Deno.Command(Deno.execPath(),{args:['run','--cached-only','--frozen',`--config=${ROOT}/deno.json`,'--unstable-worker-options','--allow-read','--allow-write','--allow-net','--allow-env',`${ROOT}/server/main.ts`],cwd:ROOT,clearEnv:true,env:{PATH:Deno.env.get('PATH'),HOME:Deno.env.get('HOME'),TMPDIR:Deno.env.get('TMPDIR'),GLOBNOTES_PATH:vault,GLOBNOTES_INDEX_PATH:state,GLOBNOTES_AUTH_TYPE:'',GLOBNOTES_HOST:host,GLOBNOTES_PORT:String(appPort),GLOBNOTES_AUTO_ENABLE_PLUGINS:'false'},stdout:'piped',stderr:'piped'}).spawn();
       const drains=['stdout','stderr'].map(async channel=>{const file=await Deno.open(`${logs}/server-${channel}.log`,{write:true,createNew:true});try{for await(const bytes of child[channel]){let at=0;while(at<bytes.length)at+=await file.write(bytes.subarray(at));}}finally{file.close();}});
       server={baseUrl:origin(appPort),pid:child.pid,async close(){child.kill('SIGTERM');await child.status;await Promise.all(drains);}};
-      const deadline=Date.now()+30000;for(;;){try{const r=await fetch(`${server.baseUrl}/_/api/health`);await r.body?.cancel();if(r.ok)break;}catch{}assert(Date.now()<deadline,'Surface first-run health deadline');await new Promise(resolve=>setTimeout(resolve,100));}
+      await awaitHealthy(server.baseUrl,{label:'Surface first-run health',child});
     }else{
       const jwt=name==='protected'?await new SignJWT({sub:config.username}).setProtectedHeader({alg:'HS256'}).setExpirationTime('1h').sign(new TextEncoder().encode(config.secret_key)):null;
       server=await bootServer(vault,state,{env:{GLOBNOTES_AUTH_TYPE:'',TMPDIR:Deno.env.get('TMPDIR')},logsDir:logs,headers:jwt?{authorization:`Bearer ${jwt}`}:{}});

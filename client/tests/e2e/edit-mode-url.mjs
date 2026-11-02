@@ -205,7 +205,7 @@ const clickedAway2 = await page.evaluate(`(() => {
 if (!clickedAway2) fail("sidebar note link not found (gate case)");
 await page.poll(`document.body.innerText.includes("Save Changes")`, { timeout: 10000 });
 await clickModalButton("Discard");
-await page.poll(`location.pathname === "/readme"`, { timeout: 10000 });
+await page.poll(`location.pathname === "/readme"`);
 await page.poll(`document.querySelector(".toastui-editor-contents") !== null`);
 const gateAway = await page.evaluate(`({
   hash: location.hash,
