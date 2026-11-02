@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      GLOBNOTES_CONTAINER_ENGINE: docker
+      GLOBNOTES_CONTAINER_ENGINE: podman
     steps:
       - uses: actions/checkout@v7
       # Everything runs in the devcontainer (docs/testing.md), as the commit check does.

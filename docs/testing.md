@@ -188,21 +188,39 @@ contain the remote tip. Deletions pass.
 
 ## CI: `.github/workflows/ci.yml`
 
-GitHub CI runs everything it can, in the same devcontainer, with Docker
-(`GLOBNOTES_CONTAINER_ENGINE=docker`), so a commit whose hook was skipped is
-still checked:
+GitHub CI runs everything it can, in the same devcontainer, with rootless
+Podman (`GLOBNOTES_CONTAINER_ENGINE=podman`), matching the ark commit check,
+so a commit whose hook was skipped is still checked. Podman is preinstalled
+on the [GitHub-hosted Ubuntu runner](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md):
 
 ```sh
+export GLOBNOTES_CONTAINER_ENGINE=podman
 .devcontainer/run.sh --browser --run-dir "$RUNNER_TEMP/globnotes/all" -- bash scripts/gates.sh --all --browser
 .devcontainer/run.sh --run-dir "$RUNNER_TEMP/globnotes/timing" -- bash scripts/gates.sh --timing
 ```
 
 The first runs every gate, including the browser suite with its Chromium
-sidecar; the second the timing tests, serially. The `docker-build` job builds
-the production image. Under Docker the launcher runs the containers as the
-runner's user, with a cache directory and `HOME` that user owns (Podman maps
-the user to `dev` instead), and caps image builds with `--memory` or
-BuildKit's `--resource`, whichever the engine offers (`run/logs/build-caps.txt`).
+sidecar; the second the timing tests, serially. Chromium's sandbox stays
+enabled. CI uses Podman because Docker's default isolation on the hosted
+runner blocks the namespace creation Chromium needs for its sandbox.
+The `docker-build` job builds the production image.
+
+The Podman launcher requires rootless operation and maps the invoking user
+to container UID/GID 1000 with `--userns=keep-id:uid=1000,gid=1000` (Podman
+4.3 or newer). It uses a named bridge network and shares the dev container's
+network namespace with Chromium, keeping CDP internal. Image builds use
+`--memory=4g`; rootless memory limits require cgroups v2. There is no
+version-specific fallback or automatic relaxation of sandbox settings.
+
+Contributors can still select `GLOBNOTES_CONTAINER_ENGINE=docker`. Under
+Docker the launcher runs the containers as the invoking user, with a cache
+directory and `HOME` that user owns, and caps image builds with `--memory`
+or BuildKit's `--resource`, whichever the engine offers
+(`run/logs/build-caps.txt`).
+
+On failure, the launcher names the failing step and prints log tails. CI
+also uploads `test-failure-diagnostics`, containing the all/timing run
+directories' `logs/` and JSON artifacts.
 
 ## Evidence
 
