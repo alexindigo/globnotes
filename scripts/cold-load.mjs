@@ -1,4 +1,4 @@
-// Outside-repository release proof. Run only on the owned test fork.
+// Cold-load gate: start a fresh-vault server; check health, index, assets and a note.
 const [root, label] = Deno.args;
 if (!root || !label) throw new Error("root and label required");
 const fixture = await Deno.makeTempDir({ prefix: `v22-${label}-cold-` });
