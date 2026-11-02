@@ -55,9 +55,8 @@ def incoming(remote, local, remote_oid):
         if git('merge-base', '--is-ancestor', remote_oid, local, check=False).returncode:
             raise RuntimeError(f'{local[:12]} does not contain the remote tip {remote_oid[:12]}')
         return remote_oid, git('rev-list', '--reverse', f'{remote_oid}..{local}').stdout.split()
-    # A new ref: everything not yet on any of this remote's branches.
-    if not git('for-each-ref', '--count=1', f'refs/remotes/{remote}/').stdout.strip():
-        raise RuntimeError(f'no remote-tracking branches for {remote!r}; fetch it first')
+    # A new ref: everything not yet on any known branch of this remote.
+    # With no tracking refs (including an empty remote), check the whole history.
     commits = git('rev-list', '--reverse', local, '--not', f'--remotes={remote}').stdout.split()
     base = None
     if commits:
