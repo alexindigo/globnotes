@@ -515,3 +515,74 @@ Deno.test("mcp endpoint: a plugin pre-save guard cancels an MCP write", async ()
     await fixture.dispose();
   }
 });
+
+Deno.test("mcp endpoint: plugin guards cancel MCP creates, renames and deletes", async () => {
+  const fixture = await pluginFixture();
+  try {
+    await fixture.install("guard", {
+      runtime: { server: "service.js" },
+      hooks: ["pre-create", "pre-rename", "pre-delete"],
+    }, {
+      "service.js": `export function activate(ctx) {
+        for (const hook of ['pre-create', 'pre-rename', 'pre-delete']) {
+          ctx.hooks.on(hook, (fact) => {
+            if (JSON.stringify(fact).includes('Guarded')) return { cancel: true, reason: 'guarded' };
+          });
+        }
+      }`,
+    });
+    await Deno.writeTextFile(
+      path.join(fixture.vault, "Guarded.md"),
+      "# Guarded\n",
+    );
+    await Deno.writeTextFile(path.join(fixture.vault, "doc.md"), "# doc\n");
+    const server = await boot({
+      GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_INDEX_PATH: fixture.statePath,
+      GLOBNOTES_AUTH_TYPE: "none",
+    });
+    try {
+      await catalogPluginReady(server, "guard");
+      const client = await connect(server);
+      try {
+        for (
+          const [name, args, action] of [
+            [
+              "globnotes_create_note",
+              { path: "New/Guarded", content: "x" },
+              "create",
+            ],
+            [
+              "globnotes_update_note",
+              { path: "doc", new_path: "Guarded too" },
+              "rename",
+            ],
+            ["globnotes_delete_note", { path: "Guarded" }, "delete"],
+          ] as const
+        ) {
+          const result = await client.callTool({ name, arguments: args });
+          assertEquals(result.isError, true, name);
+          assertEquals(
+            textOf(result),
+            `The plugin 'guard' cancelled this ${action}: guarded Nothing was written.`,
+          );
+        }
+        const disk = (p: string) => exists(path.join(fixture.vault, p));
+        assertEquals(
+          await Promise.all(
+            ["New/Guarded.md", "Guarded too.md", "doc.md", "Guarded.md"].map(
+              disk,
+            ),
+          ),
+          [false, false, true, true],
+        );
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await server.close();
+    }
+  } finally {
+    await fixture.dispose();
+  }
+});
