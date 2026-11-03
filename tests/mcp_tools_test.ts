@@ -27,7 +27,11 @@ import { MARK_CLOSE, MARK_OPEN } from "../server/search/fts5.ts";
 import { createMcpEndpoint, foreignOrigin } from "../server/mcp/endpoint.ts";
 import { READ_ONLY_MESSAGE } from "../server/mcp/errors.ts";
 import { highlightsToText } from "../server/mcp/snippets.ts";
-import { isoTime } from "../server/mcp/tools.ts";
+import {
+  CHARACTER_LIMIT,
+  isoTime,
+  SNIPPET_TRUNCATED,
+} from "../server/mcp/tools.ts";
 import type { McpVault, SearchSort } from "../server/mcp/vault.ts";
 
 const URL_BASE = "http://notes.test/_/mcp";
@@ -498,6 +502,53 @@ Deno.test("mcp tools: search stays under the character limit with fewer results"
     );
   } finally {
     await mcp.close();
+  }
+});
+
+Deno.test("mcp tools: one hit over the character limit keeps the hit with a shortened snippet", async (t) => {
+  // FTS5's snippet window counts tokens, not characters: one long token
+  // (here 40,000 characters) makes a snippet over the whole budget.
+  const token = "x".repeat(40_000);
+  const long = (i: number) =>
+    hit(i, { contentHighlights: `a ${MARK_OPEN}${token}${MARK_CLOSE} b` });
+  for (
+    const [label, results, limit, more] of [
+      ["the only hit", [long(1)], 20, false],
+      ["after halving", [long(1), long(2), long(3)], 3, true],
+    ] as const
+  ) {
+    await t.step(label, async () => {
+      const fake = fakeVault();
+      fake.setSearchResults([...results]);
+      const mcp = await connect(fake);
+      try {
+        const result = await mcp.call("globnotes_search_notes", {
+          query: "x*",
+          limit,
+        });
+        assertEquals(result.isError, undefined, textOf(result));
+        const page = result.structuredContent as {
+          count: number;
+          has_more: boolean;
+          next_offset?: number;
+          results: { path: string; snippet: string }[];
+        };
+        assertEquals(page.count, 1);
+        assertEquals(page.results[0].path, "Notes/n1");
+        assertEquals(page.has_more, more);
+        assertEquals(page.next_offset, more ? 1 : undefined);
+        const snippet = page.results[0].snippet;
+        assert(snippet.startsWith("a «xxx"), snippet.slice(0, 20));
+        assert(snippet.endsWith(SNIPPET_TRUNCATED), snippet.slice(-40));
+        const size = textOf(result).length + JSON.stringify(page).length;
+        assert(size <= CHARACTER_LIMIT, `size ${size}`);
+        // Shortened only as far as needed, not emptied.
+        assert(size > CHARACTER_LIMIT - 1_000, `size ${size}`);
+        assert(textOf(result).includes(snippet));
+      } finally {
+        await mcp.close();
+      }
+    });
   }
 });
 

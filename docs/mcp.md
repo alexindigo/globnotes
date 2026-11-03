@@ -139,7 +139,9 @@ Notes:
   `prefix*`, and `*` alone for every note. `*` with `sort: "lastModified"` lists the
   latest notes.
 - **Snippets** are plain text with the matches marked `«like this»`. They are empty when
-  only the path or a tag matched.
+  only the path or a tag matched. A snippet is a window of words, so one very long word can
+  make it long; when a single result alone would exceed 25,000 characters, its snippet is
+  shortened and ends in ` ... [snippet truncated]`.
 - **Pagination.** A result page has `count` results. When `has_more` is `true`, call again
   with `offset: next_offset`. `total` counts the matches found while filling the page (at
   most `offset + count + 1`); it is not the number of all matching notes. A page holds fewer

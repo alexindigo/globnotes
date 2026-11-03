@@ -240,6 +240,48 @@ Deno.test("mcp endpoint: none mode, both protocol eras, every tool", async () =>
   }
 });
 
+Deno.test("mcp endpoint: a single long token stays within the response limit", async () => {
+  const server = await boot({ GLOBNOTES_AUTH_TYPE: "none" });
+  try {
+    const client = await connect(server);
+    try {
+      // One 30,000-character word (under FTS5's 32,768-byte token limit): the
+      // index's snippet window counts tokens, so its snippet holds the whole
+      // word, more than the 25,000-character response budget.
+      const word = "abcdefghij".repeat(3_000);
+      await call(client, "globnotes_create_note", {
+        path: "Long token",
+        content: `# Long token\n\nbefore ${word} after\n`,
+      });
+      const result = await client.callTool({
+        name: "globnotes_search_notes",
+        arguments: { query: "abcdefghijabcdefghij*" },
+      });
+      assertEquals(result.isError, undefined, textOf(result));
+      const page = result.structuredContent as {
+        count: number;
+        results: { path: string; snippet: string }[];
+      };
+      assertEquals(page.count, 1);
+      assertEquals(page.results[0].path, "Long token");
+      const snippet = page.results[0].snippet;
+      assert(snippet.includes("«abcdefghij"), snippet.slice(0, 60));
+      assert(
+        snippet.endsWith(" ... [snippet truncated]"),
+        snippet.slice(-60),
+      );
+      assert(
+        textOf(result).length + JSON.stringify(page).length <= 25_000,
+        "within the response budget",
+      );
+    } finally {
+      await client.close();
+    }
+  } finally {
+    await server.close();
+  }
+});
+
 Deno.test("mcp endpoint: transport rules (405, Origin, Allow)", async () => {
   const server = await boot({ GLOBNOTES_AUTH_TYPE: "none" });
   try {

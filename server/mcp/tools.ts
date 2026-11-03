@@ -23,6 +23,8 @@ import type { McpVault, SearchSort } from "./vault.ts";
 /** Responses stay under this size by returning fewer search results
  * (mcp-builder); a single note is returned whole. */
 export const CHARACTER_LIMIT = 25_000;
+/** Ends a search snippet shortened to fit CHARACTER_LIMIT. */
+export const SNIPPET_TRUNCATED = " ... [snippet truncated]";
 
 export interface ToolContext {
   vault: McpVault;
@@ -165,7 +167,8 @@ const SearchHit = z.object({
   ),
   snippet: z.string().describe(
     "Plain-text excerpt with the matches marked «like this»; empty when " +
-      "only the path or a tag matched",
+      "only the path or a tag matched. Ends in ' ... [snippet truncated]' " +
+      "when it was shortened to fit the response size limit",
   ),
   matched_tags: z.array(z.string()).describe("Tags the query matched"),
 });
@@ -280,14 +283,32 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
       if (hasMore) lines.push(`More results: call again with offset=${end}.`);
       return { structured, text: lines.join("\n") };
     };
+    const size = (r: ReturnType<typeof render>) =>
+      r.text.length + JSON.stringify(r.structured).length;
     let result = render(hits);
-    while (
-      hits.length > 1 &&
-      result.text.length + JSON.stringify(result.structured).length >
-        CHARACTER_LIMIT
-    ) {
+    while (hits.length > 1 && size(result) > CHARACTER_LIMIT) {
       hits = hits.slice(0, Math.ceil(hits.length / 2));
       result = render(hits);
+    }
+    // One hit can still exceed the budget: the index's snippet window counts
+    // tokens, not characters, so a long token makes a long snippet. Shorten
+    // that snippet (marked) rather than drop the hit.
+    if (size(result) > CHARACTER_LIMIT && hits.length === 1) {
+      const chars = [...hits[0].snippet];
+      let keep = chars.length;
+      while (keep > 0 && size(result) > CHARACTER_LIMIT) {
+        // Each kept character counts at least twice (text and JSON).
+        keep = Math.max(
+          0,
+          keep - Math.ceil((size(result) - CHARACTER_LIMIT) / 2) -
+            SNIPPET_TRUNCATED.length,
+        );
+        hits = [{
+          ...hits[0],
+          snippet: chars.slice(0, keep).join("") + SNIPPET_TRUNCATED,
+        }];
+        result = render(hits);
+      }
     }
     return Promise.resolve(result);
   },
