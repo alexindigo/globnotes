@@ -21,8 +21,9 @@ import { notFound, READ_ONLY_MESSAGE, ToolError } from "./errors.ts";
 import { highlightsToText } from "./snippets.ts";
 import type { McpVault, SearchSort } from "./vault.ts";
 
-/** Responses stay under this size by returning fewer search results
- * (mcp-builder); a single note is returned whole. */
+/** Listing responses (search, folder, tags) stay under this size by
+ * returning fewer entries, then by shortening a lone oversized entry
+ * (mcp-builder; fitPage); a single note is returned whole. */
 export const CHARACTER_LIMIT = 25_000;
 /** Ends every text field shortened to fit CHARACTER_LIMIT. */
 export const TRUNCATED = " ... [truncated]";
@@ -222,6 +223,65 @@ const SearchHit = z.object({
 type SearchHitOutput = z.output<typeof SearchHit>;
 type ShortenedField = "snippet" | "matched_tags" | "title";
 
+/** The largest n in [low, high] with fits(n), or null (bisection; fits is
+ * monotone in n). */
+function largest(low: number, high: number, fits: (n: number) => boolean) {
+  if (!fits(low)) return null;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (fits(mid)) low = mid;
+    else high = mid - 1;
+  }
+  return low;
+}
+
+interface Rendered<S> {
+  structured: S;
+  text: string;
+}
+
+const renderedSize = (r: Rendered<unknown>) =>
+  r.text.length + JSON.stringify(r.structured).length;
+
+/**
+ * The one size rule for every listing tool (search, folder, tags): render
+ * the requested window; while it is over CHARACTER_LIMIT, return fewer
+ * items (halving; `render` sets has_more/next_offset after the last item
+ * shown); a single item still over the limit is shortened by `fitOne`
+ * (marked), never dropped. `fitOne(item, excess)` gets how far the page
+ * rendered with an item is over the limit.
+ */
+function fitPage<T, S>(
+  window: T[],
+  render: (page: T[]) => Rendered<S>,
+  fitOne: (item: T, excess: (item: T) => number) => T,
+): Rendered<S> {
+  let page = window;
+  let result = render(page);
+  while (page.length > 1 && renderedSize(result) > CHARACTER_LIMIT) {
+    page = page.slice(0, Math.ceil(page.length / 2));
+    result = render(page);
+  }
+  if (page.length === 1 && renderedSize(result) > CHARACTER_LIMIT) {
+    result = render([
+      fitOne(page[0], (item) => renderedSize(render([item])) - CHARACTER_LIMIT),
+    ]);
+  }
+  return result;
+}
+
+/** `text` shortened (marked) to the largest length at which `excess` of
+ * the result is not positive; the text itself when it already fits. */
+function fitText(text: string, excess: (text: string) => number): string {
+  if (excess(text) <= 0) return text;
+  const max = largest(
+    TRUNCATED.length,
+    [...text].length,
+    (n) => excess(capText(text, n)) <= 0,
+  );
+  return capText(text, max ?? TRUNCATED.length);
+}
+
 /** `text` cut to at most `max` code points, the last ones being TRUNCATED. */
 function capText(text: string, max: number): string {
   const chars = [...text];
@@ -270,17 +330,6 @@ export function fitHit(
         : {}),
       ...(truncated.length ? { truncated } : {}),
     };
-  };
-  /** The largest n in [low, high] with fits(n), or null (bisection; fits
-   * is monotone in n). */
-  const largest = (low: number, high: number, fits: (n: number) => boolean) => {
-    if (!fits(low)) return null;
-    while (low < high) {
-      const mid = Math.ceil((low + high) / 2);
-      if (fits(mid)) low = mid;
-      else high = mid - 1;
-    }
-    return low;
   };
   const longest = Math.max(
     [...hit.snippet].length,
@@ -373,7 +422,7 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
         args.include_subfolders,
         folder,
       ));
-    let hits: SearchHitOutput[] = found.slice(
+    const hits: SearchHitOutput[] = found.slice(
       args.offset,
       args.offset + args.limit,
     ).map((r) => ({
@@ -427,22 +476,10 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
       if (hasMore) lines.push(`More results: call again with offset=${end}.`);
       return { structured, text: lines.join("\n") };
     };
-    const size = (r: ReturnType<typeof render>) =>
-      r.text.length + JSON.stringify(r.structured).length;
-    let result = render(hits);
-    while (hits.length > 1 && size(result) > CHARACTER_LIMIT) {
-      hits = hits.slice(0, Math.ceil(hits.length / 2));
-      result = render(hits);
-    }
-    // One hit can still exceed the budget: the index's snippet window counts
-    // tokens, not characters (one long word makes a long snippet), and
-    // titles and tags have no length limit. Shorten that hit's fields
-    // (marked) rather than drop it.
-    if (hits.length === 1 && size(result) > CHARACTER_LIMIT) {
-      hits = [fitHit(hits[0], (h) => size(render([h])) - CHARACTER_LIMIT)];
-      result = render(hits);
-    }
-    return Promise.resolve(result);
+    // One hit can exceed the budget alone: the index's snippet window
+    // counts tokens, not characters (one long word makes a long snippet),
+    // and titles and tags have no length limit; fitHit shortens it.
+    return Promise.resolve(fitPage(hits, render, fitHit));
   },
 });
 
@@ -469,22 +506,71 @@ export const getNote = defineTool({
 
 // ---- globnotes_list_folder ----
 
+/** Pagination fields shared by the listing tools whose full list is known. */
+const ListPage = {
+  total: z.number().int().describe("Entries in the whole list"),
+  count: z.number().int().describe("Entries in this page"),
+  offset: z.number().int(),
+  has_more: z.boolean(),
+  next_offset: z.number().int().optional().describe(
+    "Pass as offset to get the next page (only when has_more)",
+  ),
+};
+
+/** The page fields for a window of `count` entries out of `total`. */
+function listPage(total: number, offset: number, count: number) {
+  const end = offset + count;
+  return {
+    total,
+    count,
+    offset,
+    has_more: total > end,
+    ...(total > end ? { next_offset: end } : {}),
+  };
+}
+
+const pageInput = (fallback: number, max: number, what: string) => ({
+  limit: z.number().int().min(1).max(max).default(fallback).describe(
+    `Maximum ${what} in this page`,
+  ),
+  offset: z.number().int().min(0).default(0).describe(
+    `${what[0].toUpperCase()}${what.slice(1)} to skip, for pagination`,
+  ),
+});
+
+const FolderNote = z.object({
+  path: z.string(),
+  title: z.string(),
+  truncated: z.array(z.enum(["title"])).optional().describe(
+    "Only when this note alone exceeded the response size limit: its title " +
+      "was shortened (ends in ' ... [truncated]'); path is never shortened",
+  ),
+});
+
 const FolderOutput = z.object({
   path: z.string().describe("The folder listed ('' = the vault root)"),
-  folders: z.array(z.object({ name: z.string(), path: z.string() })),
-  notes: z.array(z.object({ path: z.string(), title: z.string() })),
+  ...ListPage,
+  folders: z.array(z.object({ name: z.string(), path: z.string() })).describe(
+    "Subfolders in this page (they come before the notes)",
+  ),
+  notes: z.array(FolderNote).describe("Notes in this page"),
 });
+
+type FolderEntry =
+  | { kind: "folder"; name: string; path: string }
+  | { kind: "note"; note: z.output<typeof FolderNote> };
 
 export const listFolder = defineTool({
   name: "globnotes_list_folder",
   title: "List a folder",
   description:
-    "List one folder of the vault: its subfolders and the notes directly inside it (not recursive). Omit path for the vault root, then pass a folder's path to go deeper. To find notes by content use globnotes_search_notes instead.",
+    "List one folder of the vault: its subfolders, then the notes directly inside it (not recursive), one page at a time; when has_more is true, call again with offset=next_offset. Omit path for the vault root, then pass a folder's path to go deeper. To find notes by content use globnotes_search_notes instead.",
   write: false,
   inputSchema: z.strictObject({
     path: pathText().default("").describe(
       "Folder path, e.g. 'Projects/2024'; '' or omitted = the vault root",
     ),
+    ...pageInput(100, 500, "entries"),
   }),
   outputSchema: FolderOutput,
   annotations: READ,
@@ -505,41 +591,129 @@ export const listFolder = defineTool({
       }
       throw error;
     }
-    const structured = { path, ...level };
-    const lines = [
-      `Folder '${
-        path || "/"
-      }': ${level.folders.length} folder(s), ${level.notes.length} note(s).`,
-      ...level.folders.map((f) => `- ${f.path}/`),
-      ...level.notes.map((n) => `- ${n.path} — "${n.title}"`),
+    const entries: FolderEntry[] = [
+      ...level.folders.map((f) => ({ kind: "folder" as const, ...f })),
+      ...level.notes.map((note) => ({ kind: "note" as const, note })),
     ];
-    return Promise.resolve({ structured, text: lines.join("\n") });
+    const render = (page: FolderEntry[]) => {
+      const folders = page.flatMap((e) =>
+        e.kind === "folder" ? [{ name: e.name, path: e.path }] : []
+      );
+      const notes = page.flatMap((e) => e.kind === "note" ? [e.note] : []);
+      const structured = {
+        path,
+        ...listPage(entries.length, args.offset, page.length),
+        folders,
+        notes,
+      };
+      const end = args.offset + page.length;
+      const lines = [
+        `Folder '${
+          path || "/"
+        }': ${level.folders.length} folder(s), ${level.notes.length} note(s)${
+          entries.length === 0
+            ? "."
+            : page.length === 0
+            ? `; none at offset ${args.offset}.`
+            : `; entries ${args.offset + 1}–${end} of ${entries.length}:`
+        }`,
+        ...folders.map((f) => `- ${f.path}/`),
+        ...notes.map((n) =>
+          `- ${n.path} — "${n.title}"${
+            n.truncated ? " (title shortened to fit the response limit)" : ""
+          }`
+        ),
+      ];
+      if (structured.has_more) {
+        lines.push(`More entries: call again with offset=${end}.`);
+      }
+      return { structured, text: lines.join("\n") };
+    };
+    return Promise.resolve(fitPage(
+      entries.slice(args.offset, args.offset + args.limit),
+      render,
+      (entry, excess): FolderEntry => {
+        // Folder entries are bounded (a name is one path segment); a note's
+        // title is not, and its path is its identity.
+        if (entry.kind === "folder") return entry;
+        const { note } = entry;
+        const title = fitText(note.title, (t) =>
+          excess({
+            kind: "note",
+            note: { ...note, title: t, truncated: ["title"] },
+          }));
+        return title === note.title ? entry : {
+          kind: "note",
+          note: { ...note, title, truncated: ["title"] },
+        };
+      },
+    ));
   },
 });
 
 // ---- globnotes_list_tags ----
 
 const TagsOutput = z.object({
-  tags: z.array(z.string()).describe("Every tag used in the vault"),
+  ...ListPage,
+  tags: z.array(z.string()).describe(
+    "Tags in this page, in the vault's tag order",
+  ),
+  truncated: z.boolean().optional().describe(
+    "Only when the one tag on this page alone exceeded the response size " +
+      "limit: it was shortened (ends in ' ... [truncated]'); search its notes " +
+      "with its beginning and a trailing *, e.g. query='#abc*'",
+  ),
 });
 
 export const listTags = defineTool({
   name: "globnotes_list_tags",
   title: "List tags",
   description:
-    "List every tag used in the vault (lowercase, without '#'). Search a tag's notes with globnotes_search_notes and query='#tag'.",
+    "List the tags used in the vault (lowercase, without '#'), one page at a time; when has_more is true, call again with offset=next_offset. Search a tag's notes with globnotes_search_notes and query='#tag'.",
   write: false,
-  inputSchema: z.strictObject({}),
+  inputSchema: z.strictObject({ ...pageInput(500, 2000, "tags") }),
   outputSchema: TagsOutput,
   annotations: READ,
-  run(_args, ctx) {
-    const tags = ctx.vault.tags();
-    return Promise.resolve({
-      structured: { tags },
-      text: tags.length
-        ? `${tags.length} tag(s): ${tags.map((t) => `#${t}`).join(", ")}`
-        : "The vault has no tags.",
-    });
+  run(args, ctx) {
+    const all = ctx.vault.tags();
+    const render = (page: { tag: string; truncated: boolean }[]) => {
+      const structured = {
+        ...listPage(all.length, args.offset, page.length),
+        tags: page.map((t) => t.tag),
+        ...(page.some((t) => t.truncated) ? { truncated: true } : {}),
+      };
+      const end = args.offset + page.length;
+      const lines = [
+        all.length === 0
+          ? "The vault has no tags."
+          : page.length === 0
+          ? `The vault has ${all.length} tag(s); none at offset ${args.offset}.`
+          : `${all.length} tag(s); ${args.offset + 1}–${end}: ${
+            structured.tags.map((t) => `#${t}`).join(", ")
+          }`,
+      ];
+      if (structured.truncated) {
+        lines.push("The tag was shortened to fit the response limit.");
+      }
+      if (structured.has_more) {
+        lines.push(`More tags: call again with offset=${end}.`);
+      }
+      return { structured, text: lines.join("\n") };
+    };
+    return Promise.resolve(fitPage(
+      all.slice(args.offset, args.offset + args.limit).map((tag) => ({
+        tag,
+        truncated: false,
+      })),
+      render,
+      (item, excess) => {
+        const tag = fitText(
+          item.tag,
+          (t) => excess({ tag: t, truncated: true }),
+        );
+        return tag === item.tag ? item : { tag, truncated: true };
+      },
+    ));
   },
 });
 

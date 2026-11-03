@@ -73,6 +73,7 @@ function fakeVault(seed: Record<string, string> = {}) {
   let searchResults: SearchResult[] = [];
   let writeError: Error | null = null;
   let readError: Error | null = null;
+  let tags = ["garden", "recipe"];
   const get = (path: string) => {
     if (readError) throw readError;
     const note = notes.get(path);
@@ -97,7 +98,7 @@ function fakeVault(seed: Record<string, string> = {}) {
       if (readError) throw readError;
       return searchResults.slice(0, limit);
     },
-    tags: () => ["garden", "recipe"],
+    tags: () => tags,
     createNote: (data: NoteCreate, lease) => {
       calls.writes.push({ op: "create", lease, args: [data] });
       if (writeError) return Promise.reject(writeError);
@@ -136,6 +137,7 @@ function fakeVault(seed: Record<string, string> = {}) {
     setSearchResults: (results: SearchResult[]) => searchResults = results,
     failWrites: (error: Error | null) => writeError = error,
     failReads: (error: Error | null) => readError = error,
+    setTags: (next: string[]) => tags = next,
   };
 }
 
@@ -709,6 +711,10 @@ Deno.test("mcp tools: reads and their actionable errors", async () => {
     const root = await mcp.call("globnotes_list_folder", {});
     assertEquals(root.structuredContent, {
       path: "",
+      total: 2,
+      count: 2,
+      offset: 0,
+      has_more: false,
       folders: [{ name: "Sub", path: "Sub" }],
       notes: [{ path: "Garden/Beds", title: "Beds" }],
     });
@@ -726,8 +732,14 @@ Deno.test("mcp tools: reads and their actionable errors", async () => {
     assert(textOf(badFolder).startsWith("Invalid folder 'a/../b'"));
 
     const tags = await mcp.call("globnotes_list_tags");
-    assertEquals(tags.structuredContent, { tags: ["garden", "recipe"] });
-    assertEquals(textOf(tags), "2 tag(s): #garden, #recipe");
+    assertEquals(tags.structuredContent, {
+      total: 2,
+      count: 2,
+      offset: 0,
+      has_more: false,
+      tags: ["garden", "recipe"],
+    });
+    assertEquals(textOf(tags), "2 tag(s); 1–2: #garden, #recipe");
   } finally {
     await mcp.close();
   }
@@ -1223,5 +1235,160 @@ Deno.test("mcp tools: a read-only 2025 batch gets the read-only tool error", asy
     assertEquals(fake.calls.writes, []);
   } finally {
     await endpoint.close();
+  }
+});
+
+interface Listing {
+  total: number;
+  count: number;
+  offset: number;
+  has_more: boolean;
+  next_offset?: number;
+}
+
+/** Every page of a listing tool, from offset 0 to the end; each page is
+ * checked against the response budget and the pagination contract. */
+async function walkPages<P extends Listing>(
+  mcp: Awaited<ReturnType<typeof connect>>,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<P[]> {
+  const pages: P[] = [];
+  for (let offset = 0;;) {
+    const result = await mcp.call(name, { ...args, offset });
+    assertEquals(result.isError, undefined, textOf(result));
+    const page = result.structuredContent as unknown as P;
+    const size = textOf(result).length + JSON.stringify(page).length;
+    assert(size <= CHARACTER_LIMIT, `${name} page at ${offset}: ${size}`);
+    assertEquals(page.offset, offset);
+    pages.push(page);
+    if (!page.has_more) {
+      assertEquals(offset + page.count, page.total);
+      return pages;
+    }
+    assert(page.count > 0);
+    assertEquals(page.next_offset, offset + page.count);
+    offset = page.next_offset!;
+  }
+}
+
+type FolderPage = Listing & {
+  folders: { path: string }[];
+  notes: { path: string; title: string; truncated?: string[] }[];
+};
+
+Deno.test("mcp tools: list_folder pages a 1,000-note folder within the budget", async (t) => {
+  const seed: Record<string, string> = {};
+  for (let i = 0; i < 1_000; i++) {
+    const n = String(i).padStart(4, "0");
+    seed[`Flat/Note ${n}`] = `# Note ${n} about the garden\n`;
+  }
+  const fake = fakeVault(seed);
+  const mcp = await connect(fake);
+  try {
+    for (const limit of [undefined, 500]) {
+      await t.step(`limit ${limit ?? "default"}`, async () => {
+        const pages = await walkPages<FolderPage>(
+          mcp,
+          "globnotes_list_folder",
+          { path: "Flat", ...(limit ? { limit } : {}) },
+        );
+        assertEquals(pages[0].total, 1_001);
+        assertEquals(pages[0].folders.map((f) => f.path), ["Flat/Sub"]);
+        const notes = pages.flatMap((p) => p.notes.map((n) => n.path));
+        assertEquals(notes, [...fake.notes.keys()]);
+        assert(pages.every((p) => p.notes.every((n) => !n.truncated)));
+        if (limit === undefined) assertEquals(pages[0].count, 100);
+        // 500 such entries are over the budget: fewer per page.
+        else assert(pages[0].count < 500, String(pages[0].count));
+      });
+    }
+    await t.step("an offset past the end is an empty last page", async () => {
+      const past = await mcp.call("globnotes_list_folder", {
+        path: "Flat",
+        offset: 5_000,
+      });
+      assertEquals(
+        (past.structuredContent as unknown as FolderPage).count,
+        0,
+      );
+      assert(textOf(past).endsWith("none at offset 5000."));
+    });
+  } finally {
+    await mcp.close();
+  }
+});
+
+Deno.test("mcp tools: a note whose title alone is over the budget is listed shortened", async () => {
+  const title = "Heading ".repeat(5_000).trim();
+  const fake = fakeVault({ "Huge/one": `# ${title}\n`, "Huge/two": "# Two\n" });
+  const mcp = await connect(fake);
+  try {
+    const pages = await walkPages<FolderPage>(mcp, "globnotes_list_folder", {
+      path: "Huge",
+    });
+    const notes = pages.flatMap((p) => p.notes);
+    assertEquals(notes.map((n) => n.path), ["Huge/one", "Huge/two"]);
+    assertEquals(notes[0].truncated, ["title"]);
+    assert(notes[0].title.startsWith("Heading Heading"));
+    assert(notes[0].title.endsWith(TRUNCATED));
+    assertEquals(notes[1], { path: "Huge/two", title: "Two" });
+  } finally {
+    await mcp.close();
+  }
+});
+
+type TagsPage = Listing & { tags: string[]; truncated?: boolean };
+
+Deno.test("mcp tools: list_tags pages many tags within the budget", async (t) => {
+  const fake = fakeVault();
+  const tags = Array.from(
+    { length: 5_000 },
+    (_, i) => `tag-${String(i).padStart(5, "0")}`,
+  );
+  fake.setTags(tags);
+  const mcp = await connect(fake);
+  try {
+    for (const limit of [undefined, 2_000]) {
+      await t.step(`limit ${limit ?? "default"}`, async () => {
+        const pages = await walkPages<TagsPage>(
+          mcp,
+          "globnotes_list_tags",
+          limit ? { limit } : {},
+        );
+        assertEquals(pages[0].total, 5_000);
+        assertEquals(pages.flatMap((p) => p.tags), tags);
+        if (limit === undefined) assertEquals(pages[0].count, 500);
+        else assert(pages[0].count < 2_000, String(pages[0].count));
+      });
+    }
+    await t.step("one tag over the budget is shortened, marked", async () => {
+      const long = "a".repeat(40_000);
+      fake.setTags(["short", long, "tail"]);
+      const pages = await walkPages<TagsPage>(mcp, "globnotes_list_tags", {});
+      const shortened = pages.find((p) => p.truncated);
+      assertEquals(shortened?.count, 1);
+      assert(shortened!.tags[0].startsWith("aaaa"));
+      assert(shortened!.tags[0].endsWith(TRUNCATED));
+      assertEquals(
+        pages.flatMap((p) => p.tags).filter((tag) => !tag.endsWith(TRUNCATED)),
+        ["short", "tail"],
+      );
+    });
+    await t.step("limits outside the schema are refused", async () => {
+      for (
+        const [name, limit] of [
+          ["globnotes_list_tags", 2_001],
+          ["globnotes_list_tags", 0],
+          ["globnotes_list_folder", 501],
+        ] as const
+      ) {
+        const result = await mcp.call(name, { limit });
+        assertEquals(result.isError, true, `${name} ${limit}`);
+        assert(textOf(result).includes("Input validation error"));
+      }
+    });
+  } finally {
+    await mcp.close();
   }
 });

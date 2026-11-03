@@ -372,6 +372,61 @@ Deno.test("mcp protocol: the endpoint lives under the path prefix", async () => 
   }
 });
 
+Deno.test("mcp protocol: a 1,000-note folder and 3,000 tags page within the budget", async () => {
+  const vault = await Deno.makeTempDir({ prefix: "globnotes-mcp-pages-" });
+  await Deno.mkdir(path.join(vault, "Flat"));
+  for (let i = 0; i < 1_000; i++) {
+    await Deno.writeTextFile(
+      path.join(vault, "Flat", `Note ${String(i).padStart(4, "0")}.md`),
+      `# Note ${i}\n`,
+    );
+  }
+  const tags = Array.from({ length: 3_000 }, (_, i) => `tag${i}`);
+  await Deno.writeTextFile(
+    path.join(vault, "Tagged.md"),
+    `# Tagged\n\n${tags.map((t) => `#${t}`).join(" ")}\n`,
+  );
+  const server = await boot({
+    GLOBNOTES_PATH: vault,
+    GLOBNOTES_AUTH_TYPE: "none",
+  });
+  try {
+    await waitUntil(async () => {
+      const reply = await callTool(server, "globnotes_list_tags", {});
+      const total = reply.body.result.structuredContent.total;
+      return total === 3_000 ? done() : pending(total);
+    }, { label: "tags indexed", intervalMs: 100, children: [server] });
+    for (
+      const [name, args, total] of [
+        ["globnotes_list_folder", { path: "Flat", limit: 500 }, 1_000],
+        ["globnotes_list_tags", { limit: 2_000 }, 3_000],
+      ] as const
+    ) {
+      const seen: string[] = [];
+      for (let offset = 0, id = 1;; id++) {
+        const reply = await callTool(server, name, { ...args, offset }, id);
+        const page = reply.body.result.structuredContent;
+        const text = reply.body.result.content[0].text as string;
+        assert(
+          text.length + JSON.stringify(page).length <= 25_000,
+          `${name} at ${offset}`,
+        );
+        assertEquals(page.total, total);
+        seen.push(
+          ...(page.notes?.map((n: { path: string }) => n.path) ?? page.tags),
+        );
+        if (!page.has_more) break;
+        offset = page.next_offset;
+      }
+      assertEquals(new Set(seen).size, total, name);
+      assertEquals(seen.length, total, name);
+    }
+  } finally {
+    await server.close();
+    await Deno.remove(vault, { recursive: true });
+  }
+});
+
 async function exists(file: string): Promise<boolean> {
   try {
     await Deno.stat(file);
