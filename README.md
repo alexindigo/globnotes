@@ -269,6 +269,7 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 | `GLOBNOTES_SECRET_KEY` | — | JWT signing key. If unset, taken from the wizard's stored config. |
 | `GLOBNOTES_TOTP_KEY` | — | TOTP secret (for `totp`). If unset, taken from the wizard's stored config; the boot-log QR is printed only for env-provided keys. |
 | `GLOBNOTES_SESSION_EXPIRY_DAYS` | `30` | Login session length. |
+| `GLOBNOTES_MCP_ENABLED` | `true` | Serve the MCP endpoint `<prefix>/_/mcp` for AI agents ([docs/mcp.md](docs/mcp.md)). `false` turns it off (`404`). |
 | `GLOBNOTES_HOST` / `GLOBNOTES_PORT` | `0.0.0.0` / `8080` | Listen address (container). |
 | `GLOBNOTES_PATH_PREFIX` | — | Serve under a sub-path, e.g. `/mom` (multi-instance reverse proxies). |
 | `GLOBNOTES_QUICK_ACCESS_*` | — | `HIDE`, `TITLE`, `TERM`, `SORT`, `LIMIT` for the home page quick-access section. |
@@ -304,6 +305,8 @@ login. Environment-pinned credentials/signing keys must be changed through their
 deployment configuration when they prevent a requested effective transition.
 
 ## Agent access
+
+MCP clients (Claude Code, Claude Desktop, opencode and others) can search, read and edit the vault through the built-in MCP endpoint: see [docs/mcp.md](docs/mcp.md).
 
 With token auth (or no auth at all), your notes are plain HTTP:
 
