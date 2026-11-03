@@ -2,24 +2,14 @@
 
 import { note_not_found } from "@server/api_messages.ts";
 import { InvalidPathError, NoteNotFoundError } from "@server/notes/models.ts";
+import { folderLevel } from "@server/notes/folder_level.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
-import { state } from "@server/state.ts";
 
 /** Tree notes carry `path` (identity) and `title` (display label). */
 export default function (request: PathfinderRequest) {
   const dirPath = request.query.get("path") ?? "";
   try {
-    const level = state.notes.listLevel(dirPath);
-    const meta = state.indexer?.titlesFor(
-      level.notes.map((t) => t + ".md"),
-    ) ?? {};
-    return {
-      folders: level.folders,
-      notes: level.notes.map((t) => ({
-        path: t,
-        title: meta[t + ".md"] ?? t.split("/").pop(),
-      })),
-    };
+    return folderLevel(dirPath);
   } catch (e) {
     if (e instanceof InvalidPathError) throw new HttpError(400, e.message);
     if (e instanceof NoteNotFoundError) {
