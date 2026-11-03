@@ -83,6 +83,15 @@ design:
 - **[Prism](https://prismjs.com/)** — code syntax highlighting
 - **[jose](https://github.com/panva/jose)** — JWT tokens
 - **[otplib](https://github.com/otplib/otplib)** & **[qrcode](https://github.com/soldair/node-qrcode)** — TOTP authentication
+- **[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)**
+  (`@modelcontextprotocol/server` and `@modelcontextprotocol/core`; the tests also
+  use `@modelcontextprotocol/client`), Copyright (c) 2024-2025 Model Context
+  Protocol a Series of LF Projects, LLC — the MCP endpoint
+  ([docs/mcp.md](docs/mcp.md)). Licensed under the Apache License 2.0 (the
+  packages' `license` field); per the packages' `LICENSE` file, contributions not
+  yet relicensed remain under the MIT License and documentation is CC-BY-4.0
+- **[Zod](https://zod.dev/)**, Copyright (c) 2025 Colin McDonnell — the MCP
+  tools' input and output schemas. MIT License
 
 ### Frontend
 
