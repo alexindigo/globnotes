@@ -726,9 +726,12 @@ export class FileSystemNotes {
 
   /** A folder inside the root (containment as for notes), as
    * InvalidPathError. */
+  /** Read-path resolution for an existing folder: the readable-name rule
+   * (existing folders may hold characters a new name can't), same
+   * containment check. */
   #folderPath(path: string): string {
     try {
-      return resolveInRoot(this.storagePath, path);
+      return resolveReadableInRoot(this.storagePath, path);
     } catch (e) {
       throw new InvalidPathError((e as Error).message);
     }

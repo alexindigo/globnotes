@@ -5,7 +5,7 @@ import { createUuid } from "../../shared/uuid.ts";
 import * as path from "@std/path";
 import { type Environment, processEnvironment } from "@server/environment.ts";
 import type { Indexer } from "@server/state.ts";
-import { isValidNotePath } from "@server/helpers.ts";
+import { isReadableNotePath } from "@server/helpers.ts";
 import { logger } from "@server/logger.ts";
 import type { SearchResult } from "@server/notes/models.ts";
 import { state } from "@server/state.ts";
@@ -486,8 +486,9 @@ export class Fts5Indexer implements Indexer {
     // the initial sync completed (before that, only priority-reindexed
     // notes are visible).
     if (this.#status.initial) this.syncIndex();
+    // A folder filter names an existing folder: the read-path rule.
     if (folder !== undefined) {
-      isValidNotePath(folder);
+      isReadableNotePath(folder);
     }
     const matchQuery = translateQuery(term);
     let results = this.#runSearch(

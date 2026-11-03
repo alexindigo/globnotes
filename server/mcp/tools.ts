@@ -9,7 +9,7 @@
  */
 
 import * as z from "zod/v4";
-import { isValidNotePath } from "../helpers.ts";
+import { isReadableNotePath, isValidNotePath } from "../helpers.ts";
 import {
   InvalidPathError,
   type Note,
@@ -110,12 +110,17 @@ const NoteOutput = z.object({
   ),
 });
 
-/** Validate an agent-supplied note path the way the REST API does
- * (trimmed, then isValidNotePath), as a tool error. */
-function validPath(value: string, what = "path"): string {
+/** Validate an agent-supplied path the way the REST API does (trimmed,
+ * then the create-time rule for a new name, or the read-path rule for an
+ * existing folder), as a tool error. */
+function validPath(
+  value: string,
+  what = "path",
+  rule: (value: string) => string = isValidNotePath,
+): string {
   const trimmed = value.trim();
   try {
-    return isValidNotePath(trimmed);
+    return rule(trimmed);
   } catch (error) {
     throw new ToolError(
       `Invalid ${what} '${value}': ${(error as Error).message}.`,
@@ -407,7 +412,9 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
   annotations: READ,
   run(args, ctx) {
     const folderArg = args.folder?.trim().replace(/^\/+|\/+$/g, "");
-    const folder = folderArg ? validPath(folderArg, "folder") : undefined;
+    const folder = folderArg
+      ? validPath(folderArg, "folder", isReadableNotePath)
+      : undefined;
     const sort: SearchSort = args.sort === "lastModified"
       ? "last_modified"
       : args.sort;
