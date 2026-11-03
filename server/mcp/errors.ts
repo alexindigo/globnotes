@@ -32,9 +32,28 @@ export const notFound = (path: string) =>
       "extension).",
   );
 
-/** The agent-facing message for any error a tool raised while working on
- * `path` (the note or folder the call named). */
-export function toolErrorMessage(error: unknown, path?: string): string {
+/** How a tool failure reads to the agent. `internal` marks an error the
+ * domain doesn't describe (a storage, SQLite or library error): its own
+ * message can name absolute server paths and internals, so the agent reads
+ * a fixed message and the error itself belongs in the server log, as with
+ * the REST API's 500 "Internal Server Error". */
+export interface ToolFailure {
+  message: string;
+  internal: boolean;
+}
+
+/** The agent-facing description of any error a tool raised while working
+ * on `path` (the note or folder the call named). Only messages written for
+ * the agent, or composed from the call's own arguments, are shown. */
+export function describeToolError(error: unknown, path?: string): ToolFailure {
+  const message = domainMessage(error, path);
+  return message === undefined
+    ? { message: internalMessage(error, path), internal: true }
+    : { message, internal: false };
+}
+
+/** The message for an error the domain describes; undefined otherwise. */
+function domainMessage(error: unknown, path?: string): string | undefined {
   if (error instanceof ToolError) return error.message;
   if (error instanceof NoteNotFoundError && path !== undefined) {
     return notFound(path).message;
@@ -73,5 +92,23 @@ export function toolErrorMessage(error: unknown, path?: string): string {
     }
     return `globnotes rejected the request (HTTP ${error.status}).`;
   }
-  return error instanceof Error ? error.message : String(error);
+  return undefined;
+}
+
+/** A fixed message for an error the domain lets through: the error's own
+ * text never reaches the agent. */
+function internalMessage(error: unknown, path?: string): string {
+  const named = path === undefined ? "this" : `'${path}'`;
+  if (error instanceof Deno.errors.IsADirectory) {
+    return `globnotes can't read ${named} as a note: a folder is in its ` +
+      "place on the server's disk. Use globnotes_list_folder to look inside.";
+  }
+  if (error instanceof Deno.errors.PermissionDenied) {
+    return `globnotes has no permission to access ${named} on the server's ` +
+      "disk, so nothing was read or changed. The server's administrator can " +
+      "fix the file permissions.";
+  }
+  return `globnotes hit an unexpected server error${
+    path === undefined ? "" : ` working on '${path}'`
+  }. The details are in the server log. Check the path, or try again.`;
 }

@@ -72,7 +72,9 @@ function fakeVault(seed: Record<string, string> = {}) {
   };
   let searchResults: SearchResult[] = [];
   let writeError: Error | null = null;
+  let readError: Error | null = null;
   const get = (path: string) => {
+    if (readError) throw readError;
     const note = notes.get(path);
     if (!note) throw new NoteNotFoundError("missing");
     return { ...note };
@@ -80,6 +82,7 @@ function fakeVault(seed: Record<string, string> = {}) {
   const vault: McpVault = {
     getNote: get,
     listFolder: (path) => {
+      if (readError) throw readError;
       if (path === "missing") throw new NoteNotFoundError("missing");
       return {
         folders: [{ name: "Sub", path: path ? `${path}/Sub` : "Sub" }],
@@ -91,6 +94,7 @@ function fakeVault(seed: Record<string, string> = {}) {
     },
     search: (term, sort, order, limit, nested, folder) => {
       calls.search.push({ term, sort, order, limit, nested, folder });
+      if (readError) throw readError;
       return searchResults.slice(0, limit);
     },
     tags: () => ["garden", "recipe"],
@@ -131,6 +135,7 @@ function fakeVault(seed: Record<string, string> = {}) {
     calls,
     setSearchResults: (results: SearchResult[]) => searchResults = results,
     failWrites: (error: Error | null) => writeError = error,
+    failReads: (error: Error | null) => readError = error,
   };
 }
 
@@ -936,5 +941,158 @@ Deno.test("mcp tools: endpoint rules before the SDK", async () => {
   } finally {
     await writable.close();
     await readOnly.close();
+  }
+});
+
+/** A storage error as Deno raises it: its message names the absolute path. */
+function storageError<E extends Error>(
+  Kind: new (message: string) => E,
+  message: string,
+): E {
+  return new Kind(`${message}: readfile '/srv/globnotes/vault/a.md'`);
+}
+
+Deno.test("mcp tools: storage and library errors never reach the agent verbatim", async () => {
+  const fake = fakeVault({ a: "# A\n" });
+  const mcp = await connect(fake);
+  const sqlite = Object.assign(new Error("database disk image is malformed"), {
+    code: "ERR_SQLITE_ERROR",
+  });
+  try {
+    for (
+      const [error, expected] of [
+        [
+          storageError(
+            Deno.errors.IsADirectory,
+            "Is a directory (os error 21)",
+          ),
+          "globnotes can't read 'a' as a note: a folder is in its place",
+        ],
+        [
+          storageError(
+            Deno.errors.PermissionDenied,
+            "Permission denied (os error 13)",
+          ),
+          "globnotes has no permission to access 'a' on the server's disk",
+        ],
+        [
+          storageError(Error, "File name too long (os error 36)"),
+          "globnotes hit an unexpected server error working on 'a'.",
+        ],
+      ] as const
+    ) {
+      fake.failReads(error);
+      for (
+        const [name, args] of [
+          ["globnotes_get_note", { path: "a" }],
+          ["globnotes_update_note", { path: "a", content: "x" }],
+          ["globnotes_delete_note", { path: "a" }],
+        ] as const
+      ) {
+        const result = await mcp.call(name, args);
+        assertEquals(result.isError, true, name);
+        assert(textOf(result).startsWith(expected), textOf(result));
+        assert(!textOf(result).includes("/srv"), textOf(result));
+      }
+      fake.failReads(null);
+      fake.failWrites(error);
+      const created = await mcp.call("globnotes_create_note", {
+        path: "b",
+        content: "x",
+      });
+      assert(!textOf(created).includes("/srv"), textOf(created));
+      fake.failWrites(null);
+    }
+    fake.failReads(sqlite);
+    const broken = await mcp.call("globnotes_search_notes", { query: "x" });
+    assertEquals(broken.isError, true);
+    assertEquals(
+      textOf(broken),
+      "globnotes hit an unexpected server error. The details are in the " +
+        "server log. Check the path, or try again.",
+    );
+    fake.failReads(null);
+  } finally {
+    await mcp.close();
+  }
+});
+
+Deno.test("mcp tools: a query the index can't parse is a query error", async () => {
+  const fake = fakeVault();
+  const mcp = await connect(fake);
+  try {
+    fake.failReads(
+      Object.assign(new Error("unterminated string"), {
+        code: "ERR_SQLITE_ERROR",
+      }),
+    );
+    const result = await mcp.call("globnotes_search_notes", { query: '"a' });
+    assertEquals(result.isError, true);
+    assertEquals(
+      textOf(result),
+      "The search index can't parse the query '\"a'. Check that double " +
+        'quotes come in pairs ("exact phrase"), or search for plain words.',
+    );
+  } finally {
+    await mcp.close();
+  }
+});
+
+Deno.test("mcp tools: paths with NUL are rejected by the schema", async () => {
+  const fake = fakeVault({ a: "# A\n" });
+  const mcp = await connect(fake);
+  try {
+    for (
+      const [name, args] of [
+        ["globnotes_get_note", { path: "a\0b" }],
+        ["globnotes_list_folder", { path: "a\0b" }],
+        ["globnotes_search_notes", { query: "x", folder: "a\0b" }],
+        ["globnotes_create_note", { path: "a\0b", content: "x" }],
+        ["globnotes_update_note", { path: "a", new_path: "a\0b" }],
+        ["globnotes_delete_note", { path: "a\0b" }],
+      ] as const
+    ) {
+      const result = await mcp.call(name, args);
+      assertEquals(result.isError, true, name);
+      assert(
+        textOf(result).includes("must not contain NUL characters"),
+        textOf(result),
+      );
+    }
+    assertEquals(fake.calls.search, []);
+    assertEquals(fake.calls.writes, []);
+  } finally {
+    await mcp.close();
+  }
+});
+
+Deno.test("mcp tools: a rename collision names the target, not the note", async () => {
+  const fake = fakeVault({ a: "# A\n" });
+  const mcp = await connect(fake);
+  try {
+    fake.failWrites(
+      new NoteExistsError("Failed to rename. 'b' already exists."),
+    );
+    const moved = await mcp.call("globnotes_update_note", {
+      path: "a",
+      new_path: "b",
+    });
+    assertEquals(
+      textOf(moved),
+      "Note 'a' can't be moved to 'b': a note already exists there. " +
+        "Re-read the note, then choose another new_path.",
+    );
+    const heading = await mcp.call("globnotes_update_note", {
+      path: "a",
+      content: "# B\n",
+    });
+    assertEquals(
+      textOf(heading),
+      "Note 'a' can't be renamed to match its new first heading: a note " +
+        "with that name already exists in its folder. Re-read the note, " +
+        "then change the heading or pass new_path.",
+    );
+  } finally {
+    await mcp.close();
   }
 });

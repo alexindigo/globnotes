@@ -117,7 +117,9 @@ The header value comes from `env` because some clients don't escape spaces in `a
 Every tool returns structured content (described by its output schema) plus a short text
 rendering. Failures are tool results the agent can read, saying what went wrong and what
 to do next, e.g. "Note 'x' not found. Use globnotes_search_notes or globnotes_list_folder
-to find the right path".
+to find the right path". A failure on the server's side (a folder where a note should be,
+a file globnotes may not read, any unexpected error) gets a short fixed message; its
+details, which can include paths on the server, go only to the server log.
 
 | # | Tool | Input | Output | Annotations |
 |---|---|---|---|---|
@@ -137,7 +139,7 @@ Notes:
 - **Times** (`last_modified`) are ISO 8601 in UTC, e.g. `2026-11-02T14:05:09.120Z`.
 - **Search syntax** is the web app's: words (all must match), `"exact phrase"`, `#tag`,
   `prefix*`, and `*` alone for every note. `*` with `sort: "lastModified"` lists the
-  latest notes.
+  latest notes. A query with an unpaired `"` is refused with a tool error that says so.
 - **Snippets** are plain text with the matches marked `«like this»`. A match only in the
   path shows the marked path. The snippet is empty when no content or path text matched: a
   tag-only match, or `query: "*"`.

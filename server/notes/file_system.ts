@@ -660,18 +660,16 @@ export class FileSystemNotes {
     notes: string[];
   } {
     if (dirPath) this.#validateReadablePath(dirPath);
-    const resolved = dirPath
-      ? resolveInRoot(this.storagePath, dirPath)
-      : this.storagePath;
+    const resolved = dirPath ? this.#folderPath(dirPath) : this.storagePath;
+    let isDirectory;
     try {
-      Deno.statSync(resolved);
+      isDirectory = Deno.statSync(resolved).isDirectory;
     } catch (e) {
-      if (e instanceof Deno.errors.NotFound) {
-        throw new NoteNotFoundError(
-          "The specified note cannot be found.",
-        );
-      }
-      throw e;
+      if (e instanceof Deno.errors.NotFound) isDirectory = false;
+      else throw e;
+    }
+    if (!isDirectory) {
+      throw new NoteNotFoundError("The specified note cannot be found.");
     }
     const folders: { name: string; path: string }[] = [];
     const notes: string[] = [];
@@ -721,6 +719,16 @@ export class FileSystemNotes {
   #validateReadablePath(value: string): string {
     try {
       return isReadableNotePath(value);
+    } catch (e) {
+      throw new InvalidPathError((e as Error).message);
+    }
+  }
+
+  /** A folder inside the root (containment as for notes), as
+   * InvalidPathError. */
+  #folderPath(path: string): string {
+    try {
+      return resolveInRoot(this.storagePath, path);
     } catch (e) {
       throw new InvalidPathError((e as Error).message);
     }

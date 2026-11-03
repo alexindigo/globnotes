@@ -13,6 +13,7 @@ import { isValidNotePath } from "../helpers.ts";
 import {
   InvalidPathError,
   type Note,
+  NoteExistsError,
   NoteNotFoundError,
 } from "../notes/models.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
@@ -79,7 +80,12 @@ export function isoTime(seconds: number): string {
   return new Date(seconds * 1000).toISOString();
 }
 
-const notePath = z.string().min(1).describe(
+/** A path argument: any text the storage rules then judge, except NUL,
+ * which no file name can hold. */
+const pathText = () =>
+  z.string().regex(/^[^\0]*$/, "must not contain NUL characters");
+
+const notePath = pathText().min(1).describe(
   "Note path relative to the vault root, without the .md extension, e.g. " +
     "'Projects/Garden plan'. Folders are separated by '/'.",
 );
@@ -156,6 +162,31 @@ function assertUnchanged(
         "globnotes_get_note to re-read it, then retry with the new " +
         "last_modified.",
     );
+  }
+}
+
+/** SQLite's own words for query text FTS5 can't parse (an unbalanced
+ * double quote, for one); the index passes them through as errors. */
+const QUERY_SYNTAX =
+  /^(fts5: syntax error|unterminated string|unknown special query)/;
+
+/** Run a search; a query the index can't parse becomes a tool error about
+ * the query (other failures pass through to describeToolError). */
+function searchIndex<T>(query: string, run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (
+      code === "ERR_SQLITE_ERROR" && QUERY_SYNTAX.test((error as Error).message)
+    ) {
+      throw new ToolError(
+        `The search index can't parse the query '${query}'. Check that ` +
+          'double quotes come in pairs ("exact phrase"), or search for ' +
+          "plain words.",
+      );
+    }
+    throw error;
   }
 }
 
@@ -305,7 +336,7 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
     query: z.string().min(1).max(500).describe(
       "Search query in globnotes syntax (see the tool description)",
     ),
-    folder: z.string().optional().describe(
+    folder: pathText().optional().describe(
       "Only search inside this folder, e.g. 'Work/2024'",
     ),
     include_subfolders: z.boolean().default(true).describe(
@@ -333,14 +364,15 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
       : args.sort;
     // The index has no offset: fetch one more than the window to know
     // whether another page exists.
-    const found = ctx.vault.search(
-      args.query,
-      sort,
-      args.order,
-      args.offset + args.limit + 1,
-      args.include_subfolders,
-      folder,
-    );
+    const found = searchIndex(args.query, () =>
+      ctx.vault.search(
+        args.query,
+        sort,
+        args.order,
+        args.offset + args.limit + 1,
+        args.include_subfolders,
+        folder,
+      ));
     let hits: SearchHitOutput[] = found.slice(
       args.offset,
       args.offset + args.limit,
@@ -450,7 +482,7 @@ export const listFolder = defineTool({
     "List one folder of the vault: its subfolders and the notes directly inside it (not recursive). Omit path for the vault root, then pass a folder's path to go deeper. To find notes by content use globnotes_search_notes instead.",
   write: false,
   inputSchema: z.strictObject({
-    path: z.string().default("").describe(
+    path: pathText().default("").describe(
       "Folder path, e.g. 'Projects/2024'; '' or omitted = the vault root",
     ),
   }),
@@ -566,7 +598,7 @@ Examples: fix a typo -> path + content + expected_last_modified; move to another
     content: z.string().optional().describe(
       "New Markdown content (the whole note). Omit to only rename",
     ),
-    new_path: z.string().optional().describe(
+    new_path: pathText().optional().describe(
       "New path to rename/move the note to. Omit to keep the path",
     ),
     expected_last_modified: expectedLastModified,
@@ -594,12 +626,21 @@ Examples: fix a typo -> path + content + expected_last_modified; move to another
       ? undefined
       : validPath(args.new_path, "new_path");
     assertUnchanged(ctx, args.path, args.expected_last_modified);
-    const note = await ctx.vault.updateNote(
-      args.path,
-      { newContent: args.content, newPath },
-      args.file_refs,
-      lease,
-    );
+    let note;
+    try {
+      note = await ctx.vault.updateNote(
+        args.path,
+        { newContent: args.content, newPath },
+        args.file_refs,
+        lease,
+      );
+    } catch (error) {
+      // The note that exists is at the target, not at `path`.
+      if (error instanceof NoteExistsError) {
+        throw renameCollision(args.path, newPath);
+      }
+      throw error;
+    }
     const structured = {
       ...noteOutput(note),
       moved_files: note.movedFiles.map((f) => ({
@@ -620,6 +661,20 @@ Examples: fix a typo -> path + content + expected_last_modified; move to another
     return { structured, text: lines.join("\n") };
   },
 });
+
+/** NoteExistsError from an update: the note in the way is at the target
+ * path (new_path, or the one the new first heading derives), not at
+ * `path`. */
+function renameCollision(path: string, newPath: string | undefined) {
+  return new ToolError(
+    newPath === undefined
+      ? `Note '${path}' can't be renamed to match its new first heading: a ` +
+        "note with that name already exists in its folder. Re-read the " +
+        "note, then change the heading or pass new_path."
+      : `Note '${path}' can't be moved to '${newPath}': a note already ` +
+        "exists there. Re-read the note, then choose another new_path.",
+  );
+}
 
 // ---- globnotes_delete_note ----
 

@@ -10,7 +10,8 @@
  */
 
 import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
-import { toolErrorMessage } from "./errors.ts";
+import { logger } from "../logger.ts";
+import { describeToolError } from "./errors.ts";
 import {
   createNote,
   deleteNote,
@@ -62,14 +63,15 @@ function register(
       };
     } catch (error) {
       const path = (args as { path?: unknown }).path;
+      const failure = describeToolError(
+        error,
+        typeof path === "string" ? path : undefined,
+      );
+      if (failure.internal) {
+        logger.error(`MCP tool ${tool.name} failed:`, error);
+      }
       return {
-        content: [{
-          type: "text" as const,
-          text: toolErrorMessage(
-            error,
-            typeof path === "string" ? path : undefined,
-          ),
-        }],
+        content: [{ type: "text" as const, text: failure.message }],
         isError: true,
       };
     }
