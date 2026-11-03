@@ -8,16 +8,33 @@
  * event, and doing so again on every sync. Each note is now its own
  * savepoint: the failure is logged as an error, that note keeps its
  * previous entry, and the rest of the pass completes.
+ *
+ * The read failure is injected through the indexer's reader adapter, so it
+ * doesn't depend on who runs the test (file modes don't bind root).
  */
 
 import { assert, assertEquals } from "@std/assert";
 import { logger } from "../server/logger.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
 import type { PluginLifecycle } from "../server/plugins/lifecycle.ts";
+import { fileAdapters, Fts5Indexer } from "../server/search/fts5.ts";
 import { state } from "../server/state.ts";
+import { testEnvironment } from "./helpers/environment.ts";
 import { awaitIndexReady, restoreState, setupState } from "./helpers/state.ts";
 
-Deno.test("index sync: an unreadable changed note doesn't abort the pass", async () => {
+/** A reader that fails for one note, as an unreadable file would. */
+const failingFor = (name: string) => ({
+  readText(filepath: string): string {
+    if (filepath.endsWith(`/${name}`)) {
+      throw new Deno.errors.PermissionDenied(
+        `Permission denied (injected): '${filepath}'`,
+      );
+    }
+    return fileAdapters.readText(filepath);
+  },
+});
+
+Deno.test("index sync: a changed note that can't be read doesn't abort the pass", async () => {
   const previous = { ...state };
   const original = { ...logger };
   const vault = await Deno.makeTempDir({ prefix: "globnotes-pass-" });
@@ -37,18 +54,17 @@ Deno.test("index sync: an unreadable changed note doesn't abort the pass", async
     // deleted note and a new one.
     await new Promise((resolve) => setTimeout(resolve, 20));
     await Deno.writeTextFile(`${vault}/a.md`, "# a\n\nalphanew\n");
-    await Deno.chmod(`${vault}/a.md`, 0o000);
-    const unreadable = await Deno.readTextFile(`${vault}/a.md`)
-      .then(() => false, () => true);
-    assert(
-      unreadable,
-      "needs a test process that file modes apply to (not root)",
-    );
     await Deno.remove(`${vault}/b.md`);
     await Deno.writeTextFile(`${vault}/d.md`, "# d\n\ndelta\n");
 
-    // A restart: fresh server state on the same vault and index.
-    const { indexer: restarted } = setupState(vault);
+    // A restart: fresh server state on the same vault and index, with an
+    // indexer whose reads of a.md fail.
+    setupState(vault);
+    const restarted = new Fts5Indexer(
+      vault,
+      testEnvironment({}),
+      failingFor("a.md"),
+    );
     const facts: OperationFact[] = [];
     state.lifecycle = {
       syncCompleted: (fact: OperationFact) => facts.push(fact),
@@ -74,7 +90,6 @@ Deno.test("index sync: an unreadable changed note doesn't abort the pass", async
   } finally {
     Object.assign(logger, original);
     restoreState(previous);
-    await Deno.chmod(`${vault}/a.md`, 0o644).catch(() => {});
     await Deno.remove(vault, { recursive: true });
   }
 });
