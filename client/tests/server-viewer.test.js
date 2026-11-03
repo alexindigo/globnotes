@@ -185,6 +185,45 @@ describe("ServerViewer render lifetime", () => {
     }
   });
 
+  it("stays aria-busy until the fonts are ready after Mermaid resolves", async () => {
+    const fonts = deferred();
+    Object.defineProperty(document, "fonts", { value: { ready: fonts.promise }, configurable: true });
+    getRenderedHtml.mockResolvedValue('<pre class="mermaid">graph TD</pre>');
+    const wrapper = mount(ServerViewer, { props: { title: "Diagram" } });
+    try {
+      await flushPromises();
+      expect(mermaid.run).toHaveBeenCalledOnce();
+      expect(wrapper.attributes("aria-busy")).toBe("true");
+      fonts.resolve();
+      await flushPromises();
+      expect(wrapper.attributes("aria-busy")).toBe("false");
+    } finally {
+      fonts.resolve();
+      await flushPromises();
+      delete document.fonts;
+    }
+  });
+
+  it("is not aria-busy once the title is cleared under a pending render", async () => {
+    const render = deferred();
+    getRenderedHtml.mockReturnValueOnce(render.promise);
+    const wrapper = mount(ServerViewer, { props: { title: "Held" } });
+    try {
+      await flushPromises();
+      expect(wrapper.attributes("aria-busy")).toBe("true");
+      await wrapper.setProps({ title: "" });
+      await flushPromises();
+      expect(wrapper.attributes("aria-busy")).toBe("false");
+      render.resolve("<p>Held</p>");
+      await flushPromises();
+      expect(wrapper.attributes("aria-busy")).toBe("false");
+      expect(wrapper.element.innerHTML).toBe("");
+    } finally {
+      render.resolve("<p>Held</p>");
+      await flushPromises();
+    }
+  });
+
   it("rerenders the mounted surface when the view line-number preference changes", async () => {
     const wrapper = mount(ServerViewer, { props: { title: "Current" } });
     await flushPromises();

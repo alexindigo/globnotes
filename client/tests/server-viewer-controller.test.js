@@ -227,6 +227,45 @@ describe("saved-note render owner", () => {
     expect(busy.mock.calls).toEqual([[true], [true], [false]]);
   });
 
+  it.each(["title", "root"])("ends the busy period when a request without a %s supersedes a pending render", async key => {
+    const pending = deferred(), busy = vi.fn();
+    getRenderedHtml.mockReturnValueOnce(pending.promise);
+    const viewer = surface({ busy });
+    const old = viewer.renderNote();
+    expect(busy.mock.calls).toEqual([[true]]);
+    viewer.context[key] = key === "title" ? "" : null;
+    await viewer.renderNote();
+    expect(busy.mock.calls.at(-1)).toEqual([false]);
+    pending.resolve("<p>Old</p>");
+    await old;
+    expect(busy.mock.calls.at(-1)).toEqual([false]);
+    expect(viewer.setHtml).not.toHaveBeenCalled();
+  });
+
+  it("ends the busy period when the surface changes under a pending response without a new request", async () => {
+    const pending = deferred(), busy = vi.fn();
+    getRenderedHtml.mockReturnValueOnce(pending.promise);
+    const viewer = surface({ busy });
+    const old = viewer.renderNote();
+    viewer.context.title = "Elsewhere";
+    pending.resolve("<p>Old</p>");
+    await old;
+    expect(viewer.setHtml).not.toHaveBeenCalled();
+    expect(busy.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("ends the busy period on dispose, and a late response cannot reopen it", async () => {
+    const pending = deferred(), busy = vi.fn();
+    getRenderedHtml.mockReturnValueOnce(pending.promise);
+    const viewer = surface({ busy });
+    const old = viewer.renderNote();
+    viewer.dispose();
+    expect(busy.mock.calls).toEqual([[true], [false]]);
+    pending.resolve("<p>Old</p>");
+    await old;
+    expect(busy.mock.calls).toEqual([[true], [false]]);
+  });
+
   it("rerenders for each plugin/theme fact and releases the subscriptions on dispose", async () => {
     const viewer = surface();
     expect(subscribe.mock.calls.map(([topic]) => topic)).toEqual([

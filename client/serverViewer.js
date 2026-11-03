@@ -25,34 +25,42 @@ export function createServerViewer({
   reportError = (...args) => console.error(...args),
 }) {
   let renderVersion = 0;
+  // The one busy owner: busy is true exactly while the latest request is
+  // unfinished. Every way a request ends (early return, fenced or failed
+  // response, settled enhancements) goes through finish(); a request that a
+  // newer one superseded never touches busy.
+  const finish = version => {
+    if (version === renderVersion) busy(false);
+  };
 
   async function renderNote() {
     const version = ++renderVersion;
     const { root, title } = getContext();
-    if (!title || !root) return;
+    if (!title || !root) {
+      finish(version);
+      return;
+    }
     // A response belongs to one request, title and mounted surface only.
     const isCurrent = () => {
       const current = getContext();
       return version === renderVersion && current.root === root && current.title === title;
     };
-    // Only the current render ends the busy period; a newer one owns it.
     busy(true);
-    let html;
     try {
-      html = await render(title, isCurrent);
-      if (!isCurrent()) return;
-      setHtml(html);
-    } catch (error) {
-      if (!isCurrent()) return;
-      reportError("Note render failed", error);
-      failed(error);
-      busy(false);
-      return;
-    }
-    try {
+      let html;
+      try {
+        html = await render(title, isCurrent);
+        if (!isCurrent()) return;
+        setHtml(html);
+      } catch (error) {
+        if (!isCurrent()) return;
+        reportError("Note render failed", error);
+        failed(error);
+        return;
+      }
       await rendered(isCurrent);
     } finally {
-      if (isCurrent()) busy(false);
+      finish(version);
     }
   }
 
@@ -63,7 +71,7 @@ export function createServerViewer({
   ];
 
   function dispose() {
-    renderVersion++;
+    finish(++renderVersion);
     for (const unsubscribe of unsubscribers) unsubscribe();
   }
 
