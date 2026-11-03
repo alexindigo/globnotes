@@ -197,6 +197,30 @@ export class Fts5Indexer implements Indexer {
     }
   }
 
+  /** One note's work in a batched pass, as its own savepoint inside the
+   * pass's transaction: a failure rolls back only that note's writes (an
+   * indexed note keeps its previous entry) and is logged, so one unreadable
+   * or vanished note never aborts the pass, the rest of its batch, the
+   * new-file phase or the sync-completed event. A note that vanished
+   * mid-pass is expected (an outside delete); any other failure is an
+   * error. Returns whether the work completed. */
+  #perNote(filename: string, what: "update" | "add", fn: () => void): boolean {
+    try {
+      this.#transaction(fn);
+      return true;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        logger.info(`'${filename}' vanished during the index ${what}`);
+      } else {
+        logger.error(
+          `Index ${what} of '${filename}' failed; the other notes continue:`,
+          error,
+        );
+      }
+      return false;
+    }
+  }
+
   /** Insert/replace a note in the FTS table, the raw-tag table, and the
    * display-metadata table, as one unit. */
   #upsertNote(
@@ -312,18 +336,18 @@ export class Fts5Indexer implements Indexer {
       // Prune deleted; update modified. Python stats each INDEXED file
       // directly for deletion (the filename-list cache must not hide
       // external deletes).
-      const deleted = new Set<string>();
       this.#transaction(() => {
         for (const filename of indexed) {
-          if (!this.#fileExists(filename)) {
-            this.#deleteByFilename(filename);
-            deleted.add(filename);
-            logger.info(`'${filename}' removed from index`);
-          } else if (indexedMtimes.get(filename) !== fsMtime(filename)) {
-            // File changed on disk since last index.
-            this.reindexNote(this.#stripExt(filename));
-            logger.info(`'${filename}' updated`);
-          }
+          this.#perNote(filename, "update", () => {
+            if (!this.#fileExists(filename)) {
+              this.#deleteByFilename(filename);
+              logger.info(`'${filename}' removed from index`);
+            } else if (indexedMtimes.get(filename) !== fsMtime(filename)) {
+              // File changed on disk since last index.
+              this.reindexNote(this.#stripExt(filename));
+              logger.info(`'${filename}' updated`);
+            }
+          });
         }
       });
 
@@ -338,15 +362,15 @@ export class Fts5Indexer implements Indexer {
       const batchDelay =
         Number(this.#environment.get("GLOBNOTES_INDEX_BATCH_DELAY") ?? "0.1") *
         1000;
+      const added: string[] = [];
       for (let i = 0; i < newFiles.length; i += batchSize) {
         const batch = newFiles.slice(i, i + batchSize);
         this.#transaction(() => {
           for (const filename of batch) {
-            try {
-              // Tolerate deletions mid-sync and external writes.
-              this.#indexFile(filename);
-            } catch {
-              // Python: continue on FileNotFoundError
+            if (
+              this.#perNote(filename, "add", () => this.#indexFile(filename))
+            ) {
+              added.push(filename);
             }
           }
         });
@@ -358,7 +382,7 @@ export class Fts5Indexer implements Indexer {
       }
       // Initial indexing is inventory plus on-sync — never fake creates.
       this.#batchSynced(
-        newFiles.map((f) => this.#stripExt(f)),
+        added.map((f) => this.#stripExt(f)),
         true,
       );
     } catch (e) {
