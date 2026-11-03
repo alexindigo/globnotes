@@ -17,7 +17,10 @@ import { OperationError } from "../server/plugins/errors.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import type { PluginManager } from "../server/plugins/manager.ts";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
-import type { OperationFact } from "../server/plugins/contracts.ts";
+import {
+  type OperationFact,
+  PLUGIN_LIMITS,
+} from "../server/plugins/contracts.ts";
 import { servicePluginRpc } from "../server/plugins/rpc.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { initState, state } from "../server/state.ts";
@@ -807,9 +810,14 @@ Deno.test("lifecycle: policy epoch change during a suspended operation rejects w
 Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action", async () => {
   // Service limits also govern the healthy recorder's observers/commands.
   // Give them scheduling headroom; the hanger never resolves at any deadline.
+  // The queue keeps its production capacity: the recorder's backlog (one
+  // delivery per note action below) stays far under it however slowly its
+  // worker runs, so only the hanger, flooded on purpose, can overflow. A
+  // capacity of 4 let a slow recorder fill its own queue and refuse the
+  // facts command.
   const serviceCallMs = 5000;
-  const queuedJobs = 4;
-  const b = await bundle({ limits: { queuedJobs, serviceCallMs } });
+  const queuedJobs = PLUGIN_LIMITS.queuedJobs;
+  const b = await bundle({ limits: { serviceCallMs } });
   try {
     // A SEPARATE on-only observer: slow/hanging deliveries and queue
     // overflow must degrade it visibly — never block the note action.
