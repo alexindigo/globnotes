@@ -220,7 +220,7 @@ Deno.test("startup liveness: installed watchdog ready-before-heartbeat beyond100
   }
 });
 
-Deno.test("startup liveness: heartbeat-before-initialization silence>750ms", async () => {
+Deno.test("startup liveness: heartbeat-before-initialization silence>3000ms", async () => {
   const entered = Promise.withResolvers<void>(),
     release = Promise.withResolvers<void>();
   const c = await controlled(
@@ -247,9 +247,9 @@ Deno.test("startup liveness: heartbeat-before-initialization silence>750ms", asy
     release.resolve();
     await bounded(c.started, "early heartbeat plus completed initialization");
     await consume(c.host);
-    c.clock.tick(2250);
+    c.clock.tick(4500);
     assert(c.host.available);
-    c.clock.tick(2251);
+    c.clock.tick(4501);
     assertEquals(c.host.available, false);
     assertEquals(c.failures, [
       "worker heartbeat timeout; in-flight outcome unknown",
@@ -362,23 +362,23 @@ for (const second of ["heartbeat", "initialization"] as const) {
   });
 }
 
-Deno.test("startup liveness: qualified boundary750/751 and genuine newer receipts", async () => {
+Deno.test("startup liveness: qualified boundary3000/3001 and genuine newer receipts", async () => {
   const c = await controlled();
   try {
     await c.initialized();
     await c.heartbeats();
     c.gate.releaseHeartbeat();
     await c.started;
-    c.clock.tick(750);
+    c.clock.tick(3000);
     assert(c.host.available);
     await consume(c.host);
     await c.heartbeats();
-    c.gate.releaseHeartbeat(); // genuine receipt at750, not ready replay
+    c.gate.releaseHeartbeat(); // genuine receipt at3000, not ready replay
     c.gate.releaseReady();
-    c.clock.tick(1500);
+    c.clock.tick(6000);
     assert(c.host.available);
     await consume(c.host);
-    c.clock.tick(1501);
+    c.clock.tick(6001);
     assertEquals(c.host.available, false);
     assertEquals(c.host.registrations.size, 0);
     assertEquals(c.failures, [
@@ -402,10 +402,10 @@ Deno.test("startup liveness: wall-clock jumps do not change monotonic monitoring
     await c.started;
     await consume(c.host);
     Date.now = () => original() - 86400000;
-    c.clock.tick(1750);
+    c.clock.tick(4000);
     assert(c.host.available);
     Date.now = () => original() + 86400000;
-    c.clock.tick(1751);
+    c.clock.tick(4001);
     assertEquals(c.host.available, false);
   } finally {
     Date.now = original;

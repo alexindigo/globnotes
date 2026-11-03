@@ -44,7 +44,7 @@ import {
 
 const HEARTBEAT_MS = 250;
 /** A ready worker silent for longer than this (observed time) has failed. */
-const HEARTBEAT_SILENCE_MS = 3 * HEARTBEAT_MS;
+const HEARTBEAT_SILENCE_MS = 12 * HEARTBEAT_MS;
 const WORKER_URL = new URL("./worker_entry.ts", import.meta.url);
 export interface RpcAuthority {
   generation: string;

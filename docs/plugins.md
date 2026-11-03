@@ -203,10 +203,10 @@ in [plugin-api.md](plugin-api.md).
   and required guards; render initialization includes the awaited initial `onSync`.
   Both prerequisites share one 10-second startup budget in observed time, from
   just before Worker construction. Neither ready nor heartbeat traffic extends it.
-- Qualified Workers use the unchanged 250 ms heartbeat and strict `>750 ms`
-  silence threshold, observed at a host watchdog tick. A single steady window
-  begins at combined readiness; thereafter only genuine heartbeat receipts refresh
-  it. Failed service registrations are revoked; qualified render failures enter
+- Qualified Workers heartbeat every 250 ms and fail at a silence of strictly
+  more than 3000 ms (twelve heartbeat periods), observed at a host watchdog
+  tick. A single steady window begins at combined readiness; thereafter only
+  genuine heartbeat receipts refresh it. Failed service registrations are revoked; qualified render failures enter
   the existing admitted replacement flow, without replaying calls. Startup failure
   does not count as a previously healthy render owner.
 - Liveness and every plugin deadline use observed time

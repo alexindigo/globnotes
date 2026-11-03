@@ -470,10 +470,11 @@ Permission admission similarly returns before receipt/origin/readiness settlemen
 replacement waits outside the SDK call. Required guards retain their independent
 operation/per-plugin deadlines and fail closed while awaiting readiness.
 
-At qualification, one 750 ms steady window starts without falsifying the actual
+At qualification, one 3000 ms steady window starts without falsifying the actual
 heartbeat receipt timestamp. Thereafter only accepted heartbeat receipts refresh
-monitoring. The host watchdog keeps its 250 ms cadence and strict age `>750 ms`
-expiry (750 is allowed; 751 fails when observed), with no retry.
+monitoring. Workers heartbeat every 250 ms; the host watchdog keeps the same
+cadence and fails a Worker at a silence of strictly more than 3000 ms (twelve
+heartbeat periods; 3000 is allowed, 3001 fails when observed), with no retry.
 
 Every liveness and deadline budget is measured in *observed time*, the time in
 which the globnotes process was actually running: heartbeat silence, the startup

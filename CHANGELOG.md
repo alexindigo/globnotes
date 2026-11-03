@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+Plugins keep working when the server is briefly not scheduled, such as on a busy
+NAS, in a paused VM or during a large index sync. Plugin time limits count only
+time in which globnotes was actually running, and a plugin worker counts as stuck
+after 3 seconds without a heartbeat instead of 0.75 seconds. Such pauses are
+logged as warnings.
+
 ## v2.5.0 (2026-10-21)
 
 ### Added
