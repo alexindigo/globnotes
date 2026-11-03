@@ -121,7 +121,7 @@ to find the right path".
 
 | # | Tool | Input | Output | Annotations |
 |---|---|---|---|---|
-| 1 | `globnotes_search_notes` | `query`; `folder`; `include_subfolders` (default `true`); `sort` (`score`, `path`, `lastModified`; default `score`); `order` (`asc`, `desc`; default `desc`); `limit` (1–100, default 20); `offset` (default 0) | `{total, count, offset, has_more, next_offset?, results: [{path, title, last_modified, score?, snippet, matched_tags}]}` | read-only, idempotent |
+| 1 | `globnotes_search_notes` | `query`; `folder`; `include_subfolders` (default `true`); `sort` (`score`, `path`, `lastModified`; default `score`); `order` (`asc`, `desc`; default `desc`); `limit` (1–100, default 20); `offset` (default 0) | `{total, count, offset, has_more, next_offset?, results: [{path, title, last_modified, score?, snippet, matched_tags, truncated?, omitted_tags?}]}` | read-only, idempotent |
 | 2 | `globnotes_get_note` | `path` | `{path, title, content, last_modified}` | read-only, idempotent |
 | 3 | `globnotes_list_folder` | `path` (default: the vault root) | `{path, folders: [{name, path}], notes: [{path, title}]}` | read-only, idempotent |
 | 4 | `globnotes_list_tags` | — | `{tags}` | read-only, idempotent |
@@ -138,15 +138,24 @@ Notes:
 - **Search syntax** is the web app's: words (all must match), `"exact phrase"`, `#tag`,
   `prefix*`, and `*` alone for every note. `*` with `sort: "lastModified"` lists the
   latest notes.
-- **Snippets** are plain text with the matches marked `«like this»`. They are empty when
-  only the path or a tag matched. A snippet is a window of words, so one very long word can
-  make it long; when a single result alone would exceed 25,000 characters, its snippet is
-  shortened and ends in ` ... [snippet truncated]`.
+- **Snippets** are plain text with the matches marked `«like this»`. A match only in the
+  path shows the marked path. The snippet is empty when no content or path text matched: a
+  tag-only match, or `query: "*"`.
 - **Pagination.** A result page has `count` results. When `has_more` is `true`, call again
   with `offset: next_offset`. `total` counts the matches found while filling the page (at
   most `offset + count + 1`); it is not the number of all matching notes. A page holds fewer
   than `limit` results when they would exceed 25,000 characters; `next_offset` then
   continues after the last one returned.
+- **Shortened results.** A snippet is a window of words, and titles and tags have no length
+  limit, so a single result can be over 25,000 characters on its own (one very long word, a
+  huge heading, or many tags). Such a result is still returned, shortened by one rule:
+  `snippet`, `title` and each tag in `matched_tags` are cut to one common maximum length,
+  the largest that fits, so the longest field is shortened first and short ones stay
+  whole. If that would take the fields below 100 characters (only many tags can cause
+  that), trailing tags are left out instead and counted in `omitted_tags`. Every shortened
+  text ends in ` ... [truncated]`, and the result's `truncated` field lists the shortened
+  fields (it is absent otherwise). `path` is never shortened, so `globnotes_get_note` with
+  it always reads the whole note.
 - **Renames by heading.** As in the web app, a content update that changes the note's
   first `# Heading` renames the note to match, unless the note has a front-matter
   `title`. The result's `path` is the note's final path.

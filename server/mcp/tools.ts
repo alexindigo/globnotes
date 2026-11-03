@@ -23,8 +23,11 @@ import type { McpVault, SearchSort } from "./vault.ts";
 /** Responses stay under this size by returning fewer search results
  * (mcp-builder); a single note is returned whole. */
 export const CHARACTER_LIMIT = 25_000;
-/** Ends a search snippet shortened to fit CHARACTER_LIMIT. */
-export const SNIPPET_TRUNCATED = " ... [snippet truncated]";
+/** Ends every text field shortened to fit CHARACTER_LIMIT. */
+export const TRUNCATED = " ... [truncated]";
+/** Texts are not shortened below this length (marker included) before
+ * trailing matched tags are left out instead. */
+export const MIN_FIELD_CHARS = 100;
 
 export interface ToolContext {
   vault: McpVault;
@@ -166,12 +169,107 @@ const SearchHit = z.object({
     "Relevance (higher is better); only when sorted by score",
   ),
   snippet: z.string().describe(
-    "Plain-text excerpt with the matches marked «like this»; empty when " +
-      "only the path or a tag matched. Ends in ' ... [snippet truncated]' " +
-      "when it was shortened to fit the response size limit",
+    "Plain-text excerpt with the matches marked «like this». A match only " +
+      "in the path shows the marked path; empty when no content or path " +
+      "text matched (a tag-only match, or query='*')",
   ),
   matched_tags: z.array(z.string()).describe("Tags the query matched"),
+  truncated: z.array(z.enum(["snippet", "matched_tags", "title"])).optional()
+    .describe(
+      "Only when this single result alone exceeded the response size " +
+        "limit: the fields that were shortened. snippet, title and each " +
+        "matched tag are cut to one common maximum length, the longest " +
+        "first; if that is not enough, trailing tags are left out (see " +
+        "omitted_tags). A shortened text ends in ' ... [truncated]'. path is " +
+        "never shortened; read the full note with globnotes_get_note",
+    ),
+  omitted_tags: z.number().int().optional().describe(
+    "Matched tags left out of matched_tags to fit the size limit",
+  ),
 });
+
+type SearchHitOutput = z.output<typeof SearchHit>;
+type ShortenedField = "snippet" | "matched_tags" | "title";
+
+/** `text` cut to at most `max` code points, the last ones being TRUNCATED. */
+function capText(text: string, max: number): string {
+  const chars = [...text];
+  if (chars.length <= max) return text;
+  return chars.slice(0, Math.max(0, max - TRUNCATED.length)).join("") +
+    TRUNCATED;
+}
+
+/**
+ * Fit a single search result into the response budget. `excess(hit)` is how
+ * far the page rendered with `hit` is over CHARACTER_LIMIT. One rule covers
+ * every variable-size field: snippet, title and each matched tag are cut to
+ * one common maximum length, the largest that fits (so the longest field is
+ * shortened first and short ones stay whole). If even MIN_FIELD_CHARS does
+ * not fit (only many tags can cause that), trailing tags are left out and
+ * counted in omitted_tags; then, as a last resort, the cap goes lower. Every
+ * shortened text ends in TRUNCATED and `truncated` names each shortened
+ * field. `path` is the note's identity for globnotes_get_note and is never
+ * shortened; it is bounded (segments of at most 255 bytes, and a file
+ * globnotes can read fits the OS path limit, 4,096 bytes on Linux), so the
+ * other fields can make room for it.
+ */
+export function fitHit(
+  hit: SearchHitOutput,
+  excess: (hit: SearchHitOutput) => number,
+): SearchHitOutput {
+  if (excess(hit) <= 0) return hit;
+  const tags = hit.matched_tags;
+  const shaped = (max: number, keepTags: number): SearchHitOutput => {
+    const snippet = capText(hit.snippet, max);
+    const title = capText(hit.title, max);
+    const kept = tags.slice(0, keepTags).map((tag) => capText(tag, max));
+    const truncated: ShortenedField[] = [];
+    if (snippet !== hit.snippet) truncated.push("snippet");
+    if (keepTags < tags.length || kept.some((tag, i) => tag !== tags[i])) {
+      truncated.push("matched_tags");
+    }
+    if (title !== hit.title) truncated.push("title");
+    return {
+      ...hit,
+      title,
+      snippet,
+      matched_tags: kept,
+      ...(keepTags < tags.length
+        ? { omitted_tags: tags.length - keepTags }
+        : {}),
+      ...(truncated.length ? { truncated } : {}),
+    };
+  };
+  /** The largest n in [low, high] with fits(n), or null (bisection; fits
+   * is monotone in n). */
+  const largest = (low: number, high: number, fits: (n: number) => boolean) => {
+    if (!fits(low)) return null;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (fits(mid)) low = mid;
+      else high = mid - 1;
+    }
+    return low;
+  };
+  const longest = Math.max(
+    [...hit.snippet].length,
+    [...hit.title].length,
+    ...tags.map((tag) => [...tag].length),
+  );
+  const all = tags.length;
+  const fitsAt = (max: number, keepTags: number) =>
+    excess(shaped(max, keepTags)) <= 0;
+  const cap = largest(MIN_FIELD_CHARS, longest, (max) => fitsAt(max, all));
+  if (cap !== null) return shaped(cap, all);
+  const keep = largest(0, all, (n) => fitsAt(MIN_FIELD_CHARS, n));
+  if (keep !== null) return shaped(MIN_FIELD_CHARS, keep);
+  const low = largest(
+    TRUNCATED.length,
+    MIN_FIELD_CHARS,
+    (max) => fitsAt(max, 0),
+  );
+  return shaped(low ?? TRUNCATED.length, 0);
+}
 
 const SearchOutput = z.object({
   total: z.number().int().describe(
@@ -243,7 +341,10 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
       args.include_subfolders,
       folder,
     );
-    let hits = found.slice(args.offset, args.offset + args.limit).map((r) => ({
+    let hits: SearchHitOutput[] = found.slice(
+      args.offset,
+      args.offset + args.limit,
+    ).map((r) => ({
       path: r.path,
       title: r.title,
       last_modified: isoTime(r.lastModified),
@@ -277,7 +378,18 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
         );
         if (hit.snippet) lines.push(`  ${hit.snippet}`);
         if (hit.matched_tags.length) {
-          lines.push(`  tags: ${hit.matched_tags.join(", ")}`);
+          lines.push(
+            `  tags: ${hit.matched_tags.join(", ")}${
+              hit.omitted_tags ? ` (+${hit.omitted_tags} more not shown)` : ""
+            }`,
+          );
+        }
+        if (hit.truncated) {
+          lines.push(
+            `  shortened to fit the response limit: ${
+              hit.truncated.join(", ")
+            }; read the whole note with globnotes_get_note`,
+          );
         }
       }
       if (hasMore) lines.push(`More results: call again with offset=${end}.`);
@@ -291,24 +403,12 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
       result = render(hits);
     }
     // One hit can still exceed the budget: the index's snippet window counts
-    // tokens, not characters, so a long token makes a long snippet. Shorten
-    // that snippet (marked) rather than drop the hit.
-    if (size(result) > CHARACTER_LIMIT && hits.length === 1) {
-      const chars = [...hits[0].snippet];
-      let keep = chars.length;
-      while (keep > 0 && size(result) > CHARACTER_LIMIT) {
-        // Each kept character counts at least twice (text and JSON).
-        keep = Math.max(
-          0,
-          keep - Math.ceil((size(result) - CHARACTER_LIMIT) / 2) -
-            SNIPPET_TRUNCATED.length,
-        );
-        hits = [{
-          ...hits[0],
-          snippet: chars.slice(0, keep).join("") + SNIPPET_TRUNCATED,
-        }];
-        result = render(hits);
-      }
+    // tokens, not characters (one long word makes a long snippet), and
+    // titles and tags have no length limit. Shorten that hit's fields
+    // (marked) rather than drop it.
+    if (hits.length === 1 && size(result) > CHARACTER_LIMIT) {
+      hits = [fitHit(hits[0], (h) => size(render([h])) - CHARACTER_LIMIT)];
+      result = render(hits);
     }
     return Promise.resolve(result);
   },

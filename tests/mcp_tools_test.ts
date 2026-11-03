@@ -30,7 +30,8 @@ import { highlightsToText } from "../server/mcp/snippets.ts";
 import {
   CHARACTER_LIMIT,
   isoTime,
-  SNIPPET_TRUNCATED,
+  MIN_FIELD_CHARS,
+  TRUNCATED,
 } from "../server/mcp/tools.ts";
 import type { McpVault, SearchSort } from "../server/mcp/vault.ts";
 
@@ -198,6 +199,8 @@ const READ_TOOLS = [
   "globnotes_list_tags",
   "globnotes_search_notes",
 ];
+
+const hit1 = (extra: Partial<SearchResult>) => hit(1, extra);
 
 function hit(i: number, extra: Partial<SearchResult> = {}): SearchResult {
   return {
@@ -539,7 +542,11 @@ Deno.test("mcp tools: one hit over the character limit keeps the hit with a shor
         assertEquals(page.next_offset, more ? 1 : undefined);
         const snippet = page.results[0].snippet;
         assert(snippet.startsWith("a «xxx"), snippet.slice(0, 20));
-        assert(snippet.endsWith(SNIPPET_TRUNCATED), snippet.slice(-40));
+        assert(snippet.endsWith(TRUNCATED), snippet.slice(-40));
+        assertEquals(
+          (page.results[0] as { truncated?: string[] }).truncated,
+          ["snippet"],
+        );
         const size = textOf(result).length + JSON.stringify(page).length;
         assert(size <= CHARACTER_LIMIT, `size ${size}`);
         // Shortened only as far as needed, not emptied.
@@ -550,6 +557,126 @@ Deno.test("mcp tools: one hit over the character limit keeps the hit with a shor
       }
     });
   }
+});
+
+interface FittedHit {
+  path: string;
+  title: string;
+  snippet: string;
+  matched_tags: string[];
+  truncated?: string[];
+  omitted_tags?: number;
+}
+
+/** One search call over a single fake hit; the page and its size. */
+async function searchOne(result: SearchResult) {
+  const fake = fakeVault();
+  fake.setSearchResults([result]);
+  const mcp = await connect(fake);
+  try {
+    const found = await mcp.call("globnotes_search_notes", { query: "x*" });
+    assertEquals(found.isError, undefined, textOf(found));
+    const page = found.structuredContent as {
+      count: number;
+      results: FittedHit[];
+    };
+    assertEquals(page.count, 1);
+    return {
+      hit: page.results[0],
+      text: textOf(found),
+      size: textOf(found).length + JSON.stringify(page).length,
+    };
+  } finally {
+    await mcp.close();
+  }
+}
+
+Deno.test("mcp tools: a single over-long result is shortened to one common cap, path intact", async (t) => {
+  const huge = (c: string) => c.repeat(40_000);
+  const within = (size: number) => {
+    assert(size <= CHARACTER_LIMIT, `size ${size}`);
+    // Shortened only as far as needed, not emptied.
+    assert(size > CHARACTER_LIMIT - 1_000, `size ${size}`);
+  };
+
+  const length = (text: string) => [...text].length;
+
+  await t.step("a long tag is cut, the short fields stay whole", async () => {
+    const { hit, text, size } = await searchOne(
+      hit1({ tagMatches: [huge("t"), "short"] }),
+    );
+    assertEquals(hit.path, "Notes/n1");
+    assertEquals(hit.title, "Note 1");
+    assertEquals(hit.snippet, "before «match» after 1");
+    assertEquals(hit.truncated, ["matched_tags"]);
+    assertEquals(hit.omitted_tags, undefined);
+    assertEquals(hit.matched_tags.length, 2);
+    assert(hit.matched_tags[0].startsWith("ttt"));
+    assert(hit.matched_tags[0].endsWith(TRUNCATED));
+    assertEquals(hit.matched_tags[1], "short");
+    assert(text.includes("shortened to fit the response limit: matched_tags"));
+    within(size);
+  });
+
+  await t.step(
+    "many tags: trailing ones are left out and counted",
+    async () => {
+      const tags = Array.from({ length: 3_000 }, (_, i) => `tag-${i}-xxxxxx`);
+      const { hit, text, size } = await searchOne(hit1({ tagMatches: tags }));
+      assertEquals(hit.truncated, ["matched_tags"]);
+      assert(hit.omitted_tags! > 0);
+      assertEquals(hit.matched_tags.length + hit.omitted_tags!, tags.length);
+      // Short tags are kept whole; only trailing ones are left out.
+      assertEquals(hit.matched_tags, tags.slice(0, hit.matched_tags.length));
+      assertEquals(hit.snippet, "before «match» after 1");
+      assert(text.includes(`(+${hit.omitted_tags} more not shown)`), text);
+      within(size);
+    },
+  );
+
+  await t.step("a long title is shortened", async () => {
+    const { hit, text, size } = await searchOne(hit1({ title: huge("T") }));
+    assertEquals(hit.path, "Notes/n1");
+    assertEquals(hit.truncated, ["title"]);
+    assert(hit.title.startsWith("TTT") && hit.title.endsWith(TRUNCATED));
+    assertEquals(hit.snippet, "before «match» after 1");
+    assert(text.includes("shortened to fit the response limit: title"));
+    within(size);
+  });
+
+  await t.step(
+    "long title, tag and snippet together share one cap",
+    async () => {
+      const { hit, size } = await searchOne(hit1({
+        title: huge("T"),
+        tagMatches: [huge("t"), "short"],
+        contentHighlights: `${MARK_OPEN}${huge("x")}${MARK_CLOSE}`,
+      }));
+      assertEquals(hit.path, "Notes/n1");
+      assertEquals(hit.truncated, ["snippet", "matched_tags", "title"]);
+      for (const text of [hit.snippet, hit.title, hit.matched_tags[0]]) {
+        assert(text.endsWith(TRUNCATED));
+      }
+      // One common maximum length for every shortened text.
+      assertEquals(length(hit.title), length(hit.matched_tags[0]));
+      assertEquals(length(hit.title), length(hit.snippet));
+      assert(length(hit.title) >= MIN_FIELD_CHARS);
+      assertEquals(hit.matched_tags[1], "short");
+      within(size);
+    },
+  );
+
+  await t.step("a long path is never shortened", async () => {
+    // A deep but valid path (each segment under 255 bytes, ~4,000 chars).
+    const path = Array.from({ length: 16 }, (_, i) => `${i}`.padEnd(250, "p"))
+      .join("/");
+    const { hit, size } = await searchOne(
+      hit1({ path, title: huge("T"), tagMatches: [huge("t")] }),
+    );
+    assertEquals(hit.path, path);
+    assertEquals(hit.truncated, ["matched_tags", "title"]);
+    within(size);
+  });
 });
 
 Deno.test("mcp tools: reads and their actionable errors", async () => {

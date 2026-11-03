@@ -266,14 +266,59 @@ Deno.test("mcp endpoint: a single long token stays within the response limit", a
       assertEquals(page.results[0].path, "Long token");
       const snippet = page.results[0].snippet;
       assert(snippet.includes("«abcdefghij"), snippet.slice(0, 60));
-      assert(
-        snippet.endsWith(" ... [snippet truncated]"),
-        snippet.slice(-60),
-      );
+      assert(snippet.endsWith(" ... [truncated]"), snippet.slice(-60));
       assert(
         textOf(result).length + JSON.stringify(page).length <= 25_000,
         "within the response budget",
       );
+    } finally {
+      await client.close();
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+Deno.test("mcp endpoint: a long title and a long tag stay within the response limit", async () => {
+  const server = await boot({ GLOBNOTES_AUTH_TYPE: "none" });
+  try {
+    const client = await connect(server);
+    try {
+      const title = "Heading ".repeat(2_500).trim(); // ~20,000 characters
+      const tag = "abcdefghij".repeat(2_000); // one 20,000-character tag
+      const content = `---\ntitle: ${title}\n---\n\nNotes #${tag}\n`;
+      await call(client, "globnotes_create_note", { path: "Huge", content });
+      const result = await client.callTool({
+        name: "globnotes_search_notes",
+        arguments: { query: "abcdefghijabcdefghij*" },
+      });
+      assertEquals(result.isError, undefined, textOf(result));
+      const page = result.structuredContent as {
+        count: number;
+        results: {
+          path: string;
+          title: string;
+          matched_tags: string[];
+          truncated?: string[];
+        }[];
+      };
+      assertEquals(page.count, 1);
+      const [hit] = page.results;
+      assertEquals(hit.path, "Huge");
+      assertEquals(hit.truncated, ["snippet", "matched_tags", "title"]);
+      assert(hit.title.startsWith("Heading Heading"), hit.title.slice(0, 40));
+      assert(hit.title.endsWith(" ... [truncated]"));
+      assertEquals(hit.matched_tags.length, 1);
+      assert(hit.matched_tags[0].startsWith("abcdefghij"));
+      assert(hit.matched_tags[0].endsWith(" ... [truncated]"));
+      assert(
+        textOf(result).length + JSON.stringify(page).length <= 25_000,
+        "within the response budget",
+      );
+      // The path stays usable: the whole note reads back.
+      const note = await call(client, "globnotes_get_note", { path: hit.path });
+      assertEquals(note.content, content);
+      assertEquals(note.title, title);
     } finally {
       await client.close();
     }
