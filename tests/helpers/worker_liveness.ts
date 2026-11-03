@@ -46,7 +46,6 @@ export class WorkerDeliveryGate {
   readonly heartbeat = Promise.withResolvers<void>();
   holdHeartbeat = true;
   holdReady = false;
-  onConstruct?: () => void;
   constructor() {
     globalThis.Worker = new Proxy(this.native, {
       construct: (target, args, newTarget) => {
@@ -96,7 +95,6 @@ export class WorkerDeliveryGate {
           },
         );
         this.workers.push(item);
-        this.onConstruct?.();
         return worker;
       },
     });
@@ -120,14 +118,17 @@ export class WorkerDeliveryGate {
   }
 }
 
-/** Only the installed host activation/watchdog callbacks run on this test clock. */
+/** Only the installed host activation/watchdog callbacks run on this test clock.
+ * It models a punctual host: tick(t) fires every scheduled interval callback
+ * between the previous time and t on its cadence, then once at t. A test that
+ * wants a stall sets `time` directly instead. */
 export class LivenessClock {
   time = 0;
   private sequence = 0;
   readonly timeouts = new Map<number, { callback: () => void; due: number }>();
   readonly intervals = new Map<
     number,
-    { callback: () => void; milliseconds: number }
+    { callback: () => void; milliseconds: number; next: number }
   >();
   readonly installed: { kind: string; milliseconds: number }[] = [];
   now = () => this.time;
@@ -143,7 +144,11 @@ export class LivenessClock {
   setInterval = (callback: () => void, milliseconds: number) => {
     this.installed.push({ kind: "watchdog", milliseconds });
     const id = ++this.sequence;
-    this.intervals.set(id, { callback, milliseconds });
+    this.intervals.set(id, {
+      callback,
+      milliseconds,
+      next: this.time + milliseconds,
+    });
     return id as unknown as ReturnType<typeof setInterval>;
   };
   clearInterval = (id: ReturnType<typeof setInterval>) => {
@@ -151,13 +156,27 @@ export class LivenessClock {
   };
   tick(time: number, activation = false) {
     assert(time >= this.time);
-    this.time = time;
     assert(
       this.installed.some((row) =>
         row.kind === "watchdog" && row.milliseconds === 250
       ),
       "production watchdog must use injected scheduler",
     );
+    for (;;) {
+      const due = [...this.intervals.values()].filter((timer) =>
+        timer.next < time
+      ).sort((a, b) =>
+        a.next - b.next
+      )[0];
+      if (!due) break;
+      this.time = due.next;
+      due.next += due.milliseconds;
+      due.callback();
+    }
+    this.time = time;
+    for (const timer of this.intervals.values()) {
+      if (timer.next <= time) timer.next = time + timer.milliseconds;
+    }
     if (activation) {
       for (const [id, timer] of [...this.timeouts]) {
         if (timer.due <= time) {

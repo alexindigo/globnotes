@@ -15,6 +15,7 @@ import {
 } from "./contracts.ts";
 import { PluginDataStore } from "./data.ts";
 import { PluginHost, type RpcAuthority } from "./host.ts";
+import { processClock } from "../observed_time.ts";
 import type { PluginManifest } from "./manifest.ts";
 import type {
   NetworkPolicy,
@@ -739,19 +740,19 @@ export class PluginRuntime {
     deadline: number,
   ) {
     if (entry.starting && entry.status === "starting") {
-      let timer: ReturnType<typeof setTimeout> | undefined;
+      let cancel: (() => void) | undefined;
       try {
         await Promise.race([
           entry.starting,
           new Promise((_, reject) => {
-            timer = setTimeout(
+            cancel = processClock.deadlineAt(
+              deadline,
               () => reject(new Error("guard readiness deadline exceeded")),
-              Math.max(0, deadline - Date.now()),
             );
           }),
         ]);
       } finally {
-        clearTimeout(timer);
+        cancel?.();
       }
     }
     if (entry.status !== "ready" || !entry.host?.available) {
@@ -762,21 +763,34 @@ export class PluginRuntime {
       );
     }
   }
+  /** `operationDeadline` is in observed time (server/observed_time.ts). */
   async guard(
     hook: HookName,
     payload: unknown,
-    operationDeadline = Date.now() + this.limits.preOperationMs,
+    operationDeadline = processClock.now() + this.limits.preOperationMs,
   ): Promise<GuardLease[]> {
     if (!hook.startsWith("pre-")) {
       throw new Error("guard requires a cancellable pre-hook");
     }
+    const holding = processClock.hold();
+    try {
+      return await this.guardAll(hook, payload, operationDeadline);
+    } finally {
+      holding();
+    }
+  }
+  private async guardAll(
+    hook: HookName,
+    payload: unknown,
+    operationDeadline: number,
+  ): Promise<GuardLease[]> {
     const leases: GuardLease[] = [];
     for (const id of this.order) {
       const entry = this.entries.get(id)!;
       if (!entry.source.enabled || !entry.source.hooks.includes(hook)) continue;
       const deadline = Math.min(
         operationDeadline,
-        Date.now() + this.limits.preHookMs,
+        processClock.now() + this.limits.preHookMs,
       );
       try {
         await this.readyGuard(entry, hook, deadline);
@@ -787,7 +801,7 @@ export class PluginRuntime {
           ? this.adapters.sanitizeFact(entry.source.manifest, payload)
           : payload;
         for (const handler of handlers) {
-          const remaining = deadline - Date.now();
+          const remaining = deadline - processClock.now();
           if (remaining <= 0) throw new Error("guard deadline exceeded");
           const result = await host.invoke(
             handler,
@@ -796,7 +810,7 @@ export class PluginRuntime {
             remaining,
             { generation: host.generation!, causal: operationCause(payload) },
           ) as { cancel?: boolean; reason?: unknown } | undefined;
-          if (Date.now() > deadline) {
+          if (processClock.now() > deadline) {
             throw new Error("guard deadline exceeded before result delivery");
           }
           if (result?.cancel === true) {

@@ -283,7 +283,8 @@ export type HostMessage =
 export type WorkerMessage =
   | { type: "ready"; generation: string; exports: string[] }
   | { type: "rpcReceipt"; generation: string; id: number }
-  | { type: "heartbeat"; generation: string }
+  /** lateMs: how late the worker's own heartbeat timer fired (diagnostic). */
+  | { type: "heartbeat"; generation: string; lateMs?: number }
   | { type: "initError"; generation: string; value: string }
   | {
     type: "result";

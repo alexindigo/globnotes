@@ -4,6 +4,12 @@ import * as path from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { logger } from "../logger.ts";
 import {
+  type MonotonicScheduler,
+  ObservedClock,
+  processClock,
+  STALL_WARNING_MS,
+} from "../observed_time.ts";
+import {
   pluginCodePath,
   type PluginManifest,
   workerPermissions,
@@ -37,6 +43,8 @@ import {
 } from "./network_contracts.ts";
 
 const HEARTBEAT_MS = 250;
+/** A ready worker silent for longer than this (observed time) has failed. */
+const HEARTBEAT_SILENCE_MS = 3 * HEARTBEAT_MS;
 const WORKER_URL = new URL("./worker_entry.ts", import.meta.url);
 export interface RpcAuthority {
   generation: string;
@@ -71,29 +79,10 @@ export interface RenderRecoveryAdmission {
   readonly effective: PermissionDeclaration;
   readonly writable?: boolean;
 }
-/** Internal host liveness seam; all other deadlines retain their native clocks. */
-export interface HostLivenessScheduler {
-  now(): number;
-  setTimeout(
-    callback: () => void,
-    milliseconds: number,
-  ): ReturnType<typeof setTimeout>;
-  clearTimeout(id: ReturnType<typeof setTimeout>): void;
-  setInterval(
-    callback: () => void,
-    milliseconds: number,
-  ): ReturnType<typeof setInterval>;
-  clearInterval(id: ReturnType<typeof setInterval>): void;
-}
-const NATIVE_LIVENESS: HostLivenessScheduler = {
-  now: () => performance.now(),
-  setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
-  clearTimeout: (id) => clearTimeout(id),
-  setInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
-  clearInterval: (id) => clearInterval(id),
-};
 export interface HostOptions {
-  liveness?: HostLivenessScheduler;
+  /** Test seam for the watchdog and activation clock (observed time over this
+   * scheduler). Call, receipt and disposal deadlines use the process clock. */
+  liveness?: MonotonicScheduler;
   role?: "render" | "service";
   writable?: boolean;
   snapshot?: JsonValues;
@@ -115,7 +104,8 @@ interface Job {
   target?: Slot;
   resolve(value: unknown): void;
   reject(error: Error): void;
-  timer: ReturnType<typeof setTimeout>;
+  /** Cancels the job's observed-time deadline. */
+  timer: () => void;
   context?: ExecutionContext;
   invocation?: InvocationOptions;
 }
@@ -143,7 +133,9 @@ interface Slot {
    * The note-operation lock serializes operations, so at most one guard is
    * in flight per plugin. */
   activeGuard: Job | null;
-  bootTimer?: ReturnType<typeof setTimeout>;
+  bootTimer?: () => void;
+  /** The worker's own reported heartbeat lateness (diagnostic only). */
+  lastWorkerLateMs: number | null;
   resolveReady(): void;
   rejectReady(error: Error): void;
   readyPromise: Promise<void>;
@@ -155,7 +147,7 @@ interface Slot {
     {
       sent: boolean;
       context: ExecutionContext;
-      timer: ReturnType<typeof setTimeout>;
+      timer: () => void;
     }
   >;
 }
@@ -172,7 +164,11 @@ export class PluginHost {
     );
   }
   readonly limits: PluginLimits;
-  private readonly liveness: HostLivenessScheduler;
+  /** Watchdog and activation clock. */
+  private readonly liveness: ObservedClock;
+  /** Call, receipt and disposal deadlines. */
+  private readonly clock: ObservedClock = processClock;
+  private dispatches = 0;
   private slots: Slot[] = [];
   private queue: Job[] = [];
   /** Service guards have their own bounded pending admission, independent of FIFO. */
@@ -181,7 +177,7 @@ export class PluginHost {
   private stopped = false;
   private stopping = false;
   private failedDetail: string | null = null;
-  private watchdog: ReturnType<typeof setInterval> | null = null;
+  private watchdog: (() => void) | null = null;
   private startIdentity?: object;
   /** False until construction is admitted; true while its new slot initializes. */
   private readonly renderRecoveries = new Map<object, boolean>();
@@ -194,7 +190,9 @@ export class PluginHost {
     private readonly options: HostOptions = {},
   ) {
     this.role = options.role ?? "render";
-    this.liveness = options.liveness ?? NATIVE_LIVENESS;
+    this.liveness = options.liveness
+      ? new ObservedClock(options.liveness)
+      : processClock;
     this.limits = { ...PLUGIN_LIMITS, ...options.limits };
     if (this.role === "render" && !manifest.entry) {
       throw new Error("render host requires a rendering entry");
@@ -246,10 +244,7 @@ export class PluginHost {
       for (let index = 0; index < this.workerCount; index++) {
         owned.push(this.spawn());
       }
-      this.watchdog = this.liveness.setInterval(
-        () => this.checkHeartbeats(),
-        HEARTBEAT_MS,
-      );
+      this.watchdog = this.liveness.every(() => this.checkHeartbeats());
       await Promise.all(owned.map((slot) => slot.readyPromise));
       if (this.startIdentity !== identity) {
         throw new Error("plugin start owner retired");
@@ -284,10 +279,8 @@ export class PluginHost {
     }
     slot.steadyStartedAt = now;
     slot.ready = true;
-    if (slot.bootTimer !== undefined) {
-      this.liveness.clearTimeout(slot.bootTimer);
-      slot.bootTimer = undefined;
-    }
+    slot.bootTimer?.();
+    slot.bootTimer = undefined;
     slot.background.settle({ status: "settled" });
     slot.resolveReady();
     this.pump();
@@ -349,6 +342,7 @@ export class PluginHost {
         initialization: "pending",
         heartbeatEstablished: false,
         lastHeartbeatReceipt: null,
+        lastWorkerLateMs: null,
         activationDeadline: origin + this.limits.activationMs,
         steadyStartedAt: null,
         lastDispatch: 0,
@@ -366,20 +360,14 @@ export class PluginHost {
         receipts: new Map(),
       };
       constructed = slot;
-      const remaining = slot.activationDeadline - this.liveness.now();
-      if (remaining <= 0) {
-        // This constructed candidate is not yet a member: fail() cannot own cleanup.
-        this.retireSlot(slot, "plugin activation deadline exceeded");
-        throw new Error("plugin activation deadline exceeded");
-      }
-      slot.bootTimer = this.liveness.setTimeout(
-        () => {
-          if (this.livenessCurrent(slot, identity)) {
-            this.activationExpired(slot);
-          }
-        },
-        remaining,
-      );
+      // Construction is synchronous host work: it cannot use up observed
+      // activation time, so the budget always remains to be armed here.
+      slot.bootTimer = this.liveness.deadlineAt(slot.activationDeadline, () => {
+        slot.bootTimer = undefined;
+        if (this.livenessCurrent(slot, identity)) {
+          this.activationExpired(slot);
+        }
+      });
       worker.onmessage = ({ data }: MessageEvent<WorkerMessage>) => {
         if (!data || typeof data !== "object") {
           this.fail(slot, "invalid worker envelope");
@@ -391,7 +379,9 @@ export class PluginHost {
             !this.livenessCurrent(slot, identity) ||
             this.activationExpired(slot)
           ) return;
-          slot.lastHeartbeatReceipt = this.liveness.now();
+          const received = this.liveness.now();
+          this.noteHeartbeat(slot, received, data.lateMs);
+          slot.lastHeartbeatReceipt = received;
           slot.heartbeatEstablished = true;
           this.tryQualifySlot(slot, identity);
           return;
@@ -524,7 +514,7 @@ export class PluginHost {
           }
           job.context.close({ status: "settled" });
           slot.contexts.delete(job.context.reference.id);
-          clearTimeout(job.timer);
+          job.timer();
           if (slot.activeGuard?.id === data.id) slot.activeGuard = null;
           else slot.active = null;
           if (data.ok) job.resolve(data.value);
@@ -535,7 +525,7 @@ export class PluginHost {
         if (data.type === "rpcReceipt") {
           const receipt = slot.receipts.get(data.id);
           if (!receipt?.sent) return;
-          clearTimeout(receipt.timer);
+          receipt.timer();
           receipt.context.settle({ status: "settled" });
           slot.receipts.delete(data.id);
           return;
@@ -587,10 +577,10 @@ export class PluginHost {
             ? executionContext("background", false)
             : undefined;
           if (receipt) {
-            const timer = setTimeout(() => {
+            const timer = this.clock.deadline(NETWORK_LIMITS.receiptMs, () => {
               receipt.close({ status: "aborted" });
               slot.receipts.delete(data.id);
-            }, NETWORK_LIMITS.receiptMs);
+            });
             slot.receipts.set(data.id, {
               sent: false,
               context: receipt,
@@ -873,7 +863,7 @@ export class PluginHost {
         invocation,
         resolve,
         reject,
-        timer: setTimeout(() => {
+        timer: this.clock.deadline(timeout, () => {
           const pending = guardLane ? this.guardQueue : this.queue;
           const queued = pending.indexOf(job);
           if (queued >= 0) {
@@ -891,7 +881,7 @@ export class PluginHost {
               "plugin call deadline exceeded; in-flight outcome unknown",
             );
           }
-        }, timeout),
+        }),
       };
       if (initialization && target) this.dispatch(target, job);
       else {
@@ -933,7 +923,7 @@ export class PluginHost {
       job.invocation?.generation &&
       job.invocation.generation !== slot.generation
     ) {
-      clearTimeout(job.timer);
+      job.timer();
       job.reject(new Error("plugin target generation replaced"));
       return;
     }
@@ -949,7 +939,7 @@ export class PluginHost {
     } else {
       slot.active = job;
     }
-    slot.lastDispatch = Date.now();
+    slot.lastDispatch = ++this.dispatches;
     const common = {
       generation: slot.generation,
       id: job.id,
@@ -992,29 +982,27 @@ export class PluginHost {
     if (slot.retired) return;
     slot.retired = true;
     slot.retireGeneration();
-    if (slot.bootTimer !== undefined) {
-      this.liveness.clearTimeout(slot.bootTimer);
-      slot.bootTimer = undefined;
-    }
+    slot.bootTimer?.();
+    slot.bootTimer = undefined;
     slot.background.close({ status: "aborted" });
     for (const context of slot.contexts.values()) {
       context.close({ status: "aborted" });
     }
     slot.contexts.clear();
     for (const receipt of slot.receipts.values()) {
-      clearTimeout(receipt.timer);
+      receipt.timer();
       receipt.context.close({ status: "aborted" });
     }
     slot.receipts.clear();
     slot.worker.terminate();
     slot.rejectReady(new Error(detail));
     if (slot.active) {
-      clearTimeout(slot.active.timer);
+      slot.active.timer();
       slot.active.reject(new Error(detail));
       slot.active = null;
     }
     if (slot.activeGuard) {
-      clearTimeout(slot.activeGuard.timer);
+      slot.activeGuard.timer();
       slot.activeGuard.reject(new Error(detail));
       slot.activeGuard = null;
     }
@@ -1023,7 +1011,7 @@ export class PluginHost {
   }
   private rejectQueued(detail: string): void {
     for (const job of [...this.queue.splice(0), ...this.guardQueue.splice(0)]) {
-      clearTimeout(job.timer);
+      job.timer();
       job.reject(new Error(detail));
     }
   }
@@ -1110,7 +1098,7 @@ export class PluginHost {
     this.retireSlot(slot, detail);
     if (this.role === "service") {
       this.failedDetail = detail;
-      if (this.watchdog !== null) this.liveness.clearInterval(this.watchdog);
+      this.watchdog?.();
       this.watchdog = null;
       this.registry.clear();
       this.rejectQueued(detail);
@@ -1133,6 +1121,22 @@ export class PluginHost {
       });
     }
   }
+  /** Diagnostic only: a heartbeat after a long gap says whether the worker
+   * itself was late (its own timer) or its delivery was. */
+  private noteHeartbeat(slot: Slot, received: number, lateMs: unknown) {
+    slot.lastWorkerLateMs =
+      typeof lateMs === "number" && Number.isFinite(lateMs) ? lateMs : null;
+    if (slot.lastHeartbeatReceipt === null) return;
+    const gap = received - slot.lastHeartbeatReceipt;
+    if (gap < STALL_WARNING_MS) return;
+    logger.warning(
+      `plugin '${this.manifest.id}' ${this.role} worker heartbeat arrived after ${
+        Math.round(gap)
+      } ms of observed time; the worker reported its own timer ${
+        slot.lastWorkerLateMs ?? "unknown"
+      } ms late`,
+    );
+  }
   private checkHeartbeats() {
     for (const slot of [...this.slots]) {
       if (this.role === "service" && this.failedDetail) return;
@@ -1143,7 +1147,21 @@ export class PluginHost {
       }
       const age = this.liveness.now() -
         Math.max(slot.steadyStartedAt!, slot.lastHeartbeatReceipt!);
-      if (age > 3 * HEARTBEAT_MS) {
+      if (age > HEARTBEAT_SILENCE_MS) {
+        const stalls = this.liveness.stalls;
+        logger.warning(
+          `plugin '${this.manifest.id}' ${this.role} worker sent no heartbeat for ${
+            Math.round(age)
+          } ms of observed time (bound ${HEARTBEAT_SILENCE_MS} ms; last worker-reported lateness ${
+            slot.lastWorkerLateMs ?? "none"
+          } ms; last discounted host stall ${
+            stalls.last === null
+              ? "none"
+              : `${Math.round(stalls.last.gapMs)} ms, ${
+                Math.round(this.liveness.now() - stalls.lastAt!)
+              } ms ago`
+          })`,
+        );
         this.fail(slot, "worker heartbeat timeout; in-flight outcome unknown");
       }
     }
@@ -1164,20 +1182,36 @@ export class PluginHost {
     ];
     this.queue = this.queue.filter((job) => !job.pre);
     for (const job of cancelled) {
-      clearTimeout(job.timer);
+      job.timer();
       job.reject(new Error("plugin guard owner disabled before execution"));
     }
     let unfinished = cancelled.length;
-    const deadline = Date.now() + this.limits.disposalMs;
+    // The disposal budget is observed time; hold the clock while polling.
+    const holding = this.clock.hold();
+    try {
+      unfinished += await this.drain(
+        this.clock.now() + this.limits.disposalMs,
+        errors,
+      );
+    } finally {
+      holding();
+    }
+    this.stop();
+    return { unfinished, errors };
+  }
+  private async drain(deadline: number, errors: unknown[]): Promise<number> {
+    let unfinished = 0;
     this.pump();
     for (const slot of this.slots) {
       if (slot.activeGuard) {
-        clearTimeout(slot.activeGuard.timer);
+        slot.activeGuard.timer();
         slot.activeGuard.reject(new Error("plugin guard owner disabled"));
         slot.activeGuard = null;
         unfinished++;
       }
-      while ((slot.active || this.queue.length) && Date.now() < deadline) {
+      while (
+        (slot.active || this.queue.length) && this.clock.now() < deadline
+      ) {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
       if (slot.active || this.queue.length) {
@@ -1191,7 +1225,7 @@ export class PluginHost {
             "",
             [],
             false,
-            Math.max(1, deadline - Date.now()),
+            Math.max(1, deadline - this.clock.now()),
             slot,
           ) as { errors: unknown[] };
           errors.push(...result.errors);
@@ -1200,13 +1234,12 @@ export class PluginHost {
         }
       }
     }
-    this.stop();
-    return { unfinished, errors };
+    return unfinished;
   }
   stop(): void {
     this.startIdentity = undefined;
     this.stopped = true;
-    if (this.watchdog !== null) this.liveness.clearInterval(this.watchdog);
+    this.watchdog?.();
     this.watchdog = null;
     this.renderRecoveries.clear();
     for (const slot of this.slots) {

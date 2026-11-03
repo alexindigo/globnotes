@@ -13,6 +13,7 @@ import {
 } from "./contracts.ts";
 import type { RpcAuthority } from "./host.ts";
 import { AsyncLock } from "./lifecycle.ts";
+import { type ObservedClock, processClock } from "../observed_time.ts";
 import type { FilesystemGrant, PluginManifest } from "./manifest.ts";
 import { sourceDigest } from "./settings_environment.ts";
 
@@ -31,6 +32,8 @@ export interface AuxiliaryFsAdapters {
   commit<T>(effect: () => T | Promise<T>): Promise<T>;
   /** Host-only preparation seam; production has no extra task/authority surface. */
   prepare?(): Promise<void>;
+  /** Deadline clock (observed time); tests inject a stepping scheduler. */
+  clock?: ObservedClock;
 }
 interface NodeIdentity {
   location: string;
@@ -164,14 +167,21 @@ function resolveBinding(input: string): Binding {
     directoryRequired,
   };
 }
-function fileHash(file: string, deadline: number): string {
+// Hashing is synchronous work bounded by the same clock: each chunk is an
+// observation, so time spent hashing counts against the deadline.
+function fileHash(
+  file: string,
+  deadline: number,
+  clock: ObservedClock,
+): string {
   const digest = createHash("sha256"),
     handle = Deno.openSync(file, { read: true }),
     chunk = new Uint8Array(64 * 1024);
   try {
     let count;
     while (true) {
-      if (Date.now() >= deadline) throw new FsError("fs_deadline");
+      clock.observe();
+      if (clock.now() >= deadline) throw new FsError("fs_deadline");
       count = handle.readSync(chunk);
       if (count === null) break;
       digest.update(chunk.subarray(0, count));
@@ -181,12 +191,17 @@ function fileHash(file: string, deadline: number): string {
   }
   return digest.digest("hex");
 }
-function ownedHandleHash(handle: Deno.FsFile, deadline: number): string {
+function ownedHandleHash(
+  handle: Deno.FsFile,
+  deadline: number,
+  clock: ObservedClock,
+): string {
   handle.seekSync(0, Deno.SeekMode.Start);
   const digest = createHash("sha256"), chunk = new Uint8Array(64 * 1024);
   let total = 0;
   while (true) {
-    if (Date.now() >= deadline) throw new FsError("fs_deadline");
+    clock.observe();
+    if (clock.now() >= deadline) throw new FsError("fs_deadline");
     const count = handle.readSync(chunk);
     if (count === null) break;
     total += count;
@@ -272,15 +287,16 @@ export class AuxiliaryFilesystem {
       return Promise.reject(new FsError("fs_generation_revoked"));
     }
     let effect: FsEffect = "none", expired = false;
-    const deadline = Date.now() + FS_LIMITS.deadlineMs;
+    const clock = this.adapters.clock ?? processClock;
+    const deadline = clock.now() + FS_LIMITS.deadlineMs;
     const stopped = Promise.withResolvers<never>();
     const abort = () =>
       stopped.reject(new FsError("fs_generation_revoked", effect));
     generation.jobs.add(abort);
-    const timer = setTimeout(() => {
+    const timer = clock.deadlineAt(deadline, () => {
       expired = true;
       stopped.reject(new FsError("fs_deadline", effect));
-    }, FS_LIMITS.deadlineMs);
+    });
     let args: unknown[],
       lease: FsSettingsLease,
       configured: Record<string, unknown>;
@@ -334,14 +350,14 @@ export class AuxiliaryFilesystem {
         authority.source?.codeFingerprint !== lease.codeFingerprint
       ) throw new FsError("fs_source_changed");
     } catch (error) {
-      clearTimeout(timer);
+      timer();
       generation.jobs.delete(abort);
       return Promise.reject(
         error instanceof FsError ? error : new FsError("fs_source_changed"),
       );
     }
     const assertCurrent = () => {
-      if (expired || Date.now() >= deadline) {
+      if (expired || clock.now() >= deadline) {
         throw new FsError("fs_deadline", effect);
       }
       if (!authority.current() || generation!.retired) {
@@ -362,7 +378,7 @@ export class AuxiliaryFilesystem {
       vault = resolveBinding(path.resolve(this.adapters.vaultPath));
       state = resolveBinding(path.resolve(this.adapters.statePath));
     } catch {
-      clearTimeout(timer);
+      timer();
       generation.jobs.delete(abort);
       return Promise.reject(new FsError("fs_denied"));
     }
@@ -391,7 +407,7 @@ export class AuxiliaryFilesystem {
     try {
       roots = grants(mutating ? "write" : "read");
     } catch (error) {
-      clearTimeout(timer);
+      timer();
       generation.jobs.delete(abort);
       return Promise.reject(
         error instanceof FsError ? error : new FsError("fs_denied"),
@@ -457,7 +473,10 @@ export class AuxiliaryFilesystem {
             ino: info.ino,
             kind: info.isFile ? "file" : "directory",
             ...(info.isFile
-              ? { hash: fileHash(binding.canonical, deadline), size: info.size }
+              ? {
+                hash: fileHash(binding.canonical, deadline, clock),
+                size: info.size,
+              }
               : {}),
           },
         })),
@@ -484,7 +503,7 @@ export class AuxiliaryFilesystem {
       if (operation === "rename") second = observe(args[1] as string);
       assertCurrent();
     } catch (error) {
-      clearTimeout(timer);
+      timer();
       generation.jobs.delete(abort);
       return Promise.reject(
         error instanceof FsError ? error : new FsError(
@@ -592,7 +611,8 @@ export class AuxiliaryFilesystem {
             if (
               !sameTemporary(Deno.lstatSync(temporary!), temporaryOwner!) ||
               !sameTemporary(temporaryHandle!.statSync(), temporaryOwner!) ||
-              ownedHandleHash(temporaryHandle!, deadline) !== preparedHash ||
+              ownedHandleHash(temporaryHandle!, deadline, clock) !==
+                preparedHash ||
               !sameTemporary(Deno.lstatSync(temporary!), temporaryOwner!)
             ) throw new FsError("fs_conflict");
             assertCurrent();
@@ -734,7 +754,7 @@ export class AuxiliaryFilesystem {
         );
       },
     ).finally(() => {
-      clearTimeout(timer);
+      timer();
       generation!.jobs.delete(abort);
     });
     return Promise.race([running, stopped.promise]);

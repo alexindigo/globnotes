@@ -342,7 +342,10 @@ for (const second of ["heartbeat", "initialization"] as const) {
         await c.initialized();
         await c.heartbeats();
       }
-      c.clock.time = 10000; // Installed timer deliberately remains uncalled.
+      // A punctual host reaches the observed budget; the installed timer
+      // deliberately remains uncalled.
+      c.clock.tick(9750);
+      c.clock.time = 10000;
       if (second === "initialization") release.resolve();
       else c.gate.releaseHeartbeat();
       await assertRejects(
@@ -542,40 +545,6 @@ Deno.test("startup liveness: duplicate ready during held sync runs initializatio
   } finally {
     release.resolve();
     await c.close();
-  }
-});
-
-Deno.test("startup liveness: successful construction exhausting original budget is terminated before membership", async () => {
-  const fixture = await pluginFixture();
-  const dir = await fixture.install("constructor-budget", {
-    runtime: { server: "service.js" },
-  }, { "service.js": serviceConsumer });
-  const gate = new WorkerDeliveryGate(), clock = new LivenessClock();
-  gate.onConstruct = () => {
-    clock.time = 10000;
-  };
-  const host = new PluginHost(
-    readManifest(dir),
-    fixture.vault,
-    () => Promise.resolve(null),
-    1,
-    { role: "service", liveness: clock },
-  );
-  try {
-    await assertRejects(
-      () => bounded(host.start(), "constructed expired candidate"),
-      Error,
-      "activation deadline exceeded",
-    );
-    assertEquals(gate.workers.length, 1);
-    assertEquals(gate.workers[0].terminated, 1);
-    assertEquals(clock.timeouts.size, 0);
-    assertEquals(clock.intervals.size, 0);
-    assertEquals(host.available, false);
-  } finally {
-    host.stop();
-    gate.restore();
-    console.log(JSON.stringify({ retainedLivenessFixture: fixture.root }));
   }
 });
 

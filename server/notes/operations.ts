@@ -22,6 +22,7 @@ import type {
   OperationFact,
 } from "../plugins/contracts.ts";
 import { OperationError } from "../plugins/errors.ts";
+import { processClock } from "../observed_time.ts";
 import { AsyncLock } from "../plugins/lifecycle.ts";
 import type { PluginLifecycle } from "../plugins/lifecycle.ts";
 import { PluginGuardError, type PluginRuntime } from "../plugins/runtime.ts";
@@ -217,7 +218,7 @@ export class NoteOperations {
         path: notePath,
         proposed: { path: notePath, content, contentAvailable: true },
       });
-      const deadline = Date.now() +
+      const deadline = processClock.now() +
         this.adapters.runtime()!.limits.preOperationMs;
       const leases = await this.#guard("pre-create", fact, deadline);
       const actualEffects: StorageEffect[] = [];
@@ -296,7 +297,7 @@ export class NoteOperations {
       requester?.authorize(prepared.requiredPaths, operationId);
       const contentChanged = saving && data.newContent !== before.content;
       const guards: { hook: HookName; leases: GuardLease[] }[] = [];
-      const deadline = Date.now() +
+      const deadline = processClock.now() +
         this.adapters.runtime()!.limits.preOperationMs;
       if (renameChanged) {
         const fact = this.#fact(operationId, "rename", ctx, {
@@ -421,7 +422,7 @@ export class NoteOperations {
         path: notePath,
         before: snapshot(before),
       });
-      const deadline = Date.now() +
+      const deadline = processClock.now() +
         this.adapters.runtime()!.limits.preOperationMs;
       const leases = await this.#guard("pre-delete", fact, deadline);
       const actualEffects: StorageEffect[] = [];
@@ -480,7 +481,7 @@ export class NoteOperations {
         path: directory,
         metadata: { filename: prepared.filename, bytes: body.length },
       });
-      const deadline = Date.now() +
+      const deadline = processClock.now() +
         this.adapters.runtime()!.limits.preOperationMs;
       const leases = await this.#guard("pre-upload", fact, deadline);
       const actualEffects: StorageEffect[] = [];
@@ -553,7 +554,7 @@ export class NoteOperations {
         originals.set(change.path, Deno.readTextFileSync(change.path));
       }
       const changedPaths = changes.map((c) => toNotePath(c.path));
-      const deadline = Date.now() +
+      const deadline = processClock.now() +
         this.adapters.runtime()!.limits.preOperationMs;
       const guards: { hook: HookName; leases: GuardLease[] }[] = [];
       guards.push({
@@ -711,7 +712,7 @@ export class NoteOperations {
         path: target.absolutePath,
         metadata: { bytes: bytes.length, existed },
       });
-      const deadline = Date.now() +
+      const deadline = processClock.now() +
         this.adapters.runtime()!.limits.preOperationMs;
       const leases = await this.#guard("pre-file-write", fact, deadline);
       await this.#commitGate(

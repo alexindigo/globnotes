@@ -11,6 +11,8 @@ import {
   installedSettingsFingerprint,
 } from "../server/plugins/settings_environment.ts";
 import { assertFsCode, auxiliaryFixture } from "./helpers/auxiliary_fixture.ts";
+import { LivenessClock } from "./helpers/worker_liveness.ts";
+import { ObservedClock } from "../server/observed_time.ts";
 import type { FsStat } from "../server/plugins/contracts.ts";
 
 Deno.test("backup FS: actual service Worker can await auxiliary publication", async () => {
@@ -213,6 +215,7 @@ for (const mode of ["source", "generation", "deadline"] as const) {
     const entered = Promise.withResolvers<void>(),
       release = Promise.withResolvers<void>();
     let hold = false;
+    const scheduler = new LivenessClock();
     const b = await auxiliaryFixture({
       prepare: async () => {
         if (hold) {
@@ -220,8 +223,8 @@ for (const mode of ["source", "generation", "deadline"] as const) {
           await release.promise;
         }
       },
+      clock: new ObservedClock(scheduler),
     });
-    const now = Date.now;
     let pending: Promise<unknown> | undefined;
     try {
       hold = true;
@@ -239,7 +242,8 @@ for (const mode of ["source", "generation", "deadline"] as const) {
         );
       }
       if (mode === "generation") await b.runtime.retireOwner(b.id, false, true);
-      if (mode === "deadline") Date.now = () => now() + 11_000;
+      // 11 s of observed time pass while the observation is held.
+      if (mode === "deadline") scheduler.tick(11_000);
       release.resolve();
       const result = await settled;
       if (mode === "generation") assert("error" in result);
@@ -253,7 +257,6 @@ for (const mode of ["source", "generation", "deadline"] as const) {
         );}
     } finally {
       release.resolve();
-      Date.now = now;
       if (pending) await pending.catch(() => undefined);
       await b.close();
     }

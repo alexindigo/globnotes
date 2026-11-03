@@ -8,6 +8,8 @@ import {
   PluginEndpoints,
 } from "../server/plugins/endpoints.ts";
 import { proxyPluginEndpoint, readBodyBytes } from "../server/plugins/proxy.ts";
+import { ObservedClock } from "../server/observed_time.ts";
+import { LivenessClock } from "./helpers/worker_liveness.ts";
 import type { PluginRuntime } from "../server/plugins/runtime.ts";
 import { state } from "../server/state.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
@@ -216,43 +218,40 @@ Deno.test("review repairs: R04 exact null tiny zero and view-backed chunks use b
 });
 
 Deno.test("review repairs: R04 acquisition deadline returns 408 despite never-settling cancellation", async () => {
-  const original = globalThis.setTimeout;
-  let scheduled = 0, cancelled = 0;
+  let cancelled = 0;
   const stream = new ReadableStream<Uint8Array>({
     cancel() {
       cancelled++;
       return new Promise<void>(() => {});
     },
   }, { highWaterMark: 0 });
-  globalThis.setTimeout = new Proxy(original, {
-    apply(target, self, args) {
-      if (args[1] === 30_000) {
-        scheduled++;
-        args[1] = 1;
-      }
-      return Reflect.apply(target, self, args);
-    },
-  });
-  try {
-    const error = await assertRejects(
-      () => readBodyBytes({ body: { stream } }),
-      HttpError,
-    );
-    assertEquals(error.status, 408);
-    assertEquals(scheduled, 1);
-    assertEquals(cancelled, 1);
-    assertEquals(stream.locked, false);
-    console.log(
-      JSON.stringify({
-        requestedDeadlineMs: 30_000,
-        actualStatus: error.status,
-        cancellationWasNotAwaited: true,
-        readerReleased: !stream.locked,
-      }),
-    );
-  } finally {
-    globalThis.setTimeout = original;
-  }
+  // The deadline is observed time: a punctual host's 30 s pass on this clock.
+  const scheduler = new LivenessClock();
+  const reading = readBodyBytes(
+    { body: { stream } },
+    new ObservedClock(scheduler),
+  );
+  reading.catch(() => undefined);
+  assertEquals(
+    scheduler.installed.filter((row) => row.kind === "activation")
+      .map((row) => row.milliseconds),
+    [30_000],
+  );
+  scheduler.tick(30_000, true);
+  const error = await assertRejects(() => reading, HttpError);
+  assertEquals(error.status, 408);
+  assertEquals(cancelled, 1);
+  assertEquals(stream.locked, false);
+  assertEquals(scheduler.timeouts.size, 0);
+  assertEquals(scheduler.intervals.size, 0);
+  console.log(
+    JSON.stringify({
+      requestedDeadlineMs: 30_000,
+      actualStatus: error.status,
+      cancellationWasNotAwaited: true,
+      readerReleased: !stream.locked,
+    }),
+  );
 });
 
 Deno.test("review repairs: R04 abort and stream failure release the reader and do not acquire replacement bytes", async () => {

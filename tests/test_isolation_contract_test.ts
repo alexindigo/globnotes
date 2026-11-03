@@ -80,6 +80,71 @@ const READINESS_ALLOWED: NonNullable<Rule["allowed"]> = [
   },
 ];
 
+/** Server lines that read a raw clock or arm a raw timer outside the
+ * observed-time owner (plans/scheduling-tolerance): wall-clock properties and
+ * pacing, none of which turns a scheduling stall into a failure. */
+const RAW_CLOCK_ALLOWED: NonNullable<Rule["allowed"]> = [
+  {
+    file: "server/auth/local.ts",
+    line: "const exp = Math.floor(Date.now() / 1000) +",
+    reason: "wall clock by design: a token's expiry is a real-time property",
+  },
+  {
+    file: "server/auth/middleware.ts",
+    line: "(metadata.expiresAt !== null && Date.now() >= metadata.expiresAt)",
+    reason:
+      "wall clock by design: an expired credential stays expired across a stall",
+  },
+  {
+    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
+    line:
+      "if (current.expiresAt !== null && Date.now() >= current.expiresAt) {",
+    reason: "wall clock by design: credential expiry closes the stream",
+  },
+  {
+    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
+    line: ": { at: Date.now() },",
+    reason: "a timestamp in the hello frame, not a budget",
+  },
+  {
+    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
+    line: "const heartbeat = setInterval(",
+    reason: "keepalive cadence the server emits; nothing fails when it is late",
+  },
+  {
+    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
+    line: "const remaining = admitted.expiresAt - Date.now();",
+    reason: "wall clock by design: the stream closes at credential expiry",
+  },
+  {
+    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
+    line: "expiryTimer = setTimeout(",
+    reason: "wall clock by design: the stream closes at credential expiry",
+  },
+  {
+    file: "server/plugins/lifecycle.ts",
+    line: "this.managedWrites.set(filename, { deletedAt: Date.now() });",
+    reason: "compared with filesystem mtimes, which are wall-clock times",
+  },
+  {
+    file: "server/notes/file_system.ts",
+    line: "const now = performance.now() / 1000;",
+    reason:
+      "scan-cache freshness against outside edits; a stall only expires the cache",
+  },
+  {
+    file: "server/search/fts5.ts",
+    line:
+      "const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));",
+    reason: "index batch pacing; never a bound",
+  },
+  {
+    file: "server/plugins/host.ts",
+    line: "await new Promise((resolve) => setTimeout(resolve, 5));",
+    reason: "disposal poll pacing; the disposal budget itself is observed time",
+  },
+];
+
 const RULES: Rule[] = [
   {
     id: "no-process-env-writes",
@@ -140,6 +205,20 @@ const RULES: Rule[] = [
     owners: ["server/environment.ts", "server/logger.ts"],
     why:
       "server components receive an Environment (server/environment.ts); logger.ts reads LOGLEVEL once at import",
+  },
+  {
+    id: "observed-time-owner",
+    scopes: ["server"],
+    pattern: /\b(?:Date|performance)\.now\(\)|\bset(?:Timeout|Interval)\s*\(/,
+    owners: ["server/observed_time.ts"],
+    exempt: [{
+      path: "server/plugins/worker_entry.ts",
+      reason:
+        "worker side: the heartbeat producer and plugin-managed timers; the host decides liveness",
+    }],
+    allowed: RAW_CLOCK_ALLOWED,
+    why:
+      "liveness and deadline checks measure observed time through server/observed_time.ts (processClock / ObservedClock), so a stall of this process is not blamed on a plugin or an operation. A raw clock read or timer is a wall-clock property or pacing, listed in RAW_CLOCK_ALLOWED with its reason",
   },
   {
     id: "single-readiness-bound",

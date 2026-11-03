@@ -201,17 +201,20 @@ in [plugin-api.md](plugin-api.md).
   becomes operational only after initialization **and** its first accepted,
   current-owner heartbeat. Service initialization includes activation, endpoints
   and required guards; render initialization includes the awaited initial `onSync`.
-  Both prerequisites share one absolute 10-second startup budget, including Worker
-  construction. Neither ready nor heartbeat traffic extends that budget.
+  Both prerequisites share one 10-second startup budget in observed time, from
+  just before Worker construction. Neither ready nor heartbeat traffic extends it.
 - Qualified Workers use the unchanged 250 ms heartbeat and strict `>750 ms`
   silence threshold, observed at a host watchdog tick. A single steady window
   begins at combined readiness; thereafter only genuine heartbeat receipts refresh
   it. Failed service registrations are revoked; qualified render failures enter
   the existing admitted replacement flow, without replaying calls. Startup failure
   does not count as a previously healthy render owner.
-- Liveness uses a monotonic host clock, independently of wall-clock changes. This
-  does not protect an established Worker from host/OS pauses longer than its steady
-  budget or establish why a particular heartbeat receipt was absent.
+- Liveness and every plugin deadline use observed time
+  (`server/observed_time.ts`): monotonic, and a stall of the globnotes process
+  itself (a paused VM, a starved NAS, the server's own synchronous work) counts
+  at most 350 ms per 250 ms tick. Healthy Workers are not failed for time in which
+  the host was not running; a Worker silent while the host runs on time still is.
+  Stalls of 750 ms or more are logged as warnings.
 - Render workers keep state across ordinary saves/indexing; legacy `onSync`
   is broadcast to every replica at a serialized sync boundary (this is a
   deliberate change from the old per-sync reinstantiation — plugins that
