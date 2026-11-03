@@ -15,9 +15,10 @@ import { resolveTitleInfo } from "@server/search/titles.ts";
 
 const MARKDOWN_EXT = ".md";
 const SNIPPET_COLS = 48;
-/** Whoosh parity: highlights wrap matches in <b class="match term0">. */
-const MARK_OPEN = '<b class="match term0">';
-const MARK_CLOSE = "</b>";
+/** Whoosh parity: highlights wrap matches in <b class="match term0">. The
+ * note text between marks is not escaped (server/mcp/snippets.ts). */
+export const MARK_OPEN = '<b class="match term0">';
+export const MARK_CLOSE = "</b>";
 
 interface FtsRow {
   path: string;

@@ -1,0 +1,49 @@
+<evaluation>
+  <!--
+    mcp-builder Phase 4 evaluation for the globnotes MCP server
+    (plans/v2-mcp/design.md §5 row 3). Every question is read-only and
+    answered from tests/fixtures/mcp/vault/ served by globnotes. The answers
+    are verified with the real tools by tests/mcp_evaluation_test.ts, which
+    solves each question through the MCP endpoint of a read_only server.
+  -->
+  <qa_pair>
+    <question>During the 2025 trip to Japan the household took a cooking class, and the dish they made there was later saved as a recipe in the vault. At what oven temperature, in degrees Celsius, is that dish baked? Answer with the number only.</question>
+    <answer>160</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In the garden notes, one raised bed was cleared when its garlic was harvested. Which crop was planted in that same bed afterwards? Answer with the crop name in lowercase.</question>
+    <answer>bush beans</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The vault keeps book reviews under a dedicated tag. How many of the reviewed books received the top rating of 5/5? Answer with a number.</question>
+    <answer>2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Of the work projects tracked in the vault, which one has the earliest deadline? Answer with the project note's title.</question>
+    <answer>Harbour</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>A journal entry mentions a novel lent by a neighbour. What is the surname of the novel's author, according to the vault's notes on it? Answer with the surname only.</question>
+    <answer>Powers</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Where did the household stay on the final night of the Japan trip before flying home? Answer with the hotel name exactly as written in the vault.</question>
+    <answer>Namba Riverside Hotel</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>One note is displayed with the title "Seed starting calendar" although its file has a different name. In which folder is it stored? Answer with the folder path relative to the vault root, using / as the separator.</question>
+    <answer>Garden/Planning</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Among the recipes marked as vegetarian, which one has the longest total time as stated in the recipe, not counting any resting time? Answer with the recipe's title.</question>
+    <answer>Ratatouille</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many notes are stored in the folder for the 2025 trip to Japan (directly in that folder)? Answer with a number.</question>
+    <answer>3</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>For the work project that builds a customer analytics dashboard, the kickoff meeting chose a database for the event tables. Which database was chosen? Answer with its name only.</question>
+    <answer>ClickHouse</answer>
+  </qa_pair>
+</evaluation>

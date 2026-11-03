@@ -177,6 +177,8 @@ export class GlobalConfig {
   readonly quickAccessSort: string;
   readonly quickAccessLimit: number;
   readonly autoEnablePlugins: boolean;
+  /** The MCP endpoint (`<prefix>/_/mcp`, docs/mcp.md); off answers 404. */
+  readonly mcpEnabled: boolean;
   /** White-label branding: env wins over stored config, null when unset. */
   brandName: string | null;
   brandAccent: string | null;
@@ -206,6 +208,10 @@ export class GlobalConfig {
       default: true,
     }) ===
       "true";
+    this.mcpEnabled = this.#env("GLOBNOTES_MCP_ENABLED", {
+      castBool: true,
+      default: true,
+    }) === "true";
     this.pathPrefix = this.#loadPathPrefix();
     // getEnv returns "" for unset vars — `||` treats that (and an
     // explicitly empty value) as absent, per the env-wins rule.
