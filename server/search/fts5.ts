@@ -40,6 +40,7 @@ export class Fts5Indexer implements Indexer {
   #indexPath: string;
   #status = { syncing: false, initial: false, done: 0, total: 0 };
   readonly #environment: Environment;
+  #savepoints = 0;
 
   constructor(stateDir: string, environment: Environment = processEnvironment) {
     this.#environment = environment;
@@ -202,9 +203,50 @@ export class Fts5Indexer implements Indexer {
     state.lifecycle?.observe(fact);
   }
 
+  /** Run `fn` as one unit of index writes: a savepoint, which outside a
+   * transaction is the transaction. Without one every statement is its own
+   * commit, synced to disk (WAL, synchronous=FULL): indexing a note took
+   * about 15 ms that way, so 10,000 notes took minutes and each batch held
+   * the event loop for seconds (plans/mcp-v3 S1 row 5). */
+  #transaction<T>(fn: () => T): T {
+    const name = `index_write_${this.#savepoints++}`;
+    this.#db.exec(`SAVEPOINT ${name}`);
+    try {
+      const result = fn();
+      this.#db.exec(`RELEASE ${name}`);
+      return result;
+    } catch (error) {
+      this.#db.exec(`ROLLBACK TO ${name}`);
+      this.#db.exec(`RELEASE ${name}`);
+      throw error;
+    } finally {
+      this.#savepoints--;
+    }
+  }
+
   /** Insert/replace a note in the FTS table, the raw-tag table, and the
-   * display-metadata table. */
+   * display-metadata table, as one unit. */
   #upsertNote(
+    path: string,
+    contentExTags: string,
+    tagSet: Set<string>,
+    filename: string,
+    lastModified: number,
+    titleInfo?: { title: string; h1: string | null; aliases: string[] },
+  ): void {
+    this.#transaction(() =>
+      this.#writeNote(
+        path,
+        contentExTags,
+        tagSet,
+        filename,
+        lastModified,
+        titleInfo,
+      )
+    );
+  }
+
+  #writeNote(
     path: string,
     contentExTags: string,
     tagSet: Set<string>,
@@ -251,15 +293,17 @@ export class Fts5Indexer implements Indexer {
   }
 
   #deleteByFilename(filename: string): void {
-    this.#db
-      .prepare(`DELETE FROM notes_fts WHERE filename = ?`)
-      .run(filename);
-    this.#db
-      .prepare(`DELETE FROM notes_tags WHERE filename = ?`)
-      .run(filename);
-    this.#db
-      .prepare(`DELETE FROM notes_meta WHERE filename = ?`)
-      .run(filename);
+    this.#transaction(() => {
+      this.#db
+        .prepare(`DELETE FROM notes_fts WHERE filename = ?`)
+        .run(filename);
+      this.#db
+        .prepare(`DELETE FROM notes_tags WHERE filename = ?`)
+        .run(filename);
+      this.#db
+        .prepare(`DELETE FROM notes_meta WHERE filename = ?`)
+        .run(filename);
+    });
   }
 
   #fileExists(filename: string): boolean {
@@ -282,7 +326,8 @@ export class Fts5Indexer implements Indexer {
     this.#status = { syncing: true, initial: false, done: 0, total: 0 };
     try {
       const fsFiles = new Set(state.notes.listAllNoteFilenames());
-      const indexed = this.#allIndexedFilenames();
+      const indexedMtimes = this.#indexedMtimes();
+      const indexed = [...indexedMtimes.keys()];
       // Full-precision mtimes (Python compares datetimes exactly; floored
       // seconds miss same-second external writes).
       const fsMtime = (filename: string) =>
@@ -293,24 +338,25 @@ export class Fts5Indexer implements Indexer {
       // directly for deletion (the filename-list cache must not hide
       // external deletes).
       const deleted = new Set<string>();
-      for (const filename of indexed) {
-        if (!this.#fileExists(filename)) {
-          this.#deleteByFilename(filename);
-          deleted.add(filename);
-          logger.info(`'${filename}' removed from index`);
-        } else {
-          const dbMtime = this.#indexedMtime(filename);
-          if (dbMtime !== fsMtime(filename)) {
-            // File changed on disk since last index.
-            this.reindexNote(this.#stripExt(filename));
-            logger.info(`'${filename}' updated`);
+      this.#transaction(() => {
+        for (const filename of indexed) {
+          if (!this.#fileExists(filename)) {
+            this.#deleteByFilename(filename);
+            deleted.add(filename);
+            logger.info(`'${filename}' removed from index`);
+          } else {
+            if (indexedMtimes.get(filename) !== fsMtime(filename)) {
+              // File changed on disk since last index.
+              this.reindexNote(this.#stripExt(filename));
+              logger.info(`'${filename}' updated`);
+            }
           }
         }
-      }
+      });
 
       // Add new — breadth-first so top-level notes are indexed early.
       const newFiles = [...fsFiles]
-        .filter((f) => !indexed.includes(f))
+        .filter((f) => !indexedMtimes.has(f))
         .sort((a, b) => a.split("/").length - b.split("/").length);
       this.#status.total = newFiles.length;
       const batchSize = Number(
@@ -321,14 +367,16 @@ export class Fts5Indexer implements Indexer {
         1000;
       for (let i = 0; i < newFiles.length; i += batchSize) {
         const batch = newFiles.slice(i, i + batchSize);
-        for (const filename of batch) {
-          try {
-            // Tolerate deletions mid-sync and external writes.
-            this.#indexFile(filename);
-          } catch {
-            // Python: continue on FileNotFoundError
+        this.#transaction(() => {
+          for (const filename of batch) {
+            try {
+              // Tolerate deletions mid-sync and external writes.
+              this.#indexFile(filename);
+            } catch {
+              // Python: continue on FileNotFoundError
+            }
           }
-        }
+        });
         this.#status.done += batch.length;
         if (batchDelay > 0) await delay(batchDelay);
       }
@@ -353,9 +401,9 @@ export class Fts5Indexer implements Indexer {
    * removes deleted, updates modified. Emits external on-* observations;
    * host-managed operations carry signatures and are not double-reported. */
   syncIndex(): void {
-    const indexed = this.#allIndexedFilenames();
+    const indexedMtimes = this.#indexedMtimes();
     const fsFiles = state.notes.listAllNoteFilenames();
-    const indexedSet = new Set(indexed);
+    const indexedSet = new Set(indexedMtimes.keys());
     const deleted = new Set<string>();
     const changedPaths: string[] = [];
     for (const filename of indexedSet) {
@@ -397,7 +445,7 @@ export class Fts5Indexer implements Indexer {
         const fsMtime =
           (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
             ?.getTime() ?? 0) / 1000;
-        if (fsMtime !== this.#indexedMtime(filename)) {
+        if (fsMtime !== indexedMtimes.get(filename)) {
           this.#indexFile(filename);
           logger.info(`'${filename}' updated`);
           if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
@@ -606,18 +654,20 @@ export class Fts5Indexer implements Indexer {
     });
   }
 
-  #allIndexedFilenames(): string[] {
-    return this.#db
-      .prepare("SELECT filename FROM notes_fts")
-      .all()
-      .map((r) => (r as { filename: string }).filename);
-  }
-
-  #indexedMtime(filename: string): number {
-    const row = this.#db
-      .prepare("SELECT last_modified FROM notes_fts WHERE filename = ?")
-      .get(filename) as { last_modified: number } | undefined;
-    return row?.last_modified ?? 0;
+  /** Every indexed file with its indexed mtime, in one scan. The FTS5
+   * table can't index `filename`, so a lookup by filename scans the whole
+   * table: a sync that looked up each file's mtime was quadratic in the
+   * vault size (about 17 s per search at 10,000 notes). */
+  #indexedMtimes(): Map<string, number> {
+    return new Map(
+      this.#db
+        .prepare("SELECT filename, last_modified FROM notes_fts")
+        .all()
+        .map((r) => {
+          const row = r as { filename: string; last_modified: number };
+          return [row.filename, row.last_modified];
+        }),
+    );
   }
 
   #stripExt(filename: string): string {
