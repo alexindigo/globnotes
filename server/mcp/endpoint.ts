@@ -15,6 +15,7 @@
  * (GLOBNOTES_MCP_ENABLED).
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   type AuthInfo,
   createMcpHandler,
@@ -59,6 +60,47 @@ export interface McpEndpoint {
 }
 
 const ACCESS_KEY = "globnotes";
+
+/** Errors the SDK and transports report while one request is served. */
+const reported = new AsyncLocalStorage<Error[]>();
+
+/** The SDK's `onerror` receives client rejections (a bad header, an
+ * unsupported version, malformed JSON) and server faults alike. What the
+ * request was answered with tells them apart: a 5xx answer is a server
+ * fault and goes to the error log with its details; anything else was the
+ * client's request and stays at debug. An error outside any request (none
+ * is expected) is logged as an error. */
+function reportError(error: Error): void {
+  const errors = reported.getStore();
+  if (errors) errors.push(error);
+  else logger.error("MCP server error:", error);
+}
+
+async function served(run: () => Promise<Response>): Promise<Response> {
+  const errors: Error[] = [];
+  const response = await reported.run(errors, run);
+  if (response.status >= 500) {
+    if (!errors.length) {
+      logger.error(`MCP request failed: HTTP ${response.status}`);
+    }
+    for (const error of errors) {
+      logger.error(`MCP request failed (HTTP ${response.status}):`, error);
+    }
+  } else {
+    for (const error of errors) {
+      logger.debug(
+        `MCP request rejected (HTTP ${response.status}): ${error.message}`,
+      );
+    }
+  }
+  return response;
+}
+
+/** A failure to release a finished exchange: not the client's doing, and
+ * the answer is already decided. */
+function cleanupFailed(error: unknown): void {
+  logger.warning("MCP request cleanup failed:", error);
+}
 
 function jsonRpcError(
   status: number,
@@ -144,30 +186,30 @@ export function createMcpEndpoint(
       adapters.version(),
     );
   };
-  const onerror = (error: Error) =>
-    logger.debug(`MCP request rejected: ${error.message}`);
-  const modern = createMcpHandler(factory, { legacy: "reject", onerror });
+  const modern = createMcpHandler(factory, {
+    legacy: "reject",
+    onerror: reportError,
+  });
   /** One 2025-era exchange: a fresh server on a stateless transport that
    * answers with one JSON body. */
   const legacy = async (request: Request, authInfo: AuthInfo) => {
-    const server = await factory({
-      era: "legacy",
-      authInfo,
-      requestInfo: request,
-    });
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
     });
+    // Set before connect, which chains the server's own handler after it.
+    transport.onerror = reportError;
+    let server: Awaited<ReturnType<typeof factory>> | undefined;
     try {
+      server = await factory({ era: "legacy", authInfo, requestInfo: request });
       await server.connect(transport);
       return await transport.handleRequest(request, { authInfo });
     } catch (error) {
-      onerror(error as Error);
+      reportError(error instanceof Error ? error : new Error(String(error)));
       return jsonRpcError(500, "Internal error", {}, -32603);
     } finally {
-      await transport.close().catch(onerror);
-      await server.close().catch(onerror);
+      await transport.close().catch(cleanupFailed);
+      await server?.close().catch(cleanupFailed);
     }
   };
   return {
@@ -194,9 +236,11 @@ export function createMcpEndpoint(
           -32601,
         );
       }
-      return await isLegacyRequest(request)
-        ? await legacy(request, authInfo)
-        : await modern.fetch(request, { authInfo });
+      return await served(async () =>
+        await isLegacyRequest(request)
+          ? await legacy(request, authInfo)
+          : await modern.fetch(request, { authInfo })
+      );
     },
     notAllowed(request) {
       if (foreignOrigin(request)) {

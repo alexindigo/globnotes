@@ -21,6 +21,7 @@ import {
   type NoteUpdate,
   type SearchResult,
 } from "../server/notes/models.ts";
+import { logger } from "../server/logger.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import type { NoteMutationLease } from "../server/plugins/lifecycle.ts";
 import { MARK_CLOSE, MARK_OPEN } from "../server/search/fts5.ts";
@@ -1390,5 +1391,148 @@ Deno.test("mcp tools: list_tags pages many tags within the budget", async (t) =>
     });
   } finally {
     await mcp.close();
+  }
+});
+
+Deno.test("mcp tools: unexpected server faults reach the error log, client rejections stay at debug", async () => {
+  const logged: { level: string; text: string }[] = [];
+  const original = { ...logger };
+  const capture =
+    (level: "debug" | "warning" | "error") => (...args: unknown[]) => {
+      logged.push({
+        level,
+        text: args.map((a) =>
+          a instanceof Error ? `${a.name}: ${a.message}` : String(a)
+        ).join(" "),
+      });
+    };
+  Object.assign(logger, {
+    debug: capture("debug"),
+    warning: capture("warning"),
+    error: capture("error"),
+  });
+  const fault = () => {
+    throw new Error("version store broke");
+  };
+  const meta = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": { name: "raw", version: "1" },
+    "io.modelcontextprotocol/clientCapabilities": {},
+  };
+  const post = (
+    endpoint: ReturnType<typeof createMcpEndpoint>,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    endpoint.post(
+      new Request(URL_BASE, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...headers,
+        },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      }),
+    );
+  const legacyInit = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "raw", version: "1" },
+    },
+  };
+  const modernList = (version: string) =>
+    [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {
+          _meta: {
+            ...meta,
+            "io.modelcontextprotocol/protocolVersion": version,
+          },
+        },
+      },
+      { "mcp-protocol-version": version, "mcp-method": "tools/list" },
+    ] as const;
+  const adapters = {
+    vault: fakeVault().vault,
+    writable: () => true,
+    authenticateRead: () => Promise.resolve(),
+    lease: () => Promise.resolve(LEASE),
+  };
+  const broken = createMcpEndpoint({ ...adapters, version: fault });
+  const healthy = createMcpEndpoint({ ...adapters, version: () => "test" });
+  const take = () => logged.splice(0);
+  try {
+    // A server fault while building the server, in each era: 500, logged as
+    // an error with its cause.
+    for (
+      const [era, response] of [
+        ["2025", () => post(broken, legacyInit)],
+        ["2026-07-28", () => post(broken, ...modernList("2026-07-28"))],
+      ] as const
+    ) {
+      const res = await response();
+      assertEquals(res.status, 500, era);
+      await res.body?.cancel();
+      const entries = take();
+      assert(
+        entries.some((e) =>
+          e.level === "error" && e.text.includes("HTTP 500") &&
+          e.text.includes("version store broke")
+        ),
+        `${era}: ${JSON.stringify(entries)}`,
+      );
+    }
+
+    // Client rejections, in each era: 4xx, at debug only.
+    for (
+      const [what, status, response] of [
+        ["2025 malformed JSON", 400, () =>
+          post(healthy, "{", {
+            "mcp-protocol-version": "2025-11-25",
+          })],
+        [
+          "2026 unsupported version",
+          400,
+          () => post(healthy, ...modernList("2099-01-01")),
+        ],
+        [
+          "2026 wrong content type",
+          415,
+          () =>
+            post(healthy, modernList("2026-07-28")[0], {
+              ...modernList("2026-07-28")[1],
+              "content-type": "text/plain",
+            }),
+        ],
+      ] as const
+    ) {
+      const res = await response();
+      assertEquals(res.status, status, what);
+      await res.body?.cancel();
+      const entries = take();
+      assert(entries.length > 0, `${what}: the rejection is logged`);
+      assert(
+        entries.every((e) => e.level === "debug"),
+        `${what}: ${JSON.stringify(entries)}`,
+      );
+    }
+
+    // A successful exchange logs nothing above debug.
+    const ok = await post(healthy, legacyInit);
+    assertEquals(ok.status, 200);
+    await ok.body?.cancel();
+    assertEquals(take().filter((e) => e.level !== "debug"), []);
+  } finally {
+    Object.assign(logger, original);
+    await broken.close();
+    await healthy.close();
   }
 });
