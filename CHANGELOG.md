@@ -17,6 +17,12 @@ plugin notifications are preserved without repeating globnotes' own writes.
 
 ### Fixed
 
+The index check at startup stays fast in large vaults. On a restart it looked
+up each indexed note with a query that read the whole index, time proportional
+to the square of the number of notes, while the server answered nothing else; it
+now reads the index once. The first index of a vault also builds much faster,
+because index writes are saved in batches instead of one disk sync per statement.
+
 Plugins keep working when the server is briefly not scheduled, such as on a busy
 NAS, in a paused VM or during a large vault scan. Plugin time limits count only
 time in which globnotes was actually running, and a plugin worker counts as stuck
