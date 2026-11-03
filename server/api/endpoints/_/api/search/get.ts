@@ -4,7 +4,7 @@
  * route: sort=score, order=desc, nested=true, folder=None, limit=None. */
 
 import { invalid_folder_path } from "@server/api_messages.ts";
-import { isValidNotePath } from "@server/helpers.ts";
+import { isReadableNotePath } from "@server/helpers.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 
@@ -53,7 +53,8 @@ export default function (request: PathfinderRequest) {
 
   if (folder !== undefined) {
     try {
-      isValidNotePath(folder);
+      // An existing folder: the read-path rule, as the note reads use.
+      isReadableNotePath(folder);
     } catch {
       throw new HttpError(400, invalid_folder_path);
     }
