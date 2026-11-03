@@ -451,7 +451,15 @@ async function discoverEndpoints(root: string, relative = ""): Promise<void> {
   }
 }
 
-setInterval(() => send({ type: "heartbeat", generation }), 250);
+// Each heartbeat reports how late this worker's own timer fired: diagnostic
+// evidence of worker-side starvation, never part of the host's decision.
+let heartbeatAt = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  const lateMs = Math.max(0, Math.round(now - heartbeatAt - 250));
+  heartbeatAt = now;
+  send({ type: "heartbeat", generation, lateMs });
+}, 250);
 
 // Fault isolation: a plugin's unhandled rejection is a diagnostic, never a
 // worker crash that forfeits registrations and in-flight outcomes.

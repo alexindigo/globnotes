@@ -13,6 +13,7 @@ import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
+import { processClock } from "../server/observed_time.ts";
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
@@ -258,7 +259,7 @@ for (const boundary of ["operation", "per-plugin"] as const) {
       );
       const origin = performance.now();
       const guarded = boundary === "operation"
-        ? runtime.guard("pre-create", {}, Date.now() + 100)
+        ? runtime.guard("pre-create", {}, processClock.now() + 100)
         : new NoteOperations({
           notes: new FileSystemNotes(fixture.vault, {}, env),
           files: new FileServing(fixture.vault),

@@ -12,6 +12,7 @@ import {
 import { sanitizeRequestHeaders } from "./endpoints.ts";
 import { advertisedEndpointMethods } from "./endpoint_table.ts";
 import { state } from "../state.ts";
+import { type ObservedClock, processClock } from "../observed_time.ts";
 
 const textEncoder = new TextEncoder();
 export const PLUGIN_BODY_ACQUISITION_MS = 30_000;
@@ -143,10 +144,14 @@ export function optionsPluginEndpoint(
   });
 }
 
-export async function readBodyBytes(request: {
-  body: { stream: ReadableStream<Uint8Array> | null };
-  _raw?: Request;
-}): Promise<Uint8Array> {
+/** The acquisition deadline is observed time (server/observed_time.ts). */
+export async function readBodyBytes(
+  request: {
+    body: { stream: ReadableStream<Uint8Array> | null };
+    _raw?: Request;
+  },
+  clock: ObservedClock = processClock,
+): Promise<Uint8Array> {
   const signal = request._raw?.signal;
   if (signal?.aborted) {
     throw new HttpError(400, "Plugin request body acquisition aborted");
@@ -154,7 +159,7 @@ export async function readBodyBytes(request: {
   const stream = request.body.stream;
   if (stream === null) return new Uint8Array(0);
   const reader = stream.getReader();
-  const deadline = Date.now() + PLUGIN_BODY_ACQUISITION_MS;
+  const deadline = clock.now() + PLUGIN_BODY_ACQUISITION_MS;
   let rejection!: (error: HttpError) => void;
   const interrupted = new Promise<never>((_, reject) => {
     rejection = reject;
@@ -172,19 +177,19 @@ export async function readBodyBytes(request: {
   };
   const abort = () =>
     stop(new HttpError(400, "Plugin request body acquisition aborted"));
-  const timer = setTimeout(
+  const timer = clock.deadlineAt(
+    deadline,
     () =>
       stop(
         new HttpError(408, "Plugin request body acquisition deadline exceeded"),
       ),
-    PLUGIN_BODY_ACQUISITION_MS,
   );
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
   let bytes = new Uint8Array(0), count = 0;
   try {
     for (;;) {
-      if (Date.now() >= deadline) {
+      if (clock.now() >= deadline) {
         stop(
           new HttpError(
             408,
@@ -195,7 +200,7 @@ export async function readBodyBytes(request: {
       if (failure) throw failure;
       const result = await Promise.race([reader.read(), interrupted]);
       if (failure) throw failure;
-      if (Date.now() >= deadline) {
+      if (clock.now() >= deadline) {
         stop(
           new HttpError(
             408,
@@ -247,7 +252,7 @@ export async function readBodyBytes(request: {
     stop(failed);
     throw failed;
   } finally {
-    clearTimeout(timer);
+    timer();
     signal?.removeEventListener("abort", abort);
     reader.releaseLock();
   }

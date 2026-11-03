@@ -11,6 +11,7 @@ import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { PluginSettingsEnvironment } from "../../server/plugins/settings_environment.ts";
 import { validateSettingsPages } from "../../server/plugins/settings.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
+import type { ObservedClock } from "../../server/observed_time.ts";
 
 export const auxiliaryPage = {
   id: "preferences",
@@ -34,6 +35,8 @@ export async function auxiliaryFixture(options: {
   prepare?(): Promise<void>;
   commit?<T>(effect: () => T | Promise<T>): Promise<T>;
   observe?(method: string, args: unknown[]): void;
+  /** The filesystem deadline clock (default: the process clock). */
+  clock?: ObservedClock;
 } = {}) {
   const fixture = await pluginFixture(options), id = "auxiliary";
   const dir = await fixture.install(id, {
@@ -105,6 +108,7 @@ export async function auxiliaryFixture(options: {
       data.forPlugin(manifest.id).settingsLease(manifest.settings),
     commit,
     prepare: options.prepare,
+    clock: options.clock,
   });
   let writable = true, operational = true;
   const ready = Promise.withResolvers<void>();
