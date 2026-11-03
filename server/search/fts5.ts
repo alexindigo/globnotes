@@ -224,6 +224,42 @@ export class Fts5Indexer implements Indexer {
     }
   }
 
+  /** Per-note failures already logged as errors, by filename: the sync
+   * before every search would otherwise repeat the same error per search. */
+  readonly #failed = new Map<string, string>();
+
+  /** One note's work in an index pass, as its own savepoint (inside the
+   * pass's transaction, where there is one): a failure rolls back only that
+   * note's writes (an indexed note keeps its previous entry) and is logged,
+   * so one unreadable or vanished note never aborts the pass, the rest of
+   * its batch, the new-file phase or the sync-completed event. A note that
+   * vanished mid-pass is expected (an outside delete); any other failure is
+   * an error, logged once per note and failure until the note succeeds.
+   * Returns whether the work completed. */
+  #perNote(filename: string, what: "update" | "add", fn: () => void): boolean {
+    try {
+      this.#transaction(fn);
+      this.#failed.delete(filename);
+      return true;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        logger.info(`'${filename}' vanished during the index ${what}`);
+        return false;
+      }
+      const failure = `${what}: ${(error as Error).message}`;
+      if (this.#failed.get(filename) === failure) {
+        logger.debug(`Index ${failure} of '${filename}' failed again`);
+      } else {
+        this.#failed.set(filename, failure);
+        logger.error(
+          `Index ${what} of '${filename}' failed; the other notes continue:`,
+          error,
+        );
+      }
+      return false;
+    }
+  }
+
   /** Insert/replace a note in the FTS table, the raw-tag table, and the
    * display-metadata table, as one unit. */
   #upsertNote(
@@ -337,20 +373,18 @@ export class Fts5Indexer implements Indexer {
       // Prune deleted; update modified. Python stats each INDEXED file
       // directly for deletion (the filename-list cache must not hide
       // external deletes).
-      const deleted = new Set<string>();
       this.#transaction(() => {
         for (const filename of indexed) {
-          if (!this.#fileExists(filename)) {
-            this.#deleteByFilename(filename);
-            deleted.add(filename);
-            logger.info(`'${filename}' removed from index`);
-          } else {
-            if (indexedMtimes.get(filename) !== fsMtime(filename)) {
+          this.#perNote(filename, "update", () => {
+            if (!this.#fileExists(filename)) {
+              this.#deleteByFilename(filename);
+              logger.info(`'${filename}' removed from index`);
+            } else if (indexedMtimes.get(filename) !== fsMtime(filename)) {
               // File changed on disk since last index.
               this.reindexNote(this.#stripExt(filename));
               logger.info(`'${filename}' updated`);
             }
-          }
+          });
         }
       });
 
@@ -365,15 +399,15 @@ export class Fts5Indexer implements Indexer {
       const batchDelay =
         Number(this.#environment.get("GLOBNOTES_INDEX_BATCH_DELAY") ?? "0.1") *
         1000;
+      const added: string[] = [];
       for (let i = 0; i < newFiles.length; i += batchSize) {
         const batch = newFiles.slice(i, i + batchSize);
         this.#transaction(() => {
           for (const filename of batch) {
-            try {
-              // Tolerate deletions mid-sync and external writes.
-              this.#indexFile(filename);
-            } catch {
-              // Python: continue on FileNotFoundError
+            if (
+              this.#perNote(filename, "add", () => this.#indexFile(filename))
+            ) {
+              added.push(filename);
             }
           }
         });
@@ -385,7 +419,7 @@ export class Fts5Indexer implements Indexer {
       }
       // Initial indexing is inventory plus on-sync — never fake creates.
       this.#batchSynced(
-        newFiles.map((f) => this.#stripExt(f)),
+        added.map((f) => this.#stripExt(f)),
         true,
       );
     } catch (e) {
@@ -422,43 +456,37 @@ export class Fts5Indexer implements Indexer {
       // Skip anything phase 1 just deleted (the scan cache may be stale).
       if (deleted.has(filename)) continue;
       if (!indexedSet.has(filename)) {
-        try {
+        this.#perNote(filename, "add", () => {
           const fsMtime =
             (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
               ?.getTime() ?? 0) / 1000;
           this.#indexFile(filename);
           logger.info(`'${filename}' added to index`);
           if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
-            changedPaths.push(this.#stripExt(filename));
-            this.#observeExternal(
-              "create",
-              filename,
-              Deno.readTextFileSync(
-                path.join(state.config.notesPath, filename),
-              ),
+            const content = Deno.readTextFileSync(
+              path.join(state.config.notesPath, filename),
             );
+            changedPaths.push(this.#stripExt(filename));
+            this.#observeExternal("create", filename, content);
           }
-        } catch {
-          // Tolerate deletions mid-scan (Python: continue on NotFound).
-        }
+        });
       } else {
-        const fsMtime =
-          (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
-            ?.getTime() ?? 0) / 1000;
-        if (fsMtime !== indexedMtimes.get(filename)) {
-          this.#indexFile(filename);
-          logger.info(`'${filename}' updated`);
-          if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
-            changedPaths.push(this.#stripExt(filename));
-            this.#observeExternal(
-              "save",
-              filename,
-              Deno.readTextFileSync(
+        this.#perNote(filename, "update", () => {
+          const fsMtime =
+            (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
+              ?.getTime() ?? 0) / 1000;
+          if (fsMtime !== indexedMtimes.get(filename)) {
+            this.#indexFile(filename);
+            logger.info(`'${filename}' updated`);
+            if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
+              const content = Deno.readTextFileSync(
                 path.join(state.config.notesPath, filename),
-              ),
-            );
+              );
+              changedPaths.push(this.#stripExt(filename));
+              this.#observeExternal("save", filename, content);
+            }
           }
-        }
+        });
       }
     }
     if (changedPaths.length > 0) this.#batchSynced(changedPaths, false);
