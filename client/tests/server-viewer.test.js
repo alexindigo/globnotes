@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { enableAutoUnmount, flushPromises, mount as mountComponent } from "@vue/test-utils";
+import { nextTick } from "vue";
 
 import ServerViewer from "../components/ServerViewer.vue";
 import { getPlugins, getRenderedHtml } from "../api.js";
@@ -162,6 +163,26 @@ describe("ServerViewer render lifetime", () => {
     expect(wrapper.find('[data-source-line="0"]').classes()).toContain("line-highlight");
     expect(wrapper.find('[data-source-line="1"]').classes()).not.toContain("line-highlight");
     expect(getRenderedHtml).toHaveBeenCalledOnce();
+  });
+
+  it("is aria-busy from the request until Mermaid has laid out its diagrams", async () => {
+    const diagrams = deferred();
+    mermaid.run.mockReturnValueOnce(diagrams.promise);
+    getRenderedHtml.mockResolvedValue('<pre class="mermaid">graph TD</pre>');
+    const wrapper = mount(ServerViewer, { props: { title: "Diagram" } });
+    try {
+      await nextTick();
+      expect(wrapper.attributes("aria-busy")).toBe("true");
+      await flushPromises();
+      expect(wrapper.find(".mermaid").exists()).toBe(true);
+      expect(wrapper.attributes("aria-busy")).toBe("true");
+      diagrams.resolve();
+      await flushPromises();
+      expect(wrapper.attributes("aria-busy")).toBe("false");
+    } finally {
+      diagrams.resolve();
+      await flushPromises();
+    }
   });
 
   it("rerenders the mounted surface when the view line-number preference changes", async () => {

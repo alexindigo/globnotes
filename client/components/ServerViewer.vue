@@ -2,6 +2,7 @@
   <div
     ref="viewerElement"
     :class="{ 'rendered-markdown': loaded, 'toastui-editor-contents': loaded }"
+    :aria-busy="busy ? 'true' : 'false'"
     @click="handleAnchorClick"
   ></div>
 </template>
@@ -29,6 +30,8 @@ const viewerElement = ref();
 // The container class appears only when content does — the old viewer
 // rendered both atomically, and e2e/style hooks poll the class.
 const loaded = ref(false);
+// Busy from a render's request until its diagrams and fonts have laid out.
+const busy = ref(false);
 // Tabler icons are stroke-based multi-path; render them inline for the
 // dynamically-created copy buttons (no Vue component available there).
 function tablerSvg(paths) {
@@ -86,6 +89,7 @@ const viewer = createServerViewer({
       '<p class="render-error">Failed to render this note.</p>';
     loaded.value = true;
   },
+  busy: value => { busy.value = value; },
   rendered: isCurrent => {
     const root = viewerElement.value;
     addCopyButtons(root);
@@ -95,7 +99,9 @@ const viewer = createServerViewer({
       theme: "base",
       themeVariables: mermaidThemeVariables(),
     });
-    mermaid
+    // Mermaid lays its diagrams out asynchronously; the render settles after
+    // that layout and the fonts it uses.
+    const diagrams = mermaid
       .run({ nodes: root.querySelectorAll(".mermaid") })
       .catch((error) => {
         if (isCurrent()) console.error("Mermaid rendering failed", error);
@@ -108,6 +114,7 @@ const viewer = createServerViewer({
       throwOnError: false,
     });
     highlightLines();
+    return diagrams.then(() => document.fonts?.ready);
   },
 });
 

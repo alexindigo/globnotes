@@ -23,7 +23,9 @@ export async function clickReady(session, selector) {
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
     const after=el.getBoundingClientRect(),style=getComputedStyle(el);
     const hit=document.elementFromPoint(after.x+after.width/2,after.y+after.height/2);
-    return (${visibleElement.toString()})(el)&&
+    // A region marked aria-busy (a viewer still laying out its diagrams) is
+    // still moving: its frame-stable rect is not its final one.
+    return !el.parentElement?.closest('[aria-busy="true"]')&&(${visibleElement.toString()})(el)&&
       Math.abs(before.x-after.x)<=0.5&&Math.abs(before.y-after.y)<=0.5&&
       Math.abs(before.width-after.width)<=0.5&&Math.abs(before.height-after.height)<=0.5&&el.contains(hit);
   })()`);

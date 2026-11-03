@@ -190,6 +190,43 @@ describe("saved-note render owner", () => {
     expect(latest()).toBe(false);
   });
 
+  it("stays busy from the request until the asynchronous enhancements settle", async () => {
+    const enhancements = deferred(), busy = vi.fn(), rendered = vi.fn(() => enhancements.promise);
+    const viewer = surface({ busy, rendered });
+    const pending = viewer.renderNote();
+    expect(busy.mock.calls).toEqual([[true]]);
+    await vi.waitFor(() => expect(rendered).toHaveBeenCalledOnce());
+    expect(viewer.setHtml).toHaveBeenCalledOnce();
+    expect(busy.mock.calls).toEqual([[true]]);
+    enhancements.resolve();
+    await pending;
+    expect(busy.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("ends the busy period on a failed render", async () => {
+    const busy = vi.fn();
+    getRenderedHtml.mockRejectedValue(Error("render"));
+    const viewer = surface({ busy });
+    await viewer.renderNote();
+    expect(busy.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("leaves the busy period to the newer render when an older one settles", async () => {
+    const oldEnhancements = deferred(), newEnhancements = deferred(), busy = vi.fn();
+    const rendered = vi.fn().mockReturnValueOnce(oldEnhancements.promise).mockReturnValueOnce(newEnhancements.promise);
+    const viewer = surface({ busy, rendered });
+    const old = viewer.renderNote();
+    await vi.waitFor(() => expect(rendered).toHaveBeenCalledOnce());
+    const current = viewer.renderNote();
+    await vi.waitFor(() => expect(rendered).toHaveBeenCalledTimes(2));
+    oldEnhancements.resolve();
+    await old;
+    expect(busy.mock.calls).toEqual([[true], [true]]);
+    newEnhancements.resolve();
+    await current;
+    expect(busy.mock.calls).toEqual([[true], [true], [false]]);
+  });
+
   it("rerenders for each plugin/theme fact and releases the subscriptions on dispose", async () => {
     const viewer = surface();
     expect(subscribe.mock.calls.map(([topic]) => topic)).toEqual([
