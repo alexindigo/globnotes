@@ -5,8 +5,9 @@
  * the globnotes tools registered for the caller's access. Write tools are
  * registered only when the caller holds write authority, so tools/list on a
  * read-only instance shows the read tools only. A call to a write tool on a
- * read-only instance still gets that tool, without authority, so the agent
- * reads the read-only tool error instead of a protocol "not found".
+ * read-only instance (or a 2025-era batch of calls) still gets that tool,
+ * without authority, so the agent reads the read-only tool error instead of
+ * a protocol "not found".
  */
 
 import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
@@ -39,8 +40,8 @@ export const WRITE_TOOLS: ToolDefinition[] = [
 ];
 
 export interface McpAccess extends ToolContext {
-  /** On a read-only instance, the tool a tools/call request names. */
-  calledTool?: string;
+  /** On a read-only instance, the tools a tools/call request names. */
+  calledTools?: string[];
 }
 
 function register(
@@ -82,11 +83,16 @@ export function createGlobnotesMcpServer(
   access: McpAccess,
   version: string,
 ): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version });
+  // The tool list never changes while a server runs, and the endpoint has
+  // no change-notification streams (endpoint.ts), so list changes are not
+  // advertised.
+  const server = new McpServer({ name: SERVER_NAME, version }, {
+    capabilities: { tools: { listChanged: false } },
+  });
   const ctx: ToolContext = { vault: access.vault, lease: access.lease };
   for (const tool of READ_TOOLS) register(server, tool, ctx);
   for (const tool of WRITE_TOOLS) {
-    if (access.lease !== null || tool.name === access.calledTool) {
+    if (access.lease !== null || access.calledTools?.includes(tool.name)) {
       register(server, tool, ctx);
     }
   }

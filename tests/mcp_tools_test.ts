@@ -1096,3 +1096,132 @@ Deno.test("mcp tools: a rename collision names the target, not the note", async 
     await mcp.close();
   }
 });
+
+/** A raw JSON-RPC POST to an in-process endpoint. */
+function rawPost(
+  endpoint: ReturnType<typeof createMcpEndpoint>,
+  body: unknown,
+  headers: Record<string, string> = {},
+) {
+  return endpoint.post(
+    new Request(URL_BASE, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...headers,
+      },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+const MODERN_META = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientInfo": { name: "raw", version: "1" },
+  "io.modelcontextprotocol/clientCapabilities": {},
+};
+
+Deno.test("mcp tools: stateless JSON in both eras, no change notifications", async () => {
+  const fake = fakeVault({ a: "# A\n" });
+  const endpoint = createMcpEndpoint({
+    vault: fake.vault,
+    writable: () => true,
+    authenticateRead: () => Promise.resolve(),
+    lease: () => Promise.resolve(LEASE),
+    version: () => "test",
+  });
+  try {
+    const legacy = await rawPost(endpoint, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "raw", version: "1" },
+      },
+    });
+    assertEquals(legacy.status, 200);
+    assertEquals(legacy.headers.get("content-type"), "application/json");
+    const init = await legacy.json();
+    assertEquals(init.result.capabilities.tools, { listChanged: false });
+
+    const call = await rawPost(endpoint, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "globnotes_get_note", arguments: { path: "a" } },
+    }, { "mcp-protocol-version": "2025-11-25" });
+    assertEquals(call.headers.get("content-type"), "application/json");
+    assertEquals((await call.json()).result.structuredContent.path, "a");
+
+    const discover = await rawPost(endpoint, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "server/discover",
+      params: { _meta: MODERN_META },
+    }, {
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "server/discover",
+    });
+    assertEquals(discover.headers.get("content-type"), "application/json");
+    assertEquals((await discover.json()).result.capabilities.tools, {
+      listChanged: false,
+    });
+
+    const listen = await rawPost(endpoint, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "subscriptions/listen",
+      params: { notifications: { toolsListChanged: true }, _meta: MODERN_META },
+    }, {
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "subscriptions/listen",
+    });
+    assertEquals(listen.status, 404);
+    assertEquals(listen.headers.get("content-type"), "application/json");
+    assertEquals((await listen.json()).error.code, -32601);
+  } finally {
+    await endpoint.close();
+  }
+});
+
+Deno.test("mcp tools: a read-only 2025 batch gets the read-only tool error", async () => {
+  const fake = fakeVault({ a: "# A\n" });
+  const endpoint = createMcpEndpoint({
+    vault: fake.vault,
+    writable: () => false,
+    authenticateRead: () => Promise.resolve(),
+    lease: () => Promise.reject(new Error("no lease on a read-only instance")),
+    version: () => "test",
+  });
+  try {
+    const res = await rawPost(endpoint, [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "globnotes_get_note", arguments: { path: "a" } },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "globnotes_delete_note", arguments: { path: "a" } },
+      },
+    ], { "mcp-protocol-version": "2025-03-26" });
+    assertEquals(res.status, 200);
+    const replies = await res.json() as {
+      id: number;
+      result: { isError?: boolean; content: { text: string }[] };
+    }[];
+    const byId = new Map(replies.map((reply) => [reply.id, reply.result]));
+    assertEquals(byId.get(1)?.isError, undefined);
+    assertEquals(byId.get(2)?.isError, true);
+    assertEquals(byId.get(2)?.content[0].text, READ_ONLY_MESSAGE);
+    assertEquals(fake.calls.writes, []);
+  } finally {
+    await endpoint.close();
+  }
+});

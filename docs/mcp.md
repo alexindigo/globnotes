@@ -13,7 +13,7 @@ already grant there.
 | # | Item | Value |
 |---|---|---|
 | 1 | URL | `<origin><prefix>/_/mcp`, e.g. `http://globnotes.home/_/mcp`, or `http://nas.home/mom/_/mcp` with `GLOBNOTES_PATH_PREFIX=/mom` |
-| 2 | Transport | Streamable HTTP, stateless: every JSON-RPC message is one `POST`, answered with JSON. No sessions, no server-sent event streams |
+| 2 | Transport | Streamable HTTP, stateless: every JSON-RPC message is one `POST`, answered with one JSON body. No sessions and no server-sent event streams. The server sends no change notifications, so `subscriptions/listen` answers `404` (method not found) |
 | 3 | Protocol revisions | 2026-07-28 and the 2025 revisions (`initialize` handshake), from the same endpoint |
 | 4 | `GET`, `DELETE` | `405 Method Not Allowed`, `Allow: POST` |
 | 5 | Switch | `GLOBNOTES_MCP_ENABLED=false` turns it off; the URL then answers `404`. On by default |
