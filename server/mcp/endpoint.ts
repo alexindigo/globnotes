@@ -61,7 +61,10 @@ function jsonRpcError(status: number, message: string, headers = {}) {
 }
 
 /** MCP transport rule: a present Origin whose host differs from the
- * request's Host is refused. Clients without Origin (CLI agents) pass. */
+ * request's Host is refused. Clients without Origin (CLI agents) pass. This
+ * stops ordinary cross-site browser requests only: under DNS rebinding the
+ * attacker's Origin and Host match, so it is not rebinding protection (the
+ * REST API has the same limit; docs/mcp.md, Security). */
 export function foreignOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
   if (origin === null || origin === "") return false;

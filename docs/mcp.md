@@ -194,8 +194,12 @@ still be overwritten. A note changed within the same millisecond also isn't dete
   it until it expires. Use plain HTTP only on networks you trust, or put globnotes behind
   HTTPS.
 - **Browser pages.** A request whose `Origin` header doesn't match its `Host` is refused
-  with `403`, so a web page from another site can't use the endpoint through your browser.
-  MCP clients that send no `Origin` (command-line agents, desktop apps) are unaffected.
+  with `403`. That stops ordinary cross-site requests: a page on another site can't use the
+  endpoint through your browser. It does **not** stop DNS rebinding, where a hostile page
+  makes its own name resolve to your globnotes server, so that its `Origin` and `Host`
+  match. The REST API has the same limit. A rebinding page never receives your login token,
+  so on a LAN, use `password` or `totp` authentication rather than `none`. MCP clients that
+  send no `Origin` (command-line agents, desktop apps) are unaffected.
 - **Tokens in configuration files.** Client configurations hold the token in plain text.
   Prefer environment variables where the client supports them, and treat the file like a
   password.
