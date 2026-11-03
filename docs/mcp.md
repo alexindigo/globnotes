@@ -72,6 +72,7 @@ In `opencode.json`:
     "globnotes": {
       "type": "remote",
       "url": "http://globnotes.home/_/mcp",
+      "oauth": false,
       "headers": {
         "Authorization": "Bearer {env:GLOBNOTES_TOKEN}"
       }
@@ -79,6 +80,9 @@ In `opencode.json`:
   }
 }
 ```
+
+`"oauth": false` stops opencode from starting an OAuth sign-in when the token has expired
+(globnotes has no OAuth); it reports the failed connection instead.
 
 ### Claude Desktop and other stdio-only clients
 
