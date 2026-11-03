@@ -35,15 +35,31 @@ interface FtsRow {
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** How the indexer reads note files. The default reads the disk; tests
+ * inject failures through it (ARCHITECTURE: default adapters). */
+export interface IndexerAdapters {
+  readText(filepath: string): string;
+}
+
+export const fileAdapters: IndexerAdapters = {
+  readText: (filepath) => Deno.readTextFileSync(filepath),
+};
+
 export class Fts5Indexer implements Indexer {
   #db: DatabaseSync;
   #indexPath: string;
   #status = { syncing: false, initial: false, done: 0, total: 0 };
   readonly #environment: Environment;
+  readonly #adapters: IndexerAdapters;
   #savepoints = 0;
 
-  constructor(stateDir: string, environment: Environment = processEnvironment) {
+  constructor(
+    stateDir: string,
+    environment: Environment = processEnvironment,
+    adapters: Partial<IndexerAdapters> = {},
+  ) {
     this.#environment = environment;
+    this.#adapters = { ...fileAdapters, ...adapters };
     // The arg IS the state dir (index.sqlite's home) — no join; the
     // caller resolves GLOBNOTES_INDEX_PATH vs <vault>/.globnotes.
     Deno.mkdirSync(stateDir, { recursive: true });
@@ -143,7 +159,7 @@ export class Fts5Indexer implements Indexer {
    * the same (its sync reads by filename, not via the validated path). */
   #indexFile(filename: string): void {
     const filepath = path.join(state.config.notesPath, filename);
-    const content = Deno.readTextFileSync(filepath);
+    const content = this.#adapters.readText(filepath);
     const mtime = (Deno.statSync(filepath).mtime?.getTime() ?? 0) / 1000;
     const { contentExTags, tagSet } = extractTags(content);
     this.#upsertNote(
@@ -463,7 +479,7 @@ export class Fts5Indexer implements Indexer {
           this.#indexFile(filename);
           logger.info(`'${filename}' added to index`);
           if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
-            const content = Deno.readTextFileSync(
+            const content = this.#adapters.readText(
               path.join(state.config.notesPath, filename),
             );
             changedPaths.push(this.#stripExt(filename));
@@ -479,7 +495,7 @@ export class Fts5Indexer implements Indexer {
             this.#indexFile(filename);
             logger.info(`'${filename}' updated`);
             if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
-              const content = Deno.readTextFileSync(
+              const content = this.#adapters.readText(
                 path.join(state.config.notesPath, filename),
               );
               changedPaths.push(this.#stripExt(filename));
