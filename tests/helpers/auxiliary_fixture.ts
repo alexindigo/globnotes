@@ -2,7 +2,10 @@
 import { assertEquals } from "@std/assert";
 import { AuxiliaryFilesystem } from "../../server/plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "../../server/plugins/data.ts";
-import { createPluginManager } from "./plugin_manager.ts";
+import {
+  cleanupFailedPluginSetup,
+  createPluginManager,
+} from "./plugin_manager.ts";
 import {
   type PluginManifest,
   readManifest,
@@ -89,94 +92,101 @@ export async function auxiliaryFixture(options: {
       persistence: { commit },
     },
   );
-  const data = new PluginDataStore(fixture.statePath, {
-    commit,
-    settingsSchema: (id) => manager.network.settingsSchema(id),
-    settingsContext: (id) => manager.network.settingsContext(id),
-    settingsEnvironment: manager.settingsEnvironment,
-    prepareSettingsCommit: (change) =>
-      manager.network.prepareSettingsCommit(change),
-    settingsChanged: (id, page, revision) =>
-      runtime.settingsChanged(id, page, revision),
-  });
-  const filesystem = new AuxiliaryFilesystem({
-    vaultPath: fixture.vault,
-    statePath: fixture.statePath,
-    operational: () => operational,
-    writable: () => writable,
-    settings: (manifest) =>
-      data.forPlugin(manifest.id).settingsLease(manifest.settings),
-    commit,
-    prepare: options.prepare,
-    clock: options.clock,
-  });
-  let writable = true, operational = true;
-  const ready = Promise.withResolvers<void>();
-  const rpc = servicePluginRpc({
-    vaultPath: fixture.vault,
-    statePath: fixture.statePath,
-    actions: () => null,
-    filesystem,
-  });
-  const runtime = manager.configureRuntime({
-    operational: () => operational,
-    writable: () => writable,
-    commit,
-    rpc: (manifest, method, args, authority) => {
-      options.observe?.(method, args);
-      return rpc(manifest, method, args, authority);
-    },
-    changed: () => {
-      if (runtime.status(id)?.status === "ready") ready.resolve();
-    },
-  });
-  const timer = setTimeout(
-    () => ready.reject(new Error(JSON.stringify(runtime.status(id)))),
-    5000,
-  );
-  await runtime.reconcile();
+  let runtimeToClose: ReturnType<typeof manager.configureRuntime> | undefined;
   try {
-    await ready.promise;
-  } finally {
-    clearTimeout(timer);
+    const data = new PluginDataStore(fixture.statePath, {
+      commit,
+      settingsSchema: (id) => manager.network.settingsSchema(id),
+      settingsContext: (id) => manager.network.settingsContext(id),
+      settingsEnvironment: manager.settingsEnvironment,
+      prepareSettingsCommit: (change) =>
+        manager.network.prepareSettingsCommit(change),
+      settingsChanged: (id, page, revision) =>
+        runtime.settingsChanged(id, page, revision),
+    });
+    const filesystem = new AuxiliaryFilesystem({
+      vaultPath: fixture.vault,
+      statePath: fixture.statePath,
+      operational: () => operational,
+      writable: () => writable,
+      settings: (manifest) =>
+        data.forPlugin(manifest.id).settingsLease(manifest.settings),
+      commit,
+      prepare: options.prepare,
+      clock: options.clock,
+    });
+    let writable = true, operational = true;
+    const ready = Promise.withResolvers<void>();
+    ready.promise.catch(() => undefined); // observed during reconciliation too
+    const rpc = servicePluginRpc({
+      vaultPath: fixture.vault,
+      statePath: fixture.statePath,
+      actions: () => null,
+      filesystem,
+    });
+    const runtime = runtimeToClose = manager.configureRuntime({
+      operational: () => operational,
+      writable: () => writable,
+      commit,
+      rpc: (manifest, method, args, authority) => {
+        options.observe?.(method, args);
+        return rpc(manifest, method, args, authority);
+      },
+      changed: () => {
+        if (runtime.status(id)?.status === "ready") ready.resolve();
+      },
+    });
+    const timer = setTimeout(
+      () => ready.reject(new Error(JSON.stringify(runtime.status(id)))),
+      5000,
+    );
+    try {
+      await runtime.reconcile();
+      await ready.promise;
+    } finally {
+      clearTimeout(timer);
+    }
+    return {
+      ...fixture,
+      manager,
+      runtime,
+      data,
+      filesystem,
+      dir,
+      id,
+      manifest: () => readManifest(dir),
+      page: validateSettingsPages([auxiliaryPage])[0],
+      settings: () =>
+        runtime.invokeCommand(id, "run", { method: "settings" }) as Promise<
+          {
+            revision: number;
+            sourceKey: string;
+            values: Record<string, Record<string, unknown>>;
+          }
+        >,
+      last: () => runtime.invokeCommand(id, "run", { method: "last" }),
+      call: (method: string, ...args: unknown[]) =>
+        runtime.invokeCommand(id, "run", { method, args }) as Promise<
+          { value?: unknown; error?: { code: string; effect: string } }
+        >,
+      writable(value: boolean) {
+        writable = value;
+      },
+      operational(value: boolean) {
+        operational = value;
+      },
+      async close() {
+        manager.stop();
+        await runtime.close();
+        console.log(
+          JSON.stringify({ retainedAuxiliaryContractFixture: fixture.root }),
+        );
+      },
+    };
+  } catch (error) {
+    await cleanupFailedPluginSetup(manager, runtimeToClose);
+    throw error;
   }
-  return {
-    ...fixture,
-    manager,
-    runtime,
-    data,
-    filesystem,
-    dir,
-    id,
-    manifest: () => readManifest(dir),
-    page: validateSettingsPages([auxiliaryPage])[0],
-    settings: () =>
-      runtime.invokeCommand(id, "run", { method: "settings" }) as Promise<
-        {
-          revision: number;
-          sourceKey: string;
-          values: Record<string, Record<string, unknown>>;
-        }
-      >,
-    last: () => runtime.invokeCommand(id, "run", { method: "last" }),
-    call: (method: string, ...args: unknown[]) =>
-      runtime.invokeCommand(id, "run", { method, args }) as Promise<
-        { value?: unknown; error?: { code: string; effect: string } }
-      >,
-    writable(value: boolean) {
-      writable = value;
-    },
-    operational(value: boolean) {
-      operational = value;
-    },
-    async close() {
-      manager.stop();
-      await runtime.close();
-      console.log(
-        JSON.stringify({ retainedAuxiliaryContractFixture: fixture.root }),
-      );
-    },
-  };
 }
 export async function assertFsCode(
   call: Promise<{ error?: { code: string; effect: string } }>,

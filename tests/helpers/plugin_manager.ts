@@ -15,3 +15,17 @@ export function createPluginManager(
     env: options?.env ?? testEnvironment(),
   });
 }
+
+/** Failed construction has no returned owner to dispose these resources.
+ * Attempt both teardown steps while preserving the caller's setup error. */
+export async function cleanupFailedPluginSetup(
+  manager?: PluginManager,
+  runtime?: ReturnType<PluginManager["configureRuntime"]>,
+): Promise<void> {
+  try {
+    await (runtime ?? manager?.runtime)?.close();
+  } catch { /* preserve the setup failure */ }
+  try {
+    manager?.stop();
+  } catch { /* preserve the setup failure */ }
+}
