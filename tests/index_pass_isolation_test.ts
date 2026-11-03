@@ -16,6 +16,7 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
+import type { DatabaseSync } from "node:sqlite";
 import { logger } from "../server/logger.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
 import type { PluginLifecycle } from "../server/plugins/lifecycle.ts";
@@ -155,6 +156,95 @@ Deno.test("index sync: a changed note that can't be read doesn't break search", 
       facts.map((f) => [f.action, f.initial, [...f.changedPaths!].sort()]),
       [["sync", false, ["b", "d"]]],
     );
+  } finally {
+    Object.assign(logger, original);
+    restoreState(previous);
+    await Deno.remove(vault, { recursive: true });
+  }
+});
+
+/** A database whose next commit of a per-note savepoint fails once after
+ * `arm()`: the outermost savepoint of the sync before a search is
+ * `index_write_0`, and its RELEASE is that note's commit. */
+function failingCommit() {
+  let armed = false;
+  return {
+    arm: () => armed = true,
+    openDatabase(filepath: string): DatabaseSync {
+      const db = fileAdapters.openDatabase(filepath);
+      const exec = db.exec.bind(db);
+      db.exec = (sql: string) => {
+        if (armed && sql === "RELEASE index_write_0") {
+          armed = false;
+          throw new Error("disk I/O error (injected at commit)");
+        }
+        return exec(sql);
+      };
+      return db;
+    },
+  };
+}
+
+Deno.test("index sync: a note whose commit fails publishes nothing until it commits", async () => {
+  const previous = { ...state };
+  const original = { ...logger };
+  const vault = await Deno.makeTempDir({ prefix: "globnotes-pass-commit-" });
+  const errors: string[] = [];
+  try {
+    await Deno.writeTextFile(`${vault}/a.md`, "# a\n\nalpha\n");
+    setupState(vault);
+    const commit = failingCommit();
+    let attempts = 0;
+    const indexer = new Fts5Indexer(vault, testEnvironment({}), {
+      readText(filepath: string): string {
+        // Reading the new note means its savepoint is open: fail its first
+        // commit.
+        if (filepath.endsWith("/m.md") && attempts++ === 0) commit.arm();
+        return fileAdapters.readText(filepath);
+      },
+      openDatabase: commit.openDatabase,
+    });
+    indexer.startBackgroundSync();
+    await awaitIndexReady(indexer);
+
+    await Deno.writeTextFile(`${vault}/m.md`, "# m\n\nmanagedneedle\n");
+    await Deno.writeTextFile(`${vault}/x.md`, "# x\n\noutsideneedle\n");
+    setupState(vault); // a fresh note list (it is cached); resets state
+
+    // m.md is globnotes' own write: its managed signature must survive a
+    // failed attempt, so the committed retry is not an outside create.
+    const managed = new Set(["m.md"]);
+    const consumed: string[] = [];
+    const observed: string[] = [];
+    const facts: OperationFact[] = [];
+    state.lifecycle = {
+      consumeManaged: (filename: string) => {
+        consumed.push(filename);
+        return managed.delete(filename);
+      },
+      observe: (fact: OperationFact) =>
+        observed.push(`${fact.action}:${fact.path}`),
+      syncCompleted: (fact: OperationFact) => facts.push(fact),
+    } as unknown as PluginLifecycle;
+    Object.assign(logger, {
+      error: (...args: unknown[]) => errors.push(args.map(String).join(" ")),
+    });
+
+    // One sync (every search runs one first): m's commit fails, x commits.
+    // titlesFor reads the index without syncing.
+    indexer.syncIndex();
+    assertEquals(indexer.titlesFor(["m.md", "x.md"]), { "x.md": "x" });
+    assertEquals(errors.length, 1, errors.join("\n"));
+    assert(errors[0].includes("'m.md'"), errors[0]);
+    assertEquals(consumed, ["x.md"], "m's signature isn't touched");
+    assertEquals(observed, ["create:x"]);
+    assertEquals(facts.map((f) => f.changedPaths), [["x"]]);
+
+    // The retry commits: m is indexed and stays globnotes' own write.
+    assertEquals(indexer.search("managedneedle").map((r) => r.path), ["m"]);
+    assertEquals(consumed, ["x.md", "m.md"]);
+    assertEquals(observed, ["create:x"], "m isn't reported as external");
+    assertEquals(facts.length, 1);
   } finally {
     Object.assign(logger, original);
     restoreState(previous);

@@ -35,14 +35,17 @@ interface FtsRow {
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** How the indexer reads note files. The default reads the disk; tests
- * inject failures through it (ARCHITECTURE: default adapters). */
+/** How the indexer reaches the disk: note reads and its database. The
+ * defaults are the real ones; tests inject failures through them
+ * (ARCHITECTURE: default adapters). */
 export interface IndexerAdapters {
   readText(filepath: string): string;
+  openDatabase(filepath: string): DatabaseSync;
 }
 
 export const fileAdapters: IndexerAdapters = {
   readText: (filepath) => Deno.readTextFileSync(filepath),
+  openDatabase: (filepath) => new DatabaseSync(filepath),
 };
 
 export class Fts5Indexer implements Indexer {
@@ -64,7 +67,7 @@ export class Fts5Indexer implements Indexer {
     // caller resolves GLOBNOTES_INDEX_PATH vs <vault>/.globnotes.
     Deno.mkdirSync(stateDir, { recursive: true });
     this.#indexPath = path.join(stateDir, "index.sqlite");
-    this.#db = new DatabaseSync(this.#indexPath);
+    this.#db = this.#adapters.openDatabase(this.#indexPath);
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#initSchema();
     this.#migrate();
@@ -157,7 +160,7 @@ export class Fts5Indexer implements Indexer {
    * The filesystem is the source of truth: real vaults contain titles the
    * note API can't address (`?`, `:`, `*`…), and Python indexes them just
    * the same (its sync reads by filename, not via the validated path). */
-  #indexFile(filename: string): void {
+  #indexFile(filename: string): { content: string; mtime: number } {
     const filepath = path.join(state.config.notesPath, filename);
     const content = this.#adapters.readText(filepath);
     const mtime = (Deno.statSync(filepath).mtime?.getTime() ?? 0) / 1000;
@@ -170,6 +173,7 @@ export class Fts5Indexer implements Indexer {
       mtime,
       resolveTitleInfo(this.#basename(filename), content),
     );
+    return { content, mtime };
   }
 
   deleteFromIndex(path: string): void {
@@ -471,41 +475,49 @@ export class Fts5Indexer implements Indexer {
     for (const filename of fsFiles) {
       // Skip anything phase 1 just deleted (the scan cache may be stale).
       if (deleted.has(filename)) continue;
+      // Only index writes happen inside a note's savepoint. Its effects
+      // outside the index (the managed signature, the change list, the
+      // external fact) follow only once that savepoint has committed, so a
+      // rolled-back note publishes nothing and is reported on its retry.
+      let indexed: { content: string; mtime: number } | undefined;
       if (!indexedSet.has(filename)) {
-        this.#perNote(filename, "add", () => {
-          const fsMtime =
-            (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
-              ?.getTime() ?? 0) / 1000;
-          this.#indexFile(filename);
+        if (
+          this.#perNote(filename, "add", () => {
+            indexed = this.#indexFile(filename);
+          })
+        ) {
           logger.info(`'${filename}' added to index`);
-          if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
-            const content = this.#adapters.readText(
-              path.join(state.config.notesPath, filename),
-            );
-            changedPaths.push(this.#stripExt(filename));
-            this.#observeExternal("create", filename, content);
-          }
-        });
-      } else {
+          this.#reportExternal("create", filename, indexed!, changedPaths);
+        }
+      } else if (
         this.#perNote(filename, "update", () => {
           const fsMtime =
             (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
               ?.getTime() ?? 0) / 1000;
           if (fsMtime !== indexedMtimes.get(filename)) {
-            this.#indexFile(filename);
-            logger.info(`'${filename}' updated`);
-            if (!state.lifecycle?.consumeManaged(filename, fsMtime)) {
-              const content = this.#adapters.readText(
-                path.join(state.config.notesPath, filename),
-              );
-              changedPaths.push(this.#stripExt(filename));
-              this.#observeExternal("save", filename, content);
-            }
+            indexed = this.#indexFile(filename);
           }
-        });
+        }) && indexed
+      ) {
+        logger.info(`'${filename}' updated`);
+        this.#reportExternal("save", filename, indexed, changedPaths);
       }
     }
     if (changedPaths.length > 0) this.#batchSynced(changedPaths, false);
+  }
+
+  /** After a note's index write committed: unless it was globnotes' own
+   * write (its managed signature), record it as an outside change, with
+   * the content the index read. */
+  #reportExternal(
+    action: "create" | "save",
+    filename: string,
+    indexed: { content: string; mtime: number },
+    changedPaths: string[],
+  ): void {
+    if (state.lifecycle?.consumeManaged(filename, indexed.mtime)) return;
+    changedPaths.push(this.#stripExt(filename));
+    this.#observeExternal(action, filename, indexed.content);
   }
 
   getTags(): string[] {
