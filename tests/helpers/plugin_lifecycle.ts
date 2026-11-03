@@ -13,7 +13,10 @@ import { NoteOperations } from "../../server/notes/operations.ts";
 import { PluginActions } from "../../server/plugins/actions.ts";
 import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
 import type { PluginManager } from "../../server/plugins/manager.ts";
-import { createPluginManager } from "./plugin_manager.ts";
+import {
+  cleanupFailedPluginSetup,
+  createPluginManager,
+} from "./plugin_manager.ts";
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
 import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { Fts5Indexer } from "../../server/search/fts5.ts";
@@ -21,6 +24,7 @@ import { initState, state } from "../../server/state.ts";
 import { fixtureApiOrigin, pluginFixture } from "./plugin_fixture.ts";
 import { testEnvironment } from "./environment.ts";
 import { pluginSettled } from "./plugin_ready.ts";
+import { restoreState } from "./state.ts";
 
 export const RECORDER_SERVICE = `export function activate(ctx) {
   globalThis.__facts = [];
@@ -122,30 +126,38 @@ export async function bundle(opts: {
   beforeRead?(method: string, args: unknown[]): Promise<void> | void;
 } = {}): Promise<Bundle> {
   const fixture = await pluginFixture();
-  if (opts.recorder !== false) {
-    await fixture.install("recorder", {
-      runtime: { server: "service.js" },
-      hooks: HOOKS,
-      capabilities: { read: ["vault"], write: ["vault"] },
-    }, { "service.js": RECORDER_SERVICE });
-  }
-  const env = testEnvironment({
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: "none",
-    // External writes bypass the storage layer; scans must see them
-    // immediately rather than through the 15s scan-cache TTL.
-    GLOBNOTES_SCAN_CACHE_TTL: opts.scanCacheTtl ?? "0",
-  });
+  const previousState = { ...state };
+  let managerToClose: PluginManager | undefined;
+  let runtimeToClose: PluginRuntime | undefined;
+  let hubToClose: VaultHub | undefined;
   try {
+    if (opts.recorder !== false) {
+      await fixture.install("recorder", {
+        runtime: { server: "service.js" },
+        hooks: HOOKS,
+        capabilities: { read: ["vault"], write: ["vault"] },
+      }, { "service.js": RECORDER_SERVICE });
+    }
+    const env = testEnvironment({
+      GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_INDEX_PATH: fixture.statePath,
+      GLOBNOTES_AUTH_TYPE: "none",
+      // External writes bypass the storage layer; scans must see them
+      // immediately rather than through the 15s scan-cache TTL.
+      GLOBNOTES_SCAN_CACHE_TTL: opts.scanCacheTtl ?? "0",
+    });
     const config = new GlobalConfig(env);
     const notes = new FileSystemNotes(fixture.vault, opts.probes ?? {}, env);
     const indexer = new Fts5Indexer(fixture.statePath, env);
     const files = new FileServing(fixture.vault);
-    const hub = new VaultHub(fixture.vault, fixture.statePath, env);
+    const hub = hubToClose = new VaultHub(
+      fixture.vault,
+      fixture.statePath,
+      env,
+    );
     hub.scanNow(); // Initial inventory precedes subscriber admission, as at boot.
     subscribeIndex(hub, indexer);
-    const manager = createPluginManager(
+    const manager = managerToClose = createPluginManager(
       fixture.vault,
       undefined,
       opts.workers ?? 1,
@@ -187,7 +199,7 @@ export async function bundle(opts: {
       statePath: fixture.statePath,
       actions: () => actions,
     });
-    const runtime = manager.configureRuntime({
+    const runtime = runtimeToClose = manager.configureRuntime({
       operational: () => lifecycle.operational(),
       writable: () => lifecycle.writable(),
       commit: (effect) => lifecycle.gate.run(effect),
@@ -228,7 +240,14 @@ export async function bundle(opts: {
       },
     };
   } catch (e) {
-    if (opts.retain === false) await fixture.dispose();
+    await cleanupFailedPluginSetup(managerToClose, runtimeToClose);
+    try {
+      hubToClose?.stop();
+    } catch { /* preserve the setup failure */ }
+    restoreState(previousState);
+    if (opts.retain === false) {
+      await fixture.dispose().catch(() => undefined);
+    }
     throw e;
   }
 }

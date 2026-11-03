@@ -14,8 +14,16 @@ import { fixtureApiOrigin } from "./plugin_fixture.ts";
 import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import type { PluginManager } from "../../server/plugins/manager.ts";
 import { Fts5Indexer } from "../../server/search/fts5.ts";
-import { initState } from "../../server/state.ts";
+import { initState, type ServerState, state } from "../../server/state.ts";
 import { done, pending, waitUntil } from "./wait.ts";
+
+/** Restore even a pre-init snapshot whose required fields are not set yet. */
+export function restoreState(previous: ServerState): void {
+  for (const key of Object.keys(state)) {
+    if (!Object.hasOwn(previous, key)) Reflect.deleteProperty(state, key);
+  }
+  Object.assign(state, previous);
+}
 
 export interface UnitState {
   config: GlobalConfig;
