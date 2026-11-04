@@ -130,10 +130,10 @@ details, which can include paths on the server, go only to the server log.
 | # | Tool | Input | Output | Annotations |
 |---|---|---|---|---|
 | 1 | `globnotes_search_notes` | `query`; `folder`; `include_subfolders` (default `true`); `sort` (`score`, `path`, `lastModified`; default `score`); `order` (`asc`, `desc`; default `desc`); `limit` (1–100, default 20); `offset` (default 0) | `{total, count, offset, has_more, next_offset?, results: [{path, title, last_modified, score?, snippet, matched_tags, truncated?, omitted_tags?}]}` | read-only, idempotent |
-| 2 | `globnotes_get_note` | `path` | `{path, title, content, last_modified}` | read-only, idempotent |
+| 2 | `globnotes_get_note` | `path`; `offset` (characters, default 0); `length` (characters, optional) | `{path, title, content, last_modified, offset, total_length, has_more, next_offset?, truncated?}` | read-only, idempotent |
 | 3 | `globnotes_list_folder` | `path` (default: the vault root); `limit` (1–500, default 100); `offset` (default 0) | `{path, total, count, offset, has_more, next_offset?, folders: [{name, path}], notes: [{path, title, truncated?}]}`: subfolders first, then notes | read-only, idempotent |
 | 4 | `globnotes_list_tags` | `limit` (1–2000, default 500); `offset` (default 0) | `{total, count, offset, has_more, next_offset?, tags, truncated?}` | read-only, idempotent |
-| 5 | `globnotes_create_note` | `path`, `content` | the note, as 2 | not destructive |
+| 5 | `globnotes_create_note` | `path`, `content` | `{path, title, content, last_modified}` | not destructive |
 | 6 | `globnotes_update_note` | `path`; `content`; `new_path`; `expected_last_modified`; `file_refs` (`none`, `move`, `relink`; default `none`) | the note, plus `moved_files: [{old_path, new_path}]` | destructive |
 | 7 | `globnotes_delete_note` | `path`, `expected_last_modified` | `{deleted}` | destructive |
 
@@ -165,10 +165,22 @@ Notes:
   that), trailing tags are left out instead and counted in `omitted_tags`. Every shortened
   text ends in ` ... [truncated]`, and the result's `truncated` field lists the shortened
   fields (it is absent otherwise). `path` is never shortened, so `globnotes_get_note` with
-  it always reads the whole note. The same applies to the listings: a note whose title
+  it always reads the whole note (in parts, if it is large). The same applies to the listings: a note whose title
   alone is over the limit is listed with its title shortened (`truncated: ["title"]`), and
   a tag alone over the limit is returned shortened, on a page of its own with
   `truncated: true`.
+- **Large notes come in parts.** `globnotes_get_note` returns a whole note when it fits in
+  one response (25,000 characters, counted as above). A larger note comes in parts: the
+  first call returns the beginning with `has_more: true`, and its summary line says the
+  content is partial. Call again with `offset: next_offset` until `has_more` is `false`.
+  `offset` and `length` read a chosen range; `length` is a maximum, and a part is never
+  larger than the response limit. Characters are Unicode code points, so a part never
+  splits one, and the parts join back into the note. `total_length` is the whole note's
+  length. A display title too long to leave half of the response for content is shortened
+  and marked (`truncated: ["title"]`); the content never is.
+- **Replacing a note.** `globnotes_update_note` always replaces the whole note with the
+  `content` it gets; it never takes a part. Read every part of a large note before
+  replacing it.
 - **Renames by heading.** As in the web app, a content update that changes the note's
   first `# Heading` renames the note to match, unless the note has a front-matter
   `title`. The result's `path` is the note's final path.

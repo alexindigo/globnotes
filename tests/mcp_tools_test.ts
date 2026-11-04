@@ -27,6 +27,7 @@ import type { NoteMutationLease } from "../server/plugins/lifecycle.ts";
 import { MARK_CLOSE, MARK_OPEN } from "../server/search/fts5.ts";
 import { createMcpEndpoint, foreignOrigin } from "../server/mcp/endpoint.ts";
 import { READ_ONLY_MESSAGE } from "../server/mcp/errors.ts";
+import { codePointLength, codePointSlice } from "../server/mcp/note_parts.ts";
 import { highlightsToText } from "../server/mcp/snippets.ts";
 import {
   CHARACTER_LIMIT,
@@ -794,15 +795,15 @@ Deno.test("mcp tools: reads and their actionable errors", async () => {
       title: "Beds",
       content: "# Beds\n\nBed 1: tomatoes",
       last_modified: isoTime(fake.notes.get("Garden/Beds")!.lastModified),
+      offset: 0,
+      total_length: 23,
+      has_more: false,
     });
     assert(
-      textOf(note).endsWith(
-        '"content":"# Beds\\n\\nBed 1: tomatoes",' +
-          `"last_modified":"${
-            isoTime(fake.notes.get("Garden/Beds")!.lastModified)
-          }"}`,
-      ),
+      textOf(note).includes('"content":"# Beds\\n\\nBed 1: tomatoes"'),
+      textOf(note),
     );
+    assert(!summaryOf(note).includes("PARTIAL"), summaryOf(note));
 
     const missing = await mcp.call("globnotes_get_note", { path: "Nope" });
     assertEquals(missing.isError, true);
@@ -848,6 +849,143 @@ Deno.test("mcp tools: reads and their actionable errors", async () => {
       textOf(tags),
       "Tags 1-2 of 2.\n" + JSON.stringify(tags.structuredContent),
     );
+  } finally {
+    await mcp.close();
+  }
+});
+
+interface NotePart {
+  title: string;
+  content: string;
+  offset: number;
+  total_length: number;
+  has_more: boolean;
+  next_offset?: number;
+  truncated?: string[];
+}
+
+/** A lone surrogate: a part that split a pair would hold one. */
+const LONE_SURROGATE =
+  /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
+Deno.test("mcp tools: note parts count code points", () => {
+  const text = "x\u{1F600}y\ud800z"; // a pair, and a lone high surrogate
+  assertEquals(codePointLength(text), 5);
+  assertEquals(codePointLength(""), 0);
+  assertEquals(codePointSlice(text, 1, 1), "\u{1F600}");
+  assertEquals(codePointSlice(text, 1, 2), "\u{1F600}y");
+  assertEquals(codePointSlice(text, 3, Infinity), "\ud800z");
+  assertEquals(codePointSlice(text, 9, 2), "");
+  assertEquals(codePointSlice(text, 0, 0), "");
+});
+
+Deno.test("mcp tools: get_note reads large notes in parts", async (t) => {
+  // Multi-byte text: astral emoji (surrogate pairs), a combining accent,
+  // CJK; every character a code point.
+  const unit = "a\u00e9\u0301\u4e2d\u{1F600}\u{1F3FD}z";
+  const small = `# Small\n\n${unit.repeat(3)}`;
+  const huge = `# Huge\n\n${unit.repeat(30_000)}`; // 210,008 code points
+  const fake = fakeVault({ Small: small, Huge: huge });
+  const mcp = await connect(fake);
+  const read = async (args: Record<string, unknown>) => {
+    const result = await mcp.call("globnotes_get_note", args);
+    assertEquals(result.isError, undefined, textOf(result));
+    const sent = textOf(result).length +
+      JSON.stringify(result.structuredContent).length;
+    assert(sent <= CHARACTER_LIMIT, `sent ${sent}`);
+    return {
+      part: result.structuredContent as unknown as NotePart,
+      summary: summaryOf(result),
+    };
+  };
+  const length = (text: string) => [...text].length;
+  try {
+    await t.step("a note that fits comes whole", async () => {
+      const { part, summary } = await read({ path: "Small" });
+      assertEquals(part.content, small);
+      assertEquals(
+        [part.offset, part.total_length, part.has_more],
+        [0, length(small), false],
+      );
+      assertEquals("next_offset" in part, false);
+      assert(!summary.includes("PARTIAL"), summary);
+    });
+    await t.step("ranges count code points, never split a pair", async () => {
+      // "# Small\n\n" is 9 characters; then a, e, U+0301, U+4E2D, U+1F600...
+      const { part } = await read({ path: "Small", offset: 12, length: 2 });
+      assertEquals(part.content, "\u4e2d\u{1F600}");
+      assertEquals([part.offset, part.has_more, part.next_offset], [
+        12,
+        true,
+        14,
+      ]);
+      for (let offset = 0; offset < length(small); offset += 3) {
+        const { part } = await read({ path: "Small", offset, length: 3 });
+        assert(!LONE_SURROGATE.test(part.content), `at ${offset}`);
+      }
+    });
+    await t.step("boundaries: the end and past it", async () => {
+      const total = length(small);
+      const last = await read({ path: "Small", offset: total - 1 });
+      assertEquals([last.part.content, last.part.has_more], ["z", false]);
+      for (const offset of [total, total + 1_000]) {
+        const { part, summary } = await read({ path: "Small", offset });
+        assertEquals(
+          [part.content, part.offset, part.has_more],
+          ["", total, false],
+        );
+        assert(summary.includes("PARTIAL"), summary);
+      }
+    });
+    await t.step(
+      "a huge note: the first part, marked, then the rest",
+      async () => {
+        const first = await read({ path: "Huge" });
+        assertEquals(first.part.has_more, true);
+        assertEquals(first.part.offset, 0);
+        assertEquals(first.part.total_length, length(huge));
+        assertEquals(first.part.next_offset, length(first.part.content));
+        assert(first.summary.includes("PARTIAL: characters 0-"), first.summary);
+        assert(first.summary.includes("read the whole note before replacing"));
+        // As much as fits: content is sent twice (text and structured), and
+        // the budget counts UTF-16 units (9 per 7 characters here).
+        const units = first.part.content.length;
+        assert(2 * units > CHARACTER_LIMIT - 1_000, `${units} units`);
+        const parts = [first.part.content];
+        let next = first.part.next_offset;
+        while (next !== undefined) {
+          const { part } = await read({ path: "Huge", offset: next });
+          assertEquals(part.offset, next);
+          assert(!LONE_SURROGATE.test(part.content));
+          parts.push(part.content);
+          next = part.next_offset;
+        }
+        assertEquals(parts.join(""), huge);
+      },
+    );
+    await t.step("a length over the budget returns what fits", async () => {
+      const { part } = await read({ path: "Huge", length: 100_000 });
+      assertEquals(part.has_more, true);
+      assert(length(part.content) < 100_000);
+    });
+    await t.step("a title over half the budget is shortened", async () => {
+      fake.notes.get("Huge")!.title = "T".repeat(40_000);
+      const { part, summary } = await read({ path: "Huge" });
+      assertEquals(part.truncated, ["title"]);
+      assert(part.title.endsWith(TRUNCATED));
+      // About half the budget stays for content.
+      assert(2 * part.content.length > CHARACTER_LIMIT / 2 - 1_000);
+      assert(summary.includes("title was shortened"), summary);
+    });
+    await t.step("offset and length are validated", async () => {
+      for (const args of [{ offset: -1 }, { length: 0 }, { offset: 1.5 }]) {
+        const result = await mcp.call("globnotes_get_note", {
+          path: "Small",
+          ...args,
+        });
+        assertEquals(result.isError, true, JSON.stringify(args));
+      }
+    });
   } finally {
     await mcp.close();
   }
