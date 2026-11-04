@@ -511,6 +511,41 @@ Deno.test("mcp tools: search results, sort mapping and snippets", async () => {
   }
 });
 
+Deno.test("mcp tools: every offset, limit and length is a safe integer, checked by the schema", async () => {
+  const fake = fakeVault({ a: "# A\n" });
+  const mcp = await connect(fake);
+  try {
+    for (
+      const [name, args] of [
+        ["globnotes_search_notes", { query: "x" }],
+        ["globnotes_list_folder", {}],
+        ["globnotes_list_tags", {}],
+        ["globnotes_get_note", { path: "a" }],
+      ] as const
+    ) {
+      const fields = name === "globnotes_get_note"
+        ? ["offset", "length"]
+        : ["offset", "limit"];
+      for (const field of fields) {
+        for (const bad of [-1, 1.5, 1e21, 2 ** 53]) {
+          const result = await mcp.call(name, { ...args, [field]: bad });
+          assertEquals(result.isError, true, `${name} ${field}=${bad}`);
+          assert(textOf(result).includes("Input validation error"));
+        }
+      }
+      // The largest safe offset is a valid (empty) window.
+      const far = await mcp.call(name, {
+        ...args,
+        offset: Number.MAX_SAFE_INTEGER,
+      });
+      assertEquals(far.isError, undefined, `${name}: ${textOf(far)}`);
+    }
+    assertEquals(fake.calls.search.length, 1, "only the valid search ran");
+  } finally {
+    await mcp.close();
+  }
+});
+
 Deno.test("mcp tools: the text block is one summary line plus the whole result as JSON", async () => {
   const fake = fakeVault({
     'Odd "quoted"\nname': '# Line one\n\n"two"\n\tthree \u2028',

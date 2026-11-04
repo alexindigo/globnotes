@@ -7,11 +7,12 @@ import { type Environment, processEnvironment } from "@server/environment.ts";
 import type { Indexer } from "@server/state.ts";
 import { isReadableNotePath } from "@server/helpers.ts";
 import { logger } from "@server/logger.ts";
-import type {
-  SearchPage,
-  SearchQuery,
-  SearchResult,
-  TagPage,
+import {
+  pageWindow,
+  type SearchPage,
+  type SearchQuery,
+  type SearchResult,
+  type TagPage,
 } from "@server/notes/models.ts";
 import { state } from "@server/state.ts";
 import { translateQuery } from "@server/search/query.ts";
@@ -534,13 +535,18 @@ export class Fts5Indexer implements Indexer {
     return this.#tags(offset, limit, true);
   }
 
-  #tags(offset: number, limit: number | undefined, count: boolean): TagPage {
+  #tags(
+    start: number,
+    max: number | undefined,
+    count: boolean,
+  ): TagPage {
+    const { offset, limit } = pageWindow(start, max);
     if (this.#status.initial) this.syncIndex();
     const tags = this.#db
       .prepare(
         "SELECT DISTINCT tag FROM notes_tags ORDER BY tag LIMIT ? OFFSET ?",
       )
-      .all(limit === undefined || limit < 0 ? -1 : limit, offset)
+      .all(limit ?? -1, offset)
       .map((r) => (r as { tag: string }).tag);
     const total = count
       ? (this.#db
@@ -583,16 +589,13 @@ export class Fts5Indexer implements Indexer {
    * grow with its offset and nothing outside it is materialized.
    */
   #search(term: string, query: SearchQuery, count: boolean): SearchPage {
+    const { offset, limit } = pageWindow(query.offset, query.limit);
     // Python: sync_index_with_retry before every search, but only after
     // the initial sync completed (before that, only priority-reindexed
     // notes are visible).
     if (this.#status.initial) this.syncIndex();
     const sort = query.sort ?? "score";
     const order = query.order ?? "desc";
-    const offset = Math.max(0, query.offset ?? 0);
-    const limit = query.limit === undefined || query.limit < 0
-      ? undefined
-      : query.limit;
     // A folder filter names an existing folder: the read-path rule.
     if (query.folder !== undefined) isReadableNotePath(query.folder);
     const scope = this.#scope(query.folder, query.nested ?? true);

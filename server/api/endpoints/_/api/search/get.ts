@@ -6,6 +6,7 @@
 
 import { invalid_folder_path } from "@server/api_messages.ts";
 import { isReadableNotePath } from "@server/helpers.ts";
+import { nonNegativeQueryInteger } from "@server/query_params.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 
@@ -39,27 +40,9 @@ export default function (request: PathfinderRequest) {
     | "path"
     | "last_modified";
   const order = orderParam as "asc" | "desc";
-  const limitParam = request.query.get("limit");
-  const limitNum = limitParam ? Number(limitParam) : undefined;
-  if (limitParam && !Number.isInteger(limitNum)) {
-    throw new HttpError(422, [{
-      type: "int_parsing",
-      loc: ["query", "limit"],
-      msg: "Input should be a valid integer",
-    }]);
-  }
-  const limit = limitNum;
-  // The page's start, cut by the index like limit (the MCP search pages
-  // the same way).
-  const offsetParam = request.query.get("offset");
-  const offset = offsetParam ? Number(offsetParam) : 0;
-  if (offsetParam && !(Number.isInteger(offset) && offset >= 0)) {
-    throw new HttpError(422, [{
-      type: "int_parsing",
-      loc: ["query", "offset"],
-      msg: "Input should be a valid non-negative integer",
-    }]);
-  }
+  // The page window, cut by the index (the MCP search pages the same way).
+  const limit = nonNegativeQueryInteger(request.query, "limit");
+  const offset = nonNegativeQueryInteger(request.query, "offset") ?? 0;
   const nested = request.query.get("nested") !== "false";
   const folder = request.query.get("folder") ?? undefined;
 

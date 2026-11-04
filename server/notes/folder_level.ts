@@ -4,6 +4,7 @@
  * API (GET /_/api/tree) and the MCP folder tool (server/mcp/) share. */
 
 import { state } from "../state.ts";
+import { pageWindow } from "./models.ts";
 
 export interface FolderLevel {
   folders: { name: string; path: string }[];
@@ -38,9 +39,10 @@ export function folderPage(
   offset = 0,
   limit?: number,
 ): FolderPage {
+  const window = pageWindow(offset, limit);
   const level = state.notes.listLevel(dirPath);
-  const start = Math.max(0, offset);
-  const end = limit === undefined || limit < 0 ? Infinity : start + limit;
+  const start = window.offset;
+  const end = window.limit === undefined ? Infinity : start + window.limit;
   const folderCount = level.folders.length;
   const folders = level.folders.slice(start, end);
   const notes = level.notes.slice(
