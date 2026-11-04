@@ -244,10 +244,34 @@ Deno.test("search: explicit sort orders", async () => {
       (await second.json()).map((h: { path: string }) => h.path),
       ["banana"],
     );
-    for (const offset of ["-1", "x", "1.5"]) {
-      const bad = await api(server, `/_/api/search?term=*&offset=${offset}`);
-      assertEquals(bad.status, 422, offset);
-      await bad.body?.cancel();
+    // One rule for both window parameters: digits only, a safe integer.
+    // Blank, whitespace, signs, exponents, hex, fractions and unsafe values
+    // are 422 (PR #28 review: " " used to read as 0, 1e21 reached SQLite).
+    for (const name of ["limit", "offset"]) {
+      for (
+        const value of [
+          "",
+          "%20",
+          "x",
+          "1.5",
+          "1.0",
+          "1e21",
+          "1e3",
+          "0x10",
+          "+1",
+          "-1",
+          "9007199254740992",
+          "99999999999999999999999",
+        ]
+      ) {
+        const bad = await api(server, `/_/api/search?term=*&${name}=${value}`);
+        assertEquals(bad.status, 422, `${name}=${value}`);
+        const [error] = (await bad.json()).detail;
+        assertEquals(error.loc, ["query", name], `${name}=${value}`);
+      }
+      const zero = await api(server, `/_/api/search?term=*&${name}=0`);
+      assertEquals(zero.status, 200, `${name}=0`);
+      await zero.body?.cancel();
     }
   } finally {
     await server.close();

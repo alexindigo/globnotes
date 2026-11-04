@@ -47,7 +47,7 @@ export interface SearchQuery {
   folder?: string;
   /** Results to skip. Default 0. */
   offset?: number;
-  /** Maximum results; undefined or negative = no maximum. */
+  /** Maximum results; undefined = no maximum (pageWindow). */
   limit?: number;
 }
 
@@ -55,6 +55,28 @@ export interface SearchPage {
   /** Every result the query matches, not just this page's. */
   total: number;
   results: SearchResult[];
+}
+
+/**
+ * The one rule for a page window (search, tags, folder listings): `offset`
+ * is a non-negative safe integer (default 0) and `limit` one too, or
+ * undefined for no maximum. Every boundary validates its input to it (REST:
+ * server/query_params.ts; MCP: the tools' Zod `.int().min(0)`, which also
+ * means safe integers); storage enforces it with a RangeError, so no
+ * fractional, negative or unsafe number ever reaches SQL.
+ */
+export function pageWindow(
+  offset = 0,
+  limit?: number,
+): { offset: number; limit: number | undefined } {
+  const valid = (n: number) => Number.isSafeInteger(n) && n >= 0;
+  if (!valid(offset)) {
+    throw new RangeError(`page offset must be a non-negative safe integer`);
+  }
+  if (limit !== undefined && !valid(limit)) {
+    throw new RangeError(`page limit must be a non-negative safe integer`);
+  }
+  return { offset, limit };
 }
 
 /** One page of the vault's tag list (sorted). */

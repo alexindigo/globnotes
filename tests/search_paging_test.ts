@@ -8,14 +8,14 @@
  * window, however far into the list it starts.
  */
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import * as path from "@std/path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { GlobalConfig } from "../server/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { folderPage } from "../server/notes/folder_level.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
-import type { SearchQuery } from "../server/notes/models.ts";
+import { pageWindow, type SearchQuery } from "../server/notes/models.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { initState, state } from "../server/state.ts";
 import { testEnvironment } from "./helpers/environment.ts";
@@ -223,6 +223,32 @@ Deno.test("search paging: pages are windows of one list, with exact totals", asy
       const root = indexer.search("*", "path", "asc", undefined, false)
         .map((r) => r.path);
       assert(root.length > 0 && root.every((p) => !p.includes("/")));
+    });
+    await t.step("a window is non-negative safe integers, before SQL", () => {
+      for (const bad of [-1, 1.5, 1e21, 2 ** 53, NaN, Infinity]) {
+        for (
+          const call of [
+            () => indexer.searchPage("garden", { offset: bad, limit: 5 }),
+            () => indexer.searchPage("garden", { offset: 0, limit: bad }),
+            () => indexer.search("*", "path", "asc", bad),
+            () => indexer.tagsPage(bad, 5),
+            () => indexer.tagsPage(0, bad),
+            () => folderPage("Work", bad, 5),
+            () => folderPage("Work", 0, bad),
+          ]
+        ) {
+          assertThrows(call, RangeError, "non-negative safe integer");
+        }
+      }
+      assertEquals(pageWindow(), { offset: 0, limit: undefined });
+      assertEquals(pageWindow(2 ** 53 - 1, 0), {
+        offset: 2 ** 53 - 1,
+        limit: 0,
+      });
+      assertEquals(
+        indexer.searchPage("garden", { offset: 2 ** 53 - 1, limit: 5 }).results,
+        [],
+      );
     });
     await t.step("tags: windows of the sorted list", () => {
       const all = indexer.getTags();
