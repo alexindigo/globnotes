@@ -13,11 +13,16 @@ import {
   admitHost,
   type AllowedHost,
   AllowedHostsError,
+  createRebindingWarner,
   hostAllowed,
   parseAllowedHosts,
   rebindingWarning,
 } from "../server/host_admission.ts";
+import { GlobalConfig } from "../server/config.ts";
+import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { bootServer, type TestServer } from "./helpers/boot.ts";
+import { testEnvironment } from "./helpers/environment.ts";
+import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 Deno.test("host admission: parsing GLOBNOTES_ALLOWED_HOSTS", () => {
   assertEquals(parseAllowedHosts(""), null);
@@ -152,12 +157,68 @@ Deno.test("host admission: unset admits every request; set refuses with 421", as
   assert(detail.includes("GLOBNOTES_ALLOWED_HOSTS"), detail);
 });
 
-Deno.test("host admission: the startup warning", () => {
-  const warning = rebindingWarning(true, null)!;
-  assert(warning.includes("DNS rebinding"), warning);
-  assert(warning.includes("GLOBNOTES_ALLOWED_HOSTS"), warning);
-  assertEquals(rebindingWarning(true, [{ host: "a.home", port: null }]), null);
-  assertEquals(rebindingWarning(false, null), null);
+Deno.test("host admission: the rebinding warning", () => {
+  const open = (authType: string | null, setupRequired = false) => ({
+    setupRequired,
+    authType,
+    allowedHosts: null,
+  });
+  const none = rebindingWarning(open("none"))!;
+  assert(none.includes("DNS rebinding"), none);
+  assert(none.includes("GLOBNOTES_ALLOWED_HOSTS"), none);
+  assert(none.includes("change them"), none);
+  const readOnly = rebindingWarning(open("read_only"))!;
+  assert(readOnly.includes("read_only mode") && !readOnly.includes("change"));
+  for (const quiet of [open("password"), open("totp"), open(null, true)]) {
+    assertEquals(rebindingWarning(quiet), null, JSON.stringify(quiet));
+  }
+  assertEquals(
+    rebindingWarning({
+      ...open("none"),
+      allowedHosts: [{ host: "a.home", port: null }],
+    }),
+    null,
+  );
+});
+
+Deno.test("host admission: one warning per transition into exposure (PR #28 review)", () => {
+  const warnings: string[] = [];
+  const warner = createRebindingWarner((message) => warnings.push(message));
+  const step = (authType: string | null, setupRequired = false) => {
+    warner.update({ setupRequired, authType, allowedHosts: null });
+    return warnings.length;
+  };
+  assertEquals(step(null, true), 0, "setup pending: not exposed");
+  assertEquals(step("none"), 1, "setup completed as none");
+  assertEquals(step("none"), 1, "still none: no repeat");
+  assertEquals(step("read_only"), 2, "none -> read_only");
+  assertEquals(step("password"), 2, "a login: not exposed");
+  assertEquals(step("read_only"), 3, "password -> read_only");
+  warner.update({
+    setupRequired: false,
+    authType: "none",
+    allowedHosts: [{ host: "globnotes.home", port: null }],
+  });
+  assertEquals(warnings.length, 3, "an allow-list: not exposed");
+  assert(warnings[1].includes("read_only mode"), warnings[1]);
+});
+
+Deno.test("host admission: access-policy changes notify their listeners", () => {
+  const config = new GlobalConfig(testEnvironment({
+    GLOBNOTES_PATH: "/nonexistent-vault",
+    GLOBNOTES_AUTH_TYPE: "none",
+  }));
+  const lifecycle = new PluginLifecycle(config);
+  let calls = 0;
+  const stop = lifecycle.onPolicyChange(() => calls++);
+  lifecycle.onPolicyChange(() => {
+    throw new Error("a failing listener");
+  });
+  assertEquals(lifecycle.bumpEpoch(), 1);
+  assertEquals(calls, 1);
+  stop();
+  lifecycle.bumpEpoch();
+  assertEquals(calls, 1);
 });
 
 interface RawResponse {
@@ -339,6 +400,51 @@ Deno.test("host admission: applies before the path prefix", async () => {
     assertEquals(listed["REST health"], 200);
     assertEquals(listed["MCP"], 200);
     assertEquals((await raw(server, "globnotes.home", "/other")).status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
+Deno.test("host admission: setup and access changes into exposure warn at runtime (PR #28 review)", async () => {
+  // Started with setup pending: no warning yet.
+  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "" });
+  const warnings = () =>
+    (server.output.stdout + server.output.stderr).split("DNS rebinding")
+      .length - 1;
+  const api = async (route: string, method = "GET", data?: unknown) => {
+    const response = await fetch(`${server.baseUrl}/_/api/${route}`, {
+      method,
+      headers: data === undefined ? {} : { "content-type": "application/json" },
+      ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+    });
+    const text = await response.text();
+    return { status: response.status, body: text ? JSON.parse(text) : null };
+  };
+  const warned = (count: number, label: string) =>
+    waitUntil(
+      () => warnings() >= count ? done() : pending({ warnings: warnings() }),
+      { label, intervalMs: 25, children: [server] },
+    );
+  try {
+    assertEquals(warnings(), 0, "setup pending");
+    assertEquals((await api("setup", "POST", { mode: "none" })).status, 200);
+    await warned(1, "a warning after setup completes as none");
+    const view = (await api("access")).body;
+    const changed = await api("access", "PUT", {
+      mode: "read_only",
+      revision: view.revision,
+      signature: view.signature,
+    });
+    assertEquals(changed.status, 200, JSON.stringify(changed.body));
+    await warned(2, "a warning after the access change to read_only");
+    assert(
+      (server.output.stdout + server.output.stderr).includes(
+        "No login is needed (read_only mode)",
+      ),
+    );
+    // A request after the change: still two (one per transition).
+    assertEquals((await api("health")).status, 200);
+    assertEquals(warnings(), 2);
   } finally {
     await server.close();
   }

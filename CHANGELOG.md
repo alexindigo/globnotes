@@ -20,7 +20,8 @@ over it, clients get `429` with `Retry-After`. See `docs/mcp.md` for client setu
 `GLOBNOTES_ALLOWED_HOSTS` lists the host names the server answers. When set, a
 request for any other host gets `421 Misdirected Request` on every route (web app,
 API, files and MCP), which stops DNS rebinding. Without a login (`none` or
-`read_only`) and without the setting, globnotes logs a warning at startup.
+`read_only`) and without the setting, globnotes logs a warning at startup, or when
+setup or the access settings switch to such a mode.
 
 ### Fixed
 

@@ -124,21 +124,58 @@ export function hostAllowed(
   );
 }
 
-/** The startup warning for an open deployment that answers any host name:
- * with no login needed (`none`, or `read_only` for reading), a hostile web
- * page can use DNS rebinding to reach this server through the visitor's
- * browser. null when not applicable. */
-export function rebindingWarning(
-  openAccess: boolean,
-  allowed: readonly AllowedHost[] | null,
-): string | null {
-  if (!openAccess || allowed !== null) return null;
-  return "No authentication and GLOBNOTES_ALLOWED_HOSTS is unset: a web " +
-    "page on another site can use DNS rebinding (making its own name " +
-    "resolve to this server) to read notes, and change them unless the " +
-    "instance is read-only, through the browser of anyone on this network. Set GLOBNOTES_ALLOWED_HOSTS to the names " +
-    "this server is reached by, e.g. 'globnotes.home', so it answers no " +
-    "other host.";
+/** The parts of the effective access policy that decide rebinding
+ * exposure (GlobalConfig satisfies it). */
+export interface AccessExposure {
+  setupRequired: boolean;
+  /** "none", "read_only", "password", "totp", or null while setup is
+   * pending (GlobalConfig's AuthType values). */
+  authType: string | null;
+  allowedHosts: readonly AllowedHost[] | null;
+}
+
+/** The mode a deployment is exposed to DNS rebinding in: no login needed
+ * (`none`, or `read_only` for reading) and any host name answered; null
+ * when it is not exposed (setup pending, a login, or an allow-list). */
+export function rebindingExposure(access: AccessExposure): string | null {
+  if (access.setupRequired || access.allowedHosts !== null) return null;
+  return access.authType === "none" || access.authType === "read_only"
+    ? access.authType
+    : null;
+}
+
+/** The warning for an exposed deployment; null when not exposed. */
+export function rebindingWarning(access: AccessExposure): string | null {
+  const mode = rebindingExposure(access);
+  if (mode === null) return null;
+  return `No login is needed (${mode} mode) and GLOBNOTES_ALLOWED_HOSTS is ` +
+    "unset: a web page on another site can use DNS rebinding (making its " +
+    "own name resolve to this server) to read notes" +
+    (mode === "none" ? " and change them" : "") +
+    " through the browser of anyone on this network. Set " +
+    "GLOBNOTES_ALLOWED_HOSTS to the names this server is reached by, e.g. " +
+    "'globnotes.home', so it answers no other host.";
+}
+
+/**
+ * The one owner of the rebinding warning: `update` is called with the
+ * effective access policy at startup and after every access-policy change
+ * (first-run setup, access settings), and warns once each time the
+ * deployment becomes exposed in a mode it wasn't warned for (pending ->
+ * none, none -> read_only, password -> read_only, ...). Staying exposed in
+ * the same mode doesn't repeat it; leaving exposure re-arms it.
+ */
+export function createRebindingWarner(warn: (message: string) => void): {
+  update(access: AccessExposure): void;
+} {
+  let warned: string | null = null;
+  return {
+    update(access) {
+      const mode = rebindingExposure(access);
+      if (mode !== null && mode !== warned) warn(rebindingWarning(access)!);
+      warned = mode;
+    },
+  };
 }
 
 /** The admission check for one request: null to serve it, or the 421
