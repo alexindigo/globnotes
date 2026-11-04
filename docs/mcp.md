@@ -148,10 +148,10 @@ Notes:
   path shows the marked path. The snippet is empty when no content or path text matched: a
   tag-only match, or `query: "*"`.
 - **Pagination.** Search, folder listings and the tag list come in pages. A page has
-  `count` entries. When `has_more` is `true`, call again with `offset: next_offset`. For a
-  folder or the tags, `total` is the size of the whole list. For search, `total` counts the
-  matches found while filling the page (at most `offset + count + 1`); it is not the number
-  of all matching notes. A page holds fewer than `limit` entries when they would exceed
+  `count` entries. When `has_more` is `true`, call again with `offset: next_offset`.
+  `total` is exact: the size of the whole list (a folder, the tags, or every result of the
+  search). The index and storage cut each page, so a page far into a long list costs about
+  as much as the first. A page holds fewer than `limit` entries when they would exceed
   25,000 characters; `next_offset` then continues after the last one returned.
 - **Shortened results.** A snippet is a window of words, and titles and tags have no length
   limit, so a single result can be over 25,000 characters on its own (one very long word, a

@@ -12,7 +12,12 @@ import type { GlobalConfig } from "./config.ts";
 import type { FileServing } from "./files/file_serving.ts";
 import type { McpEndpoint } from "./mcp/endpoint.ts";
 import type { FileSystemNotes } from "./notes/file_system.ts";
-import type { SearchResult } from "./notes/models.ts";
+import type {
+  SearchPage,
+  SearchQuery,
+  SearchResult,
+  TagPage,
+} from "./notes/models.ts";
 import type { NoteOperations } from "./notes/operations.ts";
 import type { PluginActions } from "./plugins/actions.ts";
 import type { PluginDataStore } from "./plugins/data.ts";
@@ -35,8 +40,14 @@ export interface Indexer {
     limit?: number,
     nested?: boolean,
     folder?: string,
+    offset?: number,
   ): SearchResult[];
+  /** One page of a search, windowed by the index, with the exact number
+   * of all its results. */
+  searchPage(term: string, query?: SearchQuery): SearchPage;
   getTags(): string[];
+  /** One page of the sorted tag list, with the number of all tags. */
+  tagsPage(offset?: number, limit?: number): TagPage;
   /** Display titles for a batch of paths (path + ".md" keys). */
   titlesFor(filenames: string[]): Record<string, string>;
   /** Display metadata (title + aliases) for a batch of bare note paths. */

@@ -7,7 +7,12 @@ import { type Environment, processEnvironment } from "@server/environment.ts";
 import type { Indexer } from "@server/state.ts";
 import { isReadableNotePath } from "@server/helpers.ts";
 import { logger } from "@server/logger.ts";
-import type { SearchResult } from "@server/notes/models.ts";
+import type {
+  SearchPage,
+  SearchQuery,
+  SearchResult,
+  TagPage,
+} from "@server/notes/models.ts";
 import { state } from "@server/state.ts";
 import { translateQuery } from "@server/search/query.ts";
 import { extractTags } from "@server/search/tags.ts";
@@ -35,14 +40,17 @@ interface FtsRow {
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** How the indexer reads note files. The default reads the disk; tests
- * inject failures through it (ARCHITECTURE: default adapters). */
+/** How the indexer reaches the disk: note reads and its database. The
+ * defaults are the real ones; tests inject failures or instrumentation
+ * through them (ARCHITECTURE: default adapters). */
 export interface IndexerAdapters {
   readText(filepath: string): string;
+  openDatabase(filepath: string): DatabaseSync;
 }
 
 export const fileAdapters: IndexerAdapters = {
   readText: (filepath) => Deno.readTextFileSync(filepath),
+  openDatabase: (filepath) => new DatabaseSync(filepath),
 };
 
 export class Fts5Indexer implements Indexer {
@@ -64,7 +72,7 @@ export class Fts5Indexer implements Indexer {
     // caller resolves GLOBNOTES_INDEX_PATH vs <vault>/.globnotes.
     Deno.mkdirSync(stateDir, { recursive: true });
     this.#indexPath = path.join(stateDir, "index.sqlite");
-    this.#db = new DatabaseSync(this.#indexPath);
+    this.#db = this.#adapters.openDatabase(this.#indexPath);
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#initSchema();
     this.#migrate();
@@ -410,14 +418,31 @@ export class Fts5Indexer implements Indexer {
   }
 
   getTags(): string[] {
-    return this.#db
-      .prepare("SELECT DISTINCT tag FROM notes_tags ORDER BY tag")
-      .all()
-      .map((r) => (r as { tag: string }).tag);
+    return this.#tags(0, undefined, false).tags;
   }
 
-  /** SearchNotes: ported from file_system.py. Folder/nested filtering is
-   * done in TS after the SQL fetch (same as Python). */
+  /** One page of the sorted tag list, windowed in the query. */
+  tagsPage(offset = 0, limit?: number): TagPage {
+    return this.#tags(offset, limit, true);
+  }
+
+  #tags(offset: number, limit: number | undefined, count: boolean): TagPage {
+    const tags = this.#db
+      .prepare(
+        "SELECT DISTINCT tag FROM notes_tags ORDER BY tag LIMIT ? OFFSET ?",
+      )
+      .all(limit === undefined || limit < 0 ? -1 : limit, offset)
+      .map((r) => (r as { tag: string }).tag);
+    const total = count
+      ? (this.#db
+        .prepare("SELECT count(DISTINCT tag) AS n FROM notes_tags")
+        .get() as { n: number }).n
+      : offset + tags.length;
+    return { total, tags };
+  }
+
+  /** SearchNotes: ported from file_system.py, positional for the REST
+   * route and plugins. One page of searchPage, without its total. */
   search(
     term: string,
     sort: "score" | "path" | "last_modified" = "score",
@@ -425,64 +450,117 @@ export class Fts5Indexer implements Indexer {
     limit?: number,
     nested = true,
     folder?: string,
+    offset = 0,
   ): SearchResult[] {
+    return this.#search(
+      term,
+      { sort, order, limit, nested, folder, offset },
+      false,
+    ).results;
+  }
+
+  /** One page of a search and the number of all its results. */
+  searchPage(term: string, query: SearchQuery = {}): SearchPage {
+    return this.#search(term, query, true);
+  }
+
+  /**
+   * The search behind search() and searchPage(). The logical result list is
+   * every FTS match in scope, in the requested order, then (for an exact
+   * alias of the raw term whose note is not among those matches) the alias
+   * note, unscoped, as Obsidian's quick switcher does. The page is a window
+   * of that list cut in SQL: scope, order, LIMIT and OFFSET in the query,
+   * snippets only for the page's rows, so a page's work and memory do not
+   * grow with its offset and nothing outside it is materialized.
+   */
+  #search(term: string, query: SearchQuery, count: boolean): SearchPage {
+    // The index follows the hub's change log (server/hub/subscribers.ts):
+    // a page reads it as it is, with no scan of the vault first.
+    const sort = query.sort ?? "score";
+    const order = query.order ?? "desc";
+    const offset = Math.max(0, query.offset ?? 0);
+    const limit = query.limit === undefined || query.limit < 0
+      ? undefined
+      : query.limit;
     // A folder filter names an existing folder: the read-path rule.
-    if (folder !== undefined) {
-      isReadableNotePath(folder);
-    }
+    if (query.folder !== undefined) isReadableNotePath(query.folder);
+    const scope = this.#scope(query.folder, query.nested ?? true);
     const matchQuery = translateQuery(term);
-    let results = this.#runSearch(
-      matchQuery,
-      sort,
-      order,
-      limit,
-      nested,
-      folder,
-    );
+    const rows = this.#pageRows(matchQuery, sort, order, scope, offset, limit);
+    let matches: number | undefined = count
+      ? this.#count(matchQuery, scope)
+      : undefined;
+    let total = matches;
 
     // Alias hits: exact (case-insensitive) alias match on the raw term,
-    // merged in when not already present (Obsidian quick-switcher parity).
+    // after the matches when not already among them (Obsidian
+    // quick-switcher parity).
     if (matchQuery !== null) {
-      const aliasTitle = this.resolveAlias(term);
-      if (
-        aliasTitle !== null &&
-        !results.some((r) => this.#stripExt(r.filename) === aliasTitle)
-      ) {
-        const aliasRows = this.#runSearch(
-          null,
-          sort,
-          order,
-          undefined,
-          true,
-          undefined,
-        )
-          .filter((r) => this.#stripExt(r.filename) === aliasTitle);
-        if (aliasRows.length > 0) {
-          aliasRows[0].score = null;
-          results = [...results, ...aliasRows];
+      const aliasPath = this.resolveAlias(term);
+      const aliasFile = aliasPath === null ? null : aliasPath + MARKDOWN_EXT;
+      const alias = aliasFile === null ||
+          this.#matches(matchQuery, scope, aliasFile)
+        ? undefined
+        : this.#noteRow(aliasFile);
+      if (alias) {
+        if (total !== undefined) total++;
+        // The alias row's position is the number of matches; only a page
+        // that is not full can reach it.
+        if (limit === undefined || rows.length < limit) {
+          matches ??= rows.length > 0
+            ? offset + rows.length
+            : this.#count(matchQuery, scope);
+          if (matches === offset + rows.length) rows.push(alias);
         }
       }
     }
-    if (limit !== undefined) {
-      results = results.slice(0, limit);
-    }
-    return this.#toSearchResults(results, term);
+    return {
+      total: total ?? offset + rows.length,
+      results: this.#toSearchResults(rows, term),
+    };
   }
 
-  #runSearch(
+  /** The SQL condition (and its arguments) for a search scope: inside
+   * `folder` (the folder's own same-named note included, as before), and
+   * without `nested` only its direct children. SQLite's length() and
+   * substr() both count characters, so the prefix test is exact. */
+  #scope(
+    folder: string | undefined,
+    nested: boolean,
+  ): { sql: string; args: string[] } {
+    const filename = "notes_fts.filename";
+    if (folder === undefined) {
+      return nested
+        ? { sql: "", args: [] }
+        : { sql: ` AND instr(${filename}, '/') = 0`, args: [] };
+    }
+    const prefix = folder + "/";
+    const inside = `substr(${filename}, 1, length(?)) = ?`;
+    const direct = nested
+      ? ""
+      : ` AND instr(substr(${filename}, length(?) + 1), '/') = 0`;
+    return {
+      sql: ` AND (${filename} = ? OR (${inside}${direct}))`,
+      args: [
+        folder + MARKDOWN_EXT,
+        prefix,
+        prefix,
+        ...(nested ? [] : [prefix]),
+      ],
+    };
+  }
+
+  /** The page's rows: ordered, scoped and windowed by SQLite. Highlights
+   * and snippets are computed afterwards for these rows only. */
+  #pageRows(
     matchQuery: string | null,
     sort: "score" | "path" | "last_modified",
     order: "asc" | "desc",
+    scope: { sql: string; args: string[] },
+    offset: number,
     limit: number | undefined,
-    nested: boolean,
-    folder: string | undefined,
   ): FtsRow[] {
     const bm25 = "bm25(notes_fts, 10.0, 1.0, 10.0, 0.0, 0.0)";
-    const snippetExpr =
-      `snippet(notes_fts, 1, '${MARK_OPEN}', '${MARK_CLOSE}', '…', ${SNIPPET_COLS})`;
-    const highlightExpr =
-      `highlight(notes_fts, 0, '${MARK_OPEN}', '${MARK_CLOSE}')`;
-
     // Python: Every() scores 1.0 for match-all; field-sorted searches get
     // score=None (hit.score is the field value, not a float); relevance
     // sort carries the bm25 score.
@@ -493,61 +571,94 @@ export class Fts5Indexer implements Indexer {
       : "NULL AS score";
 
     let sql =
-      `SELECT notes_fts.title AS path, notes_fts.filename, notes_fts.tags, notes_fts.last_modified AS lastModified, meta.display_title AS title, ${scoreExpr}${
-        matchQuery !== null
-          ? `, ${highlightExpr} AS pathHighlights, ${snippetExpr} AS contentHighlights`
-          : ""
-      } FROM notes_fts
-      LEFT JOIN notes_meta meta ON meta.filename = notes_fts.filename`;
+      `SELECT notes_fts.rowid AS id, notes_fts.title AS path, notes_fts.filename, notes_fts.tags, notes_fts.last_modified AS lastModified, meta.display_title AS title, ${scoreExpr}
+      FROM notes_fts
+      LEFT JOIN notes_meta meta ON meta.filename = notes_fts.filename
+      WHERE ${matchQuery !== null ? "notes_fts MATCH ?" : "1"}${scope.sql}`;
+    const args: (string | number)[] = [
+      ...(matchQuery !== null ? [matchQuery] : []),
+      ...scope.args,
+    ];
 
-    const args: (string | number)[] = [];
-    if (matchQuery !== null) {
-      sql += ` WHERE notes_fts MATCH ?`;
-      args.push(matchQuery);
-    }
-
+    // Index insertion order (rowid) breaks ties, so pages of one order
+    // never overlap or skip. Match-all + relevance sort is that order
+    // alone (== Whoosh docnum order).
     if (sort === "path" || sort === "last_modified") {
-      sql += ` ORDER BY ${sort}`;
-      sql += order === "desc" ? " DESC" : " ASC";
+      sql += ` ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"},`;
     } else if (matchQuery !== null) {
       // FTS5 bm25: lower is better. Python's score DESC (best first) maps
       // to bm25 ASC; order=asc flips it.
-      sql += ` ORDER BY ${bm25} ${order === "asc" ? "DESC" : "ASC"}`;
+      sql += ` ORDER BY ${bm25} ${order === "asc" ? "DESC" : "ASC"},`;
+    } else {
+      sql += " ORDER BY";
     }
-    // Match-all + relevance sort: natural rowid order == Whoosh docnum
-    // order (both are index insertion order).
+    sql += " notes_fts.rowid LIMIT ? OFFSET ?";
+    args.push(limit ?? -1, offset);
 
-    const filterNeeded = folder !== undefined || !nested;
-    if (limit !== undefined && !filterNeeded) {
-      sql += " LIMIT ?";
-      args.push(limit);
-    }
+    const rows = this.#db.prepare(sql).all(
+      ...args,
+    ) as unknown as (FtsRow & { id: number })[];
+    if (matchQuery === null || rows.length === 0) return rows;
 
-    let rows = this.#db.prepare(sql).all(...args) as unknown as FtsRow[];
-
-    if (filterNeeded) {
-      rows = rows.filter((row) => this.#inScope(row.filename, folder, nested));
-      if (limit !== undefined) rows = rows.slice(0, limit);
-    }
-
-    return rows;
+    const marks = rows.map(() => "?").join(",");
+    const highlighted = new Map(
+      (this.#db.prepare(
+        `SELECT rowid AS id,
+          highlight(notes_fts, 0, '${MARK_OPEN}', '${MARK_CLOSE}') AS pathHighlights,
+          snippet(notes_fts, 1, '${MARK_OPEN}', '${MARK_CLOSE}', '…', ${SNIPPET_COLS}) AS contentHighlights
+        FROM notes_fts WHERE notes_fts MATCH ? AND rowid IN (${marks})`,
+      ).all(matchQuery, ...rows.map((row) => row.id)) as unknown as {
+        id: number;
+        pathHighlights: string | null;
+        contentHighlights: string | null;
+      }[]).map((row) => [row.id, row]),
+    );
+    return rows.map((row) => ({
+      ...row,
+      pathHighlights: highlighted.get(row.id)?.pathHighlights ?? null,
+      contentHighlights: highlighted.get(row.id)?.contentHighlights ?? null,
+    }));
   }
 
-  #inScope(
+  /** How many notes the query matches in scope. */
+  #count(
+    matchQuery: string | null,
+    scope: { sql: string; args: string[] },
+  ): number {
+    return (this.#db.prepare(
+      `SELECT count(*) AS n FROM notes_fts WHERE ${
+        matchQuery !== null ? "notes_fts MATCH ?" : "1"
+      }${scope.sql}`,
+    ).get(
+      ...(matchQuery !== null ? [matchQuery] : []),
+      ...scope.args,
+    ) as { n: number }).n;
+  }
+
+  /** Whether the note `filename` is among the query's matches in scope. */
+  #matches(
+    matchQuery: string,
+    scope: { sql: string; args: string[] },
     filename: string,
-    folder: string | undefined,
-    nested: boolean,
   ): boolean {
-    const path = filename.slice(0, -MARKDOWN_EXT.length);
-    if (folder !== undefined) {
-      if (!(path === folder || path.startsWith(folder + "/"))) return false;
-    }
-    if (!nested) {
-      const rest = folder ? path.slice(folder.length + 1) : path;
-      if (rest.includes("/")) return false;
-      return true;
-    }
-    return true;
+    return this.#db.prepare(
+      `SELECT 1 FROM notes_fts WHERE notes_fts MATCH ?
+        AND notes_fts.filename = ?${scope.sql} LIMIT 1`,
+    ).get(matchQuery, filename, ...scope.args) !== undefined;
+  }
+
+  /** A note's result row without a score or highlights (an alias hit). */
+  #noteRow(filename: string): FtsRow | undefined {
+    const row = this.#db.prepare(
+      `SELECT notes_fts.title AS path, notes_fts.filename, notes_fts.tags,
+        notes_fts.last_modified AS lastModified,
+        meta.display_title AS title, NULL AS score
+      FROM notes_fts
+      LEFT JOIN notes_meta meta ON meta.filename = notes_fts.filename
+      WHERE notes_fts.filename = ? LIMIT 1`,
+    ).get(filename) as FtsRow | undefined;
+    return row &&
+      { ...row, pathHighlights: null, contentHighlights: null };
   }
 
   /** Python: highlights exist only on fields that actually matched; the

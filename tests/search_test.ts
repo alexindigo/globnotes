@@ -233,6 +233,22 @@ Deno.test("search: explicit sort orders", async () => {
     const scoreBody = await byScore.json();
     assertEquals(scoreBody.length, 2);
     assert(scoreBody.every((h: { score: number }) => h.score === 1));
+
+    // limit and offset cut one page of the same order (the index's paging
+    // contract, shared with MCP).
+    const second = await api(
+      server,
+      "/_/api/search?term=*&sort=path&order=asc&limit=1&offset=1",
+    );
+    assertEquals(
+      (await second.json()).map((h: { path: string }) => h.path),
+      ["banana"],
+    );
+    for (const offset of ["-1", "x", "1.5"]) {
+      const bad = await api(server, `/_/api/search?term=*&offset=${offset}`);
+      assertEquals(bad.status, 422, offset);
+      await bad.body?.cancel();
+    }
   } finally {
     await server.close();
     await Deno.remove(server.vault, { recursive: true });

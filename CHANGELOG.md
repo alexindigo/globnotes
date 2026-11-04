@@ -32,6 +32,9 @@ up each indexed note with a query that read the whole index, time proportional
 to the square of the number of notes, while the server answered nothing else; it
 now reads the index once. The first index of a vault also builds much faster,
 because index writes are saved in batches instead of one disk sync per statement.
+The index also cuts each page of results itself, with any folder scope, so a page
+far into a long search costs about what the first page does; the search API takes
+`offset` along with `limit`.
 
 Plugins keep working when the server is briefly not scheduled, such as on a busy
 NAS, in a paused VM or during a large vault scan. Plugin time limits count only
