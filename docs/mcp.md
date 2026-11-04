@@ -18,6 +18,7 @@ already grant there.
 | 4 | `GET`, `DELETE` | `405 Method Not Allowed`, `Allow: POST` |
 | 5 | Switch | `GLOBNOTES_MCP_ENABLED=false` turns it off; the URL then answers `404`. On by default |
 | 6 | Plain HTTP | Works over plain HTTP on a local domain (no HTTPS needed, see [Security](#security)) |
+| 7 | Rate limit | `GLOBNOTES_MCP_RATE_LIMIT` tool calls per minute per client, default `600`; `0` turns it off. Over the limit, a request with tool calls gets `429 Too Many Requests` with `Retry-After` (seconds). The client is the logged-in account when authentication is on (all its tokens share one budget), otherwise the connection's address (forwarded headers are ignored). Other requests, such as `tools/list`, don't count |
 
 It's built on the official TypeScript SDK (`@modelcontextprotocol/server`).
 

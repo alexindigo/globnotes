@@ -10,7 +10,9 @@
  * is not served. Before the SDK sees a request this module applies the
  * transport's Origin rule and the REST API's authentication, and captures
  * the caller's write authority (the note mutation lease) before any other
- * awaited work, as every REST write endpoint does. The route files under
+ * awaited work, as every REST write endpoint does; then the tool-call rate
+ * limit (server/mcp/rate_limit.ts) answers a client over it with 429 and
+ * Retry-After. The route files under
  * server/api/endpoints/_/mcp/ only forward to it; main.ts creates it
  * (GLOBNOTES_MCP_ENABLED).
  */
@@ -28,6 +30,7 @@ import { logger } from "../logger.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
 import { state } from "../state.ts";
 import { formatVersion } from "../../shared/version.ts";
+import type { RateLimiter } from "./rate_limit.ts";
 import { createGlobnotesMcpServer, type McpAccess } from "./server.ts";
 import { type McpVault, stateVault } from "./vault.ts";
 
@@ -35,25 +38,36 @@ export interface McpEndpointAdapters {
   vault: McpVault;
   /** Whether this deployment accepts note writes at all (not read_only). */
   writable(): boolean;
-  /** Authenticate a read; throws HttpError (503 setup, 401 token). */
-  authenticateRead(request: Request): Promise<void>;
+  /** Authenticate a read; throws HttpError (503 setup, 401 token).
+   * Resolves to the authenticated subject, null without authentication. */
+  authenticateRead(request: Request): Promise<string | null>;
   /** Authenticate and capture write authority; throws HttpError. */
   lease(request: Request): Promise<NoteMutationLease>;
   version(): string;
+  /** The tool-call rate limit (server/mcp/rate_limit.ts); null = none. */
+  rateLimiter: RateLimiter | null;
 }
 
-/** The running server's adapters (the default). */
+/** The running server's adapters (the default). main.ts passes the
+ * configured rate limiter. */
 export const stateEndpointAdapters: McpEndpointAdapters = {
   vault: stateVault,
   writable: () => state.lifecycle?.writable() ?? false,
   authenticateRead: enforceReadAuth,
   lease: noteMutationLease,
   version: () => (state.version && formatVersion(state.version)) || "dev",
+  rateLimiter: null,
 };
+
+/** Where a request came from, as the HTTP server saw it. */
+export interface McpClient {
+  /** The peer's address (never a forwarded header). */
+  remoteAddress?: string;
+}
 
 export interface McpEndpoint {
   /** POST: one JSON-RPC message. */
-  post(request: Request): Promise<Response>;
+  post(request: Request, client?: McpClient): Promise<Response>;
   /** GET/DELETE: no sessions or server-initiated streams (405). */
   notAllowed(request: Request): Response;
   close(): Promise<void>;
@@ -139,14 +153,16 @@ export function foreignOrigin(request: Request): boolean {
   }
 }
 
-/** The tools a tools/call request names (read-only instances only).
- * Modern requests carry the name in Mcp-Name, which the SDK has already
- * checked against the body; a 2025-era request (or batch) is read from its
- * body, which isLegacyRequest has size-checked. */
-async function calledTools(ctx: McpRequestContext): Promise<string[]> {
-  const request = ctx.requestInfo;
-  if (!request) return [];
-  if (ctx.era === "modern") {
+/** The tools a request calls, one entry per tools/call (the rate limit
+ * counts them; a read-only instance registers the named write tools to
+ * answer them with the read-only error). Modern requests carry the name in
+ * Mcp-Name, which the SDK checks against the body; a 2025-era request (or
+ * batch) is read from its body, which isLegacyRequest has size-checked. */
+async function calledTools(
+  request: Request,
+  legacyEra: boolean,
+): Promise<string[]> {
+  if (!legacyEra) {
     if (request.headers.get("mcp-method") !== "tools/call") return [];
     const name = request.headers.get("mcp-name");
     if (name === null) return [];
@@ -178,15 +194,11 @@ export function createMcpEndpoint(
   const adapters = { ...stateEndpointAdapters, ...overrides };
   // The factory builds a fresh server per request from the access this
   // endpoint established, passed as the SDK's per-caller authInfo.
-  const factory = async (ctx: McpRequestContext) => {
-    const access = ctx.authInfo?.extra?.[ACCESS_KEY] as McpAccess;
-    return createGlobnotesMcpServer(
-      access.lease
-        ? access
-        : { ...access, calledTools: await calledTools(ctx) },
+  const factory = (ctx: McpRequestContext) =>
+    Promise.resolve(createGlobnotesMcpServer(
+      ctx.authInfo?.extra?.[ACCESS_KEY] as McpAccess,
       adapters.version(),
-    );
-  };
+    ));
   const modern = createMcpHandler(factory, {
     legacy: "reject",
     onerror: reportError,
@@ -214,20 +226,18 @@ export function createMcpEndpoint(
     }
   };
   return {
-    async post(request) {
+    async post(request, client = {}) {
       if (foreignOrigin(request)) {
         return jsonRpcError(403, "Forbidden: Origin does not match Host");
       }
+      const limiter = adapters.rateLimiter;
       let lease: NoteMutationLease | null = null;
-      if (adapters.writable()) lease = await adapters.lease(request);
-      else await adapters.authenticateRead(request);
-      const access: McpAccess = { vault: adapters.vault, lease };
-      const authInfo: AuthInfo = {
-        token: "",
-        clientId: "globnotes",
-        scopes: lease ? ["notes:read", "notes:write"] : ["notes:read"],
-        extra: { [ACCESS_KEY]: access },
-      };
+      let subject: string | null = null;
+      if (adapters.writable()) {
+        lease = await adapters.lease(request);
+        // The lease is captured; the subject is only for the rate limit.
+        if (limiter) subject = await adapters.authenticateRead(request);
+      } else subject = await adapters.authenticateRead(request);
       if (opensStream(request)) {
         // MCP: a method the server doesn't implement is 404 with -32601.
         return jsonRpcError(
@@ -237,8 +247,44 @@ export function createMcpEndpoint(
           -32601,
         );
       }
+      const legacyEra = await isLegacyRequest(request);
+      const tools = limiter || !lease
+        ? await calledTools(request, legacyEra)
+        : [];
+      if (limiter && tools.length > 0) {
+        // The client: the authenticated subject, else the peer address
+        // (never a forwarded header, which the client could choose).
+        const key = subject !== null
+          ? `subject:${subject}`
+          : `address:${client.remoteAddress ?? "unknown"}`;
+        const decision = limiter.take(key, tools.length);
+        if (!decision.allowed) {
+          logger.debug(`MCP rate limit reached for ${key}`);
+          return jsonRpcError(
+            429,
+            `Too many tool calls: this globnotes server allows ` +
+              `${limiter.perMinute} per minute per client${
+                tools.length > limiter.perMinute
+                  ? ` and this request makes ${tools.length}`
+                  : ""
+              }. Retry after ${decision.retryAfterSeconds} seconds.`,
+            { "Retry-After": String(decision.retryAfterSeconds) },
+          );
+        }
+      }
+      const access: McpAccess = {
+        vault: adapters.vault,
+        lease,
+        ...(lease ? {} : { calledTools: tools }),
+      };
+      const authInfo: AuthInfo = {
+        token: "",
+        clientId: "globnotes",
+        scopes: lease ? ["notes:read", "notes:write"] : ["notes:read"],
+        extra: { [ACCESS_KEY]: access },
+      };
       return await served(async () =>
-        await isLegacyRequest(request)
+        legacyEra
           ? await legacy(request, authInfo)
           : await modern.fetch(request, { authInfo })
       );

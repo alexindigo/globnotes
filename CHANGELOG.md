@@ -13,7 +13,9 @@ and delete can take the `last_modified` the agent read, and then refuse to
 overwrite a note changed since. Every result's text also carries the whole result
 as JSON, for clients that read only text. A note too large for one response is
 read in parts (`offset`, `length`, `has_more`). It works over plain HTTP and is on by default;
-`GLOBNOTES_MCP_ENABLED=false` turns it off. See `docs/mcp.md` for client setup.
+`GLOBNOTES_MCP_ENABLED=false` turns it off. Tool calls are limited to
+`GLOBNOTES_MCP_RATE_LIMIT` per minute per client (default 600, `0` for no limit);
+over it, clients get `429` with `Retry-After`. See `docs/mcp.md` for client setup.
 
 `GLOBNOTES_ALLOWED_HOSTS` lists the host names the server answers. When set, a
 request for any other host gets `421 Misdirected Request` on every route (web app,

@@ -11,5 +11,9 @@ export const auth = false;
 
 export default function (request: PathfinderRequest): Promise<Response> {
   if (!state.mcp) throw new HttpError(404, "Not Found");
-  return state.mcp.post(request._raw);
+  // The peer address as the HTTP server saw it: the rate limit's client
+  // key without authentication.
+  return state.mcp.post(request._raw, {
+    remoteAddress: request.remoteAddr?.hostname,
+  });
 }

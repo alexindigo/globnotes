@@ -31,7 +31,7 @@ Deno.test("read paths: an existing folder named with ? : * lists and filters", a
   await awaitIndexReady(s.indexer);
   const endpoint = createMcpEndpoint({
     writable: () => true,
-    authenticateRead: () => Promise.resolve(),
+    authenticateRead: () => Promise.resolve(null),
     lease: () =>
       Promise.resolve(Object.freeze({ epoch: 1, assertCurrent: () => {} })),
     version: () => "test",

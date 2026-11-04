@@ -180,6 +180,9 @@ export class GlobalConfig {
   readonly autoEnablePlugins: boolean;
   /** The MCP endpoint (`<prefix>/_/mcp`, docs/mcp.md); off answers 404. */
   readonly mcpEnabled: boolean;
+  /** GLOBNOTES_MCP_RATE_LIMIT: MCP tool calls per minute per client;
+   * 0 = no limit. */
+  readonly mcpRateLimit: number;
   /** GLOBNOTES_ALLOWED_HOSTS: the only Host values the server answers
    * (server/host_admission.ts); null = any. */
   readonly allowedHosts: AllowedHost[] | null;
@@ -216,6 +219,7 @@ export class GlobalConfig {
       castBool: true,
       default: true,
     }) === "true";
+    this.mcpRateLimit = this.#loadMcpRateLimit();
     this.allowedHosts = this.#loadAllowedHosts();
     this.pathPrefix = this.#loadPathPrefix();
     // getEnv returns "" for unset vars — `||` treats that (and an
@@ -454,6 +458,18 @@ export class GlobalConfig {
     return Number(
       this.#env("GLOBNOTES_QUICK_ACCESS_LIMIT", { castInt: true, default: 4 }),
     );
+  }
+
+  #loadMcpRateLimit(): number {
+    const key = "GLOBNOTES_MCP_RATE_LIMIT";
+    const value = Number(this.#env(key, { castInt: true, default: 600 }));
+    if (value < 0) {
+      logger.error(
+        `Invalid value '${value}' for ${key}. Must be 0 (no limit) or more.`,
+      );
+      Deno.exit(1);
+    }
+    return value;
   }
 
   #loadAllowedHosts(): AllowedHost[] | null {
