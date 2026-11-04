@@ -198,8 +198,13 @@ async function connect(
   return {
     client,
     endpoint,
-    call: (name: string, args: Record<string, unknown> = {}) =>
-      client.callTool({ name, arguments: args }),
+    /** A tool call; every successful result is checked for the text
+     * fallback (resultText) on the way. */
+    call: async (name: string, args: Record<string, unknown> = {}) => {
+      const result = await client.callTool({ name, arguments: args });
+      if (!result.isError) assertTextFallback(result);
+      return result;
+    },
     close: async () => {
       await client.close();
       await endpoint.close();
@@ -210,6 +215,25 @@ async function connect(
 function textOf(result: Awaited<ReturnType<Client["callTool"]>>): string {
   return (result.content as { type: string; text: string }[])
     .map((block) => block.text).join("\n");
+}
+
+/** A successful result's one text block: its summary line. */
+function summaryOf(result: Awaited<ReturnType<Client["callTool"]>>): string {
+  return textOf(result).split("\n")[0];
+}
+
+/** The MCP text fallback: one text block holding a one-line summary, then
+ * the whole structured result as JSON, equal to structuredContent. */
+function assertTextFallback(
+  result: Awaited<ReturnType<Client["callTool"]>>,
+): void {
+  const blocks = result.content as { type: string; text: string }[];
+  assertEquals(blocks.map((block) => block.type), ["text"]);
+  const text = blocks[0].text;
+  const lines = text.split("\n");
+  assertEquals(lines.length, 2, `summary line + JSON line: ${text}`);
+  assert(lines[0].length > 0, "a summary line");
+  assertEquals(JSON.parse(lines[1]), result.structuredContent);
 }
 
 const ALL_TOOLS = [
@@ -442,10 +466,52 @@ Deno.test("mcp tools: search results, sort mapping and snippets", async () => {
       ],
     });
     assertEquals(isoTime(1_700_000_001), "2023-11-14T22:13:21.000Z");
+    // One summary line; every field is in the JSON line (checked by call).
+    assertEquals(
+      summaryOf(result),
+      'Results 1-3 of 3 for "#garden match" in folder "Notes".',
+    );
     const text = textOf(result);
-    assert(text.includes('- Notes/n1 — "Note 1"'), text);
-    assert(text.includes("before «match» after 1"), text);
+    assert(text.includes('"snippet":"before «match» after 1"'), text);
+    assert(text.includes('"score":9'), text);
     assert(!text.includes("<b"), text);
+  } finally {
+    await mcp.close();
+  }
+});
+
+Deno.test("mcp tools: the text block is one summary line plus the whole result as JSON", async () => {
+  const fake = fakeVault({
+    'Odd "quoted"\nname': '# Line one\n\n"two"\n\tthree \u2028',
+  });
+  fake.setSearchResults(Array.from({ length: 100 }, (_, i) => hit(i)));
+  const mcp = await connect(fake);
+  try {
+    // User text with line breaks stays inside the one summary line (call
+    // asserts the shape of every successful result).
+    const search = await mcp.call("globnotes_search_notes", {
+      query: "a\nb\r\nc",
+      limit: 100,
+    });
+    assert(summaryOf(search).includes('"a\\nb\\r\\nc"'), summaryOf(search));
+    const note = await mcp.call("globnotes_get_note", {
+      path: 'Odd "quoted"\nname',
+    });
+    assertEquals(
+      (note.structuredContent as { content: string }).content,
+      '# Line one\n\n"two"\n\tthree \u2028',
+    );
+    // The budget counts what is sent: the text (JSON included) and the
+    // structured content.
+    const page = search.structuredContent as { count: number };
+    const sent = textOf(search).length +
+      JSON.stringify(search.structuredContent).length;
+    assert(sent <= CHARACTER_LIMIT, `sent ${sent}`);
+    assert(page.count < 100, "fewer results to fit both copies");
+    assert(
+      sent > CHARACTER_LIMIT / 2,
+      `the page is not cut far below the budget: ${sent}`,
+    );
   } finally {
     await mcp.close();
   }
@@ -482,7 +548,10 @@ Deno.test("mcp tools: search pagination edges", async () => {
       [5, 2, true, 2],
     );
     assertEquals(first.paths, ["Notes/n1", "Notes/n2"]);
-    assert(first.text.includes("call again with offset=2"));
+    assertEquals(
+      first.text.split("\n")[0],
+      'Results 1-2 of 5 for "match". More results: call again with offset=2.',
+    );
     // The page is cut by the index: the tool asks for the window only.
     assertEquals(
       [fake.calls.search.at(-1)!.offset, fake.calls.search.at(-1)!.limit],
@@ -506,7 +575,10 @@ Deno.test("mcp tools: search pagination edges", async () => {
 
     const beyond = await page(9, 2);
     assertEquals([beyond.count, beyond.has_more], [0, false]);
-    assert(beyond.text.startsWith("No notes match 'match' at offset 9"));
+    assert(
+      beyond.text.startsWith('No results for "match" at offset 9 (5 in all).'),
+      beyond.text,
+    );
   } finally {
     await mcp.close();
   }
@@ -647,7 +719,7 @@ Deno.test("mcp tools: a single over-long result is shortened to one common cap, 
     assert(hit.matched_tags[0].startsWith("ttt"));
     assert(hit.matched_tags[0].endsWith(TRUNCATED));
     assertEquals(hit.matched_tags[1], "short");
-    assert(text.includes("shortened to fit the response limit: matched_tags"));
+    assert(text.includes("shortened to fit the response limit"), text);
     within(size);
   });
 
@@ -662,7 +734,7 @@ Deno.test("mcp tools: a single over-long result is shortened to one common cap, 
       // Short tags are kept whole; only trailing ones are left out.
       assertEquals(hit.matched_tags, tags.slice(0, hit.matched_tags.length));
       assertEquals(hit.snippet, "before «match» after 1");
-      assert(text.includes(`(+${hit.omitted_tags} more not shown)`), text);
+      assert(text.includes(`"omitted_tags":${hit.omitted_tags}`), text);
       within(size);
     },
   );
@@ -673,7 +745,7 @@ Deno.test("mcp tools: a single over-long result is shortened to one common cap, 
     assertEquals(hit.truncated, ["title"]);
     assert(hit.title.startsWith("TTT") && hit.title.endsWith(TRUNCATED));
     assertEquals(hit.snippet, "before «match» after 1");
-    assert(text.includes("shortened to fit the response limit: title"));
+    assert(text.includes('"truncated":["title"]'), text);
     within(size);
   });
 
@@ -723,7 +795,14 @@ Deno.test("mcp tools: reads and their actionable errors", async () => {
       content: "# Beds\n\nBed 1: tomatoes",
       last_modified: isoTime(fake.notes.get("Garden/Beds")!.lastModified),
     });
-    assert(textOf(note).endsWith("Bed 1: tomatoes"));
+    assert(
+      textOf(note).endsWith(
+        '"content":"# Beds\\n\\nBed 1: tomatoes",' +
+          `"last_modified":"${
+            isoTime(fake.notes.get("Garden/Beds")!.lastModified)
+          }"}`,
+      ),
+    );
 
     const missing = await mcp.call("globnotes_get_note", { path: "Nope" });
     assertEquals(missing.isError, true);
@@ -765,7 +844,10 @@ Deno.test("mcp tools: reads and their actionable errors", async () => {
       has_more: false,
       tags: ["garden", "recipe"],
     });
-    assertEquals(textOf(tags), "2 tag(s); 1–2: #garden, #recipe");
+    assertEquals(
+      textOf(tags),
+      "Tags 1-2 of 2.\n" + JSON.stringify(tags.structuredContent),
+    );
   } finally {
     await mcp.close();
   }
@@ -890,7 +972,13 @@ Deno.test("mcp tools: update, rename and the stale-write guard", async () => {
       old_path: "Plans/Old.png",
       new_path: "Archive/Old.png",
     }]);
-    assert(textOf(moved).startsWith("Updated note 'Plans/Old', now at"));
+    assert(
+      summaryOf(moved).startsWith(
+        'Updated note "Plans/Old", now at "Archive/Old"',
+      ),
+      summaryOf(moved),
+    );
+    assert(summaryOf(moved).endsWith("; 1 attachment(s) moved."));
     assertEquals(fake.calls.writes[1].args, [
       "Plans/Old",
       { newContent: undefined, newPath: "Archive/Old" },
@@ -1348,7 +1436,7 @@ Deno.test("mcp tools: list_folder pages a 1,000-note folder within the budget", 
         (past.structuredContent as unknown as FolderPage).count,
         0,
       );
-      assert(textOf(past).endsWith("none at offset 5000."));
+      assert(summaryOf(past).endsWith("none at offset 5000."));
     });
   } finally {
     await mcp.close();

@@ -15,8 +15,9 @@ rename) and delete a note. It uses the same login token, write path and plugin
 guards as the web app, and the hub records its writes as globnotes writes; in
 `read_only` mode it offers only the read tools. Update and delete can take the
 `last_modified` the agent read, and then refuse to overwrite a note changed since.
-It works over plain HTTP and is on by default; `GLOBNOTES_MCP_ENABLED=false` turns
-it off. See `docs/mcp.md` for client setup.
+Every result's text also carries the whole result as JSON, for clients that read
+only text. It works over plain HTTP and is on by default; `GLOBNOTES_MCP_ENABLED=false`
+turns it off. See `docs/mcp.md` for client setup.
 
 ### Changed
 
