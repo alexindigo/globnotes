@@ -270,6 +270,7 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 | `GLOBNOTES_TOTP_KEY` | — | TOTP secret (for `totp`). If unset, taken from the wizard's stored config; the boot-log QR is printed only for env-provided keys. |
 | `GLOBNOTES_SESSION_EXPIRY_DAYS` | `30` | Login session length. |
 | `GLOBNOTES_MCP_ENABLED` | `true` | Serve the MCP endpoint `<prefix>/_/mcp` for AI agents ([docs/mcp.md](docs/mcp.md)). `false` turns it off (`404`). |
+| `GLOBNOTES_ALLOWED_HOSTS` | *(unset: any host)* | Comma-separated host names or IP addresses the server is reached by, each optionally with a port, e.g. `globnotes.home,192.168.1.20:8080`. When set, every route answers a request for any other `Host` with `421 Misdirected Request`, which stops DNS rebinding ([docs/mcp.md](docs/mcp.md#security)). An entry without a port accepts any port. |
 | `GLOBNOTES_HOST` / `GLOBNOTES_PORT` | `0.0.0.0` / `8080` | Listen address (container). |
 | `GLOBNOTES_PATH_PREFIX` | — | Serve under a sub-path, e.g. `/mom` (multi-instance reverse proxies). |
 | `GLOBNOTES_QUICK_ACCESS_*` | — | `HIDE`, `TITLE`, `TERM`, `SORT`, `LIMIT` for the home page quick-access section. |
@@ -277,7 +278,7 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 
 ### Home network deployment
 
-`GLOBNOTES_AUTH_TYPE=none` turns globnotes into a home-wide knowledge source: anyone (and any *agent*) on the network can read and write. `read_only` is the middle ground — open browsing, no writes ("family wiki; editing happens in Obsidian"). Either way, everything in the tree becomes reachable, so keep it to networks you trust. A warning is logged at startup when auth is off.
+`GLOBNOTES_AUTH_TYPE=none` turns globnotes into a home-wide knowledge source: anyone (and any *agent*) on the network can read and write. `read_only` is the middle ground — open browsing, no writes ("family wiki; editing happens in Obsidian"). Either way, everything in the tree becomes reachable, so keep it to networks you trust. A warning is logged at startup when auth is off. Set `GLOBNOTES_ALLOWED_HOSTS` to the server's names too, so a web page elsewhere can't reach it through a visitor's browser by DNS rebinding; with `none` and the setting unset, globnotes warns about that at startup.
 
 ### Access settings
 

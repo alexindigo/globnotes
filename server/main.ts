@@ -6,8 +6,10 @@
  * @pathfinder/pathfinder owns routing: filesystem-routed endpoints
  * (server/api/endpoints/), an app-wide auth middleware (_/00-auth.ts),
  * a root crossing-rest catch-all for vault files and note pages, and a
- * package-owned /_status ops face. A thin wrapper re-homes the configured
- * path prefix onto each Request before the app sees it.
+ * package-owned /_status ops face. A thin wrapper first applies host
+ * admission (GLOBNOTES_ALLOWED_HOSTS, server/host_admission.ts) to every
+ * request, then re-homes the configured path prefix onto each Request
+ * before the app sees it.
  */
 
 import { pathfinder } from "@pathfinder/pathfinder";
@@ -27,6 +29,7 @@ import { PluginManager } from "./plugins/manager.ts";
 import { servicePluginRpc } from "./plugins/rpc.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
+import { admitHost, rebindingWarning } from "./host_admission.ts";
 import { logger } from "./logger.ts";
 import { createMcpEndpoint } from "./mcp/endpoint.ts";
 import { initState, state } from "./state.ts";
@@ -228,6 +231,11 @@ if (globalConfig.setupRequired) {
       "reach this server can read and modify notes.",
   );
 }
+const rebinding = rebindingWarning(
+  !globalConfig.setupRequired && globalConfig.authType === AuthType.NONE,
+  globalConfig.allowedHosts,
+);
+if (rebinding) logger.warning(rebinding);
 if (auth?.isTotpEnabled && auth.totpKeyFromEnv) {
   // Env-configured keys enrol via this log line — their only channel.
   // Wizard-enrolled keys were already recorded in the UI; printing them
@@ -245,7 +253,11 @@ const app = await pathfinder({
   roots: [new URL("./api/endpoints/", import.meta.url)],
 });
 
+const allowedHosts = globalConfig.allowedHosts;
 const httpServer = Deno.serve({ hostname, port }, (req, info) => {
+  // Host admission first: one check for every route (server/host_admission.ts).
+  const misdirected = admitHost(allowedHosts, req);
+  if (misdirected) return misdirected;
   if (!prefix) return app(req, info);
   const url = new URL(req.url);
   // Exact segment matching: /notes-other is NOT the /notes app.

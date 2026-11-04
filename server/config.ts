@@ -9,6 +9,7 @@
 import * as path from "@std/path";
 import { type Environment, processEnvironment } from "./environment.ts";
 import { getEnv, type GetEnvOptions } from "./helpers.ts";
+import { type AllowedHost, parseAllowedHosts } from "./host_admission.ts";
 import { logger } from "./logger.ts";
 
 export enum AuthType {
@@ -179,6 +180,9 @@ export class GlobalConfig {
   readonly autoEnablePlugins: boolean;
   /** The MCP endpoint (`<prefix>/_/mcp`, docs/mcp.md); off answers 404. */
   readonly mcpEnabled: boolean;
+  /** GLOBNOTES_ALLOWED_HOSTS: the only Host values the server answers
+   * (server/host_admission.ts); null = any. */
+  readonly allowedHosts: AllowedHost[] | null;
   /** White-label branding: env wins over stored config, null when unset. */
   brandName: string | null;
   brandAccent: string | null;
@@ -212,6 +216,7 @@ export class GlobalConfig {
       castBool: true,
       default: true,
     }) === "true";
+    this.allowedHosts = this.#loadAllowedHosts();
     this.pathPrefix = this.#loadPathPrefix();
     // getEnv returns "" for unset vars — `||` treats that (and an
     // explicitly empty value) as absent, per the env-wins rule.
@@ -449,6 +454,19 @@ export class GlobalConfig {
     return Number(
       this.#env("GLOBNOTES_QUICK_ACCESS_LIMIT", { castInt: true, default: 4 }),
     );
+  }
+
+  #loadAllowedHosts(): AllowedHost[] | null {
+    const key = "GLOBNOTES_ALLOWED_HOSTS";
+    try {
+      return parseAllowedHosts(this.#env(key));
+    } catch (error) {
+      logger.error(
+        `Invalid value for ${key}: ${(error as Error).message}. Use a ` +
+          "comma-separated list such as 'globnotes.home,192.168.1.20:8080'.",
+      );
+      Deno.exit(1);
+    }
   }
 
   #loadPathPrefix(): string {
