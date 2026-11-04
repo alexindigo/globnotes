@@ -46,6 +46,11 @@ Deno.test("host admission: parsing GLOBNOTES_ALLOWED_HOSTS", () => {
       "[::1]x",
       "bad host",
       "-lead.home",
+      "[1:2]", // not an IPv6 address
+      "[::g]",
+      "nas.1", // a numeric last label is IPv4 to a browser, and not valid
+      "user@globnotes.home",
+      "globnotes%2ehome",
     ]
   ) {
     let error: unknown;
@@ -56,6 +61,55 @@ Deno.test("host admission: parsing GLOBNOTES_ALLOWED_HOSTS", () => {
     }
     assert(error instanceof AllowedHostsError, bad);
     assert((error as Error).message.includes(bad), (error as Error).message);
+  }
+});
+
+Deno.test("host admission: every spelling of an address is one entry (PR #28 review)", () => {
+  // Entries and Host headers share one canonical form (WHATWG URL hosts,
+  // what browsers send): IPv6 compressed and lowercase, IPv4 dotted
+  // decimal, names lowercase without a trailing dot, ports as numbers.
+  assertEquals(
+    parseAllowedHosts(
+      "[0:0:0:0:0:0:0:1],[FE80:0::0001]:0080,::FFFF:127.0.0.1,127.1," +
+        "0x7f.0.0.2,NAS.Home.:08080",
+    ),
+    [
+      { host: "[::1]", port: null },
+      { host: "[fe80::1]", port: "80" },
+      { host: "[::ffff:7f00:1]", port: null },
+      { host: "127.0.0.1", port: null },
+      { host: "127.0.0.2", port: null },
+      { host: "nas.home", port: "8080" },
+    ],
+  );
+  const cases: [string, string, boolean][] = [
+    // [entry, Host header, admitted]
+    ["[0:0:0:0:0:0:0:1]", "[::1]:8080", true],
+    ["[::1]", "[0:0::1]", true],
+    ["::1", "[::1]", true],
+    ["[::1]:8080", "[0000:0000::0001]:8080", true],
+    ["[::1]:8080", "[::1]:8081", false],
+    ["[fe80::1]", "[FE80::1]", true],
+    ["[::ffff:127.0.0.1]", "[::ffff:7f00:1]", true],
+    ["[::1]", "[::2]", false],
+    ["127.0.0.1", "127.1:80", true],
+    ["127.0.0.1:8080", "127.000.000.001:8080", true],
+    ["127.0.0.1", "0127.0.0.1", false], // a leading 0 is octal: 87.0.0.1
+    ["127.0.0.1:8080", "0x7F.0.0.1:08080", true],
+    ["192.168.1.20", "192.168.1.21", false],
+    ["Globnotes.Home", "GLOBNOTES.HOME.", true],
+    ["globnotes.home.", "globnotes.home:80", true],
+    ["globnotes.home:80", "globnotes.home", false], // a port entry needs it
+    ["globnotes.home:80", "globnotes.home:080", true],
+    ["globnotes.home", "user@globnotes.home", false],
+    ["globnotes.home", "globnotes.home.evil", false],
+  ];
+  for (const [entry, host, expected] of cases) {
+    assertEquals(
+      hostAllowed(parseAllowedHosts(entry)!, host),
+      expected,
+      `${entry} vs ${host}`,
+    );
   }
 });
 
