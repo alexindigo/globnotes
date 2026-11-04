@@ -4,7 +4,8 @@
  * The globnotes MCP tools (plans/v2-mcp/design.md §3). Each tool is a plain
  * definition: Zod 4 input and output schemas, annotations, and a `run`
  * function over an injected vault (server/mcp/vault.ts). `run` returns the
- * structured result and its concise text rendering; failures throw, and
+ * structured result and a one-line summary, which resultText emits with
+ * the result's JSON as the text block; failures throw, and
  * server/mcp/server.ts turns them into tool errors the agent can act on.
  */
 
@@ -21,9 +22,10 @@ import { notFound, READ_ONLY_MESSAGE, ToolError } from "./errors.ts";
 import { highlightsToText } from "./snippets.ts";
 import type { McpVault, SearchSort } from "./vault.ts";
 
-/** Listing responses (search, folder, tags) stay under this size by
- * returning fewer entries, then by shortening a lone oversized entry
- * (mcp-builder; fitPage); a single note is returned whole. */
+/** Listing responses (search, folder, tags) stay under this size, counted
+ * on what they send (emittedSize), by returning fewer entries, then by
+ * shortening a lone oversized entry (mcp-builder; fitPage); a single note
+ * is returned whole. */
 export const CHARACTER_LIMIT = 25_000;
 /** Ends every text field shortened to fit CHARACTER_LIMIT. */
 export const TRUNCATED = " ... [truncated]";
@@ -56,11 +58,36 @@ export interface ToolDefinition<
   inputSchema: I;
   outputSchema: O;
   annotations: ToolAnnotations;
-  run(
-    args: z.output<I>,
-    ctx: ToolContext,
-  ): Promise<{ structured: z.output<O>; text: string }>;
+  run(args: z.output<I>, ctx: ToolContext): Promise<ToolOutput<z.output<O>>>;
 }
+
+/** A successful result before it is emitted: the structured result and
+ * at most one line summarizing it. */
+export interface ToolOutput<S> {
+  structured: S;
+  summary: string;
+}
+
+/**
+ * The text block of a successful result: the summary line, then the whole
+ * structured result as JSON. MCP: a tool that returns structured content
+ * SHOULD also return it serialized in a text block, so a client that reads
+ * only text (or passes only text to its model) loses nothing.
+ */
+export function resultText(output: ToolOutput<unknown>): string {
+  const summary = output.summary.replace(/[\r\n]+/g, " ");
+  return `${summary}\n${JSON.stringify(output.structured)}`;
+}
+
+/** The characters a result sends the client: its text block plus its
+ * structured content. CHARACTER_LIMIT applies to this. */
+export function emittedSize(output: ToolOutput<unknown>): number {
+  return resultText(output).length + JSON.stringify(output.structured).length;
+}
+
+/** A user-supplied value in a summary line: quoted and escaped, so the
+ * summary stays one line whatever the value holds. */
+const quote = (value: string) => JSON.stringify(value);
 
 /** Identity helper that infers a definition's schema types for `run`. */
 export function defineTool<I extends z.ZodObject, O extends z.ZodObject>(
@@ -240,36 +267,29 @@ function largest(low: number, high: number, fits: (n: number) => boolean) {
   return low;
 }
 
-interface Rendered<S> {
-  structured: S;
-  text: string;
-}
-
-const renderedSize = (r: Rendered<unknown>) =>
-  r.text.length + JSON.stringify(r.structured).length;
-
 /**
  * The one size rule for every listing tool (search, folder, tags): render
- * the requested window; while it is over CHARACTER_LIMIT, return fewer
- * items (halving; `render` sets has_more/next_offset after the last item
- * shown); a single item still over the limit is shortened by `fitOne`
- * (marked), never dropped. `fitOne(item, excess)` gets how far the page
- * rendered with an item is over the limit.
+ * the requested window; while what it emits (emittedSize) is over
+ * CHARACTER_LIMIT, return fewer items (halving; `render` sets
+ * has_more/next_offset after the last item shown); a single item still over
+ * the limit is shortened by `fitOne` (marked), never dropped.
+ * `fitOne(item, excess)` gets how far the page rendered with an item is over
+ * the limit.
  */
 function fitPage<T, S>(
   window: T[],
-  render: (page: T[]) => Rendered<S>,
+  render: (page: T[]) => ToolOutput<S>,
   fitOne: (item: T, excess: (item: T) => number) => T,
-): Rendered<S> {
+): ToolOutput<S> {
   let page = window;
   let result = render(page);
-  while (page.length > 1 && renderedSize(result) > CHARACTER_LIMIT) {
+  while (page.length > 1 && emittedSize(result) > CHARACTER_LIMIT) {
     page = page.slice(0, Math.ceil(page.length / 2));
     result = render(page);
   }
-  if (page.length === 1 && renderedSize(result) > CHARACTER_LIMIT) {
+  if (page.length === 1 && emittedSize(result) > CHARACTER_LIMIT) {
     result = render([
-      fitOne(page[0], (item) => renderedSize(render([item])) - CHARACTER_LIMIT),
+      fitOne(page[0], (item) => emittedSize(render([item])) - CHARACTER_LIMIT),
     ]);
   }
   return result;
@@ -446,37 +466,22 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
         ...(hasMore ? { next_offset: end } : {}),
         results: page,
       };
-      const lines = page.length === 0
-        ? [
-          `No notes match '${args.query}'${
-            folder === undefined ? "" : ` in '${folder}'`
-          }${
-            args.offset > 0 ? ` at offset ${args.offset}` : ""
-          }. Try fewer or different words, a prefix* or query="*".`,
-        ]
-        : [`Results ${args.offset + 1}–${end} for '${args.query}':`];
-      for (const hit of page) {
-        lines.push(
-          `- ${hit.path} — "${hit.title}" (modified ${hit.last_modified})`,
-        );
-        if (hit.snippet) lines.push(`  ${hit.snippet}`);
-        if (hit.matched_tags.length) {
-          lines.push(
-            `  tags: ${hit.matched_tags.join(", ")}${
-              hit.omitted_tags ? ` (+${hit.omitted_tags} more not shown)` : ""
-            }`,
-          );
-        }
-        if (hit.truncated) {
-          lines.push(
-            `  shortened to fit the response limit: ${
-              hit.truncated.join(", ")
-            }; read the whole note with globnotes_get_note`,
-          );
-        }
+      const scope = folder === undefined ? "" : ` in folder ${quote(folder)}`;
+      let summary = page.length === 0
+        ? `No results for ${quote(args.query)}${scope}${
+          args.offset > 0
+            ? ` at offset ${args.offset} (${found.total} in all)`
+            : ""
+        }. Try fewer or different words, a prefix* or query="*".`
+        : `Results ${args.offset + 1}-${end} of ${found.total} for ${
+          quote(args.query)
+        }${scope}.`;
+      if (page.some((hit) => hit.truncated)) {
+        summary += " A result was shortened to fit the response limit " +
+          "(see truncated); read the whole note with globnotes_get_note.";
       }
-      if (hasMore) lines.push(`More results: call again with offset=${end}.`);
-      return { structured, text: lines.join("\n") };
+      if (hasMore) summary += ` More results: call again with offset=${end}.`;
+      return { structured, summary };
     };
     // One hit can exceed the budget alone: the index's snippet window
     // counts tokens, not characters (one long word makes a long snippet),
@@ -500,8 +505,9 @@ export const getNote = defineTool({
     const note = noteOutput(readNote(ctx, args.path));
     return Promise.resolve({
       structured: note,
-      text:
-        `# ${note.title}\npath: ${note.path}\nlast_modified: ${note.last_modified}\n\n${note.content}`,
+      summary: `Note ${quote(note.path)}, title ${
+        quote(note.title)
+      }, last_modified ${note.last_modified}.`,
     });
   },
 });
@@ -610,27 +616,22 @@ export const listFolder = defineTool({
         notes,
       };
       const end = args.offset + page.length;
-      const lines = [
-        `Folder '${
-          path || "/"
-        }': ${level.folderCount} folder(s), ${level.noteCount} note(s)${
-          level.total === 0
-            ? "."
-            : page.length === 0
-            ? `; none at offset ${args.offset}.`
-            : `; entries ${args.offset + 1}–${end} of ${level.total}:`
-        }`,
-        ...folders.map((f) => `- ${f.path}/`),
-        ...notes.map((n) =>
-          `- ${n.path} — "${n.title}"${
-            n.truncated ? " (title shortened to fit the response limit)" : ""
-          }`
-        ),
-      ];
-      if (structured.has_more) {
-        lines.push(`More entries: call again with offset=${end}.`);
+      let summary = `Folder ${
+        quote(path || "/")
+      }: ${level.folderCount} folder(s), ${level.noteCount} note(s)${
+        level.total === 0
+          ? "."
+          : page.length === 0
+          ? `; none at offset ${args.offset}.`
+          : `; entries ${args.offset + 1}-${end} of ${level.total}.`
+      }`;
+      if (notes.some((n) => n.truncated)) {
+        summary += " A title was shortened to fit the response limit.";
       }
-      return { structured, text: lines.join("\n") };
+      if (structured.has_more) {
+        summary += ` More entries: call again with offset=${end}.`;
+      }
+      return { structured, summary };
     };
     return Promise.resolve(fitPage(
       window,
@@ -687,22 +688,18 @@ export const listTags = defineTool({
         ...(page.some((t) => t.truncated) ? { truncated: true } : {}),
       };
       const end = args.offset + page.length;
-      const lines = [
-        found.total === 0
-          ? "The vault has no tags."
-          : page.length === 0
-          ? `The vault has ${found.total} tag(s); none at offset ${args.offset}.`
-          : `${found.total} tag(s); ${args.offset + 1}–${end}: ${
-            structured.tags.map((t) => `#${t}`).join(", ")
-          }`,
-      ];
+      let summary = found.total === 0
+        ? "The vault has no tags."
+        : page.length === 0
+        ? `The vault has ${found.total} tag(s); none at offset ${args.offset}.`
+        : `Tags ${args.offset + 1}-${end} of ${found.total}.`;
       if (structured.truncated) {
-        lines.push("The tag was shortened to fit the response limit.");
+        summary += " The tag was shortened to fit the response limit.";
       }
       if (structured.has_more) {
-        lines.push(`More tags: call again with offset=${end}.`);
+        summary += ` More tags: call again with offset=${end}.`;
       }
-      return { structured, text: lines.join("\n") };
+      return { structured, summary };
     };
     return Promise.resolve(fitPage(
       found.tags.map((tag) => ({
@@ -748,8 +745,9 @@ export const createNote = defineTool({
     );
     return {
       structured: note,
-      text:
-        `Created note '${note.path}' ("${note.title}", last_modified ${note.last_modified}).`,
+      summary: `Created note ${quote(note.path)}, title ${
+        quote(note.title)
+      }, last_modified ${note.last_modified}.`,
     };
   },
 });
@@ -826,17 +824,17 @@ Examples: fix a typo -> path + content + expected_last_modified; move to another
         new_path: f.newPath,
       })),
     };
-    const lines = [
-      note.path === args.path
-        ? `Updated note '${note.path}'`
-        : `Updated note '${args.path}', now at '${note.path}'`,
-    ];
-    lines[0] +=
-      ` ("${structured.title}", last_modified ${structured.last_modified}).`;
-    for (const f of structured.moved_files) {
-      lines.push(`Moved ${f.old_path} -> ${f.new_path}`);
-    }
-    return { structured, text: lines.join("\n") };
+    const moved = structured.moved_files.length;
+    return {
+      structured,
+      summary: `Updated note ${quote(args.path)}${
+        note.path === args.path ? "" : `, now at ${quote(note.path)}`
+      }, title ${
+        quote(structured.title)
+      }, last_modified ${structured.last_modified}${
+        moved ? `; ${moved} attachment(s) moved` : ""
+      }.`,
+    };
   },
 });
 
@@ -883,7 +881,7 @@ export const deleteNote = defineTool({
     await ctx.vault.deleteNote(args.path, lease);
     return {
       structured: { deleted: args.path },
-      text: `Deleted note '${args.path}'.`,
+      summary: `Deleted note ${quote(args.path)}.`,
     };
   },
 });

@@ -19,6 +19,7 @@ import {
   getNote,
   listFolder,
   listTags,
+  resultText,
   searchNotes,
   type ToolContext,
   type ToolDefinition,
@@ -57,10 +58,10 @@ function register(
     annotations: tool.annotations,
   }, async (args): Promise<CallToolResult> => {
     try {
-      const { structured, text } = await tool.run(args, ctx);
+      const output = await tool.run(args, ctx);
       return {
-        content: [{ type: "text" as const, text }],
-        structuredContent: structured as Record<string, unknown>,
+        content: [{ type: "text" as const, text: resultText(output) }],
+        structuredContent: output.structured as Record<string, unknown>,
       };
     } catch (error) {
       const path = (args as { path?: unknown }).path;

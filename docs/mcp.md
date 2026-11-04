@@ -118,8 +118,10 @@ The header value comes from `env` because some clients don't escape spaces in `a
 
 ## Tools
 
-Every tool returns structured content (described by its output schema) plus a short text
-rendering. Failures are tool results the agent can read, saying what went wrong and what
+Every tool returns structured content (described by its output schema) and one text block:
+a one-line summary, then the whole structured result as JSON on the second line. A client
+that reads only text (or passes only text to its model) gets the same fields as one that
+reads the structured content. Failures are tool results the agent can read, saying what went wrong and what
 to do next, e.g. "Note 'x' not found. Use globnotes_search_notes or globnotes_list_folder
 to find the right path". A failure on the server's side (a folder where a note should be,
 a file globnotes may not read, any unexpected error) gets a short fixed message; its
@@ -151,8 +153,9 @@ Notes:
   `count` entries. When `has_more` is `true`, call again with `offset: next_offset`.
   `total` is exact: the size of the whole list (a folder, the tags, or every result of the
   search). The index and storage cut each page, so a page far into a long list costs about
-  as much as the first. A page holds fewer than `limit` entries when they would exceed
-  25,000 characters; `next_offset` then continues after the last one returned.
+  as much as the first. A page holds fewer than `limit` entries when the response would
+  exceed 25,000 characters, counting the text block and the structured content together;
+  `next_offset` then continues after the last one returned.
 - **Shortened results.** A snippet is a window of words, and titles and tags have no length
   limit, so a single result can be over 25,000 characters on its own (one very long word, a
   huge heading, or many tags). Such a result is still returned, shortened by one rule:

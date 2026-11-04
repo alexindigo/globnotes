@@ -192,6 +192,13 @@ Deno.test("mcp evaluation: every answer is derived with the real tools", async (
         if (result.isError) {
           throw new Error(`${name}: ${JSON.stringify(result.content)}`);
         }
+        // A client that reads only text gets the same result: the text
+        // block's second line is the structured result as JSON.
+        const [text] = result.content as { type: "text"; text: string }[];
+        assertEquals(
+          JSON.parse(text.text.split("\n")[1]),
+          result.structuredContent,
+        );
         return result.structuredContent as T;
       };
       const tools: Tools = {
