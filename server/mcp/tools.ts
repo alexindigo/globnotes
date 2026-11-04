@@ -19,13 +19,14 @@ import {
 } from "../notes/models.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
 import { notFound, READ_ONLY_MESSAGE, ToolError } from "./errors.ts";
+import { codePointLength, codePointSlice } from "./note_parts.ts";
 import { highlightsToText } from "./snippets.ts";
 import type { McpVault, SearchSort } from "./vault.ts";
 
 /** Listing responses (search, folder, tags) stay under this size, counted
  * on what they send (emittedSize), by returning fewer entries, then by
- * shortening a lone oversized entry (mcp-builder; fitPage); a single note
- * is returned whole. */
+ * shortening a lone oversized entry (mcp-builder; fitPage). A note read
+ * stays under it too, in parts (globnotes_get_note). */
 export const CHARACTER_LIMIT = 25_000;
 /** Ends every text field shortened to fit CHARACTER_LIMIT. */
 export const TRUNCATED = " ... [truncated]";
@@ -492,23 +493,109 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
 
 // ---- globnotes_get_note ----
 
+const GetNoteOutput = NoteOutput.extend({
+  content: z.string().describe(
+    "Markdown content: the whole note, or, when has_more is true or offset " +
+      "is above 0, the part from offset (in characters)",
+  ),
+  offset: z.number().int().describe("Characters of the note before content"),
+  total_length: z.number().int().describe(
+    "Characters (Unicode code points) in the whole note",
+  ),
+  has_more: z.boolean().describe(
+    "true when the note continues after content: this is a part only",
+  ),
+  next_offset: z.number().int().optional().describe(
+    "Pass as offset to read the next part (only when has_more)",
+  ),
+  truncated: z.array(z.enum(["title"])).optional().describe(
+    "Only when the display title alone would take over half the response " +
+      "limit: it was shortened (ends in ' ... [truncated]'); the content " +
+      "never is",
+  ),
+});
+
 export const getNote = defineTool({
   name: "globnotes_get_note",
   title: "Read a note",
   description:
-    "Read one note in full: its Markdown content, display title and last_modified (pass that to the write tools' expected_last_modified to avoid overwriting newer edits). Find paths with globnotes_search_notes or globnotes_list_folder.",
+    `Read one note: its Markdown content, display title and last_modified (pass that to the write tools' expected_last_modified to avoid overwriting newer edits). Find paths with globnotes_search_notes or globnotes_list_folder.
+
+A note too large for one response comes in parts: has_more is true and content holds the characters from offset to next_offset; call again with offset=next_offset until has_more is false. offset and length (characters) read a chosen range. Read every part before replacing a note with globnotes_update_note, which always replaces the whole note.`,
   write: false,
-  inputSchema: z.strictObject({ path: notePath }),
-  outputSchema: NoteOutput,
+  inputSchema: z.strictObject({
+    path: notePath,
+    offset: z.number().int().min(0).default(0).describe(
+      "Characters (Unicode code points) to skip from the start of the note",
+    ),
+    length: z.number().int().min(1).optional().describe(
+      "At most this many characters; omit for as much as fits the response " +
+        "limit (the whole note when it fits)",
+    ),
+  }),
+  outputSchema: GetNoteOutput,
   annotations: READ,
   run(args, ctx) {
     const note = noteOutput(readNote(ctx, args.path));
-    return Promise.resolve({
-      structured: note,
-      summary: `Note ${quote(note.path)}, title ${
-        quote(note.title)
-      }, last_modified ${note.last_modified}.`,
-    });
+    const total = codePointLength(note.content);
+    const start = Math.min(args.offset, total);
+    const render = (content: string, title = note.title) => {
+      const end = start + codePointLength(content);
+      const hasMore = end < total;
+      const structured = {
+        ...note,
+        title,
+        content,
+        offset: start,
+        total_length: total,
+        has_more: hasMore,
+        ...(hasMore ? { next_offset: end } : {}),
+        ...(title === note.title ? {} : { truncated: ["title" as const] }),
+      };
+      const whole = start === 0 && !hasMore;
+      return {
+        structured,
+        summary: `Note ${
+          quote(note.path)
+        }, last_modified ${note.last_modified}, ${total} characters${
+          whole
+            ? "."
+            : `. PARTIAL: characters ${start}-${end} of ${total}.${
+              hasMore
+                ? ` Call again with offset=${end} for the rest; read the ` +
+                  "whole note before replacing it with globnotes_update_note."
+                : ""
+            }`
+        }${
+          title === note.title
+            ? ""
+            : " The title was shortened to fit the response limit."
+        }`,
+      };
+    };
+    // A display title too long to leave half the response for content is
+    // shortened (marked), as the listings do; the content never is.
+    const title = fitText(
+      note.title,
+      (t) => emittedSize(render("", t)) - CHARACTER_LIMIT / 2,
+    );
+    // A part is never larger than the response limit allows. Both copies
+    // of content (text and structured) count, so more than CHARACTER_LIMIT
+    // characters can never fit: cut there first, then find the longest
+    // prefix that fits. At least one character is returned, so reading
+    // in parts always advances.
+    const wanted = Array.from(codePointSlice(
+      note.content,
+      start,
+      Math.min(args.length ?? Infinity, CHARACTER_LIMIT),
+    ));
+    const part = (n: number) => render(wanted.slice(0, n).join(""), title);
+    const fits = (n: number) => emittedSize(part(n)) <= CHARACTER_LIMIT;
+    const count = fits(wanted.length)
+      ? wanted.length
+      : largest(Math.min(1, wanted.length), wanted.length, fits) ??
+        Math.min(1, wanted.length);
+    return Promise.resolve(part(count));
   },
 });
 
@@ -745,8 +832,8 @@ export const createNote = defineTool({
     );
     return {
       structured: note,
-      summary: `Created note ${quote(note.path)}, title ${
-        quote(note.title)
+      summary: `Created note ${
+        quote(note.path)
       }, last_modified ${note.last_modified}.`,
     };
   },
@@ -764,7 +851,7 @@ export const updateNote = defineTool({
   name: "globnotes_update_note",
   title: "Update or rename a note",
   description:
-    `Replace a note's content, rename/move it, or both. The new content replaces the whole note, so read it first with globnotes_get_note and pass its last_modified as expected_last_modified.
+    `Replace a note's content, rename/move it, or both. The new content replaces the whole note, so read it first with globnotes_get_note (every part, while has_more is true) and pass its last_modified as expected_last_modified.
 
 Like the web app, changing the first '# Heading' of a note without a front-matter title renames the note to match; the result's path is the final path.
 Examples: fix a typo -> path + content + expected_last_modified; move to another folder -> path + new_path="Archive/Old plan".`,
@@ -829,8 +916,6 @@ Examples: fix a typo -> path + content + expected_last_modified; move to another
       structured,
       summary: `Updated note ${quote(args.path)}${
         note.path === args.path ? "" : `, now at ${quote(note.path)}`
-      }, title ${
-        quote(structured.title)
       }, last_modified ${structured.last_modified}${
         moved ? `; ${moved} attachment(s) moved` : ""
       }.`,

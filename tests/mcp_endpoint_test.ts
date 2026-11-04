@@ -315,10 +315,22 @@ Deno.test("mcp endpoint: a long title and a long tag stay within the response li
         textOf(result).length + JSON.stringify(page).length <= 25_000,
         "within the response budget",
       );
-      // The path stays usable: the whole note reads back.
-      const note = await call(client, "globnotes_get_note", { path: hit.path });
-      assertEquals(note.content, content);
-      assertEquals(note.title, title);
+      // The path stays usable: the whole note reads back, in parts (it is
+      // over the response limit), with its long title shortened.
+      const parts: string[] = [];
+      for (let offset: number | undefined = 0; offset !== undefined;) {
+        const note = await call(client, "globnotes_get_note", {
+          path: hit.path,
+          offset,
+        });
+        assertEquals(note.offset, offset);
+        assertEquals(note.truncated, ["title"]);
+        assert((note.title as string).startsWith("Heading Heading"));
+        parts.push(note.content as string);
+        offset = note.next_offset as number | undefined;
+      }
+      assert(parts.length > 1, "more than one part");
+      assertEquals(parts.join(""), content);
     } finally {
       await client.close();
     }
