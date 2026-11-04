@@ -125,8 +125,9 @@ export function hostAllowed(
 }
 
 /** The startup warning for an open deployment that answers any host name:
- * with no authentication, a hostile web page can use DNS rebinding to reach
- * this server through the visitor's browser. null when not applicable. */
+ * with no login needed (`none`, or `read_only` for reading), a hostile web
+ * page can use DNS rebinding to reach this server through the visitor's
+ * browser. null when not applicable. */
 export function rebindingWarning(
   openAccess: boolean,
   allowed: readonly AllowedHost[] | null,
@@ -134,8 +135,8 @@ export function rebindingWarning(
   if (!openAccess || allowed !== null) return null;
   return "No authentication and GLOBNOTES_ALLOWED_HOSTS is unset: a web " +
     "page on another site can use DNS rebinding (making its own name " +
-    "resolve to this server) to read and change notes through the browser " +
-    "of anyone on this network. Set GLOBNOTES_ALLOWED_HOSTS to the names " +
+    "resolve to this server) to read notes, and change them unless the " +
+    "instance is read-only, through the browser of anyone on this network. Set GLOBNOTES_ALLOWED_HOSTS to the names " +
     "this server is reached by, e.g. 'globnotes.home', so it answers no " +
     "other host.";
 }

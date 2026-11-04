@@ -279,7 +279,7 @@ The only reserved top-level segment is `_` — don't name a vault folder that. E
 
 ### Home network deployment
 
-`GLOBNOTES_AUTH_TYPE=none` turns globnotes into a home-wide knowledge source: anyone (and any *agent*) on the network can read and write. `read_only` is the middle ground — open browsing, no writes ("family wiki; editing happens in Obsidian"). Either way, everything in the tree becomes reachable, so keep it to networks you trust. A warning is logged at startup when auth is off. Set `GLOBNOTES_ALLOWED_HOSTS` to the server's names too, so a web page elsewhere can't reach it through a visitor's browser by DNS rebinding; with `none` and the setting unset, globnotes warns about that at startup.
+`GLOBNOTES_AUTH_TYPE=none` turns globnotes into a home-wide knowledge source: anyone (and any *agent*) on the network can read and write. `read_only` is the middle ground — open browsing, no writes ("family wiki; editing happens in Obsidian"). Either way, everything in the tree becomes reachable, so keep it to networks you trust. A warning is logged at startup when auth is off. Set `GLOBNOTES_ALLOWED_HOSTS` to the server's names too, so a web page elsewhere can't reach it through a visitor's browser by DNS rebinding; with `none` or `read_only` and the setting unset, globnotes warns about that at startup.
 
 ### Access settings
 
