@@ -24,17 +24,30 @@ import { awaitIndexReady, restoreState } from "./helpers/state.ts";
 /** Rows each SQL statement returned to JavaScript, by statement text. */
 type RowLog = Map<string, number>;
 
-/** A database whose statements count the rows they hand to JavaScript. */
-function countingDatabase(file: string, log: RowLog): DatabaseSync {
+/** The most parameters any one statement execution was bound with. */
+interface ParamPeak {
+  peak: number;
+}
+
+/** A database whose statements count the rows they hand to JavaScript and
+ * the parameters they are bound with. */
+function countingDatabase(
+  file: string,
+  log: RowLog,
+  params: ParamPeak,
+): DatabaseSync {
   const db = new DatabaseSync(file);
   const count = (sql: string, rows: number) =>
     log.set(sql, (log.get(sql) ?? 0) + rows);
+  const bound = (args: unknown[]) =>
+    params.peak = Math.max(params.peak, args.length);
   const statement = (sql: string, inner: StatementSync) =>
     new Proxy(inner, {
       get(target, prop) {
         const value = Reflect.get(target, prop, target);
         if (prop === "all") {
           return (...args: never[]) => {
+            bound(args);
             const rows = (value as (...a: never[]) => unknown[]).apply(
               target,
               args,
@@ -45,6 +58,7 @@ function countingDatabase(file: string, log: RowLog): DatabaseSync {
         }
         if (prop === "get") {
           return (...args: never[]) => {
+            bound(args);
             const row = (value as (...a: never[]) => unknown).apply(
               target,
               args,
@@ -70,7 +84,9 @@ function countingDatabase(file: string, log: RowLog): DatabaseSync {
 /** An indexed vault in this process's state, with a row log. */
 async function indexedVault(
   write: (vault: string) => Promise<void>,
-): Promise<{ vault: string; indexer: Fts5Indexer; rows: RowLog }> {
+): Promise<
+  { vault: string; indexer: Fts5Indexer; rows: RowLog; params: ParamPeak }
+> {
   const vault = await Deno.makeTempDir({ prefix: "globnotes-paging-" });
   await write(vault);
   const env = testEnvironment({
@@ -80,8 +96,9 @@ async function indexedVault(
     GLOBNOTES_INDEX_BATCH_SIZE: "2000",
   });
   const rows: RowLog = new Map();
+  const params: ParamPeak = { peak: 0 };
   const indexer = new Fts5Indexer(path.join(vault, ".globnotes"), env, {
-    openDatabase: (file) => countingDatabase(file, rows),
+    openDatabase: (file) => countingDatabase(file, rows, params),
   });
   initState(
     new GlobalConfig(env),
@@ -93,7 +110,7 @@ async function indexedVault(
   );
   indexer.startBackgroundSync();
   await awaitIndexReady(indexer);
-  return { vault, indexer, rows };
+  return { vault, indexer, rows, params };
 }
 
 /** The sync before every search reads every indexed file's mtime; it is
@@ -269,17 +286,19 @@ const SCALE = 10_000;
 
 Deno.test("search paging: a deep page over 10,000 notes reads only its window", async (t) => {
   const previous = { ...state };
-  const { vault, indexer, rows } = await indexedVault(async (vault) => {
-    const flat = path.join(vault, "Flat");
-    await Deno.mkdir(flat, { recursive: true });
-    for (let i = 0; i < SCALE; i++) {
-      const n = String(i).padStart(5, "0");
-      await Deno.writeTextFile(
-        path.join(flat, `Note ${n}.md`),
-        `# Note ${n}\n\nmarker word${i % 50} #tag${n}\n`,
-      );
-    }
-  });
+  const { vault, indexer, rows, params } = await indexedVault(
+    async (vault) => {
+      const flat = path.join(vault, "Flat");
+      await Deno.mkdir(flat, { recursive: true });
+      for (let i = 0; i < SCALE; i++) {
+        const n = String(i).padStart(5, "0");
+        await Deno.writeTextFile(
+          path.join(flat, `Note ${n}.md`),
+          `# Note ${n}\n\nmarker word${i % 50} #tag${n}\n`,
+        );
+      }
+    },
+  );
   try {
     const LIMIT = 20;
     for (
@@ -317,6 +336,41 @@ Deno.test("search paging: a deep page over 10,000 notes reads only its window", 
       assert(first <= 501, `first tag page read ${first} rows`);
       assertEquals(deep, first);
     });
+    await t.step(
+      "no statement's parameters grow with the result (PR #28 review)",
+      () => {
+        // SQLite refuses more than SQLITE_MAX_VARIABLE_NUMBER parameters
+        // (32,766 in this runtime's build); a list bound one `?` per element
+        // fails past it. An unlimited search returns every match: 10,000
+        // here, with highlights for each.
+        params.peak = 0;
+        const all = indexer.searchPage("marker", { sort: "path" });
+        assertEquals(all.results.length, SCALE);
+        assert(
+          all.results.every((r) => r.contentHighlights?.includes("marker")),
+        );
+        const rest = indexer.search("marker", "path", "asc");
+        assertEquals(rest.length, SCALE);
+        const level = folderPage("Flat");
+        assertEquals(level.notes.length, SCALE);
+        assert(params.peak <= 8, `a statement was bound ${params.peak} params`);
+        // Past the limit itself: 40,000 names in one call.
+        const names = Array.from(
+          { length: 40_000 },
+          (_, i) => `Flat/Note ${String(i).padStart(5, "0")}`,
+        );
+        const titles = indexer.titlesFor(names.map((n) => `${n}.md`));
+        assertEquals(Object.keys(titles).length, SCALE);
+        assertEquals(titles["Flat/Note 09999.md"], "Note 09999");
+        const meta = indexer.noteMetaFor(names);
+        assertEquals(Object.keys(meta).length, SCALE);
+        assertEquals(meta["Flat/Note 00007"], {
+          title: "Note 00007",
+          aliases: [],
+        });
+        assert(params.peak <= 8, `a statement was bound ${params.peak} params`);
+      },
+    );
     await t.step("folder: titles for the page's notes only", () => {
       const first = rowsOf(rows, () => folderPage("Flat", 0, 100));
       const deep = rowsOf(rows, () => {

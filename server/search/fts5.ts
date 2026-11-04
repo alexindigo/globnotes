@@ -39,6 +39,13 @@ interface FtsRow {
   title: string | null;
 }
 
+/** `x IN ${IN_LIST}` with one bound parameter, a JSON array: the way every
+ * list reaches SQL here. One `?` per element would make the statement's
+ * parameter count grow with the list, and SQLite refuses more than
+ * SQLITE_MAX_VARIABLE_NUMBER (32,766 by default since 3.32.0; this
+ * runtime's build), so a long list would fail the query. */
+const IN_LIST = "(SELECT value FROM json_each(?))";
+
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** How the indexer reaches the disk: note reads and its database. The
@@ -714,14 +721,20 @@ export class Fts5Indexer implements Indexer {
     ) as unknown as (FtsRow & { id: number })[];
     if (matchQuery === null || rows.length === 0) return rows;
 
-    const marks = rows.map(() => "?").join(",");
+    // Highlights and snippets for the page's rows only (computing them in
+    // the page query would compute them for every match before the sort).
+    // The ids travel as one JSON parameter (IN_LIST), so the statement's
+    // parameter count never grows with the page.
     const highlighted = new Map(
       (this.#db.prepare(
         `SELECT rowid AS id,
           highlight(notes_fts, 0, '${MARK_OPEN}', '${MARK_CLOSE}') AS pathHighlights,
           snippet(notes_fts, 1, '${MARK_OPEN}', '${MARK_CLOSE}', '…', ${SNIPPET_COLS}) AS contentHighlights
-        FROM notes_fts WHERE notes_fts MATCH ? AND rowid IN (${marks})`,
-      ).all(matchQuery, ...rows.map((row) => row.id)) as unknown as {
+        FROM notes_fts WHERE notes_fts MATCH ? AND rowid IN ${IN_LIST}`,
+      ).all(
+        matchQuery,
+        JSON.stringify(rows.map((row) => row.id)),
+      ) as unknown as {
         id: number;
         pathHighlights: string | null;
         contentHighlights: string | null;
@@ -851,12 +864,14 @@ export class Fts5Indexer implements Indexer {
   titlesFor(filenames: string[]): Record<string, string> {
     const out: Record<string, string> = {};
     if (filenames.length === 0) return out;
-    const marks = filenames.map(() => "?").join(",");
     const rows = this.#db
       .prepare(
-        `SELECT filename, display_title FROM notes_meta WHERE filename IN (${marks})`,
+        `SELECT filename, display_title FROM notes_meta WHERE filename IN ${IN_LIST}`,
       )
-      .all(...filenames) as { filename: string; display_title: string }[];
+      .all(JSON.stringify(filenames)) as {
+        filename: string;
+        display_title: string;
+      }[];
     for (const r of rows) out[r.filename] = r.display_title;
     return out;
   }
@@ -868,12 +883,11 @@ export class Fts5Indexer implements Indexer {
     const out: Record<string, { title: string; aliases: string[] }> = {};
     if (paths.length === 0) return out;
     const filenames = paths.map((p) => p + MARKDOWN_EXT);
-    const marks = filenames.map(() => "?").join(",");
     const rows = this.#db
       .prepare(
-        `SELECT filename, display_title, aliases FROM notes_meta WHERE filename IN (${marks})`,
+        `SELECT filename, display_title, aliases FROM notes_meta WHERE filename IN ${IN_LIST}`,
       )
-      .all(...filenames) as {
+      .all(JSON.stringify(filenames)) as {
         filename: string;
         display_title: string;
         aliases: string;
