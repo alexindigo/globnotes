@@ -308,7 +308,7 @@ deployment configuration when they prevent a requested effective transition.
 
 ## Agent access
 
-MCP clients (Claude Code, Claude Desktop, opencode and others) can search, read and edit the vault through the built-in MCP endpoint: see [docs/mcp.md](docs/mcp.md).
+MCP clients (Claude Code, Codex CLI, Gemini CLI, opencode, Cursor, VS Code, Zed, Claude Desktop and others) can search, read and edit the vault through the built-in MCP endpoint: see [docs/mcp.md](docs/mcp.md) for each client's setup.
 
 With token auth (or no auth at all), your notes are plain HTTP:
 
