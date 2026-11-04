@@ -274,7 +274,7 @@ Deno.test("host admission: an unlisted host gets 421 on every route", async () =
   }
 });
 
-Deno.test("host admission: unset, every host is answered and none mode warns", async () => {
+Deno.test("host admission: unset, every host is answered and open modes warn", async () => {
   const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
   try {
     await seed(server);
@@ -290,15 +290,34 @@ Deno.test("host admission: unset, every host is answered and none mode warns", a
   } finally {
     await server.close();
   }
-  const readOnly = await bootServer({ GLOBNOTES_AUTH_TYPE: "read_only" });
-  try {
-    const { stdout, stderr } = readOnly.logs();
-    assert(
-      !(stdout + stderr).includes("DNS rebinding"),
-      "only none mode warns",
-    );
-  } finally {
-    await readOnly.close();
+  // read_only needs no login to read, so it warns too (PR #28 review);
+  // the allow-list or a login silences the warning.
+  for (
+    const [env, warns] of [
+      [{ GLOBNOTES_AUTH_TYPE: "read_only" }, true],
+      [{
+        GLOBNOTES_AUTH_TYPE: "read_only",
+        GLOBNOTES_ALLOWED_HOSTS: "127.0.0.1",
+      }, false],
+      [{
+        GLOBNOTES_AUTH_TYPE: "password",
+        GLOBNOTES_USERNAME: "agent",
+        GLOBNOTES_PASSWORD: "correct horse",
+        GLOBNOTES_SECRET_KEY: "host-admission-test-secret",
+      }, false],
+    ] as [Record<string, string>, boolean][]
+  ) {
+    const other = await bootServer(env);
+    try {
+      const { stdout, stderr } = other.logs();
+      assertEquals(
+        (stdout + stderr).includes("DNS rebinding"),
+        warns,
+        JSON.stringify(env),
+      );
+    } finally {
+      await other.close();
+    }
   }
 });
 

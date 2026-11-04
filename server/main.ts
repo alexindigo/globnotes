@@ -237,7 +237,9 @@ if (globalConfig.setupRequired) {
   );
 }
 const rebinding = rebindingWarning(
-  !globalConfig.setupRequired && globalConfig.authType === AuthType.NONE,
+  !globalConfig.setupRequired &&
+    (globalConfig.authType === AuthType.NONE ||
+      globalConfig.authType === AuthType.READ_ONLY),
   globalConfig.allowedHosts,
 );
 if (rebinding) logger.warning(rebinding);

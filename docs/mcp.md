@@ -395,7 +395,8 @@ will strengthen it.
   port (`nas.home:8080`, `[::1]:8080`) only that one. Entries and `Host` headers are compared
   the way a browser writes them: names ignore case and a trailing dot, and every spelling of
   an IP address is the same entry (`[0:0:0:0:0:0:0:1]` is `[::1]`). Unset, every host is answered. With
-  `none` authentication and the setting unset, globnotes logs a warning at startup. A
+  `none` or `read_only` authentication and the setting unset, globnotes logs a warning at
+  startup (a rebinding page could read a `read_only` vault). A
   rebinding page never receives your login token, so `password` or `totp` authentication
   also protects the notes.
 - **Tokens in configuration files.** Client configurations hold the token in plain text.
