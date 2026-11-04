@@ -211,6 +211,69 @@ Deno.test("rate limit: the endpoint answers 429 with Retry-After, per client", a
   );
 });
 
+Deno.test("rate limit: a malformed tool call is counted and answered, never a crash (PR #28 review)", async () => {
+  const MODERN = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": { name: "raw", version: "1" },
+    "io.modelcontextprotocol/clientCapabilities": {},
+  };
+  const modernCall = (headers: Record<string, string>) =>
+    new Request("http://notes.test/_/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": "2026-07-28",
+        "mcp-method": "tools/call",
+        ...headers,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "globnotes_list_tags", arguments: {}, _meta: MODERN },
+      }),
+    });
+  for (
+    const [label, headers] of [
+      ["an undecodable Mcp-Name", { "mcp-name": "=?base64?***not base64?=" }],
+      ["no Mcp-Name", {}],
+    ] as [string, Record<string, string>][]
+  ) {
+    for (const writable of [true, false]) {
+      const mcp = createMcpEndpoint({
+        vault: emptyVault,
+        writable: () => writable,
+        authenticateRead: () => Promise.resolve(null),
+        lease: () => Promise.resolve(LEASE),
+        version: () => "test",
+        rateLimiter: createRateLimiter({ perMinute: 1, now: () => 0 }),
+      });
+      try {
+        const bad = await mcp.post(modernCall(headers), {
+          remoteAddress: "10.0.0.1",
+        });
+        // The SDK's own answer to the header (a JSON-RPC error), not a 500.
+        assert(
+          bad.status >= 400 && bad.status < 500,
+          `${label}: ${bad.status}`,
+        );
+        const body = await bad.json();
+        assertEquals(body.jsonrpc, "2.0", label);
+        assert(body.error, `${label}: ${JSON.stringify(body)}`);
+        // It was counted: the budget of one is spent.
+        const next = await mcp.post(request(TAGS), {
+          remoteAddress: "10.0.0.1",
+        });
+        assertEquals(next.status, 429, `${label} (writable ${writable})`);
+        await next.body?.cancel();
+      } finally {
+        await mcp.close();
+      }
+    }
+  }
+});
+
 /** POST a 2025-era tools/call to the real server at `base`. */
 async function callTags(base: string, token?: string): Promise<Response> {
   return await fetch(`${base}/_/mcp`, {
