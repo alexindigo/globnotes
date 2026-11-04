@@ -27,6 +27,7 @@ import type { NoteMutationLease } from "../server/plugins/lifecycle.ts";
 import { MARK_CLOSE, MARK_OPEN } from "../server/search/fts5.ts";
 import { createMcpEndpoint, foreignOrigin } from "../server/mcp/endpoint.ts";
 import { READ_ONLY_MESSAGE } from "../server/mcp/errors.ts";
+import { INSTRUCTIONS } from "../server/mcp/server.ts";
 import { codePointLength, codePointSlice } from "../server/mcp/note_parts.ts";
 import { highlightsToText } from "../server/mcp/snippets.ts";
 import {
@@ -344,6 +345,35 @@ Deno.test("mcp tools: tools/list and annotations, writable and read-only", async
       }
     });
   }
+});
+
+Deno.test("mcp tools: server instructions at initialize, both eras", async (t) => {
+  for (const modern of [false, true]) {
+    await t.step(modern ? "modern era" : "2025 era", async () => {
+      for (const writable of [true, false]) {
+        const mcp = await connect(fakeVault(), { modern, writable });
+        try {
+          const instructions = mcp.client.getInstructions();
+          assertEquals(instructions, INSTRUCTIONS);
+        } finally {
+          await mcp.close();
+        }
+      }
+    });
+  }
+  assert(INSTRUCTIONS.length < 1_000, `${INSTRUCTIONS.length} characters`);
+  for (
+    const part of [
+      "globnotes_search_notes",
+      "globnotes_list_folder",
+      "globnotes_get_note",
+      "globnotes_update_note",
+      "expected_last_modified",
+      "offset=next_offset",
+      "Heading",
+      "read-only",
+    ]
+  ) assert(INSTRUCTIONS.includes(part), part);
 });
 
 Deno.test("mcp tools: read-only instance answers write tools with a tool error", async (t) => {

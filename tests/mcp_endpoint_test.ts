@@ -97,6 +97,11 @@ async function exerciseAllTools(
   vault: string,
   folder: string,
 ) {
+  // The server's instructions arrive with the handshake.
+  assert(
+    client.getInstructions()?.includes("globnotes_search_notes"),
+    String(client.getInstructions()),
+  );
   const root = await call(client, "globnotes_list_folder");
   assertEquals(
     (root.folders as { name: string }[]).map((f) => f.name).filter((name) =>

@@ -28,6 +28,22 @@ import {
 
 export const SERVER_NAME = "globnotes-mcp-server";
 
+/** How the tools fit together, sent at initialize (and server/discover)
+ * for clients that pass server instructions to their model. The details
+ * live in each tool's description; this stays short (under 1,000
+ * characters). */
+export const INSTRUCTIONS =
+  "globnotes is a vault of Markdown notes in folders. Find notes with " +
+  'globnotes_search_notes (words, "exact phrase", #tag, prefix*, or * for ' +
+  "all) or browse with globnotes_list_folder, then read one with " +
+  "globnotes_get_note. Listings and large notes come in parts: while " +
+  "has_more is true, call again with offset=next_offset. To change a note, " +
+  "read all of it first, then call globnotes_update_note with the whole new " +
+  "content and expected_last_modified set to the last_modified you read, so " +
+  "edits made since are not overwritten. Changing a note's first '# Heading' " +
+  "renames it (unless its front matter sets a title); use the path in the " +
+  "result from then on. A read-only instance offers only the read tools.";
+
 export const READ_TOOLS: ToolDefinition[] = [
   searchNotes,
   getNote,
@@ -89,6 +105,7 @@ export function createGlobnotesMcpServer(
   // advertised.
   const server = new McpServer({ name: SERVER_NAME, version }, {
     capabilities: { tools: { listChanged: false } },
+    instructions: INSTRUCTIONS,
   });
   const ctx: ToolContext = { vault: access.vault, lease: access.lease };
   for (const tool of READ_TOOLS) register(server, tool, ctx);

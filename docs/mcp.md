@@ -21,6 +21,11 @@ already grant there.
 
 It's built on the official TypeScript SDK (`@modelcontextprotocol/server`).
 
+The server sends short instructions with the handshake (`initialize`, or `server/discover`
+in 2026-07-28), for clients that pass them to their model: search or browse, then read,
+then edit with `expected_last_modified`; follow `next_offset` for more; heading changes
+rename notes; a read-only instance offers only the read tools.
+
 ## Getting a token
 
 The MCP endpoint accepts the same credentials as the REST API.
