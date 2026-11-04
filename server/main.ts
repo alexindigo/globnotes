@@ -29,7 +29,7 @@ import { PluginManager } from "./plugins/manager.ts";
 import { servicePluginRpc } from "./plugins/rpc.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
-import { admitHost, rebindingWarning } from "./host_admission.ts";
+import { admitHost, createRebindingWarner } from "./host_admission.ts";
 import { logger } from "./logger.ts";
 import { createMcpEndpoint } from "./mcp/endpoint.ts";
 import { createRateLimiter } from "./mcp/rate_limit.ts";
@@ -236,13 +236,14 @@ if (globalConfig.setupRequired) {
       "reach this server can read and modify notes.",
   );
 }
-const rebinding = rebindingWarning(
-  !globalConfig.setupRequired &&
-    (globalConfig.authType === AuthType.NONE ||
-      globalConfig.authType === AuthType.READ_ONLY),
-  globalConfig.allowedHosts,
+// DNS-rebinding exposure (server/host_admission.ts): checked now and after
+// every access-policy change, so a first-run setup or an access-settings
+// change to none/read_only without GLOBNOTES_ALLOWED_HOSTS warns too.
+const rebindingWarner = createRebindingWarner((message) =>
+  logger.warning(message)
 );
-if (rebinding) logger.warning(rebinding);
+rebindingWarner.update(state.config);
+lifecycle.onPolicyChange(() => rebindingWarner.update(state.config));
 if (auth?.isTotpEnabled && auth.totpKeyFromEnv) {
   // Env-configured keys enrol via this log line — their only channel.
   // Wizard-enrolled keys were already recorded in the UI; printing them

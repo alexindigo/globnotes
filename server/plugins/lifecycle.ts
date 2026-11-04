@@ -174,8 +174,23 @@ export class PluginLifecycle {
   get epoch(): number {
     return this.#epoch;
   }
+  /** Bumped by every access-policy change, after the new policy is in the
+   * config (first-run setup, access settings); policy listeners then see
+   * the new policy. */
   bumpEpoch(): number {
-    return ++this.#epoch;
+    const epoch = ++this.#epoch;
+    for (const listener of [...this.#policyListeners]) {
+      try {
+        listener();
+      } catch { /* a failing listener must not fail the policy change */ }
+    }
+    return epoch;
+  }
+  readonly #policyListeners = new Set<() => void>();
+  /** Called after each access-policy change (bumpEpoch). */
+  onPolicyChange(listener: () => void): () => void {
+    this.#policyListeners.add(listener);
+    return () => this.#policyListeners.delete(listener);
   }
   operational(): boolean {
     return !this.config.setupRequired;
