@@ -38,36 +38,45 @@ export async function enforceAuth(req: Request): Promise<void> {
 export async function enforceAuthMetadata(
   req: Request,
 ): Promise<{ expiresAt: number | null }> {
-  return await authenticate(req, req.method !== "GET");
+  const { expiresAt } = await authenticate(req, req.method !== "GET");
+  return { expiresAt };
 }
 
 /** The same rules for a request that only reads, whatever its HTTP method:
  * MCP sends every call as POST, so its read-only gate is per tool
- * (server/mcp/), not per method. Writes still need noteMutationLease. */
-export async function enforceReadAuth(req: Request): Promise<void> {
-  await authenticate(req, false);
+ * (server/mcp/), not per method. Writes still need noteMutationLease.
+ * Resolves to the authenticated subject, or null when the deployment has
+ * no authentication. */
+export async function enforceReadAuth(req: Request): Promise<string | null> {
+  return (await authenticate(req, false)).subject;
 }
 
 async function authenticate(
   req: Request,
   writes: boolean,
-): Promise<{ expiresAt: number | null }> {
+): Promise<{ expiresAt: number | null; subject: string | null }> {
   if (state.config.setupRequired) {
     throw new HttpError(503, "setup_required");
   }
   if (state.config.authType === AuthType.READ_ONLY && writes) {
     throw new HttpError(403, "read-only mode");
   }
-  if (state.auth !== null) {
+  const auth = state.auth;
+  if (auth !== null) {
     try {
-      return await state.auth.validateTokenMetadata(tokenFromRequest(req));
+      const { expiresAt } = await auth.validateTokenMetadata(
+        tokenFromRequest(req),
+      );
+      // A valid token's subject is the account (validateTokenMetadata
+      // checks it).
+      return { expiresAt, subject: auth.username };
     } catch {
       throw new HttpError(401, "Invalid authentication credentials", {
         "WWW-Authenticate": "Bearer",
       });
     }
   }
-  return { expiresAt: null };
+  return { expiresAt: null, subject: null };
 }
 
 /** Capture original HTTP note authority before any awaited request work.

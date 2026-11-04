@@ -42,7 +42,7 @@ Deno.test("mcp on the hub: writes are the globnotes peer, search follows the log
   s.hub.scanNow();
   const endpoint = createMcpEndpoint({
     writable: () => true,
-    authenticateRead: () => Promise.resolve(),
+    authenticateRead: () => Promise.resolve(null),
     lease: () => Promise.resolve(s.api().lease),
     version: () => "test",
   });

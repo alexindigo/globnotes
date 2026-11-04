@@ -177,7 +177,7 @@ async function connect(
   const endpoint = createMcpEndpoint({
     vault: fake.vault,
     writable: () => options.writable ?? true,
-    authenticateRead: () => Promise.resolve(),
+    authenticateRead: () => Promise.resolve(null),
     lease: () => Promise.resolve(LEASE),
     version: () => "test",
   });
@@ -1421,7 +1421,7 @@ Deno.test("mcp tools: stateless JSON in both eras, no change notifications", asy
   const endpoint = createMcpEndpoint({
     vault: fake.vault,
     writable: () => true,
-    authenticateRead: () => Promise.resolve(),
+    authenticateRead: () => Promise.resolve(null),
     lease: () => Promise.resolve(LEASE),
     version: () => "test",
   });
@@ -1486,7 +1486,7 @@ Deno.test("mcp tools: a read-only 2025 batch gets the read-only tool error", asy
   const endpoint = createMcpEndpoint({
     vault: fake.vault,
     writable: () => false,
-    authenticateRead: () => Promise.resolve(),
+    authenticateRead: () => Promise.resolve(null),
     lease: () => Promise.reject(new Error("no lease on a read-only instance")),
     version: () => "test",
   });
@@ -1754,7 +1754,7 @@ Deno.test("mcp tools: unexpected server faults reach the error log, client rejec
   const adapters = {
     vault: fakeVault().vault,
     writable: () => true,
-    authenticateRead: () => Promise.resolve(),
+    authenticateRead: () => Promise.resolve(null),
     lease: () => Promise.resolve(LEASE),
   };
   const broken = createMcpEndpoint({ ...adapters, version: fault });
