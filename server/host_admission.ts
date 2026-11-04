@@ -32,8 +32,29 @@ export class AllowedHostsError extends Error {
 const NAME = /^[a-z0-9_]([a-z0-9_.-]*[a-z0-9_])?$/;
 const IPV6 = /^\[[0-9a-f:.]+\]$/;
 
+/**
+ * The canonical form of an already shape-checked host: what a browser sends
+ * for it (WHATWG URL host parsing), so every spelling of one address
+ * compares equal. IPv6 is compressed and lowercased
+ * (`[0:0:0:0:0:0:0:1]` -> `[::1]`, `[::ffff:127.0.0.1]` -> `[::ffff:7f00:1]`),
+ * IPv4 in any form the URL parser accepts becomes dotted decimal
+ * (`127.1` -> `127.0.0.1`), names are lowercase without a trailing dot.
+ * null when the URL parser refuses it.
+ */
+function canonicalHost(host: string): string | null {
+  let canonical: string;
+  try {
+    canonical = new URL(`http://${host}/`).hostname;
+  } catch {
+    return null;
+  }
+  return canonical.endsWith(".") ? canonical.slice(0, -1) : canonical;
+}
+
 /** An authority ("host", "host:port", "[v6]", "[v6]:port" or a bare IPv6
- * address), normalized; null when it is not one. */
+ * address), canonical (canonicalHost; the port as a plain number); null when
+ * it is not one. Configuration entries and Host headers both go through
+ * this one function, so they compare in the same form. */
 export function parseAuthority(text: string): AllowedHost | null {
   let value = text.trim().toLowerCase();
   if (value === "") return null;
@@ -58,14 +79,19 @@ export function parseAuthority(text: string): AllowedHost | null {
     }
     host = value.endsWith(".") ? value.slice(0, -1) : value;
   }
+  // The shape check first: only name or IP characters reach the URL
+  // parser, so userinfo (`a@b`), paths or percent-escapes can't rewrite
+  // which host is compared.
   if (!(IPV6.test(host) || NAME.test(host))) return null;
+  const canonical = canonicalHost(host);
+  if (canonical === null) return null;
   if (port !== null) {
     if (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
       return null;
     }
     port = String(Number(port));
   }
-  return { host, port };
+  return { host: canonical, port };
 }
 
 /** GLOBNOTES_ALLOWED_HOSTS: comma-separated authorities; "" (unset) = no
