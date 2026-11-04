@@ -1,8 +1,8 @@
 # MCP server
 
 globnotes serves the [Model Context Protocol](https://modelcontextprotocol.io)
-(MCP) so AI agents (Claude Code, Claude Desktop, opencode and other MCP clients)
-can search your vault, read notes, browse folders and tags, and create, edit,
+(MCP) so AI agents (Claude Code, Codex CLI, Gemini CLI, opencode, Cursor, VS Code, Zed,
+Claude Desktop and other MCP clients) can search your vault, read notes, browse folders and tags, and create, edit,
 rename and delete notes. The MCP endpoint is part of the globnotes server, not a
 separate process. It uses the same authentication, write path and plugin guards
 as the web app and the REST API, and grants nothing that the same token doesn't
@@ -58,16 +58,79 @@ tokens or MCP OAuth.
 ## Client configuration
 
 The examples use `http://globnotes.home/_/mcp`; replace it with your server's address and
-prefix. In `none` and `read_only` mode, leave out the `Authorization` header.
+prefix. They read the token from `GLOBNOTES_TOKEN` ([Getting a token](#getting-a-token)). In
+`none` and `read_only` mode, leave out the `Authorization` header (or the token setting).
+
+Each setup follows the client's official documentation, linked below. The command-line
+clients were checked against a running globnotes server in a container, with the
+configuration exactly as shown (only the server's address changed): each connected and
+listed the seven tools. The editor apps were not run; their setup is taken from their
+documentation only.
+
+| # | Client | Version checked | Result |
+|---|---|---|---|
+| 1 | Claude Code | 2.1.318 | connected, 7 tools (protocol 2026-07-28) |
+| 2 | Codex CLI | 0.166.0 | connected, 7 tools |
+| 3 | Gemini CLI | 0.66.0 | connected, 7 tools (in a trusted folder) |
+| 4 | opencode | 1.19.5 | connected, 7 tools |
+| 5 | `mcp-remote` (Claude Desktop and other stdio clients) | 0.16.0 | connected, 7 tools, a note read |
+| 6 | Cursor | - | from the official docs, not tested |
+| 7 | VS Code | - | from the official docs, not tested |
+| 8 | Zed | - | from the official docs, not tested |
+
+When the token expires, clients that keep the token itself in their configuration (Claude
+Code, Gemini CLI, Zed and the `mcp-remote` example) need it replaced there; the others read
+`GLOBNOTES_TOKEN` again when they connect.
 
 ### Claude Code
+
+[Claude Code MCP docs](https://code.claude.com/docs/en/mcp):
 
 ```sh
 claude mcp add --transport http globnotes http://globnotes.home/_/mcp \
   --header "Authorization: Bearer $GLOBNOTES_TOKEN"
+claude mcp list
 ```
 
+`claude mcp list` shows `Connected`. Add `--scope user` to use the server in every project.
+
+### Codex CLI
+
+[Codex MCP docs](https://developers.openai.com/codex/mcp):
+
+```sh
+codex mcp add globnotes --url http://globnotes.home/_/mcp \
+  --bearer-token-env-var GLOBNOTES_TOKEN
+```
+
+That writes this to `~/.codex/config.toml`, which you can also edit by hand:
+
+```toml
+[mcp_servers.globnotes]
+url = "http://globnotes.home/_/mcp"
+bearer_token_env_var = "GLOBNOTES_TOKEN"
+```
+
+Codex reads the token from `GLOBNOTES_TOKEN` when it starts, so set it in the environment
+Codex runs in. `codex mcp list` shows the configuration; the connection is made when a
+session starts.
+
+### Gemini CLI
+
+[Gemini CLI MCP docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md):
+
+```sh
+gemini mcp add --transport http --scope user \
+  --header "Authorization: Bearer $GLOBNOTES_TOKEN" globnotes http://globnotes.home/_/mcp
+gemini mcp list
+```
+
+Gemini CLI connects to MCP servers only in folders you trust; elsewhere `gemini mcp list`
+shows the server as `Disabled`.
+
 ### opencode
+
+[opencode MCP docs](https://opencode.ai/docs/mcp-servers/).
 
 In `opencode.json`:
 
@@ -120,7 +183,82 @@ stdio↔HTTP bridge such as [`mcp-remote`](https://github.com/geelen/mcp-remote)
 }
 ```
 
-The header value comes from `env` because some clients don't escape spaces in `args`.
+The header value comes from `env` because some clients don't escape spaces in `args`
+([`mcp-remote` README](https://github.com/geelen/mcp-remote)). `npx` fetches `mcp-remote`
+from the npm registry the first time.
+
+### Cursor
+
+From the [Cursor MCP docs](https://cursor.com/docs/mcp), not tested. In `~/.cursor/mcp.json`
+(or `.cursor/mcp.json` in a project):
+
+```json
+{
+  "mcpServers": {
+    "globnotes": {
+      "url": "http://globnotes.home/_/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:GLOBNOTES_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+### VS Code
+
+From the [VS Code MCP configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration),
+not tested. In `.vscode/mcp.json` (or the user `mcp.json`, command **MCP: Open User
+Configuration**); VS Code asks for the token the first time and stores it:
+
+```json
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "globnotes-token",
+      "description": "globnotes token",
+      "password": true
+    }
+  ],
+  "servers": {
+    "globnotes": {
+      "type": "http",
+      "url": "http://globnotes.home/_/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:globnotes-token}"
+      }
+    }
+  }
+}
+```
+
+### Zed
+
+From the [Zed MCP docs](https://zed.dev/docs/ai/mcp), not tested. In Zed's settings file:
+
+```json
+{
+  "context_servers": {
+    "globnotes": {
+      "url": "http://globnotes.home/_/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}
+```
+
+Zed's docs say it starts an MCP OAuth sign-in for a remote server without an
+`Authorization` header. globnotes has no OAuth.
+
+### Cloud AI apps
+
+Hosted AI apps such as ChatGPT, Claude on the web or Lovable connect to MCP servers from
+their own cloud, not from your computer. They can't reach a globnotes server on your home
+network (`globnotes.home` is a name only your network knows), so they can't be used with
+it. Use one of the local clients above.
 
 ## Tools
 
