@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.6.0 (2026-11-04)
 
 ### Added
 
@@ -10,18 +10,27 @@ search notes, read a note, list a folder, list tags, and create, update (or
 rename) and delete a note. It uses the same login token, write path and plugin
 guards as the web app; in `read_only` mode it offers only the read tools. Update
 and delete can take the `last_modified` the agent read, and then refuse to
-overwrite a note changed since. Every result's text also carries the whole result
-as JSON, for clients that read only text. A note too large for one response is
-read in parts (`offset`, `length`, `has_more`). It works over plain HTTP and is on by default;
-`GLOBNOTES_MCP_ENABLED=false` turns it off. Tool calls are limited to
-`GLOBNOTES_MCP_RATE_LIMIT` per minute per client (default 600, `0` for no limit);
-over it, clients get `429` with `Retry-After`. See `docs/mcp.md` for client setup.
+overwrite a note changed since. It works over plain HTTP and is on by default;
+`GLOBNOTES_MCP_ENABLED=false` turns it off.
 
-`GLOBNOTES_ALLOWED_HOSTS` lists the host names the server answers. When set, a
-request for any other host gets `421 Misdirected Request` on every route (web app,
-API, files and MCP), which stops DNS rebinding. Without a login (`none` or
-`read_only`) and without the setting, globnotes logs a warning at startup, or when
-setup or the access settings switch to such a mode.
+MCP search, folder and tag pages stay within 25,000 characters; oversized fields
+are shortened and marked. Large notes can be read in parts. Text results include
+the full JSON for clients that read only text, and tool errors don't expose
+server paths. Server instructions explain how to browse, read and edit notes.
+`docs/mcp.md` has setup guides for Claude Code, Codex CLI, Gemini CLI, opencode,
+Cursor, VS Code, Zed and `mcp-remote`.
+
+`GLOBNOTES_MCP_RATE_LIMIT` sets the MCP tool calls allowed per minute per client
+(default 600; `0` turns it off). Over the limit, clients get `429` with
+`Retry-After`.
+
+The optional `GLOBNOTES_ALLOWED_HOSTS` setting lists the host names or IP addresses
+the server answers. When set, other `Host` values get `421 Misdirected Request`
+on every route (web app, API, files and MCP), stopping DNS rebinding.
+
+In `none` or `read_only` mode without `GLOBNOTES_ALLOWED_HOSTS`, globnotes warns
+about DNS rebinding at startup and when setup or access settings switch to such
+a mode.
 
 ### Fixed
 
@@ -31,15 +40,37 @@ the number of notes: about 17 seconds per search at 10,000 notes, during which
 the server answered nothing else. It now takes milliseconds. The first index of
 a vault also builds much faster (10,000 notes in seconds rather than minutes),
 because index writes are saved in batches instead of one disk sync per statement.
-The index also cuts each page of results itself, with any folder scope, so a page
-far into a long search costs about what the first page does; the search API takes
-`offset` along with `limit`.
+
+Deep search pages, including folder-filtered searches, no longer fetch every
+earlier result. The search API accepts `offset` alongside `limit`. Large vaults
+and folders no longer fail to list notes or return searches with tens of thousands
+of matches. Invalid search page parameters return 422 instead of being silently
+accepted or causing an internal server error.
 
 Plugins keep working when the server is briefly not scheduled, such as on a busy
 NAS, in a paused VM or during a large index sync. Plugin time limits count only
 time in which globnotes was actually running, and a plugin worker counts as stuck
 after 3 seconds without a heartbeat instead of 0.75 seconds. Such pauses are
 logged as warnings.
+
+Existing folders whose names contain `?`, `:` or `*` can now be listed and used
+as a search folder filter, in both the web app and MCP.
+
+One unreadable note no longer stops an index pass or makes every search fail.
+The other notes continue to be indexed, deleted notes leave the results, and
+the unreadable note keeps its previous index entry until it can be read again.
+Its failure is logged without repeating the same error on every search.
+
+Plugins receive outside-change notifications only after a note's index update
+succeeds. A failed update no longer announces a change that was rolled back or
+mistakes globnotes' own write for an outside edit when it retries.
+
+Listing a folder that links outside the vault now returns 400, and listing a
+file as a folder returns 404, instead of an internal server error (500).
+
+The note viewer tells assistive technology it is busy until diagrams and fonts
+have finished laying out. Only the latest render request ends that busy period,
+including when rendering fails or the viewer closes.
 
 ## v2.5.0 (2026-10-21)
 
