@@ -234,11 +234,19 @@ still be overwritten. A note changed within the same millisecond also isn't dete
   HTTPS.
 - **Browser pages.** A request whose `Origin` header doesn't match its `Host` is refused
   with `403`. That stops ordinary cross-site requests: a page on another site can't use the
-  endpoint through your browser. It does **not** stop DNS rebinding, where a hostile page
-  makes its own name resolve to your globnotes server, so that its `Origin` and `Host`
-  match. The REST API has the same limit. A rebinding page never receives your login token,
-  so on a LAN, use `password` or `totp` authentication rather than `none`. MCP clients that
-  send no `Origin` (command-line agents, desktop apps) are unaffected.
+  endpoint through your browser. MCP clients that send no `Origin` (command-line agents,
+  desktop apps) are unaffected.
+- **DNS rebinding.** The `Origin` check alone does not stop DNS rebinding, where a hostile
+  page makes its own name resolve to your globnotes server, so that its `Origin` and `Host`
+  match. Set `GLOBNOTES_ALLOWED_HOSTS` to the names your server is reached by, e.g.
+  `GLOBNOTES_ALLOWED_HOSTS=globnotes.home,192.168.1.20`: every route (the web app, the REST
+  API, vault files and MCP) then answers any other `Host` with `421 Misdirected Request`,
+  and a rebinding page, which sends its own name, gets nothing. Entries are host names or
+  IP addresses, comma-separated; an entry without a port accepts any port, and one with a
+  port (`nas.home:8080`, `[::1]:8080`) only that one. Unset, every host is answered. With
+  `none` authentication and the setting unset, globnotes logs a warning at startup. A
+  rebinding page never receives your login token, so `password` or `totp` authentication
+  also protects the notes.
 - **Tokens in configuration files.** Client configurations hold the token in plain text.
   Prefer environment variables where the client supports them, and treat the file like a
   password.

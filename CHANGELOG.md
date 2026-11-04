@@ -15,6 +15,11 @@ as JSON, for clients that read only text. A note too large for one response is
 read in parts (`offset`, `length`, `has_more`). It works over plain HTTP and is on by default;
 `GLOBNOTES_MCP_ENABLED=false` turns it off. See `docs/mcp.md` for client setup.
 
+`GLOBNOTES_ALLOWED_HOSTS` lists the host names the server answers. When set, a
+request for any other host gets `421 Misdirected Request` on every route (web app,
+API, files and MCP), which stops DNS rebinding. Without authentication and without
+the setting, globnotes logs a warning at startup.
+
 ### Fixed
 
 Search and the tag list stay fast in large vaults. Each search first checks the
