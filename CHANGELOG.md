@@ -21,6 +21,9 @@ the number of notes: about 17 seconds per search at 10,000 notes, during which
 the server answered nothing else. It now takes milliseconds. The first index of
 a vault also builds much faster (10,000 notes in seconds rather than minutes),
 because index writes are saved in batches instead of one disk sync per statement.
+The index also cuts each page of results itself, with any folder scope, so a page
+far into a long search costs about what the first page does; the search API takes
+`offset` along with `limit`.
 
 Plugins keep working when the server is briefly not scheduled, such as on a busy
 NAS, in a paused VM or during a large index sync. Plugin time limits count only

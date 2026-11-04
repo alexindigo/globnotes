@@ -314,7 +314,8 @@ With token auth (or no auth at all), your notes are plain HTTP:
 # Raw markdown
 curl -H "Authorization: Bearer $TOKEN" https://notes.example/_/api/files/dad/recipes/soup.md
 
-# Search (add folder=dad/recipes to scope to a subtree, nested=false for root-only)
+# Search (add folder=dad/recipes to scope to a subtree, nested=false for root-only,
+# limit=20&offset=40 for one page)
 curl -H "Authorization: Bearer $TOKEN" "https://notes.example/_/api/search?term=soup"
 
 # Drop a file into a vault

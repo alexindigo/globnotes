@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** GET /_/api/search — full-text search. Defaults ported from the Python
- * route: sort=score, order=desc, nested=true, folder=None, limit=None. */
+ * route: sort=score, order=desc, nested=true, folder=None, limit=None;
+ * offset (default 0) skips results, in the index. */
 
 import { invalid_folder_path } from "@server/api_messages.ts";
 import { isReadableNotePath } from "@server/helpers.ts";
@@ -48,6 +49,17 @@ export default function (request: PathfinderRequest) {
     }]);
   }
   const limit = limitNum;
+  // The page's start, cut by the index like limit (the MCP search pages
+  // the same way).
+  const offsetParam = request.query.get("offset");
+  const offset = offsetParam ? Number(offsetParam) : 0;
+  if (offsetParam && !(Number.isInteger(offset) && offset >= 0)) {
+    throw new HttpError(422, [{
+      type: "int_parsing",
+      loc: ["query", "offset"],
+      msg: "Input should be a valid non-negative integer",
+    }]);
+  }
   const nested = request.query.get("nested") !== "false";
   const folder = request.query.get("folder") ?? undefined;
 
@@ -60,5 +72,5 @@ export default function (request: PathfinderRequest) {
     }
   }
   if (!state.indexer) throw new HttpError(500, "index unavailable");
-  return state.indexer.search(term, sort, order, limit, nested, folder);
+  return state.indexer.search(term, sort, order, limit, nested, folder, offset);
 }

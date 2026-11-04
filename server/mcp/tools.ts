@@ -358,8 +358,7 @@ export function fitHit(
 
 const SearchOutput = z.object({
   total: z.number().int().describe(
-    "Matches found while filling this page (at most offset + count + 1). " +
-      "Not a count of all matching notes",
+    "Number of all results of this search (exact), not only this page's",
   ),
   count: z.number().int().describe("Results in this page"),
   offset: z.number().int(),
@@ -418,21 +417,17 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
     const sort: SearchSort = args.sort === "lastModified"
       ? "last_modified"
       : args.sort;
-    // The index has no offset: fetch one more than the window to know
-    // whether another page exists.
+    // The index cuts the page and counts all matches.
     const found = searchIndex(args.query, () =>
-      ctx.vault.search(
-        args.query,
+      ctx.vault.search(args.query, {
         sort,
-        args.order,
-        args.offset + args.limit + 1,
-        args.include_subfolders,
+        order: args.order,
+        nested: args.include_subfolders,
         folder,
-      ));
-    const hits: SearchHitOutput[] = found.slice(
-      args.offset,
-      args.offset + args.limit,
-    ).map((r) => ({
+        offset: args.offset,
+        limit: args.limit,
+      }));
+    const hits: SearchHitOutput[] = found.results.map((r) => ({
       path: r.path,
       title: r.title,
       last_modified: isoTime(r.lastModified),
@@ -442,9 +437,9 @@ Use globnotes_get_note to read a result in full, globnotes_list_folder to browse
     }));
     const render = (page: typeof hits) => {
       const end = args.offset + page.length;
-      const hasMore = found.length > end;
+      const hasMore = found.total > end;
       const structured = {
-        total: found.length,
+        total: found.total,
         count: page.length,
         offset: args.offset,
         has_more: hasMore,
@@ -585,7 +580,7 @@ export const listFolder = defineTool({
     const path = args.path.trim().replace(/^\/+|\/+$/g, "");
     let level;
     try {
-      level = ctx.vault.listFolder(path);
+      level = ctx.vault.listFolder(path, args.offset, args.limit);
     } catch (error) {
       if (error instanceof NoteNotFoundError) {
         throw new ToolError(
@@ -598,7 +593,8 @@ export const listFolder = defineTool({
       }
       throw error;
     }
-    const entries: FolderEntry[] = [
+    // The storage layer returned this page's window only.
+    const window: FolderEntry[] = [
       ...level.folders.map((f) => ({ kind: "folder" as const, ...f })),
       ...level.notes.map((note) => ({ kind: "note" as const, note })),
     ];
@@ -609,7 +605,7 @@ export const listFolder = defineTool({
       const notes = page.flatMap((e) => e.kind === "note" ? [e.note] : []);
       const structured = {
         path,
-        ...listPage(entries.length, args.offset, page.length),
+        ...listPage(level.total, args.offset, page.length),
         folders,
         notes,
       };
@@ -617,12 +613,12 @@ export const listFolder = defineTool({
       const lines = [
         `Folder '${
           path || "/"
-        }': ${level.folders.length} folder(s), ${level.notes.length} note(s)${
-          entries.length === 0
+        }': ${level.folderCount} folder(s), ${level.noteCount} note(s)${
+          level.total === 0
             ? "."
             : page.length === 0
             ? `; none at offset ${args.offset}.`
-            : `; entries ${args.offset + 1}–${end} of ${entries.length}:`
+            : `; entries ${args.offset + 1}–${end} of ${level.total}:`
         }`,
         ...folders.map((f) => `- ${f.path}/`),
         ...notes.map((n) =>
@@ -637,7 +633,7 @@ export const listFolder = defineTool({
       return { structured, text: lines.join("\n") };
     };
     return Promise.resolve(fitPage(
-      entries.slice(args.offset, args.offset + args.limit),
+      window,
       render,
       (entry, excess): FolderEntry => {
         // Folder entries are bounded (a name is one path segment); a note's
@@ -682,20 +678,21 @@ export const listTags = defineTool({
   outputSchema: TagsOutput,
   annotations: READ,
   run(args, ctx) {
-    const all = ctx.vault.tags();
+    // The index returned this page's window only.
+    const found = ctx.vault.tags(args.offset, args.limit);
     const render = (page: { tag: string; truncated: boolean }[]) => {
       const structured = {
-        ...listPage(all.length, args.offset, page.length),
+        ...listPage(found.total, args.offset, page.length),
         tags: page.map((t) => t.tag),
         ...(page.some((t) => t.truncated) ? { truncated: true } : {}),
       };
       const end = args.offset + page.length;
       const lines = [
-        all.length === 0
+        found.total === 0
           ? "The vault has no tags."
           : page.length === 0
-          ? `The vault has ${all.length} tag(s); none at offset ${args.offset}.`
-          : `${all.length} tag(s); ${args.offset + 1}–${end}: ${
+          ? `The vault has ${found.total} tag(s); none at offset ${args.offset}.`
+          : `${found.total} tag(s); ${args.offset + 1}–${end}: ${
             structured.tags.map((t) => `#${t}`).join(", ")
           }`,
       ];
@@ -708,7 +705,7 @@ export const listTags = defineTool({
       return { structured, text: lines.join("\n") };
     };
     return Promise.resolve(fitPage(
-      all.slice(args.offset, args.offset + args.limit).map((tag) => ({
+      found.tags.map((tag) => ({
         tag,
         truncated: false,
       })),

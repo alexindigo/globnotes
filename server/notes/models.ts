@@ -35,6 +35,35 @@ export interface SearchResult {
   tagMatches?: string[] | null;
 }
 
+/** One page of a search, chosen by the index itself (REST and MCP share
+ * this contract): the scope (folder, nested) and the window (offset, limit)
+ * are applied in the query, so a page costs the same at any offset. */
+export interface SearchQuery {
+  sort?: "score" | "path" | "last_modified";
+  order?: "asc" | "desc";
+  /** With folder (or at the root): also search subfolders. Default true. */
+  nested?: boolean;
+  /** Only notes inside this folder (an existing folder: the read-path rule). */
+  folder?: string;
+  /** Results to skip. Default 0. */
+  offset?: number;
+  /** Maximum results; undefined or negative = no maximum. */
+  limit?: number;
+}
+
+export interface SearchPage {
+  /** Every result the query matches, not just this page's. */
+  total: number;
+  results: SearchResult[];
+}
+
+/** One page of the vault's tag list (sorted). */
+export interface TagPage {
+  /** Every distinct tag in the vault. */
+  total: number;
+  tags: string[];
+}
+
 /** A file reference found in a note (markdown link/image or HTML src). */
 export interface FileRef {
   url: string;

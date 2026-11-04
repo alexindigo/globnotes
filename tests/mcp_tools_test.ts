@@ -44,11 +44,12 @@ const LEASE: NoteMutationLease = Object.freeze({
 
 interface SearchCall {
   term: string;
-  sort: SearchSort;
-  order: string;
-  limit: number;
-  nested: boolean;
-  folder: string | undefined;
+  sort?: SearchSort;
+  order?: string;
+  nested?: boolean;
+  folder?: string | undefined;
+  offset?: number;
+  limit?: number;
 }
 
 /** An in-memory vault recording every call the tools make. */
@@ -69,6 +70,8 @@ function fakeVault(seed: Record<string, string> = {}) {
   for (const [path, content] of Object.entries(seed)) put(path, content);
   const calls = {
     search: [] as SearchCall[],
+    folder: [] as { path: string; offset: number; limit: number }[],
+    tags: [] as { offset: number; limit: number }[],
     writes: [] as { op: string; lease: NoteMutationLease; args: unknown[] }[],
   };
   let searchResults: SearchResult[] = [];
@@ -83,23 +86,40 @@ function fakeVault(seed: Record<string, string> = {}) {
   };
   const vault: McpVault = {
     getNote: get,
-    listFolder: (path) => {
+    listFolder: (path, offset, limit) => {
+      calls.folder.push({ path, offset, limit });
       if (readError) throw readError;
       if (path === "missing") throw new NoteNotFoundError("missing");
+      const folders = [{ name: "Sub", path: path ? `${path}/Sub` : "Sub" }];
+      const all = [...notes.values()].map((n) => ({
+        path: n.path,
+        title: n.title,
+      }));
+      const end = offset + limit;
       return {
-        folders: [{ name: "Sub", path: path ? `${path}/Sub` : "Sub" }],
-        notes: [...notes.values()].map((n) => ({
-          path: n.path,
-          title: n.title,
-        })),
+        total: folders.length + all.length,
+        folderCount: folders.length,
+        noteCount: all.length,
+        folders: folders.slice(offset, end),
+        notes: all.slice(
+          Math.max(0, offset - folders.length),
+          Math.max(0, end - folders.length),
+        ),
       };
     },
-    search: (term, sort, order, limit, nested, folder) => {
-      calls.search.push({ term, sort, order, limit, nested, folder });
+    search: (term, query) => {
+      calls.search.push({ term, ...query });
       if (readError) throw readError;
-      return searchResults.slice(0, limit);
+      const offset = query.offset ?? 0;
+      return {
+        total: searchResults.length,
+        results: searchResults.slice(offset, offset + (query.limit ?? 0)),
+      };
     },
-    tags: () => tags,
+    tags: (offset, limit) => {
+      calls.tags.push({ offset, limit });
+      return { total: tags.length, tags: tags.slice(offset, offset + limit) };
+    },
     createNote: (data: NoteCreate, lease) => {
       calls.writes.push({ op: "create", lease, args: [data] });
       if (writeError) return Promise.reject(writeError);
@@ -385,9 +405,10 @@ Deno.test("mcp tools: search results, sort mapping and snippets", async () => {
       term: "#garden match",
       sort: "last_modified",
       order: "asc",
-      limit: 21,
       nested: false,
       folder: "Notes",
+      offset: 0,
+      limit: 20,
     }]);
     assertEquals(result.structuredContent, {
       total: 3,
@@ -458,11 +479,15 @@ Deno.test("mcp tools: search pagination edges", async () => {
     const first = await page(0, 2);
     assertEquals(
       [first.total, first.count, first.has_more, first.next_offset],
-      [3, 2, true, 2],
+      [5, 2, true, 2],
     );
     assertEquals(first.paths, ["Notes/n1", "Notes/n2"]);
     assert(first.text.includes("call again with offset=2"));
-    assertEquals(fake.calls.search.at(-1)!.limit, 3);
+    // The page is cut by the index: the tool asks for the window only.
+    assertEquals(
+      [fake.calls.search.at(-1)!.offset, fake.calls.search.at(-1)!.limit],
+      [0, 2],
+    );
 
     const middle = await page(2, 2);
     assertEquals(
@@ -1289,10 +1314,20 @@ Deno.test("mcp tools: list_folder pages a 1,000-note folder within the budget", 
   try {
     for (const limit of [undefined, 500]) {
       await t.step(`limit ${limit ?? "default"}`, async () => {
+        fake.calls.folder.length = 0;
         const pages = await walkPages<FolderPage>(
           mcp,
           "globnotes_list_folder",
           { path: "Flat", ...(limit ? { limit } : {}) },
+        );
+        // Storage is asked for each page's window, never the whole level.
+        assertEquals(
+          fake.calls.folder,
+          pages.map((p) => ({
+            path: "Flat",
+            offset: p.offset,
+            limit: limit ?? 100,
+          })),
         );
         assertEquals(pages[0].total, 1_001);
         assertEquals(pages[0].folders.map((f) => f.path), ["Flat/Sub"]);
