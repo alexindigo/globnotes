@@ -153,39 +153,48 @@ export function foreignOrigin(request: Request): boolean {
   }
 }
 
-/** The tools a request calls, one entry per tools/call (the rate limit
- * counts them; a read-only instance registers the named write tools to
- * answer them with the read-only error). Modern requests carry the name in
- * Mcp-Name, which the SDK checks against the body; a 2025-era request (or
- * batch) is read from its body, which isLegacyRequest has size-checked. */
+/** The value of an Mcp-Name header: RFC 2047-style `=?base64?...?=` is
+ * decoded; one that doesn't decode stays as sent (the SDK then rejects the
+ * header/body mismatch). Never throws. */
+function headerName(value: string): string {
+  const encoded = value.match(/^=\?base64\?(.*)\?=$/);
+  if (!encoded) return value;
+  try {
+    return new TextDecoder().decode(
+      Uint8Array.from(atob(encoded[1]), (c) => c.charCodeAt(0)),
+    );
+  } catch {
+    return value;
+  }
+}
+
+/** The tools a request calls: exactly one entry per tools/call message,
+ * whatever its name looks like (the rate limit counts the entries; a
+ * read-only instance registers the named write tools to answer them with
+ * the read-only error; an unreadable name is ""). It runs before the SDK,
+ * so it never throws: a malformed request is counted and then answered by
+ * the SDK's own validation. Modern requests carry the name in Mcp-Name; a
+ * 2025-era request (or batch) is read from its body, which isLegacyRequest
+ * has size-checked. */
 async function calledTools(
   request: Request,
   legacyEra: boolean,
 ): Promise<string[]> {
   if (!legacyEra) {
     if (request.headers.get("mcp-method") !== "tools/call") return [];
-    const name = request.headers.get("mcp-name");
-    if (name === null) return [];
-    const encoded = name.match(/^=\?base64\?(.*)\?=$/);
-    return [
-      encoded
-        ? new TextDecoder().decode(
-          Uint8Array.from(atob(encoded[1]), (c) => c.charCodeAt(0)),
-        )
-        : name,
-    ];
+    return [headerName(request.headers.get("mcp-name") ?? "")];
   }
+  let body: unknown;
   try {
-    const body = await request.clone().json();
-    return (Array.isArray(body) ? body : [body]).flatMap((message) =>
-      message?.method === "tools/call" &&
-        typeof message.params?.name === "string"
-        ? [message.params.name]
-        : []
-    );
+    body = await request.clone().json();
   } catch {
-    return [];
+    return []; // not JSON: the SDK answers it, and no tool runs
   }
+  return (Array.isArray(body) ? body : [body]).flatMap((message) =>
+    message?.method === "tools/call"
+      ? [typeof message.params?.name === "string" ? message.params.name : ""]
+      : []
+  );
 }
 
 export function createMcpEndpoint(
