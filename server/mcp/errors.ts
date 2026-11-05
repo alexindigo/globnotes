@@ -10,6 +10,7 @@ import {
   NoteExistsError,
   NoteNotFoundError,
 } from "../notes/models.ts";
+import { NoteChangedError } from "../notes/expectation.ts";
 import { OperationError } from "../plugins/errors.ts";
 import { IndexUnavailableError } from "./vault.ts";
 
@@ -65,6 +66,7 @@ function domainMessage(error: unknown, path?: string): string | undefined {
   if (error instanceof InvalidPathError) {
     return `Invalid path '${path}': ${error.message}.`;
   }
+  if (error instanceof NoteChangedError) return noteChanged(error);
   if (error instanceof IndexUnavailableError) {
     return `${error.message} Try again shortly.`;
   }
@@ -93,6 +95,31 @@ function domainMessage(error: unknown, path?: string): string | undefined {
     return `globnotes rejected the request (HTTP ${error.status}).`;
   }
   return undefined;
+}
+
+/** The stale-write guard's refusal: what was expected, what the note is
+ * now, and how to recover. Composed only from the call's own arguments and
+ * the note's public read fields. */
+function noteChanged(error: NoteChangedError): string {
+  const parts: string[] = [], fields: string[] = [];
+  if (error.mismatched.includes("lastModifiedMs")) {
+    parts.push(
+      `expected last_modified ${
+        new Date(error.expected.lastModifiedMs!).toISOString()
+      }, now ${new Date(error.current.lastModifiedMs).toISOString()}`,
+    );
+    fields.push("last_modified");
+  }
+  if (error.mismatched.includes("hash")) {
+    parts.push(
+      `expected hash ${error.expected.hash}, now ${error.current.hash}`,
+    );
+    fields.push("hash");
+  }
+  return `Note '${error.path}' changed since you read it (${
+    parts.join("; ")
+  }). Nothing was written. Call globnotes_get_note to re-read it, then ` +
+    `retry with the new ${fields.join(" and ")}.`;
 }
 
 /** A fixed message for an error the domain lets through: the error's own

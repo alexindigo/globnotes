@@ -24,7 +24,7 @@ It's built on the official TypeScript SDK (`@modelcontextprotocol/server`).
 
 The server sends short instructions with the handshake (`initialize`, or `server/discover`
 in 2026-07-28), for clients that pass them to their model: search or browse, then read,
-then edit with `expected_last_modified`; follow `next_offset` for more; heading changes
+then edit with `expected_last_modified` and `expected_hash`; follow `next_offset` for more; heading changes
 rename notes; a read-only instance offers only the read tools.
 
 ## Getting a token
@@ -274,12 +274,12 @@ details, which can include paths on the server, go only to the server log.
 | # | Tool | Input | Output | Annotations |
 |---|---|---|---|---|
 | 1 | `globnotes_search_notes` | `query`; `folder`; `include_subfolders` (default `true`); `sort` (`score`, `path`, `lastModified`; default `score`); `order` (`asc`, `desc`; default `desc`); `limit` (1–100, default 20); `offset` (default 0) | `{total, count, offset, has_more, next_offset?, results: [{path, title, last_modified, score?, snippet, matched_tags, truncated?, omitted_tags?}]}` | read-only, idempotent |
-| 2 | `globnotes_get_note` | `path`; `offset` (characters, default 0); `length` (characters, optional) | `{path, title, content, last_modified, offset, total_length, has_more, next_offset?, truncated?}` | read-only, idempotent |
+| 2 | `globnotes_get_note` | `path`; `offset` (characters, default 0); `length` (characters, optional) | `{path, title, content, last_modified, hash, offset, total_length, has_more, next_offset?, truncated?}` | read-only, idempotent |
 | 3 | `globnotes_list_folder` | `path` (default: the vault root); `limit` (1–500, default 100); `offset` (default 0) | `{path, total, count, offset, has_more, next_offset?, folders: [{name, path}], notes: [{path, title, truncated?}]}`: subfolders first, then notes | read-only, idempotent |
 | 4 | `globnotes_list_tags` | `limit` (1–2000, default 500); `offset` (default 0) | `{total, count, offset, has_more, next_offset?, tags, truncated?}` | read-only, idempotent |
-| 5 | `globnotes_create_note` | `path`, `content` | `{path, title, content, last_modified}` | not destructive |
-| 6 | `globnotes_update_note` | `path`; `content`; `new_path`; `expected_last_modified`; `file_refs` (`none`, `move`, `relink`; default `none`) | the note, plus `moved_files: [{old_path, new_path}]` | destructive |
-| 7 | `globnotes_delete_note` | `path`, `expected_last_modified` | `{deleted}` | destructive |
+| 5 | `globnotes_create_note` | `path`, `content` | `{path, title, content, last_modified, hash}` | not destructive |
+| 6 | `globnotes_update_note` | `path`; `content`; `new_path`; `expected_last_modified`; `expected_hash`; `file_refs` (`none`, `move`, `relink`; default `none`) | the note, plus `moved_files: [{old_path, new_path}]` | destructive |
+| 7 | `globnotes_delete_note` | `path`, `expected_last_modified`, `expected_hash` | `{deleted}` | destructive |
 
 No tool reaches anything outside the vault (`openWorldHint: false`).
 
@@ -287,6 +287,9 @@ Notes:
 - **Paths** are relative to the vault root, without `.md`, with `/` between folders:
   `Recipes/Lentil dal`. They follow the same rules as in the web app.
 - **Times** (`last_modified`) are ISO 8601 in UTC, e.g. `2026-11-02T14:05:09.120Z`.
+- **Hashes** (`hash`) are the SHA-256 of the whole note's content, as 64 hex characters:
+  the same value the vault hub records for the file. Every part of a note read in parts
+  has the same `hash`.
 - **Search syntax** is the web app's: words (all must match), `"exact phrase"`, `#tag`,
   `prefix*`, and `*` alone for every note. `*` with `sort: "lastModified"` lists the
   latest notes. A query with an unpaired `"` is refused with a tool error that says so.
@@ -360,18 +363,28 @@ folder listing takes display titles from the index).
 
 ## The stale-write guard
 
-`globnotes_update_note` and `globnotes_delete_note` take an optional
-`expected_last_modified`: the `last_modified` the agent read with `globnotes_get_note` (or
-from a search result). If the note has changed since (for example, someone saved it in the
-browser in the meantime), the tool writes nothing and asks the agent to re-read the note.
-Agents should always pass it.
+`globnotes_update_note` and `globnotes_delete_note` take two optional guards:
 
-The check is best effort. globnotes compares the note on disk just before the write, so
-a save that lands between the check and the write can still be overwritten. A note changed
-within the same millisecond also isn't detected. The web editor's own saves are base-aware
-(they merge with changes made elsewhere or keep a conflict copy, see `docs/saving.md`), so
-a browser save after an agent's edit no longer overwrites it; MCP writes don't use the
-vault hub's versions yet.
+| # | Argument | Value | Catches |
+|---|---|---|---|
+| 1 | `expected_last_modified` | The `last_modified` the agent read with `globnotes_get_note` (or from a search result) | Any write that changed the file's time, to the millisecond |
+| 2 | `expected_hash` | The `hash` the agent read with `globnotes_get_note`, or got back from a create or update | Any change of the content, also within the same millisecond |
+
+If either no longer matches (for example, someone saved the note in the browser in the
+meantime), the tool writes nothing and asks the agent to re-read the note and retry with
+the new value. It never merges or writes a conflict copy for an agent: the agent sends a
+whole note, and the server keeps no earlier text to merge with. With both guards, both
+must match. Agents should always pass them.
+
+The check runs inside globnotes' note lock, which every globnotes write takes (the web
+app, MCP, plugins), right before the write: no globnotes write can land between the check
+and the write. The write itself re-checks the note on disk, so another program (Obsidian,
+a sync tool, a shell) that changes it while the write waits for plugin guards is detected
+too; only a change in the moment between that last check and the file replacement is not.
+
+The web editor's own saves send the text they started from: they merge with changes made
+elsewhere or keep a conflict copy (see `docs/saving.md`), so a browser save after an
+agent's edit doesn't overwrite it either.
 
 ## Security
 

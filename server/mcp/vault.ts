@@ -21,6 +21,7 @@ import type {
   SearchQuery,
   TagPage,
 } from "../notes/models.ts";
+import type { NoteExpectation } from "../notes/expectation.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
 import { state } from "../state.ts";
 
@@ -35,13 +36,19 @@ export interface McpVault {
   /** One page of the sorted tag list and the number of all tags. */
   tags(offset: number, limit: number): TagPage;
   createNote(data: NoteCreate, lease: NoteMutationLease): Promise<Note>;
+  /** `expect` is the stale-write guard, checked under the note lock. */
   updateNote(
     path: string,
     data: NoteUpdate,
     fileRefs: string,
     lease: NoteMutationLease,
+    expect?: NoteExpectation,
   ): Promise<Note>;
-  deleteNote(path: string, lease: NoteMutationLease): Promise<void>;
+  deleteNote(
+    path: string,
+    lease: NoteMutationLease,
+    expect?: NoteExpectation,
+  ): Promise<void>;
 }
 
 /** Raised when the search index is unavailable (never in a running server). */
@@ -68,8 +75,22 @@ export const stateVault: McpVault = {
     state.indexer?.tagsPage(offset, limit) ?? { total: 0, tags: [] },
   createNote: (data, lease) =>
     operations().createNote(data, { origin: "api", lease }),
-  updateNote: (path, data, fileRefs, lease) =>
-    operations().updateNote(path, data, fileRefs, { origin: "api", lease }),
-  deleteNote: (path, lease) =>
-    operations().deleteNote(path, { origin: "api", lease }),
+  updateNote: (path, data, fileRefs, lease, expect) =>
+    operations().updateNote(
+      path,
+      data,
+      fileRefs,
+      { origin: "api", lease },
+      undefined,
+      undefined,
+      expect,
+    ),
+  deleteNote: (path, lease, expect) =>
+    operations().deleteNote(
+      path,
+      { origin: "api", lease },
+      undefined,
+      undefined,
+      expect,
+    ),
 };

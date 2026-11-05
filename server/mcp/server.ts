@@ -39,8 +39,9 @@ export const INSTRUCTIONS =
   "globnotes_get_note. Listings and large notes come in parts: while " +
   "has_more is true, call again with offset=next_offset. To change a note, " +
   "read all of it first, then call globnotes_update_note with the whole new " +
-  "content and expected_last_modified set to the last_modified you read, so " +
-  "edits made since are not overwritten. Changing a note's first '# Heading' " +
+  "content, expected_last_modified and expected_hash set to the " +
+  "last_modified and hash you read, so edits made since are not " +
+  "overwritten. Changing a note's first '# Heading' " +
   "renames it (unless its front matter sets a title); use the path in the " +
   "result from then on. A read-only instance offers only the read tools.";
 

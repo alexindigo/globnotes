@@ -22,6 +22,8 @@ import {
   type SearchResult,
 } from "../server/notes/models.ts";
 import { logger } from "../server/logger.ts";
+import { contentVersion } from "../server/hub/merge.ts";
+import { assertExpected } from "../server/notes/expectation.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import type { NoteMutationLease } from "../server/plugins/lifecycle.ts";
 import { MARK_CLOSE, MARK_OPEN } from "../server/search/fts5.ts";
@@ -130,10 +132,20 @@ function fakeVault(seed: Record<string, string> = {}) {
       }
       return Promise.resolve(put(data.path, data.content ?? ""));
     },
-    updateNote: (path, data: NoteUpdate, fileRefs, lease) => {
-      calls.writes.push({ op: "update", lease, args: [path, data, fileRefs] });
+    updateNote: (path, data: NoteUpdate, fileRefs, lease, expect) => {
+      calls.writes.push({
+        op: "update",
+        lease,
+        args: [path, data, fileRefs, expect],
+      });
       if (writeError) return Promise.reject(writeError);
       const before = get(path);
+      // The real guard, as NoteOperations applies it under the note lock.
+      try {
+        assertExpected(path, before, expect);
+      } catch (error) {
+        return Promise.reject(error);
+      }
       const target = data.newPath ?? path;
       notes.delete(path);
       const note = put(target, data.newContent ?? before.content ?? "");
@@ -145,10 +157,14 @@ function fakeVault(seed: Record<string, string> = {}) {
       }
       return Promise.resolve(note);
     },
-    deleteNote: (path, lease) => {
-      calls.writes.push({ op: "delete", lease, args: [path] });
+    deleteNote: (path, lease, expect) => {
+      calls.writes.push({ op: "delete", lease, args: [path, expect] });
       if (writeError) return Promise.reject(writeError);
-      get(path);
+      try {
+        assertExpected(path, get(path), expect);
+      } catch (error) {
+        return Promise.reject(error);
+      }
       notes.delete(path);
       return Promise.resolve();
     },
@@ -860,6 +876,7 @@ Deno.test("mcp tools: reads and their actionable errors", async () => {
       title: "Beds",
       content: "# Beds\n\nBed 1: tomatoes",
       last_modified: isoTime(fake.notes.get("Garden/Beds")!.lastModified),
+      hash: contentVersion("# Beds\n\nBed 1: tomatoes"),
       offset: 0,
       total_length: 23,
       has_more: false,
@@ -1143,7 +1160,15 @@ Deno.test("mcp tools: update, rename and the stale-write guard", async () => {
       ),
       textOf(stale),
     );
-    assertEquals(fake.calls.writes, []);
+    // The guard is the vault's (NoteOperations checks it under the note
+    // lock): the call carries the expectation, and nothing was written.
+    assertEquals(fake.calls.writes[0].args, [
+      "Plans/Old",
+      { newContent: "# Old\nmine", newPath: undefined },
+      "none",
+      { lastModifiedMs: Date.parse("2020-01-01T00:00:00.000Z") },
+    ]);
+    assertEquals(fake.notes.get("Plans/Old")!.content, "# Old\n");
 
     // The same instant in another ISO form is not a conflict.
     const offsetForm = stamp.replace("Z", "+00:00");
@@ -1154,10 +1179,11 @@ Deno.test("mcp tools: update, rename and the stale-write guard", async () => {
     });
     assertEquals(saved.isError, undefined, textOf(saved));
     assertEquals(fake.notes.get("Plans/Old")!.content, "# Old\nmine");
-    assertEquals(fake.calls.writes[0].args, [
+    assertEquals(fake.calls.writes[1].args, [
       "Plans/Old",
       { newContent: "# Old\nmine", newPath: undefined },
       "none",
+      { lastModifiedMs: Date.parse(stamp) },
     ]);
 
     const moved = await mcp.call("globnotes_update_note", {
@@ -1182,10 +1208,11 @@ Deno.test("mcp tools: update, rename and the stale-write guard", async () => {
       summaryOf(moved),
     );
     assert(summaryOf(moved).endsWith("; 1 attachment(s) moved."));
-    assertEquals(fake.calls.writes[1].args, [
+    assertEquals(fake.calls.writes[2].args, [
       "Plans/Old",
       { newContent: undefined, newPath: "Archive/Old" },
       "move",
+      undefined,
     ]);
 
     const staleDelete = await mcp.call("globnotes_delete_note", {
@@ -1208,6 +1235,107 @@ Deno.test("mcp tools: update, rename and the stale-write guard", async () => {
     });
     assertEquals(missing.isError, true);
     assert(textOf(missing).startsWith("Note 'Archive/Old' not found."));
+  } finally {
+    await mcp.close();
+  }
+});
+
+Deno.test("mcp tools: reads and writes return the hash; a stale expected_hash is refused", async () => {
+  const fake = fakeVault({ "Plans/Hash": "# Hash\n\nfirst" });
+  const mcp = await connect(fake);
+  try {
+    const read = await mcp.call("globnotes_get_note", { path: "Plans/Hash" });
+    const { hash, last_modified } = read.structuredContent as {
+      hash: string;
+      last_modified: string;
+    };
+    assertEquals(hash, contentVersion("# Hash\n\nfirst"));
+    // Every part of a note carries the whole note's hash.
+    const part = await mcp.call("globnotes_get_note", {
+      path: "Plans/Hash",
+      offset: 2,
+      length: 3,
+    });
+    assertEquals((part.structuredContent as { hash: string }).hash, hash);
+
+    // Same last_modified, different content (a change within the same
+    // millisecond): only the hash tells, and nothing is written.
+    fake.notes.get("Plans/Hash")!.content = "# Hash\n\nchanged elsewhere";
+    const stale = await mcp.call("globnotes_update_note", {
+      path: "Plans/Hash",
+      content: "# Hash\n\nmine",
+      expected_last_modified: last_modified,
+      expected_hash: hash.toUpperCase(),
+    });
+    assertEquals(stale.isError, true);
+    const now = contentVersion("# Hash\n\nchanged elsewhere");
+    assertEquals(
+      textOf(stale),
+      `Note 'Plans/Hash' changed since you read it (expected hash ${hash}, ` +
+        `now ${now}). Nothing was written. Call globnotes_get_note to ` +
+        "re-read it, then retry with the new hash.",
+    );
+    assertEquals(
+      fake.notes.get("Plans/Hash")!.content,
+      "# Hash\n\nchanged elsewhere",
+    );
+    assertEquals(fake.calls.writes[0].args[3], {
+      lastModifiedMs: Date.parse(last_modified),
+      hash,
+    });
+
+    const updated = await mcp.call("globnotes_update_note", {
+      path: "Plans/Hash",
+      content: "# Hash\n\nmine",
+      expected_hash: now,
+    });
+    assertEquals(updated.isError, undefined, textOf(updated));
+    const after = (updated.structuredContent as { hash: string }).hash;
+    assertEquals(after, contentVersion("# Hash\n\nmine"));
+
+    const created = await mcp.call("globnotes_create_note", {
+      path: "Plans/New",
+      content: "# New\n",
+    });
+    assertEquals(
+      (created.structuredContent as { hash: string }).hash,
+      contentVersion("# New\n"),
+    );
+
+    const staleDelete = await mcp.call("globnotes_delete_note", {
+      path: "Plans/Hash",
+      expected_hash: hash,
+    });
+    assertEquals(staleDelete.isError, true);
+    assert(textOf(staleDelete).includes(`expected hash ${hash}, now ${after}`));
+    assert(fake.notes.has("Plans/Hash"));
+    const deleted = await mcp.call("globnotes_delete_note", {
+      path: "Plans/Hash",
+      expected_hash: after,
+    });
+    assertEquals(deleted.structuredContent, { deleted: "Plans/Hash" });
+
+    // Both guards stale: both are named, and the retry asks for both.
+    const both = await mcp.call("globnotes_update_note", {
+      path: "Plans/New",
+      content: "x",
+      expected_last_modified: "2020-01-01T00:00:00.000Z",
+      expected_hash: hash,
+    });
+    assertEquals(both.isError, true);
+    assert(
+      textOf(both).includes("expected last_modified 2020-01-01T00:00:00.000Z"),
+    );
+    assert(textOf(both).endsWith("retry with the new last_modified and hash."));
+
+    const malformed = await mcp.call("globnotes_update_note", {
+      path: "Plans/New",
+      content: "x",
+      expected_hash: "abc",
+    });
+    assertEquals(malformed.isError, true);
+    assert(textOf(malformed).includes("Input validation error"));
+    assertEquals(fake.notes.get("Plans/New")!.content, "# New\n");
   } finally {
     await mcp.close();
   }

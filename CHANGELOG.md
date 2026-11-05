@@ -13,8 +13,9 @@ globnotes server now serves an MCP endpoint at `<prefix>/_/mcp` with seven tools
 search notes, read a note, list a folder, list tags, and create, update (or
 rename) and delete a note. It uses the same login token, write path and plugin
 guards as the web app, and the hub records its writes as globnotes writes; in
-`read_only` mode it offers only the read tools. Update and delete can take the
-`last_modified` the agent read, and then refuse to overwrite a note changed since.
+`read_only` mode it offers only the read tools. Reads and writes return the note's
+content hash; update and delete can take the `last_modified` and the hash the agent
+read, check them under the note lock, and refuse to overwrite a note changed since.
 Every result's text also carries the whole result as JSON, for clients that read
 only text. A note too large for one response is read in parts (`offset`, `length`,
 `has_more`). It works over plain HTTP and is on by default;

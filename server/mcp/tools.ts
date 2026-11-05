@@ -11,6 +11,8 @@
 
 import * as z from "zod/v4";
 import { isReadableNotePath, isValidNotePath } from "../helpers.ts";
+import { contentVersion } from "../hub/merge.ts";
+import type { NoteExpectation } from "../notes/expectation.ts";
 import {
   InvalidPathError,
   type Note,
@@ -127,6 +129,36 @@ const expectedLastModified = z.iso.datetime({ offset: true }).optional()
       "the check.",
   );
 
+const expectedHash = z.string().regex(
+  /^[0-9a-fA-F]{64}$/,
+  "must be the 64-character hex hash a note read returned",
+).optional().describe(
+  "Stale-write guard by content: the hash you read (from globnotes_get_note, " +
+    "or the result of a create or update). If the note's content changed " +
+    "since, nothing is written and you are asked to re-read it. Unlike " +
+    "last_modified it also catches changes within the same millisecond. " +
+    "Omit to skip the check; with both, both must match.",
+);
+
+/** The stale-write guard a write tool's arguments ask for (design §2 row 9;
+ * checked by NoteOperations under the note lock, server/notes/expectation.ts). */
+function expectation(
+  args: { expected_last_modified?: string; expected_hash?: string },
+): NoteExpectation | undefined {
+  if (
+    args.expected_last_modified === undefined &&
+    args.expected_hash === undefined
+  ) return undefined;
+  return {
+    ...(args.expected_last_modified === undefined
+      ? {}
+      : { lastModifiedMs: new Date(args.expected_last_modified).getTime() }),
+    ...(args.expected_hash === undefined
+      ? {}
+      : { hash: args.expected_hash.toLowerCase() }),
+  };
+}
+
 const NoteOutput = z.object({
   path: z.string().describe("Note path (no .md extension)"),
   title: z.string().describe(
@@ -135,6 +167,10 @@ const NoteOutput = z.object({
   content: z.string().describe("Full Markdown content"),
   last_modified: z.string().describe(
     "Last modification time, ISO 8601 (UTC)",
+  ),
+  hash: z.string().describe(
+    "SHA-256 of the whole note's content (hex); pass as expected_hash to " +
+      "the write tools",
   ),
 });
 
@@ -167,6 +203,7 @@ function noteOutput(note: Note): z.output<typeof NoteOutput> {
     title: note.title,
     content: note.content ?? "",
     last_modified: isoTime(note.lastModified),
+    hash: contentVersion(note.content ?? ""),
   };
 }
 
@@ -178,24 +215,6 @@ function readNote(ctx: ToolContext, path: string): Note {
   } catch (error) {
     if (error instanceof NoteNotFoundError) throw notFound(path);
     throw error;
-  }
-}
-
-/** The stale-write guard (design §2 row 9): best effort, before the write. */
-function assertUnchanged(
-  ctx: ToolContext,
-  path: string,
-  expected: string | undefined,
-): void {
-  if (expected === undefined) return;
-  const current = isoTime(readNote(ctx, path).lastModified);
-  if (current !== new Date(expected).toISOString()) {
-    throw new ToolError(
-      `Note '${path}' changed since you read it (expected last_modified ` +
-        `${expected}, now ${current}). Nothing was written. Call ` +
-        "globnotes_get_note to re-read it, then retry with the new " +
-        "last_modified.",
-    );
   }
 }
 
@@ -519,7 +538,7 @@ export const getNote = defineTool({
   name: "globnotes_get_note",
   title: "Read a note",
   description:
-    `Read one note: its Markdown content, display title and last_modified (pass that to the write tools' expected_last_modified to avoid overwriting newer edits). Find paths with globnotes_search_notes or globnotes_list_folder.
+    `Read one note: its Markdown content, display title, last_modified and hash (pass them to the write tools' expected_last_modified and expected_hash to avoid overwriting newer edits; every part of a note has the same hash). Find paths with globnotes_search_notes or globnotes_list_folder.
 
 A note too large for one response comes in parts: has_more is true and content holds the characters from offset to next_offset; call again with offset=next_offset until has_more is false. offset and length (characters) read a chosen range. Read every part before replacing a note with globnotes_update_note, which always replaces the whole note.`,
   write: false,
@@ -851,10 +870,10 @@ export const updateNote = defineTool({
   name: "globnotes_update_note",
   title: "Update or rename a note",
   description:
-    `Replace a note's content, rename/move it, or both. The new content replaces the whole note, so read it first with globnotes_get_note (every part, while has_more is true) and pass its last_modified as expected_last_modified.
+    `Replace a note's content, rename/move it, or both. The new content replaces the whole note, so read it first with globnotes_get_note (every part, while has_more is true) and pass its last_modified as expected_last_modified and its hash as expected_hash.
 
 Like the web app, changing the first '# Heading' of a note without a front-matter title renames the note to match; the result's path is the final path.
-Examples: fix a typo -> path + content + expected_last_modified; move to another folder -> path + new_path="Archive/Old plan".`,
+Examples: fix a typo -> path + content + expected_last_modified + expected_hash; move to another folder -> path + new_path="Archive/Old plan".`,
   write: true,
   inputSchema: z.strictObject({
     path: notePath,
@@ -865,6 +884,7 @@ Examples: fix a typo -> path + content + expected_last_modified; move to another
       "New path to rename/move the note to. Omit to keep the path",
     ),
     expected_last_modified: expectedLastModified,
+    expected_hash: expectedHash,
     file_refs: z.enum(["none", "move", "relink"]).default("none").describe(
       "On rename, what happens to attachments the note links with relative " +
         "paths: none = leave them, move = move them with the note, relink = " +
@@ -888,7 +908,6 @@ Examples: fix a typo -> path + content + expected_last_modified; move to another
     const newPath = args.new_path === undefined
       ? undefined
       : validPath(args.new_path, "new_path");
-    assertUnchanged(ctx, args.path, args.expected_last_modified);
     let note;
     try {
       note = await ctx.vault.updateNote(
@@ -896,6 +915,7 @@ Examples: fix a typo -> path + content + expected_last_modified; move to another
         { newContent: args.content, newPath },
         args.file_refs,
         lease,
+        expectation(args),
       );
     } catch (error) {
       // The note that exists is at the target, not at `path`.
@@ -947,11 +967,12 @@ export const deleteNote = defineTool({
   name: "globnotes_delete_note",
   title: "Delete a note",
   description:
-    "Delete a note permanently. Pass the last_modified you read as expected_last_modified so a note edited since is not deleted.",
+    "Delete a note permanently. Pass the last_modified and hash you read as expected_last_modified and expected_hash so a note edited since is not deleted.",
   write: true,
   inputSchema: z.strictObject({
     path: notePath,
     expected_last_modified: expectedLastModified,
+    expected_hash: expectedHash,
   }),
   outputSchema: DeleteOutput,
   annotations: {
@@ -962,8 +983,7 @@ export const deleteNote = defineTool({
   },
   async run(args, ctx) {
     const lease = writeLease(ctx);
-    assertUnchanged(ctx, args.path, args.expected_last_modified);
-    await ctx.vault.deleteNote(args.path, lease);
+    await ctx.vault.deleteNote(args.path, lease, expectation(args));
     return {
       structured: { deleted: args.path },
       summary: `Deleted note ${quote(args.path)}.`,

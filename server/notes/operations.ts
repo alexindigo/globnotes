@@ -14,6 +14,11 @@ import type { FileServing } from "../files/file_serving.ts";
 import type { Indexer } from "../state.ts";
 import type { VaultHub } from "../hub/hub.ts";
 import { contentVersion, mergeText } from "../hub/merge.ts";
+import {
+  assertExpected,
+  NoteChangedError,
+  type NoteExpectation,
+} from "./expectation.ts";
 import { guessType } from "../files/mimetypes.ts";
 import { FileSystemNotes, type StorageEffect } from "./file_system.ts";
 import {
@@ -185,7 +190,10 @@ export class NoteOperations {
       try {
         revalidate();
       } catch (e) {
-        if (e instanceof OperationError) throw e;
+        // A writer's own stale-write guard keeps its actionable error.
+        if (e instanceof OperationError || e instanceof NoteChangedError) {
+          throw e;
+        }
         throw new OperationError(
           409,
           "operation_conflict",
@@ -293,11 +301,17 @@ export class NoteOperations {
     ctx: OperationOrigin,
     requester?: RequesterAuthority,
     operationId = createUuid(),
+    expect?: NoteExpectation,
   ): Promise<Note> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);
     return await this.#lock.run(async () => {
       this.#admission(ctx, operationId);
+      // The writer's stale-write guard, under the lock and before any merge,
+      // hook or effect (server/notes/expectation.ts).
+      if (expect) {
+        assertExpected(notePath, this.adapters.notes.get(notePath), expect);
+      }
       let status: "saved" | "merged" = "saved";
       if (
         typeof data.baseContent === "string" &&
@@ -447,6 +461,7 @@ export class NoteOperations {
               JSON.stringify(prepared.attachments)
           ) throw new Error("canonical effects changed");
           const current = this.adapters.notes.get(notePath);
+          assertExpected(notePath, current, expect);
           if (current.content !== before.content) {
             throw new Error(`'${notePath}' changed on disk`);
           }
@@ -502,6 +517,7 @@ export class NoteOperations {
     ctx: OperationOrigin,
     requester?: RequesterAuthority,
     operationId = createUuid(),
+    expect?: NoteExpectation,
   ): Promise<void> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);
@@ -512,6 +528,8 @@ export class NoteOperations {
         : this.adapters.lifecycle.epoch;
       // Capture the final content BEFORE any removal.
       const before = this.adapters.notes.get(notePath);
+      // The writer's stale-write guard (server/notes/expectation.ts).
+      assertExpected(notePath, before, expect);
       const effects = [
         path.join(this.adapters.notes.storagePath, notePath + MARKDOWN_EXT),
       ];
@@ -529,6 +547,7 @@ export class NoteOperations {
         [{ hook: "pre-delete", leases }],
         () => {
           const current = this.adapters.notes.get(notePath);
+          assertExpected(notePath, current, expect);
           if (current.content !== before.content) {
             throw new Error(`'${notePath}' changed on disk`);
           }
