@@ -231,9 +231,12 @@ const RULES: Rule[] = [
   {
     id: "unique-remote-module-urls",
     scopes: ["tests"],
-    pattern: /import\(\s*['"`]https?:\/\/(?![^'"`]*\$\{modules\})/,
+    // Dynamic `import("http...")` and static `import ... from "http..."` /
+    // `import "http..."` alike: both are resolved through the module cache.
+    pattern:
+      /(?:\bimport\s*\(\s*|\bfrom\s+|\bimport\s+)['"`]https?:\/\/(?![^'"`]*\$\{modules\})/,
     why:
-      "remote modules are cached by URL in the shared, persistent DENO_DIR; fixtures serve them under a per-fixture path (`${modules}`) so no run is answered from another run's cache",
+      "remote modules, imported dynamically or statically, are cached by URL in the shared, persistent DENO_DIR; fixtures serve them under a per-fixture path (`${modules}`) so no run is answered from another run's cache",
   },
   {
     id: "single-process-env-owner",

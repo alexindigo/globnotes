@@ -491,6 +491,9 @@ Deno.test("plugin network: worker-free browser metadata ignores suppression and 
     },
   );
   const authority = `127.0.0.1:${receiver.addr.port}`;
+  // A per-fixture module path (unique-remote-module-urls): a cached copy of
+  // a reused URL would also leave traffic at 0 below.
+  const modules = `/${crypto.randomUUID()}`;
   const manager = createPluginManager(
     fixture.vault,
     () => Promise.resolve(null),
@@ -536,7 +539,7 @@ Deno.test("plugin network: worker-free browser metadata ignores suppression and 
       capabilities: { network: false, imports: [authority] },
     }, {
       "main.js":
-        `import {value} from 'http://${authority}/module.js'; export function getSelectors(){return []}`,
+        `import {value} from 'http://${authority}${modules}/module.js'; export function getSelectors(){return []}`,
       "styles.css": "body { color: inherit; }",
     });
     await Deno.writeTextFile(
