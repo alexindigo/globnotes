@@ -135,7 +135,8 @@ const RAW_CLOCK_ALLOWED: NonNullable<Rule["allowed"]> = [
   },
   {
     file: "server/api/endpoints/_/api/changes/get.ts",
-    line: "const heartbeat = setInterval(() => emit(), 25_000);",
+    line:
+      "const heartbeat = setInterval(() => emit(), CHANGE_STREAM_HEARTBEAT_MS);",
     reason: "keepalive cadence the server emits; nothing fails when it is late",
   },
   {

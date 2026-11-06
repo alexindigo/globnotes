@@ -55,10 +55,13 @@ recreation is disclosed. Outside renames are treated as deletion of the old path
 
 The change connection resumes its cursor after reconnect, with polling when
 streaming fails, and always recovers from transient failures (`docs/hub.md`).
-A tab hidden for more than 10 seconds closes it and catches up when shown. A gap invalidates the snapshot and causes a fresh
-read, still fenced against newer typing and saves. This is not real-time
-co-editing or filesystem CAS: a change during server guard waits can reject a
-request under the existing retained-error contract. Legacy non-editor callers
+A connection that receives nothing for three server heartbeats (75 seconds,
+`CHANGE_STREAM_STALL_MS`) counts as failed and reconnects the same way. A tab
+hidden for more than 10 seconds closes it and catches up when shown. A gap
+invalidates the snapshot and causes a fresh read, still fenced against newer
+typing and saves. This is not real-time co-editing or filesystem CAS: a change
+during server guard waits can reject a request under the existing
+retained-error contract. Legacy non-editor callers
 without a base keep replacement semantics until their M4 migration.
 
 ## Paused saves

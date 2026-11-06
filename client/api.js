@@ -7,6 +7,7 @@ import { getStoredToken } from "./tokenStorage.js";
 import { getToastOptions } from "./helpers.js";
 import router from "./router.js";
 import { readPathPrefix } from "./pathPrefix.js";
+import { CHANGE_STREAM_STALL_MS } from "../shared/vault_changes.ts";
 
 const pathPrefix = readPathPrefix();
 
@@ -441,20 +442,44 @@ export async function openPluginHostEvents({ onEvent, onClose, signal }) {
   };
 }
 
-/** Fetch-based SSE carries bearer authority on ordinary HTTP. */
-export async function openVaultChanges({ since = 0, poll = false, onEvent, onClose, signal }) {
+/** Fetch-based SSE carries bearer authority on ordinary HTTP. A request that
+ * receives no bytes for CHANGE_STREAM_STALL_MS (several server heartbeats)
+ * has stalled, e.g. a half-open TCP connection or a buffering proxy: it is
+ * aborted and reported as a failure (rejection before a response, onClose
+ * after), so the owner reconnects through its backoff (vaultChanges.js). */
+export async function openVaultChanges({ since = 0, poll = false, onEvent, onClose, signal, stallMs = CHANGE_STREAM_STALL_MS }) {
   const controller = new AbortController();
   const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
-  const headers = { accept: poll ? "application/json" : "text/event-stream" };
-  const token = getStoredToken();
-  if (token) headers.authorization = `Bearer ${token}`;
-  const response = await fetch(`${pathPrefix}/_/api/changes?since=${since}${poll ? "&poll=1" : ""}`, { headers, signal: requestSignal });
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw Object.assign(new Error(`Vault changes failed: ${response.status}`), { status: response.status });
+  let stalled = null, watchdog, reader = null;
+  const settle = () => { clearTimeout(watchdog); watchdog = undefined; };
+  const stall = () => {
+    if (requestSignal.aborted) return;
+    stalled = Object.assign(new Error(`Vault changes stalled: no data for ${stallMs} ms`), { stalled: true });
+    controller.abort(stalled);
+    reader?.cancel(stalled).catch(() => {});
+  };
+  // Every received chunk (events and heartbeat comments alike) proves life.
+  const alive = () => { settle(); if (!requestSignal.aborted) watchdog = setTimeout(stall, stallMs); };
+  // Abandoned by its owner (or stalled): the watchdog has nothing left to watch.
+  requestSignal.addEventListener("abort", settle, { once: true });
+  alive();
+  let response, packet;
+  try {
+    const headers = { accept: poll ? "application/json" : "text/event-stream" };
+    const token = getStoredToken();
+    if (token) headers.authorization = `Bearer ${token}`;
+    response = await fetch(`${pathPrefix}/_/api/changes?since=${since}${poll ? "&poll=1" : ""}`, { headers, signal: requestSignal });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw Object.assign(new Error(`Vault changes failed: ${response.status}`), { status: response.status });
+    }
+    if (!response.headers.get("content-type")?.includes("text/event-stream")) packet = await response.json();
+  } catch (error) {
+    settle();
+    throw stalled ?? error;
   }
-  if (!response.headers.get("content-type")?.includes("text/event-stream")) {
-    const packet = await response.json();
+  if (packet) {
+    settle();
     let timer;
     if (!requestSignal.aborted) {
       if (packet.gap) onEvent({ event: "reset", data: { next: packet.next } });
@@ -465,16 +490,20 @@ export async function openVaultChanges({ since = 0, poll = false, onEvent, onClo
     return () => { clearTimeout(timer); controller.abort(); };
   }
   if (!response.body?.getReader) {
+    settle();
     await response.body?.cancel();
-    return openVaultChanges({ since, poll: true, onEvent, onClose, signal: requestSignal });
+    return openVaultChanges({ since, poll: true, onEvent, onClose, signal: requestSignal, stallMs });
   }
-  const reader = response.body.getReader(), decoder = new TextDecoder();
+  reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  alive();
   (async () => {
     let buffer = "";
     try {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
+        alive();
         buffer += decoder.decode(value, { stream: true });
         let boundary;
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
@@ -484,8 +513,14 @@ export async function openVaultChanges({ since = 0, poll = false, onEvent, onClo
           if (event && data && !requestSignal.aborted) onEvent({ event, data: JSON.parse(data) });
         }
       }
-      if (!requestSignal.aborted) onClose?.("ended");
-    } catch (error) { if (!requestSignal.aborted) onClose?.(error); }
+      settle();
+      if (stalled) onClose?.(stalled);
+      else if (!requestSignal.aborted) onClose?.("ended");
+    } catch (error) {
+      settle();
+      if (stalled) onClose?.(stalled);
+      else if (!requestSignal.aborted) onClose?.(error);
+    }
   })();
-  return () => { controller.abort(); reader.cancel().catch(() => {}); };
+  return () => { settle(); controller.abort(); reader.cancel().catch(() => {}); };
 }

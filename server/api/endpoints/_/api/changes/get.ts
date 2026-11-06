@@ -4,6 +4,7 @@ import { enforceAuthMetadata } from "@server/auth/middleware.ts";
 import { browserChange } from "@server/hub/browser_changes.ts";
 import type { ChangeEntry } from "@server/hub/types.ts";
 import { state } from "@server/state.ts";
+import { CHANGE_STREAM_HEARTBEAT_MS } from "../../../../../../shared/vault_changes.ts";
 
 const encoder = new TextEncoder();
 const frame = (event: string, data: unknown, id?: number) =>
@@ -95,7 +96,7 @@ export default async function (request: PathfinderRequest) {
       const unpolicy = lifecycle.subscribeInvalidation(() => {
         if (lifecycle.epoch !== epoch) close();
       });
-      const heartbeat = setInterval(() => emit(), 25_000);
+      const heartbeat = setInterval(() => emit(), CHANGE_STREAM_HEARTBEAT_MS);
       let expiry: ReturnType<typeof setTimeout> | undefined;
       const expire = () => {
         if (closed || admitted.expiresAt === null) return;
