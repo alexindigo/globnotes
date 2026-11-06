@@ -28,8 +28,20 @@ import {
 import { logger } from "@server/logger.ts";
 import { walk } from "@std/fs/walk";
 import * as nodePath from "@std/path";
+import {
+  type StorageEffect,
+  UngatedVaultWrite,
+  VaultEffects,
+} from "../hub/effects.ts";
+export type { StorageEffect } from "../hub/effects.ts";
+import { versionOf } from "../hub/merge.ts";
 
 const MARKDOWN_EXT = ".md";
+
+/** Note text as Deno.readTextFileSync decodes it: lossy UTF-8, BOM kept. */
+export function decodeNote(bytes: Uint8Array): string {
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+}
 
 // Regex patterns ported from file_system.py.
 const LOCAL_REF_MD = /(!?\[[^\]]*\])\(\s*([^)\s]+)\s*\)/g;
@@ -96,11 +108,6 @@ export interface PreparedNoteCreate {
   content: string;
   requiredPaths: string[];
 }
-export interface StorageEffect {
-  kind: "write" | "rename" | "remove" | "mkdir";
-  path: string;
-  oldPath?: string;
-}
 
 function missingParents(filename: string): string[] {
   const parents: string[] = [];
@@ -125,12 +132,16 @@ export class FileSystemNotes {
   #scanCache: { ts: number; names: string[] } | null = null;
   #scanCacheTtl: number;
 
+  /** Vault effects run only inside the hub gate (server/hub/gate.ts). */
+  readonly effects: VaultEffects;
   constructor(
     storagePath: string,
     probes: StorageProbes = {},
     environment: Environment = processEnvironment,
+    effects: VaultEffects = new VaultEffects(storagePath),
   ) {
     this.storagePath = storagePath;
+    this.effects = effects;
     this.probes = probes;
     this.#scanCacheTtl = Number(
       environment.get("GLOBNOTES_SCAN_CACHE_TTL") ?? "15",
@@ -138,19 +149,6 @@ export class FileSystemNotes {
   }
 
   private readonly probes: StorageProbes;
-  private recordingEffects: StorageEffect[] | null = null;
-  captureEffects<T>(effects: StorageEffect[], callback: () => T): T {
-    const previous = this.recordingEffects;
-    this.recordingEffects = effects;
-    try {
-      return callback();
-    } finally {
-      this.recordingEffects = previous;
-    }
-  }
-  #recordEffect(effect: StorageEffect): void {
-    this.recordingEffects?.push(effect);
-  }
 
   // region public API
 
@@ -431,14 +429,10 @@ export class FileSystemNotes {
                 nodePath.join(root, newRel);
               try {
                 this.#mkdirParents(newFile);
-                Deno.renameSync(oldFile, newFile);
-                this.#recordEffect({
-                  kind: "rename",
-                  path: newFile,
-                  oldPath: oldFile,
-                });
+                this.effects.move(oldFile, newFile);
                 movedFiles[r.path] = newRel;
-              } catch {
+              } catch (error) {
+                if (error instanceof UngatedVaultWrite) throw error;
                 // OSError in Python → silently continue
               }
             }
@@ -477,12 +471,7 @@ export class FileSystemNotes {
 
       try {
         this.#mkdirParents(newFilepath);
-        Deno.renameSync(filepath, newFilepath);
-        this.#recordEffect({
-          kind: "rename",
-          path: newFilepath,
-          oldPath: filepath,
-        });
+        this.effects.move(filepath, newFilepath);
         this.probes.afterRename?.(filepath, newFilepath);
       } catch (e) {
         if (
@@ -635,8 +624,7 @@ export class FileSystemNotes {
     this.#validateReadablePath(path);
     const filepath = this.#readablePath(path);
     try {
-      Deno.removeSync(filepath);
-      this.#recordEffect({ kind: "remove", path: filepath });
+      this.effects.remove(filepath);
       this.probes.afterRemove?.(filepath);
     } catch (e) {
       if (e instanceof Deno.errors.NotFound) {
@@ -741,8 +729,12 @@ export class FileSystemNotes {
   }
 
   #noteFromFile(path: string, filepath: string): Note {
-    const content = this.#readFile(filepath);
+    logger.debug(`Reading from '${filepath}'`);
+    // One read: the content and the version (raw-byte hash) describe the same bytes.
+    const bytes = Deno.readFileSync(filepath);
+    const content = decodeNote(bytes);
     return {
+      version: versionOf(bytes),
       path,
       content,
       title: resolveTitleInfo(
@@ -763,9 +755,9 @@ export class FileSystemNotes {
     while (d !== root && nodePath.common([root, d]) === root) {
       if (canPrune && !canPrune(d)) break;
       try {
-        Deno.removeSync(d);
-        this.#recordEffect({ kind: "remove", path: d });
-      } catch {
+        this.effects.removeEmptyDirectory(d);
+      } catch (error) {
+        if (error instanceof UngatedVaultWrite) throw error;
         break;
       }
       d = nodePath.dirname(d);
@@ -779,24 +771,12 @@ export class FileSystemNotes {
 
   #writeFile(filePath: string, content: string, overwrite: boolean): void {
     logger.debug(`Writing to '${filePath}'`);
-    if (overwrite) {
-      Deno.writeTextFileSync(filePath, content);
-    } else {
-      const f = Deno.openSync(filePath, { write: true, createNew: true });
-      try {
-        f.writeSync(new TextEncoder().encode(content));
-      } finally {
-        f.close();
-      }
-    }
-    this.#recordEffect({ kind: "write", path: filePath });
+    if (overwrite) this.effects.replace(filePath, content);
+    else this.effects.writeNew(filePath, content);
     this.probes.afterWrite?.(filePath);
   }
   #mkdirParents(filename: string): void {
-    for (const directory of missingParents(filename).reverse()) {
-      Deno.mkdirSync(directory);
-      this.#recordEffect({ kind: "mkdir", path: directory });
-    }
+    this.effects.mkdirParents(filename);
   }
   reconcileEffects(_effects: readonly StorageEffect[]): void {
     this.#invalidateScanCache();

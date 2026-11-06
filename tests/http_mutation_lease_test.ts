@@ -3,6 +3,7 @@
 /** Real handlers/storage/index consumers with test-local await barriers.
  * These cases import no proposed lease helper, so the preserved product can
  * execute them and demonstrate its existing authority failure. */
+import { gatedNotes } from "./helpers/storage.ts";
 import { assert, assertEquals } from "@std/assert";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { SignJWT } from "jose";
@@ -98,7 +99,7 @@ async function fixture() {
     JSON.stringify({ auth_type: "none", secret_key: "fixture-only-secret-A" }),
   );
   const config = new GlobalConfig(env);
-  const notes = new FileSystemNotes(vault, {}, env),
+  const notes = gatedNotes(new FileSystemNotes(vault, {}, env)),
     files = new FileServing(vault);
   const indexer = new Fts5Indexer(storage, env);
   const manager = createPluginManager(vault, undefined, 1, storage, {

@@ -183,6 +183,142 @@ const RAW_CLOCK_ALLOWED: NonNullable<Rule["allowed"]> = [
   },
 ];
 
+/** Server lines that change files outside any vault: the canonical state
+ * directory (excluded from the vault by the hub, docs/hub.md) or the client
+ * build. Vault effects belong to server/hub/effects.ts. */
+const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
+  {
+    file: "server/api/endpoints/_/api/brand/post.ts",
+    line: "Deno.removeSync(path.join(dir, name));",
+    reason: "branding uploads in <state>/brand (server/brand.ts brandDirPath)",
+  },
+  {
+    file: "server/api/endpoints/_/api/brand/post.ts",
+    line: "Deno.mkdirSync(dir, { recursive: true });",
+    reason: "branding uploads in <state>/brand (server/brand.ts brandDirPath)",
+  },
+  {
+    file: "server/api/endpoints/_/api/brand/post.ts",
+    line: "Deno.writeFileSync(",
+    reason: "branding uploads in <state>/brand (server/brand.ts brandDirPath)",
+  },
+  {
+    file: "server/config.ts",
+    line: "Deno.mkdirSync(node.location);",
+    reason: "stored configuration in the state directory",
+  },
+  {
+    file: "server/config.ts",
+    line: "if (identity) Deno.openSync(target, { write: true }).close();",
+    reason: "stored configuration in the state directory",
+  },
+  {
+    file: "server/config.ts",
+    line: "const temporary = Deno.makeTempFileSync({",
+    reason: "stored configuration in the state directory",
+  },
+  {
+    file: "server/config.ts",
+    line: "Deno.writeTextFileSync(temporary, JSON.stringify(config, null, 2));",
+    reason: "stored configuration in the state directory",
+  },
+  {
+    file: "server/config.ts",
+    line: "Deno.chownSync(temporary, identity.uid, identity.gid);",
+    reason: "stored configuration in the state directory",
+  },
+  {
+    file: "server/config.ts",
+    line: "Deno.chmodSync(temporary, identity.mode & 0o7777);",
+    reason: "stored configuration in the state directory",
+  },
+  {
+    file: "server/config.ts",
+    line: "const handle = Deno.openSync(temporary, { write: true });",
+    reason: "stored configuration in the state directory",
+  },
+  {
+    file: "server/config.ts",
+    line: "Deno.renameSync(temporary, target);",
+    reason: "stored configuration in the state directory",
+  },
+  {
+    file: "server/config.ts",
+    line: "Deno.removeSync(temporary);",
+    reason: "stored configuration in the state directory",
+  },
+  {
+    file: "server/helpers.ts",
+    line: "Deno.writeTextFileSync(htmlFile, html);",
+    reason: "the client build's index.html (client/dist), not a vault",
+  },
+  {
+    file: "server/hub/store.ts",
+    line: "Deno.mkdirSync(statePath, { recursive: true });",
+    reason: "creates the state directory for hub.sqlite",
+  },
+  {
+    file: "server/main.ts",
+    line: "Deno.removeSync(`${globDir}/${entry.name}`);",
+    reason: "removes Whoosh index leftovers from the state directory",
+  },
+  {
+    file: "server/plugins/data.ts",
+    line: "await Deno.mkdir(path.dirname(file), { recursive: true });",
+    reason: "plugin settings and private data in the state directory",
+  },
+  {
+    file: "server/plugins/data.ts",
+    line: "const temporary = await Deno.makeTempFile({",
+    reason: "plugin settings and private data in the state directory",
+  },
+  {
+    file: "server/plugins/data.ts",
+    line: "const handle = await Deno.open(temporary, { write: true });",
+    reason: "plugin settings and private data in the state directory",
+  },
+  {
+    file: "server/plugins/data.ts",
+    line: "Deno.renameSync(temporary, file);",
+    reason: "plugin settings and private data in the state directory",
+  },
+  {
+    file: "server/plugins/data.ts",
+    line: "await Deno.remove(temporary);",
+    reason: "plugin settings and private data in the state directory",
+  },
+  {
+    file: "server/plugins/network_store.ts",
+    line: "await Deno.mkdir(path.dirname(file), { recursive: true });",
+    reason: "network approvals in <state>/plugin-network",
+  },
+  {
+    file: "server/plugins/network_store.ts",
+    line: "const temporary = await Deno.makeTempFile({",
+    reason: "network approvals in <state>/plugin-network",
+  },
+  {
+    file: "server/plugins/network_store.ts",
+    line: "const handle = await Deno.open(temporary, { write: true });",
+    reason: "network approvals in <state>/plugin-network",
+  },
+  {
+    file: "server/plugins/network_store.ts",
+    line: "Deno.renameSync(temporary, file);",
+    reason: "network approvals in <state>/plugin-network",
+  },
+  {
+    file: "server/plugins/network_store.ts",
+    line: "await Deno.remove(temporary);",
+    reason: "network approvals in <state>/plugin-network",
+  },
+  {
+    file: "server/search/fts5.ts",
+    line: "Deno.mkdirSync(stateDir, { recursive: true });",
+    reason: "creates the state directory for the search index",
+  },
+];
+
 const RULES: Rule[] = [
   {
     id: "no-process-env-writes",
@@ -260,6 +396,24 @@ const RULES: Rule[] = [
     allowed: RAW_CLOCK_ALLOWED,
     why:
       "liveness and deadline checks measure observed time through server/observed_time.ts (processClock / ObservedClock), so a stall of this process is not blamed on a plugin or an operation. A raw clock read or timer is a wall-clock property or pacing, listed in RAW_CLOCK_ALLOWED with its reason",
+  },
+  {
+    id: "single-vault-writer",
+    scopes: ["server"],
+    pattern:
+      /\bDeno\.(?:writeFile|writeTextFile|rename|remove|mkdir|copyFile|truncate|link|symlink|chmod|chown|utime|makeTempFile|makeTempDir|create)(?:Sync)?\s*\(|\bDeno\.open(?:Sync)?\s*\([^)]*?\b(?:write|append|create|createNew|truncate)\s*:\s*true|["']node:fs(?:\/promises)?["']/,
+    owners: ["server/hub/effects.ts"],
+    allowed: STATE_WRITES_ALLOWED,
+    why:
+      "every vault effect goes through the hub gate: server/hub/effects.ts performs it only under a gate pass (base checked, versioning offered, hub recorded). Lines elsewhere may write only the canonical state directory or the client build, listed in STATE_WRITES_ALLOWED with their reason",
+  },
+  {
+    id: "single-gate-pass-owner",
+    scopes: ["server", "tests"],
+    pattern: /\bwithGatePass\s*\(/,
+    owners: ["server/hub/gate.ts", "server/hub/effects.ts"],
+    why:
+      "only the hub gate (server/hub/gate.ts) opens effect passes, after the writer's base was checked; tests go through HubGate.apply too",
   },
   {
     id: "single-readiness-bound",

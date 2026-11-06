@@ -6,6 +6,7 @@
  * ordering, and the render endpoint end-to-end.
  */
 
+import { gatedNotes } from "./helpers/storage.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import * as path from "@std/path";
 import { GlobalConfig } from "../server/config.ts";
@@ -28,7 +29,7 @@ function setupState(vault: string, plugins: PluginManager | null): void {
   initState(
     config,
     null,
-    new FileSystemNotes(vault, {}, env),
+    gatedNotes(new FileSystemNotes(vault, {}, env)),
     new Fts5Indexer(vault, env),
     new FileServing(vault),
     plugins,

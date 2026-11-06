@@ -2,7 +2,8 @@
 /** Completion IO for auxiliary files. No actions, notes, hooks or feature policy. */
 import { createHash } from "node:crypto";
 import * as path from "@std/path";
-import { createUuid } from "../../shared/uuid.ts";
+import { type StorageEffect, VaultEffects } from "../hub/effects.ts";
+import { HubGate } from "../hub/gate.ts";
 import {
   FS_LIMITS,
   type FsEffect,
@@ -30,6 +31,10 @@ export interface AuxiliaryFsAdapters {
   writable(): boolean;
   settings(manifest: PluginManifest): FsSettingsLease;
   commit<T>(effect: () => T | Promise<T>): Promise<T>;
+  /** Filesystem effects; vault targets need the hub gate's pass. */
+  effects?: VaultEffects;
+  /** The hub's write gate (attribution and records); default: no hub. */
+  gate?: HubGate;
   /** Host-only preparation seam; production has no extra task/authority surface. */
   prepare?(): Promise<void>;
   /** Deadline clock (observed time); tests inject a stepping scheduler. */
@@ -258,7 +263,12 @@ export class AuxiliaryFilesystem {
     Promise<void>,
     { jobs: Set<() => void>; retired: boolean }
   >();
-  constructor(private readonly adapters: AuxiliaryFsAdapters) {}
+  readonly #effects: VaultEffects;
+  readonly #gate: HubGate;
+  constructor(private readonly adapters: AuxiliaryFsAdapters) {
+    this.#effects = adapters.effects ?? new VaultEffects(adapters.vaultPath);
+    this.#gate = adapters.gate ?? new HubGate();
+  }
 
   rpc(
     manifest: PluginManifest,
@@ -578,13 +588,9 @@ export class AuxiliaryFilesystem {
           if (!Deno.statSync(parent).isDirectory) {
             throw new FsError("fs_denied");
           }
-          temporary = path.join(parent, `.auxiliary-${createUuid()}`);
-          temporaryHandle = await Deno.open(temporary, {
-            read: true,
-            write: true,
-            createNew: true,
-            mode: 0o600,
-          });
+          const staged = await this.#effects.stage(parent);
+          temporary = staged.path;
+          temporaryHandle = staged.file;
           temporaryOwner = temporaryHandle.statSync();
           if (!temporaryOwner.isFile || temporaryOwner.ino === null) {
             throw new FsError("fs_denied");
@@ -600,107 +606,133 @@ export class AuxiliaryFilesystem {
           }
           await temporaryHandle.sync();
         }
-        result = await this.adapters.commit(() => {
-          namespace();
-          const current = observe(target);
-          if (
-            JSON.stringify(current.binding) !== JSON.stringify(first.binding)
-          ) throw new FsError("fs_conflict");
-          if (operation === "writeFile") {
-            condition(current.stat, configured.expect as FsExpect);
-            if (
-              !sameTemporary(Deno.lstatSync(temporary!), temporaryOwner!) ||
-              !sameTemporary(temporaryHandle!.statSync(), temporaryOwner!) ||
-              ownedHandleHash(temporaryHandle!, deadline, clock) !==
-                preparedHash ||
-              !sameTemporary(Deno.lstatSync(temporary!), temporaryOwner!)
-            ) throw new FsError("fs_conflict");
-            assertCurrent();
-            effect = "unknown";
-            Deno.renameSync(temporary!, current.binding.canonical);
-            effect = "committed";
-          } else if (operation === "rename") {
-            const destination = args[1] as string,
-              currentDestination = observe(destination);
-            if (
-              JSON.stringify(currentDestination.binding) !==
-                JSON.stringify(second!.binding)
-            ) throw new FsError("fs_conflict");
-            condition(current.stat, {
-              kind: "exact",
-              token: configured.sourceToken as string,
-            });
-            condition(
-              currentDestination.stat,
-              configured.destination as FsExpect,
-            );
-            if (
-              current.stat?.kind !== "file" ||
-              currentDestination.stat?.kind === "directory"
-            ) throw new FsError("fs_denied");
-            assertCurrent();
-            effect = "unknown";
-            Deno.renameSync(
-              current.binding.canonical,
-              currentDestination.binding.canonical,
-            );
-            effect = "committed";
-            return { token: observe(destination).stat!.token };
-          } else if (operation === "remove") {
-            condition(current.stat, {
-              kind: "exact",
-              token: configured.token as string,
-            });
-            if (current.stat?.kind !== "file") throw new FsError("fs_denied");
-            assertCurrent();
-            effect = "unknown";
-            Deno.removeSync(current.binding.canonical);
-            effect = "committed";
-            return;
-          } else {
-            if (configured.expect) {
-              condition(current.stat, configured.expect as FsExpect);
-            }
-            if (current.stat && current.stat.kind !== "directory") {
-              throw new FsError("fs_denied");
-            }
-            if (!current.stat) {
-              const missing: string[] = [];
-              let parent = current.binding.canonical;
-              while (true) {
-                let info;
-                try {
-                  info = Deno.statSync(parent);
-                } catch (error) {
-                  if (!(error instanceof Deno.errors.NotFound)) throw error;
-                }
-                if (info) {
-                  if (!info.isDirectory) throw new FsError("fs_denied");
-                  break;
-                }
-                missing.unshift(parent);
-                parent = path.dirname(parent);
-              }
-              if (!configured.recursive && missing.length > 1) {
-                throw new FsError("fs_not_found");
-              }
-              for (const component of missing) observe(component); // All required mkdir effects authorized before first effect.
-              for (const component of missing) {
-                namespace();
-                const prepared = observe(component);
-                if (prepared.stat) throw new FsError("fs_conflict", effect);
+        const effects = this.#effects;
+        const gated = [
+          first.binding.canonical,
+          ...(second ? [second.binding.canonical] : []),
+        ];
+        const journal: StorageEffect[] = [];
+        result = await this.adapters.commit(() =>
+          this.#gate.apply(
+            gated,
+            `plugin:${manifest.id}`,
+            journal,
+            () => {
+              namespace();
+              const current = observe(target);
+              if (
+                JSON.stringify(current.binding) !==
+                  JSON.stringify(first.binding)
+              ) throw new FsError("fs_conflict");
+              if (operation === "writeFile") {
+                condition(current.stat, configured.expect as FsExpect);
+                if (
+                  !sameTemporary(Deno.lstatSync(temporary!), temporaryOwner!) ||
+                  !sameTemporary(
+                    temporaryHandle!.statSync(),
+                    temporaryOwner!,
+                  ) ||
+                  ownedHandleHash(temporaryHandle!, deadline, clock) !==
+                    preparedHash ||
+                  !sameTemporary(Deno.lstatSync(temporary!), temporaryOwner!)
+                ) throw new FsError("fs_conflict");
                 assertCurrent();
                 effect = "unknown";
-                Deno.mkdirSync(prepared.binding.canonical);
+                effects.publish(temporary!, current.binding.canonical);
                 effect = "committed";
-                // Account for our own previously absent grant-root components.
-                roots = grants("write");
+              } else if (operation === "rename") {
+                const destination = args[1] as string,
+                  currentDestination = observe(destination);
+                if (
+                  JSON.stringify(currentDestination.binding) !==
+                    JSON.stringify(second!.binding)
+                ) throw new FsError("fs_conflict");
+                condition(current.stat, {
+                  kind: "exact",
+                  token: configured.sourceToken as string,
+                });
+                condition(
+                  currentDestination.stat,
+                  configured.destination as FsExpect,
+                );
+                if (
+                  current.stat?.kind !== "file" ||
+                  currentDestination.stat?.kind === "directory"
+                ) throw new FsError("fs_denied");
+                assertCurrent();
+                effect = "unknown";
+                if (currentDestination.stat) {
+                  effects.replaceByMove(
+                    current.binding.canonical,
+                    currentDestination.binding.canonical,
+                  );
+                } else {
+                  effects.move(
+                    current.binding.canonical,
+                    currentDestination.binding.canonical,
+                  );
+                }
+                effect = "committed";
+                return { token: observe(destination).stat!.token };
+              } else if (operation === "remove") {
+                condition(current.stat, {
+                  kind: "exact",
+                  token: configured.token as string,
+                });
+                if (current.stat?.kind !== "file") {
+                  throw new FsError("fs_denied");
+                }
+                assertCurrent();
+                effect = "unknown";
+                effects.remove(current.binding.canonical);
+                effect = "committed";
+                return;
+              } else {
+                if (configured.expect) {
+                  condition(current.stat, configured.expect as FsExpect);
+                }
+                if (current.stat && current.stat.kind !== "directory") {
+                  throw new FsError("fs_denied");
+                }
+                if (!current.stat) {
+                  const missing: string[] = [];
+                  let parent = current.binding.canonical;
+                  while (true) {
+                    let info;
+                    try {
+                      info = Deno.statSync(parent);
+                    } catch (error) {
+                      if (!(error instanceof Deno.errors.NotFound)) throw error;
+                    }
+                    if (info) {
+                      if (!info.isDirectory) throw new FsError("fs_denied");
+                      break;
+                    }
+                    missing.unshift(parent);
+                    parent = path.dirname(parent);
+                  }
+                  if (!configured.recursive && missing.length > 1) {
+                    throw new FsError("fs_not_found");
+                  }
+                  for (const component of missing) observe(component); // All required mkdir effects authorized before first effect.
+                  for (const component of missing) {
+                    namespace();
+                    const prepared = observe(component);
+                    if (prepared.stat) throw new FsError("fs_conflict", effect);
+                    assertCurrent();
+                    effect = "unknown";
+                    effects.mkdir(prepared.binding.canonical);
+                    effect = "committed";
+                    // Account for our own previously absent grant-root components.
+                    roots = grants("write");
+                  }
+                }
+                return observe(target).stat!;
               }
-            }
-            return observe(target).stat!;
-          }
-          return { token: observe(target).stat!.token };
-        });
+              return { token: observe(target).stat!.token };
+            },
+          )
+        );
       } catch (error) {
         failed = true;
         failure = error;
@@ -710,7 +742,7 @@ export class AuxiliaryFilesystem {
           if (!sameTemporary(Deno.lstatSync(temporary), temporaryOwner)) {
             throw new FsError("fs_conflict", effect);
           }
-          Deno.removeSync(temporary);
+          this.#effects.discard(temporary);
         } catch (error) {
           if (!(error instanceof Deno.errors.NotFound)) {
             const combined = failed

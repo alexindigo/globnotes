@@ -418,7 +418,7 @@ Deno.test("backup FS review: temporary substitution before reopening cannot writ
     Deno.open = async (...args: Parameters<typeof Deno.open>) => {
       const file = String(args[0]);
       if (
-        !injected && file.includes("/.auxiliary-") && args[1]?.write &&
+        !injected && file.includes("/.globnotes-staging-") && args[1]?.write &&
         !args[1]?.createNew
       ) {
         injected = true;
@@ -462,7 +462,7 @@ Deno.test("backup FS review: prepared temporary replacement cannot be published 
     });
     await entered.promise;
     const name = [...Deno.readDirSync(b.vault)].find((entry) =>
-        entry.name.startsWith(".auxiliary-")
+        entry.name.startsWith(".globnotes-staging-")
       )!.name,
       file = `${b.vault}/${name}`;
     await Deno.remove(file);

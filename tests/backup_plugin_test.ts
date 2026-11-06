@@ -787,7 +787,7 @@ Deno.test("backup plugin: ENOSPC write fault preserves saved note and owned ring
       if (
         full && args[1]?.createNew &&
         String(args[0]).startsWith(
-          `${b.fixture.vault}/.globnotes-backup/.auxiliary-`,
+          `${b.fixture.vault}/.globnotes-backup/.globnotes-staging-`,
         )
       ) {
         // Bounded fault at the actual retained-handle write seam. Direct
@@ -814,7 +814,7 @@ Deno.test("backup plugin: ENOSPC write fault preserves saved note and owned ring
     await ring(b.fixture.vault, "Disk", ["A"]);
     assertEquals(
       [...Deno.readDirSync(`${b.fixture.vault}/.globnotes-backup`)].filter(
-        (entry) => entry.name.startsWith(".auxiliary-"),
+        (entry) => entry.name.startsWith(".globnotes-staging-"),
       ).length,
       0,
     );

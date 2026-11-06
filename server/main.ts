@@ -19,6 +19,8 @@ import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
 import { NoteOperations } from "./notes/operations.ts";
 import { VaultHub } from "./hub/hub.ts";
+import { VaultEffects } from "./hub/effects.ts";
+import { HubGate } from "./hub/gate.ts";
 import { subscribeExternalFacts, subscribeIndex } from "./hub/subscribers.ts";
 import { PluginActions } from "./plugins/actions.ts";
 import { AuxiliaryFilesystem } from "./plugins/auxiliary_fs.ts";
@@ -53,14 +55,22 @@ logger.info(`globnotes ${formatVersion(appVersion)}`);
 
 const globalConfig = new GlobalConfig();
 const environment = globalConfig.environment;
-const notes = new FileSystemNotes(globalConfig.notesPath, {}, environment);
+// One effects owner for the vault; vault effects run only inside the gate.
+const effects = new VaultEffects(globalConfig.notesPath);
+const notes = new FileSystemNotes(
+  globalConfig.notesPath,
+  {},
+  environment,
+  effects,
+);
 const indexer = new Fts5Indexer(globalConfig.statePath, environment);
-const fileServing = new FileServing(globalConfig.notesPath);
+const fileServing = new FileServing(globalConfig.notesPath, effects);
 const hub = new VaultHub(
   globalConfig.notesPath,
   globalConfig.statePath,
   environment,
 );
+const gate = new HubGate({ hub });
 const plugins = new PluginManager(
   globalConfig.notesPath,
   undefined,
@@ -93,6 +103,7 @@ const operations = new NoteOperations({
   files: fileServing,
   indexer,
   hub,
+  gate,
   runtime: () => plugins.runtime,
   lifecycle,
 });
@@ -128,6 +139,8 @@ const auxiliaryFilesystem = new AuxiliaryFilesystem({
   settings: (manifest) =>
     pluginData.forPlugin(manifest.id).settingsLease(manifest.settings),
   commit: (effect) => lifecycle.gate.run(effect),
+  effects,
+  gate,
 });
 state.pluginEndpoints = new PluginEndpoints(() => plugins.runtime);
 state.pluginNetwork = plugins.network;

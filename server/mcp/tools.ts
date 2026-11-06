@@ -11,7 +11,7 @@
 
 import * as z from "zod/v4";
 import { isReadableNotePath, isValidNotePath } from "../helpers.ts";
-import { contentVersion } from "../hub/merge.ts";
+import { noteVersion } from "../hub/merge.ts";
 import type { NoteExpectation } from "../notes/expectation.ts";
 import {
   InvalidPathError,
@@ -203,7 +203,7 @@ function noteOutput(note: Note): z.output<typeof NoteOutput> {
     title: note.title,
     content: note.content ?? "",
     last_modified: isoTime(note.lastModified),
-    hash: contentVersion(note.content ?? ""),
+    hash: noteVersion(note),
   };
 }
 

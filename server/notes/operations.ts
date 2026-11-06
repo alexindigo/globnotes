@@ -13,7 +13,7 @@ import { HttpError } from "@pathfinder/pathfinder";
 import type { FileServing } from "../files/file_serving.ts";
 import type { Indexer } from "../state.ts";
 import type { VaultHub } from "../hub/hub.ts";
-import { contentVersion, mergeText } from "../hub/merge.ts";
+import { mergeText, noteVersion } from "../hub/merge.ts";
 import {
   assertExpected,
   NoteChangedError,
@@ -21,6 +21,7 @@ import {
 } from "./expectation.ts";
 import { guessType } from "../files/mimetypes.ts";
 import { FileSystemNotes, type StorageEffect } from "./file_system.ts";
+import { HubGate } from "../hub/gate.ts";
 import {
   type Note,
   type NoteCreate,
@@ -60,6 +61,8 @@ export interface OperationAdapters {
   files: FileServing;
   indexer: Indexer | null;
   hub?: VaultHub;
+  /** The hub's write gate; defaults to one over `hub`. */
+  gate?: HubGate;
   runtime(): PluginRuntime | null;
   lifecycle: PluginLifecycle;
   now?(): Date;
@@ -73,7 +76,10 @@ export class NoteOperations {
    * NOT filesystem CAS). */
   readonly #lock = new AsyncLock();
 
-  constructor(private readonly adapters: OperationAdapters) {}
+  readonly #gate: HubGate;
+  constructor(private readonly adapters: OperationAdapters) {
+    this.#gate = adapters.gate ?? new HubGate({ hub: adapters.hub });
+  }
 
   get lifecycle(): PluginLifecycle {
     return this.adapters.lifecycle;
@@ -291,7 +297,7 @@ export class NoteOperations {
   }
 
   #saveResponse(note: Note, saveResult: NonNullable<Note["saveResult"]>): Note {
-    return { ...note, version: contentVersion(note.content ?? ""), saveResult };
+    return { ...note, version: noteVersion(note), saveResult };
   }
 
   async updateNote(
@@ -614,7 +620,6 @@ export class NoteOperations {
             ctx,
             () => {
               const uploaded = this.adapters.files.commitCreate(prepared, body);
-              actualEffects.push({ kind: "write", path: prepared.filepath });
               if (uploaded.filename.endsWith(MARKDOWN_EXT)) {
                 this.adapters.notes.reconcileEffects(actualEffects);
               }
@@ -873,8 +878,14 @@ export class NoteOperations {
             operationId,
             ctx,
             () => {
-              Deno.writeFileSync(target.absolutePath, bytes);
-              actualEffects.push({ kind: "write", path: target.absolutePath });
+              if (existed) {
+                this.adapters.notes.effects.replace(target.absolutePath, bytes);
+              } else {
+                this.adapters.notes.effects.writeNew(
+                  target.absolutePath,
+                  bytes,
+                );
+              }
             },
             actualEffects,
             [target.absolutePath],
@@ -923,20 +934,13 @@ export class NoteOperations {
     expectedPaths: readonly string[] = [],
     pluginId = ctx.causalPlugin,
   ): T {
-    const hub = this.adapters.hub;
-    const token = hub?.expect(expectedPaths);
     try {
-      try {
-        return this.adapters.notes.captureEffects(effects, callback);
-      } finally {
-        if (token) {
-          hub!.record(
-            token,
-            effects,
-            ctx.origin === "plugin" ? `plugin:${pluginId}` : ctx.origin,
-          );
-        }
-      }
+      return this.#gate.apply(
+        expectedPaths,
+        ctx.origin === "plugin" ? `plugin:${pluginId}` : ctx.origin,
+        effects,
+        callback,
+      );
     } catch (error) {
       if (!effects.length) throw error;
       this.adapters.notes.reconcileEffects(effects);

@@ -59,9 +59,29 @@ are attached to lifecycle fact metadata instead.
 Derived projections are isolated per entry: a failed index update or fact read
 is logged without dropping the remaining entries and their sync boundary.
 
-Auxiliary plugin filesystem publication still has separate write/rename/remove/
-mkdir branches and asynchronous temporary-file preparation. M1 leaves those
-writes to local observation; M4 routes the remaining writers through the gate.
+## Write gate
+
+`server/hub/gate.ts` is the only way globnotes changes the vault folder.
+`server/hub/effects.ts` performs every filesystem mutation on a vault (and on
+plugin-granted roots outside it); a vault target needs a live gate pass naming
+it, or a directory on the route to one (missing parents, pruned empty ones), and
+fails with `UngatedVaultWrite` otherwise. `HubGate.apply(paths, origin, journal,
+effect)` announces the paths (`expect`), opens the pass only for the
+synchronous effect, and records the journaled effects with their origin
+(`api`, `plugin:<id>`) in `finally`, including completed effects before a
+failure. Callers run it inside their short commit section after revalidating
+what they checked. Note operations, uploads and the plugin filesystem facade
+all use it, so facade writes are `globnotes` changes with the plugin's origin.
+
+Staging files (`.globnotes-staging-<uuid>` in the target folder) are not vault
+content: the scanner skips that reserved name and publication records only the
+target. A file's version is the SHA-256 of its raw bytes, the hub's `hash`;
+note responses compute it from the bytes read with the content
+(`versionOf`, `noteVersion` in `server/hub/merge.ts`).
+
+The contract rule `single-vault-writer` (`tests/test_isolation_contract_test.ts`)
+rejects filesystem mutations under `server/` outside `effects.ts`; the remaining
+listed lines write only the canonical state directory or the client build.
 
 ## Retention and consumers
 

@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import * as path from "@std/path";
 import { logger } from "../logger.ts";
+import { isStagingName } from "./effects.ts";
 import { pathKey, within } from "./paths.ts";
 import type { HubStore } from "./store.ts";
 import type { Collision, Mutation, Observation, ScanStats } from "./types.ts";
@@ -101,7 +102,7 @@ export class HubScanner {
           return;
         }
         if (info.isFile) {
-          addFile(relative);
+          if (!isStagingName(relative)) addFile(relative);
           return;
         }
         if (!info.isDirectory) return;
@@ -111,6 +112,8 @@ export class HubScanner {
         for (const entry of entries) {
           const name = relative ? `${relative}/${entry.name}` : entry.name;
           if (excluded(path.join(this.root, name))) continue;
+          // Gate staging files are not vault content (hub/effects.ts).
+          if (isStagingName(entry.name)) continue;
           if (entry.isSymlink) {
             stats.symlinks++;
             continue;

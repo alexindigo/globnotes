@@ -14,6 +14,7 @@ import * as path from "@std/path";
 import { isValidNotePath, resolveInRoot } from "../helpers.ts";
 import { logger } from "../logger.ts";
 import { guessType } from "./mimetypes.ts";
+import { VaultEffects } from "../hub/effects.ts";
 
 const MARKDOWN_EXT = ".md";
 
@@ -90,9 +91,15 @@ function pyQuote(value: string): string {
 
 export class FileServing {
   readonly storagePath: string;
+  /** Vault effects run only inside the hub gate (server/hub/gate.ts). */
+  readonly effects: VaultEffects;
 
-  constructor(storagePath: string) {
+  constructor(
+    storagePath: string,
+    effects: VaultEffects = new VaultEffects(storagePath),
+  ) {
     this.storagePath = storagePath;
+    this.effects = effects;
     try {
       if (!Deno.statSync(this.storagePath).isDirectory) {
         throw new Error("not a directory");
@@ -217,9 +224,9 @@ export class FileServing {
     prepared: { directory: string; filename: string; filepath: string },
     body: Uint8Array,
   ): FileCreateResponse {
-    Deno.mkdirSync(path.dirname(prepared.filepath), { recursive: true });
+    this.effects.mkdirParents(prepared.filepath);
     logger.info(`Uploading to '${prepared.filepath}'`);
-    Deno.writeFileSync(prepared.filepath, body, { createNew: true });
+    this.effects.writeNew(prepared.filepath, body);
     const base = path.basename(prepared.filepath);
     return { filename: base, url: pyQuote(base) };
   }

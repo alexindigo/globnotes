@@ -15,6 +15,9 @@ import { PluginSettingsEnvironment } from "../../server/plugins/settings_environ
 import { validateSettingsPages } from "../../server/plugins/settings.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
 import type { ObservedClock } from "../../server/observed_time.ts";
+import { HubGate } from "../../server/hub/gate.ts";
+import { VaultHub } from "../../server/hub/hub.ts";
+import { testEnvironment } from "./environment.ts";
 
 export const auxiliaryPage = {
   id: "preferences",
@@ -40,6 +43,8 @@ export async function auxiliaryFixture(options: {
   observe?(method: string, args: unknown[]): void;
   /** The filesystem deadline clock (default: the process clock). */
   clock?: ObservedClock;
+  /** Attach a vault hub, so facade effects go through its gate records. */
+  hub?: boolean;
 } = {}) {
   const fixture = await pluginFixture(options), id = "auxiliary";
   const dir = await fixture.install(id, {
@@ -104,7 +109,11 @@ export async function auxiliaryFixture(options: {
       settingsChanged: (id, page, revision) =>
         runtime.settingsChanged(id, page, revision),
     });
+    const hub = options.hub
+      ? new VaultHub(fixture.vault, fixture.statePath, testEnvironment({}))
+      : undefined;
     const filesystem = new AuxiliaryFilesystem({
+      gate: hub ? new HubGate({ hub }) : undefined,
       vaultPath: fixture.vault,
       statePath: fixture.statePath,
       operational: () => operational,
@@ -152,6 +161,7 @@ export async function auxiliaryFixture(options: {
       runtime,
       data,
       filesystem,
+      hub,
       dir,
       id,
       manifest: () => readManifest(dir),
@@ -176,6 +186,7 @@ export async function auxiliaryFixture(options: {
         operational = value;
       },
       async close() {
+        hub?.stop();
         manager.stop();
         await runtime.close();
         console.log(

@@ -2,6 +2,7 @@
 
 /** In-process server state for unit-level tests (no subprocess boot). */
 
+import { gatedNotes } from "./storage.ts";
 import { GlobalConfig } from "../../server/config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
@@ -46,7 +47,7 @@ export function setupState(
     GLOBNOTES_AUTH_TYPE: "none",
   });
   const config = new GlobalConfig(env);
-  const notes = new FileSystemNotes(vault, probes, env);
+  const notes = gatedNotes(new FileSystemNotes(vault, probes, env));
   const indexer = new Fts5Indexer(vault, env);
   const files = new FileServing(vault);
   initState(config, null, notes, indexer, files, plugins);

@@ -2,6 +2,19 @@
 import { diff3Merge, diffIndices } from "node-diff3";
 import { createHash } from "node:crypto";
 
+/** The version of a file: SHA-256 of its raw bytes (the hub's `files.hash`). */
+export function versionOf(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** A note's version: the raw-byte hash storage read with it, else its text's. */
+export function noteVersion(
+  note: { version?: string; content?: string | null },
+): string {
+  return note.version ?? contentVersion(note.content ?? "");
+}
+
+/** The version of text as UTF-8 bytes (equal to `versionOf` of a valid file). */
 export function contentVersion(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }

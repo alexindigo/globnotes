@@ -3,7 +3,7 @@ import * as path from "@std/path";
 import { type Environment, processEnvironment } from "../environment.ts";
 import { getEnv } from "../helpers.ts";
 import { logger } from "../logger.ts";
-import type { StorageEffect } from "../notes/file_system.ts";
+import type { StorageEffect } from "./effects.ts";
 import { pathKey, within } from "./paths.ts";
 import { HubScanner, observeFile } from "./scanner.ts";
 import { HubStore } from "./store.ts";

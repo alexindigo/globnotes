@@ -8,7 +8,7 @@
  * the content is still what was read. A mismatch writes nothing.
  */
 
-import { contentVersion } from "../hub/merge.ts";
+import { noteVersion } from "../hub/merge.ts";
 import type { Note } from "./models.ts";
 
 export interface NoteExpectation {
@@ -28,7 +28,7 @@ export interface NoteState {
 export function noteState(note: Note): NoteState {
   return {
     lastModifiedMs: new Date(note.lastModified * 1000).getTime(),
-    hash: contentVersion(note.content ?? ""),
+    hash: noteVersion(note),
   };
 }
 
