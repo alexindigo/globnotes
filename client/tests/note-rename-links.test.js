@@ -74,6 +74,17 @@ describe("best-effort rename link traversal", () => {
     expect(f.failed).toHaveBeenCalledWith(error); expect(f.updated).not.toHaveBeenCalled();
   });
 
+  it("leaves a note changed since it was read and goes on with the next one", async () => {
+    const stale = { response: { status: 409, data: { code: "base_stale", currentVersion: "v2" } } };
+    const f = fixture({
+      search: vi.fn(async () => [{ path: "A" }, { path: "B" }, { path: "C" }]),
+      update: vi.fn().mockResolvedValueOnce({}).mockRejectedValueOnce(stale).mockResolvedValueOnce({}),
+    });
+    await f.updateRenamedLinks("target/old", "target/new");
+    expect(f.read.mock.calls).toEqual([["A"], ["B"], ["C"]]); expect(f.update).toHaveBeenCalledTimes(3);
+    expect(f.failed).not.toHaveBeenCalled(); expect(f.updated).toHaveBeenCalledExactlyOnceWith(2);
+  });
+
   it("does nothing when search has no candidates", async () => {
     const f = fixture({ search: vi.fn(async () => []) });
     await f.updateRenamedLinks("old", "new");

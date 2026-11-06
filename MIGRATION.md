@@ -43,10 +43,13 @@ Open notes receive outside-change notifications over ordinary HTTP. Viewing and
 clean editing refresh in place; dirty editing keeps its buffer. An outside
 deletion is shown, and explicitly saving the retained editor text recreates the
 note. Outside renames are currently treated as deletion rather than followed.
-Every writer now states its base (docs/hub.md "Bases"): REST `PATCH` (content or
-rename) needs `base` or `baseContent`, `DELETE` needs `?base_version=`, MCP update
-and delete need `expected_last_modified` or `expected_hash`; without one the request
-is refused (`428 base_required`) and nothing is written. Scripts read the note
+Every writer now states its base (docs/hub.md "Bases"). REST `PATCH` (content or
+rename) needs `base` or `baseContent` and `DELETE` needs `?base_version=`; without
+one the response is `428` with code `base_required` and nothing is written. MCP
+`globnotes_update_note` (also a rename) and `globnotes_delete_note` need
+`expected_last_modified` or `expected_hash`; without one the tool returns an error
+result (`isError: true`) whose text says which arguments to pass, and nothing is
+written. Scripts read the note
 first and pass its `version`. This is not a real-time co-editing protocol or
 external filesystem CAS. See
 [Saving notes](docs/saving.md) for the complete FIFO and departure behavior.
