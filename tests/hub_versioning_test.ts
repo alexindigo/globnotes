@@ -11,11 +11,14 @@ import { pluginOperationsFixture } from "./helpers/plugin_operations_fixture.ts"
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
 import { versionOf } from "../server/hub/merge.ts";
+import { processClock } from "../server/observed_time.ts";
+import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 const VERSIONER = `
-let mode = "keep";
+let mode = "keep", slowMs = 3000, guardMs = 0, finished = 0;
 const seen = [];
 export function activate(ctx) {
+  if (GUARD) ctx.hooks.on("pre-save", () => new Promise((r) => setTimeout(r, guardMs)));
   ctx.versioning.onOffer(async (offer) => {
     let disk;
     try {
@@ -33,7 +36,8 @@ export function activate(ctx) {
       size: offer.size,
     });
     if (mode === "fail") throw new Error("versioner failed");
-    if (mode === "slow") await new Promise((r) => setTimeout(r, 3000));
+    if (mode === "slow") await new Promise((r) => setTimeout(r, slowMs));
+    finished++;
     if (mode === "decline") return { status: "declined" };
     if (mode === "store") {
       // Its own in-vault write from inside the handler: never offered.
@@ -44,6 +48,9 @@ export function activate(ctx) {
   });
   ctx.commands.register({ id: "run", label: "run", target: "server" }, (p) => {
     if (p.mode) mode = p.mode;
+    if (p.slowMs) slowMs = p.slowMs;
+    if (p.guardMs) guardMs = p.guardMs;
+    if (p.finished) return finished;
     if (p.write) {
       return ctx.fs.writeFile(p.write, new TextEncoder().encode("own"), {
         expect: { kind: "absent" },
@@ -72,7 +79,15 @@ async function versionerFixture(
       },
       ...manifest,
     },
-    files: { "service.js": VERSIONER },
+    files: {
+      "service.js": `const GUARD = ${
+        JSON.stringify(
+          (manifest.hooks as string[] | undefined)?.includes(
+            "pre-save",
+          ) ?? false,
+        )
+      };\n${VERSIONER}`,
+    },
     limits,
   });
   const facts: OperationFact[] = [];
@@ -225,6 +240,8 @@ Deno.test("versioning: a failing, declining or slow versioner never blocks the w
       v.facts.find((f) => f.action === "save")!.metadata?.versioning,
       [{ pluginId: "versioner", path: "Note.md", status: "timeout" }],
     );
+    // The custody window is soft: the slow handler is not failed.
+    assertEquals(v.runtime.status("versioner")!.status, "ready");
   } finally {
     await v.close();
   }
@@ -263,6 +280,99 @@ Deno.test("versioning: offers carry the writer's origin and leave the file as it
       "plugin:writer",
     ]);
     assertEquals(v.hub.fileState("data.bin")!.hash, before.hash);
+  } finally {
+    await v.close();
+  }
+});
+
+Deno.test("versioning: a handler past its custody window keeps running and the plugin stays ready; queued offers past theirs are withdrawn", async () => {
+  const v = await versionerFixture({}, { versioningMs: 300 });
+  try {
+    await v.create("Note", "v1");
+    await v.command("run", { mode: "slow", slowMs: 1200 });
+    const offer = (deadline: number) =>
+      v.gate.offer(
+        [{ kind: "replace", file: `${v.fixture.vault}/Note.md` }],
+        "api",
+        crypto.randomUUID(),
+        deadline,
+      );
+    const now = processClock.now();
+    const [first, second] = await Promise.all([
+      offer(now + 300),
+      offer(now + 300),
+    ]);
+    assertEquals(first.map((o) => o.status), ["timeout"]);
+    assertEquals(second.map((o) => o.status), ["timeout"]);
+    assertEquals(v.runtime.status("versioner")!.status, "ready");
+    await waitUntil(async () => {
+      const finished = await v.command("run", { finished: true }) as number;
+      return finished >= 1 ? done(finished) : pending({ finished });
+    }, { label: "slow versioner finished" });
+    // Only the dispatched offer ran; the queued one was withdrawn.
+    assertEquals((await v.seen()).length, 1);
+    assertEquals(await v.command("run", { finished: true }), 1);
+    await v.mode("keep");
+    v.facts.length = 0;
+    await v.save("Note", "v2");
+    assertEquals(
+      v.facts.find((f) => f.action === "save")!.metadata?.versioning,
+      [{ pluginId: "versioner", path: "Note.md", status: "kept" }],
+    );
+  } finally {
+    await v.close();
+  }
+});
+
+Deno.test("versioning: guards never shorten a versioner's custody window", async () => {
+  const v = await versionerFixture(
+    { hooks: ["pre-save"] },
+    { preOperationMs: 700, versioningMs: 2000 },
+  );
+  try {
+    await v.create("Note", "v1");
+    // The guard uses most of the operation budget; custody still gets its own.
+    await v.command("run", { mode: "slow", slowMs: 400, guardMs: 500 });
+    v.facts.length = 0;
+    await v.save("Note", "v2");
+    assertEquals(
+      v.facts.find((f) => f.action === "save")!.metadata?.versioning,
+      [{ pluginId: "versioner", path: "Note.md", status: "kept" }],
+    );
+  } finally {
+    await v.close();
+  }
+});
+
+Deno.test("versioning: a moved attachment directory offers its files, never itself", async () => {
+  const v = await versionerFixture({ versioning: {} });
+  try {
+    Deno.mkdirSync(`${v.fixture.vault}/a/assets/deep`, { recursive: true });
+    Deno.mkdirSync(`${v.fixture.vault}/b`);
+    Deno.writeTextFileSync(`${v.fixture.vault}/a/assets/one.bin`, "one");
+    Deno.writeTextFileSync(`${v.fixture.vault}/a/assets/deep/two.bin`, "two");
+    Deno.symlinkSync("one.bin", `${v.fixture.vault}/a/assets/link.bin`);
+    await v.create("a/Note", "[files](assets)");
+    await v.seen();
+    const moved = await v.operations.updateNote(
+      "a/Note",
+      { newPath: "b/Note", base: currentBase("a/Note") },
+      "move",
+      v.origin(),
+    );
+    assertEquals(moved.path, "b/Note");
+    assertEquals(
+      (await v.seen()).map((s) => [s.kind, s.path, s.newPath, s.text]).sort(),
+      [
+        ["move", "a/Note.md", "b/Note.md", "[files](assets)"],
+        ["move", "a/assets/deep/two.bin", "b/assets/deep/two.bin", "two"],
+        ["move", "a/assets/one.bin", "b/assets/one.bin", "one"],
+      ],
+    );
+    assertEquals(
+      Deno.readTextFileSync(`${v.fixture.vault}/b/assets/deep/two.bin`),
+      "two",
+    );
   } finally {
     await v.close();
   }

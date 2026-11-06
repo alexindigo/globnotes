@@ -28,6 +28,39 @@ export interface Displacement {
   destination?: string;
 }
 
+/** Displaced files only: a displaced directory (an attachment folder moved
+ * with its note) contributes each regular file below it, with its own
+ * destination; links and other non-files displace no file bytes. Symlinks
+ * are never followed, as in the hub's scans. */
+export function* files(
+  displacements: readonly Displacement[],
+): Generator<Displacement> {
+  for (const displaced of displacements) {
+    let info: Deno.FileInfo;
+    try {
+      info = Deno.lstatSync(displaced.file);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) continue;
+      throw error;
+    }
+    if (info.isFile) yield displaced;
+    else if (info.isDirectory) {
+      const children: Displacement[] = [];
+      for (const entry of Deno.readDirSync(displaced.file)) {
+        children.push({
+          kind: displaced.kind,
+          file: path.join(displaced.file, entry.name),
+          ...(displaced.destination
+            ? { destination: path.join(displaced.destination, entry.name) }
+            : {}),
+        });
+      }
+      children.sort((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
+      yield* files(children);
+    }
+  }
+}
+
 /** The largest displaced file offered with its bytes (the plugin body bound). */
 export const OFFER_BYTES = 16 * 1024 * 1024;
 
@@ -191,14 +224,16 @@ export class HubGate {
     const versioning = this.adapters.versioning?.(), hub = this.adapters.hub;
     if (!versioning || !hub) return [];
     const offers: DisplacementOffer[] = [];
-    for (const displaced of displacements) {
+    for (const displaced of files(displacements)) {
       const relative = hub.relativePath(displaced.file);
       if (relative === null || !versioning.interested(relative, origin)) {
         continue;
       }
       let bytes: Uint8Array | null;
       try {
-        const size = Deno.statSync(displaced.file).size;
+        const info = Deno.lstatSync(displaced.file);
+        if (!info.isFile) continue; // Changed kind meanwhile: not file bytes.
+        const size = info.size;
         bytes = size > OFFER_BYTES ? null : Deno.readFileSync(displaced.file);
         offers.push({
           operationId,

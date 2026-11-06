@@ -9,6 +9,12 @@ A failure or timeout before custody lets the save proceed and is shown in the
 plugin's diagnostics: a successful save can still coexist with a failed backup.
 Empty text is eligible; new creates have no previous version.
 
+**Changes made by a versioning plugin are not backed up.** The hub never offers
+a versioning plugin's own writes to versioners (otherwise its storage writes would
+wait on itself), and that applies to every enabled versioning plugin, not just this
+one. If another versioning plugin changes or deletes a note, this plugin keeps no
+previous text for that change and records no failed offer.
+
 **Adjacent backups are ordinary visible vault files. Public readers can retrieve
 old or deleted text through the normal file-serving policy.** Choose a dedicated
 base outside the vault if adjacent placement is inappropriate. There is no special

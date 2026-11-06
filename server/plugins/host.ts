@@ -70,6 +70,9 @@ export interface InvocationOptions {
   /** Versioning offers hold a write: their own bounded lane, never behind the
    * ordinary FIFO or a guard, and not a pre-hook (the handler may use ctx.fs). */
   lane?: "versioning";
+  /** Observed time after which a job still waiting in its queue is withdrawn
+   * (rejected, never dispatched). A dispatched job keeps its own timeout. */
+  withdrawAt?: number;
 }
 export type RpcHandler = (
   method: string,
@@ -886,6 +889,13 @@ export class PluginHost {
       this.slots.every((slot) => slot.ready && !slot.usable)
     ) return Promise.reject(new Error("render synchronization unavailable"));
     return new Promise((resolve, reject) => {
+      const pendingQueue = () =>
+        guardLane
+          ? this.guardQueue
+          : versioningLane
+          ? this.versioningQueue
+          : this.queue;
+      let withdraw: (() => void) | undefined;
       const job: Job = {
         id: ++this.sequence,
         kind,
@@ -897,11 +907,8 @@ export class PluginHost {
         resolve,
         reject,
         timer: this.clock.deadline(timeout, () => {
-          const pending = guardLane
-            ? this.guardQueue
-            : versioningLane
-            ? this.versioningQueue
-            : this.queue;
+          withdraw?.();
+          const pending = pendingQueue();
           const queued = pending.indexOf(job);
           if (queued >= 0) {
             pending.splice(queued, 1);
@@ -921,13 +928,21 @@ export class PluginHost {
           }
         }),
       };
+      if (invocation?.withdrawAt !== undefined) {
+        withdraw = this.clock.deadlineAt(invocation.withdrawAt, () => {
+          const pending = pendingQueue(), queued = pending.indexOf(job);
+          if (queued < 0) return; // Dispatched: its own timeout applies.
+          pending.splice(queued, 1);
+          job.timer();
+          reject(
+            new Error("plugin call withdrawn: deadline passed while queued"),
+          );
+          this.pump();
+        });
+      }
       if (initialization && target) this.dispatch(target, job);
       else {
-        (guardLane
-          ? this.guardQueue
-          : versioningLane
-          ? this.versioningQueue
-          : this.queue).push(job);
+        pendingQueue().push(job);
         this.pump();
       }
     });

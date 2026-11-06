@@ -100,10 +100,15 @@ displace nothing. Files over 16 MiB are offered with `bytes: null`.
 Offers run after guards and outside every write lock; the commit then
 revalidates that the offered bytes are still the ones displaced, so a refusal
 there means the versioner kept a version that was not replaced. Each versioner
-gets `versioningMs` (10 s, observed time) in its own bounded lane to take
+gets `versioningMs` (10 s, observed time), counted from when the offer starts
+(after the guards, never shortened by them), in its own bounded lane to take
 custody; a failure, decline or timeout lets the write proceed and is visible
 in the plugin's diagnostics and the operation's fact metadata
-`versioning: [{pluginId, path, status}]`. Writes by a versioning plugin are
+`versioning: [{pluginId, path, status}]`. The custody window is soft: a handler
+still running at its end counts as `timeout` but keeps running under the
+ordinary service-call bound, and the plugin stays ready; an offer still queued
+at its end is withdrawn without running. A moved attachment directory offers
+each regular file below it (symlinks are not followed). Writes by a versioning plugin are
 never offered (its storage writes would wait on itself). The hub keeps none
 of the bytes. Changes by outside programs are already on disk when observed
 and cannot be offered.

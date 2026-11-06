@@ -173,8 +173,10 @@ action and payload (renames included):
 | # | Base | Meaning |
 |---|---|---|
 | 1 | `{kind:"absent"}` | The path must not exist (a create) |
-| 2 | `{kind:"version", version}` | The file's `version` as you read it: SHA-256 hex of its bytes, returned by `ctx.readNote`, `ctx.files.read`, action receipts and `ctx.fs` reads |
+| 2 | `{kind:"version", version}` | The file's `version` as you read it: SHA-256 hex of its bytes, returned by `ctx.readNote`, `ctx.files.read` and action receipts (`ctx.fs.readFile` returns bytes only, and `ctx.fs` tokens are not versions; hash those bytes with SHA-256 if you read through `ctx.fs`) |
 | 3 | `{kind:"text", content}` | A note's text as you read it; lets a stale save merge |
+
+Each write is based on what you read for it:
 
 ```js
 const note = await ctx.readNote("Tasks");
@@ -184,9 +186,28 @@ await ctx.actions.request("save", {
   base: { kind: "version", version: note.version }, // or {kind:"text", content: note.content}
   onStale: "refuse", // optional; default "copy"
 });
-await ctx.actions.request("rename", { path: "Tasks", newPath: "Done/Tasks", base: { kind: "version", version: note.version } });
-await ctx.actions.request("delete", { path: "Old", base: { kind: "version", version } });
+
+const old = await ctx.readNote("Old");
+await ctx.actions.request("delete", { path: "Old", base: { kind: "version", version: old.version } });
+
 await ctx.files.requestWrite("img/chart.png", bytes, { base: { kind: "absent" } });
+```
+
+`request()` only admits a write, and admitted writes can complete in any order.
+A write that depends on an earlier one takes its base from that one's receipt,
+for example a rename after a save:
+
+```js
+const saving = await ctx.actions.request("save", { path: "Tasks", newContent, base });
+ctx.actions.onResult(async (receipt) => {
+  if (receipt.requestId !== saving.requestId || receipt.status !== "completed") return;
+  const saved = receipt.result; // the note as written, with its new version
+  await ctx.actions.request("rename", {
+    path: saved.path,
+    newPath: "Done/Tasks",
+    base: { kind: "version", version: saved.version },
+  });
+});
 ```
 
 | # | Action | Without `base` | Stale `base` |
@@ -370,7 +391,9 @@ path (`extensions` omitted = every file; only paths your read grants cover).
 The handler runs in its own lane, not as a pre-hook: it may use `ctx.fs`, and
 deferred actions it requests run after it returns. The write waits up to
 `versioningMs` (10 s) per versioner; failure, decline or timeout let the write
-proceed, recorded in your diagnostics. An offer may be followed by no
+proceed, recorded in your diagnostics. A handler past that window is not failed:
+it keeps running under the ordinary service-call bound; offers still queued for
+you at the end of their window are withdrawn. An offer may be followed by no
 displacement (a later refusal). Your own writes are never offered to any
 versioner. `bytes` is null above 16 MiB.
 

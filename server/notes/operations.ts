@@ -37,6 +37,7 @@ import {
   NoteNotFoundError,
   type NoteUpdate,
 } from "./models.ts";
+import { PLUGIN_LIMITS } from "../plugins/contracts.ts";
 import type {
   HookName,
   JsonValues,
@@ -534,7 +535,6 @@ export class NoteOperations {
         ctx,
         requester,
         operationId,
-        deadline,
       );
       const actualEffects: StorageEffect[] = [];
       const note = await this.#commitGate(
@@ -653,7 +653,6 @@ export class NoteOperations {
         ctx,
         requester,
         operationId,
-        deadline,
       );
       const actualEffects: StorageEffect[] = [];
       await this.#commitGate(
@@ -841,7 +840,6 @@ export class NoteOperations {
         ctx,
         undefined,
         operationId,
-        deadline,
       );
       const actualEffects: StorageEffect[] = [];
       const applied = await this.#commitGate(
@@ -1005,7 +1003,6 @@ export class NoteOperations {
           ctx,
           requester,
           operationId,
-          deadline,
         )
         : [];
       const actualEffects: StorageEffect[] = [];
@@ -1107,20 +1104,23 @@ export class NoteOperations {
       : ctx.origin;
   }
 
-  /** Offer displaced bytes to versioners within the operation deadline. */
+  /** Offer displaced bytes to versioners. Versioning has its own budget
+   * (`versioningMs` per versioner), starting after the guards: time the
+   * guards used never shortens a versioner's custody window. */
   async #offer(
     displacements: Displacement[],
     ctx: OperationOrigin,
     requester: RequesterAuthority | undefined,
     operationId: string,
-    deadline: number,
   ): Promise<OfferOutcome[]> {
     if (!displacements.length) return [];
+    const budget = this.adapters.runtime()?.limits.versioningMs ??
+      PLUGIN_LIMITS.versioningMs;
     return await this.#gate.offer(
       displacements,
       this.#origin(ctx, requester),
       operationId,
-      deadline,
+      processClock.now() + budget,
     );
   }
 

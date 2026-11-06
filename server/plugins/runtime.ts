@@ -988,19 +988,43 @@ export class PluginRuntime implements Versioning {
       if (entry.status !== "ready" || !host?.available) return "failed";
       const [handler] = this.handlerIds(entry, "versioning");
       if (!handler) return "failed";
-      const remaining = deadline - processClock.now();
-      if (remaining <= 0) return "timeout";
-      const result = await host.invoke(handler, [offer], false, remaining, {
-        generation: host.generation!,
-        causal: { parentId: offer.operationId, depth: 1 },
-        lane: "versioning",
-      }) as { status?: unknown } | undefined;
-      if (processClock.now() > deadline) return "timeout";
-      return result?.status === "declined" ? "declined" : "kept";
-    } catch (error) {
-      return /deadline/.test(String((error as Error)?.message))
-        ? "timeout"
-        : "failed";
+      if (deadline - processClock.now() <= 0) return "timeout";
+      // Two bounds: the write waits for custody until `deadline` (soft; the
+      // offer then counts as a timeout and stays queued nowhere: an offer not
+      // yet dispatched is withdrawn). A dispatched handler keeps running under
+      // the ordinary service-call bound, so a slow versioner is not failed.
+      const invocation = host.invoke(
+        handler,
+        [offer],
+        false,
+        this.limits.serviceCallMs,
+        {
+          generation: host.generation!,
+          causal: { parentId: offer.operationId, depth: 1 },
+          lane: "versioning",
+          withdrawAt: deadline,
+        },
+      ).then(
+        (result) =>
+          (result as { status?: unknown } | undefined)?.status === "declined"
+            ? "declined" as const
+            : "kept" as const,
+        (error) =>
+          /withdrawn|deadline/.test(String((error as Error)?.message))
+            ? "timeout" as const
+            : "failed" as const,
+      );
+      let cancel: (() => void) | undefined;
+      const soft = new Promise<"timeout">((resolve) => {
+        cancel = processClock.deadlineAt(deadline, () => resolve("timeout"));
+      });
+      try {
+        return await Promise.race([invocation, soft]);
+      } finally {
+        cancel?.();
+      }
+    } catch {
+      return "failed";
     }
   }
   /** Observer admission never waits for readiness or executes under an operation lock. */
