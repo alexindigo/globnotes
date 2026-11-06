@@ -182,10 +182,13 @@ changes; the selection says so in its reasons.
 `scripts/check-push-dates.py` reads git metadata only and runs no tests. For
 each pushed ref it takes the new commits (remote tip..local, or for a new
 branch everything not on that remote's branches) and rejects the push when an
-author or committer date is on a weekday between 09:00 and 18:00
-America/Los_Angeles, or when either date is earlier than the previous
-commit's (starting from the remote tip). It also rejects updates that do not
-contain the remote tip. Deletions pass.
+author or committer date is on a weekday from 09:00 (inclusive) to 18:00
+(exclusive) America/Los_Angeles, or when a committer date is earlier than the
+previous commit's committer date in the flattened traversal (starting from
+the published base). Author dates have no ordering requirement, including
+against the published base, so rebases may keep older author dates. It also
+rejects updates that do not contain the remote tip. Annotated tags are peeled
+to commits. Deletions pass.
 
 ## CI: `.github/workflows/ci.yml`
 
