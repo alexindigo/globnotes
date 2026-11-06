@@ -294,6 +294,29 @@ async function* sources(dir: string): AsyncGenerator<string> {
 const within = (relative: string, prefix: string) =>
   relative === prefix || relative.startsWith(prefix + path.SEPARATOR);
 
+/** Where `pattern` matches in a file's text, one entry per line a match
+ * starts on. The pattern runs over the whole text, not line by line: a
+ * construct the formatter (or a fixture's template string) splits across
+ * lines, such as `import(\n  "http://..."\n)` or a multi-line
+ * `Deno.listen({ ... })`, is still found. Each match is reported at, and
+ * allowlisted by, the trimmed text of the line it starts on. */
+function matches(
+  pattern: RegExp,
+  text: string,
+): { line: number; text: string }[] {
+  const lines = text.split("\n");
+  const global = new RegExp(
+    pattern.source,
+    pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g",
+  );
+  const found = new Map<number, string>();
+  for (const match of text.matchAll(global)) {
+    const line = text.slice(0, match.index).split("\n").length;
+    found.set(line, lines[line - 1].trim());
+  }
+  return [...found].map(([line, text]) => ({ line, text }));
+}
+
 /** The rule's violations, plus allowlist entries that matched nothing. */
 async function scan(rule: Rule): Promise<string[]> {
   const violations: string[] = [];
@@ -303,16 +326,15 @@ async function scan(rule: Rule): Promise<string[]> {
       const relative = path.relative(ROOT, file);
       if (file === SELF || rule.owners?.includes(relative)) continue;
       if (rule.exempt?.some((entry) => within(relative, entry.path))) continue;
-      const lines = (await Deno.readTextFile(file)).split("\n");
-      lines.forEach((line, index) => {
-        if (!rule.pattern.test(line)) return;
+      const text = await Deno.readTextFile(file);
+      for (const { line, text: start } of matches(rule.pattern, text)) {
         const allowed = rule.allowed?.findIndex((entry) =>
-          entry.file === relative && entry.line === line.trim()
+          entry.file === relative && entry.line === start
         ) ?? -1;
         if (allowed >= 0) {
           used.add(allowed);
-        } else violations.push(`${relative}:${index + 1}: ${line.trim()}`);
-      });
+        } else violations.push(`${relative}:${line}: ${start}`);
+      }
     }
   }
   rule.allowed?.forEach((entry, index) => {
@@ -322,6 +344,30 @@ async function scan(rule: Rule): Promise<string[]> {
   });
   return violations;
 }
+
+const rule = (id: string) => RULES.find((entry) => entry.id === id)!.pattern;
+
+Deno.test("isolation contract: rules see constructs split across lines", () => {
+  const remote = rule("unique-remote-module-urls");
+  const lines = (text: string) => matches(remote, text).map((m) => m.line);
+  // A long dynamic import the formatter breaks after `import(`.
+  assertEquals(lines('x;\nawait import(\n  "http://h:1/module.js",\n);'), [2]);
+  // A static import whose `from` and URL are on separate lines.
+  assertEquals(lines('import {\n  value,\n} from\n  "http://h:1/m.js";'), [3]);
+  assertEquals(lines("import\n  'https://h:1/side-effect.js';"), [1]);
+  // A per-fixture module path is still accepted when split.
+  assertEquals(
+    lines("await import(\n  `http://${authority}${modules}/module.js`,\n);"),
+    [],
+  );
+  assertEquals(
+    matches(
+      rule("no-port-probing"),
+      'Deno.listen({\n  hostname: "127.0.0.1",\n  port: 0,\n});',
+    ),
+    [{ line: 1, text: "Deno.listen({" }],
+  );
+});
 
 for (const rule of RULES) {
   Deno.test(`isolation contract: ${rule.id}`, async () => {
