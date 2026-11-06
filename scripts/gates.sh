@@ -117,6 +117,16 @@ handlers() {
     local file
     local list="$TMPDIR/handler-files.z"
     find server/api/endpoints -name '*.ts' -print0 | sort -z > "$list"
+    if [[ "${1:-}" == --batch ]]; then
+        # One incremental program avoids rechecking shared dependencies for
+        # every endpoint. The full CI gate keeps its per-endpoint checks.
+        local files=()
+        mapfile -d '' -t files < "$list"
+        if ((${#files[@]})); then
+            deno check --cached-only --frozen --config=deno.json "${files[@]}"
+        fi
+        return
+    fi
     while IFS= read -r -d '' file; do
         deno check --cached-only --frozen --config=deno.json "$file"
     done < "$list"
@@ -135,12 +145,22 @@ server_tests() {
 }
 
 static_gates() {
-    gate install deno install
+    # The commit check installs from the lockfile, using the persistent cache.
+    # Keep the full CI entry point's install command unchanged.
+    if [[ "$mode" == select ]]; then
+        gate install deno install --frozen
+    else
+        gate install deno install
+    fi
     gate lint deno lint server/ tests/
     gate check deno check server/main.ts tests/**/*.ts
     gate format deno fmt --check server/ tests/
     gate worker deno check --cached-only --frozen --config=deno.json server/plugins/worker_entry.ts
-    gate handlers handlers
+    if [[ "$mode" == select ]]; then
+        gate handlers handlers --batch
+    else
+        gate handlers handlers
+    fi
     gate shell shell_syntax
     gate e2e-modules e2e_modules
     # Never an empty list: `deno test` without paths would run the whole suite.
@@ -185,7 +205,7 @@ field_lines() {
 case "$mode" in
     plan)
         [[ -f "$staged" && -f "$files" ]] || { printf 'missing %s or %s\n' "$staged" "$files" >&2; exit 2; }
-        gate plan-install deno install
+        gate plan-install deno install --frozen
         gate select bash -c 'deno run --cached-only --frozen --config=deno.json --allow-read --allow-write --allow-run --allow-env \
             scripts/select-checks.ts --staged "$1" --files "$2" > "$3"' select "$staged" "$files" "$logs/selection.json"
         selection="$logs/selection.json"
@@ -211,40 +231,22 @@ case "$mode" in
         browser_required="$(field browser)"
         failed=""
         selected() { local g; for g in "${gates[@]}"; do [[ "$g" == "$1" ]] && return 0; done; return 1; }
-        if [[ "$browser_required" == true ]]; then gate browser-ready cdp_ready; fi
+        [[ "$browser_required" == false ]] || { printf 'browser suite is CI-only\n' >&2; exit 1; }
         static_gates "${contracts[@]}"
         if selected server; then
-            if [[ "${server_files[*]}" == all ]]; then server_files=(--ignore=tests/timing/ tests/); fi
             gate server server_tests "${server_files[@]}"
         fi
         if selected timing; then
-            if [[ "${timing_files[*]}" == all ]]; then timing_files=(tests/timing/); fi
             gate timing deno test "${test_flags[@]}" "${timing_files[@]}"
         fi
         if selected client; then
-            if [[ "${related[*]}" == all ]]; then
-                gate client env VITEST_MAX_WORKERS=4 deno task test:client
-            else
-                quoted=""
-                for file in "${related[@]}"; do
-                    [[ "$file" != *"'"* ]] || { printf 'unsupported path: %s\n' "$file" >&2; exit 1; }
-                    quoted+=" '$file'"
-                done
-                gate client env VITEST_MAX_WORKERS=4 deno task --eval "vitest related --run --passWithNoTests$quoted"
-            fi
+            quoted=""
+            for file in "${related[@]}"; do
+                [[ "$file" != *"'"* ]] || { printf 'unsupported path: %s\n' "$file" >&2; exit 1; }
+                quoted+=" '$file'"
+            done
+            gate client env VITEST_MAX_WORKERS=4 deno task --eval "vitest related --run --passWithNoTests$quoted"
         fi
-        if selected build; then build_gates; fi
-        if selected unit-controls; then unit_controls; fi
-        if selected native; then
-            if [[ "${cases[*]}" != all ]]; then
-                GLOBNOTES_E2E_CASES="$(IFS=,; printf '%s' "${cases[*]}")"
-                export GLOBNOTES_E2E_CASES
-                printf 'browser cases: %s\n' "$GLOBNOTES_E2E_CASES"
-            fi
-        fi
-        for name in native native-results native-controls entrypoint-results; do
-            if selected "$name"; then browser_gate "$name"; fi
-        done
         ;;
     all)
         unset GLOBNOTES_E2E_CASES
