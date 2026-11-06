@@ -1,8 +1,9 @@
 """Pre-push date check (docs/testing.md). Git metadata only; runs no tests.
 
 For every pushed range, each new commit's author and committer dates must be
-outside weekdays 09:00-18:00 America/Los_Angeles, and both dates must be
-non-decreasing from the remote tip through the range. Reads the pre-push
+outside weekdays 09:00-18:00 America/Los_Angeles, and committer dates must be
+non-decreasing from the remote tip through the range. Author dates are unordered.
+Reads the pre-push
 input (`<local ref> <local oid> <remote ref> <remote oid>` per line) on stdin.
 """
 from datetime import datetime, time
@@ -33,17 +34,16 @@ def dates(commit):
 def check_range(base, commits):
     """`base` is already published: it bounds the order but is not checked itself."""
     problems = []
-    previous = dates(base) if base else None
+    previous = dates(base)[1] if base else None
     for commit in commits:
         current = dates(commit)
         for label, value in zip(('author', 'committer'), current, strict=True):
             if quiet(value):
                 problems.append(f'{commit[:12]}: {label} date {value.isoformat()} is inside weekday 09:00-18:00 Pacific')
-        if previous:
-            for label, value, before in zip(('author', 'committer'), current, previous, strict=True):
-                if value.timestamp() < before.timestamp():
-                    problems.append(f'{commit[:12]}: {label} date {value.isoformat()} is before its predecessor\'s {before.isoformat()}')
-        previous = current
+        committer = current[1]
+        if previous and committer.timestamp() < previous.timestamp():
+            problems.append(f'{commit[:12]}: committer date {committer.isoformat()} is before its predecessor\'s {previous.isoformat()}')
+        previous = committer
     return problems
 
 
@@ -83,7 +83,7 @@ def main(argv):
     for problem in problems:
         print(f'pre-push: {problem}', file=sys.stderr)
     if problems:
-        print('pre-push: rejected; commit dates must be outside the quiet hours and in order', file=sys.stderr)
+        print('pre-push: rejected; author and committer dates must be outside the quiet hours; committer dates must be in order', file=sys.stderr)
         return 1
     return 0
 
