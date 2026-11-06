@@ -4,6 +4,8 @@
  * are camelCase; storage internals mirror the Python field names where
  * it keeps the port legible. */
 
+import type { Base, OnStale } from "../hub/gate.ts";
+
 export interface Note {
   path: string;
   content: string | null;
@@ -28,7 +30,12 @@ export interface NoteCreate {
 export interface NoteUpdate {
   newPath?: string | null;
   newContent?: string | null;
+  /** The editor's wire form of a text base. */
   baseContent?: string;
+  /** What the writer read (server/hub/gate.ts). */
+  base?: Base;
+  /** A stale base that cannot merge: keep both (default) or refuse. */
+  onStale?: OnStale;
 }
 
 export interface SearchResult {

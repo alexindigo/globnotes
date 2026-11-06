@@ -340,9 +340,9 @@ export function workerPermissions(
         ...(shared ? [shared] : []),
       ]),
     ],
-    write: service || options.writable === false
-      ? false
-      : resolvePaths(manifest.capabilities.write),
+    // Plugin contract 2: no Worker writes files directly; writes go through
+    // the hub gate (ctx.actions, ctx.files.requestWrite, ctx.fs).
+    write: false,
     env: false,
     ffi: false,
     run: false,

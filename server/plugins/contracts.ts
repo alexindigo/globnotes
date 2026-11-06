@@ -2,7 +2,9 @@
 
 /** Serializable plugin contract. Authority always comes from the owning host. */
 import type { Source } from "./network_contracts.ts";
-export const PLUGIN_CONTRACT_VERSION = 1;
+/** 2: every write states its base; render Workers cannot write files;
+ * versioning (docs/plugin-api.md "Contract version"). */
+export const PLUGIN_CONTRACT_VERSION = 2;
 export const PLUGIN_LIMITS = Object.freeze({
   activationMs: 10_000,
   disposalMs: 10_000,

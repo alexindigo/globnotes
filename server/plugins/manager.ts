@@ -398,6 +398,14 @@ export class PluginManager {
               },
               diagnostics: [
                 ...diagnostic ? [diagnostic] : [],
+                ...manifest?.capabilities.write.length &&
+                    !manifest.runtime.server
+                  ? [{
+                    code: "plugin_write_grants_unused",
+                    detail:
+                      "Render code cannot write files (plugin contract 2): request writes from a server runtime with ctx.actions or ctx.files.requestWrite.",
+                  }]
+                  : [],
                 ...this.renderOwners.get(id)?.diagnostic
                   ? [this.renderOwners.get(id)!.diagnostic!]
                   : [],

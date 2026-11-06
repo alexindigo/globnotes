@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { versionOf } from "../server/hub/merge.ts";
+import type { Base } from "../server/hub/gate.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { GlobalConfig } from "../server/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
@@ -64,6 +66,17 @@ async function approveFixtureNetwork(
     }
     return pending(current);
   }, { label: `fixture consent admission for '${id}'`, intervalMs: 2 });
+}
+/** The version base of a note as it is on disk now (absent when missing). */
+function noteBase(vault: string, notePath: string) {
+  try {
+    return {
+      kind: "version",
+      version: versionOf(Deno.readFileSync(`${vault}/${notePath.trim()}.md`)),
+    };
+  } catch {
+    return { kind: "absent" };
+  }
 }
 async function bundle(
   write: string[] = ["vault"],
@@ -167,7 +180,7 @@ async function bundle(
     },
   }, {
     "service.js": service ??
-      `export function activate(ctx){ctx.commands.register({id:'request',label:'Request',target:'server'},a=>ctx.actions.request(a.action,a.args));ctx.commands.register({id:'file',label:'File',target:'server'},a=>ctx.files.requestWrite(a.path,new TextEncoder().encode(a.content)));ctx.commands.register({id:'private',label:'Private',target:'server'},async()=>{const value=await ctx.data.load();await ctx.data.save({own:'permitted'},value.revision);return ctx.data.load();});ctx.commands.register({id:'result',label:'Result',target:'server'},id=>ctx.actions.result(id));ctx.actions.onResult(value=>{globalThis.latest=value;});ctx.commands.register({id:'latest',label:'Latest',target:'server'},()=>globalThis.latest??null);}`,
+      `export function activate(ctx){ctx.commands.register({id:'request',label:'Request',target:'server'},a=>ctx.actions.request(a.action,a.args));ctx.commands.register({id:'file',label:'File',target:'server'},a=>ctx.files.requestWrite(a.path,new TextEncoder().encode(a.content),{base:a.base??{kind:'absent'}}));ctx.commands.register({id:'private',label:'Private',target:'server'},async()=>{const value=await ctx.data.load();await ctx.data.save({own:'permitted'},value.revision);return ctx.data.load();});ctx.commands.register({id:'result',label:'Result',target:'server'},id=>ctx.actions.result(id));ctx.actions.onResult(value=>{globalThis.latest=value;});ctx.commands.register({id:'latest',label:'Latest',target:'server'},()=>globalThis.latest??null);}`,
     ...fixtureOptions.files,
   });
   const manifest = readManifest(dir);
@@ -205,6 +218,16 @@ async function bundle(
       (await runtime.invokeCommand("requester", "request", {
         action,
         args,
+      }) as { requestId: string }).requestId,
+    /** Request with the base a plugin would state: the note's version as it
+     * reads it now (contract 2). */
+    based: async (
+      action: string,
+      args: { path: string } & Record<string, unknown>,
+    ) =>
+      (await runtime.invokeCommand("requester", "request", {
+        action,
+        args: { ...args, base: noteBase(fixture.vault, args.path) },
       }) as { requestId: string }).requestId,
     async dispose() {
       hub.stop();
@@ -397,7 +420,7 @@ Deno.test("plugin authority: note mutations honor write-empty denial without cha
       );
     }
     await assertRejects(() =>
-      b.request("save", {
+      b.based("save", {
         path: "keep",
         newContent: "forged authority",
         pluginId: "other",
@@ -439,7 +462,7 @@ Deno.test("plugin authority: H1 canonical paths, attachments, mkdir and optional
     b.facts.length = 0;
     Deno.mkdirSync(`${b.fixture.vault}/new`);
     Deno.writeTextFileSync(`${b.fixture.vault}/old/image.png`, "image");
-    const moved = await b.request("rename", {
+    const moved = await b.based("rename", {
       path: "old/note",
       newPath: "new/note",
       fileRefs: "move",
@@ -454,7 +477,7 @@ Deno.test("plugin authority: H1 canonical paths, attachments, mkdir and optional
       "image",
     );
     assertEquals(b.facts, []);
-    const relink = await b.request("rename", {
+    const relink = await b.based("rename", {
       path: "old/note",
       newPath: "new/note",
       fileRefs: "relink",
@@ -467,14 +490,14 @@ Deno.test("plugin authority: H1 canonical paths, attachments, mkdir and optional
     );
     // Actual equal-path requests stay equal: neither facade nor storage may
     // remove the explicit target and invent an H1-derived move.
-    const equal = await b.request("save", {
+    const equal = await b.based("save", {
       path: "new/note",
       newPath: "new/note",
       newContent: "# Uncovered",
     });
     assertEquals((await b.receipt(equal)).status, "completed");
     assertEquals(b.notes.get("new/note").content, "# Uncovered");
-    const h1 = await b.request("save", {
+    const h1 = await b.based("save", {
       path: "new/note",
       newContent: "# Derived",
     });
@@ -487,7 +510,14 @@ Deno.test("plugin authority: H1 canonical paths, attachments, mkdir and optional
       b.generation,
       () => true,
     );
-    await b.operations.deleteNote("new/note", { origin: "plugin" }, mkdir);
+    await b.operations.deleteNote(
+      "new/note",
+      { origin: "plugin" },
+      mkdir,
+      undefined,
+      undefined,
+      noteBase(b.fixture.vault, "new/note") as Base,
+    );
     assert(
       Deno.statSync(`${b.fixture.vault}/new`).isDirectory,
       "ungranted optional prune removed parent",
@@ -505,7 +535,7 @@ Deno.test("plugin authority: uncovered required mkdir, selected directory and sy
       api(),
     );
     b.facts.length = 0;
-    const id = await b.request("rename", {
+    const id = await b.based("rename", {
       path: "old/note",
       newPath: "missing/note",
     });
@@ -538,7 +568,10 @@ Deno.test("plugin authority: uncovered required mkdir, selected directory and sy
     b.facts.length = 0;
     const error = await b.operations.updateNote(
       "old/note",
-      { newPath: "new/note" },
+      {
+        newPath: "new/note",
+        base: noteBase(b.fixture.vault, "old/note") as Base,
+      },
       "move",
       { origin: "plugin" },
       authority,
@@ -599,7 +632,10 @@ Deno.test("plugin authority: partial committed effects remain truthful after pos
     );
     const error = await b.operations.updateNote(
       "old/note",
-      { newPath: "new/note" },
+      {
+        newPath: "new/note",
+        base: noteBase(b.fixture.vault, "old/note") as Base,
+      },
       "none",
       { origin: "plugin" },
       requester,
@@ -634,7 +670,7 @@ Deno.test("plugin authority: source-only and destination-only moves reject; gran
       let result: ActionReceipt | null = null;
       try {
         result = await b.receipt(
-          await b.request("rename", {
+          await b.based("rename", {
             path: "old/note",
             newPath: "new/note",
             fileRefs: "move",
@@ -703,7 +739,7 @@ Deno.test("plugin authority: requester disabled behind independent healthy guard
     await approveFixtureNetwork(b.network, "guard");
     await b.runtime.reconcile();
     await wait(() => b.runtime.status("guard")?.status === "ready");
-    const id = await b.request("save", { path: "keep", newContent: "changed" });
+    const id = await b.based("save", { path: "keep", newContent: "changed" });
     await wait(() => guardReceived);
     await guardEntered.promise;
     b.sources[0].enabled = false;
@@ -780,7 +816,11 @@ Deno.test("plugin authority: initiator revocation during commit-gate wait leaves
     const id = b.actions.request(
       b.manifest,
       "save",
-      { path: "keep", newContent: "changed" },
+      {
+        path: "keep",
+        newContent: "changed",
+        base: noteBase(b.fixture.vault, "keep"),
+      },
       {
         pluginId: "requester",
         generation: b.generation,
@@ -1255,7 +1295,7 @@ Deno.test("plugin authority: real Worker HTTP timer without file hooks persists 
     const content =
       "export async function activate(ctx){let receipt=null, completion=null; const response=fetch('http://127.0.0.1:" +
       gate.addr.port +
-      "').then(r=>r.text());ctx.actions.onResult(value=>{completion=value;});ctx.commands.register({id:'inspect',label:'Inspect',target:'server'},async()=>({receipt,completion,query:receipt?await ctx.actions.result(receipt.requestId):null}));ctx.timers.setTimeout(async()=>{const text=await response;receipt=await ctx.files.requestWrite('timer.md',new TextEncoder().encode(text));},0);}";
+      "').then(r=>r.text());ctx.actions.onResult(value=>{completion=value;});ctx.commands.register({id:'inspect',label:'Inspect',target:'server'},async()=>({receipt,completion,query:receipt?await ctx.actions.result(receipt.requestId):null}));ctx.timers.setTimeout(async()=>{const text=await response;receipt=await ctx.files.requestWrite('timer.md',new TextEncoder().encode(text),{base:{kind:'absent'}});},0);}";
     await fixture.install("timer", {
       runtime: { server: "service.js" },
       capabilities: {
@@ -1564,7 +1604,7 @@ Deno.test("plugin authority: saved generation ctx drives startup network and man
   const service =
     `export function activate(ctx){const saved=ctx,accepted=[],completed=[];
     fetch('http://${authority}/network').then(r=>r.text()).then(async text=>accepted.push(await saved.actions.request('create',{path:'network-callback',content:text})));
-    const stop=saved.timers.setInterval(async()=>{stop();const text=await(await fetch('http://${authority}/interval')).text();accepted.push(await saved.files.requestWrite('interval.md',new TextEncoder().encode(text)));},0);
+    const stop=saved.timers.setInterval(async()=>{stop();const text=await(await fetch('http://${authority}/interval')).text();accepted.push(await saved.files.requestWrite('interval.md',new TextEncoder().encode(text),{base:{kind:'absent'}}));},0);
     saved.hooks.on('on-sync',async()=>{await(await fetch('http://${authority}/observer')).text();});
     saved.actions.onResult(receipt=>completed.push(receipt));
     saved.commands.register({id:'inspect',label:'Inspect',target:'server'},()=>({accepted,completed}));
@@ -1865,7 +1905,7 @@ Deno.test("plugin authority: requester revoked while waiting for the managed ope
     );
     first.catch(() => undefined);
     await entered.promise;
-    const id = await b.request("save", {
+    const id = await b.based("save", {
       path: "keep",
       newContent: "forbidden late write",
     });
@@ -1911,7 +1951,7 @@ Deno.test("plugin authority: canonical H1 trimmed targets and frontmatter opt-ou
     Deno.mkdirSync(`${b.fixture.vault}/new`);
     b.facts.length = 0;
     const derived = await b.receipt(
-      await b.request("save", {
+      await b.based("save", {
         path: "old/note",
         newContent: "# Derived\nbody",
       }),
@@ -1921,7 +1961,7 @@ Deno.test("plugin authority: canonical H1 trimmed targets and frontmatter opt-ou
     assertEquals(b.facts.map((fact) => fact.action), ["rename", "save"]);
     assert(b.facts.every((fact) => fact.operationId === derived.operationId));
     const trimmed = await b.receipt(
-      await b.request("rename", {
+      await b.based("rename", {
         path: "old/Derived",
         newPath: "  new/Allowed  ",
       }),
@@ -1930,7 +1970,7 @@ Deno.test("plugin authority: canonical H1 trimmed targets and frontmatter opt-ou
     assertEquals(b.notes.getPaths(), ["new/Allowed"]);
     assert(b.notes.get("new/Allowed").content!.startsWith("# Allowed"));
     const optedOut = await b.receipt(
-      await b.request("save", {
+      await b.based("save", {
         path: "new/Allowed",
         newContent: "---\ntitle: stable\n---\n# Uncovered title\nbody",
       }),
@@ -1957,7 +1997,7 @@ Deno.test("plugin authority: write-only rename queries and subscriptions never d
       content: "# Secret existing title\nprivate-existing-body",
     }, api());
     b.facts.length = 0;
-    const id = await b.request("rename", {
+    const id = await b.based("rename", {
       path: "original",
       newPath: "renamed",
     });
@@ -2014,7 +2054,7 @@ Deno.test("plugin authority: real independent pre and partial-effect observers p
     b.facts.length = 0;
     armed = true;
     const result = await b.receipt(
-      await b.request("rename", { path: "old/note", newPath: "new/note" }),
+      await b.based("rename", { path: "old/note", newPath: "new/note" }),
     );
     assertEquals(result.status, "partial");
     assertEquals(
@@ -2105,7 +2145,7 @@ Deno.test("plugin authority: admitted file bytes are immutable even when the Wor
           shared
             ? "new Uint8Array(new SharedArrayBuffer(3))"
             : "new Uint8Array(3)"
-        };bytes.set([65,66,67]);const receipt=await ctx.files.requestWrite('captured.bin',bytes);bytes.fill(90);await(await fetch('http://${authority}/accepted?requestId='+receipt.requestId)).text();return receipt;});}`;
+        };bytes.set([65,66,67]);const receipt=await ctx.files.requestWrite('captured.bin',bytes,{base:{kind:'absent'}});bytes.fill(90);await(await fetch('http://${authority}/accepted?requestId='+receipt.requestId)).text();return receipt;});}`;
       const b = await bundle(
         ["captured.bin"],
         ["captured.bin"],
@@ -2163,7 +2203,7 @@ Deno.test("plugin authority: admitted file bytes are immutable even when the Wor
 Deno.test("plugin authority: sibling and relocated reserved writes deny while a granted external markdown write stays outside the note index", async () => {
   const b = await bundle([]);
   const service =
-    `export function activate(ctx){ctx.commands.register({id:'note',label:'Note',target:'server'},args=>ctx.actions.request('create',args));ctx.commands.register({id:'file',label:'File',target:'server'},args=>ctx.files.requestWrite(args.path,new TextEncoder().encode(args.content)));ctx.commands.register({id:'result',label:'Result',target:'server'},id=>ctx.actions.result(id));}`;
+    `export function activate(ctx){ctx.commands.register({id:'note',label:'Note',target:'server'},args=>ctx.actions.request('create',args));ctx.commands.register({id:'file',label:'File',target:'server'},args=>ctx.files.requestWrite(args.path,new TextEncoder().encode(args.content),{base:{kind:'absent'}}));ctx.commands.register({id:'result',label:'Result',target:'server'},id=>ctx.actions.result(id));}`;
   try {
     Deno.mkdirSync(`${b.fixture.vault}/allowed`);
     const reserved = `${b.fixture.statePath}/control.json`;

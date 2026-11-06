@@ -18,6 +18,7 @@ import { initState, state } from "../../server/state.ts";
 import type { OperationFact } from "../../server/plugins/contracts.ts";
 import { restoreState } from "./state.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
+import { PluginActions } from "../../server/plugins/actions.ts";
 import { HubGate } from "../../server/hub/gate.ts";
 import type { PluginLimits } from "../../server/plugins/contracts.ts";
 
@@ -93,7 +94,7 @@ export async function pluginOperationsFixture(options: {
     const rawRpc = servicePluginRpc({
       vaultPath: fixture.vault,
       statePath: fixture.statePath,
-      actions: () => null,
+      actions: () => actions,
       filesystem,
     });
     const ready = Promise.withResolvers<void>();
@@ -128,6 +129,12 @@ export async function pluginOperationsFixture(options: {
       runtime: () => runtime,
       lifecycle,
     });
+    const actions: PluginActions = new PluginActions({
+      operations,
+      runtime: () => runtime,
+      vaultPath: fixture.vault,
+      statePath: fixture.statePath,
+    });
     lifecycle.onFact((fact) =>
       runtime.post(`on-${fact.action}` as never, fact, {
         operationId: fact.operationId,
@@ -154,6 +161,7 @@ export async function pluginOperationsFixture(options: {
       runtime,
       data,
       operations,
+      actions,
       hub,
       gate,
       filesystem,

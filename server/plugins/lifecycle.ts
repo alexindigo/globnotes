@@ -99,6 +99,7 @@ export function projectActionReceipt(
     if (!readGrantCovers(manifest, vaultPath, statePath, result.path + ".md")) {
       delete result.content;
       delete result.title;
+      delete (result as { version?: string }).version;
       result.contentAvailable = false;
     }
     if (result.movedFiles) {

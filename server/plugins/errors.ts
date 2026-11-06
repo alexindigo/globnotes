@@ -9,7 +9,9 @@ export type OperationErrorCode =
   | "operation_conflict"
   | "operation_partial"
   | "plugin_generation_revoked"
-  | "plugin_permission_denied";
+  | "plugin_permission_denied"
+  | "base_required"
+  | "base_stale";
 // Host-only requester failures precede all filesystem effects.
 
 export class OperationError extends Error {
@@ -24,6 +26,8 @@ export class OperationError extends Error {
     completedPaths: string[];
     failedPath?: string;
   };
+  /** base_stale: the version on disk now (null when the file is gone). */
+  readonly currentVersion?: string | null;
 
   constructor(
     status: number,
@@ -34,6 +38,7 @@ export class OperationError extends Error {
       action?: string;
       operationId?: string;
       partial?: { completedPaths: string[]; failedPath?: string };
+      currentVersion?: string | null;
     } = {},
   ) {
     super(detail);
@@ -45,12 +50,36 @@ export class OperationError extends Error {
     this.action = correlation.action;
     this.operationId = correlation.operationId;
     this.partial = correlation.partial;
+    this.currentVersion = correlation.currentVersion;
   }
 }
 
 /** Real Response carrying detail + code + safe correlation fields. Endpoints
  * return this before their legacy error mappings; the rewrite-refs catch-all
  * must not convert a guard outcome into a bare 500. */
+/** A write that replaces, deletes or moves bytes stated no base. */
+export function baseRequired(operationId?: string): OperationError {
+  return new OperationError(
+    428,
+    "base_required",
+    "This write must state its base: the version (or, for a note, the text) it read. Nothing was written.",
+    { operationId },
+  );
+}
+/** The writer's base no longer matches the file; nothing was written. */
+export function baseStale(
+  path: string,
+  currentVersion: string | null,
+  operationId?: string,
+): OperationError {
+  return new OperationError(
+    409,
+    "base_stale",
+    `'${path}' changed since it was read; nothing was written. Read it again and retry from its current version.`,
+    { operationId, currentVersion },
+  );
+}
+
 export function toOperationResponse(error: OperationError): Response {
   const body: Record<string, unknown> = {
     detail: error.detail,
@@ -60,5 +89,8 @@ export function toOperationResponse(error: OperationError): Response {
   if (error.action !== undefined) body.action = error.action;
   if (error.operationId !== undefined) body.operationId = error.operationId;
   if (error.partial !== undefined) body.partial = error.partial;
+  if (error.currentVersion !== undefined) {
+    body.currentVersion = error.currentVersion;
+  }
   return Response.json(body, { status: error.status });
 }

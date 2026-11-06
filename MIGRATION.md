@@ -27,6 +27,7 @@ those releases cannot move `latest` back from v3.
 | 9 | Plugins | Installed per instance; enabled and configured for the one vault | Still installed once per instance. Each vault turns them on and off and has its own plugin settings, approvals and data |
 | 10 | Flatnotes compatibility | Flatnotes migration instructions and a Legacy Flatnotes keymap | Compatibility is dropped: no `FLATNOTES_*` names or Legacy Flatnotes keymap. Obsidian is the default keymap and the base for Custom; a saved Legacy choice falls back to Obsidian |
 | 11 | Concurrent editor saves | A save replaces current file contents | Editor saves merge independent line edits; overlapping edits create a neighboring conflict copy and move the editing session to it, preserving newer typing and queued saves |
+| 12 | Plugin writes | `save`, `rename`, `delete`, `file-write` replace or remove unconditionally; render code may write granted paths directly | Plugin contract 2: every plugin write states its base (the version or text it read); a stale one merges, is kept as a conflict copy or is refused. Render Workers cannot write files. See "For plugin authors" below |
 
 ### Safe saves and live updates
 
@@ -45,6 +46,28 @@ note. Outside renames are currently treated as deletion rather than followed.
 Legacy callers that omit a base still replace contents until their M4 migration;
 this is not a real-time co-editing protocol or external filesystem CAS. See
 [Saving notes](docs/saving.md) for the complete FIFO and departure behavior.
+
+### For plugin authors
+
+The plugin contract version is 2 (`contractVersion` in the catalog and the
+Worker snapshot). A v2-era plugin that writes must change:
+
+1. Read before writing: `ctx.readNote(path)` and `ctx.files.read(path)` return
+   `version`.
+2. Pass `base` with every `save`, `rename`, `delete`, `file-write` and
+   `ctx.files.requestWrite(path, bytes, {base})`: `{kind:"version", version}`,
+   `{kind:"text", content}` for notes (merges), or `{kind:"absent"}` to create.
+   Without it the request fails with `base_required` and the plugin shows a
+   `plugin_contract_2` diagnostic.
+3. Choose `onStale`: `"copy"` (default, keeps your bytes as a conflict copy next
+   to the original) or `"refuse"` (`base_stale`, nothing written). Stale renames
+   and deletes are always refused.
+4. Move direct `Deno.writeFile` calls in render code to a server runtime using
+   actions; render Workers have no write permission.
+
+Reading, rendering, hooks, settings, private data, endpoints and `ctx.fs` are
+unchanged. Details: [plugin-api.md](docs/plugin-api.md) "Writes state their base"
+and "Contract version".
 
 ## Steps (as decided so far)
 

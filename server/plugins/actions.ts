@@ -17,6 +17,18 @@ import type { PluginManifest } from "./manifest.ts";
 import type { NoteOperations } from "../notes/operations.ts";
 import type { PluginRuntime } from "./runtime.ts";
 import type { ReleaseOutcome } from "./execution_context.ts";
+import { parseBase, parseOnStale } from "../hub/gate.ts";
+import { baseRequired } from "./errors.ts";
+
+/** Actions a plugin may request (the writer registry in
+ * tests/hub_gate_contract_test.ts lists each with its base contract). */
+export const PLUGIN_ACTIONS = [
+  "create",
+  "save",
+  "rename",
+  "delete",
+  "file-write",
+] as const;
 
 export interface ActionAdapters {
   operations: NoteOperations;
@@ -81,9 +93,7 @@ export class PluginActions {
     args: unknown,
     ctx: ActionContext,
   ): { requestId: string } {
-    if (
-      !["create", "save", "rename", "delete", "file-write"].includes(action)
-    ) {
+    if (!(PLUGIN_ACTIONS as readonly string[]).includes(action)) {
       throw new Error(`unsupported action '${action}'`);
     }
     if (ctx.causalDepth + 1 > this.#causalLimit) {
@@ -114,6 +124,18 @@ export class PluginActions {
       input.fileRefs !== undefined &&
       !["move", "relink", "none"].includes(input.fileRefs as string)
     ) throw new Error("invalid attachment strategy");
+    // Plugin contract 2: the base is one parameter for every write, checked
+    // here for shape; a missing one fails the receipt with base_required.
+    try {
+      if (input.base !== undefined) parseBase(input.base);
+      parseOnStale(input.onStale);
+    } catch (error) {
+      throw new Error(`invalid plugin action ${(error as Error).message}`);
+    }
+    if (
+      action === "create" && input.base !== undefined &&
+      (input.base as { kind?: unknown }).kind !== "absent"
+    ) throw new Error('a create\'s base can only be {kind:"absent"}');
     if (action === "file-write") {
       classifyWriteTarget(
         manifest,
@@ -223,6 +245,8 @@ export class PluginActions {
     };
     try {
       const a = (args ?? {}) as Record<string, unknown>;
+      const base = a.base === undefined ? undefined : parseBase(a.base);
+      const onStale = parseOnStale(a.onStale);
       let result: unknown = null;
       const operationId = createUuid();
       const requester = requesterAuthority(
@@ -246,6 +270,8 @@ export class PluginActions {
           {
             newPath: a.newPath as string | undefined,
             newContent: a.newContent as string | undefined,
+            base,
+            onStale,
           },
           (a.fileRefs as string | undefined) ?? "none",
           origin,
@@ -259,6 +285,8 @@ export class PluginActions {
           origin,
           requester,
           operationId,
+          undefined,
+          base,
         );
       } else if (action === "file-write") {
         const target = classifyWriteTarget(
@@ -270,34 +298,34 @@ export class PluginActions {
         const bytes = a.bytes instanceof Uint8Array
           ? a.bytes
           : new Uint8Array(a.bytes as ArrayBuffer);
+        if (!base) throw baseRequired(operationId);
         if (target.kind === "note") {
-          const exists = this.#noteExists(target.notePath);
-          const note = exists
-            ? await this.#adapters.operations.updateNote(
+          const content = new TextDecoder().decode(bytes);
+          result = base.kind === "absent"
+            ? await this.#adapters.operations.createNote(
+              { path: target.notePath, content },
+              origin,
+              requester,
+              operationId,
+              onStale,
+            )
+            : await this.#adapters.operations.updateNote(
               target.notePath,
-              { newContent: new TextDecoder().decode(bytes) },
+              { newContent: content, base, onStale },
               "none",
               origin,
               requester,
               operationId,
-            )
-            : await this.#adapters.operations.createNote(
-              {
-                path: target.notePath,
-                content: new TextDecoder().decode(bytes),
-              },
-              origin,
-              requester,
-              operationId,
             );
-          result = note;
         } else {
-          await this.#adapters.operations.writeExternalFile(
+          result = await this.#adapters.operations.writeExternalFile(
             target,
             bytes,
             origin,
             requester,
             operationId,
+            base,
+            onStale,
           );
         }
       }
@@ -308,6 +336,14 @@ export class PluginActions {
         message?: string;
         operationId?: string;
       };
+      if (error.code === "base_required") {
+        this.#adapters.runtime()?.contractDiagnostic(
+          manifest.id,
+          "plugin_contract_2",
+          `'${action}' without a base was refused: plugin contract 2 requires every write to state the version (or note text) it read`,
+          { operationId: error.operationId, action },
+        );
+      }
       finish({
         status: error.code === "operation_partial" ? "partial" : "failed",
         operationId: error.operationId,
@@ -317,10 +353,6 @@ export class PluginActions {
         },
       });
     }
-  }
-
-  #noteExists(notePath: string): boolean {
-    return this.#adapters.operations.noteExists(notePath);
   }
 
   #record(pluginId: string, generation: string, receipt: ActionReceipt): void {

@@ -119,7 +119,7 @@ Deno.test("plugins: declared file grants and consent-gated network permissions",
       net: unknown;
       import: unknown;
       read: string[];
-      write: string[];
+      write: string[] | false;
       env: unknown;
     };
     assertEquals(
@@ -134,7 +134,11 @@ Deno.test("plugins: declared file grants and consent-gated network permissions",
       vault,
       path.join(vault, "data"),
     ]);
-    assertEquals(perms.write, [path.join(vault, "out")]);
+    assertEquals(
+      perms.write,
+      false,
+      "contract 2: write grants are action grants, never raw Worker writes",
+    );
     assertEquals(perms.env, false);
   } finally {
     await Deno.remove(vault, { recursive: true });

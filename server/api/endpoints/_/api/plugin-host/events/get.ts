@@ -9,7 +9,10 @@ import type { PathfinderRequest } from "@pathfinder/pathfinder";
  * permanent credential — reconnect requires fresh authorization. */
 
 import { enforceAuthMetadata } from "@server/auth/middleware.ts";
-import { PLUGIN_LIMITS } from "@server/plugins/contracts.ts";
+import {
+  PLUGIN_CONTRACT_VERSION,
+  PLUGIN_LIMITS,
+} from "@server/plugins/contracts.ts";
 import { state } from "@server/state.ts";
 
 const encoder = new TextEncoder();
@@ -61,7 +64,7 @@ export default async function (request: PathfinderRequest) {
                 event,
                 event === "hello"
                   ? {
-                    contractVersion: 1,
+                    contractVersion: PLUGIN_CONTRACT_VERSION,
                     heartbeatMs: PLUGIN_LIMITS.streamHeartbeatMs,
                   }
                   : { at: Date.now() },

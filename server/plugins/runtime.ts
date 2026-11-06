@@ -7,6 +7,7 @@ import {
   FsError,
   type HandlerRegistration,
   type HookName,
+  PLUGIN_CONTRACT_VERSION,
   PLUGIN_LIMITS,
   PluginContractError,
   type PluginDiagnostic,
@@ -390,7 +391,10 @@ export class PluginRuntime implements Versioning {
           role: "service",
           writable: this.adapters.writable(),
           limits: this.limits,
-          snapshot: { pluginId: manifest.id, contractVersion: 1 },
+          snapshot: {
+            pluginId: manifest.id,
+            contractVersion: PLUGIN_CONTRACT_VERSION,
+          },
           effective: policy?.effective,
           source: policy?.source,
           registrationChanged: () => this.changed(),
@@ -868,6 +872,16 @@ export class PluginRuntime implements Versioning {
         );
       }
     }
+  }
+  /** A contract diagnostic for a plugin (e.g. a contract-1 write refused). */
+  contractDiagnostic(
+    id: string,
+    code: string,
+    detail: string,
+    correlation: { operationId?: string; action?: string } = {},
+  ): void {
+    const entry = this.entries.get(id);
+    if (entry) this.diagnostic(entry, code, detail, correlation);
   }
   /** Enabled plugins declaring `versioning`, in plugin order. */
   private versioners(): RuntimeEntry[] {

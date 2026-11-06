@@ -159,6 +159,8 @@ Deno.test("hub operations: requester identity attributes plugin notes and mediat
       new Uint8Array([3, 4]),
       { origin: "plugin" },
       requester,
+      undefined,
+      { kind: "absent" },
     );
     assert(
       f.batches.flat().every((entry) =>

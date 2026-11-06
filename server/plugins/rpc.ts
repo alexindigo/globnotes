@@ -11,6 +11,7 @@ import type { PluginManifest } from "./manifest.ts";
 import { readManagedFile } from "../notes/operations.ts";
 import type { AuxiliaryFilesystem } from "./auxiliary_fs.ts";
 import { FsError } from "./contracts.ts";
+import { versionOf } from "../hub/merge.ts";
 
 export function pluginRpc(
   method: string,
@@ -57,6 +58,22 @@ export function pluginRpc(
   } catch (e) {
     return Promise.reject(e instanceof Error ? e : new Error(String(e)));
   }
+}
+
+/** `requestWrite(path, bytes, {base, onStale})`: only those two options. */
+function writeOptions(value: unknown): Record<string, unknown> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("requestWrite options must be an object");
+  }
+  const options = value as Record<string, unknown>;
+  if (Object.keys(options).some((key) => key !== "base" && key !== "onStale")) {
+    throw new Error("requestWrite accepts only base and onStale options");
+  }
+  return {
+    ...(options.base === undefined ? {} : { base: options.base }),
+    ...(options.onStale === undefined ? {} : { onStale: options.onStale }),
+  };
 }
 
 export interface ServiceRpcDeps {
@@ -118,7 +135,11 @@ function projectedRead(
         );
       }
       const served = state.files.get(args[0] as string);
-      return { mediaType: served.mediaType, body: served.body };
+      return {
+        mediaType: served.mediaType,
+        body: served.body,
+        version: versionOf(served.body),
+      };
     }
     case "pathPrefix":
       return state.config.pathPrefix;
@@ -201,6 +222,7 @@ export function servicePluginRpc(
           if (!actions) throw new Error("action queue unavailable");
           return Promise.resolve(
             actions.request(manifest, "file-write", {
+              ...writeOptions(args[2]),
               path: args[0],
               bytes: args[1],
             }, {

@@ -48,9 +48,11 @@ Two roots are scanned (internal first, vault overrides by ID):
     host-owned approval and already-granted parent authority. The default is denial.
   - These controls apply to server Workers. Trusted browser/editor code and browser
     network loads from rendered content are outside this boundary.
-- Existing filesystem capabilities retain their compatibility mapping:
+- Filesystem capabilities:
   - `read`: `["vault"]` by default; `"vault"` expands to the vault root
-  - `write`: `[]` by default
+  - `write`: `[]` by default; the paths a server plugin's actions and
+    `ctx.files.requestWrite` may write (plugin contract 2: no Worker writes files
+    directly, and every write states its base, see [plugin-api.md](plugin-api.md))
   - `env`, `ffi`, `run`, `sys` are always `false`
 
 ## main.js
@@ -220,8 +222,8 @@ in [plugin-api.md](plugin-api.md).
   deliberate change from the old per-sync reinstantiation — plugins that
   relied on per-sync state resets need explicit sync handling).
 - Permissions are real: `Deno.env`, `Deno.readFileSync` outside the declared
-  paths, and network calls (without the capability) all throw `PermissionDenied`
-  inside the Worker.
+  paths, any file write, and network calls (without the capability) all throw
+  inside the Worker (`NotCapable` or `PermissionDenied`).
 
 ## Dual-mode plugins (editor half)
 

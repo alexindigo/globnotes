@@ -76,7 +76,13 @@ export interface PluginCtx {
   };
   files: {
     read(path: string): Promise<unknown>;
-    requestWrite(path: string, bytes: Uint8Array): Promise<unknown>;
+    /** `options.base` (required): what the plugin read, or {kind:"absent"};
+     * `options.onStale`: "copy" (default) or "refuse". */
+    requestWrite(
+      path: string,
+      bytes: Uint8Array,
+      options?: { base?: unknown; onStale?: unknown },
+    ): Promise<unknown>;
   };
   fs: AuxiliaryFs;
   /** Displaced bytes before the hub replaces, deletes or moves them. Resolve
@@ -261,13 +267,13 @@ const ctx: PluginCtx = {
   },
   files: {
     read: (path) => rpc("files.read", [path]),
-    requestWrite: (path, bytes) => {
+    requestWrite: (path, bytes, options) => {
       if (currentWorkerContext().pre) {
         throw new Error(
           "mutating action requests are forbidden during a pre-hook",
         );
       }
-      return rpc("files.requestWrite", [path, bytes]);
+      return rpc("files.requestWrite", [path, bytes, options]);
     },
   },
   snapshot: {},

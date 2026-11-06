@@ -77,8 +77,9 @@ filesystem envelope.
 | `ctx.commands.register(def, handler)` | namespaced command; no overriding built-ins or other owners |
 | `ctx.settings.read()/subscribe(fn)` | effective validated values; committed-change notifications |
 | `ctx.data.load()/save(values, revision)` | private JSON with revision CAS; never in the settings catalog |
-| `ctx.actions.request(action, args)` | acceptance-only `{ requestId }`; outcome via `ctx.actions.result(id)` / `onResult` |
-| `ctx.files.read(path)` / `ctx.files.requestWrite(path, bytes)` | grant-checked mediated file access; guarded `file-write` action |
+| `ctx.actions.request(action, args)` | acceptance-only `{ requestId }`; outcome via `ctx.actions.result(id)` / `onResult`; every write states its `base` ([Writes state their base](#writes-state-their-base)) |
+| `ctx.files.read(path)` / `ctx.files.requestWrite(path, bytes, {base, onStale?})` | grant-checked mediated file access with the file's `version`; guarded `file-write` action |
+| Server `ctx.versioning.onOffer(handler)` | displaced bytes before the hub replaces, deletes or moves them ([Versioning](#versioning)) |
 | Server `ctx.permissions.declare({network,imports}, options?)` | complete host-bound contributor/source request snapshot; cannot grant access |
 | Server `ctx.permissions.requestAccess({kind,hosts,reason}, options?)` | prompt admission `{requestId,revision,status,blockedReasons}`; does not wait for a human or grant traffic |
 | Server `ctx.permissions.status()` | owning current request/approval/effective projection and source token |
@@ -163,6 +164,64 @@ never note text. Initialize and end session-dependent work from `editing`,
 including the replay at activation; `note:edit-start` / `note:edit-end` are
 non-replayed events. Exit/disposal publishes an inactive state. See
 [event-bus.md](event-bus.md) for the retained-topic contract.
+
+## Writes state their base
+
+Every write says what it was based on, through one `base` argument, for every
+action and payload (renames included):
+
+| # | Base | Meaning |
+|---|---|---|
+| 1 | `{kind:"absent"}` | The path must not exist (a create) |
+| 2 | `{kind:"version", version}` | The file's `version` as you read it: SHA-256 hex of its bytes, returned by `ctx.readNote`, `ctx.files.read`, action receipts and `ctx.fs` reads |
+| 3 | `{kind:"text", content}` | A note's text as you read it; lets a stale save merge |
+
+```js
+const note = await ctx.readNote("Tasks");
+await ctx.actions.request("save", {
+  path: "Tasks",
+  newContent: note.content + "\n- [ ] new",
+  base: { kind: "version", version: note.version }, // or {kind:"text", content: note.content}
+  onStale: "refuse", // optional; default "copy"
+});
+await ctx.actions.request("rename", { path: "Tasks", newPath: "Done/Tasks", base: { kind: "version", version: note.version } });
+await ctx.actions.request("delete", { path: "Old", base: { kind: "version", version } });
+await ctx.files.requestWrite("img/chart.png", bytes, { base: { kind: "absent" } });
+```
+
+| # | Action | Without `base` | Stale `base` |
+|---|---|---|---|
+| 1 | `create` | Implicit `absent`; only `absent` is accepted | Exists: refused (`note_exists`) |
+| 2 | `save` (content) | `base_required` | Text base merges when it can; otherwise `onStale`: `copy` keeps your text as `<name>.conflict-YYYYMMDD-HHMMSS-globnotes.md` next to the original (recorded as a conflict), `refuse` fails with `base_stale` |
+| 3 | `rename` (with or without content) | `base_required` | Refused (`base_stale`); with content, as row 2 |
+| 4 | `delete` | `base_required` | Refused (`base_stale`); nothing is deleted |
+| 5 | `file-write` / `requestWrite` | `base_required` | Notes as row 2 (an `absent` base on an existing note keeps both under `copy`). Other files are binary: never merged; `copy` writes `<stem>.conflict-...-globnotes.<ext>`, `refuse` fails. Outside the vault: always refused |
+
+Receipts of note writes carry the note with its `version` and `saveResult:
+{status: saved|merged|conflict, conflictCopyPath?, recreated?}`; a file write's
+result is `{path, version, saveResult}`. `base_stale` carries no content. A
+`base_required` refusal also adds a `plugin_contract_2` diagnostic to the
+plugin, so a contract-1 plugin is visible in Settings. `ctx.fs` keeps its own
+token conditions (`expect`, `sourceToken`, `token`), which are its bases.
+
+## Contract version
+
+The contract version is published as `contractVersion` in the plugin catalog,
+the server Worker's init `ctx.snapshot`, the browser SDK snapshot and the
+plugin-host events `hello` frame. It is **2**:
+
+| # | Change from 1 | Compatible |
+|---|---|---|
+| 1 | `save`, `rename`, `delete`, `file-write` and `requestWrite` require `base` (above) | No: refused with `base_required` |
+| 2 | Render Workers get no file write permission; `capabilities.write` only grants action targets (a render-only plugin declaring it gets a `plugin_write_grants_unused` diagnostic) | No: `Deno.writeFile` fails with `NotCapable` |
+| 3 | Reads and receipts return `version`; receipts return `saveResult` | Yes |
+| 4 | `ctx.fs` effects in the vault are recorded as the plugin's and offered to versioners; staging files are `.globnotes-staging-<uuid>` | Yes |
+| 5 | Manifest `versioning` and `ctx.versioning.onOffer` | Yes (new) |
+
+Plugins that only read, render, hook, keep settings or data, serve endpoints
+or use `ctx.fs` keep working. To migrate a writer: read the note or file first
+(`version` or the text), pass it as `base`, choose `onStale` for content that
+cannot merge, and handle `saveResult` and `base_stale` in your receipts.
 
 ## Deferred actions and invocation lifetime
 

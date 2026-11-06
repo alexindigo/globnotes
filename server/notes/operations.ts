@@ -13,7 +13,7 @@ import { HttpError } from "@pathfinder/pathfinder";
 import type { FileServing } from "../files/file_serving.ts";
 import type { Indexer } from "../state.ts";
 import type { VaultHub } from "../hub/hub.ts";
-import { mergeText, noteVersion } from "../hub/merge.ts";
+import { noteVersion, versionOf } from "../hub/merge.ts";
 import {
   assertExpected,
   NoteChangedError,
@@ -21,7 +21,15 @@ import {
 } from "./expectation.ts";
 import { guessType } from "../files/mimetypes.ts";
 import { FileSystemNotes, type StorageEffect } from "./file_system.ts";
-import { type Displacement, HubGate } from "../hub/gate.ts";
+import {
+  type Base,
+  checkBase,
+  conflictCopyPath,
+  type Displacement,
+  HubGate,
+  occupied,
+  type OnStale,
+} from "../hub/gate.ts";
 import type { OfferOutcome } from "../hub/versioning.ts";
 import {
   type Note,
@@ -36,7 +44,7 @@ import type {
   OperationAction,
   OperationFact,
 } from "../plugins/contracts.ts";
-import { OperationError } from "../plugins/errors.ts";
+import { baseRequired, baseStale, OperationError } from "../plugins/errors.ts";
 import { processClock } from "../observed_time.ts";
 import { AsyncLock } from "../plugins/lifecycle.ts";
 import type { PluginLifecycle } from "../plugins/lifecycle.ts";
@@ -45,6 +53,8 @@ import type { GuardLease } from "../plugins/runtime.ts";
 import type { WriteTarget } from "../plugins/lifecycle.ts";
 import type { RequesterAuthority } from "../plugins/lifecycle.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
+
+type SaveResult = NonNullable<Note["saveResult"]>;
 
 interface OperationCorrelation {
   causalParent?: string;
@@ -217,17 +227,38 @@ export class NoteOperations {
     });
   }
 
+  /** `onStale` decides an occupied path (a writer whose base was absent):
+   * without it the create is refused as before (note_exists). */
   async createNote(
     data: NoteCreate,
     ctx: OperationOrigin,
     requester?: RequesterAuthority,
     operationId = createUuid(),
+    onStale?: OnStale,
   ): Promise<Note> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);
-    return await this.#lock.run(() =>
-      this.#createNoteLocked(data, ctx, requester, operationId)
-    );
+    return await this.#lock.run(async () => {
+      const notePath = (data.path ?? "").trim();
+      if (onStale && this.#exists(notePath)) {
+        if (onStale === "refuse") {
+          throw baseStale(
+            notePath,
+            noteVersion(this.adapters.notes.get(notePath)),
+            operationId,
+          );
+        }
+        return await this.#keepBoth(
+          notePath,
+          data.content ?? "",
+          "stale-base",
+          ctx,
+          requester,
+          operationId,
+        );
+      }
+      return await this.#createNoteLocked(data, ctx, requester, operationId);
+    });
   }
 
   /** Reused by stale saves without reacquiring the non-reentrant note lock. */
@@ -298,6 +329,59 @@ export class NoteOperations {
     return this.#saveResponse(note, { status: "saved" });
   }
 
+  /** Keep both: the writer's text as a conflict copy next to the original,
+   * through the guarded create path, and a conflict record. */
+  async #keepBoth(
+    notePath: string,
+    content: string,
+    reason: string,
+    ctx: OperationOrigin,
+    requester: RequesterAuthority | undefined,
+    operationId: string,
+  ): Promise<Note> {
+    const copyFile = conflictCopyPath(
+      notePath + MARKDOWN_EXT,
+      "globnotes",
+      this.adapters.now?.() ?? new Date(),
+      // Count every occupied filesystem entry, not just readable notes.
+      (candidate) =>
+        occupied(
+          this.adapters.notes.prepareCreate({
+            path: candidate.slice(0, -MARKDOWN_EXT.length),
+          }).filename,
+        ),
+    );
+    const copy = await this.#createNoteLocked(
+      { path: copyFile.slice(0, -MARKDOWN_EXT.length), content },
+      ctx,
+      requester,
+      operationId,
+    );
+    this.adapters.hub?.recordConflict({
+      id: createUuid(),
+      path: notePath + MARKDOWN_EXT,
+      copyPath: copy.path + MARKDOWN_EXT,
+      peer: "globnotes",
+      reason,
+      state: "open",
+      createdAt: new Date().toISOString(),
+      resolvedAt: null,
+    });
+    return this.#saveResponse(copy, {
+      status: "conflict",
+      conflictCopyPath: copy.path,
+    });
+  }
+
+  /** Writes that replace, delete or move bytes must state their base. */
+  #baseRequired(
+    _ctx: OperationOrigin,
+    requester: RequesterAuthority | undefined,
+  ): boolean {
+    // Plugin contract 2: every plugin write states its base.
+    return requester !== undefined;
+  }
+
   #saveResponse(note: Note, saveResult: NonNullable<Note["saveResult"]>): Note {
     return { ...note, version: noteVersion(note), saveResult };
   }
@@ -321,74 +405,59 @@ export class NoteOperations {
         assertExpected(notePath, this.adapters.notes.get(notePath), expect);
       }
       let status: "saved" | "merged" = "saved";
-      if (
-        typeof data.baseContent === "string" &&
-        typeof data.newContent === "string"
-      ) {
+      const base: Base | undefined = data.base ??
+        (typeof data.baseContent === "string"
+          ? { kind: "text", content: data.baseContent }
+          : undefined);
+      if (!base && !expect && this.#baseRequired(ctx, requester)) {
+        throw baseRequired(operationId);
+      }
+      if (base) {
+        // The hub gate's base check (server/hub/gate.ts), under the note lock.
         this.adapters.hub?.scanNow([notePath + MARKDOWN_EXT]);
-        let current: Note;
+        let current: Note | null = null;
         try {
           current = this.adapters.notes.get(notePath);
         } catch (error) {
           if (!(error instanceof NoteNotFoundError)) throw error;
-          const recreated = await this.#createNoteLocked(
-            { path: notePath, content: data.newContent },
-            ctx,
-            requester,
-            operationId,
-          );
-          return this.#saveResponse(recreated, {
-            status: "saved",
-            recreated: true,
-          });
         }
-        if (current.content !== data.baseContent) {
-          const merged = mergeText(
-            data.baseContent,
-            data.newContent,
-            current.content ?? "",
-          );
-          if (merged === null) {
-            const stamp = (this.adapters.now?.() ?? new Date()).toISOString()
-              .replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
-            const stem = `${notePath}.conflict-${stamp}-globnotes`;
-            let copyPath = stem, suffix = 1;
-            // Count every occupied filesystem entry, not just readable notes.
-            for (;;) {
-              const prepared = this.adapters.notes.prepareCreate({
-                path: copyPath,
-              });
-              try {
-                Deno.lstatSync(prepared.filename);
-              } catch (error) {
-                if (error instanceof Deno.errors.NotFound) break;
-                throw error;
-              }
-              copyPath = `${stem}-${++suffix}`;
-            }
-            const copy = await this.#createNoteLocked(
-              { path: copyPath, content: data.newContent },
+        const saving = typeof data.newContent === "string";
+        const outcome = checkBase(
+          base,
+          current && {
+            version: noteVersion(current),
+            text: current.content ?? "",
+          },
+          saving ? data.newContent! : undefined,
+        );
+        if (outcome.status === "merged") {
+          data = { ...data, newContent: outcome.content };
+          status = "merged";
+        } else if (outcome.status === "stale") {
+          // A rename moves the whole file, so it never lands on a stale base.
+          if (!saving || data.onStale === "refuse") {
+            throw baseStale(notePath, outcome.currentVersion, operationId);
+          }
+          if (!current) {
+            const recreated = await this.#createNoteLocked(
+              { path: notePath, content: data.newContent! },
               ctx,
               requester,
               operationId,
             );
-            this.adapters.hub?.recordConflict({
-              id: createUuid(),
-              path: notePath + MARKDOWN_EXT,
-              copyPath: copy.path + MARKDOWN_EXT,
-              peer: "globnotes",
-              reason: "overlapping-edits",
-              state: "open",
-              createdAt: new Date().toISOString(),
-              resolvedAt: null,
-            });
-            return this.#saveResponse(copy, {
-              status: "conflict",
-              conflictCopyPath: copy.path,
+            return this.#saveResponse(recreated, {
+              status: "saved",
+              recreated: true,
             });
           }
-          data = { ...data, newContent: merged };
-          status = "merged";
+          return await this.#keepBoth(
+            notePath,
+            data.newContent!,
+            base.kind === "text" ? "overlapping-edits" : "stale-base",
+            ctx,
+            requester,
+            operationId,
+          );
         }
       }
       const capturedEpoch = ctx.origin === "api"
@@ -554,6 +623,7 @@ export class NoteOperations {
     requester?: RequesterAuthority,
     operationId = createUuid(),
     expect?: NoteExpectation,
+    base?: Base,
   ): Promise<void> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);
@@ -566,6 +636,19 @@ export class NoteOperations {
       const before = this.adapters.notes.get(notePath);
       // The writer's stale-write guard (server/notes/expectation.ts).
       assertExpected(notePath, before, expect);
+      if (!base && !expect && this.#baseRequired(ctx, requester)) {
+        throw baseRequired(operationId);
+      }
+      if (base) {
+        // A stale delete is refused: the change made since wins.
+        const outcome = checkBase(base, {
+          version: noteVersion(before),
+          text: before.content ?? "",
+        });
+        if (outcome.status !== "current") {
+          throw baseStale(notePath, noteVersion(before), operationId);
+        }
+      }
       const effects = [
         path.join(this.adapters.notes.storagePath, notePath + MARKDOWN_EXT),
       ];
@@ -868,25 +951,61 @@ export class NoteOperations {
    * Vault markdown targets are classified by the caller into note
    * create/save before reaching this method. */
   async writeExternalFile(
-    target: WriteTarget & { kind: "file" },
+    requested: WriteTarget & { kind: "file" },
     bytes: Uint8Array,
     ctx: OperationOrigin,
     requester?: RequesterAuthority,
     operationId = createUuid(),
-  ): Promise<void> {
+    base?: Base,
+    onStale: OnStale = "copy",
+  ): Promise<{ path: string; version: string; saveResult: SaveResult }> {
     this.#admission(ctx, operationId);
     this.#requesterRequired(ctx, requester, operationId);
-    await this.#lock.run(async () => {
+    return await this.#lock.run(async () => {
       this.#admission(ctx, operationId);
       const capturedEpoch = ctx.origin === "api"
         ? ctx.lease.epoch
         : this.adapters.lifecycle.epoch;
+      let target = requested;
       requester?.authorize([target.absolutePath], operationId);
-      const existed = this.#fileExists(target.absolutePath);
-      const beforeBytes = existed
+      let existed = this.#fileExists(target.absolutePath);
+      let beforeBytes = existed
         ? await Deno.readFile(target.absolutePath)
         : null;
       this.#admission(ctx, operationId);
+      if (!base && this.#baseRequired(ctx, requester)) {
+        throw baseRequired(operationId);
+      }
+      let conflictOf: string | null = null;
+      if (base) {
+        // Files other than notes are binary: compared by version, never merged.
+        const outcome = checkBase(
+          base,
+          beforeBytes ? { version: versionOf(beforeBytes) } : null,
+        );
+        if (outcome.status !== "current") {
+          const inVault = this.adapters.hub?.relativePath(target.absolutePath);
+          if (onStale === "refuse" || !inVault) {
+            throw baseStale(
+              inVault ?? target.absolutePath,
+              outcome.status === "stale" ? outcome.currentVersion : null,
+              operationId,
+            );
+          }
+          // Keep both: the writer's bytes next to the original.
+          conflictOf = target.absolutePath;
+          const copy = conflictCopyPath(
+            target.absolutePath,
+            "globnotes",
+            this.adapters.now?.() ?? new Date(),
+            occupied,
+          );
+          requester?.authorize([copy], operationId);
+          target = { kind: "file", absolutePath: copy };
+          existed = false;
+          beforeBytes = null;
+        }
+      }
       const fact = this.#fact(operationId, "file-write", ctx, {
         path: target.absolutePath,
         metadata: { bytes: bytes.length, existed },
@@ -920,11 +1039,12 @@ export class NoteOperations {
               "target existence changed while the write was pending",
             );
           }
-          if (beforeBytes) {
+          const displaced = beforeBytes;
+          if (displaced) {
             const current = Deno.readFileSync(target.absolutePath);
             if (
-              current.length !== beforeBytes.length ||
-              !current.every((b, i) => b === beforeBytes[i])
+              current.length !== displaced.length ||
+              !current.every((b, i) => b === displaced[i])
             ) {
               throw new Error("target changed on disk");
             }
@@ -967,6 +1087,30 @@ export class NoteOperations {
         kind: "write",
         path: target.absolutePath,
       }]);
+      const hub = this.adapters.hub;
+      const relative = hub?.relativePath(target.absolutePath) ?? null;
+      if (conflictOf && hub && relative) {
+        hub.recordConflict({
+          id: createUuid(),
+          path: hub.relativePath(conflictOf),
+          copyPath: relative,
+          peer: "globnotes",
+          reason: "stale-base",
+          state: "open",
+          createdAt: new Date().toISOString(),
+          resolvedAt: null,
+        });
+      }
+      return {
+        path: relative ?? target.absolutePath,
+        version: versionOf(bytes),
+        saveResult: conflictOf
+          ? {
+            status: "conflict",
+            conflictCopyPath: relative ?? target.absolutePath,
+          }
+          : { status: "saved" },
+      };
     });
   }
 
@@ -1177,9 +1321,12 @@ function snapshot(note: Note): NoteSnapshot {
 export function readManagedFile(absolutePath: string): {
   mediaType: string;
   body: Uint8Array;
+  version: string;
 } {
+  const body = Deno.readFileSync(absolutePath);
   return {
     mediaType: guessType(absolutePath) ?? "application/octet-stream",
-    body: Deno.readFileSync(absolutePath),
+    body,
+    version: versionOf(body),
   };
 }
