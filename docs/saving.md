@@ -54,7 +54,8 @@ Explicit Save can recreate even an unchanged retained buffer. Successful
 recreation is disclosed. Outside renames are treated as deletion of the old path.
 
 The change connection resumes its cursor after reconnect, with polling when
-streaming is unavailable. A gap invalidates the snapshot and causes a fresh
+streaming fails, and always recovers from transient failures (`docs/hub.md`).
+A tab hidden for more than 10 seconds closes it and catches up when shown. A gap invalidates the snapshot and causes a fresh
 read, still fenced against newer typing and saves. This is not real-time
 co-editing or filesystem CAS: a change during server guard waits can reject a
 request under the existing retained-error contract. Legacy non-editor callers

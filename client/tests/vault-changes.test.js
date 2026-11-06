@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../api.js", () => ({ openVaultChanges: vi.fn() }));
-import { acquireVaultChanges, createVaultChanges } from "../vaultChanges.js";
+import { acquireVaultChanges, createVaultChanges, HIDDEN_GRACE_MS, MAX_DELAY_MS, STABLE_MS, STREAM_RETRY_MS,
+  TERMINAL_STATUSES } from "../vaultChanges.js";
 import { openVaultChanges } from "../api.js";
 import { TOPICS } from "../bus/index.js";
 
@@ -66,6 +67,127 @@ describe("vault change owner", () => {
     const release = owner.acquire(); await flush(); await vi.advanceTimersByTimeAsync(500);
     expect(calls[1].poll).toBe(true);
     release(); resolve(close); await flush(); expect(close).toHaveBeenCalledTimes(1);
+  });
+  // One lifecycle rule (PR #30 round 1): every outcome except a definitive
+  // auth/unsupported answer reconnects, with a delay that stays bounded and
+  // recovers once a connection proves healthy.
+  function harness(outcome) {
+    let clock = 0; const calls = [], disposers = [];
+    const owner = createVaultChanges({ now: () => clock, open: async options => {
+      calls.push(options);
+      const result = outcome(calls.length, options);
+      if (result instanceof Error) throw result;
+      const dispose = vi.fn(); disposers.push(dispose); return dispose;
+    } });
+    return { owner, calls, disposers, advance: async ms => { clock += ms; await vi.advanceTimersByTimeAsync(ms); } };
+  }
+  const status = code => Object.assign(new Error(`status ${code}`), { status: code });
+  async function delaysUntil(h, count) {
+    const delays = [];
+    while (h.calls.length < count) {
+      const before = h.calls.length; let waited = 0;
+      while (h.calls.length === before) { await h.advance(100); waited += 100; if (waited > MAX_DELAY_MS + 1000) throw Error("no reconnect"); }
+      delays.push(waited);
+    }
+    return delays;
+  }
+  it("a transient 503 (or network failure, 429, 502) retries with bounded backoff and recovers", async () => {
+    vi.useFakeTimers();
+    for (const failure of [status(503), new TypeError("network"), status(429), status(502)]) {
+      const h = harness(n => n <= 9 ? failure : undefined);
+      const release = h.owner.acquire(); await flush();
+      const delays = await delaysUntil(h, 10);
+      expect(delays).toEqual([500, 1000, 2000, 4000, 8000, 16000, MAX_DELAY_MS, MAX_DELAY_MS, MAX_DELAY_MS]);
+      expect(h.owner.state().connected).toBe(true);
+      release();
+    }
+  });
+  it("only definitive auth or unsupported answers stop reconnecting", async () => {
+    vi.useFakeTimers();
+    expect([...TERMINAL_STATUSES].sort()).toEqual([400, 401, 403, 404, 405, 410, 501]);
+    for (const code of TERMINAL_STATUSES) {
+      const h = harness(() => status(code));
+      const release = h.owner.acquire(); await flush();
+      await h.advance(10 * MAX_DELAY_MS);
+      expect(h.calls).toHaveLength(1);
+      release();
+    }
+  });
+  it("a stream that stayed open resets the backoff; short-lived ones keep growing it", async () => {
+    vi.useFakeTimers();
+    const h = harness(() => undefined);
+    const release = h.owner.acquire(); await flush();
+    // Streams the server ends at once (a misbehaving proxy): the delay grows.
+    for (let i = 0; i < 4; i++) {
+      h.calls.at(-1).onClose("ended");
+      expect(await delaysUntil(h, h.calls.length + 1)).toEqual([500 * 2 ** i]);
+    }
+    // A quiet vault behind a proxy idle timeout: open past STABLE_MS, then a
+    // clean end. The next reconnect starts over instead of waiting 8 s+.
+    await h.advance(STABLE_MS);
+    h.calls.at(-1).onClose("ended");
+    expect(await delaysUntil(h, h.calls.length + 1)).toEqual([500]);
+    // So does a stream that broke after being healthy (now polling).
+    await h.advance(STABLE_MS);
+    h.calls.at(-1).onClose(new TypeError("network changed"));
+    expect(await delaysUntil(h, h.calls.length + 1)).toEqual([500]);
+    expect(h.calls.at(-1).poll).toBe(true);
+    release();
+  });
+  it("polling after a stream failure is temporary: the stream is tried again", async () => {
+    vi.useFakeTimers();
+    const h = harness(() => undefined);
+    const release = h.owner.acquire(); await flush();
+    h.calls[0].onClose(new TypeError("read failed")); await delaysUntil(h, 2);
+    expect(h.calls[1].poll).toBe(true);
+    // Polls complete once a second; a completed poll keeps the backoff at zero.
+    while (h.calls.at(-1).poll) {
+      await h.advance(1000); h.calls.at(-1).onClose("poll"); await flush();
+      expect(h.owner.state().attempts).toBe(0);
+      if (h.calls.length > STREAM_RETRY_MS / 1000 + 5) throw Error("still polling");
+    }
+    expect(h.calls.at(-1).poll).toBe(false);
+    expect(h.owner.state().polling).toBe(false);
+    release();
+  });
+  it("hidden tabs release the stream after the grace period and catch up when shown", async () => {
+    vi.useFakeTimers();
+    const h = harness(() => undefined);
+    const release = h.owner.acquire(); await flush();
+    h.calls[0].onEvent({ event: "change", data: { seq: 7, path: "a.md" } });
+    // A short switch away keeps the connection.
+    h.owner.setVisible(false); await h.advance(HIDDEN_GRACE_MS - 1); h.owner.setVisible(true); await flush();
+    expect(h.calls).toHaveLength(1); expect(h.calls[0].signal.aborted).toBe(false);
+    h.owner.setVisible(false); await h.advance(HIDDEN_GRACE_MS);
+    expect(h.calls[0].signal.aborted).toBe(true); expect(h.disposers[0]).toHaveBeenCalledTimes(1);
+    expect(h.owner.state()).toMatchObject({ visible: false, connected: false });
+    // Nothing reconnects while hidden, whatever the old wire reports.
+    h.calls[0].onClose("ended"); await h.advance(10 * MAX_DELAY_MS);
+    expect(h.calls).toHaveLength(1);
+    // A second owner while hidden does not open a stream either.
+    const other = h.owner.acquire(); await flush(); expect(h.calls).toHaveLength(1);
+    h.owner.setVisible(true); await flush();
+    expect(h.calls).toHaveLength(2); expect(h.calls[1].since).toBe(7);
+    other(); release();
+  });
+  it("the app singleton follows document visibility", async () => {
+    vi.useFakeTimers(); const calls = [];
+    openVaultChanges.mockImplementation(async options => { calls.push(options); return vi.fn(); });
+    let state = "visible";
+    const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+    const release = acquireVaultChanges(); await flush();
+    try {
+      state = "hidden"; document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(HIDDEN_GRACE_MS);
+      expect(calls[0].signal.aborted).toBe(true);
+      state = "visible"; document.dispatchEvent(new Event("visibilitychange")); await flush();
+      expect(calls).toHaveLength(2); expect(calls[1].signal.aborted).toBe(false);
+    } finally {
+      release(); delete document.visibilityState;
+      if (descriptor) Object.defineProperty(Document.prototype, "visibilityState", descriptor);
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
   });
   it("poll cursors advance even when hidden paths produce no public entries", async () => {
     vi.useFakeTimers(); let options;

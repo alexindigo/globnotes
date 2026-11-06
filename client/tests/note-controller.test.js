@@ -39,6 +39,8 @@ function fixture(overrides = {}, contextValues = {}) {
     actionAvailable: vi.fn(() => true),
     subscribe: vi.fn((topic, handler) => { handlers.set(topic, handler); const unsub = vi.fn(() => handlers.delete(topic)); unsubs.push(unsub); return unsub; }),
     registerParticipant: vi.fn((name, value) => { participant = value; return unregister; }),
+    // Change notices arrive through `subscribe`; the app's stream owner stays out.
+    acquireChanges: vi.fn(() => vi.fn()),
     ...overrides,
   };
   const controller = createNoteController(adapters);

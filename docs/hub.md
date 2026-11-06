@@ -133,5 +133,16 @@ one hub subscription, disposed on disconnect. Hidden paths, reserved app paths,
 canonical state and paths outside the ordinary note/file read namespace are
 filtered. Renames crossing that boundary disclose only the visible side.
 `client/vaultChanges.js` is the single reference-counted connection owner,
-publishes bus facts, resumes its cursor and reconnects with capped backoff;
+publishes bus facts and resumes its cursor. Its reconnect rule:
+
+| # | Outcome | Next |
+|---|---|---|
+| 1 | 400, 401, 403, 404, 405, 410, 501 (auth, endpoint missing, request rejected) | Stop; a later lifecycle start retries (the page shown again after 10 s hidden or restored from history, or a new first owner) |
+| 2 | Anything else: network error, 408, 429, 5xx (a proxy's 503 during a restart) | Retry after 0.5 s, doubling to at most 30 s |
+| 3 | A stream that stayed open 30 s ends or breaks | The backoff starts over (a proxy idle timeout is not a fault) |
+| 4 | A stream breaks, or no stream could be opened | JSON polling once a second; the stream is tried again after 60 s of polling |
+| 5 | The tab is hidden for 10 s | The stream is closed; when shown, it reconnects and catches up from its cursor |
+
+Row 5 keeps open streams to visible tabs: on plain HTTP each stream holds one of
+the browser's few HTTP/1.1 connections per host, shared by all tabs.
 `client/api.js` owns fetch streaming and the JSON polling fallback.
