@@ -369,7 +369,11 @@ under ordinary serving policy.
 
 ## Versioning
 
-A server plugin that keeps file history declares it and registers one handler:
+This asynchronous, best-effort hook is kept for the **legacy v2 backup plugin**.
+Future v3 versioning plugins will follow the hub change log (M5/M7). It does not
+add a save participant or change the rest of plugin contract 2.
+
+The legacy service declares it and registers one handler:
 
 ```json
 { "runtime": { "server": "service.js" }, "versioning": { "extensions": [".md"] } }
@@ -380,22 +384,37 @@ export function activate(ctx) {
   ctx.versioning.onOffer(async (offer) => {
     // offer: { operationId, kind: "replace"|"delete"|"move", path, newPath?,
     //          version, size, bytes: Uint8Array|null, origin }
-    await keep(offer); // resolve once the bytes are durably yours
+    await keep(offer); // runs after commit; the save never waits
     // or: return { status: "declined" };
   });
 }
 ```
 
-The hub offers bytes **before** it replaces, deletes or moves them away from a
-path (`extensions` omitted = every file; only paths your read grants cover).
+After a write commits, the host enqueues the displaced bytes captured before
+replacement, deletion or move (`extensions` omitted = every file; only paths
+your read grants cover). Refused writes deliver nothing. Completed effects of
+a partial write still deliver their displaced bytes. Reading the live path in
+the handler sees the committed state, not the old version; use `offer.bytes`.
+
+Each plugin has its own in-memory FIFO: one active handler, at most 8 pending
+entries and 32 MiB of pending bytes, plus at most 16 MiB in flight. Overflow
+drops the oldest pending entry and records a `versioning_gap` diagnostic with
+its operation ID; the plugin is visibly degraded. Delivery while the plugin is
+unavailable also records a gap. Failures and ordinary service-call deadlines
+(30 s observed time, including queue wait) affect only that plugin's queue and
+status, never the committed write. No versioning result appears in the save's
+fact metadata. There is no separate versioning wait or deadline.
+
 The handler runs in its own lane, not as a pre-hook: it may use `ctx.fs`, and
-deferred actions it requests run after it returns. The write waits up to
-`versioningMs` (10 s) per versioner; failure, decline or timeout let the write
-proceed, recorded in your diagnostics. A handler past that window is not failed:
-it keeps running under the ordinary service-call bound; offers still queued for
-you at the end of their window are withdrawn. An offer may be followed by no
-displacement (a later refusal). Your own writes are never offered to any
-versioner. `bytes` is null above 16 MiB.
+deferred actions it requests run after it returns. Writes made by any versioning
+plugin are never offered to any versioner, preventing recursive backups.
+`bytes` is null above 16 MiB, with a `versioning_failed` diagnostic.
+
+The host writes no delivery spool, journal of note bytes or other content copy.
+**If the server crashes before the plugin stores a version, that version is not
+backed up.** Pending delivery is volatile and is not replayed on restart. This
+best-effort limit matches v2 behavior; a successful save does not confirm a
+successful backup.
 
 ## Endpoints
 

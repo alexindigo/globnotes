@@ -1,17 +1,22 @@
 # Versioned note backups
 
-This server-only plugin keeps the **previous Markdown text before** a globnotes
-save, rename or delete replaces it. It is a versioning plugin: the hub offers it
-the note's bytes before the write (docs/hub.md "Versioning"), and the write waits
-until the plugin has staged and journaled them (custody), at most 10 seconds.
-Publishing the `.bak` slots, rotation and cleanup then finish in the background.
-A failure or timeout before custody lets the save proceed and is shown in the
-plugin's diagnostics: a successful save can still coexist with a failed backup.
+This server-only legacy v2 plugin keeps the **previous Markdown text** after a
+globnotes save, rename or delete commits. The host delivers the displaced bytes
+asynchronously through the best-effort versioning hook (docs/hub.md "Versioning").
+Staging, publishing the `.bak` slots, rotation and cleanup all run off the save
+path. Saves never wait for the plugin. Delivery is bounded in memory; queue
+overflow drops the oldest pending entry and records a visible `versioning_gap`.
+A successful save can coexist with a pending or failed backup.
 Empty text is eligible; new creates have no previous version.
 
+**If the server crashes before the plugin stores a version, that version is not
+backed up.** The host writes no spool or journal of note bytes and does not replay
+pending delivery after restart. This accepted best-effort limit matches v2
+behavior. Future v3 versioning plugins will follow the hub change log (M5/M7).
+
 **Changes made by a versioning plugin are not backed up.** The hub never offers
-a versioning plugin's own writes to versioners (otherwise its storage writes would
-wait on itself), and that applies to every enabled versioning plugin, not just this
+a versioning plugin's own writes to versioners (preventing recursive backups),
+and that applies to every enabled versioning plugin, not just this
 one. If another versioning plugin changes or deletes a note, this plugin keeps no
 previous text for that change and records no failed offer.
 
@@ -61,9 +66,10 @@ The namespaced **Inspect versioned backup status** command and protected
 `/_/api/plugins/globnotes-backup/status` route return current-activation counts,
 configuration, sanitized last error/operation identity, pending recovery and
 committed-ring status. Counts are observations, not a durable global outbox/audit.
-Failures before custody also reach the host's plugin diagnostics
-(`versioning_failed`); failures after it are in this status and are recovered by
-the next capture or a restart. No note text or credentials appear in status.
+Delivery gaps and failed handlers reach the host's plugin diagnostics
+(`versioning_gap`, `versioning_failed`). Processing errors also appear in this
+status; journaled work is recovered by the next capture or a restart.
+No note text or credentials appear in status.
 
 Ownership records, a fixed active journal and deterministic staging files live in
 `<vault>/.globnotes-backup/`. Preserve these when inspecting a failure. Alien slots,

@@ -466,11 +466,16 @@ Deno.test("backup plugin: rapid captures stay literal while live disk is newer; 
       size: 9,
       origin: "api",
     };
-    const outcomes = await b.runtime.offer([
+    b.runtime.enqueue([
       { ...offer, kind: "rename" as never, bytes: new Uint8Array([1]) },
       { ...offer, kind: "replace", bytes: null },
-    ], Number.MAX_SAFE_INTEGER);
-    assertEquals(outcomes.map((o) => o.status), ["declined", "too_large"]);
+    ]);
+    await b.status();
+    assert(
+      b.runtime.status(b.id)!.diagnostics.some((d) =>
+        d.code === "versioning_failed"
+      ),
+    );
     // An outside edit is already on disk when observed: nothing is offered.
     await Deno.writeTextFile(`${b.fixture.vault}/Rapid.md`, "external");
     b.hub.scanNow();

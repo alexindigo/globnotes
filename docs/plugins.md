@@ -189,8 +189,10 @@ read the warning banner before turning it on. Settings are vault-owned; detectin
 changes made elsewhere is planned for v3.
 
 The server-only [versioned backup plugin](../plugins/globnotes-backup/README.md)
-is a versioning plugin: the hub offers it a note's previous text before a save,
-rename or delete replaces it, and it keeps that text with generic completion IO. Settings →
+uses the legacy best-effort versioning hook: after a save, rename or delete
+commits, the host delivers the displaced bytes asynchronously. Saves never wait
+for backup processing; a crash before storage can lose the pending version.
+Future v3 versioners will follow the hub change log (M5/M7). Settings ->
 Versioned note backups → Backups has a default2 / integer1–10 slider and optional base. **Adjacent `.bak`
 files remain visible vault files, including old/deleted text for public readers.**
 Dedicated bases mirror the captured original path; rename/base changes do not

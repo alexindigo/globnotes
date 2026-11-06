@@ -65,14 +65,16 @@ export async function backupFixture(options: {
         current.sourceKey,
       );
     },
-    /** Status once the plugin's queue is idle: a capture resolves at custody
-     * (before the note write), and publication continues in its queue. */
+    /** Wait for host delivery as well as the plugin's own processing queue. */
     status: () =>
       waitUntil(async () => {
         const status = await runtime.invokeCommand(id, "status", {}) as
           & BackupStatus
           & { pendingJobs: number };
-        return status.pendingJobs === 0 ? done(status) : pending(status);
+        const delivery = runtime.status(id)?.versioningPending ?? 0;
+        return status.pendingJobs === 0 && delivery === 0
+          ? done(status)
+          : pending({ status, delivery });
       }, { label: "backup queue idle", intervalMs: 5 }) as Promise<
         BackupStatus
       >,

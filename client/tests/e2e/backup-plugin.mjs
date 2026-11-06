@@ -86,8 +86,8 @@ if (options.controls) {
     return { status: response.status, body: await response.json() };
   }
   const settings = () => api("/_/api/plugin-host/globnotes-backup/settings/backup");
-  // A capture resolves at custody (before the note write); publication then
-  // finishes in the plugin's queue. Status is read once that queue is idle.
+  // Post-commit delivery and publication run independently of the note write.
+  // Status is read once the plugin's queue is idle.
   async function status() {
     let latest;
     for (let attempt = 0; attempt < 600; attempt++) {

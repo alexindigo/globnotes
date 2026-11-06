@@ -67,12 +67,9 @@ export interface RpcAuthority {
 export interface InvocationOptions {
   generation?: string;
   causal?: { parentId?: string; depth: number };
-  /** Versioning offers hold a write: their own bounded lane, never behind the
-   * ordinary FIFO or a guard, and not a pre-hook (the handler may use ctx.fs). */
+  /** Best-effort post-commit offers: an independent bounded lane, not a
+   * pre-hook (the handler may use ctx.fs). */
   lane?: "versioning";
-  /** Observed time after which a job still waiting in its queue is withdrawn
-   * (rejected, never dispatched). A dispatched job keeps its own timeout. */
-  withdrawAt?: number;
 }
 export type RpcHandler = (
   method: string,
@@ -228,6 +225,10 @@ export class PluginHost {
         ...this.slots.map((slot) => slot.permissions.imports),
       ),
     };
+  }
+  get versioningPending(): number {
+    return this.versioningQueue.length +
+      this.slots.filter((slot) => slot.activeVersioning).length;
   }
   get available(): boolean {
     return !this.stopped && !this.stopping && !this.failedDetail &&
@@ -851,17 +852,33 @@ export class PluginHost {
     const guardLane = pre && this.role === "service";
     const versioningLane = !pre && this.role === "service" &&
       invocation?.lane === "versioning";
-    if (
-      versioningLane &&
-      this.versioningQueue.length >= this.limits.versioningQueue
-    ) {
-      return Promise.reject(
+    if (versioningLane) {
+      const bytes = (values: unknown[]) =>
+        (values[0] as { bytes?: Uint8Array } | undefined)?.bytes?.byteLength ??
+          0;
+      const gap = () =>
         new PluginContractError(
           503,
-          "plugin_versioning_queue_full",
-          "plugin versioning queue is full",
-        ),
-      );
+          "plugin_versioning_gap",
+          "versioning queue overflow; oldest pending committed version dropped",
+        );
+      while (
+        this.versioningQueue.length && (
+          this.versioningQueue.length >= this.limits.versioningQueue ||
+          this.versioningQueue.reduce((sum, job) => sum + bytes(job.args), 0) +
+                bytes(args) > this.limits.versioningQueueBytes
+        )
+      ) {
+        const oldest = this.versioningQueue.shift()!;
+        oldest.timer();
+        oldest.reject(gap());
+      }
+      if (
+        this.limits.versioningQueue < 1 ||
+        bytes(args) > this.limits.versioningQueueBytes
+      ) {
+        return Promise.reject(gap());
+      }
     }
     if (guardLane && this.guardQueue.length >= 1) {
       return Promise.reject(
@@ -895,7 +912,6 @@ export class PluginHost {
           : versioningLane
           ? this.versioningQueue
           : this.queue;
-      let withdraw: (() => void) | undefined;
       const job: Job = {
         id: ++this.sequence,
         kind,
@@ -907,7 +923,6 @@ export class PluginHost {
         resolve,
         reject,
         timer: this.clock.deadline(timeout, () => {
-          withdraw?.();
           const pending = pendingQueue();
           const queued = pending.indexOf(job);
           if (queued >= 0) {
@@ -928,18 +943,6 @@ export class PluginHost {
           }
         }),
       };
-      if (invocation?.withdrawAt !== undefined) {
-        withdraw = this.clock.deadlineAt(invocation.withdrawAt, () => {
-          const pending = pendingQueue(), queued = pending.indexOf(job);
-          if (queued < 0) return; // Dispatched: its own timeout applies.
-          pending.splice(queued, 1);
-          job.timer();
-          reject(
-            new Error("plugin call withdrawn: deadline passed while queued"),
-          );
-          this.pump();
-        });
-      }
       if (initialization && target) this.dispatch(target, job);
       else {
         pendingQueue().push(job);

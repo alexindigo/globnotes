@@ -19,6 +19,12 @@ export interface StorageEffect {
   oldPath?: string;
 }
 
+export interface Displacement {
+  kind: "replace" | "delete" | "move";
+  file: string;
+  destination?: string;
+}
+
 /** Reserved basename prefix of gate staging files (hub/scanner.ts skips it). */
 export const STAGING_PREFIX = ".globnotes-staging-";
 export const isStagingName = (name: string): boolean =>
@@ -35,6 +41,7 @@ export class UngatedVaultWrite extends Error {
 interface Pass {
   roots: string[];
   journal: StorageEffect[];
+  capture?: (displacements: Displacement[]) => () => void;
 }
 let active: Pass | null = null;
 
@@ -62,9 +69,10 @@ export function withGatePass<T>(
   paths: readonly string[],
   journal: StorageEffect[],
   effect: () => T,
+  capture?: Pass["capture"],
 ): T {
   if (active) throw new Error("Nested hub gate pass");
-  active = { roots: paths.map(canonicalLoose), journal };
+  active = { roots: paths.map(canonicalLoose), journal, capture };
   try {
     const result = effect();
     if (result instanceof Promise) {
@@ -129,11 +137,13 @@ export class VaultEffects {
   /** In-place replacement (the existing note and file-write mechanics). */
   replace(file: string, data: string | Uint8Array): void {
     this.#admit(file);
+    const committed = active?.capture?.([{ kind: "replace", file }]);
     try {
       if (typeof data === "string") Deno.writeTextFileSync(file, data);
       else Deno.writeFileSync(file, data);
     } finally {
       this.#record({ kind: "write", path: file });
+      committed?.(); // An in-place write may have partially displaced bytes.
     }
   }
   mkdir(directory: string): void {
@@ -173,20 +183,33 @@ export class VaultEffects {
     if (occupied) {
       throw new Deno.errors.AlreadyExists(`'${to}' already exists`);
     }
+    const committed = active?.capture?.([{
+      kind: "move",
+      file: from,
+      destination: to,
+    }]);
     Deno.renameSync(from, to);
     this.#record({ kind: "rename", path: to, oldPath: from });
+    committed?.();
   }
   /** Move that replaces an existing destination file the gate checked. */
   replaceByMove(from: string, to: string): void {
     this.#admit(from);
     this.#admit(to);
+    const committed = active?.capture?.([
+      { kind: "move", file: from, destination: to },
+      { kind: "replace", file: to },
+    ]);
     Deno.renameSync(from, to);
     this.#record({ kind: "rename", path: to, oldPath: from });
+    committed?.();
   }
   remove(file: string): void {
     this.#admit(file);
+    const committed = active?.capture?.([{ kind: "delete", file }]);
     Deno.removeSync(file);
     this.#record({ kind: "remove", path: file });
+    committed?.();
   }
   /** Remove an empty directory (pruning). */
   removeEmptyDirectory(directory: string): void {
@@ -210,8 +233,10 @@ export class VaultEffects {
   publish(staging: string, target: string): void {
     if (!isStagingName(staging)) throw new Error("not a staging file");
     this.#admit(target);
+    const committed = active?.capture?.([{ kind: "replace", file: target }]);
     Deno.renameSync(staging, target);
     this.#record({ kind: "write", path: target });
+    committed?.();
   }
   /** Remove a leftover staging file. */
   discard(staging: string): void {

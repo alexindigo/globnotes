@@ -15,11 +15,7 @@ import {
   type PluginStatus,
 } from "./contracts.ts";
 import { PluginDataStore } from "./data.ts";
-import type {
-  DisplacementOffer,
-  OfferOutcome,
-  Versioning,
-} from "../hub/versioning.ts";
+import type { DisplacementOffer, Versioning } from "../hub/versioning.ts";
 import { readGrantCovers } from "./lifecycle.ts";
 import { PluginHost, type RpcAuthority } from "./host.ts";
 import { processClock } from "../observed_time.ts";
@@ -622,6 +618,9 @@ export class PluginRuntime implements Versioning {
       degraded: entry.deliveryFailures > 0,
       deliveryFailures: entry.deliveryFailures,
       diagnostics: structuredClone(entry.diagnostics),
+      ...(entry.source.manifest?.versioning
+        ? { versioningPending: entry.host?.versioningPending ?? 0 }
+        : {}),
     };
   }
   /** Losing any delegated scope terminates raw authority synchronously. */
@@ -890,9 +889,8 @@ export class PluginRuntime implements Versioning {
     );
   }
   /** Versioning (server/hub/versioning.ts): whether a versioner takes offers
-   * for `path`. Writes by a versioner are never offered: its own storage
-   * writes would otherwise wait on offers to versioners (itself included)
-   * whose handlers queue behind that very write. */
+   * for `path`. Writes by a versioner are never offered, preventing recursive
+   * versioning of plugin-maintained history. */
   interested(path: string, origin: string): boolean {
     const versioners = this.versioners();
     if (versioners.some((entry) => origin === `plugin:${entry.source.id}`)) {
@@ -912,119 +910,52 @@ export class PluginRuntime implements Versioning {
         path,
       );
   }
-  /** Offer displaced bytes to each eligible versioner and wait for custody,
-   * each within `versioningMs` and the caller's deadline (observed time).
-   * Never rejects: failures are outcomes and plugin diagnostics; the write
-   * proceeds either way. */
-  async offer(
-    offers: DisplacementOffer[],
-    deadline: number,
-  ): Promise<OfferOutcome[]> {
-    const outcomes: OfferOutcome[] = [];
-    const holding = processClock.hold();
-    try {
-      await Promise.all(
-        this.versioners().map(async (entry) => {
-          const id = entry.source.id;
-          const mine = offers.filter((offer) =>
-            `plugin:${id}` !== offer.origin &&
-            this.versionerTakes(entry, offer.path)
+  /** Post-commit admission only. Each host owns a bounded FIFO and its ordinary
+   * call deadline. No readiness, handler, filesystem RPC or result is awaited. */
+  enqueue(offers: DisplacementOffer[]): void {
+    if (this.closed) return;
+    for (const entry of this.versioners()) {
+      for (const offer of offers) {
+        if (
+          !this.interested(offer.path, offer.origin) ||
+          !this.versionerTakes(entry, offer.path)
+        ) continue;
+        const failure = (code: string, detail: string) => {
+          entry.deliveryFailures++;
+          this.diagnostic(entry, code, detail, {
+            operationId: offer.operationId,
+            action: offer.kind,
+          });
+        };
+        if (offer.bytes === null) {
+          failure(
+            "versioning_failed",
+            "displaced file exceeds the offer bound; offered without bytes",
           );
-          if (!mine.length) return;
-          const own = Math.min(
-            deadline,
-            processClock.now() + this.limits.versioningMs,
-          );
-          for (const offer of mine) {
-            const status = offer.bytes === null
-              ? "too_large"
-              : await this.deliverOffer(entry, offer, own);
-            outcomes.push({ versioner: id, path: offer.path, status });
-            if (status !== "kept" && status !== "declined") {
-              entry.deliveryFailures++;
-              this.diagnostic(
-                entry,
-                "versioning_failed",
-                status === "too_large"
-                  ? "displaced file exceeds the offer bound; offered without bytes"
-                  : `versioning offer ${status}; the write proceeded without this version`,
-                { operationId: offer.operationId, action: offer.kind },
-              );
-            }
-            if (status === "too_large") {
-              await this.deliverOffer(entry, offer, own);
-            }
-          }
-        }),
-      );
-    } finally {
-      holding();
-    }
-    return outcomes;
-  }
-  private async deliverOffer(
-    entry: RuntimeEntry,
-    offer: DisplacementOffer,
-    deadline: number,
-  ): Promise<OfferOutcome["status"]> {
-    try {
-      if (entry.starting && entry.status === "starting") {
-        let cancel: (() => void) | undefined;
-        try {
-          await Promise.race([
-            entry.starting,
-            new Promise((_, reject) => {
-              cancel = processClock.deadlineAt(
-                deadline,
-                () => reject(new Error("versioning readiness deadline")),
-              );
-            }),
-          ]);
-        } finally {
-          cancel?.();
         }
-      }
-      const host = entry.host;
-      if (entry.status !== "ready" || !host?.available) return "failed";
-      const [handler] = this.handlerIds(entry, "versioning");
-      if (!handler) return "failed";
-      if (deadline - processClock.now() <= 0) return "timeout";
-      // Two bounds: the write waits for custody until `deadline` (soft; the
-      // offer then counts as a timeout and stays queued nowhere: an offer not
-      // yet dispatched is withdrawn). A dispatched handler keeps running under
-      // the ordinary service-call bound, so a slow versioner is not failed.
-      const invocation = host.invoke(
-        handler,
-        [offer],
-        false,
-        this.limits.serviceCallMs,
-        {
+        const host = entry.host;
+        const [handler] = this.handlerIds(entry, "versioning");
+        if (entry.status !== "ready" || !host?.available || !handler) {
+          failure(
+            "versioning_gap",
+            "versioning delivery unavailable; committed version was dropped",
+          );
+          continue;
+        }
+        host.invoke(handler, [offer], false, this.limits.serviceCallMs, {
           generation: host.generation!,
           causal: { parentId: offer.operationId, depth: 1 },
           lane: "versioning",
-          withdrawAt: deadline,
-        },
-      ).then(
-        (result) =>
-          (result as { status?: unknown } | undefined)?.status === "declined"
-            ? "declined" as const
-            : "kept" as const,
-        (error) =>
-          /withdrawn|deadline/.test(String((error as Error)?.message))
-            ? "timeout" as const
-            : "failed" as const,
-      );
-      let cancel: (() => void) | undefined;
-      const soft = new Promise<"timeout">((resolve) => {
-        cancel = processClock.deadlineAt(deadline, () => resolve("timeout"));
-      });
-      try {
-        return await Promise.race([invocation, soft]);
-      } finally {
-        cancel?.();
+        }).catch((error) => {
+          failure(
+            error instanceof PluginContractError &&
+              error.code === "plugin_versioning_gap"
+              ? "versioning_gap"
+              : "versioning_failed",
+            String((error as Error)?.message ?? error),
+          );
+        });
       }
-    } catch {
-      return "failed";
     }
   }
   /** Observer admission never waits for readiness or executes under an operation lock. */

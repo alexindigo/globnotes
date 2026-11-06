@@ -85,8 +85,8 @@ export interface PluginCtx {
     ): Promise<unknown>;
   };
   fs: AuxiliaryFs;
-  /** Displaced bytes before the hub replaces, deletes or moves them. Resolve
-   * once they are in the plugin's custody, or return {status:"declined"}. */
+  /** Legacy backup: best-effort displaced bytes delivered after commit.
+   * The write never waits for this handler. */
   versioning: { onOffer(handler: Handler): Disposer };
   snapshot: JsonValues;
   register(disposer: Disposer): Disposer;

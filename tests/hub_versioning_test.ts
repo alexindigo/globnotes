@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-/** The versioning extension point (docs/hub.md "Versioning"): bytes about to
- * be replaced, deleted or moved away are offered to versioning plugins before
- * the write; creates are not offered; a versioner's own writes are never
- * offered and cannot deadlock; failures let the write proceed visibly. */
+/** Legacy versioning: post-commit best-effort bytes, bounded delivery and no
+ * plugin completion dependency on any writer. */
 
 import { currentBase } from "./helpers/storage.ts";
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import { pluginOperationsFixture } from "./helpers/plugin_operations_fixture.ts";
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
 import { versionOf } from "../server/hub/merge.ts";
-import { processClock } from "../server/observed_time.ts";
+import { VaultEffects } from "../server/hub/effects.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 const VERSIONER = `
-let mode = "keep", slowMs = 3000, guardMs = 0, finished = 0;
+let mode = "keep", slowMs = 3000, guardMs = 0, finished = 0, release;
 const seen = [];
 export function activate(ctx) {
   if (GUARD) ctx.hooks.on("pre-save", () => new Promise((r) => setTimeout(r, guardMs)));
@@ -37,6 +35,8 @@ export function activate(ctx) {
     });
     if (mode === "fail") throw new Error("versioner failed");
     if (mode === "slow") await new Promise((r) => setTimeout(r, slowMs));
+    if (mode === "hang") await new Promise(() => {});
+    if (mode === "hold") await new Promise((r) => { release = r; });
     finished++;
     if (mode === "decline") return { status: "declined" };
     if (mode === "store") {
@@ -51,6 +51,8 @@ export function activate(ctx) {
     if (p.slowMs) slowMs = p.slowMs;
     if (p.guardMs) guardMs = p.guardMs;
     if (p.finished) return finished;
+    if (p.count) return seen.length;
+    if (p.release) { mode = "keep"; release?.(); return; }
     if (p.write) {
       return ctx.fs.writeFile(p.write, new TextEncoder().encode("own"), {
         expect: { kind: "absent" },
@@ -92,16 +94,25 @@ async function versionerFixture(
   });
   const facts: OperationFact[] = [];
   b.lifecycle.onFact((fact) => facts.push(fact));
+  const idle = (id = "versioner") =>
+    waitUntil(() => {
+      const status = b.runtime.status(id);
+      return status?.versioningPending === 0 ? done() : pending(status);
+    }, { label: `versioning delivery idle: ${id}` });
   return {
     ...b,
     facts,
-    seen: () => b.command("run", {}) as Promise<Record<string, unknown>[]>,
+    idle,
+    seen: async () => {
+      await idle();
+      return await b.command("run", {}) as Record<string, unknown>[];
+    },
     mode: (mode: string) => b.command("run", { mode }),
     origin: () => fixtureApiOrigin(b.lifecycle),
   };
 }
 
-Deno.test("versioning: a save offers the replaced bytes while they are still on disk", async () => {
+Deno.test("versioning: delivery sees the committed disk and carries the displaced bytes", async () => {
   const v = await versionerFixture();
   try {
     await v.create("Note", "first");
@@ -113,21 +124,21 @@ Deno.test("versioning: a save offers the replaced bytes while they are still on 
       path: "Note.md",
       newPath: null,
       text: "first",
-      disk: "first",
+      disk: "second",
       origin: "api",
       size: 5,
     }]);
     const save = v.facts.find((f) => f.action === "save")!;
-    assertEquals(save.metadata?.versioning, [{
-      pluginId: "versioner",
-      path: "Note.md",
-      status: "kept",
-    }]);
+    assertEquals(
+      save.metadata?.versioning,
+      undefined,
+      "save facts cannot report asynchronous outcomes",
+    );
     await v.remove("Note");
     assertEquals((await v.seen()).map((s) => [s.kind, s.text, s.disk]), [[
       "delete",
       "second",
-      "second",
+      "error:fs_not_found",
     ]]);
   } finally {
     await v.close();
@@ -180,6 +191,61 @@ Deno.test("versioning: extensions and read grants decide what a versioner sees",
   }
 });
 
+Deno.test("versioning: facade replace, overwrite-move and removal deliver only after commit", async () => {
+  const v = await versionerFixture();
+  try {
+    await v.fixture.install("writer", {
+      runtime: { server: "service.js" },
+      capabilities: { filesystem: { read: ["vault"], write: ["vault"] } },
+    }, {
+      "service.js": `
+      export function activate(ctx) {
+        ctx.commands.register({id:"write",label:"write",target:"server"}, async ({op}) => {
+          const source = await ctx.fs.stat("source.bin");
+          if (op === "replace") return ctx.fs.writeFile("source.bin", new TextEncoder().encode("new"), {expect:{kind:"exact",token:source.token}});
+          if (op === "move") {
+            const destination = await ctx.fs.stat("target.bin");
+            return ctx.fs.rename("source.bin", "target.bin", {sourceToken:source.token,destination:{kind:"exact",token:destination.token}});
+          }
+          const target = await ctx.fs.stat("target.bin");
+          return ctx.fs.remove("target.bin", {token:target.token});
+        });
+      }`,
+    });
+    await v.runtime.reconcile();
+    await waitUntil(
+      () =>
+        v.runtime.status("writer")?.status === "ready"
+          ? done()
+          : pending(v.runtime.status("writer")),
+      { label: "facade writer ready" },
+    );
+    Deno.writeTextFileSync(`${v.fixture.vault}/source.bin`, "old");
+    Deno.writeTextFileSync(`${v.fixture.vault}/target.bin`, "target");
+    await v.runtime.invokeCommand("writer", "write", { op: "replace" });
+    assertEquals(
+      (await v.seen()).map((s) => [s.kind, s.text, s.disk, s.origin]),
+      [
+        ["replace", "old", "new", "plugin:writer"],
+      ],
+    );
+    await v.runtime.invokeCommand("writer", "write", { op: "move" });
+    assertEquals(
+      (await v.seen()).map((s) => [s.kind, s.path, s.text, s.disk]),
+      [
+        ["move", "source.bin", "new", "error:fs_not_found"],
+        ["replace", "target.bin", "target", "new"],
+      ],
+    );
+    await v.runtime.invokeCommand("writer", "write", { op: "remove" });
+    assertEquals((await v.seen()).map((s) => [s.kind, s.text, s.disk]), [
+      ["delete", "new", "error:fs_not_found"],
+    ]);
+  } finally {
+    await v.close();
+  }
+});
+
 Deno.test("versioning: a versioner's own writes are never offered and never deadlock", async () => {
   const v = await versionerFixture();
   try {
@@ -207,47 +273,56 @@ Deno.test("versioning: a versioner's own writes are never offered and never dead
   }
 });
 
-Deno.test("versioning: a failing, declining or slow versioner never blocks the write", async () => {
-  const v = await versionerFixture({}, { versioningMs: 500 });
+Deno.test("versioning: failures, declines and ordinary call deadlines are plugin-local", async () => {
+  const v = await versionerFixture({}, { serviceCallMs: 700 });
   try {
     await v.create("Note", "v1");
-    for (
-      const [mode, status] of [["fail", "failed"], ["decline", "declined"]]
-    ) {
+    for (const mode of ["fail", "decline"]) {
       await v.mode(mode);
       v.facts.length = 0;
       const saved = await v.save("Note", `after-${mode}`);
       assertEquals(saved.content, `after-${mode}`);
-      assertEquals(
-        v.facts.find((f) => f.action === "save")!.metadata?.versioning,
-        [{ pluginId: "versioner", path: "Note.md", status }],
-      );
+      await v.idle();
+      assertEquals(v.runtime.status("versioner")!.status, "ready");
     }
     const failed = v.runtime.status("versioner")!;
     assert(
       failed.diagnostics.some((d) => d.code === "versioning_failed"),
       "a failure is visible",
     );
-    await v.mode("slow");
+    await v.mode("hang");
     v.facts.length = 0;
     const slow = await v.save("Note", "after-slow");
+    assertEquals(
+      v.runtime.status("versioner")!.status,
+      "ready",
+      "save returns before the handler deadline",
+    );
     assertEquals(slow.content, "after-slow");
     assertEquals(
       Deno.readTextFileSync(`${v.fixture.vault}/Note.md`),
       "after-slow",
     );
+    await waitUntil(() => {
+      const status = v.runtime.status("versioner");
+      return status?.status === "failed" ? done() : pending(status);
+    }, { label: "hung versioner ordinary deadline" });
+    await v.save("Note", "after-crash");
     assertEquals(
-      v.facts.find((f) => f.action === "save")!.metadata?.versioning,
-      [{ pluginId: "versioner", path: "Note.md", status: "timeout" }],
+      Deno.readTextFileSync(`${v.fixture.vault}/Note.md`),
+      "after-crash",
     );
-    // The custody window is soft: the slow handler is not failed.
-    assertEquals(v.runtime.status("versioner")!.status, "ready");
+    assert(
+      v.runtime.status("versioner")!.diagnostics.some((d) =>
+        d.code === "versioning_gap"
+      ),
+    );
   } finally {
     await v.close();
   }
 });
 
-Deno.test("versioning: offers carry the writer's origin and leave the file as it was", async () => {
+Deno.test("versioning: refused effects deliver nothing; partial commits deliver only completed effects", async () => {
   const v = await versionerFixture({
     capabilities: {
       network: false,
@@ -257,88 +332,121 @@ Deno.test("versioning: offers carry the writer's origin and leave the file as it
       filesystem: { read: ["vault"], write: ["vault"] },
     },
   });
-  // A second, non-versioning plugin writes through the facade.
+  // Drive the same effects boundary used by facade writes.
   try {
     Deno.writeTextFileSync(`${v.fixture.vault}/data.bin`, "before");
     v.hub.scanNow();
-    const before = v.hub.fileState("data.bin")!;
-    const outcomes = await v.gate.offer(
-      [{ kind: "replace", file: `${v.fixture.vault}/data.bin` }],
-      "plugin:writer",
-      "op-1",
-      Number.MAX_SAFE_INTEGER,
+    const file = `${v.fixture.vault}/data.bin`,
+      effects = new VaultEffects(v.fixture.vault);
+    assertThrows(() =>
+      v.gate.apply([file], "plugin:writer", [], () => {
+        throw new Error("refused");
+      })
     );
-    assertEquals(outcomes, [{
-      versioner: "versioner",
-      path: "data.bin",
-      status: "kept",
-    }]);
+    assertEquals(await v.seen(), []);
+    assertThrows(() =>
+      v.gate.apply([file], "plugin:writer", [], () => {
+        effects.replace(file, "after");
+        throw new Error("later effect failed");
+      }, "op-1")
+    );
     const [offer] = await v.seen();
     assertEquals([offer.kind, offer.text, offer.origin], [
       "replace",
       "before",
       "plugin:writer",
     ]);
-    assertEquals(v.hub.fileState("data.bin")!.hash, before.hash);
-  } finally {
-    await v.close();
-  }
-});
-
-Deno.test("versioning: a handler past its custody window keeps running and the plugin stays ready; queued offers past theirs are withdrawn", async () => {
-  const v = await versionerFixture({}, { versioningMs: 300 });
-  try {
-    await v.create("Note", "v1");
-    await v.command("run", { mode: "slow", slowMs: 1200 });
-    const offer = (deadline: number) =>
-      v.gate.offer(
-        [{ kind: "replace", file: `${v.fixture.vault}/Note.md` }],
-        "api",
-        crypto.randomUUID(),
-        deadline,
-      );
-    const now = processClock.now();
-    const [first, second] = await Promise.all([
-      offer(now + 300),
-      offer(now + 300),
-    ]);
-    assertEquals(first.map((o) => o.status), ["timeout"]);
-    assertEquals(second.map((o) => o.status), ["timeout"]);
-    assertEquals(v.runtime.status("versioner")!.status, "ready");
-    await waitUntil(async () => {
-      const finished = await v.command("run", { finished: true }) as number;
-      return finished >= 1 ? done(finished) : pending({ finished });
-    }, { label: "slow versioner finished" });
-    // Only the dispatched offer ran; the queued one was withdrawn.
-    assertEquals((await v.seen()).length, 1);
-    assertEquals(await v.command("run", { finished: true }), 1);
-    await v.mode("keep");
-    v.facts.length = 0;
-    await v.save("Note", "v2");
+    assertEquals(offer.disk, "after");
     assertEquals(
-      v.facts.find((f) => f.action === "save")!.metadata?.versioning,
-      [{ pluginId: "versioner", path: "Note.md", status: "kept" }],
+      v.hub.fileState("data.bin")!.hash,
+      versionOf(new TextEncoder().encode("after")),
     );
   } finally {
     await v.close();
   }
 });
 
-Deno.test("versioning: guards never shorten a versioner's custody window", async () => {
+for (
+  const [bound, limits] of [
+    ["entries", { versioningQueue: 2 }],
+    ["bytes", { versioningQueue: 8, versioningQueueBytes: 4 }],
+  ] as const
+) {
+  Deno.test(`versioning: ${bound} overflow drops oldest pending entries with a visible gap, isolating consumers`, async () => {
+    const v = await versionerFixture({}, limits);
+    try {
+      await v.fixture.install("healthy", {
+        runtime: { server: "service.js" },
+        versioning: {},
+        capabilities: {
+          read: ["vault"],
+          filesystem: { read: ["vault"], write: [] },
+        },
+      }, { "service.js": `const GUARD = false;\n${VERSIONER}` });
+      await v.runtime.reconcile();
+      await waitUntil(
+        () =>
+          v.runtime.status("healthy")?.status === "ready"
+            ? done()
+            : pending(v.runtime.status("healthy")),
+        { label: "healthy versioner ready" },
+      );
+      await v.mode("hold");
+      await v.create("Queue", "v0");
+      await v.save("Queue", "v1");
+      await waitUntil(async () => {
+        const count = await v.command("run", { count: true });
+        return count === 1 ? done() : pending(count);
+      }, { label: "first offer held" });
+      for (let i = 2; i <= 5; i++) {
+        await v.save("Queue", `v${i}`);
+        await v.idle("healthy");
+      }
+      const status = v.runtime.status("versioner")!;
+      assertEquals(
+        status.versioningPending,
+        3,
+        "one active plus two pending bodies",
+      );
+      assertEquals(status.deliveryFailures, 2);
+      assertEquals(status.degraded, true);
+      assertEquals(
+        status.diagnostics.filter((d) => d.code === "versioning_gap").length,
+        2,
+      );
+      assertEquals(v.runtime.status("healthy")!.degraded, false);
+      const healthy = await v.runtime.invokeCommand(
+        "healthy",
+        "run",
+        {},
+      ) as Record<string, unknown>[];
+      assertEquals(healthy.map((s) => s.text), ["v0", "v1", "v2", "v3", "v4"]);
+      await v.command("run", { release: true });
+      assertEquals((await v.seen()).map((s) => s.text), ["v0", "v3", "v4"]);
+      assertEquals(Deno.readTextFileSync(`${v.fixture.vault}/Queue.md`), "v5");
+    } finally {
+      await v.close();
+    }
+  });
+}
+
+Deno.test("versioning: guards finish before commit, not before plugin work finishes", async () => {
   const v = await versionerFixture(
     { hooks: ["pre-save"] },
-    { preOperationMs: 700, versioningMs: 2000 },
+    { preOperationMs: 700 },
   );
   try {
     await v.create("Note", "v1");
-    // The guard uses most of the operation budget; custody still gets its own.
-    await v.command("run", { mode: "slow", slowMs: 400, guardMs: 500 });
+    await v.command("run", { mode: "hold", guardMs: 500 });
     v.facts.length = 0;
     await v.save("Note", "v2");
-    assertEquals(
-      v.facts.find((f) => f.action === "save")!.metadata?.versioning,
-      [{ pluginId: "versioner", path: "Note.md", status: "kept" }],
-    );
+    assertEquals(Deno.readTextFileSync(`${v.fixture.vault}/Note.md`), "v2");
+    await waitUntil(async () => {
+      const count = await v.command("run", { count: true });
+      return count === 1 ? done() : pending(count);
+    }, { label: "post-guard versioner started" });
+    await v.command("run", { release: true });
+    assertEquals((await v.seen())[0].disk, "v2");
   } finally {
     await v.close();
   }

@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
- * The versioning extension point (docs/hub.md "Versioning"): before the gate
- * replaces, deletes or moves bytes away from a path, it offers them to
- * versioners. The hub keeps nothing: the bytes are read for the offer and
- * dropped. The plugin runtime implements this interface; the hub never
- * imports plugins.
+ * Best-effort post-commit delivery for the legacy v2 backup plugin. The host
+ * captures displaced bytes transiently, never persists them, and never waits
+ * for plugins. Future v3 versioners follow the hub change log (M5/M7).
  */
 
 export interface DisplacementOffer {
@@ -24,18 +22,11 @@ export interface DisplacementOffer {
   origin: string;
 }
 
-export interface OfferOutcome {
-  versioner: string;
-  path: string;
-  status: "kept" | "declined" | "failed" | "timeout" | "too_large";
-}
-
 export interface Versioning {
   /** Whether any versioner takes offers for `path` written by `origin`
    * (bytes are read only then). */
   interested(path: string, origin: string): boolean;
-  /** Resolves when every eligible versioner has taken custody, declined,
-   * failed or timed out (`deadline` in observed time); never rejects. The
-   * bytes may still not be displaced (a later refusal). */
-  offer(offers: DisplacementOffer[], deadline: number): Promise<OfferOutcome[]>;
+  /** Admit committed displacements to independent bounded in-memory queues.
+   * No plugin execution or completion is awaited; gaps are diagnostics. */
+  enqueue(offers: DisplacementOffer[]): void;
 }

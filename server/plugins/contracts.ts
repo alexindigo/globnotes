@@ -17,10 +17,10 @@ export const PLUGIN_LIMITS = Object.freeze({
   httpBytes: 16 * 1024 * 1024,
   controlBytes: 1024 * 1024,
   streamHeartbeatMs: 15_000,
-  /** Observed time a write waits for each versioning plugin's custody. */
-  versioningMs: 10_000,
   /** Pending versioning offers per plugin beyond the one in flight. */
   versioningQueue: 8,
+  /** Pending displaced bytes per plugin (plus one in-flight body <= 16 MiB). */
+  versioningQueueBytes: 32 * 1024 * 1024,
 });
 export type PluginLimits = { [Key in keyof typeof PLUGIN_LIMITS]: number };
 export const FS_LIMITS = Object.freeze({

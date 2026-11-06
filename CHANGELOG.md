@@ -33,9 +33,10 @@ Open notes follow changes made elsewhere over the vault change stream, with a
 polling fallback. Clean editors refresh in place; dirty editors keep their text
 and explain that the next save will merge it.
 
-Versioning plugins: the hub offers a file's previous bytes to plugins that declare
-`versioning` before a globnotes write replaces, deletes or moves them, and waits up
-to 10 seconds for them to keep a copy. The hub itself still stores no content.
+The legacy backup hook delivers displaced bytes asynchronously after commit.
+Saves never wait on versioning plugins. Each plugin has a bounded in-memory queue
+with visible gaps on overflow; a crash before plugin storage can lose a version.
+The host writes no content spool. Future v3 versioners follow the hub change log.
 
 ### Changed
 
@@ -61,9 +62,9 @@ Plugin contract version 2: plugin writes take a `base` (and `onStale`), reads an
 receipts return versions, and render Workers can no longer write files directly.
 See `docs/plugin-api.md` "Contract version" and `MIGRATION.md`.
 
-The versioned backup plugin keeps a note's previous text before a save, rename or
-delete replaces it (before: after the change). A failed or slow backup still never
-blocks the save, and is shown in the plugin's diagnostics.
+The versioned backup plugin stages and publishes a note's displaced text after
+the save, rename or delete commits. Failed delivery is visible in plugin
+diagnostics; processing and recoverable journal state remain in backup status.
 
 Moving a note with its attachments never overwrites a file in the destination: an
 attachment whose name is taken there gets the next free name (`name 1.png`,

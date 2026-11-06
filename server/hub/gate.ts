@@ -12,21 +12,13 @@
 import * as path from "@std/path";
 import type { VaultHub } from "./hub.ts";
 import { mergeText, versionOf } from "./merge.ts";
-import { type StorageEffect, withGatePass } from "./effects.ts";
-import type {
-  DisplacementOffer,
-  OfferOutcome,
-  Versioning,
-} from "./versioning.ts";
-
-/** Bytes about to leave a path: replaced, deleted or moved away. */
-export interface Displacement {
-  kind: DisplacementOffer["kind"];
-  /** Absolute path of the displaced file. */
-  file: string;
-  /** For "move": the absolute destination. */
-  destination?: string;
-}
+import {
+  type Displacement,
+  type StorageEffect,
+  withGatePass,
+} from "./effects.ts";
+import { createUuid } from "../../shared/uuid.ts";
+import type { DisplacementOffer, Versioning } from "./versioning.ts";
 
 /** Displaced files only: a displaced directory (an attachment folder moved
  * with its note) contributes each regular file below it, with its own
@@ -212,21 +204,25 @@ export class HubGate {
     } = {},
   ) {}
 
-  /** Offer bytes about to be displaced to the versioners (docs/hub.md
-   * "Versioning"). Called before the commit section, outside every write
-   * lock; the commit then revalidates the displaced version. */
-  async offer(
+  /** Capture only at the actual effect boundary, after all revalidation.
+   * These buffers live only until post-commit admission; no content is stored. */
+  private capture(
     displacements: readonly Displacement[],
     origin: string,
     operationId: string,
-    deadline: number,
-  ): Promise<OfferOutcome[]> {
+    seen: Set<string>,
+  ): DisplacementOffer[] {
     const versioning = this.adapters.versioning?.(), hub = this.adapters.hub;
     if (!versioning || !hub) return [];
     const offers: DisplacementOffer[] = [];
+    const destinations: string[] = [];
     for (const displaced of files(displacements)) {
+      if (displaced.destination) destinations.push(displaced.destination);
       const relative = hub.relativePath(displaced.file);
-      if (relative === null || !versioning.interested(relative, origin)) {
+      if (
+        relative === null || seen.has(relative) ||
+        !versioning.interested(relative, origin)
+      ) {
         continue;
       }
       let bytes: Uint8Array | null;
@@ -251,13 +247,19 @@ export class HubGate {
           bytes,
           origin,
         });
+        seen.add(relative);
       } catch (error) {
         // Already gone: nothing is displaced; the commit decides the outcome.
         if (!(error instanceof Deno.errors.NotFound)) throw error;
       }
     }
-    if (!offers.length) return [];
-    return await versioning.offer(offers, deadline);
+    // A move followed by a derived write at its destination is one original
+    // displacement, not a second version of the host's intermediate content.
+    for (const destination of destinations) {
+      const relative = hub.relativePath(destination);
+      if (relative !== null) seen.add(relative);
+    }
+    return offers;
   }
 
   /** Run a synchronous effect for `paths` inside the gate: announce them to
@@ -270,13 +272,22 @@ export class HubGate {
     origin: string,
     journal: StorageEffect[],
     effect: () => T,
+    operationId = createUuid(),
   ): T {
     const hub = this.adapters.hub;
     const token = hub?.expect(paths);
+    const committed: DisplacementOffer[] = [], seen = new Set<string>();
     try {
-      return withGatePass(paths, journal, effect);
+      return withGatePass(paths, journal, effect, (displacements) => {
+        const captured = this.capture(displacements, origin, operationId, seen);
+        return () => committed.push(...captured);
+      });
     } finally {
-      if (token) hub!.record(token, journal, origin);
+      try {
+        if (token) hub!.record(token, journal, origin);
+      } finally {
+        if (committed.length) this.adapters.versioning?.()?.enqueue(committed);
+      }
     }
   }
 }
