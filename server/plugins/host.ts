@@ -67,6 +67,9 @@ export interface RpcAuthority {
 export interface InvocationOptions {
   generation?: string;
   causal?: { parentId?: string; depth: number };
+  /** Versioning offers hold a write: their own bounded lane, never behind the
+   * ordinary FIFO or a guard, and not a pre-hook (the handler may use ctx.fs). */
+  lane?: "versioning";
 }
 export type RpcHandler = (
   method: string,
@@ -133,6 +136,8 @@ interface Slot {
    * The note-operation lock serializes operations, so at most one guard is
    * in flight per plugin. */
   activeGuard: Job | null;
+  /** Versioning lane: one offer in flight per slot. */
+  activeVersioning: Job | null;
   bootTimer?: () => void;
   /** The worker's own reported heartbeat lateness (diagnostic only). */
   lastWorkerLateMs: number | null;
@@ -173,6 +178,8 @@ export class PluginHost {
   private queue: Job[] = [];
   /** Service guards have their own bounded pending admission, independent of FIFO. */
   private guardQueue: Job[] = [];
+  /** Versioning offers have their own bounded pending admission. */
+  private versioningQueue: Job[] = [];
   private sequence = 0;
   private stopped = false;
   private stopping = false;
@@ -348,6 +355,7 @@ export class PluginHost {
         lastDispatch: 0,
         active: null,
         activeGuard: null,
+        activeVersioning: null,
         resolveReady,
         rejectReady,
         readyPromise,
@@ -507,6 +515,8 @@ export class PluginHost {
         if (data.type === "result") {
           const job = slot.activeGuard?.id === data.id
             ? slot.activeGuard
+            : slot.activeVersioning?.id === data.id
+            ? slot.activeVersioning
             : slot.active;
           if (!job || job.id !== data.id) return;
           if (!job.context || job.context.reference.id !== data.contextId) {
@@ -516,7 +526,9 @@ export class PluginHost {
           slot.contexts.delete(job.context.reference.id);
           job.timer();
           if (slot.activeGuard?.id === data.id) slot.activeGuard = null;
-          else slot.active = null;
+          else if (slot.activeVersioning?.id === data.id) {
+            slot.activeVersioning = null;
+          } else slot.active = null;
           if (data.ok) job.resolve(data.value);
           else job.reject(new Error(String(data.value)));
           this.pump();
@@ -755,6 +767,13 @@ export class PluginHost {
           })),
         { handlerId: "tentative-endpoint", descriptor: definition },
       ]);
+    } else if (registration.kind === "versioning") {
+      if (!this.manifest.versioning) {
+        throw new Error("versioning is not declared by this plugin");
+      }
+      if (
+        [...this.registrations.values()].some((r) => r.kind === "versioning")
+      ) throw new Error("duplicate versioning handler");
     } else if (
       registration.kind !== "settings-change" &&
       registration.kind !== "action-result"
@@ -827,6 +846,20 @@ export class PluginHost {
       );
     }
     const guardLane = pre && this.role === "service";
+    const versioningLane = !pre && this.role === "service" &&
+      invocation?.lane === "versioning";
+    if (
+      versioningLane &&
+      this.versioningQueue.length >= this.limits.versioningQueue
+    ) {
+      return Promise.reject(
+        new PluginContractError(
+          503,
+          "plugin_versioning_queue_full",
+          "plugin versioning queue is full",
+        ),
+      );
+    }
     if (guardLane && this.guardQueue.length >= 1) {
       return Promise.reject(
         new PluginContractError(
@@ -837,7 +870,7 @@ export class PluginHost {
       );
     }
     if (
-      this.role === "service" && !guardLane &&
+      this.role === "service" && !guardLane && !versioningLane &&
       this.queue.length >= this.limits.queuedJobs
     ) {
       return Promise.reject(
@@ -864,7 +897,11 @@ export class PluginHost {
         resolve,
         reject,
         timer: this.clock.deadline(timeout, () => {
-          const pending = guardLane ? this.guardQueue : this.queue;
+          const pending = guardLane
+            ? this.guardQueue
+            : versioningLane
+            ? this.versioningQueue
+            : this.queue;
           const queued = pending.indexOf(job);
           if (queued >= 0) {
             pending.splice(queued, 1);
@@ -873,7 +910,8 @@ export class PluginHost {
             return;
           }
           const active = this.slots.find((slot) =>
-            slot.active === job || slot.activeGuard === job
+            slot.active === job || slot.activeGuard === job ||
+            slot.activeVersioning === job
           );
           if (active) {
             this.fail(
@@ -885,7 +923,11 @@ export class PluginHost {
       };
       if (initialization && target) this.dispatch(target, job);
       else {
-        (guardLane ? this.guardQueue : this.queue).push(job);
+        (guardLane
+          ? this.guardQueue
+          : versioningLane
+          ? this.versioningQueue
+          : this.queue).push(job);
         this.pump();
       }
     });
@@ -902,6 +944,17 @@ export class PluginHost {
         );
       if (slot?.ready && slot.usable && !slot.activeGuard) {
         this.guardQueue.shift();
+        this.dispatch(slot, job);
+      }
+    }
+    if (this.role === "service" && this.versioningQueue.length) {
+      const job = this.versioningQueue[0];
+      const slot = job.target ??
+        this.slots.find((candidate) =>
+          candidate.ready && candidate.usable && !candidate.activeVersioning
+        );
+      if (slot?.ready && slot.usable && !slot.activeVersioning) {
+        this.versioningQueue.shift();
         this.dispatch(slot, job);
       }
     }
@@ -936,6 +989,10 @@ export class PluginHost {
     // pump owns lane eligibility; an admitted guard never supersedes another.
     if (job.pre && this.role === "service") {
       slot.activeGuard = job;
+    } else if (
+      this.role === "service" && job.invocation?.lane === "versioning"
+    ) {
+      slot.activeVersioning = job;
     } else {
       slot.active = job;
     }
@@ -1006,11 +1063,22 @@ export class PluginHost {
       slot.activeGuard.reject(new Error(detail));
       slot.activeGuard = null;
     }
+    if (slot.activeVersioning) {
+      slot.activeVersioning.timer();
+      slot.activeVersioning.reject(new Error(detail));
+      slot.activeVersioning = null;
+    }
     slot.ready = false;
     slot.usable = false;
   }
   private rejectQueued(detail: string): void {
-    for (const job of [...this.queue.splice(0), ...this.guardQueue.splice(0)]) {
+    for (
+      const job of [
+        ...this.queue.splice(0),
+        ...this.guardQueue.splice(0),
+        ...this.versioningQueue.splice(0),
+      ]
+    ) {
       job.timer();
       job.reject(new Error(detail));
     }
@@ -1178,6 +1246,7 @@ export class PluginHost {
     const errors: unknown[] = [];
     const cancelled = [
       ...this.guardQueue.splice(0),
+      ...this.versioningQueue.splice(0),
       ...this.queue.filter((job) => job.pre),
     ];
     this.queue = this.queue.filter((job) => !job.pre);
@@ -1207,6 +1276,14 @@ export class PluginHost {
         slot.activeGuard.timer();
         slot.activeGuard.reject(new Error("plugin guard owner disabled"));
         slot.activeGuard = null;
+        unfinished++;
+      }
+      if (slot.activeVersioning) {
+        slot.activeVersioning.timer();
+        slot.activeVersioning.reject(
+          new Error("plugin versioning owner disabled"),
+        );
+        slot.activeVersioning = null;
         unfinished++;
       }
       while (

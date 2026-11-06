@@ -3,7 +3,8 @@
 import { createHash } from "node:crypto";
 import * as path from "@std/path";
 import { type StorageEffect, VaultEffects } from "../hub/effects.ts";
-import { HubGate } from "../hub/gate.ts";
+import { type Displacement, HubGate } from "../hub/gate.ts";
+import { createUuid } from "../../shared/uuid.ts";
 import {
   FS_LIMITS,
   type FsEffect,
@@ -768,7 +769,35 @@ export class AuxiliaryFilesystem {
       await this.adapters.prepare?.();
       return await run();
     };
-    const running = (mutating ? this.#writer.run(prepared) : prepared()).catch(
+    // Offer what a mutation would displace before taking the writer lock (a
+    // versioner's handler may itself write through this facade); the commit's
+    // token check keeps the offered bytes the displaced ones.
+    const displaced: Displacement[] = [];
+    if (operation === "writeFile" && first.stat?.kind === "file") {
+      displaced.push({ kind: "replace", file: first.binding.canonical });
+    } else if (operation === "rename" && first.stat?.kind === "file") {
+      displaced.push({
+        kind: "move",
+        file: first.binding.canonical,
+        destination: second!.binding.canonical,
+      });
+      if (second!.stat?.kind === "file") {
+        displaced.push({ kind: "replace", file: second!.binding.canonical });
+      }
+    } else if (operation === "remove" && first.stat?.kind === "file") {
+      displaced.push({ kind: "delete", file: first.binding.canonical });
+    }
+    const offered = displaced.length
+      ? this.#gate.offer(
+        displaced,
+        `plugin:${manifest.id}`,
+        `fs:${createUuid()}`,
+        deadline - 1000,
+      ).catch(() => [])
+      : Promise.resolve([]);
+    const running = offered.then(() =>
+      mutating ? this.#writer.run(prepared) : prepared()
+    ).catch(
       (error) => {
         if (error instanceof FsError) {
           throw new FsError(

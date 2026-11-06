@@ -21,7 +21,8 @@ import {
 } from "./expectation.ts";
 import { guessType } from "../files/mimetypes.ts";
 import { FileSystemNotes, type StorageEffect } from "./file_system.ts";
-import { HubGate } from "../hub/gate.ts";
+import { type Displacement, HubGate } from "../hub/gate.ts";
+import type { OfferOutcome } from "../hub/versioning.ts";
 import {
   type Note,
   type NoteCreate,
@@ -30,6 +31,7 @@ import {
 } from "./models.ts";
 import type {
   HookName,
+  JsonValues,
   NoteSnapshot,
   OperationAction,
   OperationFact,
@@ -449,6 +451,32 @@ export class NoteOperations {
           leases: await this.#guard("pre-save", fact, deadline),
         });
       }
+      // Offer what leaves a path before the commit (docs/hub.md "Versioning");
+      // the commit's revalidation keeps the offered bytes the displaced ones.
+      const versioning = await this.#offer(
+        [
+          ...(saving || renameChanged
+            ? [
+              renameChanged
+                ? {
+                  kind: "move" as const,
+                  file: prepared.sourceFile,
+                  destination: prepared.targetFile,
+                }
+                : { kind: "replace" as const, file: prepared.sourceFile },
+            ]
+            : []),
+          ...prepared.attachments.map((file) => ({
+            kind: "move" as const,
+            file: file.source,
+            destination: file.destination,
+          })),
+        ],
+        ctx,
+        requester,
+        operationId,
+        deadline,
+      );
       const actualEffects: StorageEffect[] = [];
       const note = await this.#commitGate(
         capturedEpoch,
@@ -500,6 +528,7 @@ export class NoteOperations {
             newPath: note.path,
             before: snapshot(before),
             after: snapshot(note),
+            ...versioningMetadata(versioning),
           }),
         );
       }
@@ -510,6 +539,7 @@ export class NoteOperations {
             before: snapshot(before),
             after: snapshot(note),
             contentChanged,
+            ...versioningMetadata(versioning),
           }),
         );
       }
@@ -547,6 +577,13 @@ export class NoteOperations {
       const deadline = processClock.now() +
         this.adapters.runtime()!.limits.preOperationMs;
       const leases = await this.#guard("pre-delete", fact, deadline);
+      const versioning = await this.#offer(
+        [{ kind: "delete", file: effects[0] }],
+        ctx,
+        requester,
+        operationId,
+        deadline,
+      );
       const actualEffects: StorageEffect[] = [];
       await this.#commitGate(
         capturedEpoch,
@@ -578,6 +615,7 @@ export class NoteOperations {
           path: notePath,
           before: snapshot(before),
           after: null,
+          ...versioningMetadata(versioning),
         }),
       );
       this.#syncEffects(operationId, ctx, actualEffects);
@@ -727,6 +765,13 @@ export class NoteOperations {
           ),
         });
       }
+      const versioning = await this.#offer(
+        changes.map((change) => ({ kind: "replace", file: change.path })),
+        ctx,
+        undefined,
+        operationId,
+        deadline,
+      );
       const actualEffects: StorageEffect[] = [];
       const applied = await this.#commitGate(
         capturedEpoch,
@@ -778,7 +823,10 @@ export class NoteOperations {
               contentAvailable: true,
             },
             contentChanged: true,
-            metadata: { rewriteRefs: true },
+            metadata: {
+              rewriteRefs: true,
+              ...versioningMetadata(versioning).metadata,
+            },
           }),
         );
       }
@@ -846,6 +894,15 @@ export class NoteOperations {
       const deadline = processClock.now() +
         this.adapters.runtime()!.limits.preOperationMs;
       const leases = await this.#guard("pre-file-write", fact, deadline);
+      const versioning = existed
+        ? await this.#offer(
+          [{ kind: "replace", file: target.absolutePath }],
+          ctx,
+          requester,
+          operationId,
+          deadline,
+        )
+        : [];
       const actualEffects: StorageEffect[] = [];
       await this.#commitGate(
         capturedEpoch,
@@ -899,7 +956,11 @@ export class NoteOperations {
       this.adapters.lifecycle.observe(
         this.#fact(operationId, "file-write", ctx, {
           path: target.absolutePath,
-          metadata: { bytes: bytes.length, existed },
+          metadata: {
+            bytes: bytes.length,
+            existed,
+            ...versioningMetadata(versioning).metadata,
+          },
         }),
       );
       this.#syncEffects(operationId, ctx, [{
@@ -907,6 +968,30 @@ export class NoteOperations {
         path: target.absolutePath,
       }]);
     });
+  }
+
+  /** The writer's origin as the hub records it. */
+  #origin(ctx: OperationOrigin, requester?: RequesterAuthority): string {
+    return ctx.origin === "plugin"
+      ? `plugin:${requester?.pluginId ?? ctx.causalPlugin}`
+      : ctx.origin;
+  }
+
+  /** Offer displaced bytes to versioners within the operation deadline. */
+  async #offer(
+    displacements: Displacement[],
+    ctx: OperationOrigin,
+    requester: RequesterAuthority | undefined,
+    operationId: string,
+    deadline: number,
+  ): Promise<OfferOutcome[]> {
+    if (!displacements.length) return [];
+    return await this.#gate.offer(
+      displacements,
+      this.#origin(ctx, requester),
+      operationId,
+      deadline,
+    );
   }
 
   noteExists(notePath: string): boolean {
@@ -1059,6 +1144,23 @@ export class NoteOperations {
       // File vanished immediately after commit; the scan reports the truth.
     }
   }
+}
+
+/** Versioning outcomes for the operation's facts (empty when none). */
+function versioningMetadata(
+  outcomes: OfferOutcome[],
+): { metadata?: { versioning: JsonValues[] } } {
+  return outcomes.length
+    ? {
+      metadata: {
+        versioning: outcomes.map((o) => ({
+          pluginId: o.versioner,
+          path: o.path,
+          status: o.status,
+        })),
+      },
+    }
+    : {};
 }
 
 function snapshot(note: Note): NoteSnapshot {

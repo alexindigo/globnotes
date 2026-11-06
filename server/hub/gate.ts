@@ -13,6 +13,23 @@ import * as path from "@std/path";
 import type { VaultHub } from "./hub.ts";
 import { mergeText, versionOf } from "./merge.ts";
 import { type StorageEffect, withGatePass } from "./effects.ts";
+import type {
+  DisplacementOffer,
+  OfferOutcome,
+  Versioning,
+} from "./versioning.ts";
+
+/** Bytes about to leave a path: replaced, deleted or moved away. */
+export interface Displacement {
+  kind: DisplacementOffer["kind"];
+  /** Absolute path of the displaced file. */
+  file: string;
+  /** For "move": the absolute destination. */
+  destination?: string;
+}
+
+/** The largest displaced file offered with its bytes (the plugin body bound). */
+export const OFFER_BYTES = 16 * 1024 * 1024;
 
 /** What a writer read before it wrote. */
 export type Base =
@@ -155,7 +172,58 @@ export function currentVersion(file: string): string | null {
 }
 
 export class HubGate {
-  constructor(private readonly adapters: { hub?: VaultHub } = {}) {}
+  constructor(
+    private readonly adapters: {
+      hub?: VaultHub;
+      versioning?: () => Versioning | null;
+    } = {},
+  ) {}
+
+  /** Offer bytes about to be displaced to the versioners (docs/hub.md
+   * "Versioning"). Called before the commit section, outside every write
+   * lock; the commit then revalidates the displaced version. */
+  async offer(
+    displacements: readonly Displacement[],
+    origin: string,
+    operationId: string,
+    deadline: number,
+  ): Promise<OfferOutcome[]> {
+    const versioning = this.adapters.versioning?.(), hub = this.adapters.hub;
+    if (!versioning || !hub) return [];
+    const offers: DisplacementOffer[] = [];
+    for (const displaced of displacements) {
+      const relative = hub.relativePath(displaced.file);
+      if (relative === null || !versioning.interested(relative, origin)) {
+        continue;
+      }
+      let bytes: Uint8Array | null;
+      try {
+        const size = Deno.statSync(displaced.file).size;
+        bytes = size > OFFER_BYTES ? null : Deno.readFileSync(displaced.file);
+        offers.push({
+          operationId,
+          kind: displaced.kind,
+          path: relative,
+          ...(displaced.destination
+            ? {
+              newPath: hub.relativePath(displaced.destination) ??
+                displaced.destination,
+            }
+            : {}),
+          version: bytes ? versionOf(bytes) : hub.fileState(relative)?.hash ??
+            "",
+          size,
+          bytes,
+          origin,
+        });
+      } catch (error) {
+        // Already gone: nothing is displaced; the commit decides the outcome.
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      }
+    }
+    if (!offers.length) return [];
+    return await versioning.offer(offers, deadline);
+  }
 
   /** Run a synchronous effect for `paths` inside the gate: announce them to
    * the hub (which first reconciles outside changes), open the effects pass,

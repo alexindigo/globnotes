@@ -77,6 +77,9 @@ export interface PluginManifest {
   hasClient: boolean;
   runtime: { server?: string; client?: string };
   hooks: HookName[];
+  /** Displaced bytes offered before the hub replaces, deletes or moves them
+   * (docs/plugin-api.md "Versioning"); `extensions` omitted = every file. */
+  versioning?: { extensions?: string[] };
   settings: SettingsPage[];
   hasEndpoints: boolean;
   capabilities: PluginCapabilities;
@@ -199,6 +202,10 @@ export function readManifest(dir: string): PluginManifest {
   if (hooks.length && !runtime.server) {
     throw new Error("declared server hooks require runtime.server");
   }
+  const versioning = versioningDeclaration(raw.versioning);
+  if (versioning && !runtime.server) {
+    throw new Error("versioning requires runtime.server");
+  }
   const settings = validateSettingsPages(raw.settings);
   const caps = raw.capabilities === undefined
     ? {}
@@ -281,6 +288,7 @@ export function readManifest(dir: string): PluginManifest {
     hasClient,
     runtime,
     hooks: hooks as HookName[],
+    ...(versioning ? { versioning } : {}),
     settings,
     hasEndpoints,
     capabilities,
@@ -340,6 +348,25 @@ export function workerPermissions(
     run: false,
     sys: false,
   } as unknown as Deno.PermissionOptions;
+}
+
+function versioningDeclaration(
+  value: unknown,
+): PluginManifest["versioning"] {
+  if (value === undefined) return undefined;
+  const declaration = record(value, "versioning");
+  if (Object.keys(declaration).some((key) => key !== "extensions")) {
+    throw new Error("unsupported versioning manifest property");
+  }
+  if (declaration.extensions === undefined) return {};
+  const extensions = uniqueStrings(
+    declaration.extensions,
+    "versioning extensions",
+  );
+  if (extensions.some((ext) => !/^\.[a-z0-9][a-z0-9._-]*$/.test(ext))) {
+    throw new Error("versioning extensions must be lowercase, like '.md'");
+  }
+  return { extensions };
 }
 
 export function discoverPluginDirs(root: string): string[] {

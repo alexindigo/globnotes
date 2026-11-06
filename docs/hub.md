@@ -85,6 +85,29 @@ free macOS-style name (`name 1.ext`, `name 2.ext`, ...), the note's link is
 rewritten to it (percent-encoded, so it stays a valid Markdown link), and the
 response's `movedFiles` entry carries `renamed: true`.
 
+## Versioning
+
+Versioning is plugins, not hub (decision row 17). Before the gate replaces,
+deletes or moves bytes away from a path, `HubGate.offer()` hands them to
+versioners through `server/hub/versioning.ts`; the plugin runtime implements
+it. Offers are `{operationId, kind: replace|delete|move, path, newPath?,
+version, size, bytes, origin}`: note saves (also with identical content),
+merges (the current file), deletes, renames (the note and each moved
+attachment), reference rewrites, plugin file writes and plugin facade
+replace/rename/remove in the vault. Creates, uploads and conflict copies
+displace nothing. Files over 16 MiB are offered with `bytes: null`.
+
+Offers run after guards and outside every write lock; the commit then
+revalidates that the offered bytes are still the ones displaced, so a refusal
+there means the versioner kept a version that was not replaced. Each versioner
+gets `versioningMs` (10 s, observed time) in its own bounded lane to take
+custody; a failure, decline or timeout lets the write proceed and is visible
+in the plugin's diagnostics and the operation's fact metadata
+`versioning: [{pluginId, path, status}]`. Writes by a versioning plugin are
+never offered (its storage writes would wait on itself). The hub keeps none
+of the bytes. Changes by outside programs are already on disk when observed
+and cannot be offered.
+
 The contract rule `single-vault-writer` (`tests/test_isolation_contract_test.ts`)
 rejects filesystem mutations under `server/` outside `effects.ts`; the remaining
 listed lines write only the canonical state directory or the client build.

@@ -286,6 +286,34 @@ The shipped [backup plugin](../plugins/globnotes-backup/README.md) owns its enti
 post-change retention/journal policy. Adjacent files remain publicly readable
 under ordinary serving policy.
 
+## Versioning
+
+A server plugin that keeps file history declares it and registers one handler:
+
+```json
+{ "runtime": { "server": "service.js" }, "versioning": { "extensions": [".md"] } }
+```
+
+```js
+export function activate(ctx) {
+  ctx.versioning.onOffer(async (offer) => {
+    // offer: { operationId, kind: "replace"|"delete"|"move", path, newPath?,
+    //          version, size, bytes: Uint8Array|null, origin }
+    await keep(offer); // resolve once the bytes are durably yours
+    // or: return { status: "declined" };
+  });
+}
+```
+
+The hub offers bytes **before** it replaces, deletes or moves them away from a
+path (`extensions` omitted = every file; only paths your read grants cover).
+The handler runs in its own lane, not as a pre-hook: it may use `ctx.fs`, and
+deferred actions it requests run after it returns. The write waits up to
+`versioningMs` (10 s) per versioner; failure, decline or timeout let the write
+proceed, recorded in your diagnostics. An offer may be followed by no
+displacement (a later refusal). Your own writes are never offered to any
+versioner. `bytes` is null above 16 MiB.
+
 ## Endpoints
 
 Plugin-local routes live at `/_/api/plugins/<id>/<route>` for

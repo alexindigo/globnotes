@@ -14,6 +14,12 @@ import {
   type PluginStatus,
 } from "./contracts.ts";
 import { PluginDataStore } from "./data.ts";
+import type {
+  DisplacementOffer,
+  OfferOutcome,
+  Versioning,
+} from "../hub/versioning.ts";
+import { readGrantCovers } from "./lifecycle.ts";
 import { PluginHost, type RpcAuthority } from "./host.ts";
 import { processClock } from "../observed_time.ts";
 import type { PluginManifest } from "./manifest.ts";
@@ -92,7 +98,7 @@ export class PluginGuardError extends PluginContractError {
   }
 }
 
-export class PluginRuntime {
+export class PluginRuntime implements Versioning {
   private readonly entries = new Map<string, RuntimeEntry>();
   private order: string[] = [];
   private closed = false;
@@ -861,6 +867,126 @@ export class PluginRuntime {
           "required plugin guard authority changed before commit",
         );
       }
+    }
+  }
+  /** Enabled plugins declaring `versioning`, in plugin order. */
+  private versioners(): RuntimeEntry[] {
+    return this.order.map((id) => this.entries.get(id)!).filter((entry) =>
+      entry.source.enabled && entry.source.manifest?.versioning
+    );
+  }
+  /** Versioning (server/hub/versioning.ts): whether a versioner takes offers
+   * for `path`. Writes by a versioner are never offered: its own storage
+   * writes would otherwise wait on offers to versioners (itself included)
+   * whose handlers queue behind that very write. */
+  interested(path: string, origin: string): boolean {
+    const versioners = this.versioners();
+    if (versioners.some((entry) => origin === `plugin:${entry.source.id}`)) {
+      return false;
+    }
+    return versioners.some((entry) => this.versionerTakes(entry, path));
+  }
+  private versionerTakes(entry: RuntimeEntry, path: string): boolean {
+    const manifest = entry.source.manifest!;
+    const extensions = manifest.versioning?.extensions;
+    const lower = path.toLowerCase();
+    return (!extensions || extensions.some((ext) => lower.endsWith(ext))) &&
+      readGrantCovers(
+        manifest,
+        this.adapters.vaultPath,
+        this.adapters.statePath,
+        path,
+      );
+  }
+  /** Offer displaced bytes to each eligible versioner and wait for custody,
+   * each within `versioningMs` and the caller's deadline (observed time).
+   * Never rejects: failures are outcomes and plugin diagnostics; the write
+   * proceeds either way. */
+  async offer(
+    offers: DisplacementOffer[],
+    deadline: number,
+  ): Promise<OfferOutcome[]> {
+    const outcomes: OfferOutcome[] = [];
+    const holding = processClock.hold();
+    try {
+      await Promise.all(
+        this.versioners().map(async (entry) => {
+          const id = entry.source.id;
+          const mine = offers.filter((offer) =>
+            `plugin:${id}` !== offer.origin &&
+            this.versionerTakes(entry, offer.path)
+          );
+          if (!mine.length) return;
+          const own = Math.min(
+            deadline,
+            processClock.now() + this.limits.versioningMs,
+          );
+          for (const offer of mine) {
+            const status = offer.bytes === null
+              ? "too_large"
+              : await this.deliverOffer(entry, offer, own);
+            outcomes.push({ versioner: id, path: offer.path, status });
+            if (status !== "kept" && status !== "declined") {
+              entry.deliveryFailures++;
+              this.diagnostic(
+                entry,
+                "versioning_failed",
+                status === "too_large"
+                  ? "displaced file exceeds the offer bound; offered without bytes"
+                  : `versioning offer ${status}; the write proceeded without this version`,
+                { operationId: offer.operationId, action: offer.kind },
+              );
+            }
+            if (status === "too_large") {
+              await this.deliverOffer(entry, offer, own);
+            }
+          }
+        }),
+      );
+    } finally {
+      holding();
+    }
+    return outcomes;
+  }
+  private async deliverOffer(
+    entry: RuntimeEntry,
+    offer: DisplacementOffer,
+    deadline: number,
+  ): Promise<OfferOutcome["status"]> {
+    try {
+      if (entry.starting && entry.status === "starting") {
+        let cancel: (() => void) | undefined;
+        try {
+          await Promise.race([
+            entry.starting,
+            new Promise((_, reject) => {
+              cancel = processClock.deadlineAt(
+                deadline,
+                () => reject(new Error("versioning readiness deadline")),
+              );
+            }),
+          ]);
+        } finally {
+          cancel?.();
+        }
+      }
+      const host = entry.host;
+      if (entry.status !== "ready" || !host?.available) return "failed";
+      const [handler] = this.handlerIds(entry, "versioning");
+      if (!handler) return "failed";
+      const remaining = deadline - processClock.now();
+      if (remaining <= 0) return "timeout";
+      const result = await host.invoke(handler, [offer], false, remaining, {
+        generation: host.generation!,
+        causal: { parentId: offer.operationId, depth: 1 },
+        lane: "versioning",
+      }) as { status?: unknown } | undefined;
+      if (processClock.now() > deadline) return "timeout";
+      return result?.status === "declined" ? "declined" : "kept";
+    } catch (error) {
+      return /deadline/.test(String((error as Error)?.message))
+        ? "timeout"
+        : "failed";
     }
   }
   /** Observer admission never waits for readiness or executes under an operation lock. */

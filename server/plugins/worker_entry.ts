@@ -79,6 +79,9 @@ export interface PluginCtx {
     requestWrite(path: string, bytes: Uint8Array): Promise<unknown>;
   };
   fs: AuxiliaryFs;
+  /** Displaced bytes before the hub replaces, deletes or moves them. Resolve
+   * once they are in the plugin's custody, or return {status:"declined"}. */
+  versioning: { onOffer(handler: Handler): Disposer };
   snapshot: JsonValues;
   register(disposer: Disposer): Disposer;
   timers: {
@@ -268,6 +271,10 @@ const ctx: PluginCtx = {
     },
   },
   snapshot: {},
+  versioning: {
+    onOffer: (handler) =>
+      register({ kind: "versioning", id: "versioning" }, handler),
+  },
   fs: {
     stat: (path, options) =>
       fsRpc("stat", [path, options]) as ReturnType<AuxiliaryFs["stat"]>,
@@ -567,7 +574,7 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
         const handler = handlers.get(message.handlerId);
         if (!handler) throw new Error("handler registration is unavailable");
         if (
-          ["hook", "settings-change", "action-result"].includes(
+          ["hook", "settings-change", "action-result", "versioning"].includes(
             handlerKinds.get(message.handlerId) ?? "",
           )
         ) message.args.forEach(immutable);

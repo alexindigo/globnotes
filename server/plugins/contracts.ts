@@ -15,6 +15,10 @@ export const PLUGIN_LIMITS = Object.freeze({
   httpBytes: 16 * 1024 * 1024,
   controlBytes: 1024 * 1024,
   streamHeartbeatMs: 15_000,
+  /** Observed time a write waits for each versioning plugin's custody. */
+  versioningMs: 10_000,
+  /** Pending versioning offers per plugin beyond the one in flight. */
+  versioningQueue: 8,
 });
 export type PluginLimits = { [Key in keyof typeof PLUGIN_LIMITS]: number };
 export const FS_LIMITS = Object.freeze({
@@ -156,7 +160,13 @@ export interface CommandDefinition {
   description?: string;
 }
 export interface HandlerRegistration {
-  kind: "hook" | "command" | "settings-change" | "action-result" | "endpoint";
+  kind:
+    | "hook"
+    | "command"
+    | "settings-change"
+    | "action-result"
+    | "endpoint"
+    | "versioning";
   id: string;
   definition?: CommandDefinition | EndpointDescriptor;
 }

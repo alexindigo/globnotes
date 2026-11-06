@@ -70,7 +70,8 @@ const hub = new VaultHub(
   globalConfig.statePath,
   environment,
 );
-const gate = new HubGate({ hub });
+// Versioning plugins are offered displaced bytes before every gate write.
+const gate = new HubGate({ hub, versioning: () => plugins.runtime });
 const plugins = new PluginManager(
   globalConfig.notesPath,
   undefined,
