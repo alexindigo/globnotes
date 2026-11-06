@@ -449,7 +449,7 @@ Deno.test("backup canonical root: external unseen alias after restart continues 
   }
 });
 
-Deno.test("backup plugin: rapid captures stay literal while live disk is newer; unavailable external facts skip", async () => {
+Deno.test("backup plugin: rapid captures stay literal while live disk is newer; offers without usable bytes and outside edits keep nothing", async () => {
   const b = await backupFixture();
   try {
     await b.create("Rapid", "A");
@@ -458,30 +458,24 @@ Deno.test("backup plugin: rapid captures stay literal while live disk is newer; 
     await b.save("Rapid", "D");
     await b.status();
     await ring(b.fixture.vault, "Rapid", ["C", "B"]);
-    for (
-      const before of [null, {
-        path: "Rapid",
-        contentAvailable: false,
-        content: "invented",
-      }, { path: "Rapid", contentAvailable: true }]
-    ) {
-      b.runtime.post("on-save", {
-        operationId: crypto.randomUUID(),
-        action: "save",
-        origin: "api",
-        timestamp: new Date().toISOString(),
-        before,
-      });
-    }
-    b.runtime.post("on-save", {
+    const offer = {
       operationId: crypto.randomUUID(),
-      action: "save",
-      origin: "external",
-      timestamp: new Date().toISOString(),
-      before: { path: "Rapid", content: "external", contentAvailable: true },
-    });
+      path: "Rapid.md",
+      version: "0".repeat(64),
+      size: 9,
+      origin: "api",
+    };
+    const outcomes = await b.runtime.offer([
+      { ...offer, kind: "rename" as never, bytes: new Uint8Array([1]) },
+      { ...offer, kind: "replace", bytes: null },
+    ], Number.MAX_SAFE_INTEGER);
+    assertEquals(outcomes.map((o) => o.status), ["declined", "too_large"]);
+    // An outside edit is already on disk when observed: nothing is offered.
+    await Deno.writeTextFile(`${b.fixture.vault}/Rapid.md`, "external");
+    b.hub.scanNow();
     const status = await b.status();
-    assertEquals(status.skipped, 4);
+    assertEquals(status.skipped, 1);
+    assertEquals(status.lastError, { code: "fs_too_large" });
     await ring(b.fixture.vault, "Rapid", ["C", "B"]);
   } finally {
     await b.close();

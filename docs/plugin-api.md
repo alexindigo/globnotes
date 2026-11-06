@@ -341,8 +341,9 @@ Expiration cannot start later publication. A deadline is not rollback; lost repl
 or post-effect errors do not prove no write. Tokens are not external filesystem
 CAS, recursive CRUD or multi-file atomicity. Recovery inspects recorded states.
 
-The shipped [backup plugin](../plugins/globnotes-backup/README.md) owns its entire
-post-change retention/journal policy. Adjacent files remain publicly readable
+The shipped [backup plugin](../plugins/globnotes-backup/README.md) takes its
+versions through `ctx.versioning` ([Versioning](#versioning)) and owns its
+retention/journal policy. Adjacent files remain publicly readable
 under ordinary serving policy.
 
 ## Versioning

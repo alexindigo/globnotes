@@ -1,9 +1,13 @@
 # Versioned note backups
 
-This server-only plugin saves the **previous Markdown text after** a managed save,
-rename or delete. Note changes do not wait for backup delivery/storage: a
-successful save can coexist with a failed backup. Empty text is eligible; new
-creates have no previous version.
+This server-only plugin keeps the **previous Markdown text before** a globnotes
+save, rename or delete replaces it. It is a versioning plugin: the hub offers it
+the note's bytes before the write (docs/hub.md "Versioning"), and the write waits
+until the plugin has staged and journaled them (custody), at most 10 seconds.
+Publishing the `.bak` slots, rotation and cleanup then finish in the background.
+A failure or timeout before custody lets the save proceed and is shown in the
+plugin's diagnostics: a successful save can still coexist with a failed backup.
+Empty text is eligible; new creates have no previous version.
 
 **Adjacent backups are ordinary visible vault files. Public readers can retrieve
 old or deleted text through the normal file-serving policy.** Choose a dedicated
@@ -51,8 +55,9 @@ The namespaced **Inspect versioned backup status** command and protected
 `/_/api/plugins/globnotes-backup/status` route return current-activation counts,
 configuration, sanitized last error/operation identity, pending recovery and
 committed-ring status. Counts are observations, not a durable global outbox/audit.
-Genuine hook failures also reach the host's degraded/delivery diagnostics. No
-note text or credentials appear in status.
+Failures before custody also reach the host's plugin diagnostics
+(`versioning_failed`); failures after it are in this status and are recovered by
+the next capture or a restart. No note text or credentials appear in status.
 
 Ownership records, a fixed active journal and deterministic staging files live in
 `<vault>/.globnotes-backup/`. Preserve these when inspecting a failure. Alien slots,
@@ -72,8 +77,9 @@ there is no restore/history UI. Multi-file publication is recoverable, **not
 atomic**, and is not a transaction with the completed note change. Tokens are
 managed/preparation conflict checks, not external filesystem CAS or power-loss proof.
 
-Uploads, external scans and unavailable/partial preimages do not invent old bytes.
+Uploads and creates displace nothing; changes made by other programs are already
+on disk when globnotes sees them, so they cannot be offered and leave no backup.
 Strings are encoded as UTF-8; invalid UTF-8 input yields reconstructed text, not
-byte-exact binary history. The generic 16 MiB body bound fails visibly without
-truncation. No scheduler, autosave, attachment history, Git/process permissions or
+byte-exact binary history. Notes over the 16 MiB offer bound are offered without bytes
+and fail visibly (`fs_too_large`) without truncation. No scheduler, autosave, attachment history, Git/process permissions or
 external-writer interception is added.

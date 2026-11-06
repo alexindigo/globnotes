@@ -4,10 +4,11 @@ import { BackupError, LIMITS, bytesRecord, digestValid, fail, hash, join, origin
 export class BackupQueue {
   #tail = Promise.resolve();
   #pending = 0;
+  #scheduled = 0;
   #recent = new Set();
   #status = { completed: 0, skipped: 0, failed: 0, pendingRecovery: false, ringCommitted: false, lastError: null, lastOperation: null, configuration: null };
   constructor(ctx) { this.ctx = ctx; }
-  status() { return structuredClone({ ...this.#status, pendingJobs: this.#pending }); }
+  status() { return structuredClone({ ...this.#status, pendingJobs: this.#pending + this.#scheduled }); }
   #error(error, operation) {
     this.#status.failed++;
     const code = error instanceof BackupError || /^fs_[a-z_]+$/.test(error?.code ?? "") ? error.code : "backup_processing_failed";
@@ -35,14 +36,24 @@ export class BackupQueue {
       if (workspace) await this.#recover(workspace, config);
     }).catch(() => { /* Keep status available; subsequent genuine capture failures reach host diagnostics. */ });
   }
-  capture(fact) {
-    const before = fact?.before;
-    if (!before || before.contentAvailable !== true || typeof before.content !== "string" || fact.origin === "external" || !["save", "rename", "delete"].includes(fact.action)) {
+  /** A versioning offer: the note's bytes before the hub replaces, deletes or
+   * moves them. Resolves once those bytes are staged and journaled (custody).
+   * Publication, rotation and cleanup then run as background work through the
+   * same recovery path a restart uses, so the offer never outlives custody. */
+  capture(offer) {
+    if (!offer || typeof offer.path !== "string" || !offer.path.endsWith(".md") || !["replace", "delete", "move"].includes(offer.kind)) {
       this.#status.skipped++;
-      return Promise.resolve({ skipped: true, reason: "preimage_unavailable" });
+      return Promise.resolve({ status: "declined" });
     }
-    const captured = { operationId: fact.operationId, path: before.path, content: before.content };
-    return this.#admit(async () => {
+    if (!(offer.bytes instanceof Uint8Array)) {
+      // Larger than the offer bound: no bytes to keep (the 16 MiB body bound).
+      this.#error(new BackupError("fs_too_large"), { operationId: offer.operationId, path: offer.path.slice(0, -3) });
+      return Promise.resolve({ status: "declined" });
+    }
+    // Strings are UTF-8 as before: invalid input yields reconstructed text.
+    const captured = { operationId: offer.operationId, path: offer.path.slice(0, -3), content: new TextDecoder().decode(offer.bytes) };
+    const custody = Promise.withResolvers();
+    const done = this.#admit(async () => {
       const config = await this.#configuration();
       const name = originalPath(captured.path);
       if (typeof captured.operationId !== "string" || !captured.operationId || captured.operationId.length > 128) fail("backup_invalid_operation");
@@ -56,6 +67,23 @@ export class BackupQueue {
       this.#status.ringCommitted = false;
       return await this.#begin(workspace, config, captured, key, bytes);
     }, captured);
+    done.then(result => {
+      if (result?.staged) this.#completeLater(captured);
+      custody.resolve(result?.skipped ? { status: "declined" } : { status: "kept" });
+    }, error => custody.reject(error));
+    return custody.promise;
+  }
+  /** Finish the journaled transaction outside the offer's invocation. */
+  #completeLater(captured) {
+    this.#scheduled++;
+    this.ctx.timers.setTimeout(() => {
+      this.#scheduled--;
+      return this.#admit(async () => {
+        const config = await this.#configuration();
+        const workspace = await this.#workspace(config, false);
+        if (workspace) await this.#recover(workspace, config);
+      }, captured).catch(() => { /* Recorded in status; the next capture or restart recovers. */ });
+    }, 0);
   }
   #options(config) { return { sourceKey: config.sourceKey }; }
   async #workspace(config, create) {
@@ -170,12 +198,13 @@ export class BackupQueue {
     const stages = [{ file: join(workspace.location, `stage-${transaction}-0.bin`), hash: await hash(bytes) }, ...slots.map((slot, index) => ({ file: join(workspace.location, `stage-${transaction}-${index + 1}.bin`), hash: slot.hash }))];
     const planned = stages.slice(0, config.count).map((stage, index) => ({ path: this.#slot(root, captured.path, index), hash: stage.hash }));
     const existing = await this.#active(workspace, config);
-    let journal = await this.#saveJournal(workspace, { ...(existing ? { token: existing.token } : {}), value: { schema: 1, owner: workspace.nonce, transaction, operationId: captured.operationId, operationKey, path: captured.path, count: config.count, base: config.base, sourceKey: config.sourceKey, phase: "staging-intent", root, rootToken: canonical.token, familyKey, old: slots, oldMetadataHash: metadata?.hash ?? null, recent: old?.recent ?? [], stages, planned, initial: initial.slice(0, planned.length), attempted: planned.map(() => false), staged: 0, published: 0 } }, config);
+    const journal = await this.#saveJournal(workspace, { ...(existing ? { token: existing.token } : {}), value: { schema: 1, owner: workspace.nonce, transaction, operationId: captured.operationId, operationKey, path: captured.path, count: config.count, base: config.base, sourceKey: config.sourceKey, phase: "staging-intent", root, rootToken: canonical.token, familyKey, old: slots, oldMetadataHash: metadata?.hash ?? null, recent: old?.recent ?? [], stages, planned, initial: initial.slice(0, planned.length), attempted: planned.map(() => false), staged: 0, published: 0 } }, config);
     await fs.writeFile(stages[0].file, bytes, { ...options, expect: { kind: "absent" } });
     await this.#verifiedFile(stages[0].file, stages[0].hash, config);
     journal.value.staged = 1;
-    journal = await this.#saveJournal(workspace, journal, config);
-    return await this.#finish(workspace, journal, config);
+    await this.#saveJournal(workspace, journal, config);
+    // Verified staging plus its journal: the previous text is in custody.
+    return { staged: true };
   }
   #remember(key) {
     this.#recent.add(key);

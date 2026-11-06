@@ -6,6 +6,7 @@ export async function activate(ctx) {
   bind(queue);
   ctx.commands.register({ id: "status", label: "Inspect versioned backup status", target: "server" }, status);
   ctx.settings.subscribe(() => queue.configurationChanged());
-  for (const hook of ["on-save", "on-rename", "on-delete"]) ctx.hooks.on(hook, fact => queue.capture(fact));
+  // The hub offers the previous bytes before a save, rename or delete replaces them.
+  ctx.versioning.onOffer(offer => queue.capture(offer));
   await queue.initialize();
 }

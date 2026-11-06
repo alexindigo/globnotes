@@ -35,8 +35,8 @@ const changes: Record<string, [string, string][]> = {
     "root = join(workspace.vault, 'misplaced');",
   ]],
   preimage: [[
-    "content: before.content",
-    "content: fact.after?.content ?? before.content",
+    "content: new TextDecoder().decode(offer.bytes)",
+    'content: ""',
   ]],
   pin: [["base: values.basePath", "base: ''"]],
   recovery: [[

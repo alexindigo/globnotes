@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { readManifest } from "../../server/plugins/manifest.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
+import { done, pending, waitUntil } from "./wait.ts";
 import {
   pluginOperationsFixture,
   type RpcFault,
@@ -64,7 +65,16 @@ export async function backupFixture(options: {
         current.sourceKey,
       );
     },
+    /** Status once the plugin's queue is idle: a capture resolves at custody
+     * (before the note write), and publication continues in its queue. */
     status: () =>
-      runtime.invokeCommand(id, "status", {}) as Promise<BackupStatus>,
+      waitUntil(async () => {
+        const status = await runtime.invokeCommand(id, "status", {}) as
+          & BackupStatus
+          & { pendingJobs: number };
+        return status.pendingJobs === 0 ? done(status) : pending(status);
+      }, { label: "backup queue idle", intervalMs: 5 }) as Promise<
+        BackupStatus
+      >,
   };
 }

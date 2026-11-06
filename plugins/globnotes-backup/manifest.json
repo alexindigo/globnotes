@@ -1,14 +1,14 @@
 {
   "id": "globnotes-backup",
   "name": "Versioned note backups",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "license": "LGPL-3.0-only",
   "runtime": { "server": "service.js" },
-  "hooks": ["on-save", "on-rename", "on-delete"],
+  "versioning": { "extensions": [".md"] },
   "settings": [{
     "id": "backup",
     "label": "Backups",
-    "description": "Keeps earlier note text when you save, rename or delete a note. Backups beside notes are ordinary vault files: public readers can open old or deleted text. Choose a folder outside the vault to keep backups private. Each note path has its own history; changing the backup folder does not move or delete earlier backups.",
+    "description": "Keeps the earlier note text before a save, rename or delete replaces it. Backups beside notes are ordinary vault files: public readers can open old or deleted text. Choose a folder outside the vault to keep backups private. Each note path has its own history; changing the backup folder does not move or delete earlier backups.",
     "renderer": { "kind": "declarative-v1", "version": 1 },
     "fields": [
       { "key": "retention", "label": "Retained versions", "type": "slider", "default": 2, "min": 1, "max": 10, "step": 1, "description": "The newest backup ends in .0.bak. Lowering this count removes extra versions the next time that note is backed up successfully." },
