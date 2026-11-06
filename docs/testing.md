@@ -2,8 +2,10 @@
 
 Every test and browser check runs inside the project's devcontainer,
 started by `.devcontainer/run.sh`. Nothing runs Deno, Chromium or the test
-suites directly on the host. The pre-commit hook runs the checks related to a
-commit; GitHub CI runs the full suite (`scripts/gates.sh --all --browser`).
+suites directly on the host. Pre-commit provides fast feedback: whole-tree
+static checks and related tests. GitHub CI is the full gate, including the
+browser suite, client build and cold-load (`scripts/gates.sh --all --browser`),
+plus the serial timing tests.
 
 ## The devcontainer
 
@@ -55,12 +57,12 @@ One gate list serves the hook and full runs. Each gate logs to
 
 | # | Gate | Command (in `/workspace`) |
 |---|---|---|
-| 1 | install | `deno install` |
+| 1 | install | `deno install` in full runs; `deno install --frozen` in pre-commit, using the persistent dependency cache |
 | 2 | lint | `deno lint server/ tests/` |
-| 3 | check | `deno check server/main.ts tests/**/*.ts` (all test files, with `globstar`) |
+| 3 | check | `deno check server/main.ts tests/**/*.ts` (all test files, with `globstar`); Deno's incremental type-check cache lives in the persistent `DENO_DIR` |
 | 4 | format | `deno fmt --check server/ tests/` |
 | 5 | worker | `deno check` of `server/plugins/worker_entry.ts` |
-| 6 | handlers | `deno check` of each `server/api/endpoints/**/*.ts`, which main loads only at run time |
+| 6 | handlers | `deno check` of every `server/api/endpoints/**/*.ts`, which main loads only at run time; pre-commit batches the same endpoints into one cached check, full runs check each endpoint separately |
 | 7 | shell | `bash -n` / `sh -n` of every `*.sh` file and `.githooks/*` |
 | 8 | e2e-modules | `deno bundle` (esbuild) of every `client/tests/e2e/*.mjs` and `*.js` into a scratch directory: links each module graph without running it, so a duplicate binding, a missing module or a missing named export fails even in a script the native suite doesn't select |
 | 9 | contracts | `tests/test_isolation_contract_test.ts`, `tests/devcontainer_caps_test.ts` |
@@ -75,7 +77,7 @@ One gate list serves the hook and full runs. Each gate logs to
 | 18 | native-controls | `native-consumer-controls.mjs`: wrong clipboard/token/image/link/identity/tag/palette/visibility/geometry consumers fail, equivalent CSS passes; follows `GLOBNOTES_E2E_CASES` for case-owned controls |
 | 19 | entrypoint-results | `runner-entrypoint-controls.mjs`: the shell entrypoint with a misleading nonzero child and a completed zero-exit child |
 
-Gates 16–19 need the Chromium sidecar; a selection or `--browser` run checks
+Gates 16-19 need the Chromium sidecar; a full `--browser` run checks
 the CDP endpoint first. The native suite records each child's actual exit and
 timeout state; printed PASS/OK words cannot grant success.
 
@@ -125,9 +127,8 @@ On `git commit` the hook:
 3. writes the staged paths (`git diff --cached --name-status -M -z`) and the
    tree's file list into `run/logs/`;
 4. runs `gates.sh --plan` in the container, which selects the checks into
-   `run/logs/selection.json`, then `gates.sh --select` with `--browser` when
-   the selection has browser gates. Both use the snapshot's own `run.sh` and
-   scripts;
+   `run/logs/selection.json`, then `gates.sh --select`. Pre-commit never
+   requests Chromium. Both use the snapshot's own `run.sh` and scripts;
 5. prints one line: PASS/FAIL, wall time, the gates run (and the failing one),
    the run directory; and a warning above the 300-second budget;
 6. keeps logs, selection and timings. On PASS it deletes `source/`, the
@@ -145,37 +146,34 @@ GLOBNOTES_CHECK_BASE=HEAD~1 git hook run pre-commit   # the change HEAD~1..index
 
 ### What a change selects
 
-The selection (`scripts/select-checks.ts`) reads the snapshot. When in doubt it
-selects more; every choice is recorded with its reason in `selection.json`.
+The selection (`scripts/select-checks.ts`) reads the snapshot. Every choice is
+recorded with its reason in `selection.json`. The warm-cache target is under
+60 seconds per trial; the first cold-cache run can take longer. This is fast
+feedback, not a substitute for CI's full gate.
 
 | # | Changed path | Selected |
 |---|---|---|
-| 1 | Any change | Static gates 1–8 |
-| 2 | `server/**`, `shared/**`, `tests/**` (not `tests/timing/`) | The server tests whose dependencies contain the path, run in parallel |
-| 3 | `client/**` (not `client/tests/e2e/`), `shared/**` | `vitest related` of the changed files, unit-controls, build, cold-load. The Vitest setup file selects the whole client suite |
-| 4 | `client/tests/e2e/**` | The cases whose driver reaches the file or that the case map (`FILE_CASES` in `legacy-native-suite.mjs`) names, with native-controls for them; the meta gates (native-results, unit-controls, entrypoint-results) whose entrypoint reaches it; `vitest related` of the file. A shared harness file, a file the native suite imports, a removed file or a non-module outside the map and graph selects the whole browser suite. A `*.test.js` file is a client test |
-| 5 | Shared inputs: `deno.json`, `deno.lock`, `vite.config.js`, `vitest.config.mjs`, `.devcontainer/**`, `scripts/gates.sh`, `scripts/select-checks.ts`, `scripts/cold-load.mjs`, `entrypoint.sh`, `Dockerfile` | Every non-browser gate: the whole server suite, the whole client suite, unit-controls, build, cold-load. `.devcontainer/**` also the whole browser suite |
-| 6 | `tests/timing/**` | The changed timing tests, serially; a helper or a removed file there selects all of them |
+| 1 | Any change | Whole-tree static gates 1-9: cached install, lint, incremental cached type checks (including worker and handlers), format check, shell syntax, e2e module-load gate and contract tests |
+| 2 | Server tests | Only test files whose direct imports include a changed file, plus test files that changed themselves; `deno test --parallel`, `DENO_JOBS=4` |
+| 3 | `client/**`, `shared/**` (including browser-suite helpers) | `vitest related --run --passWithNoTests` on the changed files, `VITEST_MAX_WORKERS=4` |
+| 4 | Browser suite, client build, cold-load, consumer controls | Never in pre-commit; CI owns these gates |
+| 5 | Shared inputs: `deno.json`, `deno.lock`, `vite.config.js`, `vitest.config.mjs`, `.devcontainer/**`, `scripts/gates.sh`, `scripts/select-checks.ts`, `entrypoint.sh`, `Dockerfile` | Static gates only, with `deno install --frozen`; no related test expansion |
+| 6 | `tests/timing/**` | Only changed, surviving timing test files, serially; helper changes and deletions do not select timing tests |
 | 7 | Docs: `*.md`, `docs/**` | Row 1 |
-| 8 | Anything else | Row 5 |
-| 9 | Renames and deletions | Old and new paths are both classified. A removed server or client path selects its whole suite (its dependents are not in the snapshot) |
+| 8 | Unknown paths | Static gates plus direct server-test importers and `vitest related` of the changed paths; never silently skipped |
+| 9 | Renames and deletions | Classify both old and new paths using the same direct-import and related-test rules; no whole-suite expansion |
 
-A server test's dependencies are its `deno info` module graph plus the
-repository paths its modules name in string literals (`new URL("…",
-import.meta.url)`, launcher arguments, fixture files), followed transitively.
-A directory named relative to a module is a loader: its modules count too
-(the server's endpoint directory, a bundled plugin). Any other named directory
-counts for server-side paths only; the launcher `tests/helpers/boot.ts` names
-the repository root as the server's working directory, so every test that
-starts a server through it is selected by every server-side change. A path a
-server test names selects it whatever the path's row (a script, a browser
-driver, a document). Dynamic imports the literal scan cannot resolve are
-listed in `KNOWN_DYNAMIC` with what they load; any other one makes its tests
-depend on everything. Without a module graph or a case map the selection
-falls back to the whole server or browser suite.
+Deno resolves the test imports (`deno info --json`); selection retains only
+the edges directly out of each test file. It never follows transitive edges
+or scans string literals, fixture directories or launcher arguments. In
+particular, server-boot tests do not inherit `server/main.ts`'s graph. Timing
+tests are excluded from that matching and stay CI-only unless the timing test
+file itself changed. Docs and shared-input rules take precedence for those
+paths; other paths in a mixed commit still select their related tests.
 
-Browser cases and timing tests are left to full runs for server and client
-changes; the selection says so in its reasons.
+A selection error (including failed import analysis, malformed JSON or a
+failed field read) fails the hook. The selection validator also rejects
+CI-only gates. `gates.sh --all` and CI's full-gate behavior are unchanged.
 
 ## Push check: `.githooks/pre-push`
 
