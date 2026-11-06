@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
+import { currentBase } from "../helpers/storage.ts";
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import type { OperationFact } from "../../server/plugins/contracts.ts";
@@ -202,7 +203,7 @@ for (
       if (mutation === "save") {
         await b.operations.updateNote(
           "Seed",
-          { newContent: "saved consumer" },
+          { base: currentBase("Seed"), newContent: "saved consumer" },
           "none",
           api(),
         );
@@ -210,12 +211,25 @@ for (
       if (mutation === "rename-save") {
         await b.operations.updateNote(
           "Seed",
-          { newPath: "Renamed", newContent: "renamed consumer" },
+          {
+            base: currentBase("Seed"),
+            newPath: "Renamed",
+            newContent: "renamed consumer",
+          },
           "none",
           api(),
         );
       }
-      if (mutation === "delete") await b.operations.deleteNote("Seed", api());
+      if (mutation === "delete") {
+        await b.operations.deleteNote(
+          "Seed",
+          api(),
+          undefined,
+          undefined,
+          undefined,
+          currentBase("Seed"),
+        );
+      }
       if (mutation === "markdown-upload") {
         await b.operations.uploadFile(
           "",
@@ -239,7 +253,7 @@ for (
         partial = true;
         const outcome = await b.operations.updateNote(
           "Seed",
-          { newContent: "actual partial consumer" },
+          { base: currentBase("Seed"), newContent: "actual partial consumer" },
           "none",
           api(),
         ).then(() => null, (error) => error);
@@ -258,7 +272,12 @@ for (
         assertEquals(partialWrites, 2);
       }
       if (mutation === "no-op-save") {
-        await b.operations.updateNote("Seed", {}, "none", api());
+        await b.operations.updateNote(
+          "Seed",
+          { base: currentBase("Seed") },
+          "none",
+          api(),
+        );
       }
       if (mutation === "private-data") {
         await b.runtime.invokeCommand("sync-cache", "private", {});

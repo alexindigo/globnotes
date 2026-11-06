@@ -59,7 +59,15 @@ interface Observation {
   stat: FsStat | null;
   binding: Binding;
 }
-const mutations = new Set(["writeFile", "rename", "remove", "mkdir"]);
+/** Facade methods that change files (the writer registry in
+ * tests/hub_gate_contract_test.ts lists each with its condition). */
+export const AUXILIARY_MUTATIONS = [
+  "writeFile",
+  "rename",
+  "remove",
+  "mkdir",
+] as const;
+const mutations = new Set<string>(AUXILIARY_MUTATIONS);
 function inside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return relative === "" ||

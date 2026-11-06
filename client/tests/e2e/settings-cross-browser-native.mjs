@@ -10,6 +10,11 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
     b: { targetId: b.targetId, browserContextId: b.browserContextId }, c: { targetId: c.targetId, browserContextId: c.browserContextId }, serverPid: server.pid,
   }, null, 2), { createNew: true });
   const api = (peer, path, options = {}) => peer.evaluate(`fetch(${JSON.stringify(path)},{...${JSON.stringify(options)},signal:AbortSignal.timeout(5000)}).then(async r=>{const text=await r.text();return {status:r.status,body:r.headers.get('content-type')?.includes('application/json')?JSON.parse(text):text};})`);
+  // A write states the version it read (docs/hub.md "Write gate").
+  const patchNote = async (peer, path, newContent) => {
+    const read = await api(peer, path);
+    return api(peer, path, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newContent, base: { kind: "version", version: read.body.version } }) });
+  };
   async function replace(peer, selector, value) { await peer.click(selector); await peer.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); if (value) await peer.type(value); else await peer.key("Backspace", { windowsVirtualKeyCode: 8 }); }
   async function open(peer, page) {
     if (!await peer.evaluate("!!document.querySelector('#settings-modal-title')")) {
@@ -123,7 +128,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   await a.poll("fetch('/_/api/plugin-host/session-guard/settings/preferences').then(r=>r.json()).then(d=>d.values.protect===true)");
   await b.poll("!!document.querySelector('#settings-field-protect .text-theme-brand')");
   await persistence("native-toggle");
-  const guarded = await api(b, "/_/api/notes/NoteA", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newContent: "GPS-blocked peer write" }) });
+  const guarded = await patchNote(b, "/_/api/notes/NoteA", "GPS-blocked peer write");
   assert(guarded.status === 409, "Enabled guard did not consume the persisted peer setting");
   await replace(a, "#settings-field-message", "A recovery after remote disable");
   await open(b, "Plugins"); await b.click('[data-plugin-inventory-id="session-guard"] .plugin-row-actions [role=switch]');
@@ -131,7 +136,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   assert(await a.evaluate("document.querySelector('#settings-field-message').value==='A recovery after remote disable'"), "Remote disable lost the recovery draft");
   const disabledCommand = await api(b, "/_/api/plugin-host/session-guard/commands/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   const disabledEndpoint = await api(b, "/_/api/plugins/session-guard/ping");
-  const unguarded = await api(b, "/_/api/notes/NoteA", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newContent: "GPS-blocked peer write" }) });
+  const unguarded = await patchNote(b, "/_/api/notes/NoteA", "GPS-blocked peer write");
   assert(disabledCommand.status === 404 && disabledEndpoint.status === 404 && unguarded.status === 200, "Disable did not remove actual command/endpoint/guard admission");
   const disabledInventory = await settleSettingsInventory(b, "document.querySelector('[data-plugin-inventory-id=\"session-guard\"] .plugin-row-actions [role=switch]')?.getAttribute('aria-checked')==='false'");
   await open(b, "Appearance"); const beforeDisabledTheme = await b.evaluate("window.__settingsPeerThemeEvents"); await b.click('[data-theme-id="globnotes-dark"]');
@@ -148,7 +153,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   await open(b, "Appearance"); const beforeEnabledTheme = await b.evaluate("window.__settingsPeerThemeEvents"); await b.click('[data-theme-id="globnotes-light"]');
   await b.poll(`window.__settingsPeerThemeEvents===${beforeEnabledTheme + 1}`);
   const reenabledEndpoint = await api(b, "/_/api/plugins/session-guard/ping");
-  const reenabledGuard = await api(b, "/_/api/notes/NoteA", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newContent: "GPS-blocked second peer write" }) });
+  const reenabledGuard = await patchNote(b, "/_/api/notes/NoteA", "GPS-blocked second peer write");
   assert(reenabledEndpoint.status === 200 && reenabledGuard.status === 409, "Re-enable failed to restore endpoint/guard consumers");
   assert(await a.evaluate("document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content').textContent.includes('GPS cross-browser dirty marker')"), "Peer reconciliation replaced or lost A's dirty editor");
   await record({ name: "remote-disable-reenable-owned-contributions", disabledCommand: 404, disabledEndpoint: 404, disabledGuardRemoved: 200, reenabledEndpoint: 200, reenabledGuard: 409, recoveredDraft: "A recovery after remote disable", enabledSubscriptionDelta: 1, dirtyEditorRetained: true, inventorySettlement: [disabledInventory, enabledInventory] });
@@ -161,7 +166,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   await open(b, "Native preferences"); await b.poll("document.querySelector('#settings-field-message').value==='A recovery after remote disable'");
   await persistence("backend-restart");
   const restartedCommand = await api(b, "/_/api/plugin-host/session-guard/commands/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-  const restartedGuard = await api(b, "/_/api/notes/NoteA", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newContent: "GPS-blocked restart write" }) });
+  const restartedGuard = await patchNote(b, "/_/api/notes/NoteA", "GPS-blocked restart write");
   assert(restartedCommand.status === 200 && restartedCommand.body.result.message === "A recovery after remote disable" && restartedGuard.status === 409, "Restarted command/hook did not consume persisted values");
   assert(await a.evaluate(`location.href===${JSON.stringify(aUrl)} && document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content').textContent.includes('GPS cross-browser dirty marker')`), "Backend restart changed A's URL/editor/dirty buffer");
   await record({ name: "same-origin-server-restart-settings-consumers", ...restarted, revision: afterRestart.body.revision, values: afterRestart.body.values, command: restartedCommand.body.result, guard: restartedGuard.status, existingCredentialsRetained: true, dirtyEditorAndUrlRetained: true, expectedStreamTransportClosure: true });

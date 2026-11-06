@@ -67,10 +67,15 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
     );
 
     await t.step("update content", async () => {
+      const read = await (await api(server, "/_/api/notes/Hello%20World"))
+        .json();
       const upd = await api(server, "/_/api/notes/Hello%20World", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ newContent: "updated text" }),
+        body: JSON.stringify({
+          newContent: "updated text",
+          base: { kind: "version", version: read.version },
+        }),
       });
       assertEquals(upd.status, 200);
       const fetched = await api(server, "/_/api/notes/Hello%20World");
@@ -93,7 +98,10 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ newPath: "renamed" }),
+          body: JSON.stringify({
+            newPath: "renamed",
+            base: { kind: "text", content: "[ref](Hello%20World)" },
+          }),
         },
       );
       assertEquals(rename.status, 200);
@@ -106,9 +114,18 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
     });
 
     await t.step("delete note", async () => {
-      const del = await api(server, "/_/api/notes/Hello%20World", {
+      const before = await (await api(server, "/_/api/notes/Hello%20World"))
+        .json();
+      const unbased = await api(server, "/_/api/notes/Hello%20World", {
         method: "DELETE",
       });
+      assertEquals(unbased.status, 428);
+      assertEquals((await unbased.json()).code, "base_required");
+      const del = await api(
+        server,
+        `/_/api/notes/Hello%20World?base_version=${before.version}`,
+        { method: "DELETE" },
+      );
       assertEquals(del.status, 200);
       const gone = await api(server, "/_/api/notes/Hello%20World");
       assertEquals(gone.status, 404);

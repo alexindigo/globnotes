@@ -115,7 +115,7 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   await session.click("#settings-field-protect");
   await session.poll("fetch('/_/api/plugin-host/session-guard/settings/preferences').then(r=>r.json()).then(d=>d.values.protect===true)");
   const before = await Deno.readTextFile(`${vault}/NoteA.md`);
-  const guard = await inspect("fetch('/_/api/notes/NoteA',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({newContent:'GPS-blocked inline settings'})}).then(async r=>({status:r.status,body:await r.json()}))");
+  const guard = await inspect(`fetch('/_/api/notes/NoteA',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({newContent:'GPS-blocked inline settings',baseContent:${JSON.stringify(before)}})}).then(async r=>({status:r.status,body:await r.json()}))`);
   assert(guard.status === 409 && guard.body.detail === "session guard protection", "Real pre-save guard did not consume the native toggle");
   assert(await Deno.readTextFile(`${vault}/NoteA.md`) === before, "Guarded write changed disk");
   assert(await inspect("document.querySelector('.cm-content') === window.__gpsEditor && document.querySelector('.cm-content').textContent.includes('GPS inline dirty marker')"), "Inline Settings lost the original dirty editor");

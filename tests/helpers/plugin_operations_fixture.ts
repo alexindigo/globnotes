@@ -17,6 +17,7 @@ import { fixtureApiOrigin, pluginFixture } from "./plugin_fixture.ts";
 import { initState, state } from "../../server/state.ts";
 import type { OperationFact } from "../../server/plugins/contracts.ts";
 import { restoreState } from "./state.ts";
+import { currentBase } from "./storage.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
 import { PluginActions } from "../../server/plugins/actions.ts";
 import { HubGate } from "../../server/hub/gate.ts";
@@ -172,9 +173,10 @@ export async function pluginOperationsFixture(options: {
         content: string,
         operationId?: Parameters<NoteOperations["updateNote"]>[5],
       ) {
+        // Like a client: based on the version it reads now.
         const result = await operations.updateNote(
           path,
-          { newContent: content },
+          { newContent: content, base: currentBase(path) },
           "none",
           fixtureApiOrigin(lifecycle),
           undefined,
@@ -189,7 +191,14 @@ export async function pluginOperationsFixture(options: {
         );
       },
       async remove(path: string) {
-        return await operations.deleteNote(path, fixtureApiOrigin(lifecycle));
+        return await operations.deleteNote(
+          path,
+          fixtureApiOrigin(lifecycle),
+          undefined,
+          undefined,
+          undefined,
+          currentBase(path),
+        );
       },
       async close() {
         manager.stop();

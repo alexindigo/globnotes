@@ -9,15 +9,30 @@ import {
   type PathfinderRequest,
 } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
+import { parseBase } from "@server/hub/gate.ts";
 import { noteMutationLease } from "@server/auth/middleware.ts";
 
 export default async function (request: PathfinderRequest<{ path: string }>) {
   try {
     const lease = await noteMutationLease(request._raw);
-    await state.operations!.deleteNote(request.params.path, {
-      origin: "api",
-      lease,
-    });
+    // The version the caller read: a changed note is not deleted.
+    const version = request.query.get("base_version");
+    let base;
+    if (version !== null) {
+      try {
+        base = parseBase({ kind: "version", version });
+      } catch (error) {
+        throw new HttpError(400, (error as Error).message);
+      }
+    }
+    await state.operations!.deleteNote(
+      request.params.path,
+      { origin: "api", lease },
+      undefined,
+      undefined,
+      undefined,
+      base,
+    );
   } catch (e) {
     if (e instanceof OperationError) return toOperationResponse(e);
     if (e instanceof InvalidPathError) {

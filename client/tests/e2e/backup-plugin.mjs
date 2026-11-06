@@ -25,7 +25,7 @@ const deltas = {
   count: [["const planned = stages.slice(0, config.count)", "const planned = stages.slice(0, Math.min(3, config.count + 1))"], ["Math.min(journal.count, journal.old.length + 1)", "Math.min(Math.min(3, journal.count + 1), journal.old.length + 1)"]],
   order: [["const planned = stages.slice(0, config.count)", "const planned = stages.slice(0, config.count).reverse()"], ["slot.hash !== journal.stages[index].hash", "slot.hash !== journal.stages[journal.planned.length - index - 1].hash"], ["this.#verifiedFile(state.stages[index].file, slot.hash, config)", "this.#verifiedFile(state.stages[state.planned.length - index - 1].file, slot.hash, config)"]],
   location: [["root = workspace.vault;", "root = join(workspace.vault, 'misplaced');"]],
-  preimage: [["content: before.content", "content: fact.after?.content ?? before.content"]],
+  preimage: [["content: new TextDecoder().decode(offer.bytes)", 'content: ""']],
   pin: [["base: values.basePath", "base: ''"]],
   recovery: [["if (metadata?.value.operationKey === state.operationKey)", "if (false && metadata?.value.operationKey === state.operationKey)"]],
   cleanup: [["this.#remember(state.operationKey);", "this.#remember(state.operationKey); this.#status.pendingRecovery=false; return {completed:true};"]],
@@ -86,7 +86,17 @@ if (options.controls) {
     return { status: response.status, body: await response.json() };
   }
   const settings = () => api("/_/api/plugin-host/globnotes-backup/settings/backup");
-  const status = () => api("/_/api/plugins/globnotes-backup/status");
+  // A capture resolves at custody (before the note write); publication then
+  // finishes in the plugin's queue. Status is read once that queue is idle.
+  async function status() {
+    let latest;
+    for (let attempt = 0; attempt < 600; attempt++) {
+      latest = await api("/_/api/plugins/globnotes-backup/status");
+      if (latest.status !== 200 || latest.body?.pendingJobs === 0) return latest;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return latest;
+  }
   async function picture(name, session = current.session) {
     const { data } = await session.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
     await Deno.writeFile(`${current.directory}/${name}.png`, Uint8Array.from(atob(data), c => c.charCodeAt(0)), { createNew: true });
@@ -179,7 +189,8 @@ if (options.controls) {
     await session.poll(`fetch('/_/api/plugin-host/globnotes-backup/settings/backup').then(r=>r.json()).then(v=>v.values.basePath===${JSON.stringify(value)})`);
   }
   async function save(path, value) {
-    const ack = await api(`/_/api/notes/${path}`, "PATCH", { newContent: value });
+    const read = await api(`/_/api/notes/${path}`);
+    const ack = await api(`/_/api/notes/${path}`, "PATCH", { newContent: value, base: { kind: "version", version: read.body.version } });
     equal(ack.status, 200, "managed save acknowledgement");
     equal(await Deno.readTextFile(`${current.vault}/${path}.md`), value, "live saved bytes");
     const settled = await status(); equal(settled.status, 200, "actual plugin status endpoint"); return settled.body;
@@ -302,7 +313,8 @@ if (options.controls) {
         const watcher = Deno.watchFs(`${current.vault}/.globnotes-backup`);
         const ready = (async () => { for await (const event of watcher) if (event.paths.some(path => path.endsWith("/retarget-ready"))) { const observed = await Deno.stat(`${current.vault}/.globnotes-backup/retarget-ready`).catch(error => { if (error instanceof Deno.errors.NotFound) return null; throw error; }); if (observed) return; } throw new Error("barrier watcher closed before observation"); })();
         try {
-          equal((await api("/_/api/notes/Note", "PATCH", { newContent: "C" })).status, 200, "BACKUP_NATIVE_retarget: original ACK before deferred publication");
+          const read = await api("/_/api/notes/Note");
+          equal((await api("/_/api/notes/Note", "PATCH", { newContent: "C", base: { kind: "version", version: read.body.version } })).status, 200, "BACKUP_NATIVE_retarget: original ACK before deferred publication");
           await ready;
           Deno.removeSync(alias); Deno.symlinkSync(second, alias); Deno.writeTextFileSync(`${current.vault}/.globnotes-backup/retarget-release`, "release");
           const settled = (await status()).body;

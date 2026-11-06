@@ -33,6 +33,10 @@ Open notes follow changes made elsewhere over the vault change stream, with a
 polling fallback. Clean editors refresh in place; dirty editors keep their text
 and explain that the next save will merge it.
 
+Versioning plugins: the hub offers a file's previous bytes to plugins that declare
+`versioning` before a globnotes write replaces, deletes or moves them, and waits up
+to 10 seconds for them to keep a copy. The hub itself still stores no content.
+
 ### Changed
 
 Search follows committed hub changes instead of scanning the folder before
@@ -45,6 +49,25 @@ edits keep both versions by saving your text as a conflict copy next to the
 original. The editor moves to the copy, explains what happened and keeps any
 newer typing and queued saves. Saving a note deleted elsewhere re-creates it
 with a notice. No previous versions or base text are stored in the hub.
+
+Every globnotes write goes through the hub's write gate and states what it was
+based on. REST updates (also renames) and deletes, MCP updates and deletes, plugin
+actions and plugin file writes without a base are refused with nothing written; a
+stale base merges note text, keeps a conflict copy or is refused, and a stale rename
+or delete is always refused. Deleting a note that changed since it was opened keeps
+it and says why. Plugin filesystem writes are recorded as the plugin's.
+
+Plugin contract version 2: plugin writes take a `base` (and `onStale`), reads and
+receipts return versions, and render Workers can no longer write files directly.
+See `docs/plugin-api.md` "Contract version" and `MIGRATION.md`.
+
+The versioned backup plugin keeps a note's previous text before a save, rename or
+delete replaces it (before: after the change). A failed or slow backup still never
+blocks the save, and is shown in the plugin's diagnostics.
+
+Moving a note with its attachments never overwrites a file in the destination: an
+attachment whose name is taken there gets the next free name (`name 1.png`,
+`name 2.png`, ...), and the note's link follows it.
 
 ### Fixed
 

@@ -156,7 +156,28 @@ next to it as `<stem>.conflict-YYYYMMDD-HHMMSS-globnotes.md` (UTC), using the no
 guarded, create-exclusive path. Occupied names receive `-2`, `-3`, etc. before
 `.md`. No requested rename is applied on conflict. A missing original is
 recreated through guarded creation. Cancellation/failure retains existing error
-semantics. Legacy callers without a base retain replacement semantics until M4.
+semantics.
+
+## Bases
+
+No globnotes writer replaces, renames or deletes without stating its base, the
+same parameter for every write: `{kind:"absent"}`, `{kind:"version", version}`
+(SHA-256 of the bytes read) or `{kind:"text", content}` for notes (the editor's
+`baseContent` is this form). Without one: `428 base_required`, nothing written.
+
+| # | Writer | Base | Stale base |
+|---|---|---|---|
+| 1 | Note update (content) | Version or text | Text merges when it can; otherwise `onStale`: `copy` (default) keeps the writer's text as a conflict copy, `refuse` answers `409 base_stale` with `currentVersion` |
+| 2 | Note rename (with or without content) | Version or text | Refused (`base_stale`) |
+| 3 | Note delete | Version (`DELETE ...?base_version=<hex>`) | Refused; nothing deleted |
+| 4 | Create, upload, conflict copy | Implicit absent | Create: `note_exists`; upload: a time-suffixed free name |
+| 5 | Plugin `file-write` | Absent or version | Notes as rows 1-2; other files are binary and never merge (copy `<stem>.conflict-...-globnotes.<ext>` or refuse); outside the vault always refused |
+| 6 | Reference rewrite, link rebasing, H1 sync | The host's own read under the lock | `operation_conflict`, nothing written |
+| 7 | Plugin filesystem facade | Its tokens (`expect`, `sourceToken`, `token`) | `fs_conflict` |
+| 8 | MCP update/delete | `expected_last_modified` and/or `expected_hash`, one required | Refused with an actionable message |
+
+`tests/hub_gate_contract_test.ts` holds the registry of every writer with its base
+and stale outcome and fails when code gains a writer the registry does not list.
 
 GET/save responses include `version`, the SHA-256 of the returned content;
 updates add `saveResult: {status: saved|merged|conflict, conflictCopyPath?,

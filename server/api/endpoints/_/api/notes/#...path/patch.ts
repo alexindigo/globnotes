@@ -11,6 +11,7 @@ import { validateNotePath } from "@server/notes/validate.ts";
 import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
+import { parseBase, parseOnStale } from "@server/hub/gate.ts";
 import { noteMutationLease } from "@server/auth/middleware.ts";
 
 export default async function (request: PathfinderRequest<{ path: string }>) {
@@ -21,6 +22,17 @@ export default async function (request: PathfinderRequest<{ path: string }>) {
       data.baseContent !== undefined && typeof data.baseContent !== "string"
     ) {
       throw new HttpError(400, "baseContent must be a string");
+    }
+    // The base every update states (docs/hub.md "Write gate"): `base`, or the
+    // editor's text form `baseContent`. Missing: 428 base_required.
+    try {
+      if (data.base !== undefined) data.base = parseBase(data.base);
+      data.onStale = parseOnStale(data.onStale);
+    } catch (error) {
+      throw new HttpError(400, (error as Error).message);
+    }
+    if (data.base !== undefined && data.baseContent !== undefined) {
+      throw new HttpError(400, "pass either base or baseContent");
     }
     const fileRefs = request.query.get("file_refs") ?? "none";
     if (data.newPath !== undefined && data.newPath !== null) {

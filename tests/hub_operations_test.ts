@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { requesterAuthority } from "../server/plugins/lifecycle.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
@@ -13,13 +14,13 @@ Deno.test("hub operations: create/save/rename/delete and uploads are globnotes w
     );
     await f.operations.updateNote(
       "note",
-      { newContent: "modified" },
+      { base: currentBase("note"), newContent: "modified" },
       "none",
       f.api(),
     );
     await f.operations.updateNote(
       "note",
-      { newPath: "folder/moved" },
+      { base: currentBase("note"), newPath: "folder/moved" },
       "none",
       f.api(),
     );
@@ -35,7 +36,14 @@ Deno.test("hub operations: create/save/rename/delete and uploads are globnotes w
       new TextEncoder().encode("upload"),
       f.api(),
     );
-    await f.operations.deleteNote("folder/moved", f.api());
+    await f.operations.deleteNote(
+      "folder/moved",
+      f.api(),
+      undefined,
+      undefined,
+      undefined,
+      currentBase("folder/moved"),
+    );
     assertEquals(f.batches.flat().map((e) => e.kind), [
       "created",
       "modified",
@@ -72,7 +80,7 @@ Deno.test("hub operations: partial storage failures record actual effects and re
     await assertRejects(() =>
       f.operations.updateNote(
         "partial",
-        { newContent: "completed partial bytes" },
+        { base: currentBase("partial"), newContent: "completed partial bytes" },
         "none",
         f.api(),
       )
@@ -104,7 +112,7 @@ Deno.test("hub operations: attachment moves and reference rewrites record all ac
     }, f.api());
     await f.operations.updateNote(
       "note",
-      { newPath: "folder/note" },
+      { base: currentBase("note"), newPath: "folder/note" },
       "move",
       f.api(),
     );
@@ -200,11 +208,18 @@ for (const failure of ["rename", "remove"] as const) {
         failure === "rename"
           ? f.operations.updateNote(
             "old/note",
-            { newPath: "new/note" },
+            { base: currentBase("old/note"), newPath: "new/note" },
             "none",
             f.api(),
           )
-          : f.operations.deleteNote("old/note", f.api())
+          : f.operations.deleteNote(
+            "old/note",
+            f.api(),
+            undefined,
+            undefined,
+            undefined,
+            currentBase("old/note"),
+          )
       );
       assertEquals(
         f.batches.at(-1)![0].kind,
@@ -261,7 +276,14 @@ Deno.test("hub operations: deleting an unscanned local file records local create
       `${f.vault}/unobserved.md`,
       "outside before debounce",
     );
-    await f.operations.deleteNote("unobserved", f.api());
+    await f.operations.deleteNote(
+      "unobserved",
+      f.api(),
+      undefined,
+      undefined,
+      undefined,
+      currentBase("unobserved"),
+    );
     const entries = f.batches.flat();
     assertEquals(entries.map((entry) => [entry.peer, entry.kind]), [
       ["local", "created"],
@@ -302,7 +324,7 @@ Deno.test("hub operations: moving an attachment directory first ingests unscanne
     );
     await f.operations.updateNote(
       "note",
-      { newPath: "folder/note" },
+      { base: currentBase("note"), newPath: "folder/note" },
       "move",
       f.api(),
     );
@@ -343,7 +365,7 @@ Deno.test("hub operations: a save reconciles an unscanned outside modification b
     );
     await f.operations.updateNote(
       "note",
-      { newContent: "managed result" },
+      { base: currentBase("note"), newContent: "managed result" },
       "none",
       f.api(),
     );
@@ -404,7 +426,14 @@ for (const alias of ["sibling", "ancestor"] as const) {
     const f = hubOperationsFixture({}, { alias });
     try {
       Deno.writeTextFileSync(`${f.vault}/unobserved.md`, "new outside note");
-      await f.operations.deleteNote("unobserved", f.api());
+      await f.operations.deleteNote(
+        "unobserved",
+        f.api(),
+        undefined,
+        undefined,
+        undefined,
+        currentBase("unobserved"),
+      );
       assertEquals(
         f.batches.flat().map((entry) => [entry.peer, entry.kind, entry.path]),
         [

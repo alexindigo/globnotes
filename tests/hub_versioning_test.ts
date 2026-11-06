@@ -5,10 +5,12 @@
  * the write; creates are not offered; a versioner's own writes are never
  * offered and cannot deadlock; failures let the write proceed visibly. */
 
+import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals } from "@std/assert";
 import { pluginOperationsFixture } from "./helpers/plugin_operations_fixture.ts";
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
+import { versionOf } from "../server/hub/merge.ts";
 
 const VERSIONER = `
 let mode = "keep";
@@ -125,7 +127,7 @@ Deno.test("versioning: renames offer the bytes leaving the old path, attachments
     await v.create("a/Note", "![](pic.bin)");
     await v.operations.updateNote(
       "a/Note",
-      { newPath: "b/Note" },
+      { base: currentBase("a/Note"), newPath: "b/Note" },
       "move",
       v.origin(),
     );
@@ -150,6 +152,12 @@ Deno.test("versioning: extensions and read grants decide what a versioner sees",
       { kind: "file", absolutePath: `${v.fixture.vault}/x.bin` },
       new TextEncoder().encode("new"),
       v.origin(),
+      undefined,
+      undefined,
+      {
+        kind: "version",
+        version: versionOf(Deno.readFileSync(`${v.fixture.vault}/x.bin`)),
+      },
     );
     assertEquals(await v.seen(), [], ".bin is not declared");
   } finally {

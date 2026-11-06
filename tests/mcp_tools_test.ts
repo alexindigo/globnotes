@@ -1123,6 +1123,7 @@ Deno.test("mcp tools: writes carry the lease and map domain errors", async () =>
     const cancelled = await mcp.call("globnotes_update_note", {
       path: "a",
       content: "#BLOCK#",
+      expected_hash: ANY_HASH,
     });
     assertEquals(cancelled.isError, true);
     assertEquals(
@@ -1131,9 +1132,39 @@ Deno.test("mcp tools: writes carry the lease and map domain errors", async () =>
         "Nothing was written.",
     );
     fake.failWrites(new HttpError(401, "Invalid authentication credentials"));
-    const expired = await mcp.call("globnotes_delete_note", { path: "a" });
+    const expired = await mcp.call("globnotes_delete_note", {
+      path: "a",
+      expected_hash: ANY_HASH,
+    });
     assert(textOf(expired).startsWith("The globnotes token expired"));
     fake.failWrites(null);
+  } finally {
+    await mcp.close();
+  }
+});
+
+Deno.test("mcp tools: update, rename and delete refuse without a stale-write guard", async () => {
+  const fake = fakeVault({ a: "# A\n" });
+  const mcp = await connect(fake);
+  try {
+    for (
+      const [name, args, verb] of [
+        ["globnotes_update_note", { path: "a", content: "x" }, "written"],
+        ["globnotes_update_note", { path: "a", new_path: "b" }, "written"],
+        ["globnotes_delete_note", { path: "a" }, "deleted"],
+      ] as const
+    ) {
+      const result = await mcp.call(name, args);
+      assertEquals(result.isError, true, name);
+      assertEquals(
+        textOf(result),
+        `Nothing was ${verb}: pass expected_last_modified or expected_hash ` +
+          "(or both) from globnotes_get_note for 'a', so a note changed " +
+          "since you read it is not overwritten.",
+      );
+    }
+    assertEquals(fake.calls.writes, []);
+    assertEquals(fake.notes.get("a")!.content, "# A\n");
   } finally {
     await mcp.close();
   }
@@ -1186,10 +1217,12 @@ Deno.test("mcp tools: update, rename and the stale-write guard", async () => {
       { lastModifiedMs: Date.parse(stamp) },
     ]);
 
+    const reread = await mcp.call("globnotes_get_note", { path: "Plans/Old" });
     const moved = await mcp.call("globnotes_update_note", {
       path: "Plans/Old",
       new_path: " Archive/Old ",
       file_refs: "move",
+      expected_hash: (reread.structuredContent as { hash: string }).hash,
     });
     assertEquals(moved.isError, undefined, textOf(moved));
     const result = moved.structuredContent as {
@@ -1212,7 +1245,7 @@ Deno.test("mcp tools: update, rename and the stale-write guard", async () => {
       "Plans/Old",
       { newContent: undefined, newPath: "Archive/Old" },
       "move",
-      undefined,
+      { hash: (reread.structuredContent as { hash: string }).hash },
     ]);
 
     const staleDelete = await mcp.call("globnotes_delete_note", {
@@ -1442,8 +1475,12 @@ Deno.test("mcp tools: storage and library errors never reach the agent verbatim"
       for (
         const [name, args] of [
           ["globnotes_get_note", { path: "a" }],
-          ["globnotes_update_note", { path: "a", content: "x" }],
-          ["globnotes_delete_note", { path: "a" }],
+          ["globnotes_update_note", {
+            path: "a",
+            content: "x",
+            expected_hash: ANY_HASH,
+          }],
+          ["globnotes_delete_note", { path: "a", expected_hash: ANY_HASH }],
         ] as const
       ) {
         const result = await mcp.call(name, args);
@@ -1533,6 +1570,7 @@ Deno.test("mcp tools: a rename collision names the target, not the note", async 
     const moved = await mcp.call("globnotes_update_note", {
       path: "a",
       new_path: "b",
+      expected_hash: ANY_HASH,
     });
     assertEquals(
       textOf(moved),
@@ -1542,6 +1580,7 @@ Deno.test("mcp tools: a rename collision names the target, not the note", async 
     const heading = await mcp.call("globnotes_update_note", {
       path: "a",
       content: "# B\n",
+      expected_hash: ANY_HASH,
     });
     assertEquals(
       textOf(heading),
@@ -1682,6 +1721,9 @@ Deno.test("mcp tools: a read-only 2025 batch gets the read-only tool error", asy
     await endpoint.close();
   }
 });
+
+/** A guard value for calls whose vault fails before checking it. */
+const ANY_HASH = "0".repeat(64);
 
 interface Listing {
   total: number;

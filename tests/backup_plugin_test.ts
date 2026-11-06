@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { backupFixture } from "./helpers/backup_fixture.ts";
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
@@ -142,7 +143,7 @@ Deno.test("backup plugin: rename delete recreate preserve original-path historie
     await b.create("Original", "old");
     await b.operations.updateNote(
       "Original",
-      { newContent: "new", newPath: "Renamed" },
+      { base: currentBase("Original"), newContent: "new", newPath: "Renamed" },
       "none",
       fixtureApiOrigin(b.lifecycle),
     );
@@ -207,7 +208,7 @@ Deno.test("backup plugin: H1-derived and explicit heading renames capture origin
     );
     const moved = await b.operations.updateNote(
       "heading/Renamed",
-      { newPath: "heading/Explicit" },
+      { base: currentBase("heading/Renamed"), newPath: "heading/Explicit" },
       "none",
       fixtureApiOrigin(b.lifecycle),
     );

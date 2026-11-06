@@ -7,6 +7,7 @@
  * Fts5Indexer; glob-counting cache tests become behaviour assertions).
  */
 
+import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { NoteExistsError, NoteNotFoundError } from "../server/notes/models.ts";
@@ -236,7 +237,14 @@ Deno.test("priority reindex: delete unsearchable without any sync", () =>
       { path: "gone/note", content: "needle" },
       api(),
     );
-    await operations.deleteNote("gone/note", api());
+    await operations.deleteNote(
+      "gone/note",
+      api(),
+      undefined,
+      undefined,
+      undefined,
+      currentBase("gone/note"),
+    );
     const results = indexer.search("needle");
     assert(!results.some((r) => r.path === "gone/note"));
   }));
@@ -246,7 +254,7 @@ Deno.test("priority reindex: rename removes old title from index", () =>
     await operations.createNote({ path: "old/name", content: "needle" }, api());
     await operations.updateNote(
       "old/name",
-      { newPath: "new/name" },
+      { base: currentBase("old/name"), newPath: "new/name" },
       "none",
       api(),
     );

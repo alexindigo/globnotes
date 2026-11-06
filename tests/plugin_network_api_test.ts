@@ -477,6 +477,7 @@ Deno.test("review repairs: R08 reader-detected settings retirement arranges same
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         newContent: "narrowed required guard remains usable",
+        baseContent: "fresh required guard consumer",
       }),
       signal: AbortSignal.timeout(3000),
     });

@@ -200,7 +200,9 @@ export async function getPlugins() {
   }
 }
 
-export async function updateNote(path, newPath, newContent, fileRefs = "none", baseContent) {
+/** `baseContent`: the text this update is based on (required by the server);
+ * `onStale`: "copy" (default, keep both) or "refuse". */
+export async function updateNote(path, newPath, newContent, fileRefs = "none", baseContent, onStale) {
   try {
     const response = await api.patch(
       `notes/${encodeURIComponent(path)}`,
@@ -208,6 +210,7 @@ export async function updateNote(path, newPath, newContent, fileRefs = "none", b
         newPath: newPath,
         newContent: newContent,
         ...(baseContent === undefined ? {} : { baseContent }),
+        ...(onStale === undefined ? {} : { onStale }),
       },
       { params: { file_refs: fileRefs } },
     );
@@ -232,9 +235,12 @@ export async function rewriteRefs(oldPath, newPath) {
   });
 }
 
-export async function deleteNote(path) {
+/** `version`: the note's version as loaded; a changed note is not deleted. */
+export async function deleteNote(path, version) {
   try {
-    await api.delete(`notes/${encodeURIComponent(path)}`);
+    await api.delete(`notes/${encodeURIComponent(path)}`, {
+      params: { base_version: version },
+    });
   } catch (response) {
     return Promise.reject(response);
   }

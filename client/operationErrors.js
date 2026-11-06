@@ -36,6 +36,18 @@ export function operationError(error) {
         message: data.detail ||
           "Some changes could not be completed. Do not retry blindly.",
       };
+    case "base_stale":
+      return {
+        code: data.code,
+        title: "Changed elsewhere",
+        message: "This note changed since you opened it; nothing was changed. It now shows the current version.",
+      };
+    case "base_required":
+      return {
+        code: data.code,
+        title: "Not applied",
+        message: data.detail || "This change did not say which version it was based on; nothing was changed.",
+      };
     default:
       return null;
   }

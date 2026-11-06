@@ -312,7 +312,10 @@ Deno.test("mcp protocol: storage failures don't show server paths", async () => 
         { path: "Folder" },
         "can't read 'Folder' as a note",
       ],
-      ["globnotes_delete_note", { path: "Folder" }, "can't read 'Folder'"],
+      ["globnotes_delete_note", {
+        path: "Folder",
+        expected_hash: "0".repeat(64),
+      }, "can't read 'Folder'"],
       ["globnotes_list_folder", { path: "Elsewhere" }, "Invalid folder"],
       ["globnotes_list_folder", { path: "Locked.md" }, "not found"],
       ["globnotes_get_note", { path: "x".repeat(300) }, "unexpected server"],
@@ -327,7 +330,7 @@ Deno.test("mcp protocol: storage failures don't show server paths", async () => 
         ["globnotes_get_note", { path: "Locked" }, "no permission to access"],
         [
           "globnotes_update_note",
-          { path: "Locked", content: "x" },
+          { path: "Locked", content: "x", expected_hash: "0".repeat(64) },
           "no permission",
         ],
       );

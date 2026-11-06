@@ -25,7 +25,8 @@ export function createNoteRenameLinks({
         const content = rewriteRenamedLinks(other.content, oldPath, newPath, path);
         if (content !== other.content) {
           if (ownsPath(path)) continue;
-          await update(path, path, content);
+          // Based on the text just read; a note changed since is left alone.
+          await update(path, path, content, "none", other.content, "refuse");
           count++;
         }
       }

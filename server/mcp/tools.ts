@@ -125,8 +125,8 @@ const expectedLastModified = z.iso.datetime({ offset: true }).optional()
   .describe(
     "Stale-write guard: the last_modified value you read (from " +
       "globnotes_get_note or a search result). If the note changed since, " +
-      "nothing is written and you are asked to re-read it. Omit to skip " +
-      "the check.",
+      "nothing is written and you are asked to re-read it. Update and " +
+      "delete need this or expected_hash.",
   );
 
 const expectedHash = z.string().regex(
@@ -137,7 +137,8 @@ const expectedHash = z.string().regex(
     "or the result of a create or update). If the note's content changed " +
     "since, nothing is written and you are asked to re-read it. Unlike " +
     "last_modified it also catches changes within the same millisecond. " +
-    "Omit to skip the check; with both, both must match.",
+    "Update and delete need this or expected_last_modified; with both, both " +
+    "must match.",
 );
 
 /** The stale-write guard a write tool's arguments ask for (design §2 row 9;
@@ -157,6 +158,28 @@ function expectation(
       ? {}
       : { hash: args.expected_hash.toLowerCase() }),
   };
+}
+
+/** Every write states what it read: update (renames included) and delete
+ * need at least one guard. */
+function requiredExpectation(
+  args: {
+    path: string;
+    expected_last_modified?: string;
+    expected_hash?: string;
+  },
+  action: "update" | "delete",
+): NoteExpectation {
+  const expect = expectation(args);
+  if (!expect) {
+    throw new ToolError(
+      `Nothing was ${action === "update" ? "written" : "deleted"}: pass ` +
+        "expected_last_modified or expected_hash (or both) from " +
+        `globnotes_get_note for '${args.path}', so a note changed since you ` +
+        "read it is not overwritten.",
+    );
+  }
+  return expect;
 }
 
 const NoteOutput = z.object({
@@ -870,7 +893,7 @@ export const updateNote = defineTool({
   name: "globnotes_update_note",
   title: "Update or rename a note",
   description:
-    `Replace a note's content, rename/move it, or both. The new content replaces the whole note, so read it first with globnotes_get_note (every part, while has_more is true) and pass its last_modified as expected_last_modified and its hash as expected_hash.
+    `Replace a note's content, rename/move it, or both. The new content replaces the whole note, so read it first with globnotes_get_note (every part, while has_more is true) and pass its last_modified as expected_last_modified and its hash as expected_hash (at least one is required, also for a rename).
 
 Like the web app, changing the first '# Heading' of a note without a front-matter title renames the note to match; the result's path is the final path.
 Examples: fix a typo -> path + content + expected_last_modified + expected_hash; move to another folder -> path + new_path="Archive/Old plan".`,
@@ -908,6 +931,7 @@ Examples: fix a typo -> path + content + expected_last_modified + expected_hash;
     const newPath = args.new_path === undefined
       ? undefined
       : validPath(args.new_path, "new_path");
+    const expect = requiredExpectation(args, "update");
     let note;
     try {
       note = await ctx.vault.updateNote(
@@ -915,7 +939,7 @@ Examples: fix a typo -> path + content + expected_last_modified + expected_hash;
         { newContent: args.content, newPath },
         args.file_refs,
         lease,
-        expectation(args),
+        expect,
       );
     } catch (error) {
       // The note that exists is at the target, not at `path`.
@@ -967,7 +991,7 @@ export const deleteNote = defineTool({
   name: "globnotes_delete_note",
   title: "Delete a note",
   description:
-    "Delete a note permanently. Pass the last_modified and hash you read as expected_last_modified and expected_hash so a note edited since is not deleted.",
+    "Delete a note permanently. Pass the last_modified and hash you read as expected_last_modified and expected_hash (at least one is required) so a note edited since is not deleted.",
   write: true,
   inputSchema: z.strictObject({
     path: notePath,
@@ -983,7 +1007,11 @@ export const deleteNote = defineTool({
   },
   async run(args, ctx) {
     const lease = writeLease(ctx);
-    await ctx.vault.deleteNote(args.path, lease, expectation(args));
+    await ctx.vault.deleteNote(
+      args.path,
+      lease,
+      requiredExpectation(args, "delete"),
+    );
     return {
       structured: { deleted: args.path },
       summary: `Deleted note ${quote(args.path)}.`,

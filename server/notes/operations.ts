@@ -373,15 +373,6 @@ export class NoteOperations {
     });
   }
 
-  /** Writes that replace, delete or move bytes must state their base. */
-  #baseRequired(
-    _ctx: OperationOrigin,
-    requester: RequesterAuthority | undefined,
-  ): boolean {
-    // Plugin contract 2: every plugin write states its base.
-    return requester !== undefined;
-  }
-
   #saveResponse(note: Note, saveResult: NonNullable<Note["saveResult"]>): Note {
     return { ...note, version: noteVersion(note), saveResult };
   }
@@ -409,9 +400,8 @@ export class NoteOperations {
         (typeof data.baseContent === "string"
           ? { kind: "text", content: data.baseContent }
           : undefined);
-      if (!base && !expect && this.#baseRequired(ctx, requester)) {
-        throw baseRequired(operationId);
-      }
+      // Every write that replaces or moves a note states its base.
+      if (!base && !expect) throw baseRequired(operationId);
       if (base) {
         // The hub gate's base check (server/hub/gate.ts), under the note lock.
         this.adapters.hub?.scanNow([notePath + MARKDOWN_EXT]);
@@ -636,9 +626,7 @@ export class NoteOperations {
       const before = this.adapters.notes.get(notePath);
       // The writer's stale-write guard (server/notes/expectation.ts).
       assertExpected(notePath, before, expect);
-      if (!base && !expect && this.#baseRequired(ctx, requester)) {
-        throw baseRequired(operationId);
-      }
+      if (!base && !expect) throw baseRequired(operationId);
       if (base) {
         // A stale delete is refused: the change made since wins.
         const outcome = checkBase(base, {
@@ -973,9 +961,7 @@ export class NoteOperations {
         ? await Deno.readFile(target.absolutePath)
         : null;
       this.#admission(ctx, operationId);
-      if (!base && this.#baseRequired(ctx, requester)) {
-        throw baseRequired(operationId);
-      }
+      if (!base) throw baseRequired(operationId);
       let conflictOf: string | null = null;
       if (base) {
         // Files other than notes are binary: compared by version, never merged.

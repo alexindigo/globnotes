@@ -41,7 +41,8 @@ export const INSTRUCTIONS =
   "read all of it first, then call globnotes_update_note with the whole new " +
   "content, expected_last_modified and expected_hash set to the " +
   "last_modified and hash you read, so edits made since are not " +
-  "overwritten. Changing a note's first '# Heading' " +
+  "overwritten; update (also a rename) and delete refuse without them. " +
+  "Changing a note's first '# Heading' " +
   "renames it (unless its front matter sets a title); use the path in the " +
   "result from then on. A read-only instance offers only the read tools.";
 

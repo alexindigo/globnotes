@@ -278,8 +278,8 @@ details, which can include paths on the server, go only to the server log.
 | 3 | `globnotes_list_folder` | `path` (default: the vault root); `limit` (1–500, default 100); `offset` (default 0) | `{path, total, count, offset, has_more, next_offset?, folders: [{name, path}], notes: [{path, title, truncated?}]}`: subfolders first, then notes | read-only, idempotent |
 | 4 | `globnotes_list_tags` | `limit` (1–2000, default 500); `offset` (default 0) | `{total, count, offset, has_more, next_offset?, tags, truncated?}` | read-only, idempotent |
 | 5 | `globnotes_create_note` | `path`, `content` | `{path, title, content, last_modified, hash}` | not destructive |
-| 6 | `globnotes_update_note` | `path`; `content`; `new_path`; `expected_last_modified`; `expected_hash`; `file_refs` (`none`, `move`, `relink`; default `none`) | the note, plus `moved_files: [{old_path, new_path}]` | destructive |
-| 7 | `globnotes_delete_note` | `path`, `expected_last_modified`, `expected_hash` | `{deleted}` | destructive |
+| 6 | `globnotes_update_note` | `path`; `content`; `new_path`; `expected_last_modified` and/or `expected_hash` (one is required); `file_refs` (`none`, `move`, `relink`; default `none`) | the note, plus `moved_files: [{old_path, new_path}]` | destructive |
+| 7 | `globnotes_delete_note` | `path`; `expected_last_modified` and/or `expected_hash` (one is required) | `{deleted}` | destructive |
 
 No tool reaches anything outside the vault (`openWorldHint: false`).
 
@@ -363,7 +363,8 @@ folder listing takes display titles from the index).
 
 ## The stale-write guard
 
-`globnotes_update_note` and `globnotes_delete_note` take two optional guards:
+`globnotes_update_note` (content changes and renames alike) and `globnotes_delete_note`
+need at least one of two guards; without one they write nothing and say which to pass:
 
 | # | Argument | Value | Catches |
 |---|---|---|---|
@@ -374,7 +375,7 @@ If either no longer matches (for example, someone saved the note in the browser 
 meantime), the tool writes nothing and asks the agent to re-read the note and retry with
 the new value. It never merges or writes a conflict copy for an agent: the agent sends a
 whole note, and the server keeps no earlier text to merge with. With both guards, both
-must match. Agents should always pass them.
+must match.
 
 The check runs inside globnotes' note lock, which every globnotes write takes (the web
 app, MCP, plugins), right before the write: no globnotes write can land between the check

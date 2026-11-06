@@ -38,7 +38,7 @@ vi.mock("../pluginRuntime.js", async () => {
     capturePluginCatalogOwnership: vi.fn(() => ({ current: () => true })), acknowledgePluginPolicy: vi.fn(() => true) };
 });
 vi.mock("../api.js", async importOriginal => ({
-  getConfig: vi.fn(), getNote: vi.fn(async path => ({ path, content: "Seed\n" })),
+  getConfig: vi.fn(), getNote: vi.fn(async path => ({ path, content: "Seed\n", version: `v-${path}` })),
   getNoteIndex: vi.fn(async () => [{ path: "NoteA" }]), getPlugins: vi.fn(async () => []),
   getRenderedHtml: vi.fn(async () => "<p>Seed</p>"), getTree: vi.fn(async () => []),
   getIndexStatus: vi.fn(async () => ({ syncing: false })), getNotes: vi.fn(async () => []),
@@ -178,7 +178,7 @@ describe("foreground FIFO through the real Note", () => {
     button("Cancel", document.querySelector('[data-modal-top="true"]')).click(); await flushPromises();
     expect(deleteNote).not.toHaveBeenCalled(); expect(holder.router.currentRoute.value.params.path).toBe("NoteA");
     button("Delete").click(); await flushPromises(); button("Delete", document.querySelector('[data-modal-top="true"]')).click(); await flushPromises();
-    expect(deleteNote).toHaveBeenCalledExactlyOnceWith("NoteA"); expect(holder.router.currentRoute.value.name).toBe("home"); expect(updateNote).not.toHaveBeenCalled(); expect(createNote).not.toHaveBeenCalled();
+    expect(deleteNote).toHaveBeenCalledExactlyOnceWith("NoteA", "v-NoteA"); expect(holder.router.currentRoute.value.name).toBe("home"); expect(updateNote).not.toHaveBeenCalled(); expect(createNote).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -195,7 +195,7 @@ describe("foreground FIFO through the real Note", () => {
     toastConsumer.add.mockClear();
     button("Delete").click(); await flushPromises();
     button("Delete", document.querySelector('[data-modal-top="true"]')).click(); await flushPromises();
-    expect(deleteNote).toHaveBeenCalledExactlyOnceWith("NoteA");
+    expect(deleteNote).toHaveBeenCalledExactlyOnceWith("NoteA", "v-NoteA");
     expect(toastConsumer.add).toHaveBeenCalledWith(expect.objectContaining({ summary: title, detail, severity: "error" }));
     expect(apiErrorHandler).not.toHaveBeenCalled();
     expect(wrapper.findComponent(NoteView).vm.$).toBe(owner);
@@ -347,7 +347,7 @@ describe("foreground FIFO through the real Note", () => {
     getNote.mockResolvedValueOnce({ path: "Reference", content: "[[NoteA]]" });
     await applyRename("Title", "Enter"); await acknowledge(0, "Renamed", "Saved text");
     expect(getNotes).toHaveBeenCalledWith("NoteA", undefined, undefined, undefined, true);
-    expect(pending[1].args).toEqual(["Reference", "Reference", "[[Renamed]]"]);
+    expect(pending[1].args).toEqual(["Reference", "Reference", "[[Renamed]]", "none", "[[NoteA]]", "refuse"]);
     expect(live()).toBe("Saved text");
     await acknowledge(1, "Reference", "[[Renamed]]");
     expect(toastConsumer.add).toHaveBeenCalledWith(expect.objectContaining({ summary: "Links updated", detail: "Updated links in 1 note(s).", severity: "success" }));

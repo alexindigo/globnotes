@@ -3,7 +3,7 @@
 /** Real handlers/storage/index consumers with test-local await barriers.
  * These cases import no proposed lease helper, so the preserved product can
  * execute them and demonstrate its existing authority failure. */
-import { gatedNotes } from "./helpers/storage.ts";
+import { currentBase, gatedNotes } from "./helpers/storage.ts";
 import { assert, assertEquals } from "@std/assert";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { SignJWT } from "jose";
@@ -207,7 +207,20 @@ function request(
   hold?: ReturnType<typeof barrier>,
   token?: string,
 ) {
-  const raw = new Request(`http://fixture/_/api/${route}`, {
+  // Writers state what they read (docs/hub.md "Write gate"): the victim's
+  // version as on disk when the request is built.
+  const based = method === "DELETE"
+    ? `${route}${route.includes("?") ? "&" : "?"}base_version=${
+      currentBase("victim").kind === "version"
+        ? (currentBase("victim") as { version: string }).version
+        : "0".repeat(64)
+    }`
+    : route;
+  if (
+    method === "PATCH" && body && typeof body === "object" &&
+    !("base" in body) && !("baseContent" in body)
+  ) body = { ...body, base: currentBase("victim") };
+  const raw = new Request(`http://fixture/_/api/${based}`, {
     method,
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });

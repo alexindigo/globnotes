@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { currentBase } from "./helpers/storage.ts";
 import { versionOf } from "../server/hub/merge.ts";
 import type { Base } from "../server/hub/gate.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
@@ -561,7 +562,7 @@ Deno.test("plugin authority: uncovered required mkdir, selected directory and sy
     Deno.mkdirSync(`${b.fixture.vault}/old/directory`);
     await b.operations.updateNote(
       "old/note",
-      { newContent: "[directory](directory)" },
+      { base: currentBase("old/note"), newContent: "[directory](directory)" },
       "none",
       api(),
     );
@@ -1385,7 +1386,7 @@ Deno.test("plugin authority: forged pre false is rejected by the actual runtime 
     b.facts.length = 0;
     await b.operations.updateNote(
       "keep",
-      { newContent: "authorized control" },
+      { base: currentBase("keep"), newContent: "authorized control" },
       "none",
       api(),
     );
@@ -1899,7 +1900,7 @@ Deno.test("plugin authority: requester revoked while waiting for the managed ope
       });
     first = b.operations.updateNote(
       "control",
-      { newContent: "healthy control committed" },
+      { base: currentBase("control"), newContent: "healthy control committed" },
       "none",
       api(),
     );

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
   subscribeExternalFacts,
@@ -37,7 +38,7 @@ Deno.test("hub search: outside write/scan/delete updates index; managed save vis
     assertEquals(s.indexer.search("ownneedle").map((r) => r.path), ["managed"]);
     await s.operations.updateNote(
       "managed",
-      { newContent: "nextneedle" },
+      { base: currentBase("managed"), newContent: "nextneedle" },
       "none",
       s.api(),
     );
@@ -47,12 +48,19 @@ Deno.test("hub search: outside write/scan/delete updates index; managed save vis
     ]);
     await s.operations.updateNote(
       "managed",
-      { newPath: "moved" },
+      { base: currentBase("managed"), newPath: "moved" },
       "none",
       s.api(),
     );
     assertEquals(s.indexer.search("nextneedle").map((r) => r.path), ["moved"]);
-    await s.operations.deleteNote("moved", s.api());
+    await s.operations.deleteNote(
+      "moved",
+      s.api(),
+      undefined,
+      undefined,
+      undefined,
+      currentBase("moved"),
+    );
     assertEquals(s.indexer.search("nextneedle"), []);
   } finally {
     s.hub.stop();
@@ -121,7 +129,7 @@ Deno.test("hub search: partial-save lifecycle consumers see reconciled committed
     await assertRejects(() =>
       s.operations.updateNote(
         "partial",
-        { newContent: "afterword" },
+        { base: currentBase("partial"), newContent: "afterword" },
         "none",
         s.api(),
       )
@@ -157,7 +165,14 @@ Deno.test("hub facts: pre-effect reconciliation publishes the real outside creat
   s.lifecycle.onSync((fact) => syncs.push(fact));
   try {
     Deno.writeTextFileSync(`${vault}/outside.md`, "unobservedword");
-    await s.operations.deleteNote("outside", s.api());
+    await s.operations.deleteNote(
+      "outside",
+      s.api(),
+      undefined,
+      undefined,
+      undefined,
+      currentBase("outside"),
+    );
     assertEquals(observed, [
       {
         origin: "external",

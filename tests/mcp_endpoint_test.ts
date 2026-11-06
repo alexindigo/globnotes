@@ -8,6 +8,7 @@
  * guard cancels an MCP write.
  */
 
+import { contentVersion } from "../server/hub/merge.ts";
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { type Client, SdkHttpError } from "@modelcontextprotocol/client";
@@ -505,7 +506,11 @@ Deno.test("mcp endpoint: a plugin pre-save guard cancels an MCP write", async ()
       try {
         const blocked = await client.callTool({
           name: "globnotes_update_note",
-          arguments: { path: "doc", content: "# Doc\n#BLOCK#" },
+          arguments: {
+            path: "doc",
+            content: "# Doc\n#BLOCK#",
+            expected_hash: contentVersion("# Doc\n"),
+          },
         });
         assertEquals(blocked.isError, true);
         assertEquals(
@@ -520,6 +525,7 @@ Deno.test("mcp endpoint: a plugin pre-save guard cancels an MCP write", async ()
         const allowed = await call(client, "globnotes_update_note", {
           path: "doc",
           content: "# Doc\nfine",
+          expected_hash: contentVersion("# Doc\n"),
         });
         assertEquals(allowed.content, "# Doc\nfine");
       } finally {
@@ -571,10 +577,17 @@ Deno.test("mcp endpoint: plugin guards cancel MCP creates, renames and deletes",
             ],
             [
               "globnotes_update_note",
-              { path: "doc", new_path: "Guarded too" },
+              {
+                path: "doc",
+                new_path: "Guarded too",
+                expected_hash: contentVersion("# doc\n"),
+              },
               "rename",
             ],
-            ["globnotes_delete_note", { path: "Guarded" }, "delete"],
+            ["globnotes_delete_note", {
+              path: "Guarded",
+              expected_hash: contentVersion("# Guarded\n"),
+            }, "delete"],
           ] as const
         ) {
           const result = await client.callTool({ name, arguments: args });

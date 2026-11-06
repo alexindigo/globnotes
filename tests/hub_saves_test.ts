@@ -167,18 +167,68 @@ Deno.test("hub saves: cancelled conflict-copy guard writes nothing and records n
   }
 });
 
-Deno.test("hub saves: legacy no-base callers retain replacement semantics", async () => {
+Deno.test("hub saves: no writer replaces, renames or deletes without a base", async () => {
   const f = fixture();
   try {
     await f.ops.createNote({ path: "note", content: "theirs" }, f.api());
-    const result = await f.ops.updateNote(
+    for (
+      const attempt of [
+        () => f.ops.updateNote("note", { newContent: "x" }, "none", f.api()),
+        () => f.ops.updateNote("note", { newPath: "moved" }, "none", f.api()),
+        () => f.ops.deleteNote("note", f.api()),
+      ]
+    ) {
+      const error = await attempt().catch((e) => e);
+      assertEquals([error.status, error.code], [428, "base_required"]);
+    }
+    assertEquals(f.notes.get("note").content, "theirs");
+    assertEquals(f.notes.getPaths(), ["note"]);
+  } finally {
+    f.close();
+  }
+});
+
+Deno.test("hub saves: a stale version base keeps both or refuses; a stale rename or delete is refused", async () => {
+  const f = fixture();
+  try {
+    const created = await f.ops.createNote(
+      { path: "note", content: "one" },
+      f.api(),
+    );
+    const stale = { kind: "version" as const, version: created.version! };
+    Deno.writeTextFileSync(`${f.vault}/note.md`, "outside");
+    const copy = await f.ops.updateNote(
       "note",
-      { newContent: "legacy" },
+      { newContent: "mine", base: stale },
       "none",
       f.api(),
     );
-    assertEquals(result.content, "legacy");
-    assertEquals(result.saveResult, { status: "saved" });
+    assertEquals(copy.saveResult?.status, "conflict");
+    assertEquals(copy.content, "mine");
+    const refused = await f.ops.updateNote(
+      "note",
+      { newContent: "mine", base: stale, onStale: "refuse" },
+      "none",
+      f.api(),
+    ).catch((e) => e);
+    assertEquals([refused.status, refused.code], [409, "base_stale"]);
+    const renamed = await f.ops.updateNote(
+      "note",
+      { newPath: "moved", base: stale },
+      "none",
+      f.api(),
+    ).catch((e) => e);
+    assertEquals(renamed.code, "base_stale");
+    const removed = await f.ops.deleteNote(
+      "note",
+      f.api(),
+      undefined,
+      undefined,
+      undefined,
+      stale,
+    ).catch((e) => e);
+    assertEquals(removed.code, "base_stale");
+    assertEquals(f.notes.get("note").content, "outside");
   } finally {
     f.close();
   }

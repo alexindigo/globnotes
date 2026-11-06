@@ -288,10 +288,11 @@ try {
   console.log("ok: fixture note readable after login");
   // Edit via the API with the session token (proves authenticated mutation).
   const edited = await page.evaluate(`(async () => {
+    const read = await (await fetch("/_/api/notes/FixtureA")).json();
     const r = await fetch("/_/api/notes/FixtureA", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ newPath: "FixtureA", newContent: "# Fixture A\\n\\nalpha edited\\n" }),
+      body: JSON.stringify({ newPath: "FixtureA", newContent: "# Fixture A\\n\\nalpha edited\\n", base: { kind: "version", version: read.version } }),
     });
     return r.status;
   })()`);

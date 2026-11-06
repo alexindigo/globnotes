@@ -358,10 +358,14 @@ export function createNoteController({
   async function deleteHandler() { if (!await resolveOwnedWork()) return; isDeleteModalVisible.value = true; }
   async function deleteConfirmedHandler() {
     if (!await settlePendingWrites() || isDirty()) return;
-    return remove(note.value.path).then(() => {
+    return remove(note.value.path, note.value.version).then(() => {
       publishFact(TOPICS.NOTE_DELETE, { path: note.value.path }); exitEditState();
       notify("Note deleted ✓", "Success", "success"); router.push({ name: "home" });
-    }).catch(error => showNoteError(error, noteOperationError(error)));
+    }).catch(error => {
+      showNoteError(error, noteOperationError(error));
+      // Changed elsewhere: the note stays; show what is there now.
+      if (error?.response?.data?.code === "base_stale") return refreshFromVault();
+    });
   }
   function saveHandler(close = false) {
     if (!close) return saveOwner.save(deletedElsewhere);

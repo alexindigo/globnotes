@@ -62,8 +62,11 @@ hidden for more than 10 seconds closes it and catches up when shown. A gap
 invalidates the snapshot and causes a fresh read, still fenced against newer
 typing and saves. This is not real-time co-editing or filesystem CAS: a change
 during server guard waits can reject a request under the existing
-retained-error contract. Legacy non-editor callers
-without a base keep replacement semantics until their M4 migration.
+retained-error contract. Every other writer states its base too
+([hub.md](hub.md) "Bases"). Delete sends the version the note was loaded with; if
+the note changed elsewhere meanwhile, nothing is deleted, a **Changed elsewhere**
+message explains why and the note shows its current text. Link updates after a
+rename are based on the text they read and leave a note changed since alone.
 
 ## Paused saves
 

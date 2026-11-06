@@ -325,6 +325,16 @@ describe("note workflow ownership", () => {
     expect(f.router.push).toHaveBeenCalledWith({ name: "home" });
     expect(f.adapters.toast.add).toHaveBeenCalledWith(expect.objectContaining({ detail: "Note deleted ✓" }));
   });
+  it("a stale delete keeps the note, says why and shows the current version", async () => {
+    const read = vi.fn().mockResolvedValueOnce({ path: "folder/P", content: "Seed", version: "v1" })
+      .mockResolvedValue({ path: "folder/P", content: "Elsewhere", version: "v2" });
+    const f = fixture({ read, remove: vi.fn().mockRejectedValue({ response: { status: 409, data: { code: "base_stale", currentVersion: "v2" } } }) });
+    await f.controller.mount(); await f.controller.deleteConfirmedHandler(); await flush();
+    expect(f.adapters.remove).toHaveBeenCalledExactlyOnceWith("folder/P", "v1");
+    expect(f.adapters.toast.add).toHaveBeenCalledWith(expect.objectContaining({ summary: "Changed elsewhere", severity: "error" }));
+    expect(f.router.push).not.toHaveBeenCalled(); expect(f.adapters.publish).not.toHaveBeenCalledWith(TOPICS.NOTE_DELETE, expect.anything());
+    expect(f.controller.state.note.content).toBe("Elsewhere");
+  });
   it("delete failure uses classified policy or the injected generic fallback", async () => {
     const f = fixture({ remove: vi.fn().mockRejectedValueOnce({ response: { data: { code: "operation_conflict", detail: "Conflict detail" } } }).mockRejectedValueOnce(Error("unmapped")) });
     await f.controller.mount(); await f.controller.deleteConfirmedHandler();
@@ -340,14 +350,14 @@ describe("note workflow ownership", () => {
     f.controller.dispose(); expect(f.handlers.size).toBe(0); expect(f.unsubs).toHaveLength(7);
   });
   it("wires its default load/delete/save transports without a view import", async () => {
-    getNote.mockResolvedValue({ path: "folder/P", content: "Seed" }); deleteNote.mockResolvedValue({});
-    updateNote.mockImplementation(async (source, path, content) => ({ path, content }));
+    getNote.mockResolvedValue({ path: "folder/P", content: "Seed", version: "v1" }); deleteNote.mockResolvedValue({});
+    updateNote.mockImplementation(async (source, path, content) => ({ path, content, version: "v2" }));
     const f = fixture({ read: undefined, remove: undefined }); await f.controller.mount();
     expect(getNote).toHaveBeenCalledWith("folder/P"); f.enter(); f.input("Saved");
     f.controller.saveHandler(); await flush();
     expect(updateNote).toHaveBeenCalledWith("folder/P", "folder/P", "Saved", "none", "Seed");
     expect(f.controller.isDirty()).toBe(false); expect(createNote).not.toHaveBeenCalled();
-    await f.controller.deleteConfirmedHandler(); expect(deleteNote).toHaveBeenCalledWith("folder/P");
+    await f.controller.deleteConfirmedHandler(); expect(deleteNote).toHaveBeenCalledWith("folder/P", "v2");
   });
   it("save is a no-op outside editing and when text is already submitted, and never stores the editor mode", async () => {
     updateNote.mockImplementation(async (source, path, content) => ({ path, content }));

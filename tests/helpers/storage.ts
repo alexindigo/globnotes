@@ -5,7 +5,10 @@
  * hub is attached: these writes stay fixture writes the scanner observes. */
 
 import { gatePassActive } from "../../server/hub/effects.ts";
-import { HubGate } from "../../server/hub/gate.ts";
+import { type Base, HubGate } from "../../server/hub/gate.ts";
+import { noteVersion } from "../../server/hub/merge.ts";
+import { NoteNotFoundError } from "../../server/notes/models.ts";
+import { state } from "../../server/state.ts";
 import type { FileSystemNotes } from "../../server/notes/file_system.ts";
 
 const gate = new HubGate();
@@ -49,4 +52,15 @@ export function gatedNotes(notes: FileSystemNotes): FileSystemNotes {
         gated(target.storagePath, () => value.apply(target, args));
     },
   });
+}
+
+/** The base a writer states after reading `notePath` now: its version, or
+ * absent (server/hub/gate.ts). Reads the running state's notes. */
+export function currentBase(notePath: string): Base {
+  try {
+    return { kind: "version", version: noteVersion(state.notes.get(notePath)) };
+  } catch (error) {
+    if (error instanceof NoteNotFoundError) return { kind: "absent" };
+    throw error;
+  }
 }

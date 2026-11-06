@@ -642,6 +642,7 @@ for (const invalid of ["grammar", "shape"] as const) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           newContent: "must not pass failed required guard",
+          baseContent: "retained guard consumer",
         }),
       });
       assertEquals(save.status, 503);

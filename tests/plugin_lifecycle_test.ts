@@ -6,6 +6,7 @@
  * The bundle is composed in-process with injected adapters — exactly the
  * wiring main.ts performs. */
 
+import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { GlobalConfig } from "../server/config.ts";
@@ -161,7 +162,7 @@ Deno.test("lifecycle: create/save/rename/delete reach observers with actual outc
     // Content-only save with an H1 change resolves to a real rename.
     const renamed = await b.operations.updateNote(
       "alpha",
-      { newContent: "# Beta\nbody2" },
+      { base: currentBase("alpha"), newContent: "# Beta\nbody2" },
       "none",
       api(),
     );
@@ -171,7 +172,14 @@ Deno.test("lifecycle: create/save/rename/delete reach observers with actual outc
       "# Beta\nbody2",
     );
 
-    await b.operations.deleteNote("Beta", api());
+    await b.operations.deleteNote(
+      "Beta",
+      api(),
+      undefined,
+      undefined,
+      undefined,
+      currentBase("Beta"),
+    );
     const observed = await b.facts();
     assertEquals(observed.map((entry) => entry.kind), [
       "on-create",
@@ -229,7 +237,12 @@ Deno.test("lifecycle: cancellation and guard timeout leave disk and index untouc
     const before = Deno.readTextFileSync(path.join(b.fixture.vault, "keep.md"));
 
     const cancelled = await b.operations
-      .updateNote("keep", { newContent: "#BLOCK#" }, "none", api())
+      .updateNote(
+        "keep",
+        { base: currentBase("keep"), newContent: "#BLOCK#" },
+        "none",
+        api(),
+      )
       .then(() => null)
       .catch((e) => e);
     assert(cancelled instanceof OperationError);
@@ -252,7 +265,14 @@ Deno.test("lifecycle: cancellation and guard timeout leave disk and index untouc
       "#BLOCK#",
     );
     const cancelledDelete = await b.operations
-      .deleteNote("blocked", api())
+      .deleteNote(
+        "blocked",
+        api(),
+        undefined,
+        undefined,
+        undefined,
+        currentBase("blocked"),
+      )
       .then(() => null)
       .catch((e) => e);
     assertEquals(cancelledDelete.code, "plugin_cancelled");
@@ -620,7 +640,7 @@ Deno.test("lifecycle: nested note mutation during a pre-hook is rejected; deferr
     await b.operations.createNote({ path: "n", content: "# N\n" }, api());
     await b.operations.updateNote(
       "n",
-      { newContent: "#NESTED#" },
+      { base: currentBase("n"), newContent: "#NESTED#" },
       "none",
       api(),
     );
@@ -638,7 +658,7 @@ Deno.test("lifecycle: nested note mutation during a pre-hook is rejected; deferr
     await b.operations.createNote({ path: "s", content: "# S\n" }, api());
     await b.operations.updateNote(
       "s",
-      { newContent: "#SPAWN#" },
+      { base: currentBase("s"), newContent: "#SPAWN#" },
       "none",
       api(),
     );
@@ -732,7 +752,10 @@ Deno.test("lifecycle: wire envelope over HTTP carries structured codes; rewrite 
         const res = await fetch(`${server.baseUrl}/_/api/notes/doc`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ newContent: "#BLOCK#" }),
+          body: JSON.stringify({
+            newContent: "#BLOCK#",
+            baseContent: "# Doc\n",
+          }),
           signal,
         });
         if (res.status === 409) return done(res);
@@ -863,9 +886,24 @@ Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action
         d.operationId === `overflow-${queuedJobs + 1}`
       ),
     );
-    await b.operations.updateNote("a", { newContent: "two" }, "none", api());
-    await b.operations.updateNote("a", { newContent: "three" }, "none", api());
-    await b.operations.updateNote("a", { newContent: "four" }, "none", api());
+    await b.operations.updateNote(
+      "a",
+      { base: currentBase("a"), newContent: "two" },
+      "none",
+      api(),
+    );
+    await b.operations.updateNote(
+      "a",
+      { base: currentBase("a"), newContent: "three" },
+      "none",
+      api(),
+    );
+    await b.operations.updateNote(
+      "a",
+      { base: currentBase("a"), newContent: "four" },
+      "none",
+      api(),
+    );
     assertEquals(
       Deno.readTextFileSync(path.join(b.fixture.vault, "a.md")),
       "four",
@@ -891,7 +929,12 @@ Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action
     assertEquals(status.status, "failed");
     assert(status.diagnostics.some((d) => d.code === "plugin_runtime_failed"));
     // On-only failure does not acquire blocking authority: more saves pass.
-    await b.operations.updateNote("a", { newContent: "five" }, "none", api());
+    await b.operations.updateNote(
+      "a",
+      { base: currentBase("a"), newContent: "five" },
+      "none",
+      api(),
+    );
     assertEquals(
       Deno.readTextFileSync(path.join(b.fixture.vault, "a.md")),
       "five",

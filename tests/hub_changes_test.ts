@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import changes from "../server/api/endpoints/_/api/changes/get.ts";
@@ -87,7 +88,14 @@ Deno.test("hub changes: SSE emits live deletion, resumes by Last-Event-ID and re
     assert(first.includes("event: change\n"));
     assert(first.includes('"path":"note.md"'));
     const seq = JSON.parse(/data: (.+)/.exec(first)![1]).seq;
-    await f.operations.deleteNote("note", f.api());
+    await f.operations.deleteNote(
+      "note",
+      f.api(),
+      undefined,
+      undefined,
+      undefined,
+      currentBase("note"),
+    );
     const deletion = await readFrame(reader);
     assert(deletion.includes('"kind":"deleted"'));
     assert(deletion.includes('"path":"note.md"'));

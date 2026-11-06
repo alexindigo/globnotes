@@ -16,12 +16,13 @@ function fixture(overrides = {}) {
 }
 
 describe("best-effort rename link traversal", () => {
-  it("searches references, excludes both identities, and writes rewritten content with the original API arguments", async () => {
+  it("searches references, excludes both identities, and writes rewritten content based on the text it read", async () => {
     const f = fixture({ search: vi.fn(async () => ["target/old", "target/new", "probe/source"].map(path => ({ path }))) });
     await f.updateRenamedLinks("target/old", "target/new");
     expect(f.search).toHaveBeenCalledExactlyOnceWith("target/old", undefined, undefined, undefined, true);
     expect(f.read).toHaveBeenCalledExactlyOnceWith("probe/source");
-    expect(f.update).toHaveBeenCalledExactlyOnceWith("probe/source", "probe/source", "[[target/new]] and [md](../target/new.md)");
+    expect(f.update).toHaveBeenCalledExactlyOnceWith("probe/source", "probe/source", "[[target/new]] and [md](../target/new.md)",
+      "none", "[[target/old]] and [md](../target/old.md)", "refuse");
     expect(f.updated).toHaveBeenCalledExactlyOnceWith(1);
   });
 
@@ -84,7 +85,7 @@ describe("best-effort rename link traversal", () => {
     const controller = createNoteRenameLinks({ ownsPath: () => false });
     await controller.updateRenamedLinks("old", "new");
     expect(getNotes).toHaveBeenCalledExactlyOnceWith("old", undefined, undefined, undefined, true);
-    expect(getNote).toHaveBeenCalledExactlyOnceWith("ref"); expect(updateNote).toHaveBeenCalledExactlyOnceWith("ref", "ref", "[[new]]");
+    expect(getNote).toHaveBeenCalledExactlyOnceWith("ref"); expect(updateNote).toHaveBeenCalledExactlyOnceWith("ref", "ref", "[[new]]", "none", "[[old]]", "refuse");
     const error = new Error("offline"), log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       getNotes.mockRejectedValueOnce(error); await controller.updateRenamedLinks("old", "new");
