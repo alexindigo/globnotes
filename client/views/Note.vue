@@ -169,6 +169,9 @@
     >
       <p class="mb-2 text-sm text-theme-text-muted">
         {{ lastMovedFiles.length }} file(s) moved with this note.
+        <template v-if="lastRenamedFiles.length">
+          {{ lastRenamedFiles.length }} renamed because the folder already had a file with that name.
+        </template>
       </p>
       <RouterLink
         :to="rewriteScanLink"
@@ -306,7 +309,7 @@ const controller = createNoteController({
 const {
   canModify, isNewNote, editMode, isNoteNotFound, note, folderDatalistOptions,
   noteDirName, noteBasename, noteDirBreadcrumbs, renameAssetsModalVisible, renameRefs,
-  renamePromptIdentity, lastMovedFiles, rewriteScanLink, editorMode, editorInitialValue,
+  renamePromptIdentity, lastMovedFiles, lastRenamedFiles, rewriteScanLink, editorMode, editorInitialValue,
   editorInitialLine, viewLine, previewHtml, unsavedChanges, saving, saveFeedback, saveChangesMessage,
   vaultNotice, conflictOriginal, viewerRevision,
 } = toRefs(controller.state);

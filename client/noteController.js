@@ -85,6 +85,8 @@ export function createNoteController({
   const renameRefs = computed(() => saveOwnerState.value.pendingRenamePrompt?.refs ?? []);
   const renamePromptIdentity = computed(() => saveOwnerState.value.pendingRenamePrompt?.identity ?? null);
   const lastMovedFiles = ref([]);
+  // Attachments that moved under a free "name N.ext" because the name was taken.
+  const lastRenamedFiles = computed(() => lastMovedFiles.value.filter(file => file.renamed));
   const rewriteScanLink = computed(() => {
     const files = lastMovedFiles.value;
     return files.length ? `/_/search?${params.searchTerm}=*&rewriteFiles=${encodeRewriteFiles(files)}` : "";
@@ -536,7 +538,7 @@ export function createNoteController({
     canModify, isNewNote, editMode, isSaveChangesModalVisible, isDeleteModalVisible, isDraftModalVisible,
     isNoteNotFound, loadStatus, note, editBasename, editFolder, folderDatalistOptions,
     noteDirName, noteBasename, noteDirBreadcrumbs, renameAssetsModalVisible, renameRefs, renamePromptIdentity,
-    lastMovedFiles, rewriteScanLink, editorMode, editorInitialValue, editorInitialLine, viewLine,
+    lastMovedFiles, lastRenamedFiles, rewriteScanLink, editorMode, editorInitialValue, editorInitialLine, viewLine,
     previewHtml, unsavedChanges, saving, saveFeedback, saveChangesMessage, resourceIdentity,
     vaultNotice, conflictOriginal, viewerRevision,
   }));

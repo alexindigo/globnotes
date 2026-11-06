@@ -116,6 +116,23 @@ export function conflictCopyPath(
   }
 }
 
+/** The first free macOS-style name for `file`: itself, else `name 1.ext`,
+ * `name 2.ext`, ... (space and number before the extension). */
+export function freeName(
+  file: string,
+  taken: (candidate: string) => boolean,
+): string {
+  if (!taken(file)) return file;
+  const slash = file.lastIndexOf("/") + 1;
+  const name = file.slice(slash), dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  for (let n = 1;; n++) {
+    const candidate = `${file.slice(0, slash)}${stem} ${n}${ext}`;
+    if (!taken(candidate)) return candidate;
+  }
+}
+
 /** Every path entry is occupied, including dangling links and directories. */
 export function occupied(file: string): boolean {
   try {

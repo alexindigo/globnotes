@@ -510,3 +510,58 @@ Deno.test("aliases: exact-alias search includes the note", () =>
     const hits = indexer.search("Totally Different");
     assert(hits.some((h) => h.path === "deep/real-name"));
   }));
+
+Deno.test("rename strategy: move never overwrites; taken names get macOS-style free names", () =>
+  withState(({ notes, vault }) => {
+    Deno.mkdirSync(path.join(vault, "a"));
+    Deno.mkdirSync(path.join(vault, "b"));
+    Deno.writeTextFileSync(path.join(vault, "a", "img.png"), "mine");
+    Deno.writeTextFileSync(path.join(vault, "a", "doc.pdf"), "mine pdf");
+    Deno.writeTextFileSync(path.join(vault, "b", "img.png"), "theirs");
+    Deno.writeTextFileSync(path.join(vault, "b", "img 1.png"), "theirs 1");
+    Deno.writeTextFileSync(path.join(vault, "b", "doc.pdf"), "theirs pdf");
+    notes.create({
+      path: "a/note",
+      content: "![](img.png) and [doc](doc.pdf) and ![again](img.png)",
+    });
+    const note = notes.update("a/note", { newPath: "b/note" }, "move");
+    // Nothing in the destination folder is touched.
+    assertEquals(
+      Deno.readTextFileSync(path.join(vault, "b", "img.png")),
+      "theirs",
+    );
+    assertEquals(
+      Deno.readTextFileSync(path.join(vault, "b", "img 1.png")),
+      "theirs 1",
+    );
+    assertEquals(
+      Deno.readTextFileSync(path.join(vault, "b", "doc.pdf")),
+      "theirs pdf",
+    );
+    // The moved attachments carry the next free names; links follow them,
+    // encoded so they remain valid Markdown links.
+    assertEquals(
+      Deno.readTextFileSync(path.join(vault, "b", "img 2.png")),
+      "mine",
+    );
+    assertEquals(
+      Deno.readTextFileSync(path.join(vault, "b", "doc 1.pdf")),
+      "mine pdf",
+    );
+    assertEquals(
+      note.content,
+      "![](./img%202.png) and [doc](./doc%201.pdf) and ![again](./img%202.png)",
+    );
+    assertEquals(
+      note.movedFiles.toSorted((x, y) => x.oldPath.localeCompare(y.oldPath)),
+      [
+        { oldPath: "a/doc.pdf", newPath: "b/doc 1.pdf", renamed: true },
+        { oldPath: "a/img.png", newPath: "b/img 2.png", renamed: true },
+      ],
+    );
+    // The encoded links still resolve to the renamed attachments.
+    assertEquals(
+      notes.previewRename("b/note", "c/note").map((ref) => ref.path).sort(),
+      ["b/doc 1.pdf", "b/img 2.png", "b/img 2.png"],
+    );
+  }));

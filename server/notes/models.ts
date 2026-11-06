@@ -11,7 +11,7 @@ export interface Note {
   /** Display title: front-matter title → first H1 → basename. */
   title: string;
   /** Python's Note model serializes this always (default []). */
-  movedFiles: { oldPath: string; newPath: string }[];
+  movedFiles: { oldPath: string; newPath: string; renamed?: boolean }[];
   version?: string;
   saveResult?: {
     status: "saved" | "merged" | "conflict";
@@ -98,6 +98,8 @@ export interface FileRef {
   url: string;
   path: string;
   kind: "absolute" | "relative" | "same-folder";
+  /** The path was found by percent-decoding `url`. */
+  decoded?: boolean;
 }
 
 /** Storage-layer errors, mapped to HTTP statuses by the endpoints.

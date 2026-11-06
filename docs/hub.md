@@ -79,6 +79,12 @@ target. A file's version is the SHA-256 of its raw bytes, the hub's `hash`;
 note responses compute it from the bytes read with the content
 (`versionOf`, `noteVersion` in `server/hub/merge.ts`).
 
+Moves never replace: a note rename refuses an occupied destination, and an
+attachment moved with its note (`file_refs=move`) onto a taken name gets the next
+free macOS-style name (`name 1.ext`, `name 2.ext`, ...), the note's link is
+rewritten to it (percent-encoded, so it stays a valid Markdown link), and the
+response's `movedFiles` entry carries `renamed: true`.
+
 The contract rule `single-vault-writer` (`tests/test_isolation_contract_test.ts`)
 rejects filesystem mutations under `server/` outside `effects.ts`; the remaining
 listed lines write only the canonical state directory or the client build.

@@ -33,10 +33,28 @@ import {
   UngatedVaultWrite,
   VaultEffects,
 } from "../hub/effects.ts";
+import { freeName, occupied } from "../hub/gate.ts";
 export type { StorageEffect } from "../hub/effects.ts";
 import { versionOf } from "../hub/merge.ts";
 
 const MARKDOWN_EXT = ".md";
+
+/** A link's percent-decoded form (the link itself when it does not decode). */
+function decodeLink(url: string): string {
+  try {
+    return decodeURI(url);
+  } catch {
+    return url;
+  }
+}
+/** Encode what would end a Markdown link destination (and `%` for a link
+ * that was decoded, so it decodes back to the same name). */
+function encodeLink(link: string, decoded: boolean): string {
+  return link.replace(
+    decoded ? /[\s()<>%]/g : /[\s()<>]/g,
+    (c) => encodeURIComponent(c),
+  );
+}
 
 /** Note text as Deno.readTextFileSync decodes it: lossy UTF-8, BOM kept. */
 export function decodeNote(bytes: Uint8Array): string {
@@ -239,6 +257,7 @@ export class FileSystemNotes {
         "/",
       );
       const predicted: Record<string, string> = {};
+      const claimed = new Set<string>();
       for (const ref of refs) {
         if (
           fileRefs === "move" &&
@@ -246,10 +265,21 @@ export class FileSystemNotes {
             (ref.kind === "absolute" &&
               ref.path.startsWith(oldRel ? oldRel + "/" : "")))
         ) {
+          if (ref.path in predicted) continue; // Referenced more than once.
           const sub = oldRel
             ? ref.path.slice(oldRel.length).replace(/^\//, "")
             : ref.path;
-          const destinationPath = newRel ? newRel + "/" + sub : sub;
+          let destinationPath = newRel ? newRel + "/" + sub : sub;
+          if (destinationPath === ref.path) continue; // Already in place.
+          // An occupied destination gets the next free "name N.ext" (never
+          // overwritten); the note's link follows the new name.
+          destinationPath = freeName(
+            destinationPath,
+            (candidate) =>
+              claimed.has(candidate) ||
+              occupied(nodePath.join(this.storagePath, candidate)),
+          );
+          claimed.add(destinationPath);
           const source = nodePath.join(this.storagePath, ref.path),
             destination = nodePath.join(this.storagePath, destinationPath);
           attachments.push({
@@ -268,6 +298,7 @@ export class FileSystemNotes {
           oldRel,
           newRel,
           predicted,
+          ref.decoded,
         );
         if (url !== ref.url) {
           content = content.replace(
@@ -344,6 +375,13 @@ export class FileSystemNotes {
     canPrune?: (path: string) => boolean,
     prepared?: PreparedNoteUpdate,
   ): Note {
+    // Effects follow a prepared plan: the gate revalidates exactly that plan.
+    if (!prepared) {
+      return this.commitUpdate(
+        this.prepareUpdate(path, data, fileRefs),
+        canPrune,
+      );
+    }
     this.#validateReadablePath(path);
     const oldPath = path;
     let filepath = prepared?.sourceFile ?? this.#readablePath(path);
@@ -409,32 +447,12 @@ export class FileSystemNotes {
           if (newRelDir === ".") newRelDir = "";
 
           if (fileRefs === "move") {
-            for (const r of refs) {
-              if (
-                r.kind !== "same-folder" &&
-                (r.kind !== "absolute" ||
-                  !r.path.startsWith(oldRelDir ? oldRelDir + "/" : ""))
-              ) {
-                continue;
-              }
-              const sub = oldRelDir
-                ? r.path.slice(oldRelDir.length).replace(/^\//, "")
-                : r.path;
-              const newRel = newRelDir ? newRelDir + "/" + sub : sub;
-              const planned = prepared?.attachments.find((file) =>
-                file.oldPath === r.path
-              );
-              const oldFile = planned?.source ?? nodePath.join(root, r.path);
-              const newFile = planned?.destination ??
-                nodePath.join(root, newRel);
-              try {
-                this.#mkdirParents(newFile);
-                this.effects.move(oldFile, newFile);
-                movedFiles[r.path] = newRel;
-              } catch (error) {
-                if (error instanceof UngatedVaultWrite) throw error;
-                // OSError in Python → silently continue
-              }
+            // Exactly the moves prepared (and revalidated) for this commit;
+            // destinations are free names, so nothing is overwritten.
+            for (const planned of prepared!.attachments) {
+              this.#mkdirParents(planned.destination);
+              this.effects.move(planned.source, planned.destination);
+              movedFiles[planned.oldPath] = planned.newPath;
             }
           }
 
@@ -444,6 +462,7 @@ export class FileSystemNotes {
               oldRelDir,
               newRelDir,
               movedFiles,
+              r.decoded,
             );
             if (newUrl !== r.url) {
               contentWritten = contentWritten!
@@ -515,6 +534,9 @@ export class FileSystemNotes {
     const moved = Object.entries(movedFiles).map(([o, n]) => ({
       oldPath: o,
       newPath: n,
+      ...(nodePath.basename(o) === nodePath.basename(n)
+        ? {}
+        : { renamed: true }),
     }));
     this.#invalidateScanCache();
     return {
@@ -567,6 +589,7 @@ export class FileSystemNotes {
           noteRel,
           noteRel,
           { [oldPath]: newPath },
+          r.decoded,
         );
         if (newUrl === r.url) continue;
         content = content
@@ -861,38 +884,68 @@ export class FileSystemNotes {
       url.startsWith("#")
     ) return;
 
-    let rel: string;
-    let kind: FileRef["kind"];
-    if (url.startsWith("/")) {
-      rel = url.slice(1);
-      kind = "absolute";
-    } else if (url.startsWith("../") || url.startsWith("./")) {
-      const oldRel = nodePath.relative(root, oldDir).replace(/\\/g, "/");
-      rel = (oldRel !== "." && oldRel !== "" ? oldRel + "/" : "") + url;
-      rel = nodePath.normalize(rel).replace(/\\/g, "/");
-      kind = "relative";
-    } else {
-      const oldRel = nodePath.relative(root, oldDir).replace(/\\/g, "/");
-      rel = oldRel !== "." && oldRel !== "" ? oldRel + "/" + url : url;
-      kind = "same-folder";
+    const oldRel = nodePath.relative(root, oldDir).replace(/\\/g, "/");
+    const locate = (link: string): Pick<FileRef, "path" | "kind"> => {
+      if (link.startsWith("/")) {
+        return { path: link.slice(1), kind: "absolute" };
+      }
+      if (link.startsWith("../") || link.startsWith("./")) {
+        const joined = (oldRel !== "." && oldRel !== "" ? oldRel + "/" : "") +
+          link;
+        return {
+          path: nodePath.normalize(joined).replace(/\\/g, "/"),
+          kind: "relative",
+        };
+      }
+      return {
+        path: oldRel !== "." && oldRel !== "" ? oldRel + "/" + link : link,
+        kind: "same-folder",
+      };
+    };
+    // The link as written, then percent-decoded (uploads and renamed
+    // attachments link names with spaces encoded).
+    const decodedUrl = decodeLink(url);
+    const candidates = [{ link: url, decoded: false }];
+    if (decodedUrl !== url) {
+      candidates.push({ link: decodedUrl, decoded: true });
     }
-
-    if (checkExistence) {
-      try {
-        resolveInRoot(root, rel);
-      } catch {
+    for (const { link, decoded } of candidates) {
+      const located = locate(link);
+      if (checkExistence) {
+        try {
+          resolveInRoot(root, located.path);
+          Deno.statSync(nodePath.join(root, located.path));
+        } catch {
+          continue;
+        }
+        out.push({ url, ...located, ...(decoded ? { decoded } : {}) });
         return;
       }
-      try {
-        Deno.statSync(nodePath.join(root, rel));
-      } catch {
-        return;
-      }
+      out.push({ url, ...located, ...(decoded ? { decoded } : {}) });
     }
-    out.push({ url, path: rel, kind });
   }
 
+  /** Rebase a link, keeping it as written when nothing changes; a link that
+   * was percent-encoded, or a new name with spaces or parentheses, is
+   * written encoded so it stays a valid Markdown link. */
   static #rebaseUrl(
+    url: string,
+    oldDir: string,
+    newDir: string,
+    movedFiles: Record<string, string>,
+    decoded = false,
+  ): string {
+    const link = decoded ? decodeLink(url) : url;
+    const rebased = FileSystemNotes.#rebasePath(
+      link,
+      oldDir,
+      newDir,
+      movedFiles,
+    );
+    return rebased === link ? url : encodeLink(rebased, decoded);
+  }
+
+  static #rebasePath(
     url: string,
     oldDir: string,
     newDir: string,
