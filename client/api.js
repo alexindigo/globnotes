@@ -464,6 +464,29 @@ export async function openVaultChanges({ since = 0, poll = false, onEvent, onClo
   requestSignal.addEventListener("abort", settle, { once: true });
   alive();
   let response, packet;
+  // The one way a change response body is read, stream or poll: chunk by
+  // chunk, each chunk re-arming the watchdog, so a large poll on a slow link
+  // that is still making progress is never mistaken for a stall.
+  const read = async () => {
+    const result = await reader.read();
+    if (!result.done) alive();
+    return result;
+  };
+  const readJson = async () => {
+    // Without a body reader there are no chunks to observe; only then the
+    // whole-body read, still bounded by the watchdog.
+    if (!response.body?.getReader) return await response.json();
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    for (;;) {
+      const { value, done } = await read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    if (stalled) throw stalled;
+    return JSON.parse(text + decoder.decode());
+  };
   try {
     const headers = { accept: poll ? "application/json" : "text/event-stream" };
     const token = getStoredToken();
@@ -473,7 +496,7 @@ export async function openVaultChanges({ since = 0, poll = false, onEvent, onClo
       await response.body?.cancel();
       throw Object.assign(new Error(`Vault changes failed: ${response.status}`), { status: response.status });
     }
-    if (!response.headers.get("content-type")?.includes("text/event-stream")) packet = await response.json();
+    if (!response.headers.get("content-type")?.includes("text/event-stream")) packet = await readJson();
   } catch (error) {
     settle();
     throw stalled ?? error;
@@ -501,9 +524,8 @@ export async function openVaultChanges({ since = 0, poll = false, onEvent, onClo
     let buffer = "";
     try {
       for (;;) {
-        const { value, done } = await reader.read();
+        const { value, done } = await read();
         if (done) break;
-        alive();
         buffer += decoder.decode(value, { stream: true });
         let boundary;
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {

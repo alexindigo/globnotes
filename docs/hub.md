@@ -143,7 +143,7 @@ publishes bus facts and resumes its cursor. Its reconnect rule:
 | 3 | A stream that stayed open 30 s ends or breaks | The backoff starts over (a proxy idle timeout is not a fault) |
 | 4 | A stream breaks, or no stream could be opened | JSON polling once a second; the stream is tried again after 60 s of polling |
 | 5 | The tab is hidden for 10 s | The stream is closed; when shown, it reconnects and catches up from its cursor |
-| 6 | A request, stream or poll, receives no bytes for 75 s (`CHANGE_STREAM_STALL_MS`, 3 heartbeats; a half-open connection or a buffering proxy) | It is aborted as a failure: rows 2-4 apply, so a stalled stream falls back to polling |
+| 6 | A request, stream or poll, receives no bytes for 75 s (`CHANGE_STREAM_STALL_MS`, 3 heartbeats; a half-open connection or a buffering proxy). Bodies are read chunk by chunk and every chunk counts, so a slow poll that keeps arriving is not a stall | It is aborted as a failure: rows 2-4 apply, so a stalled stream falls back to polling |
 
 Row 5 keeps open streams to visible tabs: on plain HTTP each stream holds one of
 the browser's few HTTP/1.1 connections per host, shared by all tabs.

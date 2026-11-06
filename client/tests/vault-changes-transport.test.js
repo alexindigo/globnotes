@@ -110,3 +110,56 @@ it("the owner reconnects a stalled stream through its backoff, falling back to p
   expect(fetch.mock.calls[1][0]).toContain("poll=1");
   release();
 });
+
+// PR #30 round 3: poll bodies are read chunk by chunk through the same rule,
+// so a large poll on a slow link keeps the watchdog alive while it progresses.
+const slowJson = (value, parts, gapMs) => {
+  const bytes = new TextEncoder().encode(JSON.stringify(value)), size = Math.ceil(bytes.length / parts);
+  let controller, sent = 0;
+  const pushNext = () => {
+    controller.enqueue(bytes.slice(sent * size, (sent + 1) * size));
+    if (++sent < parts) setTimeout(pushNext, gapMs); else controller.close();
+  };
+  return new Response(new ReadableStream({ start(value) { controller = value; setTimeout(pushNext, gapMs); } }),
+    { headers: { "content-type": "application/json" } });
+};
+it("a slow multi-chunk poll that takes longer than the stall limit succeeds", async () => {
+  vi.useFakeTimers();
+  const entries = Array.from({ length: 2000 }, (_, i) => ({ seq: i + 1, path: `n${i}.md`, kind: "modified" }));
+  const gap = CHANGE_STREAM_HEARTBEAT_MS + 5_000, parts = 6;
+  expect(gap * parts).toBeGreaterThan(CHANGE_STREAM_STALL_MS);
+  vi.stubGlobal("fetch", vi.fn(async () => slowJson({ entries, next: 2000 }, parts, gap)));
+  const onEvent = vi.fn();
+  const opened = openVaultChanges({ poll: true, onEvent, onClose: vi.fn() });
+  let settled = false; opened.finally(() => { settled = true; }).catch(() => {});
+  await vi.advanceTimersByTimeAsync(gap * parts);
+  expect(settled).toBe(true);
+  const close = await opened;
+  expect(onEvent).toHaveBeenCalledTimes(entries.length + 1);
+  expect(onEvent).toHaveBeenLastCalledWith({ event: "cursor", data: { next: 2000 } });
+  expect(fetch.mock.calls[0][1].signal.aborted).toBe(false);
+  close();
+});
+it("a poll body that stops arriving stalls after the limit", async () => {
+  vi.useFakeTimers();
+  let controller;
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ start(value) {
+    controller = value; value.enqueue(new TextEncoder().encode('{"entries":[')); } }),
+  { headers: { "content-type": "application/json" } })));
+  const opened = openVaultChanges({ poll: true, onEvent: vi.fn(), onClose: vi.fn() });
+  const outcome = expect(opened).rejects.toMatchObject({ stalled: true });
+  await vi.advanceTimersByTimeAsync(CHANGE_STREAM_STALL_MS);
+  await outcome;
+  expect(controller).toBeDefined();
+});
+it("without a body reader a poll falls back to the whole-body read", async () => {
+  const json = vi.fn(async () => ({ entries: [{ seq: 4, path: "a.md" }], next: 4 }));
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, headers: new Headers({ "content-type": "application/json" }), body: null, json })));
+  const onEvent = vi.fn();
+  const close = await openVaultChanges({ poll: true, onEvent, onClose: vi.fn() });
+  expect(json).toHaveBeenCalledTimes(1);
+  expect(onEvent.mock.calls.map(([value]) => value)).toEqual([
+    { event: "change", data: { seq: 4, path: "a.md" } }, { event: "cursor", data: { next: 4 } },
+  ]);
+  close();
+});
