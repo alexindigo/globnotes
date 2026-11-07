@@ -13,6 +13,11 @@ import {
 } from "./contracts.ts";
 import { validateSettingsPages } from "./settings.ts";
 import {
+  DRIVER_API_VERSION,
+  type DriverCapabilities,
+  validateDriverCapabilities,
+} from "./driver_contract.ts";
+import {
   canonicalScopes,
   type PermissionDeclaration,
 } from "./network_contracts.ts";
@@ -76,6 +81,7 @@ export interface PluginManifest {
   clientEntry: string;
   hasClient: boolean;
   runtime: { server?: string; client?: string };
+  driver?: DriverDeclaration;
   hooks: HookName[];
   /** Displaced bytes offered before the hub replaces, deletes or moves them
    * (docs/plugin-api.md "Versioning"); `extensions` omitted = every file. */
@@ -84,6 +90,91 @@ export interface PluginManifest {
   hasEndpoints: boolean;
   capabilities: PluginCapabilities;
   dir: string;
+}
+
+export interface DriverDeclaration {
+  entry: string;
+  apiVersion: 1;
+  settings: SettingsPage["fields"];
+  secrets: { key: string; label: string; description?: string }[];
+  capabilities: DriverCapabilities;
+}
+
+/** Reuse the declarative validator without creating a plugin settings page or
+ * a filesystem grant. Driver values belong to a configured instance. */
+export function driverSettingsPage(
+  fields: SettingsPage["fields"],
+): SettingsPage {
+  return {
+    id: "driver",
+    label: "Sync",
+    renderer: { kind: "declarative-v1", version: 1 },
+    fields,
+  };
+}
+
+function driverDeclaration(
+  value: unknown,
+  dir: string,
+): DriverDeclaration | undefined {
+  if (value === undefined) return undefined;
+  const raw = record(value, "driver");
+  if (
+    Object.keys(raw).some((key) =>
+      !["entry", "apiVersion", "settings", "secrets", "capabilities"].includes(
+        key,
+      )
+    )
+  ) {
+    throw new Error("unsupported driver manifest property");
+  }
+  if (raw.apiVersion !== DRIVER_API_VERSION) {
+    throw new Error("unsupported driver API version");
+  }
+  const entry = basename(raw.entry, "driver.entry");
+  entryExists(dir, entry, true);
+  const settings = validateSettingsPages([
+    driverSettingsPage(
+      (raw.settings === undefined ? [] : raw.settings) as SettingsPage[
+        "fields"
+      ],
+    ),
+  ])[0].fields;
+  if (!Array.isArray(raw.secrets) || raw.secrets.length > 8) {
+    throw new Error(
+      "driver secrets must be an array of at most 8 declarations",
+    );
+  }
+  const keys = new Set<string>();
+  const secrets = raw.secrets.map((value) => {
+    const secret = record(value, "driver secret");
+    if (
+      Object.keys(secret).some((key) =>
+        !["key", "label", "description"].includes(key)
+      ) ||
+      typeof secret.key !== "string" ||
+      !/^[a-z][a-z0-9_]{0,31}$/.test(secret.key) || keys.has(secret.key) ||
+      (secret.description !== undefined &&
+        typeof secret.description !== "string")
+    ) {
+      throw new Error("invalid driver secret declaration");
+    }
+    keys.add(secret.key);
+    return {
+      key: secret.key,
+      label: text(secret.label, "driver secret label"),
+      ...(secret.description === undefined
+        ? {}
+        : { description: secret.description as string }),
+    };
+  });
+  return {
+    entry,
+    apiVersion: 1,
+    settings,
+    secrets,
+    capabilities: validateDriverCapabilities(raw.capabilities),
+  };
 }
 
 /** Resolve existing code below the plugin directory, including symlinks. */
@@ -207,6 +298,7 @@ export function readManifest(dir: string): PluginManifest {
     throw new Error("versioning requires runtime.server");
   }
   const settings = validateSettingsPages(raw.settings);
+  const driver = driverDeclaration(raw.driver, dir);
   const caps = raw.capabilities === undefined
     ? {}
     : record(raw.capabilities, "capabilities");
@@ -270,7 +362,7 @@ export function readManifest(dir: string): PluginManifest {
   }
   if (
     !entry && !hasClient && !runtime.server && !runtime.client &&
-    !settings.length && !hasEndpoints
+    !settings.length && !hasEndpoints && !driver
   ) {
     throw new Error(
       "plugin has no contributions (no default entry or optional contribution)",
@@ -287,6 +379,7 @@ export function readManifest(dir: string): PluginManifest {
     clientEntry,
     hasClient,
     runtime,
+    ...(driver ? { driver } : {}),
     hooks: hooks as HookName[],
     ...(versioning ? { versioning } : {}),
     settings,
@@ -308,14 +401,14 @@ export function workerPermissions(
   manifest: PluginManifest,
   vaultPath: string,
   options: {
-    role?: "render" | "service";
+    role?: "render" | "service" | "driver";
     writable?: boolean;
     effective?: PermissionDeclaration;
   } = {},
 ): Deno.PermissionOptions {
   const resolvePaths = (values: string[]) =>
     values.map((p) => p === "vault" ? vaultPath : path.resolve(vaultPath, p));
-  const service = options.role === "service";
+  const service = options.role === "service" || options.role === "driver";
   const shared = service
     ? existingSharedDir(
       path.resolve(

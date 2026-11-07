@@ -35,6 +35,11 @@ import {
 } from "./execution_context.ts";
 import { compileEndpointTable } from "./endpoint_table.ts";
 import {
+  DRIVER_METHODS,
+  type DriverInstanceSnapshot,
+  validateDriverEnvelope,
+} from "./driver_contract.ts";
+import {
   canonicalScopes,
   NETWORK_LIMITS,
   type PermissionDeclaration,
@@ -48,7 +53,7 @@ const HEARTBEAT_SILENCE_MS = 12 * HEARTBEAT_MS;
 const WORKER_URL = new URL("./worker_entry.ts", import.meta.url);
 export interface RpcAuthority {
   generation: string;
-  role: "render" | "service";
+  role: "render" | "service" | "driver";
   pre: boolean;
   /** Causal operation context of the currently executing handler, when the
    * handler was invoked with an OperationFact payload. */
@@ -86,7 +91,9 @@ export interface HostOptions {
   /** Test seam for the watchdog and activation clock (observed time over this
    * scheduler). Call, receipt and disposal deadlines use the process clock. */
   liveness?: MonotonicScheduler;
-  role?: "render" | "service";
+  role?: "render" | "service" | "driver";
+  /** Host-bound instance data, never secrets. Only used by the driver role. */
+  instance?: DriverInstanceSnapshot;
   writable?: boolean;
   snapshot?: JsonValues;
   limits?: Partial<PluginLimits>;
@@ -157,9 +164,9 @@ interface Slot {
   >;
 }
 
-/** One service slot or the existing render pool. Calls are never replayed. */
+/** One authoritative service/driver slot or a render pool. No call replay. */
 export class PluginHost {
-  readonly role: "render" | "service";
+  readonly role: "render" | "service" | "driver";
   private readonly registry = new Map<string, HandlerRegistration>();
   get registrations(): ReadonlyMap<string, HandlerRegistration> {
     return new Map(
@@ -204,9 +211,14 @@ export class PluginHost {
     if (this.role === "render" && !manifest.entry) {
       throw new Error("render host requires a rendering entry");
     }
-    if (this.role === "service" && workerCount !== 1) {
+    if (this.role !== "render" && workerCount !== 1) {
       throw new Error(
         "service contributions require exactly one authoritative worker",
+      );
+    }
+    if (this.role === "driver" && (!manifest.driver || !options.instance)) {
+      throw new Error(
+        "driver host requires a declared driver and a bound instance",
       );
     }
   }
@@ -298,7 +310,9 @@ export class PluginHost {
   }
   private spawn(admission?: RenderRecoveryAdmission): Slot {
     const identity = this.startIdentity!;
-    const entry = this.role === "service"
+    const entry = this.role === "driver"
+      ? this.manifest.driver?.entry
+      : this.role === "service"
       ? this.manifest.runtime.server
       : this.manifest.entry;
     const pluginUrl = entry
@@ -382,10 +396,23 @@ export class PluginHost {
       });
       worker.onmessage = ({ data }: MessageEvent<WorkerMessage>) => {
         if (!data || typeof data !== "object") {
-          this.fail(slot, "invalid worker envelope");
+          this.fail(
+            slot,
+            this.role === "driver"
+              ? "driver_contract_violation"
+              : "invalid worker envelope",
+          );
           return;
         }
         if (!this.valid(slot) || data.generation !== slot.generation) return;
+        if (this.role === "driver") {
+          try {
+            validateDriverEnvelope(data);
+          } catch {
+            this.fail(slot, "driver_contract_violation");
+            return;
+          }
+        }
         if (data.type === "heartbeat") {
           if (
             !this.livenessCurrent(slot, identity) ||
@@ -399,7 +426,12 @@ export class PluginHost {
           return;
         }
         if (data.type === "initError") {
-          this.fail(slot, `plugin failed to load: ${data.value}`);
+          this.fail(
+            slot,
+            this.role === "driver"
+              ? "driver activation failed"
+              : `plugin failed to load: ${data.value}`,
+          );
           return;
         }
         if (data.type === "ready") {
@@ -452,6 +484,17 @@ export class PluginHost {
               return;
             }
           }
+          if (
+            this.role === "driver" &&
+            DRIVER_METHODS.some((method) =>
+              ![...this.registry.values()].some((entry) =>
+                entry.kind === "driver" && entry.id === method
+              )
+            )
+          ) {
+            this.fail(slot, "driver must serve every lifecycle method");
+            return;
+          }
           const initialized =
             this.role === "render" && slot.exports.has("onSync")
               ? this.enqueue(
@@ -486,7 +529,7 @@ export class PluginHost {
         if (data.type === "register") {
           try {
             if (
-              this.role !== "service" || this.stopping ||
+              this.role === "render" || this.stopping ||
               this.registrations.has(data.handlerId)
             ) throw new Error("invalid handler registration lifetime");
             if (
@@ -511,9 +554,16 @@ export class PluginHost {
           this.registry.delete(data.handlerId);
           this.options.registrationChanged?.();
           if (
-            !this.stopping && removed?.kind === "hook" &&
-            removed.id.startsWith("pre-")
-          ) this.fail(slot, "required pre-hook registration disposed");
+            !this.stopping && (removed?.kind === "driver" ||
+              removed?.kind === "hook" && removed.id.startsWith("pre-"))
+          ) {
+            this.fail(
+              slot,
+              removed?.kind === "driver"
+                ? "required driver registration disposed"
+                : "required pre-hook registration disposed",
+            );
+          }
           return;
         }
         if (data.type === "result") {
@@ -534,7 +584,13 @@ export class PluginHost {
             slot.activeVersioning = null;
           } else slot.active = null;
           if (data.ok) job.resolve(data.value);
-          else job.reject(new Error(String(data.value)));
+          else {job.reject(
+              new Error(
+                this.role === "driver"
+                  ? "driver handler failed"
+                  : String(data.value),
+              ),
+            );}
           this.pump();
           return;
         }
@@ -638,9 +694,15 @@ export class PluginHost {
             );
             return;
           }
-          Promise.resolve().then(() =>
-            this.rpc(data.method, data.args, authority)
-          ).then(
+          Promise.resolve().then(() => {
+            if (
+              this.role === "driver" &&
+              !["driver.secret", "driver.hint"].includes(data.method)
+            ) {
+              throw new Error("driver RPC is not available");
+            }
+            return this.rpc(data.method, data.args, authority);
+          }).then(
             (value) => {
               if (authority.current()) {
                 worker.postMessage(
@@ -705,6 +767,9 @@ export class PluginHost {
             snapshot: this.options.snapshot ?? {},
             context: slot.background.reference,
             permissionsSource: slot.source,
+            ...(this.role === "driver"
+              ? { instance: this.options.instance }
+              : {}),
           } satisfies HostMessage,
         );
       } catch (error) {
@@ -724,6 +789,20 @@ export class PluginHost {
   }
   private validateRegistration(registration: HandlerRegistration) {
     const value = record(registration, "registration");
+    if (this.role === "driver") {
+      if (
+        registration.kind !== "driver" ||
+        !DRIVER_METHODS.includes(registration.id as never) ||
+        registration.definition !== undefined ||
+        Object.keys(value).some((key) => key !== "kind" && key !== "id") ||
+        [...this.registry.values()].some((entry) =>
+          entry.id === registration.id
+        )
+      ) {
+        throw new Error("invalid driver lifecycle registration");
+      }
+      return;
+    }
     if (registration.kind === "hook") {
       if (!this.manifest.hooks.includes(registration.id as never)) {
         throw new Error("hook is not declared by this plugin");
@@ -890,7 +969,7 @@ export class PluginHost {
       );
     }
     if (
-      this.role === "service" && !guardLane && !versioningLane &&
+      this.role !== "render" && !guardLane && !versioningLane &&
       this.queue.length >= this.limits.queuedJobs
     ) {
       return Promise.reject(
@@ -1182,7 +1261,7 @@ export class PluginHost {
     const identity = this.startIdentity;
     if (this.role === "render") this.slots.splice(this.slots.indexOf(slot), 1);
     this.retireSlot(slot, detail);
-    if (this.role === "service") {
+    if (this.role !== "render") {
       this.failedDetail = detail;
       this.watchdog?.();
       this.watchdog = null;
@@ -1225,7 +1304,7 @@ export class PluginHost {
   }
   private checkHeartbeats() {
     for (const slot of [...this.slots]) {
-      if (this.role === "service" && this.failedDetail) return;
+      if (this.role !== "render" && this.failedDetail) return;
       if (!this.livenessCurrent(slot, slot.startIdentity)) continue;
       if (!slot.ready) {
         this.activationExpired(slot);

@@ -718,7 +718,9 @@ export class PluginNetworkRequests {
     args: unknown[],
     authority: RpcAuthority,
   ): Promise<unknown> {
-    if (!authority.source || !authority.current()) {
+    if (
+      authority.role === "driver" || !authority.source || !authority.current()
+    ) {
       throw new PluginContractError(
         409,
         "permission_source_conflict",

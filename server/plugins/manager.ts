@@ -383,6 +383,14 @@ export class PluginManager {
               },
               rendering: !!manifest?.entry,
               endpoints: manifest?.hasEndpoints ?? false,
+              driver: manifest?.driver
+                ? {
+                  apiVersion: manifest.driver.apiVersion,
+                  settings: manifest.driver.settings,
+                  secrets: manifest.driver.secrets,
+                  capabilities: manifest.driver.capabilities,
+                }
+                : null,
               capabilities: manifest?.capabilities ?? null,
               permissions,
               pages: manifest?.settings ?? [],

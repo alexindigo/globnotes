@@ -31,6 +31,11 @@ import type {
   PermissionView,
   Source,
 } from "./network_contracts.ts";
+import {
+  type Driver,
+  DRIVER_METHODS,
+  type DriverInstanceSnapshot,
+} from "./driver_contract.ts";
 
 type Handler = (...args: unknown[]) => unknown;
 type Disposer = () => unknown;
@@ -38,8 +43,16 @@ interface PluginModule {
   getSelectors?: () => unknown;
   parseNode?: (node: unknown, ctx: PluginCtx) => unknown;
   onSync?: (ctx: PluginCtx) => unknown;
-  activate?: (ctx: PluginCtx) => unknown;
-  deactivate?: (ctx: PluginCtx) => unknown;
+  activate?: (ctx: PluginCtx | DriverCtx) => unknown;
+  deactivate?: (ctx: PluginCtx | DriverCtx) => unknown;
+}
+export interface DriverCtx {
+  createUuid(): string;
+  instance: DriverInstanceSnapshot;
+  secrets: { get(key: string): Promise<string | null> };
+  driver: { serve(driver: Driver): void; hint(): Promise<void> };
+  register(disposer: Disposer): Disposer;
+  timers: PluginCtx["timers"];
 }
 export interface PluginCtx {
   createUuid(): string;
@@ -97,7 +110,8 @@ export interface PluginCtx {
 }
 
 let generation = "";
-let role: "render" | "service" = "render";
+let role: "render" | "service" | "driver" = "render";
+let driverCtx: DriverCtx | undefined;
 let plugin: PluginModule | null = null;
 let stopping = false;
 let sequence = 0;
@@ -166,7 +180,9 @@ function register(
   handler: Handler,
 ): Disposer {
   if (stopping) throw new Error("plugin generation is stopping");
-  if (role !== "service") {
+  if (
+    role !== "service" && !(role === "driver" && registration.kind === "driver")
+  ) {
     throw new Error("application handlers require the server runtime entry");
   }
   if (typeof handler !== "function") {
@@ -197,6 +213,14 @@ function timer(
     if (!interval) release();
     runBackground(() =>
       Promise.resolve().then(callback).catch(() => {
+        if (role === "driver") {
+          send({
+            type: "initError",
+            generation,
+            value: "driver managed timer failed",
+          });
+          return;
+        }
         rpc("diagnostic", ["managed_timer_failed"]).catch(() => undefined);
       })
     );
@@ -309,6 +333,38 @@ const ctx: PluginCtx = {
     setInterval: (handler, ms) => timer(handler, ms, true),
   },
 };
+function createDriverCtx(instance: DriverInstanceSnapshot): DriverCtx {
+  let served = false;
+  return Object.freeze({
+    createUuid,
+    instance: immutable(structuredClone(instance)) as DriverInstanceSnapshot,
+    secrets: Object.freeze({
+      get: (key: string) =>
+        rpc("driver.secret", [key]) as Promise<string | null>,
+    }),
+    driver: Object.freeze({
+      serve(driver: Driver) {
+        if (
+          served || !driver || typeof driver !== "object" ||
+          Object.keys(driver).some((key) =>
+            !DRIVER_METHODS.includes(key as never)
+          ) ||
+          DRIVER_METHODS.some((method) => typeof driver[method] !== "function")
+        ) {
+          throw new Error("driver must serve one complete lifecycle");
+        }
+        served = true;
+        for (const method of DRIVER_METHODS) {
+          const handler = driver[method].bind(driver) as Handler;
+          register({ kind: "driver", id: method }, handler);
+        }
+      },
+      hint: () => rpc("driver.hint", []) as Promise<void>,
+    }),
+    register: own,
+    timers: Object.freeze({ ...ctx.timers }),
+  });
+}
 function fsMutation(method: string, args: unknown[]): Promise<unknown> {
   let context;
   try {
@@ -478,7 +534,26 @@ setInterval(() => {
 // worker crash that forfeits registrations and in-flight outcomes.
 self.addEventListener("unhandledrejection", (event) => {
   event.preventDefault();
+  if (role === "driver") {
+    send({
+      type: "initError",
+      generation,
+      value: "driver asynchronous resource failed",
+    });
+    return;
+  }
   rpc("diagnostic", ["unhandled_rejection"]).catch(() => undefined);
+});
+self.addEventListener("error", (event) => {
+  if (role !== "driver") return;
+  // A native timer exception may contain a key. Suppress the default Worker
+  // error report before sending a value-free failure to the host.
+  event.preventDefault();
+  send({
+    type: "initError",
+    generation,
+    value: "driver asynchronous resource failed",
+  });
 });
 function immutable(value: unknown): unknown {
   if (
@@ -501,10 +576,32 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
     permissionsSource = message.permissionsSource;
     ctx.snapshot = immutable(structuredClone(message.snapshot)) as JsonValues;
     try {
+      if (role === "driver") {
+        if (!message.instance) throw new Error("driver instance is missing");
+        driverCtx = createDriverCtx(message.instance);
+        // Console arguments are unstructured and may be keys. Drivers report
+        // typed, redacted state instead; never forward their raw console text.
+        const quiet = () => {};
+        for (
+          const method of [
+            "log",
+            "info",
+            "debug",
+            "warn",
+            "error",
+            "trace",
+            "dir",
+            "table",
+            "assert",
+          ] as const
+        ) {
+          console[method] = quiet;
+        }
+      }
       await runBackground(async () => {
         plugin = message.pluginUrl ? await import(message.pluginUrl) : {};
         if (
-          role === "service" && message.pluginUrl &&
+          role !== "render" && message.pluginUrl &&
           typeof plugin?.activate !== "function"
         ) throw new Error("server runtime entry requires activate(ctx)");
         if (role === "service") {
@@ -513,6 +610,7 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
             await discoverEndpoints(message.endpointsUrl);
           }
         }
+        if (role === "driver") await plugin?.activate?.(driverCtx!);
       });
       send({
         type: "ready",
@@ -526,7 +624,7 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
       send({
         type: "initError",
         generation,
-        value: role === "service"
+        value: role !== "render"
           ? "server entry activation or endpoint initialization failed"
           : reason(error),
       });
@@ -557,7 +655,7 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
     revokeWorkerContext();
     const errors: string[] = [];
     try {
-      await plugin?.deactivate?.(ctx);
+      await plugin?.deactivate?.(role === "driver" ? driverCtx! : ctx);
     } catch (error) {
       errors.push(reason(error));
     }
@@ -611,7 +709,7 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
       id: message.id,
       contextId: message.context.id,
       ok: false,
-      value: role === "service" ? "plugin handler failed" : reason(error),
+      value: role !== "render" ? "plugin handler failed" : reason(error),
     });
   }
 };

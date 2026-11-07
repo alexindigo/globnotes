@@ -2,6 +2,7 @@
 
 /** Serializable plugin contract. Authority always comes from the owning host. */
 import type { Source } from "./network_contracts.ts";
+import type { DriverInstanceSnapshot } from "./driver_contract.ts";
 /** 2: every write states its base; render Workers cannot write files;
  * versioning (docs/plugin-api.md "Contract version"). */
 export const PLUGIN_CONTRACT_VERSION = 2;
@@ -168,7 +169,8 @@ export interface HandlerRegistration {
     | "settings-change"
     | "action-result"
     | "endpoint"
-    | "versioning";
+    | "versioning"
+    | "driver";
   id: string;
   definition?: CommandDefinition | EndpointDescriptor;
 }
@@ -252,7 +254,8 @@ export type HostMessage =
   | {
     type: "init";
     generation: string;
-    role: "render" | "service";
+    role: "render" | "service" | "driver";
+    instance?: DriverInstanceSnapshot;
     pluginUrl?: string;
     endpointsUrl?: string;
     hooks: HookName[];

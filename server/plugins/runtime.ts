@@ -34,6 +34,25 @@ import {
 } from "./network_contracts.ts";
 import { permissionFingerprint } from "./network_permissions.ts";
 import type { PluginSettingsEnvironment } from "./settings_environment.ts";
+import {
+  type DiscoverRequest,
+  type DiscoveryPage,
+  DRIVER_LIMITS,
+  DriverContractError,
+  type DriverInstanceSnapshot,
+  type DriverMethod,
+  driverPath,
+  type ExportItem,
+  type MutationResult,
+  type OpenResult,
+  type ReadRequest,
+  type ReadResult,
+  validateDiscoveryPage,
+  validateExportItems,
+  validateMutationResults,
+  validateOpenResult,
+  validateReadResult,
+} from "./driver_contract.ts";
 
 export interface RuntimeSource {
   id: string;
@@ -1105,4 +1124,221 @@ function operationCause(
       : undefined,
     depth: typeof fact?.causalDepth === "number" ? fact.causalDepth : 0,
   };
+}
+
+export interface DriverWorkerAdapters {
+  /** Supervisor owns the instance/configuration/policy epoch. */
+  current(): boolean;
+  secret(key: string): string | null | Promise<string | null>;
+  hint(): void;
+  failed?(detail: string): void;
+  effective?: PermissionDeclaration;
+  source?: Source;
+  /** Tests may shorten observed-time deadlines, never change production bounds. */
+  deadlines?: Partial<Record<DriverMethod, number>>;
+  hostLimits?: Partial<PluginLimits>;
+}
+
+/** One authoritative Worker for one instance. No vault service RPC is reachable
+ * from this role; the instance is captured here, never selected by a message. */
+export class DriverWorker {
+  readonly host: PluginHost;
+  private opened?: OpenResult;
+  private opening?: Promise<OpenResult>;
+  private started = false;
+  private retired = false;
+  constructor(
+    readonly manifest: PluginManifest,
+    instance: DriverInstanceSnapshot,
+    vaultPath: string,
+    private readonly adapters: DriverWorkerAdapters,
+  ) {
+    if (!manifest.driver) throw new Error("plugin has no driver contribution");
+    this.host = new PluginHost(
+      manifest,
+      vaultPath,
+      async (method, args, authority) => {
+        const current = () => !!authority?.current() && this.current();
+        if (
+          !current() || authority?.role !== "driver" || !Array.isArray(args)
+        ) {
+          throw new Error("driver generation is unavailable");
+        }
+        if (method === "driver.secret") {
+          const key = args[0];
+          if (
+            args.length !== 1 || typeof key !== "string" ||
+            !manifest.driver!.secrets.some((secret) => secret.key === key)
+          ) {
+            throw new Error("driver secret is not declared");
+          }
+          const value = await adapters.secret(key);
+          // A held lookup cannot disclose a key to a replaced instance generation.
+          if (!current()) throw new Error("driver generation is unavailable");
+          if (value !== null && typeof value !== "string") {
+            throw new Error(
+              "driver secret is unavailable",
+            );
+          }
+          return value;
+        }
+        if (method === "driver.hint" && args.length === 0) {
+          adapters.hint();
+          return null;
+        }
+        throw new Error("driver RPC is not available");
+      },
+      1,
+      {
+        role: "driver",
+        instance: structuredClone(instance),
+        effective: adapters.effective,
+        source: adapters.source,
+        limits: adapters.hostLimits,
+        failed: (detail) => {
+          this.retired = true;
+          adapters.failed?.(
+            detail === "driver_contract_violation"
+              ? detail
+              : "driver Worker failed; in-flight outcome unknown",
+          );
+        },
+      },
+    );
+  }
+  current(): boolean {
+    return !this.retired && this.adapters.current();
+  }
+  async start(): Promise<void> {
+    if (this.started || !this.current()) {
+      throw new Error("driver generation is unavailable");
+    }
+    this.started = true;
+    await this.host.start();
+    if (!this.current()) {
+      this.stop();
+      throw new Error("driver generation is unavailable");
+    }
+  }
+  private async invoke(
+    method: DriverMethod,
+    args: unknown[],
+  ): Promise<unknown> {
+    if (!this.current() || !this.host.available) {
+      throw new Error("driver generation is unavailable");
+    }
+    const handler = [...this.host.registrations].find(([, entry]) =>
+      entry.kind === "driver" && entry.id === method
+    )?.[0];
+    if (!handler) throw new DriverContractError();
+    const value = await this.host.invoke(
+      handler,
+      args,
+      false,
+      this.adapters.deadlines?.[method] ?? DRIVER_LIMITS[`${method}Ms`],
+      { generation: this.host.generation! },
+    );
+    if (!this.current()) throw new Error("driver generation is unavailable");
+    return value;
+  }
+  private validate<T>(read: () => T): T {
+    try {
+      return read();
+    } catch (error) {
+      this.stop();
+      this.adapters.failed?.("driver_contract_violation");
+      throw error instanceof DriverContractError
+        ? error
+        : new DriverContractError();
+    }
+  }
+  async open(): Promise<OpenResult> {
+    if (!this.current() || !this.host.available) {
+      throw new Error("driver generation is unavailable");
+    }
+    this.opening ??= this.invoke("open", []).then((value) => {
+      this.opened = this.validate(() => validateOpenResult(value));
+      return this.opened;
+    });
+    return structuredClone(await this.opening);
+  }
+  async discover(request: DiscoverRequest): Promise<DiscoveryPage> {
+    const opened = this.opened;
+    if (opened?.state !== "ready") {
+      throw new Error("driver endpoint is not ready");
+    }
+    if (
+      !request || !["snapshot", "delta"].includes(request.mode) ||
+      Object.keys(request).some((key) => key !== "mode" && key !== "cursor") ||
+      (request.cursor !== undefined && typeof request.cursor !== "string") ||
+      (request.mode === "delta" &&
+        !this.manifest.driver!.capabilities.discovery.delta)
+    ) throw new DriverContractError();
+    const captured = structuredClone(request);
+    const value = await this.invoke("discover", [captured]);
+    return this.validate(() =>
+      validateDiscoveryPage(
+        value,
+        this.manifest.driver!.capabilities,
+        captured,
+        opened,
+      )
+    );
+  }
+  async read(request: ReadRequest): Promise<ReadResult> {
+    if (this.opened?.state !== "ready") {
+      throw new Error("driver endpoint is not ready");
+    }
+    driverPath(request.path);
+    if (
+      typeof request.revision !== "string" || !request.revision ||
+      new TextEncoder().encode(request.revision).length > 512 ||
+      Object.keys(request).some((key) => key !== "path" && key !== "revision")
+    ) throw new DriverContractError();
+    let value: unknown;
+    try {
+      value = await this.invoke("read", [structuredClone(request)]);
+    } catch {
+      return { state: "unknown", reason: "driver_read_unavailable" };
+    }
+    return this.validate(() =>
+      validateReadResult(value, this.manifest.driver!.capabilities)
+    );
+  }
+  async apply(items: ExportItem[]): Promise<MutationResult[]> {
+    if (this.opened?.state !== "ready") {
+      throw new Error("driver endpoint is not ready");
+    }
+    const captured = validateExportItems(
+      items,
+      this.manifest.driver!.capabilities,
+    );
+    let value: unknown;
+    try {
+      value = await this.invoke("apply", [captured]);
+    } catch {
+      // Lost reply/deadline/crash never proves the endpoint did not commit.
+      return captured.map(({ id }) => ({ id, state: "uncertain" }));
+    }
+    return this.validate(() => validateMutationResults(value, captured));
+  }
+  async close(): Promise<void> {
+    try {
+      if (this.current() && this.host.available) {
+        const value = await this.invoke("close", []);
+        if (value !== undefined && value !== null) {
+          this.validate(() => {
+            throw new DriverContractError();
+          });
+        }
+      }
+    } finally {
+      this.retired = true;
+      await this.host.dispose();
+    }
+  }
+  stop(): void {
+    this.retired = true;
+    this.host.stop();
+  }
 }

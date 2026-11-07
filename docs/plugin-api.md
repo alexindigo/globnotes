@@ -68,6 +68,57 @@ and host-shared modules directly; vault reads/writes use the mediated facade
 against declared grants. Legacy render pools keep their documented direct
 filesystem envelope.
 
+### Sync driver contribution (driver API 1)
+
+A manifest may additionally declare `driver: {entry, apiVersion: 1, settings,
+secrets, capabilities}`. It can be the plugin's only contribution. `entry` is a
+contained basename module, `settings` is one declarative-v1 field array, and
+`secrets` declares at most eight `{key,label,description?}` fields. Secret keys
+match `^[a-z][a-z0-9_]{0,31}$`; values never belong in settings. The catalog
+exposes only these declarations and static capabilities, without running code.
+Unknown driver/capability properties and unsupported API versions are rejected.
+
+Every configured instance gets its own authoritative `driver` Worker, independent
+of service and render Workers, with the plugin's effective network/import scopes.
+It can read its code and shared host modules, never the vault or state directory,
+and gets no raw write, environment, subprocess, FFI or system permission. The
+driver contribution authorizes sync of every tracked vault file through the hub;
+it does not use `capabilities.write` or receive an application file facade.
+
+`activate(ctx)` must call `ctx.driver.serve({open,discover,read,apply,close})` once.
+All five methods are required; functions remain inside the Worker. The driver
+context has only `createUuid`, frozen `instance: {id,label,settings}`,
+`secrets.get(key)`, `driver.serve`, `driver.hint`, managed `timers` and `register`.
+No hooks, commands, endpoints, permissions, plugin data, file, action or
+versioning facade is available to this role. Host dispatch binds the instance;
+no driver message can name another peer or secret namespace. Secret lookup
+rechecks the owning generation after an awaited lookup, before disclosure.
+
+The host calls `open` once per generation. Ready binds `{endpoint:{id,epoch},
+scope}`; locked and failed are explicit outcomes. `discover({mode,cursor?})`
+returns bounded pages for that exact binding. `read({path,revision})` returns
+known bytes, absent, unknown or locked. `apply(items)` returns exactly one typed
+receipt per item. A settled put requires a native revision; conflict, uncertain,
+failed, excluded and unsupported are distinct outcomes. `close` returns no data.
+Every control envelope and result is validated; malformed results retire only
+that instance with `driver_contract_violation` before they can be applied.
+
+Pages have at most 1000 entries and 1 MiB of metadata; reads have at most 16 MiB
+of bytes and optional historical base text only when advertised. Exports have
+at most the manifest's `maxBatch` (1-64) items and 16 MiB combined bodies. Paths
+are relative, slash-separated and NFC-compared, at most 4096 UTF-8 bytes, with
+no dot/empty/parent segments or staging names. Canonical state, links and disk
+spelling collisions are checked again at the hub boundary. Native revisions
+are opaque strings of at most 512 bytes and must not contain file names.
+
+Open/discover/close have 30-second observed-time deadlines; read/apply have
+120 seconds. A lost read result is unknown, never absence; a lost apply reply
+is uncertain, never proof of failure. The existing heartbeat/readiness ownership
+also applies to driver Workers, so a hung instance cannot block another one.
+Driver console arguments are not forwarded; asynchronous exceptions report only
+value-free failures. The instance's host must redact typed state reasons/errors
+before publication. The host retains no read bodies or historical text.
+
 ## Facades
 
 | Surface | Contract |
