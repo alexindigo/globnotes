@@ -144,6 +144,15 @@ export async function storageServerFixture(authorities: string[]) {
     configure,
     key,
     sync,
+    // Fault scenarios own the export admission boundary. Preparing a one-shot
+    // fault after a live note write races the supervisor's background exporter.
+    async exportPrepared(id: string, prepare: () => Promise<void>) {
+      assertEquals((await one(id)).enabled, true);
+      await configure(id, { enabled: false });
+      await prepare();
+      await configure(id, { enabled: true });
+      return await one(id);
+    },
     decide,
     approve,
     server: () => server,

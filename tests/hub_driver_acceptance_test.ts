@@ -196,16 +196,17 @@ Deno.test("driver acceptance: commit then lost reply settles by read-back with n
   const f = await storageServerFixture([remote.authority]);
   try {
     const id = await f.add(remote.baseUrl, remote.token);
-    await f.call("notes", "POST", {
-      path: "uncertain",
-      content: "native committed bytes",
+    await f.exportPrepared(id, async () => {
+      await f.call("notes", "POST", {
+        path: "uncertain",
+        content: "native committed bytes",
+      });
+      remote.faults.push({
+        method: "PUT",
+        key: "uncertain.md",
+        dropAfterCommit: true,
+      });
     });
-    remote.faults.push({
-      method: "PUT",
-      key: "uncertain.md",
-      dropAfterCommit: true,
-    });
-    await f.sync(id);
     assertEquals(remote.text("uncertain.md"), "native committed bytes");
     assertEquals(
       metadata(f.statePath, "SELECT state FROM peer_files")[0].state,
@@ -232,18 +233,19 @@ Deno.test("driver acceptance: conditional export conflicts preserve the interven
   const f = await storageServerFixture([remote.authority]);
   try {
     const id = await f.add(remote.baseUrl, remote.token);
-    await f.call("notes/same", "PATCH", {
-      baseContent: "base",
-      newContent: "hub edit",
+    await f.exportPrepared(id, async () => {
+      await f.call("notes/same", "PATCH", {
+        baseContent: "base",
+        newContent: "hub edit",
+      });
+      remote.faults.push({
+        method: "PUT",
+        key: "same.md",
+        before: () => {
+          remote.put("same.md", "intervening remote edit");
+        },
+      });
     });
-    remote.faults.push({
-      method: "PUT",
-      key: "same.md",
-      before: () => {
-        remote.put("same.md", "intervening remote edit");
-      },
-    });
-    await f.sync(id);
     assertEquals(remote.text("same.md"), "intervening remote edit");
     assertEquals(
       metadata(f.statePath, "SELECT state FROM peer_files")[0].state,
@@ -508,16 +510,27 @@ Deno.test("driver acceptance: GET retry advice survives Worker transport; denied
     assert(failed.nextRetry > 26000);
     assertEquals(Deno.readTextFileSync(`${f.vault}/base.md`), "base");
     await f.sync(id);
-    await f.call("notes", "POST", { path: "a", content: "first packet" });
-    await f.call("notes", "POST", { path: "b", content: "later packet" });
     const count = writes(remote).length;
-    remote.faults.push({
-      method: "PUT",
-      status: 401,
-      message: "credentials rejected",
+    const locked = await f.exportPrepared(id, async () => {
+      await f.call("notes", "POST", { path: "a", content: "first packet" });
+      await f.call("notes", "POST", { path: "b", content: "later packet" });
+      remote.faults.push({
+        method: "PUT",
+        status: 401,
+        message: "credentials rejected",
+      });
+      assertEquals(writes(remote).length, count);
     });
-    const locked = await f.sync(id);
-    assertEquals(locked.status, "locked");
+    assertEquals(
+      locked.status,
+      "locked",
+      JSON.stringify({
+        beforeFaultWrites: count,
+        requests: remote.requests,
+        pendingFaults: remote.faults.length,
+        objects: [...remote.objects.keys()],
+      }),
+    );
     assertEquals(locked.reason, "credentials rejected");
     assertEquals(writes(remote).length, count + 1);
     assertEquals(remote.text("a.md"), null);
