@@ -591,8 +591,8 @@ export class DriverSupervisor implements DriverOwners {
             plugin?.driver?.secrets ?? [],
           ),
           ...stateView,
-          nextRetry: slot?.nextRetry !== Infinity
-            ? Math.max(0, (slot?.nextRetry ?? 0) - this.#clock.now())
+          nextRetry: slot && Number.isFinite(slot.nextRetry)
+            ? Math.max(0, slot.nextRetry - this.#clock.now())
             : null,
           permissionsPage: view.reason === "network_denied" ||
               view.error?.code === "network_denied"

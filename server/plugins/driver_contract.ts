@@ -6,6 +6,7 @@ import type { WorkerMessage } from "./contracts.ts";
 
 export const DRIVER_API_VERSION = 1;
 export const DRIVER_LIMITS = Object.freeze({
+  textBytes: 4096,
   entries: 1000,
   metadataBytes: 1024 * 1024,
   bodyBytes: 16 * 1024 * 1024,
@@ -147,7 +148,10 @@ function object(value: unknown, keys: string[]): Record<string, unknown> {
   ) invalid();
   return value as Record<string, unknown>;
 }
-function boundedText(value: unknown, max = 4096): string {
+function boundedText(
+  value: unknown,
+  max: number = DRIVER_LIMITS.textBytes,
+): string {
   if (typeof value !== "string" || !value || value.includes("\0")) invalid();
   const encoded = new TextEncoder().encode(value);
   if (encoded.length > max || new TextDecoder().decode(encoded) !== value) {

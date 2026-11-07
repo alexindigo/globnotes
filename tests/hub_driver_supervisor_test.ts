@@ -123,6 +123,29 @@ function fixture(
   };
 }
 
+Deno.test("driver supervisor: missing and retired slots report no scheduled retry", async () => {
+  const f = fixture();
+  try {
+    await f.manager.catalog();
+    const instance = f.supervisor.peers.create(
+      "test-driver",
+      "Unreconciled",
+      {},
+    );
+    assertEquals((await f.one(instance.id)).nextRetry, null);
+    await f.supervisor.reconcile();
+    assertEquals((await f.one(instance.id)).nextRetry, null);
+    await f.key(instance.id);
+    await f.enable(instance.id);
+    assertEquals((await f.one(instance.id)).status, "active");
+    assertEquals((await f.one(instance.id)).nextRetry, null);
+    f.supervisor.retireOwner("test-driver");
+    assertEquals((await f.one(instance.id)).nextRetry, null);
+  } finally {
+    await f.close();
+  }
+});
+
 Deno.test("driver supervisor: off by default, missing keys construct no Worker, secrets restart only their instance", async () => {
   const f = await fixture(
     `const generation=crypto.randomUUID(); export function activate(ctx) {

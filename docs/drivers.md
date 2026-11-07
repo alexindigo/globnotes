@@ -208,6 +208,10 @@ The SDK maps 404 reads to absent, precondition failures to conflict and uncertai
 mutation effects to uncertain. Untyped mutation transport failures are uncertain
 too. Auth errors lock and stop subsequent sends; advice survives open, discovery,
 read and mutation results. Sandbox denial remains distinct from endpoint auth.
+`StorageError` normalizes provider messages once: valid UTF-8, no NUL, at most
+4096 bytes without splitting a code point, and the error code when no text
+remains. Empty responses and oversized proxy error pages therefore preserve
+their typed lock/retry outcome instead of violating the Worker contract.
 
 For missing native conditions, declare the corresponding manifest mutation
 `emulated`. The SDK freshly checks the supplied base immediately before the

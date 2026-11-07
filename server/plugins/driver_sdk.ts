@@ -21,6 +21,21 @@ export type StorageErrorCode =
   | "network"
   | "invalid";
 
+/** Provider bodies are diagnostics, not driver-authored protocol envelopes. */
+function storageMessage(code: StorageErrorCode, message?: string): string {
+  const encoder = new TextEncoder();
+  const valid = new TextDecoder().decode(encoder.encode(message ?? code));
+  let result = "", bytes = 0;
+  for (const point of valid) {
+    if (point === "\0") continue;
+    const size = encoder.encode(point).length;
+    if (bytes + size > DRIVER_LIMITS.textBytes) break;
+    result += point;
+    bytes += size;
+  }
+  return result || code;
+}
+
 /** A mutation error must say whether the endpoint could have committed. Never
  * classify a lost reply as effect:none just because fetch rejected. */
 export class StorageError extends Error {
@@ -34,7 +49,7 @@ export class StorageError extends Error {
       message?: string;
     },
   ) {
-    super(options.message ?? code);
+    super(storageMessage(code, options.message));
     this.name = "StorageError";
     this.effect = options.effect;
     if (

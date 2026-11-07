@@ -141,4 +141,38 @@ describe("Sync workflow ownership", () => {
     expect(await f.controller.review()).toBe(true);expect(row(f).enabled).toBe(true);expect(row(f).canSave).toBe(true);expect(f.update).toHaveBeenCalledTimes(1);
     expect(await f.controller.save("home")).toBe(true);expect(f.update.mock.calls[1][1]).toMatchObject({enabled:true,revision:1});
   });
+  it("departure Save waits for a fresh snapshot between instance drafts",async()=>{
+    const f=fixture(), held=deferred();f.view.instances.push({...instance(),id:"work",label:"Work"});
+    f.controller.activate();await flushPromises();
+    f.controller.edit("home","baseUrl","http://home-chosen");f.controller.edit("work","baseUrl","http://work-chosen");
+    f.read.mockReturnValueOnce(held.promise);let settled=false;
+    const departure=f.controller.resolveDeparture("closing Settings","save").then(result=>{settled=true;return result;});
+    await flushPromises();expect(f.update).toHaveBeenCalledTimes(1);expect(settled).toBe(false);
+    held.resolve(copy(f.view));expect(await departure).toBe(true);
+    expect(f.update.mock.calls.map(([id])=>id)).toEqual(["home","work"]);
+    expect(f.view.instances.map(row=>row.settings.baseUrl)).toEqual(["http://home-chosen","http://work-chosen"]);
+    expect(f.controller.hasWork()).toBe(false);
+  });
+  it.each(["failed","changed"])("departure Save retains later drafts after a %s inter-instance read",async ending=>{
+    const f=fixture(), held=deferred();f.view.instances.push({...instance(),id:"work",label:"Work"});
+    f.controller.activate();await flushPromises();
+    f.controller.edit("home","label","Home chosen");f.controller.edit("work","label","Work chosen");
+    f.read.mockReturnValue(held.promise);
+    const departure=f.controller.resolveDeparture("logout","save");await flushPromises();
+    expect(f.update).toHaveBeenCalledTimes(1);
+    if(ending==="failed")held.reject(Error("read unavailable"));else {f.view.instances[1].revision=2;held.resolve(copy(f.view));}
+    expect(await departure).toBe(false);expect(f.update).toHaveBeenCalledTimes(1);
+    if(ending==="failed")expect(f.controller.state.stale).toBe(true);
+    expect(f.controller.state.instances.find(row=>row.id==="work")).toMatchObject({label:"Work chosen",dirty:true});
+  });
+  it("departure Save can use an accepted fresh follow-up after a superseded read fails",async()=>{
+    const f=fixture(), held=deferred();f.view.instances.push({...instance(),id:"work",label:"Work"});
+    f.controller.activate();await flushPromises();
+    f.controller.edit("home","label","Home chosen");f.controller.edit("work","label","Work chosen");
+    f.read.mockReturnValueOnce(held.promise);
+    const departure=f.controller.resolveDeparture("closing Settings","save");await flushPromises();
+    f.events.get(TOPICS.VAULT_DRIVERS)();held.reject(Error("superseded read failed"));
+    expect(await departure).toBe(true);expect(f.controller.state.stale).toBe(false);
+    expect(f.update.mock.calls.map(([id])=>id)).toEqual(["home","work"]);expect(f.controller.hasWork()).toBe(false);
+  });
 });

@@ -207,18 +207,25 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
       return false;
     }
   }
+  async function refreshSnapshot() {
+    const own = generation;
+    try {
+      await observe((async () => {
+        // Joining an owned post-write read must not invalidate it and thereby
+        // turn its failure into an unsolicited follow-up read.
+        if (flight) await flight; else await refresh();
+        // Own the accepted follow-up when invalidations supersede a read.
+        while (flight && !disposed && own === generation) await flight;
+      })());
+      return !disposed && own === generation && identity === getSession() && !data.stale && data.loaded;
+    } catch { return false; }
+  }
   async function review() {
     if (disposed || data.busy || data.reviewing) return false;
     const target = operation.value, own = generation;
     data.reviewing = true; updateUnload();
     try {
-      await observe((async () => {
-        await refresh();
-        // An invalidation supersedes its in-flight snapshot and installs one
-        // follow-up. The explicit review owns that accepted read, not the
-        // superseded flight's false result.
-        while (flight && !disposed && own === generation) await flight;
-      })());
+      if (!await refreshSnapshot()) return false;
       if (disposed || own !== generation || identity !== getSession() || target !== operation.value || data.stale || !data.loaded) return false;
       // A rejected transport may still have reached the server. Fresh CAS bases,
       // not equality of write-only key status, fence the next explicit operation.
@@ -294,7 +301,9 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
     const pages = departurePages(), selected = choice ?? await confirm({ reason, pages, canSave:pages[0].canSave });
     if (selected === "discard") return discard();
     if (selected === "save" && pages[0].canSave) {
-      for (const [id, record] of data.records) if (hasDraft(record) && !await save(id)) return false;
+      for (const [id, record] of data.records) if (hasDraft(record)) {
+        if (!await save(id) || !await settle() || !await refreshSnapshot()) return false;
+      }
       return !hasWork();
     }
     return false;

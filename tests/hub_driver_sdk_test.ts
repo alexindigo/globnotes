@@ -5,7 +5,13 @@ import {
   StorageError,
   type StorageProvider,
 } from "../server/plugins/driver_sdk.ts";
-import type { ExportItem } from "../server/plugins/driver_contract.ts";
+import {
+  type ExportItem,
+  validateDiscoveryPage,
+  validateMutationResults,
+  validateOpenResult,
+  validateReadResult,
+} from "../server/plugins/driver_contract.ts";
 import { driverCapabilities } from "./helpers/driver_fixture.ts";
 
 function fixture() {
@@ -222,6 +228,71 @@ Deno.test("storage SDK: exclusions and names have per-item outcomes without touc
     reason: "name_not_storable",
   }]);
   assertEquals(f.calls, []);
+});
+
+Deno.test("storage SDK: provider error messages retain typed outcomes across every validated result", async (t) => {
+  const messages = [
+    ["empty", ""],
+    ["NUL only", "\0"],
+    ["embedded NUL", "proxy\0failure"],
+    ["large proxy page", "x".repeat(5000)],
+    ["multi-byte boundary", "a".repeat(4093) + "\u{1f600}"],
+    ["invalid surrogate", "proxy\ud800failure"],
+  ];
+  for (const code of ["unauthorized", "rate_limited"] as const) {
+    for (const [label, message] of messages) {
+      await t.step(`${code}: ${label}`, async () => {
+        const f = fixture(), driver = storageDriver(f.provider);
+        const opened = await driver.open();
+        assertEquals(opened.state, "ready");
+        if (opened.state !== "ready") throw Error("fixture binding missing");
+        f.fail(
+          new StorageError(code, {
+            effect: "none",
+            message,
+            retryAfterMs: 23000,
+          }),
+        );
+        const open = validateOpenResult(await driver.open());
+        const page = validateDiscoveryPage(
+          await driver.discover({ mode: "snapshot" }),
+          driverCapabilities,
+          { mode: "snapshot" },
+          opened,
+        );
+        const read = validateReadResult(
+          await driver.read({ path: "note.md", revision: "r1" }),
+          driverCapabilities,
+        );
+        const [mutation] = validateMutationResults(
+          await driver.apply([item()]),
+          [item()],
+        );
+        assertEquals(open.state, code === "unauthorized" ? "locked" : "failed");
+        assertEquals(page.completion, "incomplete");
+        assertEquals(
+          read.state,
+          code === "unauthorized" ? "locked" : "unknown",
+        );
+        assertEquals(mutation.state, "failed");
+        assertEquals(
+          page.error?.code,
+          code === "unauthorized" ? "denied" : "rate_limited",
+        );
+        assertEquals(page.error?.retryAfterMs, 23000);
+        if (label === "empty" || label === "NUL only") {
+          assertEquals(page.error?.message, code);
+        }
+        if (mutation.state === "failed") {
+          assertEquals(mutation.error.code, page.error?.code);
+          assertEquals(mutation.error.retryAfterMs, 23000);
+        }
+        if (label === "multi-byte boundary") {
+          assertEquals(page.error?.message, "a".repeat(4093));
+        }
+      });
+    }
+  }
 });
 
 Deno.test("storage SDK: authentication failure stops later sends but preserves earlier receipts", async () => {
