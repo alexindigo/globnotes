@@ -564,13 +564,13 @@ export class FileSystemNotes {
     newPath: string,
   ): Promise<{ path: string; content: string }[]> {
     const root = this.storagePath;
-    const fname = oldPath.split("/").pop()!;
     const changes: { path: string; content: string }[] = [];
     for await (
       const entry of walk(root, { includeDirs: false, exts: [".md"] })
     ) {
       let content = this.#readFile(entry.path);
-      if (!content.includes(fname)) continue;
+      // References are URLs, so their spelling need not contain the raw
+      // filename (percent escapes, including differently cased hex, are valid).
       const noteDir = nodePath.dirname(entry.path);
       const refs = this.#scanLocalRefs(content, noteDir, false);
       let changed = false;
@@ -895,42 +895,49 @@ export class FileSystemNotes {
     root: string,
     checkExistence: boolean,
   ): void {
+    const oldRel = nodePath.relative(root, oldDir).replace(/\\/g, "/");
+    const ref = FileSystemNotes.#localRef(url, oldRel);
+    if (!ref) return;
+    try {
+      const resolved = resolveReadableInRoot(root, ref.path);
+      if (checkExistence) Deno.statSync(resolved);
+    } catch {
+      return;
+    }
+    out.push(ref);
+  }
+
+  /** One URL-to-vault-path boundary for inventory, moves and reference
+   * rewrites. Decode exactly once; comparisons and move maps use filenames,
+   * while the original URL remains available for replacing source text. */
+  static #localRef(url: string, oldDir: string): FileRef | null {
     if (
       url.startsWith("http://") ||
       url.startsWith("https://") ||
       url.startsWith("//") ||
       url.startsWith("#")
-    ) return;
+    ) return null;
+
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(url);
+    } catch {
+      return null;
+    }
 
     let rel: string;
     let kind: FileRef["kind"];
-    if (url.startsWith("/")) {
-      rel = url.slice(1);
+    if (decoded.startsWith("/")) {
+      rel = decoded.slice(1);
       kind = "absolute";
-    } else if (url.startsWith("../") || url.startsWith("./")) {
-      const oldRel = nodePath.relative(root, oldDir).replace(/\\/g, "/");
-      rel = (oldRel !== "." && oldRel !== "" ? oldRel + "/" : "") + url;
-      rel = nodePath.normalize(rel).replace(/\\/g, "/");
+    } else if (decoded.startsWith("../") || decoded.startsWith("./")) {
+      rel = (oldDir && oldDir !== "." ? oldDir + "/" : "") + decoded;
       kind = "relative";
     } else {
-      const oldRel = nodePath.relative(root, oldDir).replace(/\\/g, "/");
-      rel = oldRel !== "." && oldRel !== "" ? oldRel + "/" + url : url;
+      rel = oldDir && oldDir !== "." ? oldDir + "/" + decoded : decoded;
       kind = "same-folder";
     }
-
-    if (checkExistence) {
-      try {
-        resolveInRoot(root, rel);
-      } catch {
-        return;
-      }
-      try {
-        Deno.statSync(nodePath.join(root, rel));
-      } catch {
-        return;
-      }
-    }
-    out.push({ url, path: rel, kind });
+    return { url, path: nodePath.normalize(rel).replace(/\\/g, "/"), kind };
   }
 
   static #rebaseUrl(
@@ -939,27 +946,13 @@ export class FileSystemNotes {
     newDir: string,
     movedFiles: Record<string, string>,
   ): string {
-    if (
-      url.startsWith("http://") ||
-      url.startsWith("https://") ||
-      url.startsWith("//") ||
-      url.startsWith("#")
-    ) return url;
+    const ref = FileSystemNotes.#localRef(url, oldDir);
+    if (!ref) return url;
+    const target = movedFiles[ref.path] ?? ref.path;
+    const encodePath = (p: string) =>
+      p.split("/").map(encodeURIComponent).join("/");
 
-    let target: string;
-    if (url.startsWith("/")) {
-      target = url.slice(1);
-    } else if (url.startsWith("../") || url.startsWith("./")) {
-      target = nodePath
-        .normalize(nodePath.join(oldDir || ".", url))
-        .replace(/\\/g, "/");
-    } else {
-      target = oldDir ? oldDir + "/" + url : url;
-    }
-
-    target = movedFiles[target] ?? target;
-
-    if (!newDir) return target ? "/" + target : url;
+    if (!newDir) return target ? "/" + encodePath(target) : url;
 
     const newParts = newDir.split("/");
     const targetParts = target.split("/");
@@ -969,7 +962,7 @@ export class FileSystemNotes {
       targetParts[i] === newParts[i]
     ) i++;
     const up = newParts.length - i;
-    const rest = targetParts.slice(i).join("/");
+    const rest = encodePath(targetParts.slice(i).join("/"));
     if (up === 0) {
       return rest && !rest.includes("/") ? "./" + rest : rest;
     }

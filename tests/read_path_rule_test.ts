@@ -6,8 +6,8 @@
  * folders and files named with characters a new name can't (`?`, `:`, `*`).
  * A folder listing and a search folder filter of such a folder used to fail
  * as an invalid path while the notes inside read fine. Creating a new name
- * keeps the create-time rule. (Vault file GETs keep their own documented
- * contract: invalid characters answer 400, tests/files_test.ts.)
+ * keeps the create-time rule. Existing attachments follow this readable-name
+ * rule too; new note names retain the portable create-time policy.
  */
 
 import { assert, assertEquals } from "@std/assert";
