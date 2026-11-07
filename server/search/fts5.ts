@@ -81,21 +81,40 @@ export class Fts5Indexer implements Indexer {
     Deno.mkdirSync(stateDir, { recursive: true });
     this.#indexPath = path.join(stateDir, "index.sqlite");
     this.#db = this.#adapters.openDatabase(this.#indexPath);
-    this.#db.exec("PRAGMA journal_mode = WAL");
-    this.#initSchema();
-    this.#migrate();
-    this.#probeFts5();
+    try {
+      this.#db.exec("PRAGMA journal_mode = WAL");
+      this.#initSchema();
+      this.#migrate();
+    } catch (error) {
+      this.#db.close();
+      throw error;
+    }
   }
 
   #initSchema(): void {
-    this.#db.exec(`
+    // The real table already tests FTS5 support. A separate create/drop probe
+    // would needlessly acquire the writer lock even on an up-to-date index.
+    try {
+      this.#db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
         title, content, tags,
         filename UNINDEXED,
         last_modified UNINDEXED,
         tokenize = 'porter unicode61 remove_diacritics 2'
       );
-    `);
+      `);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /\bno such module:\s*fts5\b/i.test(error.message)
+      ) {
+        throw new Error(
+          "FTS5 is unavailable in Deno's node:sqlite: " + error.message,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
     // Raw tags for the listing endpoint (Python tags = KEYWORD,
     // unstemmed, lowercase). FTS5 tokenizers are per-table — the
     // stemmed tags column above serves search ranking, this plain
@@ -134,20 +153,6 @@ export class Fts5Indexer implements Indexer {
       this.#db.exec("DELETE FROM notes_tags");
       this.#db.exec("DELETE FROM notes_meta");
       this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-    }
-  }
-
-  /** FTS5 probe — fails loudly if the build lacks FTS5 (fallback to
-   * @db/sqlite in that case; see plans/plugin-system §3). */
-  #probeFts5(): void {
-    try {
-      this.#db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS __probe USING fts5(x)");
-      this.#db.exec("DROP TABLE IF EXISTS __probe");
-    } catch (e) {
-      throw new Error(
-        "FTS5 is unavailable in Deno's node:sqlite. Fallback to @db/sqlite " +
-          "with DENO_SQLITE_PATH is required. Cause: " + (e as Error).message,
-      );
     }
   }
 

@@ -72,6 +72,10 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Opening an existing search index no longer takes an unnecessary writer lock or
+misreports a busy database as missing FTS5 support. Other SQLite failures keep
+their original diagnosis, and failed initialization closes its connection.
+
 Vault roots with relative segments or repeated separators share one normalized
 path across storage, indexing and the hub. Initial indexing reports only committed
 notes as done and counts failed additions separately.
