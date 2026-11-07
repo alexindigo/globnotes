@@ -40,18 +40,33 @@ await conflictCase("conflict-inbox-native", async f => {
   await s.click('[title="Unpin sidebar"]'); await s.click('[title="Close sidebar"]');
   // Metadata-only Both must converge in poll fallback without a file event.
   const pollRow = await f.create("Poll");
-  let blocked = 0;
+  let blocked = 0, polls = 0;
+  const pendingPolls = new Set();
+  const reads = { list: 0, detail: 0 };
   const release = s.page.onEvent(event => {
+    if (event.method === "Network.requestWillBeSent") {
+      const url = new URL(event.params.request.url), path = url.pathname;
+      if (path === `${f.prefix}/_/api/changes` && url.searchParams.has("poll")) pendingPolls.add(event.params.requestId);
+      if (path === `${f.prefix}/_/api/conflicts`) reads.list++;
+      if (path === `${f.prefix}/_/api/conflicts/${pollRow.id}`) reads.detail++;
+    }
+    if (event.method === "Network.loadingFinished" && pendingPolls.delete(event.params.requestId)) polls++;
     if (event.method !== "Fetch.requestPaused") return;
     if (new URL(event.params.request.url).searchParams.has("poll")) s.send("Fetch.continueRequest", { requestId: event.params.requestId });
     else { blocked++; s.send("Fetch.failRequest", { requestId: event.params.requestId, errorReason: "Failed" }); }
   });
   try {
     await s.send("Fetch.enable", { patterns: [{ urlPattern: "*/_/api/changes*", requestStage: "Request" }] });
-    await s.goto(f.url("/_/conflicts")); await f.inboxCount(1); await until(() => blocked > 0, "SSE failure intercepted");
+    await f.compare(pollRow); await f.detailCount(1);
+    await until(() => blocked > 0 && polls >= 2, "SSE failure and continuing poll fallback observed");
+    const baseline = { ...reads }, firstPolls = polls;
+    await until(() => polls >= firstPolls + 3, "three unchanged revision polls completed with comparison open");
+    assert(reads.list === baseline.list && reads.detail === baseline.detail, `Unchanged polling repeated conflict reads: ${JSON.stringify({ baseline, reads })}`);
     const detail = await f.api(`conflicts/${pollRow.id}`);
     await f.api(`conflicts/${pollRow.id}/resolve`, "POST", { action: "both", revision: detail.revision, base: { original: { kind: "version", version: detail.original.version }, copy: { kind: "version", version: detail.copy.version } } });
-    await f.inboxCount(0); f.results.push({ pollingMetadataOnlyClosure: true, sseBlocked: blocked });
+    await s.poll("document.querySelector('.conflicts-page')?.textContent.includes('This conflict was resolved elsewhere.')");
+    await f.detailCount(0); await s.click('.conflicts-page > a'); await f.inboxCount(0);
+    f.results.push({ pollingMetadataOnlyClosure: true, unchangedPollingReads: baseline, quietPolls: polls - firstPolls, sseBlocked: blocked });
   } finally { release(); await s.send("Fetch.disable"); }
   await f.restart(); const readonly = await f.create("ReadOnly"); await f.restart({ GLOBNOTES_AUTH_TYPE: "read_only" });
   await s.goto(f.url(`/_/conflicts/${readonly.id}`)); await s.poll("!!document.querySelector('.conflict-comparison')");

@@ -314,9 +314,15 @@ Vault changes retain their cursor across suspension.
 It uses the same authenticated emission queue and lifetime as file events and
 sends the current metadata revision on every reconnect. `vaultChanges.js`
 validates/deduplicates metadata separately from file sequence, fencing retired
-connections. A reconnect snapshot invalidates consumers even after a server
-reset lowered the metadata revision. Rows/counts come from the filtered list,
-never from this invalidation cursor.
+connections. Consecutive successful polls share the owner's revision memory:
+an equal revision is quiet, while any different revision (including a lower one)
+invalidates consumers. A real transport reconnect, stream retry, owner restart
+or page-lifetime resume delivers a fresh snapshot even at the same revision.
+Rows/counts come from the filtered list, never from this invalidation cursor.
+Failed list/comparison reads retry independently with bounded backoff, paused
+while the page lifetime is inactive and retired with their account/selection.
+Definitive authority/identity rejections retain explicit recovery. Read retries
+never resend resolutions or accept a stale pair on the person's behalf.
 
 This keeps open streams to visible tabs: on plain HTTP each stream holds one of
 the browser's few HTTP/1.1 connections per host, shared by all tabs.

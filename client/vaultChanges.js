@@ -25,7 +25,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
   lifetime = createConnectionLifetime({ setTimer, clearTimer }) } = {}) {
   let owners = 0, generation = 0, seq = 0, attempts = 0, polling = false, pollingSince = 0;
   let pageActive = lifetime.state().active;
-  let timer = null, close = null, abort = null;
+  let timer = null, close = null, abort = null, conflictRevision = null;
   const live = () => owners > 0 && pageActive;
   function retire() {
     generation++;
@@ -37,11 +37,14 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     if (polling) return;
     polling = true; pollingSince = now();
   }
-  async function connect() {
+  async function connect(continuePoll = false) {
     if (!live()) return;
     retire();
     const own = generation, mode = polling ? "poll" : "stream";
-    let openedAt = null, conflictRevision = null;
+    // Completed polls continue one observation lifetime. Real reconnects and
+    // page/owner restarts must deliver a fresh snapshot even at the same revision.
+    if (!continuePoll) conflictRevision = null;
+    let openedAt = null;
     abort = new AbortController();
     const current = () => live() && generation === own;
     // Every non-terminal outcome ends here: one timer, a bounded delay.
@@ -49,6 +52,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
       if (!current() || timer !== null) return;
       let delay;
       if (reason === "poll") {
+        enterPolling(); // The stream request may itself have received JSON.
         // A completed poll is a healthy exchange; the transport paces it.
         attempts = 0; delay = 0;
         if (now() - pollingSince >= STREAM_RETRY_MS) polling = false;
@@ -58,7 +62,8 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
         if (mode === "stream" && reason !== "ended") enterPolling();
         delay = Math.min(MAX_DELAY_MS, 500 * 2 ** Math.min(attempts++, 6));
       }
-      timer = setTimer(() => { timer = null; if (current()) connect(); }, delay);
+      const continuePoll = reason === "poll" && polling;
+      timer = setTimer(() => { timer = null; if (current()) connect(continuePoll); }, delay);
     };
     try {
       const disposer = await open({ since: seq, poll: mode === "poll", signal: abort.signal,
@@ -66,7 +71,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
           if (!current()) return;
           if (event === "conflicts") {
             if (!Number.isSafeInteger(data?.revision) || data.revision < 0) throw new Error("Invalid conflict revision");
-            if (conflictRevision !== null && data.revision <= conflictRevision) return;
+            if (data.revision === conflictRevision) return;
             conflictRevision = data.revision;
             emit(TOPICS.VAULT_CONFLICTS, { revision: conflictRevision });
           } else if (event === "reset" || event === "cursor") {

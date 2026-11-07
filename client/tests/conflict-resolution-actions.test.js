@@ -92,6 +92,19 @@ describe("explicit conflict resolution and retained work", () => {
     expect(await departure).toBe(false); expect(f.controller.state.draft).toBe("retained"); expect(f.drafts.clear).not.toHaveBeenCalled();
     const next = f.controller.gateNavigation(); await flush(); f.controller.onDecision("discard"); expect(await next).toBe(true); expect(f.drafts.clear).toHaveBeenCalledTimes(1);
   });
+  it("a resolved caption alone does not release unknown authority before current review settles", async () => {
+    const held = deferred(), review = deferred(), f = fixture({ send: () => held.promise });
+    await f.controller.mount("a"); f.controller.editMerge(); f.controller.setDraft("retained"); f.controller.choose("merge");
+    const write = f.controller.confirmResolution(f.controller.state.confirmation.identity);
+    f.read.mockResolvedValue({ id: "a", revision: 3, state: "resolved" }); await f.handlers.get(TOPICS.VAULT_CONFLICTS)();
+    held.reject(Error("lost response")); await write;
+    expect(f.controller.state.resolvedElsewhere).toBe(true); expect(f.controller.state.unknown).toBe(true);
+    f.read.mockReturnValueOnce(review.promise); const reviewing = f.controller.reviewCurrent(); await flush();
+    expect(await f.controller.gateNavigation()).toBe(false); expect(f.controller.state.decision).toBe(null);
+    review.resolve({ id: "a", revision: 3, state: "resolved" }); await reviewing;
+    const departure = f.controller.gateNavigation(); await flush(); expect(f.controller.state.decision.canSave).toBe(false);
+    f.controller.onDecision("cancel"); expect(await departure).toBe(false); expect(f.controller.state.draft).toBe("retained");
+  });
   it("observation timeout aborts departure; late success never revives it or logout", async () => {
     vi.useFakeTimers(); const held = deferred(), f = fixture({ send: () => held.promise }); await f.controller.mount("a"); f.controller.choose("both");
     const attempt = f.controller.gateNavigation(); await flush(); await vi.advanceTimersByTimeAsync(60_000);

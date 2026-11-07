@@ -3,6 +3,10 @@ vi.mock("../router.js", () => ({ default: {} }));
 vi.mock("../tokenStorage.js", () => ({ getStoredToken: () => "fixture-token" }));
 import { openVaultChanges } from "../api.js";
 import { createVaultChanges } from "../vaultChanges.js";
+import { createConflictInbox } from "../conflictInbox.js";
+import { createConflictResolutionController } from "../conflictResolutionController.js";
+import { createConnectionLifetime } from "../connectionLifetime.js";
+import { publish, subscribe } from "../bus/index.js";
 import { CHANGE_STREAM_HEARTBEAT_MS, CHANGE_STREAM_STALL_MS } from "../../shared/vault_changes.ts";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -172,4 +176,44 @@ it("poll metadata-only and gap packets use the same independent event as SSE", a
     expect(onEvent.mock.calls.map(([value]) => value.event)).toEqual(gap ? ["reset", "cursor", "conflicts"] : ["cursor", "conflicts"]);
     close();
   }
+});
+
+it("unchanged real poll packets leave healthy consumers quiet while failed list/detail reads retry", async () => {
+  vi.useFakeTimers();
+  const snapshot = { revision: 7, total: 1, conflicts: [{ id: "a", path: "A.md", copyPath: "B.md", reason: "overlapping-edits", createdAt: "2026-11-01T12:00:00Z" }] };
+  const pair = { id: "a", revision: 1, state: "open", original: { path: "A.md", version: "a", preview: "text", content: "original" }, copy: { path: "B.md", version: "b", preview: "text", content: "copy" } };
+  vi.stubGlobal("fetch", vi.fn(async url => {
+    if (!url.includes("poll=1")) throw new TypeError("SSE unavailable");
+    return Response.json({ entries: [], next: 0, conflictRevision: 7 });
+  }));
+  const lifetime = createConnectionLifetime();
+  const changes = createVaultChanges({ publish, lifetime });
+  const listRead = vi.fn(async () => snapshot), detailRead = vi.fn(async () => pair);
+  const inbox = createConflictInbox({ read: listRead, subscribe, acquireChanges: () => changes.acquire(), lifetime });
+  inbox.setContext({ active: true, key: "poll-fixture" });
+  const release = inbox.acquire();
+  const controller = createConflictResolutionController({ read: detailRead, inbox, subscribe, lifetime,
+    drafts: { load: () => null, release: () => {} }, registerParticipant: () => () => {}, unload: { set() {}, dispose() {} } });
+  try {
+    await controller.mount("a"); await vi.advanceTimersByTimeAsync(500);
+    const healthy = { list: listRead.mock.calls.length, detail: detailRead.mock.calls.length };
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(fetch.mock.calls.filter(([url]) => url.includes("poll=1")).length).toBeGreaterThanOrEqual(4);
+    expect({ list: listRead.mock.calls.length, detail: detailRead.mock.calls.length }).toEqual(healthy);
+    listRead.mockRejectedValueOnce(Error("temporary list failure"));
+    detailRead.mockRejectedValueOnce(Error("temporary comparison failure"));
+    await inbox.refresh(); await controller.refresh();
+    expect(inbox.state.error).toBe("Could not load conflicts."); expect(controller.state.error).toBe("Could not load comparison.");
+    changes.suspendDocument(); await vi.advanceTimersByTimeAsync(4000);
+    expect(listRead).toHaveBeenCalledTimes(healthy.list + 1); expect(detailRead).toHaveBeenCalledTimes(healthy.detail + 1);
+    changes.resumeDocument(); await vi.advanceTimersByTimeAsync(4000);
+    expect(inbox.state.error).toBe(""); expect(controller.state.error).toBe("");
+    expect(inbox.state.total).toBe(1); expect(controller.state.pair.original.content).toBe("original");
+    const recovered = { list: listRead.mock.calls.length, detail: detailRead.mock.calls.length };
+    await vi.advanceTimersByTimeAsync(4000);
+    expect({ list: listRead.mock.calls.length, detail: detailRead.mock.calls.length }).toEqual(recovered);
+    listRead.mockRejectedValueOnce(Error("retry without revision change")); detailRead.mockRejectedValueOnce(Error("retry without revision change"));
+    await inbox.refresh(); await controller.refresh(); await vi.advanceTimersByTimeAsync(1000);
+    expect(inbox.state.error).toBe(""); expect(controller.state.error).toBe("");
+  } finally { controller.dispose(); release(); inbox.dispose(); }
 });

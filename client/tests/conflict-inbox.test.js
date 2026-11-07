@@ -9,7 +9,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 const row = (id = "a", extra = {}) => ({ id, path: "Original.md", copyPath: "Copy.md", reason: "overlapping-edits", createdAt: "2026-11-01T12:00:00Z", revision: 1, ...extra });
 const response = (...conflicts) => ({ revision: 1, total: conflicts.length, conflicts });
 const owners = [];
-afterEach(() => owners.splice(0).forEach(owner => owner.dispose()));
+afterEach(() => { owners.splice(0).forEach(owner => owner.dispose()); vi.useRealTimers(); });
 function fixture(read = vi.fn(async () => response())) {
   const handlers = new Map(), release = vi.fn();
   const acquireChanges = vi.fn(() => { expect(handlers.size).toBe(3); return release; });
@@ -70,5 +70,14 @@ describe("shared conflict metadata owner", () => {
     context.route = "login"; expect(inbox.state.rows).toEqual([]); expect(inbox.state.available).toBe(false);
     context.route = "conflicts"; await flush(); expect(read).toHaveBeenCalledTimes(2);
     context.config.setupRequired = true; expect(inbox.state.available).toBe(false);
+  });
+  it("retires failed-read retries with their account and final owner", async () => {
+    vi.useFakeTimers();
+    const f = fixture(vi.fn().mockRejectedValueOnce(Error("offline")).mockResolvedValue(response(row("new"))));
+    const release = f.inbox.acquire(); await flush(); expect(f.inbox.state.error).toContain("Could not load");
+    f.inbox.setContext({ active: true, key: "new-account" }); await flush();
+    await vi.advanceTimersByTimeAsync(30000); expect(f.read).toHaveBeenCalledTimes(2); expect(f.inbox.state.rows[0].id).toBe("new");
+    f.read.mockRejectedValueOnce(Error("offline")); await f.inbox.refresh(); release();
+    await vi.advanceTimersByTimeAsync(30000); expect(f.read).toHaveBeenCalledTimes(3); expect(f.inbox.state.total).toBe(null);
   });
 });

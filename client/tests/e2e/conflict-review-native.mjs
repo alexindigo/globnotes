@@ -46,7 +46,9 @@ await conflictCase("conflict-review-native", async f => {
     assert(await Deno.readTextFile(`${f.vault}/${row.path}`) === "unacknowledged merge\n" && await f.absent(row.copyPath), "Unknown fixture was not admitted to real effects");
     await s.send("Fetch.failRequest", { requestId: paused, errorReason: "Failed" }); await s.send("Fetch.disable");
     await s.poll("document.body.textContent.includes('The resolution outcome is unknown.')");
-    await s.button("Review current versions"); await s.poll("document.body.textContent.includes('This conflict was resolved elsewhere.')");
+    // A metadata closure may render the caption before a lost wire rejects.
+    // Wait for this authoritative review to retire unknown authority too.
+    await s.button("Review current versions"); await s.poll("document.body.textContent.includes('This conflict was resolved elsewhere.') && !document.body.textContent.includes('The resolution outcome is unknown.')");
     assert(await s.evaluate("document.querySelector('#conflict-merge').value") === "unacknowledged merge\n", "Unknown closed read falsely acknowledged draft");
     await s.click('.conflicts-page > a'); await s.button("Cancel", "[role=dialog]");
     assert(f.writes.filter(request => request.content === "unacknowledged merge\n").length === 1, "Unknown outcome replayed");
@@ -62,7 +64,7 @@ await conflictCase("conflict-review-native", async f => {
     await s.send("Fetch.fulfillRequest", { requestId: partialResponse, responseCode: 500, responseHeaders: [{ name: "content-type", value: "application/json" }],
       body: btoa(JSON.stringify({ code: "operation_partial", detail: "Fixture partial response after actual effects", partial: { completedPaths: [partial.path, partial.copyPath] } })) });
     await s.send("Fetch.disable"); await s.poll("document.body.textContent.includes('The resolution outcome is unknown.')");
-    await s.button("Review current versions"); await s.poll("document.body.textContent.includes('This conflict was resolved elsewhere.')");
+    await s.button("Review current versions"); await s.poll("document.body.textContent.includes('This conflict was resolved elsewhere.') && !document.body.textContent.includes('The resolution outcome is unknown.')");
     assert(await s.evaluate("document.querySelector('#conflict-merge').value") === "partial response retained\n", "Partial response lost the browser draft");
     await s.click('.conflicts-page > a'); await s.button("Discard draft", "[role=dialog]"); await f.inboxCount(0);
     assert(f.writes.filter(request => request.content === "partial response retained\n").length === 1, "Partial response authorized a replay");

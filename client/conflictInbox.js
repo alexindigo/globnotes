@@ -6,24 +6,28 @@ import { acquireVaultChanges } from "./vaultChanges.js";
 import { getStoredToken } from "./tokenStorage.js";
 import { permissionEligibility, permissionSessionKey } from "./appSessionPolicy.js";
 import { conflictTarget } from "./conflictNavigation.js";
+import { createConflictReadRetry } from "./conflictReadRetry.js";
 
 export const CONFLICT_INBOX = Symbol("conflict-inbox");
 
 /** One vault-scoped list/count owner; no content or draft state lives here. */
 export function createConflictInbox({ read = getConflicts, subscribe: on = subscribe,
-  acquireChanges = acquireVaultChanges, token = getStoredToken } = {}) {
+  acquireChanges = acquireVaultChanges, token = getStoredToken, lifetime } = {}) {
   const data = reactive({ available: false, generation: 0, rows: [], total: null,
     revision: null, loading: false, stale: false, error: "", result: "" });
   let owners = 0, identity = null, disposed = false, flight = null, dirty = false;
   let releases = [], stopContext = null;
+  const retry = createConflictReadRetry(refresh, { lifetime });
   const live = () => !disposed && owners > 0 && data.available;
   function retire() {
+    retry.reset();
     data.generation++; flight = null; dirty = false;
     releases.splice(0).forEach(release => release());
     Object.assign(data, { rows: [], total: null, revision: null, loading: false, stale: false, error: "", result: "" });
   }
   async function refresh() {
     if (!live()) return false;
+    retry.begin();
     data.stale = data.total !== null;
     if (flight) { dirty = true; return flight; }
     const generation = data.generation;
@@ -40,9 +44,10 @@ export function createConflictInbox({ read = getConflicts, subscribe: on = subsc
           createdLabel: new Date(row.createdAt).toLocaleString() }))
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
         data.total = result.total; data.revision = result.revision; data.stale = false;
+        retry.reset();
         return true;
-      } catch {
-        if (current() && !dirty) data.error = "Could not load conflicts.";
+      } catch (error) {
+        if (current() && !dirty) { data.error = "Could not load conflicts."; retry.failed(error); }
         return false;
       } finally {
         if (current()) {
@@ -83,6 +88,6 @@ export function createConflictInbox({ read = getConflicts, subscribe: on = subsc
     setContext, bindContext, acquire, refresh,
     lookupByMember: (path, member) => data.rows.find(row => member ? row[member] === path : row.path === path || row.copyPath === path),
     resolved(message) { data.result = message; return refresh(); },
-    dispose() { stopContext?.(); stopContext = null; retire(); disposed = true; data.available = false; },
+    dispose() { stopContext?.(); stopContext = null; retire(); retry.dispose(); disposed = true; data.available = false; },
   };
 }

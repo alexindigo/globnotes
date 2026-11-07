@@ -10,6 +10,7 @@ import { classifyNoteSaveFailure, NOTE_SAVE_OBSERVATION_MS } from "./noteSaveQue
 import { requestReauthentication } from "./reauthentication.js";
 import { operationError } from "./operationErrors.js";
 import { readPathPrefix } from "./pathPrefix.js";
+import { createConflictReadRetry } from "./conflictReadRetry.js";
 
 const bases = pair => ({ original: { kind: "version", version: pair.original.version }, copy: { kind: "version", version: pair.copy.version } });
 const labels = { original: "Keep original", copy: "Keep conflict copy", both: "Keep both", merge: "Save merge" };
@@ -23,7 +24,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
   getContext = () => ({ writable: true, scope: `${readPathPrefix()}:globnotes` }),
   drafts = createConflictDraftStore(), registerParticipant = registerSessionParticipant,
   unload = createUnloadConfirmation(), requestAuthentication = requestReauthentication,
-  observationMs = NOTE_SAVE_OBSERVATION_MS } = {}) {
+  observationMs = NOTE_SAVE_OBSERVATION_MS, lifetime } = {}) {
   const state = reactive({ id: null, status: "idle", pair: null, reviewRequired: false,
     error: "", feedback: "", settledByUs: false, originalHref: "", copyHref: "", merge: false, draft: "",
     recovered: false, confirmation: null, decision: null, busy: false, unknown: false,
@@ -46,6 +47,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
   let wire = null, choice = null, recovered = null, draftBase = null, draftRevision = 0, seed = "", scope = "";
   let reviewLocked = false;
   let decision = null, departure = null, mounted = false;
+  const retry = createConflictReadRetry(refresh, { lifetime });
   const current = own => !disposed && own === generation;
   const editable = () => [state.pair?.original, state.pair?.copy].every(member => member?.preview === "text" && typeof member.content === "string");
   const hasDraft = () => state.recovered || state.draftRetained || (state.merge && state.draft !== seed);
@@ -77,6 +79,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
   }
   async function refresh() {
     if (disposed || !state.id) return;
+    retry.begin();
     if (flight) { dirty = true; return flight; }
     const own = generation, id = state.id;
     const work = (async () => {
@@ -84,6 +87,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
       try {
         const fresh = await read(id);
         if (!current(own) || dirty) return;
+        retry.reset();
         state.error = "";
         if (fresh.state === "resolved") closed();
         else if (state.status === "resolved") return; // Closure is terminal for this selected id.
@@ -95,6 +99,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
         if (error.response?.status === 404) { state.status = "missing"; state.pair = null; cancelConfirmation(); }
         else {
           state.error = "Could not load comparison."; if (!state.pair) state.status = "error";
+          retry.failed(error);
           if (error.response?.status === 401) {
             persist();
             Promise.resolve(requestAuthentication()).then(ok => { if (ok && current(own)) refresh(); }).catch(() => {});
@@ -111,6 +116,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
     // Route guards settle authority before prop changes. A direct consumer must
     // use that same guard; refusing here prevents silently abandoning a draft.
     if (hasUnsavedChanges()) return false;
+    retry.reset();
     generation++; flight = null; dirty = false; pending = null; cancelConfirmation(); drafts.release();
     scope = getContext().scope ?? `${readPathPrefix()}:globnotes`;
     draftBase = null; draftRevision = 0; recovered = null; seed = ""; reviewLocked = false;
@@ -331,7 +337,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
     async followFile(event, href) { event.preventDefault(); if (await gateNavigation()) openFile(href); },
     dispose() {
       if (disposed) return;
-      persist(); onDecision("cancel"); disposed = true; generation++;
+      persist(); onDecision("cancel"); disposed = true; generation++; retry.dispose();
       if (wire) { clearTimeout(wire.timer); wire.finish(false); }
       releases.splice(0).forEach(release => release()); stopUnload(); unload.dispose(); drafts.release();
     },

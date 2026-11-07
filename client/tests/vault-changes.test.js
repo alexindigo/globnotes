@@ -202,17 +202,57 @@ describe("vault change owner", () => {
     const release = owner.acquire(); await flush();
     const metadata = (index, revision) => calls[index].onEvent({event: "conflicts", data: {revision}});
     metadata(0, 12); metadata(0, 12); metadata(0, 11);
-    expect(publish).toHaveBeenCalledExactlyOnceWith(TOPICS.VAULT_CONFLICTS, {revision: 12});
+    expect(publish.mock.calls).toEqual([
+      [TOPICS.VAULT_CONFLICTS, {revision: 12}], [TOPICS.VAULT_CONFLICTS, {revision: 11}],
+    ]);
     expect(owner.state().seq).toBe(0);
     calls[0].onEvent({event: "change", data: {seq: 2, path: "a.md"}});
     expect(owner.state().seq).toBe(2);
     owner.suspendDocument(); owner.resumeDocument(); await flush();
     metadata(0, 99); metadata(1, 0); metadata(1, 1);
     expect(publish.mock.calls.filter(([topic]) => topic === TOPICS.VAULT_CONFLICTS)).toEqual([
-      [TOPICS.VAULT_CONFLICTS, {revision: 12}], [TOPICS.VAULT_CONFLICTS, {revision: 0}], [TOPICS.VAULT_CONFLICTS, {revision: 1}],
+      [TOPICS.VAULT_CONFLICTS, {revision: 12}], [TOPICS.VAULT_CONFLICTS, {revision: 11}],
+      [TOPICS.VAULT_CONFLICTS, {revision: 0}], [TOPICS.VAULT_CONFLICTS, {revision: 1}],
     ]);
     expect(owner.state().seq).toBe(2);
     for (const revision of [-1, 1.5, "2", null]) expect(() => metadata(1, revision)).toThrow("Invalid conflict revision");
+    release();
+  });
+  it("deduplicates completed polls but refreshes after failures, stream retries and owner restarts", async () => {
+    vi.useFakeTimers(); const calls = [], publish = vi.fn();
+    const owner = createVaultChanges({ publish, open: async value => { calls.push(value); return () => {}; } });
+    let release = owner.acquire(); await flush();
+    const metadata = revision => calls.at(-1).onEvent({ event: "conflicts", data: { revision } });
+    const published = () => publish.mock.calls.filter(([topic]) => topic === TOPICS.VAULT_CONFLICTS).map(([, data]) => data.revision);
+    metadata(12); calls.at(-1).onClose(new Error("stream broke")); await vi.advanceTimersByTimeAsync(500);
+    expect(calls.at(-1).poll).toBe(true); metadata(12);
+    for (let i = 0; i < 3; i++) { calls.at(-1).onClose("poll"); await flush(); metadata(12); }
+    expect(published()).toEqual([12, 12]);
+    metadata(0); metadata(0); expect(published()).toEqual([12, 12, 0]);
+    calls.at(-1).onClose(new Error("poll broke")); await vi.advanceTimersByTimeAsync(500); metadata(0);
+    expect(published()).toEqual([12, 12, 0, 0]);
+    owner.restart(); await flush(); metadata(0);
+    release(); release = owner.acquire(); await flush(); metadata(0);
+    await vi.advanceTimersByTimeAsync(STREAM_RETRY_MS); calls.at(-1).onClose("poll"); await flush();
+    expect(calls.at(-1).poll).toBe(false); metadata(0);
+    expect(published()).toEqual([12, 12, 0, 0, 0, 0, 0]);
+    release();
+  });
+  it("treats a JSON stream response as poll continuation and refreshes after actual page lifetime boundaries", async () => {
+    vi.useFakeTimers(); const calls = [], publish = vi.fn();
+    const owner = createVaultChanges({ publish, open: async value => { calls.push(value); return () => {}; } });
+    const release = owner.acquire(); await flush();
+    const metadata = () => calls.at(-1).onEvent({ event: "conflicts", data: { revision: 7 } });
+    metadata(); calls.at(-1).onClose("poll"); await flush();
+    expect(calls.at(-1).poll).toBe(true); metadata();
+    expect(publish).toHaveBeenCalledTimes(1);
+    owner.setVisible(false); await vi.advanceTimersByTimeAsync(HIDDEN_GRACE_MS - 1); owner.setVisible(true); metadata();
+    expect(publish).toHaveBeenCalledTimes(1);
+    owner.setVisible(false); await vi.advanceTimersByTimeAsync(HIDDEN_GRACE_MS);
+    const retired = calls.at(-1); owner.setVisible(true); await flush(); metadata();
+    retired.onEvent({ event: "conflicts", data: { revision: 99 } });
+    owner.suspendDocument(); owner.resumeDocument(); await flush(); metadata();
+    expect(publish.mock.calls).toEqual(Array.from({ length: 3 }, () => [TOPICS.VAULT_CONFLICTS, { revision: 7 }]));
     release();
   });
 });

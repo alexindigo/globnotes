@@ -235,6 +235,15 @@ checks metadata-only invalidations, polling and shared stream cleanup. Client
 metadata cursors, reconnect/reset snapshots and SSE/poll translation. Run these
 through `.devcontainer/run.sh`; browser acceptance uses the HTTP domain above.
 
+The poll-owner/transport tests also prove unchanged revisions cause no repeated
+healthy list/detail reads, lower revisions invalidate, real reconnects and page
+lifetime resumes refresh, and failed consumer reads recover without a revision
+change. `conflict-read-retry.test.js` covers bounded backoff, hidden-page pauses,
+retirement and definitive read rejection; comparison tests retain draft/review
+authority during recovery. The inbox native case counts actual HTTP list/detail
+requests over three unchanged polls with a comparison open, then observes
+metadata-only closure in the comparison and inbox.
+
 `client/tests/conflict-inbox.test.js` covers the shared list/badge lifetime,
 subscription-before-read, coalesced invalidations, file-before-record order,
 retired accounts and stale/error counts. `conflict-resolution-controller.test.js`
