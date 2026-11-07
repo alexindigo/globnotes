@@ -5,6 +5,8 @@ const TOPICS = {
   VAULT_RESET: "vault:reset",
   /** { revision } - metadata invalidation, independent of the file sequence; no paths or content. */
   VAULT_CONFLICTS: "vault:conflicts",
+  /** { revision } - sync instance invalidation only; no settings, keys or paths. */
+  VAULT_DRIVERS: "vault:drivers",
   NOTE_OPEN: "note:open",
   NOTE_TITLE_CHANGED: "note:title-changed",
   NOTE_CREATE: "note:create",

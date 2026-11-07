@@ -75,7 +75,7 @@
 <script setup>
 import { tabDots } from "../icons.js";
 import { useToast } from "primevue/usetoast";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 
 import { publish, TOPICS } from "../bus/index.js";
@@ -119,4 +119,5 @@ function submitSearch() {
 // Watch to allow for delayed config load.
 watch(() => globalStore.config.quickAccessLimit, quickAccess.init);
 onMounted(quickAccess.init);
+onBeforeUnmount(quickAccess.dispose);
 </script>

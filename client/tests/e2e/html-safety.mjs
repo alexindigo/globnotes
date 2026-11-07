@@ -6,8 +6,8 @@ await runCase("html-safety", async f => {
   const content = `---\ntitle: '${payload}'\n---\n\nneedleprobe ${payload}\n\n<strong>safe formatting</strong>\n`;
   assert((await f.api("notes", "POST", { path: "html-safety", content })).status === 200, "Note fixture failed");
   await f.page.goto(f.baseUrl + "/_/search?term=needleprobe");
-  await f.page.poll("!!document.querySelector('a[href=\"/html-safety\"] b.match')");
-  const search = await f.page.evaluate(`(()=>{const row=document.querySelector('a[href="/html-safety"]'),mark=row.querySelector('b.match'),rect=mark.getBoundingClientRect();return{text:row.textContent,unsafe:row.querySelectorAll('img,script,[onerror]').length,executions:window.noteXss||0,highlight:mark.textContent,visible:rect.width>0&&rect.height>0};})()`);
+  await f.page.poll("!!document.querySelector('.content-column a[href=\"/html-safety\"] b.match')");
+  const search = await f.page.evaluate(`(()=>{const row=document.querySelector('.content-column a[href="/html-safety"]'),mark=row.querySelector('b.match'),rect=mark.getBoundingClientRect();return{text:row.textContent,unsafe:row.querySelectorAll('img,script,[onerror]').length,executions:window.noteXss||0,highlight:mark.textContent,visible:rect.width>0&&rect.height>0};})()`);
   assert(search.unsafe === 0 && search.executions === 0, "Search interpreted note markup: " + JSON.stringify(search));
   assert(search.text.includes(payload) && search.highlight === "needleprobe" && search.visible, "Search lost literal note text or visible highlights");
   await f.page.goto(f.baseUrl + "/html-safety");

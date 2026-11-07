@@ -6,6 +6,7 @@ import { useGlobalStore } from "./globalStore.js";
 import { basenameOf } from "./notePath.js";
 import { refreshNoteIndex } from "./noteIndex.js";
 import * as sidebarPreferences from "./sidebarPreferences.js";
+import { subscribeVaultNotes } from "./vaultNoteInvalidation.js";
 
 function buildTree(titles) {
   const root = { folders: new Map(), notes: [] };
@@ -56,6 +57,7 @@ export function createSidebarTree({
   const filterText = ref("");
   const filterCollapsed = ref(new Set());
   const recentNotes = ref([]);
+  let recentTicket = 0;
   const activePath = ref(null);
   const tree = computed(() => buildTree(notePaths() || []));
 
@@ -156,14 +158,15 @@ export function createSidebarTree({
 
   async function loadRecentNotes() {
     if (disposed) return;
+    const own = ++recentTicket;
     try {
       const results = await loadNotes("*", undefined, undefined, undefined);
-      if (disposed) return;
+      if (disposed || own !== recentTicket) return;
       recentNotes.value = [...results]
         .sort((a, b) => b.lastModified - a.lastModified).slice(0, 5)
         .map(n => ({ path: n.path, name: basenameOf(n.path) }));
     } catch {
-      if (!disposed) recentNotes.value = [];
+      if (!disposed && own === recentTicket) recentNotes.value = [];
     }
   }
 
@@ -190,6 +193,7 @@ export function createSidebarTree({
     subscribe(TOPICS.NOTE_CREATE, invalidateTree),
     subscribe(TOPICS.NOTE_RENAME, invalidateTree),
     subscribe(TOPICS.NOTE_DELETE, invalidateTree),
+    subscribeVaultNotes(invalidateTree, { subscribe }),
   ];
 
   function visibilityChanged(visible) {

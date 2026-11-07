@@ -177,6 +177,15 @@ it("poll metadata-only and gap packets use the same independent event as SSE", a
     close();
   }
 });
+it("driver metadata reaches the same SSE and JSON event without settings, key or cursor coupling", async () => {
+  const wire=sse();vi.stubGlobal("fetch",vi.fn(async()=>wire.response));const onEvent=vi.fn();
+  const close=await openVaultChanges({onEvent});wire.push('event: drivers\ndata: {"revision":3}\n\n');
+  for(let i=0;i<20;i++)await Promise.resolve();expect(onEvent).toHaveBeenLastCalledWith({event:"drivers",data:{revision:3}});close();
+  for(const gap of [false,true]){
+    vi.stubGlobal("fetch",vi.fn(async()=>Response.json({entries:[],next:7,conflictRevision:9,driverRevision:3,...(gap?{gap:true}:{})})));
+    const closePoll=await openVaultChanges({poll:true,onEvent});expect(onEvent).toHaveBeenLastCalledWith({event:"drivers",data:{revision:3}});closePoll();
+  }
+});
 
 it("unchanged real poll packets leave healthy consumers quiet while failed list/detail reads retry", async () => {
   vi.useFakeTimers();

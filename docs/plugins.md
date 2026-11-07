@@ -172,6 +172,41 @@ discoverable for disabled plugins and valid declarations whose runtime failed;
 the existing host-owned availability and draft-recovery controls still apply.
 Settings-less plugins have no invented settings action.
 
+## Sync plugins and instances
+
+A plugin may declare a `driver` contribution ([driver author guide](drivers.md)).
+Its Plugins row discloses: "Sync driver: reads and writes every file of this vault
+through the hub". Driver instances have no direct vault filesystem access; each
+has its own sandboxed Worker, configuration and write-only keys. Network consent
+is still per plugin and is managed in that plugin's expanded row.
+
+Open **Settings -> Sync**, choose **Add**, select an enabled sync plugin and name
+the instance. New instances are off. Review its settings, save its keys and switch
+it on. Multiple instances of one plugin are independent peers. Sync now requests
+a full cycle; Off/Starting/Active/Locked/Failed/Paused describe its current state.
+Plain local-domain HTTP supports the entire workflow. No production driver is
+shipped by M5; the memory-remote driver lives only in test fixtures.
+
+Settings drafts use explicit Save settings or Discard edits. Leaving Settings or
+changing pages asks before losing local work; unknown requests must settle and be
+reviewed before retry or departure. Password inputs clear after their owned PUT
+settles, preserving newer input; key values never enter browser storage, history
+snapshots or bus facts. A read returns only Set/Not set and update time.
+
+Deleted-here remote changes require Restore here or Delete on the remote, per file
+or for all held items. A remote that suddenly looks empty deletes nothing until
+Delete here too or Upload them again is chosen. Unsupported/invalid files remain
+listed with their reasons. Revision checks refuse stale decisions. Collisions
+without a known base become neighboring conflict copies; the Conflicts inbox
+shows "Different on both sides" and the source instance label. Removing an
+instance removes its keys and retires its id, leaving vault and endpoint files.
+
+Providers with emulated conditions disclose the simultaneous-write race in the
+instance panel. If state is inside the vault, Sync names the key-store location:
+outside tools copying the entire folder copy keys too. Use `GLOBNOTES_INDEX_PATH`
+to keep state outside such copies. For connections outside a trusted LAN, protect
+the page's link with a TLS reverse proxy such as Caddy or Nginx Proxy Manager.
+
 For server network consent, expand the plugin's row in **Settings → Plugins**.
 The inline controls replace the old permission pages and review dialog. Manual filesystem additions are
 listed for review; there is no marketplace or new browser activation-review gate.

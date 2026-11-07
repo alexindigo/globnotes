@@ -40,7 +40,8 @@ export function createConflictInbox({ read = getConflicts, subscribe: on = subsc
         const result = await read();
         if (!current() || dirty) return false;
         data.rows = result.conflicts.map(row => ({ ...row, target: conflictTarget(row.id),
-          reasonLabel: row.reason === "overlapping-edits" ? "Overlapping edits" : "Changed since the writer read it",
+          reasonLabel: row.reason === "unknown-base" ? "Different on both sides" : row.reason === "overlapping-edits" ? "Overlapping edits" : "Changed since the writer read it",
+          sourceLabel:row.peerLabel ?? (row.peer !== "local" && row.peer !== "globnotes" ? row.peer : ""),
           createdLabel: new Date(row.createdAt).toLocaleString() }))
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
         data.total = result.total; data.revision = result.revision; data.stale = false;

@@ -18,6 +18,7 @@ const CORE_PAGES = [
   { id: "core:keybindings", label: "Keybindings", group: "browser", kind: "browser-pref", preference: "keybindings" },
   { id: "core:diagnostics", label: "Diagnostics", group: "browser", kind: "browser-pref", preference: "diagnostics" },
   { id: "core:plugins", label: "Plugins", group: "vault", kind: "plugins", description: "Turn plugins on or off for this vault." },
+  { id: "core:sync", label: "Sync", group: "vault", kind: "sync", description: "Sync this vault with other places." },
   { id: "core:branding", label: "Branding", group: "vault", kind: "branding" },
   { id: "core:access", label: "Access", group: "vault", kind: "access" },
   { id: "core:account", label: "Account", group: "vault", kind: "account" },

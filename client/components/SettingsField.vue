@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-only -->
 <template>
-  <SettingRow :id="`settings-field-${field.key}`" :label="field.label" :help="field.description" :error="error" :pin="pin || presentation.pin" :short="presentation.short">
-    <template v-if="field.type === 'slider'" #value><output :for="`settings-field-${field.key}`">{{ value }}</output></template>
+  <SettingRow :id="id || `settings-field-${field.key}`" :label="field.label" :help="field.description" :error="error" :pin="pin || presentation.pin" :short="presentation.short">
+    <template v-if="field.type === 'slider'" #value><output :for="id || `settings-field-${field.key}`">{{ value }}</output></template>
     <template #default="{ id, labelledby, describedby, invalid }">
       <Toggle v-if="field.type === 'toggle'" :id="id" :is-on="Boolean(value)" :disabled="readonly" :aria-labelledby="labelledby" :aria-describedby="describedby" :aria-invalid="invalid" @click="toggle" />
       <input v-else-if="field.type === 'color'" :id="id" type="color" class="focus-ring h-8 w-16" :value="value" :disabled="readonly" :aria-describedby="describedby" :aria-invalid="invalid" @input="edit($event.target.value)" @change="change($event.target.value)">
@@ -28,7 +28,7 @@ import Toggle from './Toggle.vue';
 import CustomButton from './CustomButton.vue';
 import SettingRow from './settings/SettingRow.vue';
 import { settingsFieldPresentation, createSettingsFieldIntents } from '../declarativeSettings.js';
-const props = defineProps({ field:{ type:Object, required:true }, value:{ required:true }, error:String, readonly:Boolean, provenance:Object, pin:String, onBrowse:Function });
+const props = defineProps({ field:{ type:Object, required:true }, value:{ required:true }, id:String, error:String, readonly:Boolean, provenance:Object, pin:String, onBrowse:Function });
 const emit = defineEmits(['edit','commit']);
 const presentation = computed(() => settingsFieldPresentation(props.field, props.value, props.provenance));
 const { edit, commit, change, toggle, select } = createSettingsFieldIntents(props, emit);

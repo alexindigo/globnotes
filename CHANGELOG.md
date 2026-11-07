@@ -41,6 +41,16 @@ review, uncertain replies and outside resolution. Keep both preserves filenames.
 Outside member deletion closes metadata; recognized renames follow the files.
 Hub schema versions 1 and 2 upgrade automatically to metadata-only schema 3.
 
+Sync plugins can connect multiple independent endpoints through driver API 1.
+The hub owns all folder writes and metadata-only per-peer progress, conditional
+exports, conflict copies, groups and unknown-outcome recovery. A storage-provider
+SDK supplies paging, exact ETag reads and explicit conditional-write semantics.
+Each instance runs in its own sandboxed Worker with isolated write-only keys.
+Settings -> Sync adds configuration, key entry on plain HTTP, state, manual sync
+and revision-bound deleted-here/remote-empty decisions. Removing an instance
+preserves files on both sides. The driver author guide and test-only HTTP memory
+remote document and exercise the contract; real endpoint drivers follow later.
+
 The legacy backup hook delivers displaced bytes asynchronously after commit.
 Saves never wait on versioning plugins. Each plugin has a bounded in-memory queue
 with visible gaps on overflow; a crash before plugin storage can lose a version.

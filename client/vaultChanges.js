@@ -25,7 +25,9 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
   lifetime = createConnectionLifetime({ setTimer, clearTimer }) } = {}) {
   let owners = 0, generation = 0, seq = 0, attempts = 0, polling = false, pollingSince = 0;
   let pageActive = lifetime.state().active;
-  let timer = null, close = null, abort = null, conflictRevision = null;
+  let timer = null, close = null, abort = null;
+  const revisions = new Map();
+  const metadataTopics = { conflicts: TOPICS.VAULT_CONFLICTS, drivers: TOPICS.VAULT_DRIVERS };
   const live = () => owners > 0 && pageActive;
   function retire() {
     generation++;
@@ -43,7 +45,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     const own = generation, mode = polling ? "poll" : "stream";
     // Completed polls continue one observation lifetime. Real reconnects and
     // page/owner restarts must deliver a fresh snapshot even at the same revision.
-    if (!continuePoll) conflictRevision = null;
+    if (!continuePoll) revisions.clear();
     let openedAt = null;
     abort = new AbortController();
     const current = () => live() && generation === own;
@@ -69,11 +71,11 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
       const disposer = await open({ since: seq, poll: mode === "poll", signal: abort.signal,
         onEvent({ event, data }) {
           if (!current()) return;
-          if (event === "conflicts") {
-            if (!Number.isSafeInteger(data?.revision) || data.revision < 0) throw new Error("Invalid conflict revision");
-            if (data.revision === conflictRevision) return;
-            conflictRevision = data.revision;
-            emit(TOPICS.VAULT_CONFLICTS, { revision: conflictRevision });
+          if (Object.hasOwn(metadataTopics, event)) {
+            if (!Number.isSafeInteger(data?.revision) || data.revision < 0) throw new Error(`Invalid ${event === "conflicts" ? "conflict" : "driver"} revision`);
+            if (data.revision === revisions.get(event)) return;
+            revisions.set(event, data.revision);
+            emit(metadataTopics[event], { revision: data.revision });
           } else if (event === "reset" || event === "cursor") {
             if (!Number.isSafeInteger(data?.next) || data.next < 0) throw new Error("Invalid vault cursor");
             seq = data.next;

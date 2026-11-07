@@ -2,13 +2,19 @@ import { getNoteIndex } from "./api.js";
 import { subscribe, TOPICS } from "./bus/index.js";
 import { useGlobalStore } from "./globalStore.js";
 import { basenameOf } from "./notePath.js";
+import { subscribeVaultNotes } from "./vaultNoteInvalidation.js";
 
 const RETRY_DELAYS = [1000, 3000, 8000];
 
+let refreshTicket = 0;
 export function refreshNoteIndex(attempt = 0) {
+  return readIndex(attempt, ++refreshTicket);
+}
+function readIndex(attempt, ticket) {
   const globalStore = useGlobalStore();
   return getNoteIndex()
     .then((entries) => {
+      if (ticket !== refreshTicket) return;
       globalStore.notePaths = entries.map((e) => e.path);
       globalStore.noteMeta = entries;
       // Recents must not outlive the note — reconcile against the fresh
@@ -21,13 +27,14 @@ export function refreshNoteIndex(attempt = 0) {
       );
     })
     .catch((error) => {
+      if (ticket !== refreshTicket) return;
       // A failed fetch must not leave the sidebar empty forever:
       // retry a few times (the server may still be warming up), and
       // leave any previously-loaded titles in place on final failure.
       if (attempt < RETRY_DELAYS.length) {
         return new Promise((resolve) =>
           setTimeout(resolve, RETRY_DELAYS[attempt]),
-        ).then(() => refreshNoteIndex(attempt + 1));
+        ).then(() => ticket === refreshTicket ? readIndex(attempt + 1, ticket) : undefined);
       }
       console.error("[noteIndex] refresh failed after retries", error);
       if (!globalStore.notePaths?.length) {
@@ -59,6 +66,7 @@ export function resolveNotePath(linkText) {
 subscribe(TOPICS.NOTE_CREATE, () => refreshNoteIndex());
 subscribe(TOPICS.NOTE_RENAME, () => refreshNoteIndex());
 subscribe(TOPICS.NOTE_DELETE, () => refreshNoteIndex());
+subscribeVaultNotes(() => refreshNoteIndex());
 
 // Track recently opened notes for the quick switcher's empty-query state.
 subscribe(TOPICS.NOTE_OPEN, ({ path }) => {

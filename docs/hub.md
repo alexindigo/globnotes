@@ -340,15 +340,15 @@ new choice; lost replies do not authorize blind replay.
 with a sequence `id` and `{seq,path,kind,oldPath?,hash?,peer}`. Resume through
 `Last-Event-ID` or `?since=N`. Comment heartbeats run every 25 seconds (`CHANGE_STREAM_HEARTBEAT_MS` in
 `shared/vault_changes.ts`).
-`?since=N&poll=1` returns `{entries,next,conflictRevision}` or
-`{gap:true,next,conflictRevision}`, including metadata-only empty packets. Cursors older
+`?since=N&poll=1` returns `{entries,next,conflictRevision,driverRevision}` or
+`{gap:true,next,conflictRevision,driverRevision}`, including metadata-only empty packets. Cursors older
 than retained history, cursors beyond the current log, and replay containing
 anonymous deleted names require a snapshot reset. Live deletion frames retain
 their transient path. Neither transport discloses anonymous keys or origins.
 
 Read authorization is the same as note reads, rechecked before stream emissions
 and heartbeats; expiry and policy changes close streams. Each connection owns
-one file and one conflict metadata subscription on the same connection, both
+one file, one conflict and one driver-state subscription on the same connection, all
 disposed on disconnect. Hidden paths, reserved app paths,
 canonical state and paths outside the ordinary note/file read namespace are
 filtered. Renames crossing that boundary disclose only the visible side.
@@ -380,6 +380,10 @@ an equal revision is quiet, while any different revision (including a lower one)
 invalidates consumers. A real transport reconnect, stream retry, owner restart
 or page-lifetime resume delivers a fresh snapshot even at the same revision.
 Rows/counts come from the filtered list, never from this invalidation cursor.
+`event: drivers` likewise carries only `{revision}`, without an SSE id, settings,
+keys or paths. Its own revision memory shares the same reconnect/poll lifetime
+without advancing or suppressing either other domain. Settings -> Sync reads the
+instance API after this fact; local drafts and key-input ownership survive reads.
 Failed list/comparison reads retry independently with bounded backoff, paused
 while the page lifetime is inactive and retired with their account/selection.
 Definitive authority/identity rejections retain explicit recovery. Read retries
@@ -388,3 +392,19 @@ never resend resolutions or accept a stale pair on the person's behalf.
 This keeps open streams to visible tabs: on plain HTTP each stream holds one of
 the browser's few HTTP/1.1 connections per host, shared by all tabs.
 `client/api.js` owns fetch streaming and the JSON polling fallback.
+
+## Driver keys and Settings
+
+The supervisor owns per-instance scheduling, configuration CAS and write-only key
+delivery. `driver-secrets.sqlite` is a separate mode-0600 file in the configured
+state directory, with secure delete and DELETE journaling. It is never part of
+`hub.sqlite`, plugin settings/data or browser storage. Worker generations can read
+only their own declared keys; setting/clearing a key retires that generation.
+Removal retires the peer and deletes its key rows, not files on either side.
+
+When state is inside the vault, Settings -> Sync names its path and explains that
+outside whole-folder copies include keys. Keep state outside such copies with
+`GLOBNOTES_INDEX_PATH`. Ordinary local-domain HTTP supports key entry; off a trusted
+LAN a TLS reverse proxy such as Caddy or Nginx Proxy Manager protects that link.
+See [drivers.md](drivers.md) for the lifecycle, storage SDK and native-history
+limits, and [plugins.md](plugins.md#sync-plugins-and-instances) for the UI workflow.

@@ -16,6 +16,7 @@
       </div>
     </div>
     <p v-if="row.toggleNote" class="plugin-row-note">{{ row.toggleNote }}</p>
+    <p v-if="row.syncDriver" class="plugin-row-note">Sync driver: reads and writes every file of this vault through the hub</p>
     <div v-if="$slots.recovery" class="plugin-row-recovery"><slot name="recovery" /></div>
     <div v-if="row.expanded" :id="regionId" role="region" :aria-labelledby="headerId" class="plugin-row-body"><slot /></div>
   </article>

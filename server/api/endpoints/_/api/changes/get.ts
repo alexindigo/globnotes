@@ -34,7 +34,8 @@ export default async function (request: PathfinderRequest) {
       e !== null
     );
   const snapshot = hub.changesSince(cursor), next = hub.sequence();
-  const conflictRevision = hub.conflictRevision();
+  const conflictRevision = hub.conflictRevision(), drivers = state.drivers;
+  const driverMetadata = drivers ? { driverRevision: drivers.revision() } : {};
   // Persisted deletions have no plaintext path. Replay must invalidate the
   // consumer snapshot rather than pretending these anonymous entries are absent.
   const gap = snapshot.gap || cursor > next ||
@@ -47,9 +48,12 @@ export default async function (request: PathfinderRequest) {
   ) {
     return new Response(
       JSON.stringify(
-        gap
-          ? { gap: true, next, conflictRevision }
-          : { entries: project(snapshot.entries), next, conflictRevision },
+        gap ? { gap: true, next, conflictRevision, ...driverMetadata } : {
+          entries: project(snapshot.entries),
+          next,
+          conflictRevision,
+          ...driverMetadata,
+        },
       ),
       {
         headers: {
@@ -74,7 +78,7 @@ export default async function (request: PathfinderRequest) {
       const emit = (
         entries?: ChangeEntry[],
         reset?: number,
-        revision?: number,
+        metadata?: { event: "conflicts" | "drivers"; revision: number },
       ) => {
         emission = emission.then(async () => {
           if (closed) return;
@@ -85,8 +89,10 @@ export default async function (request: PathfinderRequest) {
               close();
               return;
             }
-            if (revision !== undefined) {
-              controller.enqueue(frame("conflicts", { revision }));
+            if (metadata) {
+              controller.enqueue(
+                frame(metadata.event, { revision: metadata.revision }),
+              );
             } else if (reset !== undefined) {
               controller.enqueue(frame("reset", { next: reset }, reset));
             } else if (entries) {
@@ -101,7 +107,10 @@ export default async function (request: PathfinderRequest) {
       };
       const unsubscribe = hub.subscribe((entries) => emit(entries));
       const unconflicts = hub.subscribeConflicts((revision) =>
-        emit(undefined, undefined, revision)
+        emit(undefined, undefined, { event: "conflicts", revision })
+      );
+      const undrivers = drivers?.subscribe((revision) =>
+        emit(undefined, undefined, { event: "drivers", revision })
       );
       const unpolicy = lifecycle.subscribeInvalidation(() => {
         if (lifecycle.epoch !== epoch) close();
@@ -118,6 +127,7 @@ export default async function (request: PathfinderRequest) {
       cleanup = () => {
         unsubscribe();
         unconflicts();
+        undrivers?.();
         unpolicy();
         clearInterval(heartbeat);
         clearTimeout(expiry);
@@ -132,7 +142,16 @@ export default async function (request: PathfinderRequest) {
         expire();
         if (gap) emit(undefined, next);
         else emit(snapshot.entries);
-        emit(undefined, undefined, conflictRevision);
+        emit(undefined, undefined, {
+          event: "conflicts",
+          revision: conflictRevision,
+        });
+        if (drivers) {
+          emit(undefined, undefined, {
+            event: "drivers",
+            revision: drivers.revision(),
+          });
+        }
       }
     },
     cancel() {

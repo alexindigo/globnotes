@@ -68,7 +68,8 @@
              the legacy popup wrapper is not rendered here). -->
             <AppearanceSettingsPage v-if="currentPage.preference === 'appearance'" :snapshot="appearanceSnapshot" :selected="core.currentTheme.value" :on-select="core.setTheme" />
             <KeybindingsSettingsPage v-else-if="currentPage.preference === 'keybindings'" :layers="core.layers" :snapshot="keybindingSnapshot" :on-layer="core.setLayer" :on-capture="core.startCapture" :on-reset="core.resetBinding" />
-            <BrandingSettingsPage v-else-if="currentPage.kind === 'branding'" :snapshot="brandingSnapshot" :on-edit="core.editBrand" :on-clear-accent="core.clearAccent" :on-pick-file="core.chooseFile" :on-discard-file="core.discardFile" :on-remove-file="core.removeFile" :on-save="()=>core.saveBrand()" :on-reset="resetCoreBranding" :on-review="core.reviewBrand" :on-cancel="session.cancelBranding" />
+             <BrandingSettingsPage v-else-if="currentPage.kind === 'branding'" :snapshot="brandingSnapshot" :on-edit="core.editBrand" :on-clear-accent="core.clearAccent" :on-pick-file="core.chooseFile" :on-discard-file="core.discardFile" :on-remove-file="core.removeFile" :on-save="()=>core.saveBrand()" :on-reset="resetCoreBranding" :on-review="core.reviewBrand" :on-cancel="session.cancelBranding" />
+             <SyncSettingsPage v-else-if="currentPage.kind === 'sync'" :snapshot="driverSnapshot" :controller="drivers" :on-plugins="()=>selectPage('core:plugins')" :on-manage="managePlugin" :on-discard="session.discardDriverDraft" :on-cancel-add="session.cancelDriverAdd" />
             <!-- Plugins: vault-owned inventory + enablement (the old
              localStorage switches are legacy preferences, shown once). -->
             <PluginInventorySettingsPage v-else-if="currentPage.kind === 'plugins'"
@@ -148,6 +149,7 @@ import { useGlobalStore } from "../globalStore.js";
 import AppearanceSettingsPage from "./AppearanceSettingsPage.vue";
 import KeybindingsSettingsPage from "./KeybindingsSettingsPage.vue";
 import BrandingSettingsPage from "./BrandingSettingsPage.vue";
+import SyncSettingsPage from "./SyncSettingsPage.vue";
 
 const props = defineProps({ permissionController: Object, writable: { type: Boolean, default: false } });
 const isVisible = defineModel({ type: Boolean });
@@ -164,13 +166,13 @@ const session = createSettingsSession({
   focus: () => modal.value?.focus(),
   openAccess: () => emit("open-access"),
 });
-const { core, permissions, pageState, inventory,
+const { core, permissions, pageState, inventory, drivers,
   openSettings, selectPage, requestClose, reloadCurrentPage, decideDeparture,
    togglePluginRow, toggleAutoEnable, discardInventoryChoice, managePlugin, toggleExpansion,
    discardPermission, resolveRisk,
   resetCoreBranding, openAccess, parentPath, closePathChoice, browseField, loadPathChoices, selectPath,
 } = session;
-const { brandingSnapshot, keybindingSnapshot, appearanceSnapshot, accessSummary, accountSummary, attentionItems, canLogout, versionLabel, currentPageId,
+const { brandingSnapshot, keybindingSnapshot, appearanceSnapshot, driverSnapshot, accessSummary, accountSummary, attentionItems, canLogout, versionLabel, currentPageId,
   riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice, pathEntries, pathChoiceError, pathLoading, pathCrumbs,
   departureVisible, departureMessage, departureCanSave, departureConfirmText,
    groupedPages, currentSnapshot, currentPage,

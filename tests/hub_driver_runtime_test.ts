@@ -1,9 +1,40 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { DriverWorker } from "../server/plugins/runtime.ts";
+import { DriverWorker, PluginRuntime } from "../server/plugins/runtime.ts";
 import { DriverContractError } from "../server/plugins/driver_contract.ts";
 import { driverFixture, minimalDriver } from "./helpers/driver_fixture.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
+
+Deno.test("drivers: hook dispatch never sees a partial roster while a driver-only inventory reconciles", async () => {
+  const fixture = await driverFixture();
+  const runtime = new PluginRuntime(() => [
+    { id: "disabled-first", enabled: false, hooks: [] },
+    {
+      id: fixture.manifest.id,
+      enabled: true,
+      hooks: [],
+      manifest: fixture.manifest,
+    },
+  ], {
+    vaultPath: fixture.vault,
+    statePath: fixture.statePath,
+    operational: () => true,
+    writable: () => true,
+    commit: (effect) => effect(),
+  });
+  try {
+    const reconciling = runtime.reconcile();
+    await Promise.resolve();
+    await Promise.resolve();
+    runtime.post("on-sync", { initial: false });
+    await reconciling;
+    runtime.post("on-sync", { initial: false });
+    assertEquals(runtime.status(fixture.manifest.id)?.status, "ready");
+  } finally {
+    await runtime.close();
+    await fixture.dispose();
+  }
+});
 
 Deno.test("drivers: real instance Workers get only their own immutable settings and keys", async () => {
   const source = `export function activate(ctx) {

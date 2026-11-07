@@ -159,6 +159,20 @@ export class PluginRuntime implements Versioning {
     const next = this.reconciliation.catch(() => undefined).then(async () => {
       if (this.closed) return;
       const sources = this.inventory();
+      // Publish a complete roster before any asynchronous retirement. Hooks,
+      // guards and status readers can run while reconciliation awaits cleanup.
+      for (const source of sources) {
+        if (!this.entries.has(source.id)) {
+          this.entries.set(source.id, {
+            source,
+            status: "discovered",
+            host: null,
+            starting: null,
+            diagnostics: [],
+            deliveryFailures: 0,
+          });
+        }
+      }
       this.order = sources.map((source) => source.id);
       const present = new Set(this.order);
       for (const [id, entry] of this.entries) {
@@ -168,18 +182,7 @@ export class PluginRuntime implements Versioning {
         }
       }
       for (const source of sources) {
-        let entry = this.entries.get(source.id);
-        if (!entry) {
-          entry = {
-            source,
-            status: "discovered",
-            host: null,
-            starting: null,
-            diagnostics: [],
-            deliveryFailures: 0,
-          };
-          this.entries.set(source.id, entry);
-        }
+        const entry = this.entries.get(source.id)!;
         // An invalid code update cannot erase already-known required protection.
         const previousHooks = entry.source.hooks;
         entry.source = !source.manifest && source.enabled

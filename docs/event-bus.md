@@ -76,12 +76,20 @@ including reentrant delivery; `note:edit-start`,
 | 30 | `vault:change` | `{ seq, path, kind, oldPath?, hash?, peer }` (paths include extensions) | `vaultChanges.js` accepted stream/poll entry |
 | 31 | `vault:reset` | `{ next }` — re-read consumer snapshots after a history gap | `vaultChanges.js` accepted reset |
 | 32 | `vault:conflicts` | `{ revision }` - re-read vault-scoped conflict metadata, including reconnect snapshots | `vaultChanges.js` accepted SSE/poll metadata event |
+| 33 | `vault:drivers` | `{ revision }` - re-read vault-scoped sync instance state, including reconnect snapshots | `vaultChanges.js` accepted SSE/poll metadata event |
 
 `vault:conflicts` carries no paths, count or content. Its revision is independent
 of file sequence and cannot advance or suppress a `vault:change`. It is an
 invalidation, not retained state or permission: inbox consumers read the filtered
 list/count, and comparison consumers review current versions. The existing
 connection owns both event domains; reconnects publish a fresh metadata snapshot.
+
+`vault:drivers` uses that same connection and lifetime. It contains only a revision,
+never keys, settings, paths or attention items. Driver, conflict and file cursors
+are independent. Consecutive successful polls deduplicate each metadata domain;
+a reconnect or page resume invalidates each again, even at an equal or lower
+revision. `driverSettingsController.js` coalesces invalidations into current API
+reads and retains local work across them. No key value is ever put on the bus.
 
 `note:edit-state` never carries note text. `path` is the current requested path;
 `revision` increases per content edit. The controller publishes whenever revision,
@@ -100,6 +108,7 @@ mode, or disposing its controller while editing, publishes
 |---|---|---|
 | `noteIndex.js` | `note:create`, `note:rename`, `note:delete` | Calls `refreshNoteIndex()` — keeps the sidebar filter and wiki-link resolver fresh without a page reload. |
 | `sidebarTree.js` | `note:create`, `note:rename`, `note:delete` | Invalidates the lazy cache, reloads root and expanded levels, and refreshes Recent when enabled. Releases subscriptions and retires pending reads on dispose. Sidepanel visibility/section facts remain published by `sidebarPreferences.js`. |
+| `noteIndex.js`, `quickAccess.js`, `sidebarTree.js`, `searchResults.js` | `vault:change` for Markdown members and `vault:reset`, through `vaultNoteInvalidation.js` | Refreshes live note-list projections for every peer, not only browser-authored writes. Synchronous group facts coalesce into one snapshot invalidation; mounted consumers release it on dispose. App's existing shared connection supplies transport. |
 | `serverViewer.js` | `plugin:toggle`, `plugin:auto-enable`, `theme:change` | Re-renders the open note for plugin switches and the current Mermaid palette; releases subscriptions on dispose. |
 | `noteController.js` | `editor:save`, `editor:save-close`, `editor:exit-edit`, `editor:toggle-edit`, `editor:toggle-source-mode` | Owns note actions for the mounted view; registers at mount and unsubscribes on dispose. |
 | `MarkdownEditor.vue` | Formatting/structure and `editor:find` topics in `sourceEditorActions.js`; `keybindings:change` | Applies source edits or opens find; reconfigures the layer keymap. Mount/unmount owns subscriptions; action availability is checked before execution. |

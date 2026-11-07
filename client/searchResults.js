@@ -7,6 +7,7 @@ import { directoryFromPath } from "./helpers.js";
 import { tabSearch } from "./icons.js";
 import { decodeRewriteFiles, folderSearchTarget } from "./notePath.js";
 import * as searchPreferences from "./searchPreferences.js";
+import { subscribeVaultNotes } from "./vaultNoteInvalidation.js";
 
 /** Search policy and reference-rewrite work for one mounted result view. */
 export function createSearchResults({
@@ -187,7 +188,9 @@ export function createSearchResults({
   function dispose() {
     disposed = true;
     requestTicket = undefined;
+    releaseVault();
   }
+  const releaseVault = subscribeVaultNotes(init);
   return { snapshot, init, toggleNested, reSortResults, folderTarget, title,
     selectSort, menuItems, fixSingleRef, fixAllRefs, dispose };
 }

@@ -21,6 +21,7 @@ import { permissionSessionKey } from "./appSessionPolicy.js";
 import { formatVersion } from "../shared/version.ts";
 import { createAccessSettingsState } from "./accessSettingsState.js";
 import { attention } from './attention.js';
+import { createDriverSettings } from './driverSettingsController.js';
 
 const defaultRegistry = {
   find: findPage,
@@ -39,7 +40,8 @@ export function createSettingsSession({
   readPaths = getTree, readAccess = getAccessSettings, clock = globalThis, attentionRegistry = attention,
   registerParticipant = registerSessionParticipant,
   createCore = createCoreSettingsAdapters, createPages = createSettingsPageState,
-  createInventory = createPluginInventoryController, createPermissions = createPluginPermissionController,
+   createInventory = createPluginInventoryController, createPermissions = createPluginPermissionController,
+   createDrivers = createDriverSettings,
 }) {
   const core = createCore({ getBrand: () => config().brand, writable, writeBrand: postBrand,
     readBrand: async () => (await getConfig()).brand, applyBrand });
@@ -110,19 +112,22 @@ export function createSettingsSession({
     confirm: request=>askDeparture({...request,pages:request.pages.map(page=>({...page,page:{...page.page,label:'Plugins'}}))}),
   });
   const inventorySnapshot = computed(() => inventory.snapshot());
+  const drivers = createDrivers({ writable, getSession:() => permissionSessionKey(config(), token()), confirm:askDeparture,
+    confirmRemove:label => askRisk(`Remove ${label}?`, `Files in this vault and on ${label} stay as they are.`, 'Remove', 'danger') });
+  const driverSnapshot = computed(() => drivers.state);
   const participant = {
-    hasUnsavedChanges: () => inventory.hasWork() || pageState.hasWork() || permissions.hasWork() || core.hasWork(),
-    settlePending: async () => await inventory.settle() && await pageState.settle() && await permissions.settle() && await core.settle(),
+    hasUnsavedChanges: () => drivers.hasWork() || inventory.hasWork() || pageState.hasWork() || permissions.hasWork() || core.hasWork(),
+    settlePending: async () => await drivers.settle() && await inventory.settle() && await pageState.settle() && await permissions.settle() && await core.settle(),
     requestDecision: reason => {
       const pages = pageState.pageIds().map(id => pageState.snapshot(id)).filter(page => page.dirty || page.pending);
       const permissionPages = permissions.recoveryIds().map(id => ({ page: { label: `Permissions for ${pluginName(id)}` }, canSave: !!permissions.snapshot(id).draft }));
       const corePages = core.hasWork() ? [{ page: { label: 'Branding' }, canSave: writable() }] : [];
       const inventoryPages = inventory.hasWork() ? [{ page: { label: 'Plugins' }, canSave: inventory.snapshot().canRetry }] : [];
-      const all = [...pages, ...permissionPages, ...corePages, ...inventoryPages];
+      const all = [...pages, ...permissionPages, ...corePages, ...inventoryPages, ...(drivers.hasWork() ? drivers.departurePages() : [])];
       return askDeparture({ reason, pages: all, canSave: all.every(page => page.canSave) });
     },
-    save: async () => await inventory.resolveDeparture("session handoff", "save") && await pageState.resolveDeparture(pageState.pageIds(), "session handoff", "save") && await resolvePermissionDeparture(permissions.recoveryIds(), "session handoff", "save") && await resolveCoreDeparture('session handoff', 'save'),
-    discard: async () => await inventory.resolveDeparture("session handoff", "discard") && await pageState.resolveDeparture(pageState.pageIds(), "session handoff", "discard") && await resolvePermissionDeparture(permissions.recoveryIds(), "session handoff", "discard") && await resolveCoreDeparture('session handoff', 'discard'),
+    save: async () => await drivers.resolveDeparture("session handoff", "save") && await inventory.resolveDeparture("session handoff", "save") && await pageState.resolveDeparture(pageState.pageIds(), "session handoff", "save") && await resolvePermissionDeparture(permissions.recoveryIds(), "session handoff", "save") && await resolveCoreDeparture('session handoff', 'save'),
+    discard: async () => await drivers.resolveDeparture("session handoff", "discard") && await inventory.resolveDeparture("session handoff", "discard") && await pageState.resolveDeparture(pageState.pageIds(), "session handoff", "discard") && await resolvePermissionDeparture(permissions.recoveryIds(), "session handoff", "discard") && await resolveCoreDeparture('session handoff', 'discard'),
   };
   const disposeParticipant = registerParticipant("settings", participant);
   // Current registry order plus captured recovery definitions, normalized once
@@ -180,7 +185,7 @@ export function createSettingsSession({
     if (count) attention.push({ key:'requests', text:`${count} access request${count === 1 ? '' : 's'}`, tone:'quiet' });
     if (plugin.status === 'failed') attention.push({ key:'failure', text:`Failed: ${plugin.diagnostics?.[0]?.detail ?? 'runtime error'}`, tone:'danger' });
     if (plugin.blocking?.actions?.length) attention.push({ key:'blocking', text:`${plugin.blocking.active===false ? 'Can block when on' : 'Can block'}: ${plugin.blocking.actions.join(', ')}`, tone:'warning' });
-    return { id:plugin.id, name:plugin.name ?? plugin.id, enabled:plugin.enabled, runsInBrowser:!!plugin.runsInBrowser, attention,
+    return { id:plugin.id, name:plugin.name ?? plugin.id, enabled:plugin.enabled, runsInBrowser:!!plugin.runsInBrowser, syncDriver:!!plugin.driver, attention,
       canToggle:!!inventorySnapshot.value.canMutate && catalogPlugins.value.some(item => item.id === plugin.id),
       toggleNote:catalogPlugins.value.some(item => item.id === plugin.id) ? '' : 'Plugin unavailable. Your choices are retained.',
       hasServer, expanded:hasServer && expandedPluginId.value===plugin.id, openSettingsLabel:`Open ${plugin.name ?? plugin.id} settings`, pages:inventoryPages.value[plugin.id] ?? [], permission,
@@ -227,8 +232,10 @@ export function createSettingsSession({
     if (isVisible()) { focus(); return; }
     setVisible(true);
     if (currentPage.value?.kind === 'plugin-page') await pageState.load(currentPageId.value);
+    if (currentPage.value?.kind === 'sync') drivers.activate();
   }
   async function selectPage(id) {
+    if (id !== currentPageId.value && !await drivers.resolveDeparture("changing pages")) return false;
     if (id !== currentPageId.value && !await inventory.resolveDeparture("changing pages")) return false;
     if (id !== currentPageId.value && !await pageState.resolveDeparture([currentPageId.value], "changing pages")) return false;
     if (id !== currentPageId.value && currentPage.value?.kind === 'plugins' && expandedPluginId.value && !await resolvePermissionDeparture([expandedPluginId.value], "changing pages")) return false;
@@ -239,10 +246,12 @@ export function createSettingsSession({
     if (currentPage.value?.kind === 'branding') core.loadBrand();
     if (['access','account'].includes(currentPage.value?.kind)) await loadAccessSummary();
     if (currentPage.value?.kind === 'plugin-page') await pageState.load(id);
+    if (currentPage.value?.kind === 'sync') drivers.activate();
     return true;
   }
   /** Close keeps pending/invalid drafts unless explicitly resolved. */
   async function requestClose() {
+    if (!await drivers.resolveDeparture("closing Settings")) return false;
     if (!await inventory.resolveDeparture("closing Settings")) return false;
     if (!await pageState.resolveDeparture(pageState.pageIds(), "closing Settings")) return false;
     if (!await resolvePermissionDeparture(permissions.recoveryIds(), "closing Settings")) return false;
@@ -314,6 +323,11 @@ export function createSettingsSession({
     return false;
   }
   async function cancelBranding() { return await core.settle() && core.discardBrand(); }
+  async function discardDriverDraft(id) {
+    if (!await askRisk('Discard edits?', 'Discard your unsaved settings and key input for this sync instance?', 'Discard edits', 'danger')) return false;
+    return drivers.discard(id);
+  }
+  async function cancelDriverAdd() { return await drivers.cancelAdd(); }
   async function resetCoreBranding() { if (await askRisk('Reset branding?', core.resetMessage(), 'Reset branding', 'danger')) await core.saveBrand(true); }
   async function openAccess() { if (await requestClose()) notifyOpenAccess(); }
   function parentPath(path) { return path.split('/').slice(0, -1).join('/'); }
@@ -342,21 +356,21 @@ export function createSettingsSession({
   const choosePathEntry = entry => entry.directory ? loadPathChoices(entry.path) : selectPath(entry.path);
   function dispose() {
     decideDeparture("cancel"); resolveRisk(false); closePathChoice(); disposeParticipant();
-    inventory.dispose(); pageState.dispose(); core.dispose(); access.dispose(); if (ownsPermissions) permissions.dispose();
+    drivers.dispose(); inventory.dispose(); pageState.dispose(); core.dispose(); access.dispose(); if (ownsPermissions) permissions.dispose();
     stopPages(); stopCatalog(); stopAccessSession();
   }
   return {
     state: readonly(reactive({ brandingSnapshot, keybindingSnapshot, appearanceSnapshot, accessSummary, accountName, accountSummary, attentionItems, canLogout, versionLabel, currentPageId,
       riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice:pathChoiceView, pathEntries, pathChoiceError, pathCrumbs, pathLoading,
       departureVisible, departureMessage, departureCanSave, departureConfirmText, inventorySnapshot,
-      groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageIsPlugin, catalogPlugins, catalogPolicy,
+       groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageIsPlugin, catalogPlugins, catalogPolicy, driverSnapshot,
       pluginRows, autoEnableView, pluginPageHeader, expandedPluginId })),
-    core, permissions, pageState, inventory,
+    core, permissions, pageState, inventory, drivers,
     setRiskVisible: value => { riskVisible.value = value; },
     setDepartureVisible: value => { departureVisible.value = value; },
     openSettings, selectPage, requestClose, reloadCurrentPage, decideDeparture,
     togglePlugin, togglePluginRow, toggleAutoEnable, toggleLineNumbers, toggleDebug, discardInventoryChoice, managePlugin, toggleExpansion,
     approveScope, deleteScope, togglePermissionMaster, permissionHostAction, discardPermission, resolveRisk,
-    cancelBranding, resetCoreBranding, openAccess, parentPath, closePathChoice, browseField, loadPathChoices, selectPath, choosePathEntry, dispose,
+    cancelBranding, discardDriverDraft, cancelDriverAdd, resetCoreBranding, openAccess, parentPath, closePathChoice, browseField, loadPathChoices, selectPath, choosePathEntry, dispose,
   };
 }

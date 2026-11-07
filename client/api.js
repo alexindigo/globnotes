@@ -85,6 +85,16 @@ export async function getConflicts() { return (await api.get("conflicts")).data;
 export async function getConflict(id) { return (await api.get(`conflicts/${encodeURIComponent(id)}`)).data; }
 export async function resolveConflict(id, request) { return (await api.post(`conflicts/${encodeURIComponent(id)}/resolve`, request)).data; }
 
+const driverRoute = id => `drivers/${encodeURIComponent(id)}`;
+export async function getDrivers() { return (await api.get("drivers")).data; }
+export async function postDriver(request) { return (await api.post("drivers", request)).data; }
+export async function putDriver(id, request) { return (await api.put(driverRoute(id), request)).data; }
+export async function deleteDriver(id, request) { return (await api.delete(driverRoute(id), { data: request })).data; }
+export async function putDriverSecret(id, key, request) { return (await api.put(`${driverRoute(id)}/secrets/${encodeURIComponent(key)}`, request)).data; }
+export async function deleteDriverSecret(id, key, request) { return (await api.delete(`${driverRoute(id)}/secrets/${encodeURIComponent(key)}`, { data: request })).data; }
+export async function syncDriver(id, request) { return (await api.post(`${driverRoute(id)}/sync`, request)).data; }
+export async function decideDriver(id, request) { return (await api.post(`${driverRoute(id)}/decisions`, request)).data; }
+
 // Mint a TOTP enrolment bundle for the setup wizard (key, uri, qr,
 // secret). Nothing is stored server-side until setup completes.
 export async function postTotpEnrolment(username) {
@@ -525,6 +535,7 @@ export async function openVaultChanges({ since = 0, poll = false, onEvent, onClo
       else for (const entry of packet.entries) onEvent({ event: "change", data: entry });
       onEvent({ event: "cursor", data: { next: packet.next } });
       if (packet.conflictRevision !== undefined) onEvent({ event: "conflicts", data: { revision: packet.conflictRevision } });
+      if (packet.driverRevision !== undefined) onEvent({ event: "drivers", data: { revision: packet.driverRevision } });
       timer = setTimeout(() => { if (!requestSignal.aborted) onClose?.("poll"); }, 1000);
     }
     return () => { clearTimeout(timer); controller.abort(); };

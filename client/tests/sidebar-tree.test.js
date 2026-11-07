@@ -263,7 +263,7 @@ describe("sidebar tree controller", () => {
     await flush();
     expect(sidebar.loadTree).toHaveBeenCalledExactlyOnceWith("");
     expect(sidebar.loadNotes).not.toHaveBeenCalled();
-    expect(sidebar.subscribe.mock.calls.map(([topic]) => topic)).toEqual([TOPICS.NOTE_CREATE, TOPICS.NOTE_RENAME, TOPICS.NOTE_DELETE]);
+    expect(sidebar.subscribe.mock.calls.map(([topic]) => topic)).toEqual([TOPICS.NOTE_CREATE, TOPICS.NOTE_RENAME, TOPICS.NOTE_DELETE, TOPICS.VAULT_CHANGE, TOPICS.VAULT_RESET]);
   });
 
   it("delegates open/close and pinning to the same preference setters", () => {
@@ -416,13 +416,14 @@ describe("sidebar tree controller", () => {
       const subscribe = (_topic, handler) => { handlers.add(handler); return () => handlers.delete(handler); };
       const old = fixture({ subscribe }), current = fixture({ subscribe });
       old.dispose?.();
+      const replacementHandlers = new Set(handlers);
       current.loadTree.mockResolvedValue({ folders: [], notes: ["Current"] });
       for (const handler of handlers) handler({ path: "Created" });
       await flush();
       expect(old.loadTree).not.toHaveBeenCalled();
       expect(current.snapshot().visibleRows.map(row => row.key)).toEqual(["n:Current"]);
       old.dispose?.();
-      expect(handlers.size).toBe(1);
+      expect(handlers).toEqual(replacementHandlers);
       current.dispose?.();
       expect(handlers.size).toBe(0);
     });

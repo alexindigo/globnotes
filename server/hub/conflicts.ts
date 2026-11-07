@@ -143,6 +143,14 @@ export function listConflicts(context: ConflictContext) {
       path: path!,
       copyPath: copyPath!,
       peer,
+      ...(peer !== "local" && peer !== "globnotes"
+        ? {
+          peerLabel: String(
+            context.hub.store.db.prepare("SELECT label FROM peers WHERE id=?")
+              .get(peer)?.label ?? peer,
+          ),
+        }
+        : {}),
       reason,
       createdAt,
     }));

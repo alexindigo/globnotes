@@ -255,4 +255,16 @@ describe("vault change owner", () => {
     expect(publish.mock.calls).toEqual(Array.from({ length: 3 }, () => [TOPICS.VAULT_CONFLICTS, { revision: 7 }]));
     release();
   });
+  it("driver metadata shares the transport but not file/conflict cursors or reconnect memory", async () => {
+    vi.useFakeTimers(); const calls=[], publish=vi.fn();
+    const owner=createVaultChanges({publish,open:async value=>{calls.push(value);return ()=>{};}});
+    const release=owner.acquire();await flush();
+    const event=(name,revision,index=calls.length-1)=>calls[index].onEvent({event:name,data:{revision}});
+    event("drivers",7);event("drivers",7);event("conflicts",7);event("drivers",1);
+    expect(publish.mock.calls).toEqual([[TOPICS.VAULT_DRIVERS,{revision:7}],[TOPICS.VAULT_CONFLICTS,{revision:7}],[TOPICS.VAULT_DRIVERS,{revision:1}]]);
+    expect(owner.state().seq).toBe(0);calls[0].onClose("poll");await flush();event("drivers",1);expect(publish).toHaveBeenCalledTimes(3);
+    owner.suspendDocument();owner.resumeDocument();await flush();event("drivers",99,0);event("drivers",1);
+    expect(publish).toHaveBeenLastCalledWith(TOPICS.VAULT_DRIVERS,{revision:1});expect(publish).toHaveBeenCalledTimes(4);
+    for(const value of [-1,1.5,"2",null])expect(()=>event("drivers",value)).toThrow("Invalid driver revision");release();
+  });
 });

@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { apiErrorHandler, getNotes } from "./api.js";
 import { params, searchSortOptions } from "./constants.js";
+import { subscribeVaultNotes } from "./vaultNoteInvalidation.js";
 
 export function quickAccessQuery(config) {
   // Delayed config and a hidden section must not send an invalid/unused query.
@@ -31,15 +32,21 @@ export function createQuickAccess({ config, toast, loadNotes = getNotes, reportE
   const notes = ref([]);
   const loaded = ref(false);
   const load = ref({ status: "loading" });
+  let disposed = false, ticket = 0;
 
   async function init() {
+    if (disposed) return;
+    const own = ++ticket;
     const query = quickAccessQuery(config());
     if (!query) return;
     try {
-      notes.value = await loadNotes(...query);
+      const rows = await loadNotes(...query);
+      if (disposed || own !== ticket) return;
+      notes.value = rows;
       loaded.value = true;
       load.value = { status: "loaded" };
     } catch (error) {
+      if (disposed || own !== ticket) return;
       loaded.value = true;
       load.value = { status: "failed" };
       reportError(error, toast);
@@ -50,5 +57,6 @@ export function createQuickAccess({ config, toast, loadNotes = getNotes, reportE
     return { notes: notes.value, loaded: loaded.value, load: load.value, moreTarget: quickAccessTarget(config()) };
   }
 
-  return { snapshot, init };
+  const release = subscribeVaultNotes(init);
+  return { snapshot, init, dispose() { disposed = true; ticket++; release(); } };
 }

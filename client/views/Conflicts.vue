@@ -59,7 +59,7 @@
           <RouterLink :to="row.target" class="conflicts-page__row focus-ring">
             <span class="conflicts-page__path" :title="row.path">{{ row.path }}</span>
             <span class="conflicts-page__path" :title="row.copyPath">{{ row.copyPath }}</span>
-            <span class="conflicts-page__row-meta"><span>{{ row.reasonLabel }}</span><time :datetime="row.createdAt">{{ row.createdLabel }}</time></span>
+            <span class="conflicts-page__row-meta"><span>{{ row.reasonLabel }}</span><span v-if="row.sourceLabel">{{ row.sourceLabel }}</span><time :datetime="row.createdAt">{{ row.createdLabel }}</time></span>
           </RouterLink>
         </li>
       </ul>

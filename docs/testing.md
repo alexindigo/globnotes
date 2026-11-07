@@ -262,6 +262,31 @@ timeout 1800 .devcontainer/run.sh --run-dir "$RUNS/drivers" -- deno test --unsta
 Use a new disk-backed RUNS directory. This targeted command does not replace the
 final full browser and separate serial timing gates below.
 
+`driver-settings-controller.test.js` exercises CAS, retained drafts, schema
+changes, coalesced invalidations, late/unknown wires and explicit read-before-retry,
+write-only inputs, session fencing and departure. `sync-settings-page.test.js`
+covers declarative field identity, password semantics, state/attention rendering
+and intent wiring. The transport tests check three independent cursor domains on
+one SSE/poll connection; `hub_changes_test.ts` observes driver snapshots and
+subscription cleanup at policy/disconnect boundaries.
+
+Native `sync-settings-native` and `sync-driver-native` install only the fixture
+driver and talk to the actual authenticated HTTP memory remote. Native input
+adds/configures an instance, enters keys over insecure-context local HTTP, observes
+lock/unlock, disk/list imports, editor export and clean editor reload, inbox
+collision/resolution propagation, held/remote-empty decisions and removal/privacy.
+Geometry and keyboard probes accompany desktop/narrow/dark working captures. Run
+them through `run.sh --browser` with `GLOBNOTES_E2E_CASES=sync-settings-native,sync-driver-native`;
+the suite's ordinary result/timeout gates still apply.
+
+`vault-note-projections.test.js` observes imported/reset facts at Home, search,
+sidebar and full-index consumers, including disposal. This closes the browser-only
+fact gap discovered by native import acceptance; read tickets prevent older list
+responses from replacing later snapshots. The driver runtime test also dispatches
+a sync fact while inventory reconciliation is suspended: the runtime publishes a
+complete roster before awaiting cleanup, so driver-only inventories cannot expose
+a partially populated observer registry.
+
 ### Conflict inbox
 
 Conflict lifecycle/read coverage lives in `tests/hub_conflicts_test.ts` and

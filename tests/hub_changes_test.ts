@@ -5,6 +5,7 @@ import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import changes from "../server/api/endpoints/_/api/changes/get.ts";
 import { state } from "../server/state.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
+import type { DriverSupervisor } from "../server/hub/drivers/supervisor.ts";
 
 function request(
   query = "",
@@ -254,6 +255,69 @@ Deno.test("hub changes: metadata-only closure is emitted without a file id and b
     assertEquals(await replay.read(), { value: undefined, done: true });
     assertEquals(subscriptions, 0);
   } finally {
+    f.close();
+  }
+});
+
+Deno.test("hub changes: driver metadata uses authenticated SSE/poll with independent revisions and owned cleanup", async () => {
+  const f = hubOperationsFixture();
+  let revision = 17;
+  const listeners = new Set<(revision: number) => void>();
+  state.drivers = {
+    revision: () => revision,
+    subscribe(callback: (revision: number) => void) {
+      listeners.add(callback);
+      return () => {
+        listeners.delete(callback);
+      };
+    },
+  } as DriverSupervisor;
+  try {
+    const stream = await changes(request("", { accept: "text/event-stream" }));
+    const reader = stream.body!.getReader();
+    assertEquals(
+      await readFrame(reader),
+      'event: conflicts\ndata: {"revision":0}\n\n',
+    );
+    assertEquals(
+      await readFrame(reader),
+      'event: drivers\ndata: {"revision":17}\n\n',
+    );
+    assertEquals(listeners.size, 1);
+    revision++;
+    for (const listener of listeners) listener(revision);
+    assertEquals(
+      await readFrame(reader),
+      'event: drivers\ndata: {"revision":18}\n\n',
+    );
+    assertEquals(f.hub.sequence(), 0);
+    assertEquals(await (await changes(request("?poll=1"))).json(), {
+      entries: [],
+      next: 0,
+      conflictRevision: 0,
+      driverRevision: 18,
+    });
+    assertEquals(await (await changes(request("?poll=1&since=1"))).json(), {
+      gap: true,
+      next: 0,
+      conflictRevision: 0,
+      driverRevision: 18,
+    });
+    f.lifecycle.bumpEpoch();
+    f.lifecycle.notifyInvalidation();
+    assertEquals(await reader.read(), { done: true, value: undefined });
+    assertEquals(listeners.size, 0);
+    const resumed = await changes(request("", { accept: "text/event-stream" }));
+    const replay = resumed.body!.getReader();
+    await readFrame(replay);
+    assertEquals(
+      await readFrame(replay),
+      'event: drivers\ndata: {"revision":18}\n\n',
+    );
+    await replay.cancel();
+    assertEquals(listeners.size, 0);
+  } finally {
+    state.drivers = null;
     f.close();
   }
 });

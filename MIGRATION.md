@@ -51,6 +51,23 @@ update its paths. An outside closure never silently discards an open merge draft
 See [Saving notes](docs/saving.md#resolving-a-conflict) for exact effects and
 unknown-outcome/departure protection.
 
+### Sync driver metadata and keys (M5)
+
+Hub schema versions 1 through 3 upgrade additively to schema 4 in place, preserving
+notes and existing conflict records. No operator action, content backfill or
+reset is required. New sync instances start off and are configured in Settings ->
+Sync. Driver API 1 is separate from plugin contract 2; the storage SDK and author
+guide are in [docs/drivers.md](docs/drivers.md). M5 ships no real endpoint plugin.
+
+Driver keys live in `driver-secrets.sqlite` (mode 0600, secure delete, DELETE
+journaling) beside the existing server keys in the configured state directory.
+They are write-only in the UI/API, scoped to an instance, and removed when that
+instance is removed. When state is inside the vault, the Sync page explains that
+outside tools copying the whole folder copy keys too. Keep state outside those
+copies with the existing `GLOBNOTES_INDEX_PATH`. Key entry works over ordinary
+local-domain HTTP; deployments outside a trusted LAN can protect the link with
+a TLS reverse proxy such as Caddy or Nginx Proxy Manager.
+
 Open notes receive outside-change notifications over ordinary HTTP. Viewing and
 clean editing refresh in place; dirty editing keeps its buffer. An outside
 deletion is shown, and explicitly saving the retained editor text recreates the
