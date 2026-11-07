@@ -63,6 +63,8 @@ export interface Indexer {
     initial: boolean;
     done: number;
     total: number;
+    /** Failed additions in the initial pass; never included in done. */
+    failed?: number;
   };
   startBackgroundSync(): void;
 }

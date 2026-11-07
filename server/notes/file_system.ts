@@ -837,9 +837,6 @@ export class FileSystemNotes {
     }
     const names: string[] = [];
     const root = this.storagePath;
-    const prefix = root.endsWith(nodePath.SEPARATOR)
-      ? root
-      : root + nodePath.SEPARATOR;
 
     function walkDir(dir: string): void {
       for (const entry of Deno.readDirSync(dir)) {
@@ -847,7 +844,7 @@ export class FileSystemNotes {
         if (entry.isDirectory) {
           walkDir(full);
         } else if (entry.name.endsWith(MARKDOWN_EXT)) {
-          names.push(full.slice(prefix.length));
+          names.push(nodePath.relative(root, full));
         }
       }
     }

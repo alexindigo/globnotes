@@ -38,6 +38,47 @@ const failingFor = (name: string, failing = () => true) => ({
   },
 });
 
+Deno.test("index sync: initial progress counts committed notes separately from failures", async () => {
+  const previous = { ...state };
+  const original = { ...logger };
+  const vault = await Deno.makeTempDir({ prefix: "globnotes-pass-progress-" });
+  const errors: string[] = [], summaries: string[] = [];
+  try {
+    await Deno.writeTextFile(`${vault}/a.md`, "alpha");
+    await Deno.writeTextFile(`${vault}/b.md`, "bravo");
+    setupState(vault);
+    const indexer = new Fts5Indexer(
+      vault,
+      testEnvironment({}),
+      failingFor("a.md"),
+    );
+    Object.assign(logger, {
+      error: (...args: unknown[]) => errors.push(args.map(String).join(" ")),
+      info: (...args: unknown[]) => summaries.push(args.map(String).join(" ")),
+    });
+    indexer.startBackgroundSync();
+    await awaitIndexReady(indexer);
+    assertEquals<Record<string, unknown>>(indexer.indexStatus, {
+      syncing: false,
+      initial: false,
+      done: 1,
+      total: 2,
+      failed: 1,
+    });
+    assertEquals(indexer.titlesFor(["a.md", "b.md"]), { "b.md": "b" });
+    assertEquals(errors.length, 1);
+    assert(errors[0].includes("a.md"));
+    assert(
+      summaries.some((s) => s.includes("1 indexed") && s.includes("1 failed")),
+      summaries.join("\n"),
+    );
+  } finally {
+    Object.assign(logger, original);
+    restoreState(previous);
+    await Deno.remove(vault, { recursive: true });
+  }
+});
+
 Deno.test("index sync: a changed note that can't be read doesn't abort the pass", async () => {
   const previous = { ...state };
   const original = { ...logger };
