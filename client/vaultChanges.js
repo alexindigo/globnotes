@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { openVaultChanges } from "./api.js";
 import { publish, TOPICS } from "./bus/index.js";
+import { connectionLifetime, createConnectionLifetime } from "./connectionLifetime.js";
+export { HIDDEN_GRACE_MS } from "./connectionLifetime.js";
 
 /** Reconnect delays grow from 500 ms and never exceed this. */
 export const MAX_DELAY_MS = 30_000;
@@ -10,11 +12,6 @@ export const STABLE_MS = 30_000;
 /** Polling is a fallback after a stream failure, never a final mode: after
  * this long the stream is tried again. */
 export const STREAM_RETRY_MS = 60_000;
-/** A hidden tab keeps its stream this long, then releases it and catches up
- * from its cursor when it is shown again. On plain HTTP (HTTP/1.1, Axiom 1)
- * every open stream holds one of the browser's few connections per host, so
- * only visible tabs hold one. */
-export const HIDDEN_GRACE_MS = 10_000;
 /** Answers that retrying cannot change: authentication (401, 403), a server
  * without this endpoint (404, 405, 410, 501), a request it rejects (400).
  * Every other failure (network errors, 408, 429, 5xx including a proxy's
@@ -24,11 +21,12 @@ export const TERMINAL_STATUSES = new Set([400, 401, 403, 404, 405, 410, 501]);
 /** One reference-counted owner per app; generations fence late connections. */
 export function createVaultChanges({ open = options => openVaultChanges(options), publish: emit = publish,
   // Resolved at call time, so the page's current timer implementation applies.
-  setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), now = () => Date.now() } = {}) {
+  setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), now = () => Date.now(),
+  lifetime = createConnectionLifetime({ setTimer, clearTimer }) } = {}) {
   let owners = 0, generation = 0, seq = 0, attempts = 0, polling = false, pollingSince = 0;
-  let documentActive = true, visible = true, hiddenTimer = null;
+  let pageActive = lifetime.state().active;
   let timer = null, close = null, abort = null;
-  const live = () => owners > 0 && documentActive && visible;
+  const live = () => owners > 0 && pageActive;
   function retire() {
     generation++;
     clearTimer(timer); timer = null;
@@ -86,44 +84,23 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
       reconnect(error);
     }
   }
+  lifetime.subscribe(next => {
+    if (pageActive === next) return;
+    pageActive = next;
+    if (next) connect(); else retire();
+  });
   return {
-    suspendDocument() {
-      if (!documentActive) return;
-      documentActive = false; retire();
-    },
-    resumeDocument() {
-      if (documentActive) return;
-      documentActive = true;
-      if (owners) connect();
-    },
-    /** Page visibility: hidden releases the stream after HIDDEN_GRACE_MS;
-     * shown reconnects at once from the accepted cursor. */
-    setVisible(next) {
-      if (next) {
-        clearTimer(hiddenTimer); hiddenTimer = null;
-        if (visible) return;
-        visible = true;
-        if (owners) connect();
-        return;
-      }
-      if (!visible || hiddenTimer !== null) return;
-      hiddenTimer = setTimer(() => { hiddenTimer = null; visible = false; retire(); }, HIDDEN_GRACE_MS);
-    },
+    suspendDocument: lifetime.suspendDocument,
+    resumeDocument: lifetime.resumeDocument,
+    setVisible: lifetime.setVisible,
     acquire() {
       if (++owners === 1) connect();
       let released = false;
       return () => { if (released) return; released = true; if (--owners === 0) retire(); };
     },
-    state: () => ({ owners, seq, polling, attempts, visible, connected: close !== null }),
+    state: () => ({ owners, seq, polling, attempts, visible: lifetime.state().visible, connected: close !== null }),
   };
 }
 
-const vaultChanges = createVaultChanges();
+const vaultChanges = createVaultChanges({ lifetime: connectionLifetime });
 export const acquireVaultChanges = () => vaultChanges.acquire();
-// As with the plugin runtime, full-document navigation/BFCache suspension is
-// a lifetime boundary even when Vue never unmounts its components.
-window.addEventListener("pagehide", () => vaultChanges.suspendDocument());
-window.addEventListener("pageshow", () => vaultChanges.resumeDocument());
-const syncVisibility = () => vaultChanges.setVisible(document.visibilityState !== "hidden");
-document.addEventListener("visibilitychange", syncVisibility);
-syncVisibility();

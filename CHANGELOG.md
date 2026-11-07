@@ -72,6 +72,10 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Background tabs release both vault-change and plugin-host connections after
+10 seconds, freeing HTTP connections for visible tabs. Returning catches up on
+vault changes and reactivates browser plugins from the current catalog.
+
 The index check at startup stays fast in large vaults. On a restart it looked
 up each indexed note with a query that read the whole index, time proportional
 to the square of the number of notes, while the server answered nothing else; it

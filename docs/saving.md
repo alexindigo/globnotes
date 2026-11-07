@@ -58,7 +58,11 @@ streaming fails, and retries detected failures (errors, and stalls past the
 stall limit; `docs/hub.md`). A connection that receives nothing for three
 server heartbeats (75 seconds, `CHANGE_STREAM_STALL_MS`) counts as stalled; a
 large poll that keeps arriving does not. A tab
-hidden for more than 10 seconds closes it and catches up when shown. A gap
+hidden for more than 10 seconds closes every long-lived connection, including
+plugin-host events, on HTTP and HTTPS. One page lifetime owner
+(`client/connectionLifetime.js`) owns the grace period and document lifecycle.
+When shown, the vault stream resumes its cursor; the plugin runtime rereads its
+catalog and reactivates the browser contributions unloaded on suspension. A gap
 invalidates the snapshot and causes a fresh read, still fenced against newer
 typing and saves. This is not real-time co-editing or filesystem CAS: a change
 during server guard waits can reject a request under the existing
