@@ -40,13 +40,13 @@ describe("SearchResults controller wiring", () => {
 
   it("renders sorted titles/highlights, watches input and resorts without a fetch", async () => {
     getNotes.mockResolvedValue([
-      { path: "F/Z", title: "Display Z", score: 9, lastModifiedAsString: "Today", contentHighlights: "<b>hit</b>" },
-      { path: "F/A", pathHighlights: "<em>Highlighted A</em>", score: 1 },
+      { path: "F/Z", title: "Display Z", score: 9, lastModifiedAsString: "Today", contentHighlights: '<b class="match term0">hit</b>' },
+      { path: "F/A", pathHighlights: '<b class="match term0">Highlighted A</b>', score: 1 },
     ]);
     const { wrapper } = await render({ folder: "F" });
     expect(wrapper.find('a[href="/F/Z"]').text()).toContain("Display Z");
     expect(wrapper.find('a[href="/F/Z"] b').text()).toBe("hit");
-    expect(wrapper.find('a[href="/F/A"] em').text()).toBe("Highlighted A");
+    expect(wrapper.find('a[href="/F/A"] b.match').text()).toBe("Highlighted A");
     await wrapper.setProps({ sortBy: searchSortOptions.path });
     expect(wrapper.findAll('a[href^="/F/"]').map(a => a.attributes("href"))).toEqual(["/F/A", "/F/Z"]);
     expect(getNotes).toHaveBeenCalledTimes(1);
@@ -55,6 +55,22 @@ describe("SearchResults controller wiring", () => {
     expect(wrapper.find("input").element.value).toBe("next");
     await wrapper.setProps({ folder: "G" }); await flushPromises();
     expect(getNotes.mock.lastCall[5]).toBe("G");
+  });
+
+  it("renders note markup as text in highlighted paths, snippets and fallback titles", async () => {
+    const payload = '<img src=x onerror="window.searchXss=1"><script>window.searchXss=1</script>';
+    const marked = payload + '<b class="match term0">hit</b>';
+    getNotes.mockResolvedValue([
+      { path: "Highlighted", pathHighlights: marked, contentHighlights: marked },
+      { path: "Title", title: payload },
+      { path: "Fallback" + payload },
+    ]);
+    const { wrapper } = await render();
+    expect(wrapper.findAll("img,script")).toHaveLength(0);
+    expect(wrapper.find('a[href="/Highlighted"]').text()).toContain(payload + "hit");
+    expect(wrapper.findAll('a[href="/Highlighted"] b.match').map(b => b.text())).toEqual(["hit", "hit"]);
+    expect(wrapper.find('a[href="/Title"]').text()).toContain(payload);
+    expect(wrapper.text()).toContain("Fallback" + payload);
   });
 
   it("wires nested toggle, folder/up targets and sort menu navigation", async () => {

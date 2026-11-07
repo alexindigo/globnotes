@@ -12,6 +12,22 @@ function deferred() {
 }
 
 describe("shared plugin render preparation", () => {
+  it("keeps note HTML formatting but removes executable markup before either consumer sees it", async () => {
+    const raw = '<p data-source-line="0" data-line="L1"><strong>safe</strong>' +
+      '<a href="https://example.test/">link</a><img src="assets/a.png" onerror="evil()">' +
+      '<script>evil()</script><a href="javascript:evil()">bad</a><svg onload="evil()"></svg></p>';
+    const html = await renderWithPlugins(async () => raw, {
+      getPlugins: async () => [], disabledPluginIds: () => [],
+    });
+    const root = document.createElement("div");
+    root.innerHTML = html;
+    expect(root.querySelector("strong").textContent).toBe("safe");
+    expect(root.querySelector('a[href="https://example.test/"]')).not.toBeNull();
+    expect(root.querySelector('img[src="assets/a.png"]')).not.toBeNull();
+    expect(root.querySelector('[data-source-line="0"][data-line="L1"]')).not.toBeNull();
+    expect(root.querySelector("script,[onerror],[onload],[href^='javascript:']")).toBeNull();
+  });
+
   it("awaits plugins, then reads disabled switches, then renders with those ids", async () => {
     const pending = deferred();
     const plugins = [{ id: "off" }, { id: "on" }];

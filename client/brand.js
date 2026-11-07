@@ -25,6 +25,13 @@ let currentBrand = null;
 // cache-buster so a fresh upload replaces the old file on screen.
 export const brandVersion = ref(0);
 
+/** Only hex colors may enter the bundled SVG templates: environment/stored
+ * accents can bypass endpoint validation. Shared by the logo and favicon. */
+export function tintBrandSvg(svg, accent) {
+  return typeof accent === "string" && /^#[0-9a-fA-F]{6}$/.test(accent)
+    ? svg.replaceAll("#38BDF8", accent) : svg;
+}
+
 /** Doc-title base for router.js. */
 export function currentBrandName() {
   return currentBrand?.name ?? "globnotes";
@@ -53,7 +60,7 @@ export function applyBrandToDocument(brand) {
     } else if (customLogo) {
       href = `${pathPrefix}/_/brand/${customLogo}?v=${brandVersion.value}`;
     } else if (brand?.accent) {
-      const tinted = iconSvg.replaceAll("#38BDF8", brand.accent);
+      const tinted = tintBrandSvg(iconSvg, brand.accent);
       href = `data:image/svg+xml,${encodeURIComponent(tinted)}`;
     }
     if (href) {

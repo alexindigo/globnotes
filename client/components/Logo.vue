@@ -45,7 +45,7 @@
 <script setup>
 import { computed } from "vue";
 
-import { brandVersion } from "../brand.js";
+import { brandVersion, tintBrandSvg } from "../brand.js";
 import { readPathPrefix } from "../pathPrefix.js";
 import iconSvg from "../assets/brand/icon.svg?raw";
 import logoSvg from "../assets/brand/logo.svg?raw";
@@ -74,13 +74,8 @@ const brandName = computed(() => brand.value.name ?? "");
 
 // No custom logo: keep the bundled lockup but recolor its brand-blue
 // square (#38BDF8) to the brand accent when one is set.
-const BRAND_BLUE = "#38BDF8";
-function tinted(svg) {
-  const accent = brand.value.accent;
-  return accent ? svg.replaceAll(BRAND_BLUE, accent) : svg;
-}
-const logoSvgTinted = computed(() => tinted(logoSvg));
-const iconSvgTinted = computed(() => tinted(iconSvg));
+const logoSvgTinted = computed(() => tintBrandSvg(logoSvg, brand.value.accent));
+const iconSvgTinted = computed(() => tintBrandSvg(iconSvg, brand.value.accent));
 
 function brandUrl(file) {
   // Cache-buster: a just-uploaded file must replace the old one on screen.

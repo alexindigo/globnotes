@@ -72,6 +72,10 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Search displays note-controlled markup as text while keeping match highlights.
+Saved notes and previews preserve safe HTML formatting without executing note
+scripts or event handlers; configured logo accents cannot inject SVG attributes.
+
 The index check at startup stays fast in large vaults. On a restart it looked
 up each indexed note with a query that read the whole index, time proportional
 to the square of the number of notes, while the server answered nothing else; it

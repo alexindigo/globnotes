@@ -3,7 +3,8 @@
 /**
  * markdown-it instance + the default renderer rules that reproduce the
  * ToastUI viewer's output: heading id slugs, Prism-highlighted fences,
- * front-matter box, linkify, raw HTML passthrough.
+ * front-matter box, linkify, raw HTML passthrough. The client sanitizes rendered
+ * HTML in noteRendering.js before saved viewing or unsaved preview inserts it.
  */
 
 import MarkdownIt from "markdown-it";
