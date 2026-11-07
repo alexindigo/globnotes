@@ -949,8 +949,11 @@ export class FileSystemNotes {
     const ref = FileSystemNotes.#localRef(url, oldDir);
     if (!ref) return url;
     const target = movedFiles[ref.path] ?? ref.path;
+    // Parentheses are URI-safe but delimit bare Markdown destinations.
     const encodePath = (p: string) =>
-      p.split("/").map(encodeURIComponent).join("/");
+      p.split("/").map((part) =>
+        encodeURIComponent(part).replaceAll("(", "%28").replaceAll(")", "%29")
+      ).join("/");
 
     if (!newDir) return target ? "/" + encodePath(target) : url;
 
