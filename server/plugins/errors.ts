@@ -11,6 +11,7 @@ export type OperationErrorCode =
   | "plugin_generation_revoked"
   | "plugin_permission_denied"
   | "base_required"
+  | "conflict_stale"
   | "base_stale";
 // Host-only requester failures precede all filesystem effects.
 

@@ -7,6 +7,7 @@ import { listConflicts, readConflict } from "../server/hub/conflicts.ts";
 import { versionOf } from "../server/hub/merge.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import { VaultHub } from "../server/hub/hub.ts";
+import { bootServer } from "./helpers/boot.ts";
 
 function pair(
   f: ReturnType<typeof hubOperationsFixture>,
@@ -209,5 +210,82 @@ Deno.test("conflict reads: an unreadable member propagates I/O failure without o
     }
   } finally {
     f.close();
+  }
+});
+
+Deno.test("conflict API: real HTTP choices reach disk, filtered inbox and ordinary note consumers", async () => {
+  const root = Deno.makeTempDirSync({ prefix: "conflict-http-" });
+  Deno.mkdirSync(`${root}/vault`);
+  const server = await bootServer({
+    GLOBNOTES_PATH: `${root}/vault`,
+    GLOBNOTES_INDEX_PATH: `${root}/state`,
+    GLOBNOTES_AUTH_TYPE: "none",
+  });
+  try {
+    const json = async (route: string, method = "GET", body?: unknown) => {
+      const response = await fetch(server.baseUrl + "/_/api/" + route, {
+        method,
+        ...(body === undefined ? {} : {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      });
+      const packet = await response.json();
+      assertEquals(response.status, 200, JSON.stringify(packet));
+      return packet;
+    };
+    for (const action of ["original", "copy", "both", "merge"]) {
+      const name = `choice-${action}`;
+      await json("notes", "POST", { path: name, content: "base\n" });
+      Deno.writeTextFileSync(`${root}/vault/${name}.md`, "outside\n");
+      const saved = await json("notes/" + name, "PATCH", {
+        baseContent: "base\n",
+        newContent: "copy\n",
+      });
+      assertEquals(saved.saveResult.status, "conflict");
+      const inbox = await json("conflicts");
+      assertEquals(inbox.total, 1);
+      const id = inbox.conflicts[0].id;
+      const comparison = await json("conflicts/" + id);
+      assertEquals(comparison.original.content, "outside\n");
+      assertEquals(comparison.copy.content, "copy\n");
+      const receipt = await json(`conflicts/${id}/resolve`, "POST", {
+        action,
+        revision: comparison.revision,
+        base: {
+          original: { kind: "version", version: comparison.original.version },
+          copy: { kind: "version", version: comparison.copy.version },
+        },
+        ...(action === "merge"
+          ? { content: "# Keep this exact heading\r\n" }
+          : {}),
+      });
+      assertEquals(receipt.status, "settled");
+      const kept = action === "copy"
+        ? "copy\n"
+        : action === "merge"
+        ? "# Keep this exact heading\r\n"
+        : "outside\n";
+      assertEquals(Deno.readTextFileSync(`${root}/vault/${name}.md`), kept);
+      assertEquals((await json("notes/" + name)).content, kept);
+      assertEquals((await json("conflicts")).total, 0);
+      const copy = `${root}/vault/${saved.path}.md`;
+      assertEquals(
+        [...Deno.readDirSync(`${root}/vault`)].some((e) =>
+          `${root}/vault/${e.name}` === copy
+        ),
+        action === "both",
+      );
+      const closed = await json("conflicts/" + id);
+      assertEquals(Object.keys(closed).sort(), [
+        "id",
+        "resolvedAt",
+        "revision",
+        "state",
+      ]);
+    }
+  } finally {
+    await server.close();
+    Deno.removeSync(root, { recursive: true });
   }
 });

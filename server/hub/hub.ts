@@ -26,6 +26,9 @@ export class VaultHub {
   #started = false;
   #scanning = false;
   readonly root: string;
+  get stateRoot(): string {
+    return this.#stateRoot;
+  }
   constructor(
     notesPath: string,
     statePath: string,

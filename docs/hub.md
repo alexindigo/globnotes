@@ -230,6 +230,49 @@ lossily for merging. Confirmed missing members are reconciled before returning
 closure; other I/O errors propagate. The write gate and its filesystem CAS and
 best-effort versioning limits are unchanged.
 
+## Explicit conflict resolution
+
+`POST /_/api/conflicts/:id/resolve` accepts `{action,revision,base,content?}`.
+`action` is `original`, `copy`, `both` or `merge`; only merge accepts content.
+`base` contains both `original` and `copy`, each `{kind:"version",version}` for
+the exact raw bytes displayed by detail. Member paths come from this vault's
+record, never from the caller. Missing either base returns `428 base_required`;
+malformed input returns 400 before hooks or effects. Whole-vault read-only mode
+refuses every action, including metadata-only Keep both.
+
+| # | Action | Effects |
+|---|---|---|
+| 1 | Original | Leave Original byte-exact; remove only the selected Copy |
+| 2 | Copy | Replace Original with Copy's exact bytes; verify, then remove Copy |
+| 3 | Both | Close this relationship only; both filenames and bytes remain |
+| 4 | Merge | Write the exact submitted UTF-8 string at Original; verify, then remove Copy. Complete Markdown text is required on both sides |
+
+Resolution is one `NoteOperations` lock/admission/guard/commit workflow, not a
+sequence of public save/delete calls. All applicable pre-save/pre-file-write and
+pre-delete guards run before the first effect with one operation id/deadline.
+The original HTTP mutation lease, epoch, guard authority, readable canonical
+regular-file targets, record revision and both byte versions are revalidated
+inside the lifecycle gate. Stale review returns 409
+`{code:'conflict_stale',status:'stale',id}` without resolution effects. A renamed
+record is stale even if its bytes are unchanged. There is no automatic merge,
+H1 rename, attachment move, link rewrite or additional conflict copy.
+
+One `HubGate.apply` journals actual file effects with origin `api`. Replacement
+must be verified before Copy removal. Deletion performs the ordinary metadata
+closure/scrub; Keep both uses conditional closure without a file sequence.
+Completed Markdown effects reach cache/index, ordinary lifecycle facts and one
+managed sync; displaced bytes use the unchanged asynchronous versioning path.
+The short external check/effect race remains: this is not filesystem CAS.
+
+Success returns `{status:'settled',id,revision,action,remaining,removed}` with
+transient path/version receipts. A well-formed request for a known closed record
+returns `{status:'settled',id,revision,alreadyResolved:true}` without historical
+names or effects. Partial I/O or reconciliation failure reports
+`operation_partial` with actual completed paths and the failed path when known;
+it never claims stale/no effects after displacement. Failed replacement retains
+Copy. No rollback overwrites newer outside work. Review actual state before any
+new choice; lost replies do not authorize blind replay.
+
 ## Browser changes
 
 `GET /_/api/changes` with `Accept: text/event-stream` emits `change` frames

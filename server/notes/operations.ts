@@ -50,6 +50,17 @@ import type { GuardLease } from "../plugins/runtime.ts";
 import type { WriteTarget } from "../plugins/lifecycle.ts";
 import type { RequesterAuthority } from "../plugins/lifecycle.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
+import {
+  assertReviewed,
+  type ConflictReceipt,
+  ConflictStaleError,
+  type ConflictVersion,
+  findConflict,
+  parseResolution,
+  readConflict,
+  readConflictVersion,
+} from "../hub/conflicts.ts";
+import { readableVaultPath } from "../hub/browser_changes.ts";
 
 type SaveResult = NonNullable<Note["saveResult"]>;
 
@@ -206,7 +217,10 @@ export class NoteOperations {
         revalidate();
       } catch (e) {
         // A writer's own stale-write guard keeps its actionable error.
-        if (e instanceof OperationError || e instanceof NoteChangedError) {
+        if (
+          e instanceof OperationError || e instanceof NoteChangedError ||
+          e instanceof HttpError
+        ) {
           throw e;
         }
         throw new OperationError(
@@ -1043,6 +1057,286 @@ export class NoteOperations {
     });
   }
 
+  /** One reviewed pair, one managed operation and one effects pass. No public
+   * save/delete chaining: every guard and both bases precede the first effect. */
+  async resolveConflict(
+    id: string,
+    value: unknown,
+    ctx: OperationOrigin,
+  ): Promise<ConflictReceipt> {
+    const operationId = createUuid();
+    this.#admission(ctx, operationId);
+    this.#requesterRequired(ctx, undefined, operationId);
+    const request = parseResolution(value);
+    return await this.#lock.run(async () => {
+      this.#admission(ctx, operationId);
+      const hub = this.adapters.hub;
+      if (!hub) throw new HttpError(503, "Conflicts unavailable");
+      const context = { hub, stateRoot: hub.stateRoot };
+      // The read owner applies the namespace before scanning any supplied id.
+      const record = findConflict(context, id);
+      if (record.state === "open") {
+        hub.scanNow([record.path!, record.copyPath!]);
+      }
+      const detail = readConflict(context, id);
+      if (detail.state === "resolved") {
+        return {
+          status: "settled",
+          id,
+          revision: detail.revision,
+          alreadyResolved: true,
+        };
+      }
+      assertReviewed(detail, request);
+      const pair = detail;
+      const original = readableVaultPath(
+        hub.root,
+        hub.stateRoot,
+        pair.original.path,
+      )!;
+      const copy = readableVaultPath(hub.root, hub.stateRoot, pair.copy.path)!;
+      if (original === copy) throw new HttpError(404, "Conflict not found.");
+      const replacing = request.action === "copy" || request.action === "merge";
+      if (
+        request.action === "merge" &&
+        (pair.original.preview !== "text" || pair.copy.preview !== "text")
+      ) {
+        throw new HttpError(
+          400,
+          "Complete Markdown text is required to edit a merge",
+        );
+      }
+      // A fixed-path effects write deliberately bypasses H1/attachment derivation.
+      const bytes = request.action === "merge"
+        ? new TextEncoder().encode(request.content!)
+        : request.action === "copy"
+        ? Deno.readFileSync(copy)
+        : null;
+      if (
+        request.action === "copy" && versionOf(bytes!) !== pair.copy.version
+      ) throw new ConflictStaleError(id);
+      const outputVersion = bytes ? versionOf(bytes) : pair.original.version;
+      const epoch = ctx.origin === "api"
+        ? ctx.lease.epoch
+        : this.adapters.lifecycle.epoch;
+      const guards: { hook: HookName; leases: GuardLease[] }[] = [];
+      const deadline = processClock.now() +
+        (this.adapters.runtime()?.limits.preOperationMs ?? 30000);
+      const metadata = { conflictId: id, resolution: request.action };
+      const noteSnapshot = (member: ConflictVersion): NoteSnapshot => ({
+        path: member.path.slice(0, -MARKDOWN_EXT.length),
+        contentAvailable: member.preview === "text",
+        ...(member.preview === "text" ? { content: member.content } : {}),
+      });
+      const guard = async (hook: HookName, fact: OperationFact) => {
+        guards.push({ hook, leases: await this.#guard(hook, fact, deadline) });
+      };
+      if (replacing) {
+        if (pair.original.path.endsWith(MARKDOWN_EXT)) {
+          await guard(
+            "pre-save",
+            this.#fact(operationId, "save", ctx, {
+              path: pair.original.path.slice(0, -MARKDOWN_EXT.length),
+              before: noteSnapshot(pair.original),
+              proposed: {
+                path: pair.original.path.slice(0, -MARKDOWN_EXT.length),
+                contentAvailable: request.action === "merge" ||
+                  pair.copy.preview === "text",
+                ...(request.action === "merge"
+                  ? { content: request.content }
+                  : pair.copy.preview === "text"
+                  ? { content: pair.copy.content }
+                  : {}),
+              },
+              contentChanged: outputVersion !== pair.original.version,
+              metadata,
+            }),
+          );
+        } else {
+          await guard(
+            "pre-file-write",
+            this.#fact(operationId, "file-write", ctx, {
+              path: original,
+              metadata: { ...metadata, bytes: bytes!.length, existed: true },
+            }),
+          );
+        }
+      }
+      if (request.action !== "both" && pair.copy.path.endsWith(MARKDOWN_EXT)) {
+        await guard(
+          "pre-delete",
+          this.#fact(operationId, "delete", ctx, {
+            path: pair.copy.path.slice(0, -MARKDOWN_EXT.length),
+            before: noteSnapshot(pair.copy),
+            metadata,
+          }),
+        );
+      }
+      const actualEffects: StorageEffect[] = [];
+      const failure = { path: original };
+      await this.#commitGate(
+        epoch,
+        guards,
+        () => {
+          // Reconcile truth after awaited guards, then recheck namespace, kinds,
+          // canonical identities, record revision and both keeper/loser versions.
+          findConflict(context, id);
+          hub.scanNow([pair.original.path, pair.copy.path]);
+          const fresh = readConflict(context, id);
+          assertReviewed(fresh, request);
+          if (
+            fresh.original.path !== pair.original.path ||
+            fresh.copy.path !== pair.copy.path ||
+            readableVaultPath(hub.root, hub.stateRoot, fresh.original.path) !==
+              original ||
+            readableVaultPath(hub.root, hub.stateRoot, fresh.copy.path) !== copy
+          ) throw new ConflictStaleError(id);
+        },
+        () => {
+          if (request.action === "both") {
+            if (
+              !hub.closeConflict(id, request.revision)
+            ) throw new ConflictStaleError(id);
+            return;
+          }
+          this.#captureStorage(
+            operationId,
+            ctx,
+            () => {
+              if (bytes) {
+                this.adapters.notes.effects.replace(original, bytes);
+                if (
+                  readConflictVersion(context, pair.original.path).version !==
+                    outputVersion
+                ) {
+                  throw new Error(
+                    "Conflict replacement could not be verified; copy retained",
+                  );
+                }
+              }
+              // An external writer is a peer. Never remove changed copy bytes.
+              if (
+                readConflictVersion(context, pair.copy.path).version !==
+                  pair.copy.version
+              ) {
+                throw new Error(
+                  "Conflict copy changed during resolution; retained",
+                );
+              }
+              failure.path = copy;
+              this.adapters.notes.effects.remove(copy);
+              failure.path = original;
+              const remaining = readConflictVersion(
+                context,
+                pair.original.path,
+              );
+              if (remaining.version !== outputVersion) {
+                throw new Error(
+                  "Conflict survivor changed during resolution",
+                );
+              }
+              this.adapters.notes.reconcileEffects(actualEffects);
+            },
+            actualEffects,
+            [original, copy],
+            undefined,
+            failure,
+            () => {
+              if (
+                hub.conflict(id)?.state !== "resolved" ||
+                hub.fileState(pair.original.path)?.hash !== outputVersion ||
+                hub.fileState(pair.copy.path) !== null
+              ) {
+                throw new Error(
+                  "Conflict recording did not verify the resolved pair",
+                );
+              }
+            },
+          );
+        },
+        operationId,
+        ctx,
+      );
+      for (const effect of actualEffects) {
+        const member = effect.path === original ? pair.original : pair.copy;
+        if (member.path.endsWith(MARKDOWN_EXT)) {
+          const notePath = member.path.slice(0, -MARKDOWN_EXT.length);
+          if (effect.kind === "remove") {
+            this.adapters.lifecycle.recordManagedDelete(member.path);
+            this.adapters.lifecycle.observe(
+              this.#fact(operationId, "delete", ctx, {
+                path: notePath,
+                before: noteSnapshot(member),
+                after: null,
+                metadata,
+              }),
+            );
+          } else if (effect.kind === "write") {
+            this.#recordManaged(notePath);
+            this.adapters.lifecycle.observe(
+              this.#fact(operationId, "save", ctx, {
+                path: notePath,
+                before: noteSnapshot(member),
+                after: {
+                  path: notePath,
+                  contentAvailable: request.action === "merge" ||
+                    pair.copy.preview === "text",
+                  ...(request.action === "merge"
+                    ? { content: request.content }
+                    : pair.copy.preview === "text"
+                    ? { content: pair.copy.content }
+                    : {}),
+                },
+                contentChanged: outputVersion !== member.version,
+                metadata,
+              }),
+            );
+          }
+        } else if (effect.kind === "write") {
+          this.adapters.lifecycle.observe(
+            this.#fact(operationId, "file-write", ctx, {
+              path: effect.path,
+              metadata: { ...metadata, bytes: bytes!.length, existed: true },
+            }),
+          );
+        }
+      }
+      this.#syncEffects(operationId, ctx, actualEffects);
+      const settled = hub.conflict(id)!;
+      if (
+        settled.state !== "resolved" ||
+        (request.action !== "both" && settled.revision === record?.revision)
+      ) {
+        throw new OperationError(
+          500,
+          "operation_partial",
+          "Conflict effects could not be fully reconciled",
+          {
+            operationId,
+            partial: {
+              completedPaths: actualEffects.map((e) =>
+                hub.relativePath(e.path)!
+              ).filter(Boolean),
+            },
+          },
+        );
+      }
+      return {
+        status: "settled",
+        id,
+        revision: settled.revision,
+        action: request.action,
+        remaining: [
+          { path: pair.original.path, version: outputVersion },
+          ...(request.action === "both"
+            ? [{ path: pair.copy.path, version: pair.copy.version }]
+            : []),
+        ],
+        removed: request.action === "both" ? [] : [pair.copy.path],
+      };
+    });
+  }
+
   noteExists(notePath: string): boolean {
     return this.#exists(notePath);
   }
@@ -1067,31 +1361,61 @@ export class NoteOperations {
     effects: StorageEffect[] = [],
     expectedPaths: readonly string[] = [],
     pluginId = ctx.causalPlugin,
+    failure?: { path: string },
+    verify?: () => void,
   ): T {
     try {
-      return this.#gate.apply(
+      const result = this.#gate.apply(
         expectedPaths,
         ctx.origin === "plugin" ? `plugin:${pluginId}` : ctx.origin,
         effects,
         callback,
         operationId,
       );
+      verify?.();
+      return result;
     } catch (error) {
       if (!effects.length) throw error;
-      this.adapters.notes.reconcileEffects(effects);
-      const noteEffects = new Set(
+      // A reconciliation failure must not erase the actual journal or turn an
+      // admitted partial write into an unstructured/no-effect failure.
+      let reconciliationFailed = false;
+      try {
+        this.adapters.notes.reconcileEffects(effects);
+      } catch {
+        reconciliationFailed = true;
+      }
+      const changedFiles = new Set(
         effects.flatMap(
           (
             effect,
           ) => [effect.path, ...(effect.oldPath ? [effect.oldPath] : [])],
-        ).filter((filename) => filename.endsWith(MARKDOWN_EXT)),
+        ),
       );
       const completedPaths: string[] = [];
-      for (const filename of noteEffects) {
+      for (const filename of changedFiles) {
         const relative = this.#vaultRelative(filename);
         if (relative === null) continue;
+        if (!relative.endsWith(MARKDOWN_EXT)) {
+          completedPaths.push(relative);
+          continue;
+        }
         const notePath = relative.slice(0, -MARKDOWN_EXT.length);
         completedPaths.push(notePath);
+        const finalEffect = effects.findLast((effect) =>
+          effect.path === filename
+        );
+        if (finalEffect?.kind === "remove") {
+          this.adapters.lifecycle.recordManagedDelete(relative);
+          this.adapters.lifecycle.observe(
+            this.#fact(operationId, "delete", ctx, {
+              path: notePath,
+              before: { path: notePath, contentAvailable: false },
+              after: null,
+              metadata: { partial: true },
+            }),
+          );
+          continue;
+        }
         try {
           const after = this.adapters.notes.get(notePath);
           this.#recordManaged(notePath);
@@ -1102,13 +1426,18 @@ export class NoteOperations {
               metadata: { partial: true },
             }),
           );
-        } catch {
-          this.adapters.lifecycle.recordManagedDelete(notePath + MARKDOWN_EXT);
+        } catch (readError) {
+          if (readError instanceof NoteNotFoundError) {
+            this.adapters.lifecycle.recordManagedDelete(
+              notePath + MARKDOWN_EXT,
+            );
+          }
         }
       }
       const metadata = {
         code: "operation_partial",
         effects: effects.map((effect) => ({ ...effect })),
+        ...(reconciliationFailed ? { reconciliationFailed: true } : {}),
       };
       this.adapters.lifecycle.observe(
         this.#fact(operationId, "operation-error", ctx, {
@@ -1121,7 +1450,19 @@ export class NoteOperations {
         500,
         "operation_partial",
         "Storage effects were applied, but the operation could not be fully reconciled; inspect the actual effects before retrying.",
-        { operationId, partial: { completedPaths } },
+        {
+          operationId,
+          partial: {
+            completedPaths,
+            ...(failure
+              ? {
+                failedPath:
+                  this.#vaultRelative(failure.path)?.replace(/\.md$/, "") ??
+                    failure.path,
+              }
+              : {}),
+          },
+        },
       );
     }
   }

@@ -25,8 +25,15 @@ import type { ActionReceipt } from "../server/plugins/contracts.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import { pluginOperationsFixture } from "./helpers/plugin_operations_fixture.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
+import resolveConflict from "../server/api/endpoints/_/api/conflicts/%23id/resolve/post.ts";
+import type { PathfinderRequest } from "@pathfinder/pathfinder";
 
-type Base = "absent" | "version|text" | "host-read" | "token";
+type Base =
+  | "absent"
+  | "version|text"
+  | "host-read"
+  | "token"
+  | "pair-of-version-bases";
 type Stale = "refused" | "copy|refuse" | "merge|copy|refuse" | "n/a";
 interface Writer {
   base: Base;
@@ -39,6 +46,10 @@ const REGISTRY: Record<string, Writer> = {
   "operations.createNote": { base: "absent", stale: "refused" },
   "operations.updateNote": { base: "version|text", stale: "merge|copy|refuse" },
   "operations.deleteNote": { base: "version|text", stale: "refused" },
+  "operations.resolveConflict": {
+    base: "pair-of-version-bases",
+    stale: "refused",
+  },
   "operations.uploadFile": { base: "absent", stale: "n/a" },
   "operations.rewriteRefs": { base: "host-read", stale: "refused" },
   "operations.writeExternalFile": {
@@ -65,6 +76,10 @@ const REGISTRY: Record<string, Writer> = {
   "rest.notes/#...path/delete.ts": { base: "version|text", stale: "refused" },
   "rest.files/post.ts": { base: "absent", stale: "n/a" },
   "rest.files/rewrite-refs/post.ts": { base: "host-read", stale: "refused" },
+  "rest.conflicts/#id/resolve/post.ts": {
+    base: "pair-of-version-bases",
+    stale: "refused",
+  },
 };
 
 /** NoteOperations methods that do not write. */
@@ -309,5 +324,82 @@ Deno.test("writer registry: plugin actions refuse a missing base and honour a st
     assertEquals(Deno.readTextFileSync(`${vault}/note.md`), "outside");
   } finally {
     await b.close();
+  }
+});
+
+Deno.test("writer registry: every resolution action and REST writer refuses missing/stale pair bases", async () => {
+  const f = hubOperationsFixture();
+  try {
+    Deno.writeTextFileSync(`${f.vault}/original.md`, "keeper");
+    Deno.writeTextFileSync(`${f.vault}/copy.md`, "loser");
+    f.hub.recordConflict({
+      id: "reviewed",
+      path: "original.md",
+      copyPath: "copy.md",
+      peer: "globnotes",
+      reason: "stale-base",
+      state: "open",
+      createdAt: "now",
+      resolvedAt: null,
+    });
+    const base = {
+      original: {
+        kind: "version",
+        version: versionOf(new TextEncoder().encode("keeper")),
+      },
+      copy: {
+        kind: "version",
+        version: versionOf(new TextEncoder().encode("loser")),
+      },
+    };
+    for (const action of ["original", "copy", "both", "merge"]) {
+      for (const member of ["original", "copy"] as const) {
+        for (const missing of [true, false]) {
+          const body = {
+            action,
+            revision: f.hub.conflict("reviewed")!.revision,
+            base: {
+              ...base,
+              [member]: missing
+                ? undefined
+                : { kind: "version", version: "0".repeat(64) },
+            },
+            ...(action === "merge" ? { content: "draft" } : {}),
+          };
+          const operation = await f.operations.resolveConflict(
+            "reviewed",
+            body,
+            f.api(),
+          ).catch((e) => e);
+          assertEquals(
+            [operation.status, operation.code],
+            missing ? [428, "base_required"] : [409, "conflict_stale"],
+          );
+          const response = await resolveConflict(
+            {
+              _raw: new Request(
+                "http://fixture/_/api/conflicts/reviewed/resolve",
+                { method: "POST" },
+              ),
+              params: { id: "reviewed" },
+              body: { json: () => Promise.resolve(body) },
+            } as unknown as PathfinderRequest<{ id: string }>,
+          );
+          assertEquals(response.status, missing ? 428 : 409);
+          assertEquals(
+            (await response.json()).code,
+            missing ? "base_required" : "conflict_stale",
+          );
+          assertEquals(
+            Deno.readTextFileSync(`${f.vault}/original.md`),
+            "keeper",
+          );
+          assertEquals(Deno.readTextFileSync(`${f.vault}/copy.md`), "loser");
+          assertEquals(f.hub.conflict("reviewed")!.state, "open");
+        }
+      }
+    }
+  } finally {
+    f.close();
   }
 });

@@ -235,6 +235,15 @@ checks metadata-only invalidations, polling and shared stream cleanup. Client
 metadata cursors, reconnect/reset snapshots and SSE/poll translation. Run these
 through `.devcontainer/run.sh`; browser acceptance uses the HTTP domain above.
 
+`tests/hub_conflict_resolution_test.ts` drives all four resolution effects on
+real files, both required bases, stale keeper/loser/rename, concurrent decisions,
+guard cancellation and authority waits, hidden/foreign records, exact binary and
+large bodies, partial replacement/removal/reconciliation, index/cache/facts and
+asynchronous displacement admission. `hub_conflict_api_test.ts` also checks the
+real HTTP routes through disk and ordinary note consumers. The writer registry
+lists the operation and endpoint as pair-of-version-bases writers with stale
+refusal; every action's missing/stale base coverage lives in the resolution test.
+
 | # | Run | Where |
 |---|---|---|
 | 1 | Commit check | `~/TemporaryFiles/globnotes/validation/<stamp>-pre-commit-<tree12>/`: `tree.txt`, `base.txt`, `run/logs/` (`staged.z`, `files.z`, `selection.json`, gate logs, `timings.jsonl`, `summary.txt`, launcher logs) and JSON results under `run/artifacts/` |

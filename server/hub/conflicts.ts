@@ -5,6 +5,95 @@ import { guessType } from "../files/mimetypes.ts";
 import { readableVaultPath } from "./browser_changes.ts";
 import type { VaultHub } from "./hub.ts";
 import type { Conflict } from "./types.ts";
+import { type Base, checkBase, parseBase } from "./gate.ts";
+import { baseRequired, OperationError } from "../plugins/errors.ts";
+
+export type ConflictAction = "original" | "copy" | "both" | "merge";
+export interface ConflictResolution {
+  action: ConflictAction;
+  revision: number;
+  base: {
+    original: Base & { kind: "version" };
+    copy: Base & { kind: "version" };
+  };
+  content?: string;
+}
+export type ConflictReceipt =
+  & {
+    status: "settled";
+    id: string;
+    revision: number;
+  }
+  & ({ alreadyResolved: true } | {
+    action: ConflictAction;
+    remaining: { path: string; version: string }[];
+    removed: string[];
+  });
+
+/** The same validation owns REST and in-process admission. No caller paths. */
+export function parseResolution(value: unknown): ConflictResolution {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "Resolution must be an object");
+  }
+  const raw = value as Record<string, unknown>;
+  if (raw.base === undefined) throw baseRequired();
+  if (!raw.base || typeof raw.base !== "object" || Array.isArray(raw.base)) {
+    throw new HttpError(400, "base must contain both version bases");
+  }
+  const base = raw.base as Record<string, unknown>;
+  if (base.original === undefined || base.copy === undefined) {
+    throw baseRequired();
+  }
+  try {
+    const original = parseBase(base.original), copy = parseBase(base.copy);
+    if (original.kind !== "version" || copy.kind !== "version") {
+      throw new TypeError("Both version bases are required");
+    }
+    if (!Number.isSafeInteger(raw.revision) || (raw.revision as number) < 1) {
+      throw new TypeError("Invalid conflict revision");
+    }
+    if (!["original", "copy", "both", "merge"].includes(raw.action as string)) {
+      throw new TypeError("Invalid resolution action");
+    }
+    if (
+      (raw.action === "merge" && typeof raw.content !== "string") ||
+      (raw.action !== "merge" && raw.content !== undefined)
+    ) throw new TypeError("Only merge accepts content");
+    if (
+      Object.keys(raw).some((k) =>
+        !["action", "revision", "base", "content"].includes(k)
+      ) || Object.keys(base).some((k) => !["original", "copy"].includes(k))
+    ) throw new TypeError("Unexpected resolution fields");
+    return {
+      action: raw.action as ConflictAction,
+      revision: raw.revision as number,
+      base: { original, copy },
+      ...(raw.action === "merge" ? { content: raw.content as string } : {}),
+    };
+  } catch (error) {
+    throw new HttpError(400, (error as Error).message);
+  }
+}
+
+export class ConflictStaleError extends OperationError {
+  constructor(readonly id: string) {
+    super(
+      409,
+      "conflict_stale",
+      "These files changed. Review current versions before resolving.",
+    );
+  }
+}
+export function assertReviewed(
+  detail: ConflictDetail,
+  request: ConflictResolution,
+): asserts detail is Extract<ConflictDetail, { state: "open" }> {
+  if (
+    detail.state !== "open" || detail.revision !== request.revision ||
+    checkBase(request.base.original, detail.original).status !== "current" ||
+    checkBase(request.base.copy, detail.copy).status !== "current"
+  ) throw new ConflictStaleError(detail.id);
+}
 
 export interface ConflictContext {
   hub: VaultHub;
@@ -76,7 +165,10 @@ export function findConflict(context: ConflictContext, id: string): Conflict {
 const INLINE_BYTES = 16 * 1024 * 1024;
 /** One file handle supplies both the raw-byte hash and optional complete text.
  * Stream large/binary members without retaining their content. Preserve BOM. */
-function readVersion(context: ConflictContext, name: string): ConflictVersion {
+export function readConflictVersion(
+  context: ConflictContext,
+  name: string,
+): ConflictVersion {
   const filename = readableVaultPath(context.hub.root, context.stateRoot, name);
   if (!filename) throw new HttpError(404, "Conflict not found.");
   const handle = Deno.openSync(filename, { read: true });
@@ -134,8 +226,8 @@ export function readConflict(
   let record = findConflict(context, id);
   if (record.state === "open") {
     try {
-      const original = readVersion(context, record.path!),
-        copy = readVersion(context, record.copyPath!);
+      const original = readConflictVersion(context, record.path!),
+        copy = readConflictVersion(context, record.copyPath!);
       return { id, revision: record.revision, state: "open", original, copy };
     } catch (error) {
       if (!(error instanceof Deno.errors.NotFound)) throw error;
