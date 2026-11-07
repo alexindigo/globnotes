@@ -11,7 +11,11 @@
  */
 
 import * as path from "@std/path";
-import { isValidNotePath, resolveInRoot } from "../helpers.ts";
+import {
+  isValidNotePath,
+  resolveInRoot,
+  resolveReadableInRoot,
+} from "../helpers.ts";
 import { logger } from "../logger.ts";
 import { guessType } from "./mimetypes.ts";
 import { VaultEffects } from "../hub/effects.ts";
@@ -118,7 +122,8 @@ export class FileServing {
     }
     let filepath: string;
     try {
-      filepath = resolveInRoot(this.storagePath, relPath);
+      // Existing vault files share the notes' readable-name containment rule.
+      filepath = resolveReadableInRoot(this.storagePath, relPath);
     } catch {
       throw new ValueError(`'${relPath}' resolves outside the root directory`);
     }

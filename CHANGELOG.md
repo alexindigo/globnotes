@@ -72,6 +72,11 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Existing attachments with special filenames download and follow note moves.
+Preview, move/relink and global reference rewriting compare decoded filenames
+once and write encoded URL paths, including literal percent names. Attachment
+moves retain base checks, non-overwrite naming and hub change notifications.
+
 Opening an existing search index no longer takes an unnecessary writer lock or
 misreports a busy database as missing FTS5 support. Other SQLite failures keep
 their original diagnosis, and failed initialization closes its connection.

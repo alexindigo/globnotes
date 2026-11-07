@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { resolveInRoot, resolveReadableInRoot } from "../helpers.ts";
+import { resolveReadableInRoot } from "../helpers.ts";
 import { within } from "./paths.ts";
 import type { ChangeEntry } from "./types.ts";
 
@@ -14,9 +14,7 @@ export function browserChange(
   const visible = (name: string | null) => {
     if (!name) return false;
     try {
-      const resolved = name.endsWith(".md")
-        ? resolveReadableInRoot(root, name)
-        : resolveInRoot(root, name);
+      const resolved = resolveReadableInRoot(root, name);
       return !within(stateRoot, resolved);
     } catch {
       return false;

@@ -159,10 +159,14 @@ Deno.test("files: API get", async (t) => {
       },
     );
 
-    await t.step("invalid path chars → 400", async () => {
+    await t.step("existing punctuation uses readable names", async () => {
+      await Deno.writeTextFile(
+        path.join(server.vault, "bad|name.png"),
+        "existing",
+      );
       const res = await api("bad%7Cname.png");
-      assertEquals(res.status, 400);
-      await res.body?.cancel();
+      assertEquals(res.status, 200);
+      assertEquals(await res.text(), "existing");
     });
   } finally {
     await cleanup(server);
