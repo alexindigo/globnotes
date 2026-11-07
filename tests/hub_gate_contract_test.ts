@@ -50,6 +50,10 @@ const REGISTRY: Record<string, Writer> = {
     base: "pair-of-version-bases",
     stale: "refused",
   },
+  "operations.applyDriverImport": {
+    base: "host-read",
+    stale: "merge|copy|refuse",
+  },
   "operations.uploadFile": { base: "absent", stale: "n/a" },
   "operations.rewriteRefs": { base: "host-read", stale: "refused" },
   "operations.writeExternalFile": {

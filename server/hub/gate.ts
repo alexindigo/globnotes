@@ -19,6 +19,8 @@ import {
 } from "./effects.ts";
 import { createUuid } from "../../shared/uuid.ts";
 import type { DisplacementOffer, Versioning } from "./versioning.ts";
+import type { PeerAcknowledgement } from "./store.ts";
+import type { Peer } from "./types.ts";
 
 /** Displaced files only: a displaced directory (an attachment folder moved
  * with its note) contributes each regular file below it, with its own
@@ -273,6 +275,8 @@ export class HubGate {
     journal: StorageEffect[],
     effect: () => T,
     operationId = createUuid(),
+    peer: Peer = "globnotes",
+    ack?: PeerAcknowledgement,
   ): T {
     const hub = this.adapters.hub;
     const token = hub?.expect(paths);
@@ -284,7 +288,7 @@ export class HubGate {
       });
     } finally {
       try {
-        if (token) hub!.record(token, journal, origin);
+        if (token) hub!.record(token, journal, origin, peer, ack);
       } finally {
         if (committed.length) this.adapters.versioning?.()?.enqueue(committed);
       }

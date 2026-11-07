@@ -6,8 +6,14 @@ import { logger } from "../logger.ts";
 import type { StorageEffect } from "./effects.ts";
 import { pathKey, within } from "./paths.ts";
 import { HubScanner, observeFile } from "./scanner.ts";
-import { HubStore } from "./store.ts";
-import type { ChangeEntry, Conflict, Mutation, ScanStats } from "./types.ts";
+import { HubStore, type PeerAcknowledgement } from "./store.ts";
+import type {
+  ChangeEntry,
+  Conflict,
+  Mutation,
+  Peer,
+  ScanStats,
+} from "./types.ts";
 
 export type Expectation = symbol;
 export class VaultHub {
@@ -33,6 +39,7 @@ export class VaultHub {
     notesPath: string,
     statePath: string,
     environment: Environment = processEnvironment,
+    options: { changeLimit?: number } = {},
   ) {
     this.#configuredRoot = path.resolve(notesPath);
     this.root = Deno.realPathSync(notesPath);
@@ -46,7 +53,7 @@ export class VaultHub {
     if (!(this.#intervalMs > 0) || !Number.isFinite(this.#intervalMs)) {
       throw new Error("GLOBNOTES_HUB_SCAN_INTERVAL must be positive");
     }
-    this.store = new HubStore(statePath);
+    this.store = new HubStore(statePath, options);
     this.#stateRoot = Deno.realPathSync(statePath);
     this.#scanner = new HubScanner(
       this.root,
@@ -142,6 +149,8 @@ export class VaultHub {
     token: Expectation,
     effects: readonly StorageEffect[],
     origin: string,
+    peer: Peer = "globnotes",
+    ack?: PeerAcknowledgement,
   ): void {
     if (!this.#expectations.has(token)) {
       throw new Error("Unknown hub expectation");
@@ -195,7 +204,7 @@ export class VaultHub {
           mutations.set(pathKey(relative), { path: relative });
         }
       }
-      entries = this.store.apply([...mutations.values()], "globnotes", origin);
+      entries = this.store.apply([...mutations.values()], peer, origin, ack);
     } finally {
       this.#expectations.delete(token);
       this.#publishConflicts(revision);

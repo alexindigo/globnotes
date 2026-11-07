@@ -12,12 +12,23 @@ import type {
 } from "./types.ts";
 
 export const CHANGE_LIMIT = 100_000;
+/** Runs synchronously within the file metadata transaction, before publication. */
+export type PeerAcknowledgement = (entries: readonly ChangeEntry[]) => void;
 
 /** Metadata only. Plaintext deletion scrubbing and version updates commit together. */
 export class HubStore {
   readonly db: DatabaseSync;
   readonly secret: string;
-  constructor(statePath: string) {
+  constructor(
+    statePath: string,
+    private readonly options: { changeLimit?: number } = {},
+  ) {
+    if (
+      !Number.isSafeInteger(options.changeLimit ?? CHANGE_LIMIT) ||
+      (options.changeLimit ?? CHANGE_LIMIT) < 1
+    ) {
+      throw new TypeError("changeLimit must be a positive integer");
+    }
     Deno.mkdirSync(statePath, { recursive: true });
     this.db = new DatabaseSync(path.join(statePath, "hub.sqlite"));
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;
@@ -38,7 +49,7 @@ export class HubStore {
     const version = this.db.prepare(
       "SELECT value FROM meta WHERE key='schema_version'",
     ).get();
-    if (version && !["1", "2", "3"].includes(version.value as string)) {
+    if (version && !["1", "2", "3", "4"].includes(version.value as string)) {
       throw new Error("Unsupported hub schema");
     }
     this.db.exec(`BEGIN IMMEDIATE;
@@ -58,9 +69,32 @@ export class HubStore {
         "ALTER TABLE conflicts ADD COLUMN revision INTEGER NOT NULL DEFAULT 1",
       );
     }
-    this.db.exec(
-      "INSERT OR REPLACE INTO meta VALUES ('schema_version','3'); COMMIT;",
-    );
+    for (
+      const [table, name, definition] of [
+        ["peers", "plugin", "TEXT"],
+        ["peers", "settings", "TEXT NOT NULL DEFAULT '{}'"],
+        ["peers", "enabled", "INTEGER NOT NULL DEFAULT 0"],
+        ["peers", "revision", "INTEGER NOT NULL DEFAULT 1"],
+        ["changes", "batch", "INTEGER"],
+      ]
+    ) {
+      if (
+        !this.db.prepare(`PRAGMA table_info(${table})`).all().some((r) =>
+          r.name === name
+        )
+      ) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+      }
+    }
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS peer_sync(peer TEXT PRIMARY KEY,
+        endpoint_id TEXT, endpoint_epoch TEXT, scope TEXT, cursor TEXT,
+        export_seq INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS peer_files(peer TEXT NOT NULL, path_key TEXT NOT NULL,
+        version TEXT, revision TEXT, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+        next_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(peer,path_key));
+      INSERT OR REPLACE INTO meta VALUES ('schema_version','4'); COMMIT;
+    `);
     const secret = [...crypto.getRandomValues(new Uint8Array(32))]
       .map((v) => v.toString(16).padStart(2, "0")).join("");
     this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('path_secret',?)").run(
@@ -95,6 +129,7 @@ export class HubStore {
     mutations: Mutation[],
     peer: Peer,
     origin: string | null,
+    ack?: PeerAcknowledgement,
   ): ChangeEntry[] {
     const entries: ChangeEntry[] = [];
     let scrubbed = false;
@@ -163,6 +198,7 @@ export class HubStore {
         vector[peer] = (vector[peer] ?? 0) + 1;
         const entry: ChangeEntry = {
           seq: 0,
+          batch: 0,
           path: mutation.path,
           pathKey: keyed,
           kind: mutation.oldPath
@@ -198,6 +234,11 @@ export class HubStore {
             entry.at,
           ).lastInsertRowid,
         );
+        entry.batch = entries[0]?.batch ?? entry.seq;
+        this.db.prepare("UPDATE changes SET batch=? WHERE seq=?").run(
+          entry.batch,
+          entry.seq,
+        );
         if (mutation.oldPath) {
           this.db.prepare("DELETE FROM files WHERE key=?").run(
             pathKey(mutation.oldPath),
@@ -231,8 +272,11 @@ export class HubStore {
         // Transient committed notifications retain deleted names; persisted history does not.
         entries.push(entry);
       }
+      ack?.(entries);
       this.db.exec(`DELETE FROM changes WHERE seq <=
-        (SELECT seq FROM changes ORDER BY seq DESC LIMIT 1 OFFSET ${CHANGE_LIMIT})`);
+        (SELECT seq FROM changes ORDER BY seq DESC LIMIT 1 OFFSET ${
+        this.options.changeLimit ?? CHANGE_LIMIT
+      })`);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -252,6 +296,7 @@ export class HubStore {
       entries: this.db.prepare("SELECT * FROM changes WHERE seq>? ORDER BY seq")
         .all(cursor).map((r) => ({
           seq: r.seq as number,
+          batch: (r.batch ?? r.seq) as number,
           path: r.path as string | null,
           pathKey: r.path_key as string,
           kind: r.kind as ChangeEntry["kind"],

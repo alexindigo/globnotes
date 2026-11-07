@@ -61,10 +61,15 @@ import {
   readConflictVersion,
 } from "../hub/conflicts.ts";
 import { readableVaultPath } from "../hub/browser_changes.ts";
+import { DriverPeers, PeerRevisionConflict } from "../hub/drivers/peers.ts";
+import { type DriverImport, planImport } from "../hub/drivers/importer.ts";
+import { driverTarget } from "../hub/drivers/paths.ts";
+import type { PeerAcknowledgement } from "../hub/store.ts";
 
 type SaveResult = NonNullable<Note["saveResult"]>;
 
 interface OperationCorrelation {
+  peer?: string;
   causalParent?: string;
   causalPlugin?: string;
   causalDepth?: number;
@@ -136,6 +141,7 @@ export class NoteOperations {
       causalPlugin: ctx.causalPlugin,
       causalDepth: ctx.causalDepth,
       ...extra,
+      ...(ctx.peer ? { metadata: { ...extra.metadata, peer: ctx.peer } } : {}),
     };
   }
 
@@ -1340,6 +1346,268 @@ export class NoteOperations {
   noteExists(notePath: string): boolean {
     return this.#exists(notePath);
   }
+  /** Remote input has no requester to guard. One lock, commit gate, file batch
+   * and transaction acknowledge only the dispositions actually verified. */
+  async applyDriverImport(
+    peer: string,
+    members: readonly DriverImport[],
+    assertCurrent: () => void = () => {},
+  ): Promise<{ path: string; status: string; copyPath?: string }[]> {
+    const operationId = createUuid(),
+      ctx: OperationOrigin = { origin: "external", peer };
+    this.#admission(ctx, operationId);
+    const hub = this.adapters.hub;
+    if (!hub) throw new HttpError(503, "Hub unavailable");
+    const peers = new DriverPeers(hub.store);
+    const instance = peers.instance(peer);
+    if (!instance?.enabled) throw new HttpError(403, "Sync instance is off");
+    if (members.some((member) => !Object.hasOwn(member, "expectedVersion"))) {
+      throw baseRequired(operationId);
+    }
+    if (
+      members.length > 256 ||
+      members.reduce((n, m) => n + (m.bytes?.length ?? 0), 0) > 64 * 1024 * 1024
+    ) throw new TypeError("group_split required");
+    const inputs = members.map((member) => ({
+      ...member,
+      bytes: member.bytes?.slice(),
+    }));
+    if (
+      new Set(inputs.map((member) => member.path.normalize("NFC"))).size !==
+        inputs.length
+    ) {
+      throw new TypeError("Duplicate driver import path");
+    }
+    return await this.#lock.run(async () => {
+      this.#admission(ctx, operationId);
+      assertCurrent();
+      const epoch = this.adapters.lifecycle.epoch;
+      const results: { path: string; status: string; copyPath?: string }[] = [];
+      const effects: StorageEffect[] = [];
+      const completed: {
+        input: DriverImport;
+        status: string;
+        version: string | null;
+        copyPath?: string;
+        reason?: string;
+      }[] = [];
+      const planned = inputs.flatMap((input) => {
+        try {
+          const absolute = driverTarget(hub, input.path);
+          if (input.bytes && input.bytes.length > 16 * 1024 * 1024) {
+            throw new TypeError("too_large");
+          }
+          hub.scanNow([input.path]);
+          let bytes: Uint8Array | null = null;
+          try {
+            bytes = Deno.readFileSync(absolute);
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+          }
+          const version = bytes ? versionOf(bytes) : null;
+          if (version !== input.expectedVersion) {
+            results.push({ path: input.path, status: "replan" });
+            return [];
+          }
+          const disposition = planImport(
+            input,
+            peers.file(peer, input.path),
+            bytes ? { version: version!, bytes } : null,
+            peers.deleted(input.path),
+          );
+          const copyPath = disposition.kind === "conflict"
+            ? conflictCopyPath(
+              input.path,
+              peer,
+              this.adapters.now?.() ?? new Date(),
+              (candidate) => occupied(path.join(hub.root, candidate)),
+            )
+            : undefined;
+          return [{ input, absolute, version, disposition, copyPath }];
+        } catch (error) {
+          if (!(error instanceof TypeError)) throw error;
+          results.push({ path: input.path, status: error.message });
+          return [];
+        }
+      });
+      // Attachments before notes, removals last. Network/body acquisition is over.
+      planned.sort((a, b) =>
+        Number(a.disposition.kind === "delete") -
+          Number(b.disposition.kind === "delete") ||
+        Number(a.input.path.toLowerCase().endsWith(".md")) -
+          Number(b.input.path.toLowerCase().endsWith(".md"))
+      );
+      const expected = planned.flatMap(
+        (item) => [
+          item.absolute,
+          ...(item.copyPath ? [path.join(hub.root, item.copyPath)] : []),
+        ],
+      );
+      await this.#commitGate(
+        epoch,
+        [],
+        () => {
+          assertCurrent();
+          if (peers.instance(peer)?.revision !== instance.revision) {
+            throw new PeerRevisionConflict();
+          }
+          // Re-plan just the members whose on-disk bytes changed while waiting.
+          for (let i = planned.length - 1; i >= 0; i--) {
+            const item = planned[i];
+            driverTarget(hub, item.input.path);
+            let current: string | null = null;
+            try {
+              current = versionOf(Deno.readFileSync(item.absolute));
+            } catch (error) {
+              if (!(error instanceof Deno.errors.NotFound)) throw error;
+            }
+            if (current !== item.version) {
+              results.push({ path: item.input.path, status: "replan" });
+              planned.splice(i, 1);
+            } else if (item.copyPath) driverTarget(hub, item.copyPath);
+          }
+        },
+        () =>
+          this.#captureStorage(
+            operationId,
+            ctx,
+            () => {
+              for (const item of planned) {
+                const { input, disposition, absolute, copyPath } = item;
+                let version = input.bytes ? versionOf(input.bytes) : null;
+                if (
+                  disposition.kind === "write" ||
+                  disposition.kind === "conflict"
+                ) {
+                  const target = copyPath
+                    ? path.join(hub.root, copyPath)
+                    : absolute;
+                  this.adapters.notes.effects.mkdirParents(target);
+                  if (
+                    disposition.kind === "write" && item.version !== null
+                  ) {
+                    this.adapters.notes.effects.replace(
+                      target,
+                      disposition.bytes,
+                    );
+                  } else {
+                    this.adapters.notes.effects.writeNew(
+                      target,
+                      disposition.bytes,
+                    );
+                  }
+                  if (
+                    versionOf(Deno.readFileSync(target)) !==
+                      versionOf(disposition.bytes)
+                  ) throw new Error("Driver effect could not be verified");
+                  // Mapping describes the endpoint bytes, including after a merge/copy.
+                  version = versionOf(input.bytes!);
+                } else if (disposition.kind === "delete") {
+                  this.adapters.notes
+                    .effects.remove(absolute);
+                }
+                completed.push({
+                  input,
+                  status: disposition.kind,
+                  version,
+                  copyPath,
+                  ...(disposition.kind === "conflict"
+                    ? { reason: disposition.reason }
+                    : {}),
+                });
+              }
+              this.adapters.notes.reconcileEffects(effects);
+            },
+            effects,
+            expected,
+            undefined,
+            undefined,
+            undefined,
+            peer,
+            () => {
+              for (const { input, status, version } of completed) {
+                if (status === "unchanged") continue;
+                if (status === "drop" || status === "delete") {
+                  peers.drop(peer, peers.key(input.path));
+                } else {
+                  peers.acknowledge(
+                    peer,
+                    input.path,
+                    version,
+                    input.revision,
+                    status === "held" ? "held" : "synced",
+                  );
+                }
+              }
+            },
+          ),
+        operationId,
+        ctx,
+      );
+      for (const item of completed) {
+        results.push({
+          path: item.input.path,
+          status: item.status,
+          ...(item.copyPath ? { copyPath: item.copyPath } : {}),
+        });
+        if (item.copyPath) {
+          hub.recordConflict({
+            id: createUuid(),
+            path: item.input.path,
+            copyPath: item.copyPath,
+            peer,
+            reason: item.reason!,
+            state: "open",
+            createdAt: new Date().toISOString(),
+            resolvedAt: null,
+          });
+        }
+      }
+      for (const effect of effects) {
+        if (effect.kind === "mkdir") continue;
+        const relative = hub.relativePath(effect.path)!;
+        if (relative.endsWith(MARKDOWN_EXT)) {
+          const notePath = relative.slice(0, -MARKDOWN_EXT.length);
+          if (effect.kind === "remove") {
+            this.adapters.lifecycle.recordManagedDelete(relative);
+            this.adapters.lifecycle.observe(
+              this.#fact(operationId, "delete", ctx, {
+                path: notePath,
+                after: null,
+                metadata: { peer },
+              }),
+            );
+          } else {
+            this.#recordManaged(notePath);
+            const member = planned.find((item) =>
+              item.absolute === effect.path
+            );
+            this.adapters.lifecycle.observe(
+              this.#fact(
+                operationId,
+                member?.version ? "save" : "create",
+                ctx,
+                {
+                  path: notePath,
+                  after: snapshot(this.adapters.notes.get(notePath)),
+                  metadata: { peer },
+                },
+              ),
+            );
+          }
+        } else if (effect.kind === "write") {
+          this.adapters.lifecycle.observe(
+            this.#fact(operationId, "file-write", ctx, {
+              path: effect.path,
+              metadata: { peer },
+            }),
+          );
+        }
+      }
+      this.#syncEffects(operationId, ctx, effects);
+      return results;
+    });
+  }
   #requesterRequired(
     ctx: OperationOrigin,
     requester: RequesterAuthority | undefined,
@@ -1363,6 +1631,8 @@ export class NoteOperations {
     pluginId = ctx.causalPlugin,
     failure?: { path: string },
     verify?: () => void,
+    peer = "globnotes",
+    ack?: PeerAcknowledgement,
   ): T {
     try {
       const result = this.#gate.apply(
@@ -1371,6 +1641,8 @@ export class NoteOperations {
         effects,
         callback,
         operationId,
+        peer,
+        ack,
       );
       verify?.();
       return result;

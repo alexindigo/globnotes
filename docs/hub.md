@@ -4,8 +4,9 @@
 The vault folder is the only content store. `hub.sqlite` in the configured
 state directory stores hashes, sizes, mtimes, vectors and change metadata,
 never note contents or previous versions. It uses `node:sqlite`, WAL, and
-schema version 3 (versions 1 and 2 migrate in place). Peers are `local` (outside programs) and `globnotes`
-(managed writes, with `api` or `plugin:<id>` origin detail).
+schema version 4 (versions 1 through 3 migrate in place). Peers are `local`
+(outside programs), `globnotes` (managed writes, with `api` or `plugin:<id>`
+origin detail), and configured sync driver instance ids.
 
 ## Observations
 
@@ -138,6 +139,66 @@ predates retained history. The newest 100,000 entries are retained.
 synchronously, with failing subscribers isolated. Live deletion notifications
 carry the path for consumers; the persisted log has only its anonymous key.
 The hub retains no content for replay.
+
+## Sync peer metadata (M5)
+
+Each configured driver instance is a separate peer and vector dimension, even
+when several instances use the same plugin. New instances are off. Their ids
+are permanent slugs, never reused after removal; `local` and `globnotes` remain
+reserved. Removal retires the peer and clears its settings and delivery metadata,
+without changing vault files. Configuration updates use the instance revision.
+
+Schema v4 adds plugin/settings/enabled/revision to `peers`, progress in
+`peer_sync` (endpoint id, epoch, scope, cursor, export sequence), and
+`peer_files` (per-peer keyed path hash, hub version, native revision, delivery
+state, attempts, next retry). No file names or bodies live in those tables.
+Native revision tokens must not embed paths. A new endpoint id or epoch resets
+only that peer's mappings and cursors; scope changes detach exclusions and forbid
+omission-based deletion for that pass.
+
+`changes.batch` is the first sequence of a metadata transaction. Migrated rows
+without a batch stand alone. `HubStore.apply` runs the importing peer's
+acknowledgement inside the same SQLite transaction as its file changes, before
+subscribers run. An acknowledgement error rolls back both metadata changes.
+`VaultHub.record` and `HubGate.apply` accept the bound peer and acknowledgement;
+existing writers retain `globnotes` by default.
+
+`NoteOperations.applyDriverImport` owns driver application: the normal note lock,
+lifecycle admission and commit gate, one synchronous hub gate pass per ready
+group, attachments before notes and deletions last. The host supplies the peer;
+driver messages do not choose it. Members carry the hub version observed while
+planning; a change during a wait requires re-planning that member. Pre-guards do
+not run for remote input: post-facts use `origin: external` and `metadata.peer`.
+Actual effects reconcile cache/index and reach the normal asynchronous
+best-effort versioning path. All incoming bytes and native historical base text
+live only for the call.
+
+Equal bytes are adopted without a write. A changed remote revision replaces a
+still-matching mapped hub version. Divergence with a verifiable historical text
+base can merge; otherwise the incoming bytes become a sibling conflict copy
+named with the instance id (`stale-base`, or `unknown-base` on first collision).
+Mapping acknowledgements describe what the endpoint holds, not merged bytes or
+the original file. The exporter compares current hub versions with mappings:
+equal means no export, regardless of authorship. It never fabricates a driver
+edit when that endpoint adopts a hub version.
+
+A deleted-here file that returns with different remote bytes is held rather
+than recreated; explicit Restore can create it. An unchanged mapped remote
+version instead leaves a remote deletion obligation. Deleted names remain
+transient: after restart, a nameless mapping is `delete-pending` until discovery
+supplies its name. Snapshot omission proves absence only for a complete,
+comparable pass with no unknown/locked observations; an unexpectedly empty
+remote infers no deletions and requires a decision. A remote deletion concurrent
+with a hub modification keeps the modification and drops its old mapping so it
+can be recreated there. Excluded, unsupported and held paths are not exported;
+uncertain effects require observation before another send. Oversized files are
+unsupported, never truncated or deleted to make them fit.
+
+Groups share one recorded batch and publication to cooperative hub consumers,
+not filesystem-wide atomic visibility to outside programs. A crash during file
+effects can precede recording; the scanner later observes the actual files as
+local and a subsequent import adopts equal bytes. No rollback overwrites newer
+outside work, and no hub journal retains content for crash replay.
 
 At startup `main.ts` inventories the vault before admitting subscribers, then
 starts the existing background index rebuild. `server/hub/subscribers.ts`

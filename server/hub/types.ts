@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 export type Vector = Record<string, number>;
-export type Peer = "local" | "globnotes";
+export type Peer = string;
 export interface Conflict {
   id: string;
   revision: number;
@@ -25,6 +25,7 @@ export interface FileState {
 export type Observation = Omit<FileState, "vector" | "seq">;
 export interface ChangeEntry {
   seq: number;
+  batch: number;
   path: string | null;
   pathKey: string;
   kind: "created" | "modified" | "deleted" | "renamed";

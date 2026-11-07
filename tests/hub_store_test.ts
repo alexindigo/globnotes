@@ -171,7 +171,7 @@ Deno.test("hub store: migrates v1 metadata in place and scrubs conflicts on eith
     assertEquals(
       store.db.prepare("SELECT value FROM meta WHERE key='schema_version'")
         .get()!.value,
-      "3",
+      "4",
     );
     for (const deleted of ["secret-original.md", "secret-copy.md"]) {
       store.apply(

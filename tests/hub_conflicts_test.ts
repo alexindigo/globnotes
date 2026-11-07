@@ -40,7 +40,7 @@ Deno.test("conflicts: v2 migration retains records and assigns persistent revisi
     assertEquals(
       store.db.prepare("SELECT value FROM meta WHERE key='schema_version'")
         .get()!.value,
-      "3",
+      "4",
     );
     assertEquals(store.conflictRevision(), 0);
     assert(store.closeConflict("old", 1));
