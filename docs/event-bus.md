@@ -75,6 +75,13 @@ including reentrant delivery; `note:edit-start`,
 | 29 | `note:edit-state` (retained) | `{ path, revision, editing, unsaved, canSave }` | `noteController.js` refreshDirtyState |
 | 30 | `vault:change` | `{ seq, path, kind, oldPath?, hash?, peer }` (paths include extensions) | `vaultChanges.js` accepted stream/poll entry |
 | 31 | `vault:reset` | `{ next }` — re-read consumer snapshots after a history gap | `vaultChanges.js` accepted reset |
+| 32 | `vault:conflicts` | `{ revision }` - re-read vault-scoped conflict metadata, including reconnect snapshots | `vaultChanges.js` accepted SSE/poll metadata event |
+
+`vault:conflicts` carries no paths, count or content. Its revision is independent
+of file sequence and cannot advance or suppress a `vault:change`. It is an
+invalidation, not retained state or permission: inbox consumers read the filtered
+list/count, and comparison consumers review current versions. The existing
+connection owns both event domains; reconnects publish a fresh metadata snapshot.
 
 `note:edit-state` never carries note text. `path` is the current requested path;
 `revision` increases per content edit. The controller publishes whenever revision,

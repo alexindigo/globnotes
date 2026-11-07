@@ -226,6 +226,15 @@ directories' `logs/` and JSON artifacts.
 
 ## Evidence
 
+Conflict lifecycle/read coverage lives in `tests/hub_conflicts_test.ts` and
+`tests/hub_conflict_api_test.ts`: automatic schema migration, persistent revisions,
+conditional closure, pre-batch member renames, deletion scrubbing, vault scoping,
+read filtering and exact raw-byte comparison/preview bounds. `hub_changes_test.ts`
+checks metadata-only invalidations, polling and shared stream cleanup. Client
+`vault-changes.test.js` and `vault-changes-transport.test.js` cover independent
+metadata cursors, reconnect/reset snapshots and SSE/poll translation. Run these
+through `.devcontainer/run.sh`; browser acceptance uses the HTTP domain above.
+
 | # | Run | Where |
 |---|---|---|
 | 1 | Commit check | `~/TemporaryFiles/globnotes/validation/<stamp>-pre-commit-<tree12>/`: `tree.txt`, `base.txt`, `run/logs/` (`staged.z`, `files.z`, `selection.json`, gate logs, `timings.jsonl`, `summary.txt`, launcher logs) and JSON results under `run/artifacts/` |

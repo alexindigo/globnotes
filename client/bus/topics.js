@@ -3,6 +3,8 @@ const TOPICS = {
   VAULT_CHANGE: "vault:change",
   // Log gap / anonymous deletion replay: consumers must re-read their snapshot.
   VAULT_RESET: "vault:reset",
+  /** { revision } - metadata invalidation, independent of the file sequence; no paths or content. */
+  VAULT_CONFLICTS: "vault:conflicts",
   NOTE_OPEN: "note:open",
   NOTE_TITLE_CHANGED: "note:title-changed",
   NOTE_CREATE: "note:create",

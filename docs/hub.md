@@ -4,7 +4,7 @@
 The vault folder is the only content store. `hub.sqlite` in the configured
 state directory stores hashes, sizes, mtimes, vectors and change metadata,
 never note contents or previous versions. It uses `node:sqlite`, WAL, and
-schema version 2 (version 1 migrates in place). Peers are `local` (outside programs) and `globnotes`
+schema version 3 (versions 1 and 2 migrate in place). Peers are `local` (outside programs) and `globnotes`
 (managed writes, with `api` or `plugin:<id>` origin detail).
 
 ## Observations
@@ -198,20 +198,54 @@ recreated?}`. A conflict response describes the copy, not the original.
 record and nulls both plaintext paths in the deletion transaction, with the same
 secure-delete/checkpoint policy as the change log. Anonymous path keys remain.
 
+## Conflict metadata and reads (M3)
+
+Each vault owns its conflict records, record `revision` and monotonic metadata
+revision. Schema v3 adds revisions in place; existing records start at 1.
+Creation, conditional closure and member renames increment revisions in the same
+SQLite transaction. No content, base, patch, merge draft or resolution history
+is stored. Keep both closes metadata without changing names or file sequence;
+later deletion still scrubs both member paths of resolved records.
+
+The scanner and managed effects reconcile relationships through `HubStore.apply`.
+An unambiguous rename updates member names and keyed hashes from pre-batch
+identities (including swaps/chains). Ambiguous moves stay delete/create. Deleting
+either member closes and scrubs the relationship; editing it or making both
+files equal does not. Startup, watcher hints and periodic scans repair outside
+changes. Unknown/unreadable is never absence. Multiple copies may share an
+original; relationships close only on actual member deletion or explicit choice.
+
+| # | Authenticated read | Response |
+|---|---|---|
+| 1 | `GET /_/api/conflicts` | `{revision,total,conflicts}`; open rows oldest first, metadata only. Count equals the visible rows |
+| 2 | `GET /_/api/conflicts/:id` | Open: `{id,revision,state:'open',original,copy}`. Each member has `path,version,size,mediaType,preview` and complete `content` only for valid UTF-8 Markdown up to 16 MiB |
+| 3 | Same id after closure | `{id,revision,state:'resolved',resolvedAt}` only; no historical names or content. Unknown/hidden open ids return 404 |
+
+Reads are `Cache-Control: no-store`, scoped to the request's vault hub, and
+project both members through the ordinary browser readable namespace. Hidden,
+reserved, state and descendant-symlink members cannot contribute rows/counts.
+Versions hash the exact raw bytes read with the body, including a BOM and line
+endings. Binary, oversized and invalid UTF-8 bodies are not truncated or decoded
+lossily for merging. Confirmed missing members are reconciled before returning
+closure; other I/O errors propagate. The write gate and its filesystem CAS and
+best-effort versioning limits are unchanged.
+
 ## Browser changes
 
 `GET /_/api/changes` with `Accept: text/event-stream` emits `change` frames
 with a sequence `id` and `{seq,path,kind,oldPath?,hash?,peer}`. Resume through
 `Last-Event-ID` or `?since=N`. Comment heartbeats run every 25 seconds (`CHANGE_STREAM_HEARTBEAT_MS` in
 `shared/vault_changes.ts`).
-`?since=N&poll=1` returns `{entries,next}` or `{gap:true,next}`. Cursors older
+`?since=N&poll=1` returns `{entries,next,conflictRevision}` or
+`{gap:true,next,conflictRevision}`, including metadata-only empty packets. Cursors older
 than retained history, cursors beyond the current log, and replay containing
 anonymous deleted names require a snapshot reset. Live deletion frames retain
 their transient path. Neither transport discloses anonymous keys or origins.
 
 Read authorization is the same as note reads, rechecked before stream emissions
 and heartbeats; expiry and policy changes close streams. Each connection owns
-one hub subscription, disposed on disconnect. Hidden paths, reserved app paths,
+one file and one conflict metadata subscription on the same connection, both
+disposed on disconnect. Hidden paths, reserved app paths,
 canonical state and paths outside the ordinary note/file read namespace are
 filtered. Renames crossing that boundary disclose only the visible side.
 `client/vaultChanges.js` is the single reference-counted connection owner,
@@ -232,6 +266,14 @@ on every origin. Plugin contributions unload at suspension; resume refetches the
 catalog, reactivates contributions and subscribes again. The stream's initial
 `hello` refetches once more, covering changes between the read and subscription.
 Vault changes retain their cursor across suspension.
+
+`event: conflicts` carries only `{revision}`, with no SSE `id`, paths or count.
+It uses the same authenticated emission queue and lifetime as file events and
+sends the current metadata revision on every reconnect. `vaultChanges.js`
+validates/deduplicates metadata separately from file sequence, fencing retired
+connections. A reconnect snapshot invalidates consumers even after a server
+reset lowered the metadata revision. Rows/counts come from the filtered list,
+never from this invalidation cursor.
 
 This keeps open streams to visible tabs: on plain HTTP each stream holds one of
 the browser's few HTTP/1.1 connections per host, shared by all tabs.

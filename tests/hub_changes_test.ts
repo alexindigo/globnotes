@@ -57,7 +57,7 @@ Deno.test("hub changes: polling filters hidden/state paths and returns a resumab
     assert(!JSON.stringify(packet).includes("pathKey"));
     assertEquals(
       await (await changes(request(`?since=${packet.next}&poll=1`))).json(),
-      { entries: [], next: packet.next },
+      { entries: [], next: packet.next, conflictRevision: 0 },
     );
     await assertRejects(() => changes(request("?since=-1&poll=1")));
   } finally {
@@ -83,6 +83,10 @@ Deno.test("hub changes: SSE emits live deletion, resumes by Last-Event-ID and re
     );
     const reader = response.body!.getReader();
     assertEquals(subscriptions, 1);
+    assertEquals(
+      await readFrame(reader),
+      'event: conflicts\ndata: {"revision":0}\n\n',
+    );
     await f.operations.createNote({ path: "note", content: "first" }, f.api());
     const first = await readFrame(reader);
     assert(first.includes("event: change\n"));
@@ -112,7 +116,11 @@ Deno.test("hub changes: SSE emits live deletion, resumes by Last-Event-ID and re
     await replay.cancel();
     assertEquals(subscriptions, 0);
     const poll = await (await changes(request(`?since=${seq}&poll=1`))).json();
-    assertEquals(poll, { gap: true, next: f.hub.sequence() });
+    assertEquals(poll, {
+      gap: true,
+      next: f.hub.sequence(),
+      conflictRevision: 0,
+    });
   } finally {
     f.close();
   }
@@ -136,6 +144,7 @@ Deno.test("hub changes: retained-log gaps reset SSE and polling; normal resume r
     assertEquals(await (await changes(request("?since=0&poll=1"))).json(), {
       gap: true,
       next: 3,
+      conflictRevision: 0,
     });
     const reset = await changes(
       request("?since=0", { accept: "text/event-stream" }),
@@ -171,6 +180,79 @@ Deno.test("hub changes: read authorization is required and revoked streams discl
     f.hub.scanNow();
     assertEquals(await reader.read(), { value: undefined, done: true });
     abort.abort();
+  } finally {
+    f.close();
+  }
+});
+
+Deno.test("hub changes: metadata-only closure is emitted without a file id and both subscriptions retire", async () => {
+  const f = hubOperationsFixture();
+  let subscriptions = 0;
+  const subscribe = f.hub.subscribeConflicts.bind(f.hub);
+  f.hub.subscribeConflicts = (callback) => {
+    subscriptions++;
+    const dispose = subscribe(callback);
+    return () => {
+      subscriptions--;
+      dispose();
+    };
+  };
+  try {
+    const response = await changes(
+      request("", { accept: "text/event-stream" }),
+    );
+    const reader = response.body!.getReader();
+    assertEquals(subscriptions, 1);
+    assertEquals(
+      await readFrame(reader),
+      'event: conflicts\ndata: {"revision":0}\n\n',
+    );
+    for (const name of ["original.md", "copy.md"]) {
+      Deno.writeTextFileSync(`${f.vault}/${name}`, name);
+    }
+    f.hub.scanNow();
+    await readFrame(reader);
+    await readFrame(reader);
+    f.hub.recordConflict({
+      id: "pair",
+      path: "original.md",
+      copyPath: "copy.md",
+      peer: "globnotes",
+      reason: "overlapping-edits",
+      state: "open",
+      createdAt: "now",
+      resolvedAt: null,
+    });
+    assertEquals(
+      await readFrame(reader),
+      'event: conflicts\ndata: {"revision":1}\n\n',
+    );
+    const seq = f.hub.sequence();
+    assert(f.hub.closeConflict("pair", 1));
+    assertEquals(
+      await readFrame(reader),
+      'event: conflicts\ndata: {"revision":2}\n\n',
+    );
+    assertEquals(f.hub.sequence(), seq);
+    assertEquals(
+      await (await changes(request(`?poll=1&since=${seq}`))).json(),
+      { entries: [], next: seq, conflictRevision: 2 },
+    );
+    await reader.cancel();
+    assertEquals(subscriptions, 0);
+    const resumed = await changes(
+      request(`?since=${seq}`, { accept: "text/event-stream" }),
+    );
+    const replay = resumed.body!.getReader();
+    assertEquals(
+      await readFrame(replay),
+      'event: conflicts\ndata: {"revision":2}\n\n',
+    );
+    // A policy epoch closes both the file and metadata subscriptions.
+    f.lifecycle.bumpEpoch();
+    f.lifecycle.notifyInvalidation();
+    assertEquals(await replay.read(), { value: undefined, done: true });
+    assertEquals(subscriptions, 0);
   } finally {
     f.close();
   }

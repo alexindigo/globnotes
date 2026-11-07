@@ -38,18 +38,29 @@ export class HubStore {
     const version = this.db.prepare(
       "SELECT value FROM meta WHERE key='schema_version'",
     ).get();
-    if (version && !["1", "2"].includes(version.value as string)) {
+    if (version && !["1", "2", "3"].includes(version.value as string)) {
       throw new Error("Unsupported hub schema");
     }
     this.db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS conflicts(id TEXT PRIMARY KEY, path TEXT,
         path_key TEXT NOT NULL, copy_path TEXT, copy_path_key TEXT NOT NULL,
         peer TEXT NOT NULL, reason TEXT NOT NULL, state TEXT NOT NULL,
-        created_at TEXT NOT NULL, resolved_at TEXT);
+        created_at TEXT NOT NULL, resolved_at TEXT, revision INTEGER NOT NULL DEFAULT 1);
       CREATE INDEX IF NOT EXISTS conflicts_path_key ON conflicts(path_key);
       CREATE INDEX IF NOT EXISTS conflicts_copy_path_key ON conflicts(copy_path_key);
-      INSERT OR REPLACE INTO meta VALUES ('schema_version','2');
-      COMMIT;`);
+      INSERT OR IGNORE INTO meta VALUES ('conflict_revision','0');`);
+    if (
+      !this.db.prepare("PRAGMA table_info(conflicts)").all().some((r) =>
+        r.name === "revision"
+      )
+    ) {
+      this.db.exec(
+        "ALTER TABLE conflicts ADD COLUMN revision INTEGER NOT NULL DEFAULT 1",
+      );
+    }
+    this.db.exec(
+      "INSERT OR REPLACE INTO meta VALUES ('schema_version','3'); COMMIT;",
+    );
     const secret = [...crypto.getRandomValues(new Uint8Array(32))]
       .map((v) => v.toString(16).padStart(2, "0")).join("");
     this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('path_secret',?)").run(
@@ -89,6 +100,52 @@ export class HubStore {
     let scrubbed = false;
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      // Resolve all member transitions from the pre-batch identities. In
+      // particular, a swap/chain must not retarget the same member twice.
+      const renamed = new Map(
+        mutations.filter((m) => m.oldPath).map(
+          (m) => [pathKey(m.oldPath!), m.path],
+        ),
+      );
+      const deleted = new Set(
+        mutations.filter((m) => !m.file && !m.oldPath).map((m) =>
+          pathKey(m.path)
+        ),
+      );
+      for (const conflict of this.conflicts()) {
+        if (!conflict.path || !conflict.copyPath) continue;
+        if (
+          [conflict.path, conflict.copyPath].some((name) =>
+            deleted.has(pathKey(name))
+          )
+        ) {
+          this.db.prepare(
+            `UPDATE conflicts SET path=NULL,copy_path=NULL,state='resolved',
+            resolved_at=COALESCE(resolved_at,?),revision=revision+1 WHERE id=?`,
+          )
+            .run(new Date().toISOString(), conflict.id);
+          this.#bumpConflicts();
+          scrubbed = true;
+        } else {
+          const original = renamed.get(pathKey(conflict.path)) ?? conflict.path;
+          const copy = renamed.get(pathKey(conflict.copyPath)) ??
+            conflict.copyPath;
+          if (original === conflict.path && copy === conflict.copyPath) {
+            continue;
+          }
+          this.db.prepare(
+            `UPDATE conflicts SET path=?,path_key=?,copy_path=?,copy_path_key=?,
+            revision=revision+1 WHERE id=?`,
+          ).run(
+            original,
+            anonymousPath(this.secret, original),
+            copy,
+            anonymousPath(this.secret, copy),
+            conflict.id,
+          );
+          this.#bumpConflicts();
+        }
+      }
       for (const mutation of mutations) {
         const key = pathKey(mutation.path),
           keyed = anonymousPath(this.secret, key);
@@ -169,9 +226,6 @@ export class HubStore {
           this.db.prepare(
             "UPDATE changes SET old_path=NULL WHERE old_path_key=?",
           ).run(keyed);
-          this.db.prepare(`UPDATE conflicts SET path=NULL, copy_path=NULL,
-            state='resolved', resolved_at=? WHERE path_key=? OR copy_path_key=?`)
-            .run(entry.at, keyed, keyed);
           scrubbed = true;
         }
         // Transient committed notifications retain deleted names; persisted history does not.
@@ -220,41 +274,86 @@ export class HubStore {
         .get()?.seq ?? 0,
     );
   }
-  recordConflict(conflict: Conflict): void {
+  #bumpConflicts(): void {
+    this.db.exec(
+      "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='conflict_revision'",
+    );
+  }
+  conflictRevision(): number {
+    return Number(
+      this.db.prepare("SELECT value FROM meta WHERE key='conflict_revision'")
+        .get()!.value,
+    );
+  }
+  conflict(id: string): Conflict | null {
+    const row = this.db.prepare("SELECT * FROM conflicts WHERE id=?").get(id);
+    return row ? decodeConflict(row) : null;
+  }
+  /** Conditional metadata-only closure (Keep both). Deletion scrubbing stays in apply. */
+  closeConflict(id: string, revision: number): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.db.prepare(
+        `UPDATE conflicts SET state='resolved',resolved_at=?,
+        revision=revision+1 WHERE id=? AND revision=? AND state='open'`,
+      )
+        .run(new Date().toISOString(), id, revision);
+      if (result.changes) this.#bumpConflicts();
+      this.db.exec("COMMIT");
+      return Number(result.changes) !== 0;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  recordConflict(conflict: Omit<Conflict, "revision">): void {
     if (!conflict.path || !conflict.copyPath) {
       throw new Error("Conflict paths required");
     }
     const live = this.fileState(conflict.path)?.diskPath === conflict.path &&
       this.fileState(conflict.copyPath)?.diskPath === conflict.copyPath;
-    this.db.prepare("INSERT INTO conflicts VALUES(?,?,?,?,?,?,?,?,?,?)").run(
-      conflict.id,
-      live ? conflict.path : null,
-      anonymousPath(this.secret, conflict.path),
-      live ? conflict.copyPath : null,
-      anonymousPath(this.secret, conflict.copyPath),
-      conflict.peer,
-      conflict.reason,
-      live ? conflict.state : "resolved",
-      conflict.createdAt,
-      live ? conflict.resolvedAt : new Date().toISOString(),
-    );
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("INSERT INTO conflicts VALUES(?,?,?,?,?,?,?,?,?,?,1)")
+        .run(
+          conflict.id,
+          live ? conflict.path : null,
+          anonymousPath(this.secret, conflict.path),
+          live ? conflict.copyPath : null,
+          anonymousPath(this.secret, conflict.copyPath),
+          conflict.peer,
+          conflict.reason,
+          live ? conflict.state : "resolved",
+          conflict.createdAt,
+          live ? conflict.resolvedAt : new Date().toISOString(),
+        );
+      this.#bumpConflicts();
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
   conflicts(): Conflict[] {
     return this.db.prepare("SELECT * FROM conflicts ORDER BY created_at,id")
-      .all().map((r) => ({
-        id: r.id as string,
-        path: r.path as string | null,
-        copyPath: r.copy_path as string | null,
-        peer: r.peer as Conflict["peer"],
-        reason: r.reason as string,
-        state: r.state as Conflict["state"],
-        createdAt: r.created_at as string,
-        resolvedAt: r.resolved_at as string | null,
-      }));
+      .all().map(decodeConflict);
   }
   close(): void {
     this.db.close();
   }
+}
+function decodeConflict(r: Record<string, unknown>): Conflict {
+  return {
+    id: r.id as string,
+    revision: r.revision as number,
+    path: r.path as string | null,
+    copyPath: r.copy_path as string | null,
+    peer: r.peer as Conflict["peer"],
+    reason: r.reason as string,
+    state: r.state as Conflict["state"],
+    createdAt: r.created_at as string,
+    resolvedAt: r.resolved_at as string | null,
+  };
 }
 function decodeFile(row: Record<string, unknown>): FileState {
   return {

@@ -1,7 +1,40 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { resolveReadableInRoot } from "../helpers.ts";
+import * as path from "@std/path";
 import { within } from "./paths.ts";
 import type { ChangeEntry } from "./types.ts";
+
+/** The shared browser read namespace, including missing event targets. A
+ * configured root alias is allowed; no descendant symlink is a readable member. */
+export function readableVaultPath(
+  root: string,
+  stateRoot: string,
+  name: string | null,
+): string | null {
+  if (!name) return null;
+  let resolved: string;
+  try {
+    resolved = resolveReadableInRoot(root, name);
+  } catch {
+    return null;
+  }
+  if (within(stateRoot, resolved)) return null;
+  let current = Deno.realPathSync(root);
+  const components = name.split("/");
+  for (const [index, component] of components.entries()) {
+    current = path.join(current, component);
+    try {
+      const info = Deno.lstatSync(current);
+      if (info.isSymlink || (index === components.length - 1 && !info.isFile)) {
+        return null;
+      }
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) break;
+      throw error;
+    }
+  }
+  return resolved;
+}
 
 /** Project the hub (which deliberately inventories hidden files) through the
  * ordinary notes/files read namespace. Never disclose state or anonymous keys.
@@ -14,8 +47,7 @@ export function browserChange(
   const visible = (name: string | null) => {
     if (!name) return false;
     try {
-      const resolved = resolveReadableInRoot(root, name);
-      return !within(stateRoot, resolved);
+      return readableVaultPath(root, stateRoot, name) !== null;
     } catch {
       return false;
     }

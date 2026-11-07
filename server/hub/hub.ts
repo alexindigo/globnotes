@@ -15,6 +15,7 @@ export class VaultHub {
   readonly #scanner: HubScanner;
   readonly #expectations = new Map<Expectation, string[]>();
   readonly #subscribers = new Set<(entries: ChangeEntry[]) => void>();
+  readonly #conflictSubscribers = new Set<(revision: number) => void>();
   readonly #intervalMs: number;
   readonly #stateRoot: string;
   readonly #configuredRoot: string;
@@ -114,12 +115,14 @@ export class VaultHub {
   scanNow(targets?: string[]): ScanStats {
     if (this.#scanning) throw new Error("Hub scan already in progress");
     this.#scanning = true;
+    const revision = this.conflictRevision();
     try {
       const { mutations, stats } = this.#scanner.scan(targets);
       this.#publish(this.store.apply(mutations, "local", null));
       return stats;
     } finally {
       this.#scanning = false;
+      this.#publishConflicts(revision);
     }
   }
   expect(absolutePaths: readonly string[]): Expectation {
@@ -141,6 +144,7 @@ export class VaultHub {
       throw new Error("Unknown hub expectation");
     }
     let entries: ChangeEntry[];
+    const revision = this.conflictRevision();
     try {
       // Fold repeated writes and rename+write to one resulting file observation.
       const mutations = new Map<string, Mutation>();
@@ -191,6 +195,7 @@ export class VaultHub {
       entries = this.store.apply([...mutations.values()], "globnotes", origin);
     } finally {
       this.#expectations.delete(token);
+      this.#publishConflicts(revision);
     }
     this.#publish(entries!);
   }
@@ -219,13 +224,44 @@ export class VaultHub {
   fileState(name: string) {
     return this.store.fileState(name);
   }
-  recordConflict(conflict: Conflict): void {
+  recordConflict(conflict: Omit<Conflict, "revision">): void {
     // A guard awaited while creating the copy may let the watcher observe a
     // deletion first. Reconcile both members before admitting plaintext names.
     this.scanNow(
       [conflict.path, conflict.copyPath].filter((p): p is string => p !== null),
     );
+    const revision = this.conflictRevision();
     this.store.recordConflict(conflict);
+    this.#publishConflicts(revision);
+  }
+  conflict(id: string): Conflict | null {
+    return this.store.conflict(id);
+  }
+  conflictRevision(): number {
+    return this.store.conflictRevision();
+  }
+  closeConflict(id: string, expectedRevision: number): boolean {
+    const revision = this.conflictRevision();
+    const closed = this.store.closeConflict(id, expectedRevision);
+    this.#publishConflicts(revision);
+    return closed;
+  }
+  subscribeConflicts(callback: (revision: number) => void): () => void {
+    this.#conflictSubscribers.add(callback);
+    return () => {
+      this.#conflictSubscribers.delete(callback);
+    };
+  }
+  #publishConflicts(before: number): void {
+    const revision = this.conflictRevision();
+    if (revision === before) return;
+    for (const subscriber of this.#conflictSubscribers) {
+      try {
+        subscriber(revision);
+      } catch (error) {
+        logger.error(`Hub conflict subscriber failed: ${error}`);
+      }
+    }
   }
   conflicts(): Conflict[] {
     return this.store.conflicts();

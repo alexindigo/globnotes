@@ -196,4 +196,23 @@ describe("vault change owner", () => {
     options.onEvent({ event: "cursor", data: { next: 123 } });
     expect(owner.state().seq).toBe(123); release();
   });
+  it("metadata revisions are independent, fenced and invalidated on every reconnect including a server reset", async () => {
+    vi.useFakeTimers(); const calls = [], publish = vi.fn();
+    const owner = createVaultChanges({ publish, open: async value => { calls.push(value); return () => {}; } });
+    const release = owner.acquire(); await flush();
+    const metadata = (index, revision) => calls[index].onEvent({event: "conflicts", data: {revision}});
+    metadata(0, 12); metadata(0, 12); metadata(0, 11);
+    expect(publish).toHaveBeenCalledExactlyOnceWith(TOPICS.VAULT_CONFLICTS, {revision: 12});
+    expect(owner.state().seq).toBe(0);
+    calls[0].onEvent({event: "change", data: {seq: 2, path: "a.md"}});
+    expect(owner.state().seq).toBe(2);
+    owner.suspendDocument(); owner.resumeDocument(); await flush();
+    metadata(0, 99); metadata(1, 0); metadata(1, 1);
+    expect(publish.mock.calls.filter(([topic]) => topic === TOPICS.VAULT_CONFLICTS)).toEqual([
+      [TOPICS.VAULT_CONFLICTS, {revision: 12}], [TOPICS.VAULT_CONFLICTS, {revision: 0}], [TOPICS.VAULT_CONFLICTS, {revision: 1}],
+    ]);
+    expect(owner.state().seq).toBe(2);
+    for (const revision of [-1, 1.5, "2", null]) expect(() => metadata(1, revision)).toThrow("Invalid conflict revision");
+    release();
+  });
 });

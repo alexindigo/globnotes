@@ -163,3 +163,13 @@ it("without a body reader a poll falls back to the whole-body read", async () =>
   ]);
   close();
 });
+it("poll metadata-only and gap packets use the same independent event as SSE", async () => {
+  for (const gap of [false, true]) {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({entries: [], next: 7, conflictRevision: 9, ...(gap ? {gap: true} : {})})));
+    const onEvent = vi.fn();
+    const close = await openVaultChanges({since: 7, poll: true, onEvent});
+    expect(onEvent).toHaveBeenLastCalledWith({event: "conflicts", data: {revision: 9}});
+    expect(onEvent.mock.calls.map(([value]) => value.event)).toEqual(gap ? ["reset", "cursor", "conflicts"] : ["cursor", "conflicts"]);
+    close();
+  }
+});

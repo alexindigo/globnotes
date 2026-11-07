@@ -41,7 +41,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     if (!live()) return;
     retire();
     const own = generation, mode = polling ? "poll" : "stream";
-    let openedAt = null;
+    let openedAt = null, conflictRevision = null;
     abort = new AbortController();
     const current = () => live() && generation === own;
     // Every non-terminal outcome ends here: one timer, a bounded delay.
@@ -64,7 +64,12 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
       const disposer = await open({ since: seq, poll: mode === "poll", signal: abort.signal,
         onEvent({ event, data }) {
           if (!current()) return;
-          if (event === "reset" || event === "cursor") {
+          if (event === "conflicts") {
+            if (!Number.isSafeInteger(data?.revision) || data.revision < 0) throw new Error("Invalid conflict revision");
+            if (conflictRevision !== null && data.revision <= conflictRevision) return;
+            conflictRevision = data.revision;
+            emit(TOPICS.VAULT_CONFLICTS, { revision: conflictRevision });
+          } else if (event === "reset" || event === "cursor") {
             if (!Number.isSafeInteger(data?.next) || data.next < 0) throw new Error("Invalid vault cursor");
             seq = data.next;
             if (event === "reset") emit(TOPICS.VAULT_RESET, { next: seq });

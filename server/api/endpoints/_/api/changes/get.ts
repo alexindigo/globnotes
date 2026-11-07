@@ -34,6 +34,7 @@ export default async function (request: PathfinderRequest) {
       e !== null
     );
   const snapshot = hub.changesSince(cursor), next = hub.sequence();
+  const conflictRevision = hub.conflictRevision();
   // Persisted deletions have no plaintext path. Replay must invalidate the
   // consumer snapshot rather than pretending these anonymous entries are absent.
   const gap = snapshot.gap || cursor > next ||
@@ -47,8 +48,8 @@ export default async function (request: PathfinderRequest) {
     return new Response(
       JSON.stringify(
         gap
-          ? { gap: true, next }
-          : { entries: project(snapshot.entries), next },
+          ? { gap: true, next, conflictRevision }
+          : { entries: project(snapshot.entries), next, conflictRevision },
       ),
       {
         headers: {
@@ -70,7 +71,11 @@ export default async function (request: PathfinderRequest) {
         } catch { /* disconnected */ }
       };
       let emission = Promise.resolve();
-      const emit = (entries?: ChangeEntry[], reset?: number) => {
+      const emit = (
+        entries?: ChangeEntry[],
+        reset?: number,
+        revision?: number,
+      ) => {
         emission = emission.then(async () => {
           if (closed) return;
           try {
@@ -80,7 +85,9 @@ export default async function (request: PathfinderRequest) {
               close();
               return;
             }
-            if (reset !== undefined) {
+            if (revision !== undefined) {
+              controller.enqueue(frame("conflicts", { revision }));
+            } else if (reset !== undefined) {
               controller.enqueue(frame("reset", { next: reset }, reset));
             } else if (entries) {
               for (const entry of project(entries)) {
@@ -93,6 +100,9 @@ export default async function (request: PathfinderRequest) {
         });
       };
       const unsubscribe = hub.subscribe((entries) => emit(entries));
+      const unconflicts = hub.subscribeConflicts((revision) =>
+        emit(undefined, undefined, revision)
+      );
       const unpolicy = lifecycle.subscribeInvalidation(() => {
         if (lifecycle.epoch !== epoch) close();
       });
@@ -107,6 +117,7 @@ export default async function (request: PathfinderRequest) {
       const aborted = () => close();
       cleanup = () => {
         unsubscribe();
+        unconflicts();
         unpolicy();
         clearInterval(heartbeat);
         clearTimeout(expiry);
@@ -121,6 +132,7 @@ export default async function (request: PathfinderRequest) {
         expire();
         if (gap) emit(undefined, next);
         else emit(snapshot.entries);
+        emit(undefined, undefined, conflictRevision);
       }
     },
     cancel() {

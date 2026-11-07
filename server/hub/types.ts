@@ -4,6 +4,7 @@ export type Vector = Record<string, number>;
 export type Peer = "local" | "globnotes";
 export interface Conflict {
   id: string;
+  revision: number;
   path: string | null;
   copyPath: string | null;
   peer: Peer;

@@ -81,6 +81,10 @@ export async function getAccessSettings() { return (await api.get("access")).dat
 export async function putAccessSettings(data) { return (await api.put("access", data)).data; }
 export async function postAccessTotpEnrolment(username) { return (await api.post("access/totp-enrolment", { username })).data; }
 
+export async function getConflicts() { return (await api.get("conflicts")).data; }
+export async function getConflict(id) { return (await api.get(`conflicts/${encodeURIComponent(id)}`)).data; }
+export async function resolveConflict(id, request) { return (await api.post(`conflicts/${encodeURIComponent(id)}/resolve`, request)).data; }
+
 // Mint a TOTP enrolment bundle for the setup wizard (key, uri, qr,
 // secret). Nothing is stored server-side until setup completes.
 export async function postTotpEnrolment(username) {
@@ -520,6 +524,7 @@ export async function openVaultChanges({ since = 0, poll = false, onEvent, onClo
       if (packet.gap) onEvent({ event: "reset", data: { next: packet.next } });
       else for (const entry of packet.entries) onEvent({ event: "change", data: entry });
       onEvent({ event: "cursor", data: { next: packet.next } });
+      if (packet.conflictRevision !== undefined) onEvent({ event: "conflicts", data: { revision: packet.conflictRevision } });
       timer = setTimeout(() => { if (!requestSignal.aborted) onClose?.("poll"); }, 1000);
     }
     return () => { clearTimeout(timer); controller.abort(); };
