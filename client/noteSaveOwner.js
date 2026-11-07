@@ -4,6 +4,7 @@ import { publish, TOPICS } from "./bus/index.js";
 import { directoryFromPath } from "./helpers.js";
 import { createNoteSaveQueue, NOTE_SAVE_OBSERVATION_MS } from "./noteSaveQueue.js";
 import { notePathError } from "./validators.js";
+import { requestReauthentication } from "./reauthentication.js";
 
 const idleState = () => Object.freeze({ status: "idle", unresolved: false, queued: Object.freeze([]), jobs: Object.freeze([]), canDiscard: true });
 
@@ -30,6 +31,8 @@ export function createNoteSaveOwner({
   held = () => {},
   failed = () => {},
   saved = () => {},
+  requestAuthentication = requestReauthentication,
+  authenticationRequired = () => {},
   create = createNote,
   update = updateNote,
   preview = previewRename,
@@ -39,6 +42,7 @@ export function createNoteSaveOwner({
   let queueSnapshot = idleState();
   let editSession = 0;
   let pendingRenamePrompt = null;
+  let authentication = null;
   const aliases = new Set();
 
   const state = () => Object.freeze({ queue: queueSnapshot,
@@ -149,7 +153,10 @@ export function createNoteSaveOwner({
         ? update(context.sourcePath, context.targetPath, snapshot.content, preparation.fileRefs, context.baseContent)
         : create(context.targetPath, snapshot.content),
       acknowledge,
-      failed: error => failed(error),
+      failed: (error, _, failure) => {
+        if (failure?.authenticationRequired) recoverAuthentication(failure);
+        else failed(error);
+      },
       canResolveLate: (_, result) => getBuffer() === result.content && getState().requestedPath === result.path,
       drained: clearAcknowledgedDrafts,
     });
@@ -195,6 +202,12 @@ export function createNoteSaveOwner({
   }
 
   function save(force = false) {
+    if (queue?.state().failure?.authenticationRequired) {
+      recoverAuthentication(queue.state().failure);
+      // Capture newer typing while the original submission remains first.
+      if (contentNeedsSave()) return submit("save", "none");
+      return null;
+    }
     if (queue?.state().rebaseConflict) {
       const error = notePathError(getState().requestedPath);
       if (error) { invalid(error); return null; }
@@ -202,6 +215,19 @@ export function createNoteSaveOwner({
     queue?.acceptRebaseConflict();
     if (!contentNeedsSave() && (!force || queue?.state().unresolved)) return null;
     return submit("save", "none");
+  }
+
+  function recoverAuthentication(failure) {
+    const recoveringQueue = queue;
+    if (authentication?.queue === recoveringQueue && authentication.serial === failure.serial) return;
+    const own = { queue: recoveringQueue, serial: failure.serial };
+    authentication = own;
+    authenticationRequired();
+    Promise.resolve(requestAuthentication()).then(accepted => {
+      if (authentication !== own) return;
+      authentication = null;
+      if (accepted && queue === recoveringQueue) recoveringQueue.resumeAfterAuthentication(failure.serial);
+    }).catch(error => { if (authentication === own) { authentication = null; failed(error); } });
   }
 
   function rename() {

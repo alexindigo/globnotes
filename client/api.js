@@ -8,6 +8,8 @@ import { getToastOptions } from "./helpers.js";
 import router from "./router.js";
 import { readPathPrefix } from "./pathPrefix.js";
 import { CHANGE_STREAM_STALL_MS } from "../shared/vault_changes.ts";
+import { hasUnsavedWork } from "./sessionActions.js";
+import { requestReauthentication } from "./reauthentication.js";
 
 const pathPrefix = readPathPrefix();
 
@@ -33,6 +35,10 @@ export { operationError } from "./operationErrors.js";
 
 export function apiErrorHandler(error, toast) {
   if (error.response?.status === 401) {
+    if (hasUnsavedWork()) {
+      requestReauthentication();
+      return;
+    }
     // Browser plugin contributions die with the credential; reconnect
     // requires fresh authorization.
     import("./pluginRuntime.js").then((m) => m.stopPluginRuntime());

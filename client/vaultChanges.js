@@ -93,6 +93,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     suspendDocument: lifetime.suspendDocument,
     resumeDocument: lifetime.resumeDocument,
     setVisible: lifetime.setVisible,
+    restart() { if (live()) connect(); },
     acquire() {
       if (++owners === 1) connect();
       let released = false;
@@ -104,3 +105,4 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
 
 const vaultChanges = createVaultChanges({ lifetime: connectionLifetime });
 export const acquireVaultChanges = () => vaultChanges.acquire();
+export const restartVaultChanges = () => vaultChanges.restart();

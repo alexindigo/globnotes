@@ -16,6 +16,32 @@ function fixture(overrides = {}) {
 async function ack(request, path = "P") { request.resolve({ path, content: request.snapshot.content }); await flushPromises(); }
 
 describe("per-note save FIFO", () => {
+  it.each(["preparing", "sending"])("only the current authentication rejection can resume its retained job (%s)", async phase => {
+    let rejected = false;
+    const auth = { response: { status: 401, data: { detail: "Invalid authentication credentials" } } };
+    const { queue, sent } = fixture({ prepare: () => {
+      if (phase === "preparing" && !rejected) { rejected = true; throw auth; }
+      return { fileRefs: "none" };
+    } });
+    const receipt = queue.submit(snapshot("A")); queue.submit(snapshot("B")); await flushPromises();
+    if (phase === "sending") { sent[0].reject(auth); await flushPromises(); }
+    const failure = queue.state().failure;
+    expect(failure.authenticationRequired).toBe(true);
+    expect(queue.resumeAfterAuthentication(failure.serial + 1)).toBe(false);
+    expect(queue.resumeAfterAuthentication(failure.serial)).toBe(true); await flushPromises();
+    expect(queue.state().active.submissionId).toBe(receipt.submissionId);
+    expect(sent.at(-1).context.baseContent).toBe("old");
+    expect(queue.resumeAfterAuthentication(failure.serial)).toBe(false);
+    await ack(sent.at(-1)); await ack(sent.at(-1));
+    expect(await receipt.completion).toMatchObject({ status: "acknowledged" });
+  });
+  it("an authentication answer after the observation deadline cannot authorize replay", async () => {
+    vi.useFakeTimers(); const { queue, sent } = fixture({ observationMs: 10 });
+    queue.submit(snapshot("A")); await vi.advanceTimersByTimeAsync(0); await vi.advanceTimersByTimeAsync(10);
+    sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await vi.advanceTimersByTimeAsync(0);
+    expect(queue.state().failure.authenticationRequired).toBe(false);
+    expect(queue.resumeAfterAuthentication(queue.state().failure.serial)).toBe(false); expect(sent).toHaveLength(1);
+  });
   it("holds every queued snapshot behind a transformed rename without an owner merge", async () => {
     const { queue, sent } = fixture();
     queue.submit({ ...snapshot("# Old\n\nBody\n", 1, "Q"), intent: "rename" });

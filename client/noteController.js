@@ -115,7 +115,9 @@ export function createNoteController({
   let lastEditState = null;
   const queueState = shallowRef({ status: "idle", unresolved: false, queued: [], jobs: [], canDiscard: true });
   const saving = computed(() => ["preparing", "sending"].includes(queueState.value.status));
-  const saveFeedback = computed(() => queueState.value.status === "paused"
+  const saveFeedback = computed(() => queueState.value.failure?.authenticationRequired
+    ? "Not saved. Sign in to finish saving; your edits and pending saves are retained. Press Save to sign in again."
+    : queueState.value.status === "paused"
     ? `Saving paused at submission ${queueState.value.failure?.submissionId}. ${queueState.value.queued.length} held saves; current edits are retained. ${queueState.value.failure?.certainty === 'unknown' ? 'The write outcome is unknown; do not resend it.' : queueState.value.failure?.certainty === 'known-committed' ? 'The write committed; its UI integration failed. Do not resend it.' : ''} ${queueState.value.failure?.message ?? ''}`
     : saving.value ? `Saving… ${queueState.value.queued.length} queued.` : "");
   const saveChangesMessage = computed(() => queueState.value.unresolved
@@ -300,6 +302,7 @@ export function createNoteController({
   function resolveOwnedWork() { return applyRename() ? saveOwner.resolve() : Promise.resolve(false); }
   const disposeSessionParticipant = registerParticipant("note", {
     hasUnsavedChanges: isDirty, settlePending: settlePendingWrites, requestDecision: requestNoteDecision,
+    retainForAuthentication: contentChangedHandler,
     save: saveForNavigation,
     discard: () => { if (!discardOwnedWork()) return false; exitEditState(); return true; },
   });

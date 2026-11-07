@@ -14,25 +14,34 @@ export function loginError(error) {
 export function createLoginFlow({
   credentials, clearCredentials, redirect, navigate, toast,
   requestToken = getToken, persistToken = storeToken, reportError = apiErrorHandler,
+  authenticated, isCurrent = () => true,
 } = {}) {
+  let pending = null;
+  const complete = () => authenticated ? authenticated() : navigate(redirect() || { name: "home" });
   function init(authType) {
-    if (authType === authTypes.none) navigate({ name: "home" });
+    if (authType === authTypes.none) {
+      if (authenticated) authenticated(); else navigate({ name: "home" });
+    }
   }
 
   function logIn() {
+    if (pending || !isCurrent()) return pending;
     const { username, password, totp } = credentials();
-    return requestToken(username, password, totp)
+    pending = requestToken(username, password, totp)
       .then((token) => {
+        if (!isCurrent()) return;
         // Read the current checkbox and redirect when the request acknowledges.
         persistToken(token, credentials().rememberMe);
-        navigate(redirect() || { name: "home" });
+        return complete();
       })
       .catch((error) => {
+        if (!isCurrent()) return;
         clearCredentials();
         const message = loginError(error);
         if (message) toast.add(message);
         else reportError(error, toast);
-      });
+      }).finally(() => { pending = null; });
+    return pending;
   }
 
   return { init, logIn };

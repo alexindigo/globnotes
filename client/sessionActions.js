@@ -87,3 +87,11 @@ export function hasUnsavedWork() {
   }
   return false;
 }
+
+/** Flush each owner's existing draft persistence without attempting a save,
+ * changing credentials, asking for departure, or abandoning the editor. */
+export function retainUnsavedWork() {
+  for (const { callbacks } of participants.values()) {
+    if (callbacks.hasUnsavedChanges?.()) callbacks.retainForAuthentication?.();
+  }
+}
