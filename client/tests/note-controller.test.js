@@ -57,6 +57,18 @@ function fixture(overrides = {}, contextValues = {}) {
 }
 
 describe("note workflow ownership", () => {
+  it("Review conflict uses the shared copy lookup and ordinary dirty departure protection", async () => {
+    const lookupByMember = vi.fn(() => ({ id: "conflict-a" }));
+    const f = fixture({ conflictInbox: { lookupByMember } }); await f.controller.mount(); f.enter(); f.input("Keep my typing");
+    f.controller.reviewConflict();
+    expect(lookupByMember).toHaveBeenCalledWith("folder/P.md", "copyPath");
+    expect(f.router.push).toHaveBeenLastCalledWith({ name: "conflict", params: { id: "conflict-a" } });
+    const target = { name: "conflict", params: { id: "conflict-a" }, query: {}, hash: "", fullPath: "/_/conflicts/conflict-a" };
+    expect(await f.controller.gateNavigation(target)).toBe(false); expect(f.controller.state.isSaveChangesModalVisible).toBe(true);
+    f.controller.onSaveChoice("cancel"); expect(f.controller.currentBuffer()).toBe("Keep my typing"); expect(f.controller.isDirty()).toBe(true);
+    lookupByMember.mockReturnValue(null); f.controller.reviewConflict();
+    expect(f.router.push).toHaveBeenLastCalledWith({ name: "conflicts" });
+  });
   it.each(["change", "reset"])("an initial read cannot swallow an earlier stream %s", async event => {
     const initial = deferred();
     const f = fixture({ read: vi.fn().mockReturnValueOnce(initial.promise)

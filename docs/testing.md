@@ -235,6 +235,15 @@ checks metadata-only invalidations, polling and shared stream cleanup. Client
 metadata cursors, reconnect/reset snapshots and SSE/poll translation. Run these
 through `.devcontainer/run.sh`; browser acceptance uses the HTTP domain above.
 
+`client/tests/conflict-inbox.test.js` covers the shared list/badge lifetime,
+subscription-before-read, coalesced invalidations, file-before-record order,
+retired accounts and stale/error counts. `conflict-resolution-controller.test.js`
+covers URL-selected paired reads, late replies, explicit review and outside
+closure. `conflict-navigation.test.js` checks copy lookup and prefixed file URLs;
+`conflict-views.test.js` covers escaped source, shared panels, status labels and
+badge rendering. The note controller test preserves dirty-editor departure when
+Review conflict chooses a route.
+
 `tests/hub_conflict_resolution_test.ts` drives all four resolution effects on
 real files, both required bases, stale keeper/loser/rename, concurrent decisions,
 guard cancellation and authority waits, hidden/foreign records, exact binary and

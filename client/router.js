@@ -40,6 +40,17 @@ const router = createRouter({
       }),
     },
     {
+      path: "/_/conflicts",
+      name: "conflicts",
+      component: () => import("./views/Conflicts.vue"),
+    },
+    {
+      path: "/_/conflicts/:id",
+      name: "conflict",
+      component: () => import("./views/Conflicts.vue"),
+      props: true,
+    },
+    {
       // Notes live in the root URL space; paths may contain slashes.
       path: "/:path(.*)",
       name: "note",

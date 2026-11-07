@@ -53,6 +53,7 @@
     <div v-if="conflictOriginal" role="status" data-conflict-banner class="mb-3 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-3 text-sm">
       <p>Your version was saved here because ‹{{ conflictOriginal }}› changed elsewhere.</p>
       <button type="button" class="mt-2 text-theme-brand hover:underline" @click="controller.openConflictOriginal">Open original</button>
+      <button type="button" class="mt-2 ml-4 text-theme-brand hover:underline" @click="controller.reviewConflict">Review conflict</button>
     </div>
     <!-- 404 / Not Found -->
     <div
@@ -276,7 +277,7 @@
 
 <script setup>
 import { tabSave, tabTrash, tabLoader2 } from "../icons.js";
-import { computed, onBeforeUnmount, onMounted, ref, toRefs, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, toRefs, watch } from "vue";
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import { useToast } from "primevue/usetoast";
 import Icon from "../components/Icon.vue";
@@ -296,13 +297,14 @@ import { currentLayerId } from "../keybindings/store.js";
 import { clientPluginEpoch } from "../pluginLoader.js";
 import { folderSearchTarget } from "../notePath.js";
 import { createNoteController } from "../noteController.js";
+import { CONFLICT_INBOX } from "../conflictInbox.js";
 
 const props = defineProps({ path: String });
 const route = useRoute();
 const router = useRouter();
 const globalStore = useGlobalStore();
 const controller = createNoteController({
-  router, toast: useToast(),
+  router, toast: useToast(), conflictInbox: inject(CONFLICT_INBOX, null),
   getContext: () => ({ path: props.path, query: route.query,
     authType: globalStore.config.authType, notePaths: globalStore.notePaths }),
 });

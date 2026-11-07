@@ -102,6 +102,7 @@ import { DIALOG_HOST, isActionAvailable, modalStack } from "./modalState.js";
 import Modal from "./components/Modal.vue";
 import LoginForm from "./components/LoginForm.vue";
 import { reauthenticationRequest as reauthentication } from "./reauthentication.js";
+import { CONFLICT_INBOX, createConflictInbox } from "./conflictInbox.js";
 
 const globalStore = useGlobalStore();
 const dialogHost = ref(null);
@@ -124,6 +125,11 @@ const session = createAppSession({
   loaded: () => loadingIndicator.value.setLoaded(), failed: () => loadingIndicator.value.setFailed(),
 });
 const { openAccessFromSettings, beforeSetupCommit, logoutFromSettings, setupCompleted } = session;
+const conflictInbox = createConflictInbox();
+provide(CONFLICT_INBOX, conflictInbox);
+conflictInbox.bindContext({ config: () => globalStore.config,
+  configReady: () => session.state.configReady, routeName: () => route.name });
+onBeforeUnmount(conflictInbox.dispose);
 const permissionReview = createAppPermissions({
   config: () => globalStore.config, configReady: () => session.state.configReady,
   routeName: () => route.name, setupRequested: () => globalStore.setupWizardRequested,

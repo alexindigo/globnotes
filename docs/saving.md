@@ -44,6 +44,20 @@ With no newer work the copy is clean immediately. A session banner explains
 which original changed, with **Open original** through ordinary navigation.
 It does not rename the original or rewrite links to point at the copy.
 
+The navigation bar's **Conflicts** button opens `/_/conflicts`. Its adjacent
+badge counts readable, unresolved records in this vault; it stays reachable at
+zero. **Review conflict** in the editor banner opens the record for the current
+copy, or the inbox if that relationship has closed. Both use normal editor
+departure protection, including newer typing and pending FIFO saves.
+
+The inbox lists the two real filenames, oldest first. A comparison URL selects
+one record and shows Original beside Conflict copy as escaped, read-only source.
+Binary, invalid UTF-8 and oversized files show metadata and authenticated Open
+file links instead. Opening or refreshing never changes either file. A changed
+pair requires **Review current versions**; outside closure stays on the selected
+URL and reports that the conflict was resolved elsewhere. A failed list read
+keeps its previous count and marks it out of date rather than claiming zero.
+
 An open viewing note updates in place when the vault change stream reports a
 new version. A clean editor likewise refreshes its text and base. A dirty editor
 keeps its text and shows **This note changed elsewhere. Your changes will be

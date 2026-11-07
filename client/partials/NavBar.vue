@@ -22,6 +22,7 @@
       >
         <CustomButton :iconPath="allNotesIcon" title="All notes" />
       </RouterLink>
+      <ConflictBadge v-if="conflictInbox" :snapshot="conflictInbox.state" />
       <!-- Search (unified jump + full-text) -->
       <CustomButton :iconPath="tabSearch" title="Search" @click="openSearch" />
       <!-- New Note -->
@@ -35,7 +36,7 @@
 
 <script setup>
 import { tabSearch, tabEdit } from "../icons.js";
-import { computed } from "vue";
+import { computed, inject } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import CustomButton from "../components/CustomButton.vue";
 import Logo from "../components/Logo.vue";
@@ -43,8 +44,11 @@ import { params, searchSortOptions } from "../constants.js";
 import { useGlobalStore } from "../globalStore.js";
 import { folderSearchTarget, newNoteTarget } from "../notePath.js";
 import { canCreateNote } from "../noteCreation.js";
+import ConflictBadge from "../components/ConflictBadge.vue";
+import { CONFLICT_INBOX } from "../conflictInbox.js";
 
 const globalStore = useGlobalStore();
+const conflictInbox = inject(CONFLICT_INBOX, null);
 
 // The All Notes badge: a live vault count rendered from the note index, with
 // the list-details glyph as fallback before the index loads (or in an empty

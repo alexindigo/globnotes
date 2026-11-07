@@ -23,6 +23,7 @@ import { createNoteAttachments } from "./noteAttachments.js";
 import { noteOperationError, noteSaveError } from "./noteErrors.js";
 import { notePathError } from "./validators.js";
 import { acquireVaultChanges } from "./vaultChanges.js";
+import { reviewConflictTarget } from "./conflictNavigation.js";
 
 // Ephemeral tab-session metadata, retained when the Note view is unmounted.
 const conflictBanners = new Map();
@@ -30,7 +31,7 @@ const conflictBanners = new Map();
 /** Owns a mounted note's workflow. Views supply route/context readers, effects
  * and an editor port; all decisions and buffer ownership remain here. */
 export function createNoteController({
-  getContext, router, toast = { add() {} },
+  getContext, router, toast = { add() {} }, conflictInbox = null,
   read = getNote, remove = deleteNote,
   getLocation = () => window.location,
   defer = nextTick,
@@ -443,6 +444,7 @@ export function createNoteController({
     const original = conflictBanners.get(note.value.path);
     if (original) return router.push({ path: notePath(original), hash: "" });
   }
+  function reviewConflict() { return router.push(reviewConflictTarget(conflictInbox, note.value.path)); }
   function openVaultPath() {
     return loadStatus.value !== "loaded" || isNoteNotFound.value ? getContext().path : note.value.path;
   }
@@ -554,7 +556,7 @@ export function createNoteController({
     toggleEditModeHandler, setEditorMode, onEditorInput, onSourceSelection, setEditMode,
     syncTitle, onTitleInput, applyRename, deleteHandler, deleteConfirmedHandler, saveHandler, onSaveChoice,
     clearDraft, createFromWikilink,
-    openConflictOriginal,
+    openConflictOriginal, reviewConflict,
     confirmRename: saveOwner.confirmRename, cancelRename: saveOwner.cancelRename,
     setBasename: value => { editBasename.value = value; },
     setFolder: value => { editFolder.value = value; },
