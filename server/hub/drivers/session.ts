@@ -66,6 +66,29 @@ class CycleFailure extends Error {
   }
 }
 
+/** Receipts describe independent effects. A later ordinary failure cannot
+ * erase an earlier authentication/policy stop or shorten retry advice. */
+function preferFailure(
+  previous: DriverError | null,
+  next: DriverError,
+): DriverError {
+  if (!previous) return next;
+  const rank = (error: DriverError) =>
+    error.code === "denied"
+      ? 3
+      : error.code === "network_denied"
+      ? 2
+      : error.code === "rate_limited"
+      ? 1
+      : 0;
+  const selected = rank(previous) >= rank(next) ? previous : next;
+  const retryAfterMs = Math.max(
+    previous.retryAfterMs ?? 0,
+    next.retryAfterMs ?? 0,
+  );
+  return { ...selected, ...(retryAfterMs ? { retryAfterMs } : {}) };
+}
+
 /** One instance's host-driven reconciliation. Metadata can survive the call;
  * bytes/base text cannot. The supervisor owns scheduling and Worker lifetimes. */
 export class DriverSession {
@@ -276,12 +299,19 @@ export class DriverSession {
               ? "driver_contract_violation"
               : "driver_cycle_failed",
           };
-        this.#set("failed", detail.code, {
+        const failure = {
           ...detail,
           ...(detail.message
             ? { message: this.adapters.redact(detail.message) }
             : {}),
-        });
+        };
+        this.#set(
+          detail.code === "denied" ? "locked" : "failed",
+          detail.code === "denied"
+            ? failure.message ?? "Authentication required"
+            : detail.code,
+          detail.code === "denied" ? null : failure,
+        );
       }
     }
   }
@@ -343,6 +373,12 @@ export class DriverSession {
       this.#set("locked", this.adapters.redact(locked));
       return false;
     }
+    const failure = pages.reduce<DriverError | null>(
+      (failure, page) =>
+        page.error ? preferFailure(failure, page.error) : failure,
+      null,
+    );
+    if (failure) throw new CycleFailure(failure);
     const complete = pages.at(-1)!.completion === "complete";
     if (!complete) uncertain = true;
     let dispositionsComplete = true;
@@ -524,6 +560,9 @@ export class DriverSession {
       });
       this.#assert();
       if (result.state !== "known" || result.revision !== entry.revision) {
+        if (result.state === "unknown" && result.error) {
+          throw new CycleFailure(result.error);
+        }
         if (result.state === "locked") {
           this.#readLocked = true;
           this.#set("locked", this.adapters.redact(result.reason));
@@ -727,7 +766,7 @@ export class DriverSession {
             });
             this.#snapshot = true;
             if (result.state === "failed") {
-              failure = result.error;
+              failure = preferFailure(failure, result.error);
               this.#issue(
                 sent.planned.path,
                 result.error.code,
@@ -735,6 +774,9 @@ export class DriverSession {
               );
             }
           }
+        }
+        if (failure?.code === "denied" || failure?.code === "network_denied") {
+          throw new CycleFailure(failure);
         }
       };
       const prior = new Map(

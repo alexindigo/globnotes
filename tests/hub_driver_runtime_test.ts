@@ -359,3 +359,31 @@ Deno.test("drivers: locked open cannot admit reads or endpoint writes", async ()
     await fixture.dispose();
   }
 });
+
+Deno.test("drivers: a storage provider cannot silently emulate a condition the manifest promises is native", async () => {
+  const fixture = await driverFixture(`export function activate(ctx) {
+    ctx.driver.serve(ctx.driver.storage({
+      conditions:{create:false,update:false,delete:false},
+      identity:async()=>({id:'store',epoch:'1'}), list:async()=>({entries:[]}),
+      get:async()=>({bytes:new Uint8Array(),etag:'r'}),
+      put:async()=>({etag:'r'}), delete:async()=>{},
+    }));
+  }`);
+  const worker = new DriverWorker(
+    fixture.manifest,
+    { id: "one", label: "One", settings: {} },
+    fixture.vault,
+    {
+      current: () => true,
+      secret: () => null,
+      hint() {},
+    },
+  );
+  try {
+    await assertRejects(() => worker.start());
+    assertEquals(worker.host.available, false);
+  } finally {
+    worker.stop();
+    await fixture.dispose();
+  }
+});

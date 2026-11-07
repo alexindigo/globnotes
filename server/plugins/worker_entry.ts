@@ -5,6 +5,11 @@
 /** Handler functions never leave their owning Worker. The host binds authority. */
 import { createUuid } from "../../shared/uuid.ts";
 import {
+  storageDriver,
+  StorageError,
+  type StorageProvider,
+} from "./driver_sdk.ts";
+import {
   type AuxiliaryFs,
   type CommandDefinition,
   FS_LIMITS,
@@ -34,6 +39,7 @@ import type {
 import {
   type Driver,
   DRIVER_METHODS,
+  type DriverCapabilities,
   type DriverInstanceSnapshot,
 } from "./driver_contract.ts";
 
@@ -50,7 +56,12 @@ export interface DriverCtx {
   createUuid(): string;
   instance: DriverInstanceSnapshot;
   secrets: { get(key: string): Promise<string | null> };
-  driver: { serve(driver: Driver): void; hint(): Promise<void> };
+  driver: {
+    serve(driver: Driver): void;
+    hint(): Promise<void>;
+    storage(provider: StorageProvider, options?: { name?: string }): Driver;
+    StorageError: typeof StorageError;
+  };
   register(disposer: Disposer): Disposer;
   timers: PluginCtx["timers"];
 }
@@ -333,7 +344,10 @@ const ctx: PluginCtx = {
     setInterval: (handler, ms) => timer(handler, ms, true),
   },
 };
-function createDriverCtx(instance: DriverInstanceSnapshot): DriverCtx {
+function createDriverCtx(
+  instance: DriverInstanceSnapshot,
+  capabilities: DriverCapabilities,
+): DriverCtx {
   let served = false;
   return Object.freeze({
     createUuid,
@@ -360,6 +374,9 @@ function createDriverCtx(instance: DriverInstanceSnapshot): DriverCtx {
         }
       },
       hint: () => rpc("driver.hint", []) as Promise<void>,
+      storage: (provider: StorageProvider, options?: { name?: string }) =>
+        storageDriver(provider, options, capabilities),
+      StorageError,
     }),
     register: own,
     timers: Object.freeze({ ...ctx.timers }),
@@ -577,8 +594,13 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
     ctx.snapshot = immutable(structuredClone(message.snapshot)) as JsonValues;
     try {
       if (role === "driver") {
-        if (!message.instance) throw new Error("driver instance is missing");
-        driverCtx = createDriverCtx(message.instance);
+        if (!message.instance || !message.driverCapabilities) {
+          throw new Error("driver instance declaration is missing");
+        }
+        driverCtx = createDriverCtx(
+          message.instance,
+          message.driverCapabilities,
+        );
         // Console arguments are unstructured and may be keys. Drivers report
         // typed, redacted state instead; never forward their raw console text.
         const quiet = () => {};

@@ -768,7 +768,10 @@ export class PluginHost {
             context: slot.background.reference,
             permissionsSource: slot.source,
             ...(this.role === "driver"
-              ? { instance: this.options.instance }
+              ? {
+                instance: this.options.instance,
+                driverCapabilities: this.manifest.driver!.capabilities,
+              }
               : {}),
           } satisfies HostMessage,
         );

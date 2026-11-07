@@ -221,6 +221,42 @@ Deno.test("drivers: outgoing units capture bytes and require exact complete rece
   ) invalid(() => validateExportItems(value, caps));
 });
 
+Deno.test("drivers: failure advice is strictly typed and never decorates complete discovery or known reads", () => {
+  const error = {
+    code: "rate_limited" as const,
+    retryAfterMs: 23000,
+    message: "Wait",
+  };
+  const incomplete = { ...page, completion: "incomplete" as const, error };
+  assertEquals(
+    validateDiscoveryPage(incomplete, caps, { mode: "snapshot" }, binding),
+    incomplete,
+  );
+  const unknown = { state: "unknown" as const, reason: "unavailable", error };
+  assertEquals(validateReadResult(unknown, caps), unknown);
+  for (
+    const value of [
+      { ...page, error },
+      { ...incomplete, error: { ...error, extra: "no" } },
+      { ...incomplete, error: { ...error, retryAfterMs: -1 } },
+      { ...incomplete, error: { code: "provider_said_so" } },
+    ]
+  ) {
+    invalid(() =>
+      validateDiscoveryPage(value, caps, { mode: "snapshot" }, binding)
+    );
+  }
+  for (
+    const value of [
+      { ...unknown, state: "locked" },
+      { state: "absent", error },
+      { state: "known", revision: "r", bytes: new Uint8Array(), error },
+      { ...unknown, error: { ...error, peer: "someone-else" } },
+      { ...unknown, error: { ...error, retryAfterMs: Infinity } },
+    ]
+  ) invalid(() => validateReadResult(value, caps));
+});
+
 Deno.test("drivers: transport envelopes cannot smuggle application RPCs or authority", () => {
   const rpc = {
     type: "rpc",

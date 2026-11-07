@@ -117,8 +117,8 @@ function sessionFixture() {
     ...instance,
     enabled: true,
   });
-  const make = () => {
-    const session = new DriverSession(instance, driverCapabilities, {
+  const make = (capabilities = driverCapabilities) => {
+    const session = new DriverSession(instance, capabilities, {
       hub: f.hub,
       operations: f.operations,
       driver: remote,
@@ -740,6 +740,37 @@ Deno.test("driver session: an unchanged oversized native file stays unsupported 
       code: "unsupported",
       reason: "too_large",
     }]);
+  } finally {
+    f.close();
+  }
+});
+
+Deno.test("driver session: mixed native receipts cannot hide authentication failure or its stop on later packets", async () => {
+  const f = sessionFixture();
+  try {
+    for (const path of ["a.md", "b.md", "c.md"]) {
+      Deno.writeTextFileSync(`${f.vault}/${path}`, path);
+    }
+    f.hub.scanNow();
+    f.remote.apply = (items) => {
+      f.remote.writes.push(items);
+      return items.map(({ id }, index) => ({
+        id,
+        state: "failed",
+        error: {
+          code: index === 0 ? "denied" : "offline",
+          message: "needs authentication",
+        },
+      }));
+    };
+    const session = f.make({ ...driverCapabilities, limits: { maxBatch: 2 } });
+    await session.run();
+    assertEquals(session.snapshot().status, "locked");
+    assertEquals(f.remote.writes.length, 1);
+    assertEquals(
+      f.peers.files(f.instance.id).some(({ state }) => state === "uncertain"),
+      false,
+    );
   } finally {
     f.close();
   }

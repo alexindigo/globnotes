@@ -226,6 +226,44 @@ directories' `logs/` and JSON artifacts.
 
 ## Evidence
 
+### Driver contract and SDK
+
+`hub_driver_sdk_test.ts` checks native/emulated conditions, exact ETag reads,
+paging, typed failures and partial receipts. `hub_driver_contract_test.ts` also
+rejects malformed error advice and errors attached to complete/known results.
+`hub_driver_runtime_test.ts` verifies the narrow real Worker context, instance
+isolation and refusal of providers weaker than their static manifest promises.
+
+`hub_driver_acceptance_test.ts` boots actual servers and installs only the
+test-owned `globnotes-test-driver` fixture. Its SDK provider talks to the real
+authenticated HTTP `memory_remote.ts`: random write ETags, pages, conditions,
+faults, held reads and commit-then-lost replies. It observes disk, API consumers,
+endpoint objects and metadata across convergence, five-cycle no-echo, locked and
+incomplete discovery, empty/held decisions, conditional conflicts, epoch reset,
+process restart during reads, permissions, plugin disable/read-only mode, bounds
+and secret privacy. No fixture driver ships under `plugins/`.
+
+`hub_driver_native_acceptance_test.ts` composes the actual supervisor, Workers,
+SDK reads, HTTP remote and NoteOperations with deterministic scheduling. The
+test-only native fixture adds deltas and atomic apply receipts. It verifies
+13-file attachment-first group visibility to subscribers and the browser stream,
+failed member acquisition, conflict members, pruned-log recovery, actual editor
+rename/attachment export units, native deletes and unknown cursor safety,
+malformed/oversized/unsafe messages, isolated heartbeat failure, 256-file/64-MiB
+unit splits and smaller maxBatch export packets. Native atomicity is not claimed
+for the ordinary storage provider API.
+
+Run the targeted server acceptance through the authorized container launcher:
+
+```sh
+timeout 1800 .devcontainer/run.sh --run-dir "$RUNS/drivers" -- deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net tests/hub_driver_sdk_test.ts tests/hub_driver_contract_test.ts tests/hub_driver_runtime_test.ts tests/hub_driver_acceptance_test.ts tests/hub_driver_native_acceptance_test.ts tests/hub_driver_session_test.ts tests/hub_driver_supervisor_test.ts
+```
+
+Use a new disk-backed RUNS directory. This targeted command does not replace the
+final full browser and separate serial timing gates below.
+
+### Conflict inbox
+
 Conflict lifecycle/read coverage lives in `tests/hub_conflicts_test.ts` and
 `tests/hub_conflict_api_test.ts`: automatic schema migration, persistent revisions,
 conditional closure, pre-batch member renames, deletion scrubbing, vault scoping,

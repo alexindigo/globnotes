@@ -88,7 +88,8 @@ it does not use `capabilities.write` or receive an application file facade.
 `activate(ctx)` must call `ctx.driver.serve({open,discover,read,apply,close})` once.
 All five methods are required; functions remain inside the Worker. The driver
 context has only `createUuid`, frozen `instance: {id,label,settings}`,
-`secrets.get(key)`, `driver.serve`, `driver.hint`, managed `timers` and `register`.
+`secrets.get(key)`, `driver.serve`, `driver.hint`, `driver.storage`,
+`driver.StorageError`, managed `timers` and `register`.
 No hooks, commands, endpoints, permissions, plugin data, file, action or
 versioning facade is available to this role. Host dispatch binds the instance;
 no driver message can name another peer or secret namespace. Secret lookup
@@ -118,6 +119,16 @@ also applies to driver Workers, so a hung instance cannot block another one.
 Driver console arguments are not forwarded; asynchronous exceptions report only
 value-free failures. The instance's host must redact typed state reasons/errors
 before publication. The host retains no read bodies or historical text.
+
+The [driver author guide](drivers.md) documents every result, storage-provider
+method, bound and recovery rule. Incomplete discovery pages and unknown reads
+may carry strictly validated `error: {code,retryAfterMs?,message?}` so typed
+provider failures survive the Worker boundary without changing absence/cursor
+semantics. Rate limits preserve retry advice, authentication locks the instance,
+and sandbox network denial remains distinct. The storage SDK refuses a provider
+whose actual native-condition support is weaker than its static conditional
+manifest promise. Emulated conditions require explicit disclosure; they are
+fresh checks followed by writes, not native CAS.
 
 ### Instance controls and key custody
 

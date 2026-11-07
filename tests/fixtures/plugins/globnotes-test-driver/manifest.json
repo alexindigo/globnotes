@@ -1,0 +1,55 @@
+{
+  "id": "globnotes-test-driver",
+  "name": "Memory remote",
+  "version": "1.0.0",
+  "capabilities": {
+    "network": ["127.0.0.1", "globnotes.test"],
+    "imports": false
+  },
+  "driver": {
+    "entry": "driver.js",
+    "apiVersion": 1,
+    "settings": [
+      {
+        "key": "baseUrl",
+        "label": "Remote URL",
+        "type": "text",
+        "default": "",
+        "maxLength": 2048
+      },
+      { "key": "prefix", "label": "Prefix", "type": "text", "default": "" },
+      {
+        "key": "exclude",
+        "label": "Excluded prefixes",
+        "type": "text",
+        "default": ""
+      },
+      {
+        "key": "forbiddenCharacters",
+        "label": "Unsupported characters",
+        "type": "text",
+        "default": ""
+      },
+      {
+        "key": "atomicGroups",
+        "label": "Atomic groups",
+        "type": "toggle",
+        "default": false
+      }
+    ],
+    "secrets": [{ "key": "token", "label": "Access token" }],
+    "capabilities": {
+      "discovery": { "snapshot": true, "delta": false },
+      "revisions": "exact",
+      "mutations": {
+        "create": "conditional",
+        "update": "conditional",
+        "delete": "conditional",
+        "move": "none"
+      },
+      "groups": "none",
+      "history": { "baseText": false },
+      "limits": { "maxBatch": 64 }
+    }
+  }
+}

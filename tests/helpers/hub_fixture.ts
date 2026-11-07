@@ -16,7 +16,7 @@ import { fixtureApiOrigin } from "./plugin_fixture.ts";
 
 export function hubOperationsFixture(
   probes: StorageProbes = {},
-  options: { alias?: "sibling" | "ancestor" } = {},
+  options: { alias?: "sibling" | "ancestor"; changeLimit?: number } = {},
 ) {
   const previous = { ...state };
   const root = Deno.makeTempDirSync();
@@ -37,7 +37,9 @@ export function hubOperationsFixture(
   const config = new GlobalConfig(env),
     notes = new FileSystemNotes(config.notesPath, probes, env);
   const files = new FileServing(config.notesPath),
-    hub = new VaultHub(config.notesPath, config.statePath, env);
+    hub = new VaultHub(config.notesPath, config.statePath, env, {
+      changeLimit: options.changeLimit,
+    });
   initState(config, null, notes, null, files, null, hub);
   const lifecycle = new PluginLifecycle(config);
   state.lifecycle = lifecycle;

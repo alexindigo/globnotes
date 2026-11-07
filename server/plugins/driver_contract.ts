@@ -70,6 +70,9 @@ export interface DiscoveryPage {
   groups?: { id: string; members: string[] }[];
   cursor?: string;
   completion: "more" | "complete" | "incomplete";
+  /** Typed failure advice, only on incomplete discovery. Never proves absence.
+   * Added in M5 answer 3 so providers need not encode errors in reason strings. */
+  error?: DriverError;
 }
 export interface DiscoverRequest {
   mode: "snapshot" | "delta";
@@ -87,7 +90,9 @@ export type ReadResult =
     baseText?: string;
   }
   | { state: "absent" }
-  | { state: "unknown"; reason: string }
+  /** A failed read remains unknown. Optional typed advice is consumed without
+   * advancing discovery or inventing absence (M5 answer 3). */
+  | { state: "unknown"; reason: string; error?: DriverError }
   | { state: "locked"; reason: string };
 export interface ExportItem {
   id: string;
@@ -279,6 +284,7 @@ export function validateDiscoveryPage(
     "groups",
     "cursor",
     "completion",
+    "error",
   ]);
   const identity = endpoint(raw.endpoint);
   if (
@@ -288,6 +294,10 @@ export function validateDiscoveryPage(
     (raw.mode === "delta" && !caps.discovery.delta)
   ) invalid();
   oneOf(raw.completion, ["more", "complete", "incomplete"]);
+  if (raw.error !== undefined) {
+    if (raw.completion !== "incomplete") invalid();
+    driverError(raw.error);
+  }
   if (raw.cursor !== undefined) boundedText(raw.cursor, 64 * 1024);
   if (
     raw.completion === "more" && (!raw.cursor || raw.cursor === request.cursor)
@@ -371,6 +381,7 @@ export function validateReadResult(
     "bytes",
     "baseText",
     "reason",
+    "error",
   ]);
   if (raw.state === "known") {
     object(raw, ["state", "revision", "bytes", "baseText"]);
@@ -387,8 +398,14 @@ export function validateReadResult(
     }
   } else if (raw.state === "absent") object(raw, ["state"]);
   else if (raw.state === "unknown" || raw.state === "locked") {
-    object(raw, ["state", "reason"]);
+    object(
+      raw,
+      raw.state === "unknown"
+        ? ["state", "reason", "error"]
+        : ["state", "reason"],
+    );
     boundedText(raw.reason);
+    if (raw.error !== undefined) driverError(raw.error);
   } else invalid();
   return structuredClone(raw) as unknown as ReadResult;
 }
