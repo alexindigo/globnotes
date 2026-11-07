@@ -38,39 +38,35 @@ await conflictCase("conflict-review-native", async f => {
   // A lost successful server reply is still an unknown client outcome until a
   // closed authoritative review. This models transport loss after actual effects.
   const row = await f.create("Unknown"); await f.compare(row); await s.button("Edit a merge"); await f.fill("unacknowledged merge\n");
-  let paused;
-  const release = s.page.onEvent(event => { if (event.method === "Fetch.requestPaused") paused = event.params.requestId; });
+  const unknownResponse = await f.holdResolutionResponse(row);
   try {
-    await s.send("Fetch.enable", { patterns: [{ urlPattern: "*/conflicts/*/resolve", requestStage: "Response" }] });
-    await s.button("Save merge", ".conflicts-page"); await s.button("Save merge", "[role=dialog]"); await until(() => !!paused, "successful response held");
+    await s.button("Save merge", ".conflicts-page"); await s.button("Save merge", "[role=dialog]"); const paused = await unknownResponse.wait("successful response held");
     assert(await Deno.readTextFile(`${f.vault}/${row.path}`) === "unacknowledged merge\n" && await f.absent(row.copyPath), "Unknown fixture was not admitted to real effects");
-    await s.send("Fetch.failRequest", { requestId: paused, errorReason: "Failed" }); await s.send("Fetch.disable");
+    await s.send("Fetch.failRequest", { requestId: paused, errorReason: "Failed" });
     await s.poll("document.body.textContent.includes('The resolution outcome is unknown.')");
     // A metadata closure may render the caption before a lost wire rejects.
     // Wait for this authoritative review to retire unknown authority too.
-    await s.button("Review current versions"); await s.poll("document.body.textContent.includes('This conflict was resolved elsewhere.') && !document.body.textContent.includes('The resolution outcome is unknown.')");
+    await unknownResponse.review(); await s.poll("document.body.textContent.includes('This conflict was resolved elsewhere.') && !document.body.textContent.includes('The resolution outcome is unknown.')");
     assert(await s.evaluate("document.querySelector('#conflict-merge').value") === "unacknowledged merge\n", "Unknown closed read falsely acknowledged draft");
     await s.click('.conflicts-page > a'); await s.button("Cancel", "[role=dialog]");
     assert(f.writes.filter(request => request.content === "unacknowledged merge\n").length === 1, "Unknown outcome replayed");
     f.results.push({ unknownActualEffects: true, noReplay: true, closedReviewRetainsDraft: true });
-  } finally { release(); await s.send("Fetch.disable"); }
+  } finally { await unknownResponse.dispose(); }
   await s.click('.conflicts-page > a'); await s.button("Discard draft", "[role=dialog]"); await f.inboxCount(0);
   const partial = await f.create("Partial-response"); await f.compare(partial); await s.button("Edit a merge"); await f.fill("partial response retained\n");
-  let partialResponse;
-  const releasePartial = s.page.onEvent(event => { if (event.method === "Fetch.requestPaused") partialResponse = event.params.requestId; });
+  const partialResponse = await f.holdResolutionResponse(partial);
   try {
-    await s.send("Fetch.enable", { patterns: [{ urlPattern: "*/conflicts/*/resolve", requestStage: "Response" }] });
-    await s.button("Save merge", ".conflicts-page"); await s.button("Save merge", "[role=dialog]"); await until(() => !!partialResponse, "actual effects before partial response");
-    await s.send("Fetch.fulfillRequest", { requestId: partialResponse, responseCode: 500, responseHeaders: [{ name: "content-type", value: "application/json" }],
+    await s.button("Save merge", ".conflicts-page"); await s.button("Save merge", "[role=dialog]"); const paused = await partialResponse.wait("actual effects before partial response");
+    await s.send("Fetch.fulfillRequest", { requestId: paused, responseCode: 500, responseHeaders: [{ name: "content-type", value: "application/json" }],
       body: btoa(JSON.stringify({ code: "operation_partial", detail: "Fixture partial response after actual effects", partial: { completedPaths: [partial.path, partial.copyPath] } })) });
-    await s.send("Fetch.disable"); await s.poll("document.body.textContent.includes('The resolution outcome is unknown.')");
-    await s.button("Review current versions"); await s.poll("document.body.textContent.includes('This conflict was resolved elsewhere.') && !document.body.textContent.includes('The resolution outcome is unknown.')");
+    await s.poll("document.body.textContent.includes('The resolution outcome is unknown.')");
+    await partialResponse.review(); await s.poll("document.body.textContent.includes('This conflict was resolved elsewhere.') && !document.body.textContent.includes('The resolution outcome is unknown.')");
     assert(await s.evaluate("document.querySelector('#conflict-merge').value") === "partial response retained\n", "Partial response lost the browser draft");
     await s.click('.conflicts-page > a'); await s.button("Discard draft", "[role=dialog]"); await f.inboxCount(0);
     assert(f.writes.filter(request => request.content === "partial response retained\n").length === 1, "Partial response authorized a replay");
     assert(await Deno.readTextFile(`${f.vault}/${partial.path}`) === "partial response retained\n" && await f.absent(partial.copyPath), "Partial-response fixture did not retain actual effects");
     f.results.push({ injectedPartialResponseAfterActualEffects: true, draftRetained: true, noReplay: true });
-  } finally { releasePartial(); await s.send("Fetch.disable"); }
+  } finally { await partialResponse.dispose(); }
   await f.restart({ GLOBNOTES_AUTH_TYPE: "password", GLOBNOTES_USERNAME: "m3-fixture", GLOBNOTES_PASSWORD: "m3-fixture-password", GLOBNOTES_SECRET_KEY: "m3-native-fixture-only-secret-key" });
   await s.goto(f.url("/_/conflicts")); await f.login("m3-fixture", "m3-fixture-password");
   const guarded = await f.create("Departure");

@@ -64,6 +64,24 @@ export async function conflictCase(name, run, { prefix = "", env = {} } = {}) {
       server: () => server,
       async restart(extra = {}) { await server.close(); server = await bootServer({ GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_PATH_PREFIX: prefix, ...env, ...extra }, applicationServer()); },
       async peer() { const peer = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) }); peers.push(peer); return peer; },
+      async holdResolutionResponse(row) {
+        let response;
+        const endpoint = `${server.baseUrl}${prefix}/_/api/conflicts/${row.id}`;
+        const release = session.page.onEvent(event => {
+          if (event.method === "Fetch.requestPaused" && event.params.request.url === `${endpoint}/resolve`) response = event.params.requestId;
+        });
+        // The wire and background authoritative reads race independently. Hold
+        // the real detail responses until the explicit review intent, so unknown
+        // authority cannot disappear between observing its status and clicking.
+        try {
+          await session.send("Fetch.enable", { patterns: [endpoint, `${endpoint}/resolve`].map(urlPattern => ({ urlPattern, requestStage: "Response" })) });
+        } catch (error) { release(); throw error; }
+        return {
+          async wait(label) { await until(() => !!response, label); return response; },
+          async review() { await session.button("Review current versions"); await session.send("Fetch.disable"); },
+          async dispose() { release(); await session.send("Fetch.disable"); },
+        };
+      },
       async login(username, password) {
         await session.poll("!!document.querySelector('#username')");
         await session.click("#username"); await session.type(username); await session.click("#password"); await session.type(password); await session.button("Log In");
