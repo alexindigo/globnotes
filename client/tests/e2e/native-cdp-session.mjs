@@ -1,5 +1,6 @@
 // Feature-owned native CDP; all targets/contexts are explicitly owned.
 import { assertHttpTestUrl } from "./http-origin.mjs";
+import { clickReady } from "./native-actions.mjs";
 import { done, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
 export function connectSocket(url, { timeout = 15000, Socket = WebSocket } = {}) {
   return new Promise((resolve, reject) => {
@@ -113,13 +114,13 @@ export async function nativeSession({ port = 9333, width = 1280, height = 900, d
   function poll(expression) {
     return waitUntil(async () => {
       const value = await evaluate(expression);
-      return value ? done() : waitPending({ expression, value });
+      return value ? done(value) : waitPending({ expression, value });
     }, { label: "page condition", intervalMs: 50 });
   }
-  async function click(selector) {
-    const point = await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Missing control'); el.scrollIntoView({block:'center',inline:'center'}); const r = el.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`);
+  const pointer = { evaluate, poll, async click(_selector, point) {
     for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
-  }
+  } };
+  const click = selector => clickReady(pointer, selector);
   return { ...owned, browser, errors, events, version, evaluate, poll, click, send: page.send,
     // Every application page load is checked before and after navigation: plain
     // HTTP on the local test domain, and an insecure context (AXIOMS §1).
@@ -136,8 +137,7 @@ export async function nativeSession({ port = 9333, width = 1280, height = 900, d
       console.log(JSON.stringify(record));
     },
     async button(text, scope = "body") {
-      await poll(`(() => { document.querySelector('[data-gps-click]')?.removeAttribute('data-gps-click'); const button = [...document.querySelectorAll(${JSON.stringify(scope + " button")})].find(el => el.textContent.trim() === ${JSON.stringify(text)} && el.getBoundingClientRect().width); button?.setAttribute('data-gps-click','1'); return !!button; })()`);
-      await click("[data-gps-click]");
+      await clickReady(pointer, scope + " button", { text });
     },
     type(text) { return page.send("Input.insertText", { text }); },
     async key(key, { modifiers = 0, code = key, windowsVirtualKeyCode } = {}) {
