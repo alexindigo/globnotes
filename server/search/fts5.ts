@@ -64,7 +64,7 @@ export const fileAdapters: IndexerAdapters = {
 export class Fts5Indexer implements Indexer {
   #db: DatabaseSync;
   #indexPath: string;
-  #status = { syncing: false, initial: false, done: 0, total: 0 };
+  #status = { syncing: false, initial: false, done: 0, total: 0, failed: 0 };
   readonly #environment: Environment;
   readonly #adapters: IndexerAdapters;
   #savepoints = 0;
@@ -156,12 +156,14 @@ export class Fts5Indexer implements Indexer {
     initial: boolean;
     done: number;
     total: number;
+    failed: number;
   } {
     return {
       syncing: this.#status.syncing,
       initial: !this.#status.initial,
       done: this.#status.done,
       total: this.#status.total,
+      failed: this.#status.failed,
     };
   }
 
@@ -352,7 +354,13 @@ export class Fts5Indexer implements Indexer {
   }
 
   async #runBackgroundSync(): Promise<void> {
-    this.#status = { syncing: true, initial: false, done: 0, total: 0 };
+    this.#status = {
+      syncing: true,
+      initial: false,
+      done: 0,
+      total: 0,
+      failed: 0,
+    };
     try {
       const fsFiles = new Set(state.notes.listAllNoteFilenames());
       // All indexed mtimes in one scan: a lookup per file by filename is a
@@ -397,20 +405,26 @@ export class Fts5Indexer implements Indexer {
       const added: string[] = [];
       for (let i = 0; i < newFiles.length; i += batchSize) {
         const batch = newFiles.slice(i, i + batchSize);
+        const batchAdded: string[] = [];
         this.#transaction(() => {
           for (const filename of batch) {
             if (
               this.#perNote(filename, "add", () => this.#indexFile(filename))
             ) {
-              added.push(filename);
+              batchAdded.push(filename);
             }
           }
         });
-        this.#status.done += batch.length;
+        // Facts and progress describe committed additions, never attempts.
+        added.push(...batchAdded);
+        this.#status.done += batchAdded.length;
+        this.#status.failed += batch.length - batchAdded.length;
         if (batchDelay > 0) await delay(batchDelay);
       }
       if (newFiles.length > 0) {
-        logger.info(`Initial index sync complete (${newFiles.length} notes)`);
+        logger.info(
+          `Initial index sync complete (${this.#status.done} indexed, ${this.#status.failed} failed of ${newFiles.length} notes)`,
+        );
       }
       // Initial indexing is inventory plus on-sync — never fake creates.
       this.#batchSynced(

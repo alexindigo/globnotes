@@ -197,7 +197,10 @@ export class GlobalConfig {
   constructor(environment: Environment = processEnvironment) {
     this.environment = environment;
     logger.debug("Loading global config...");
-    this.notesPath = this.#env("GLOBNOTES_PATH", { mandatory: true });
+    // One absolute normalized spelling for storage, index, hub and plugins.
+    this.notesPath = path.resolve(
+      this.#env("GLOBNOTES_PATH", { mandatory: true }),
+    );
     // getEnv returns "" for unset vars — `||` treats that (and an
     // explicitly empty value) as absent, per the env-wins rule.
     this.statePath = this.#env("GLOBNOTES_INDEX_PATH") ||

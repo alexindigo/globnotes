@@ -12,7 +12,8 @@ export default function (): {
   initial: boolean;
   done: number;
   total: number;
+  failed?: number;
 } {
   return state.indexer?.indexStatus ??
-    { syncing: false, initial: true, done: 0, total: 0 };
+    { syncing: false, initial: true, done: 0, total: 0, failed: 0 };
 }

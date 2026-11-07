@@ -277,6 +277,7 @@ Deno.test("index status shape", () =>
     const s = indexer.indexStatus;
     assertEquals(Object.keys(s).sort(), [
       "done",
+      "failed",
       "initial",
       "syncing",
       "total",

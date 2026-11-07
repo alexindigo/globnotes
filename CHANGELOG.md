@@ -72,6 +72,10 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Vault roots with relative segments or repeated separators share one normalized
+path across storage, indexing and the hub. Initial indexing reports only committed
+notes as done and counts failed additions separately.
+
 Search displays note-controlled markup as text while keeping match highlights.
 Saved notes and previews preserve safe HTML formatting without executing note
 scripts or event handlers; configured logo accents cannot inject SVG attributes.
