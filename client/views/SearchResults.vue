@@ -104,7 +104,7 @@
         <RouterLink :to="notePath(result.path)">
           <!-- Title and Tags -->
           <div>
-            <span v-html="search.title(result)" class="mr-2"></span>
+            <HighlightText :text="search.title(result)" :highlighted="!!result.pathHighlights" class="mr-2" />
             <Tag v-for="tag in result.tagMatches" :tag="tag" class="mr-1" />
           </div>
           <!-- Last Modified and Content Highlights -->
@@ -113,10 +113,11 @@
               result.lastModifiedAsString
             }}</span>
             <span v-if="result.contentHighlights"> - </span>
-            <span
-              v-html="result.contentHighlights"
+            <HighlightText
+              :text="result.contentHighlights || ''"
+              highlighted
               class="text-theme-text-muted"
-            ></span>
+            />
           </div>
         </RouterLink>
       </div>
@@ -135,6 +136,7 @@ import { publish, TOPICS } from "../bus/index.js";
 import CustomButton from "../components/CustomButton.vue";
 import CtaButton from "../components/CtaButton.vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
+import HighlightText from "../components/HighlightText.vue";
 import PrimeMenu from "../components/PrimeMenu.vue";
 import Tag from "../components/Tag.vue";
 import Toggle from "../components/Toggle.vue";
@@ -180,9 +182,3 @@ watch(() => state.value.effectiveSortBy, search.reSortResults);
 onMounted(search.init);
 onBeforeUnmount(search.dispose);
 </script>
-
-<style>
-.match {
-  @apply text-theme-brand;
-}
-</style>
