@@ -9,7 +9,7 @@ export const SELECTION = [
   ["quick-switcher"], ["test-quality-geometry"],
   ["native-ownership-control"], ["native-actions-control"], ["button-icons"], ["save-preview"],
   ["line-wrap"], ["ctrl-f-search"], ["anchor-history"], ["setup-wizard"], ["setup-totp-desktop"],
-  ["autosave-timer"], ["hub-safe-saves-native"], ["hub-writers-gate-native"], ["html-safety"],
+  ["autosave-timer"], ["hub-safe-saves-native"], ["hub-writers-gate-native"], ["html-safety"], ["background-connections-native"],
 ];
 
 // Argument variants are distinct cases (rename-options-move/relink/none).

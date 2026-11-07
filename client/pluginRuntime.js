@@ -16,6 +16,7 @@ import { removeCommandOwner } from "./commands.js";
 import { createPluginSdk } from "./pluginSdk.js";
 import { getStoredToken } from "./tokenStorage.js";
 import { readPathPrefix } from "./pathPrefix.js";
+import { connectionLifetime, createConnectionLifetime } from "./connectionLifetime.js";
 
 const pathPrefix = readPathPrefix();
 
@@ -31,10 +32,11 @@ export function createPluginRuntime({
   report = (...args) => console.error(...args),
   setTimer = setTimeout,
   clearTimer = clearTimeout,
+  lifetime = createConnectionLifetime({ setTimer, clearTimer }),
 } = {}) {
   const catalog = ref(null), browserStatus = ref(new Map());
   const generations = new Map();
-  let started = false, requested = false, documentActive = true;
+  let started = false, requested = false, documentActive = lifetime.state().active;
   let epoch = 0, readTicket = 0, publicationSerial = 0, policyFloor = 0;
   let sessionKey = "default", activeCredential;
   let closeEvents = null, reconnectTimer = null, eventController = null;
@@ -199,14 +201,18 @@ export function createPluginRuntime({
     return receipt;
   }
   function stop() { requested = false; halt(); }
-  function suspendDocument() { documentActive = false; halt(); }
-  function resumeDocument() { documentActive = true; if (requested) return start(); return Promise.resolve({ status: "inactive" }); }
+  lifetime.subscribe(next => {
+    if (next === documentActive) return;
+    documentActive = next;
+    if (!next) halt();
+    else if (requested) start(); // Fresh catalog, then hello closes the read/subscribe gap.
+  });
 
   return Object.freeze({ catalog: readonly(catalog), browserGenerations: readonly(browserStatus), start, stop, refresh,
-    captureOwnership, acknowledgePolicy, suspendDocument, resumeDocument });
+    captureOwnership, acknowledgePolicy, suspendDocument: lifetime.suspendDocument, resumeDocument: lifetime.resumeDocument });
 }
 
-const runtime = createPluginRuntime();
+const runtime = createPluginRuntime({ lifetime: connectionLifetime });
 /** Read-only reactive projections; only refresh publishes authoritative data. */
 export const pluginCatalog = runtime.catalog;
 export const browserGenerations = runtime.browserGenerations;
@@ -215,5 +221,3 @@ export const stopPluginRuntime = () => runtime.stop();
 export const refreshPluginRuntimeCatalog = () => runtime.refresh();
 export const capturePluginCatalogOwnership = () => runtime.captureOwnership();
 export const acknowledgePluginPolicy = (policy, owner) => runtime.acknowledgePolicy(policy, owner);
-window.addEventListener("pagehide", () => runtime.suspendDocument());
-window.addEventListener("pageshow", () => runtime.resumeDocument());
