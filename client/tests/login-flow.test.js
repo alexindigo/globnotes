@@ -34,6 +34,14 @@ describe("login flow", () => {
     expect(order).toEqual([["store", "access", false], ["navigate", { name: "home" }]]);
     expect(s.clearCredentials).not.toHaveBeenCalled();
   });
+  it("in-place login persists once and acknowledges its controller without navigating", async () => {
+    const order = [], request = Promise.withResolvers();
+    const s = setup({ requestToken: () => request.promise, persistToken: () => order.push("store"), authenticated: () => order.push("authenticated") });
+    const first = s.flow.logIn(), duplicate = s.flow.logIn();
+    expect(duplicate).toBe(first);
+    request.resolve("token"); await first;
+    expect(order).toEqual(["store", "authenticated"]); expect(s.navigate).not.toHaveBeenCalled();
+  });
 
   it("uses the current Remember Me and redirect values on acknowledgement, not submission", async () => {
     let resolve;

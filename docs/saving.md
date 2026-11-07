@@ -77,8 +77,24 @@ rename are based on the text they read and leave a note changed since alone.
 A rejected request, cancelled attachment choice or uncertain write pauses the
 queue and restores the Save icon. Failed and queued snapshots, current text and
 filename intent remain retained. Further Save clicks capture additional held
-snapshots and report that they are held. They do not retry, resume or skip the
-failed work.
+snapshots and report that they are held. Except for the known authentication
+rejection described below, they do not retry, resume or skip the failed work.
+
+### Sign-in while editing
+
+A 401 while unsaved work exists opens the existing login form in a shared modal,
+without leaving the note or opening Save/Discard. The note controller immediately
+flushes its current text to the existing browser draft store. Cancelling sign-in
+keeps the same editor, draft and pending saves, with a **Not saved** status. Press
+**Save** to reopen sign-in; newer typing can join the retained FIFO.
+
+The exact pre-write middleware response (`401`, `Invalid authentication credentials`)
+pauses the FIFO for authentication. After successful sign-in, the save owner
+retries that same immutable submission, in order, with its original base. Changes
+made elsewhere during sign-in therefore merge or produce the usual conflict copy.
+Newer typing and queued saves remain owned by the same edit session. A cancelled
+form's late response cannot store credentials or release a replacement session.
+Successful in-place sign-in also restarts credential-owned streams.
 
 A 60-second observation deadline is not cancellation of a server write. A late
 reply belongs to its original editing session and submission. It cannot resume
@@ -86,8 +102,9 @@ held snapshots or execute an earlier aborted close/logout request. A network
 error, partial operation or unproven error response can leave the outcome
 unknown; receiving an error does not by itself prove that files were untouched.
 
-The initial FIFO implementation provides no Retry/Resume/Skip controls, automatic
-reconciliation, persistent outbox or crash-safe replay.
+Network errors, bare/unproven 401s, partial operations, observation timeouts and
+integration failures never gain automatic retry permission from sign-in. There
+are no general Retry/Resume/Skip controls, persistent outbox or crash-safe replay.
 
 ## Leaving an editing session
 

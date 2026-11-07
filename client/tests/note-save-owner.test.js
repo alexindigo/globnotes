@@ -69,6 +69,53 @@ function fixture(overrides = {}, useDefaults = false) {
 }
 
 describe("save owner submission and acknowledgement", () => {
+  it("a known 401 retains the exact FIFO job and base, then retries after in-place sign-in", async () => {
+    const login = deferred(), requestAuthentication = vi.fn(() => login.promise), authenticationRequired = vi.fn();
+    const f = fixture({ requestAuthentication, authenticationRequired }); f.owner.start();
+    f.edit("A"); const receipt = f.owner.save(); await flush();
+    f.edit("B"); f.owner.save(); f.edit("C");
+    f.sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await flush();
+    expect(requestAuthentication).toHaveBeenCalledTimes(1);
+    expect(authenticationRequired).toHaveBeenCalledTimes(1);
+    expect(f.adapters.failed).not.toHaveBeenCalled();
+    expect(f.owner.queueState()).toMatchObject({ status: "paused", failure: { authenticationRequired: true } });
+    expect(f.sent).toHaveLength(1); expect(f.buffer()).toBe("C");
+    login.resolve(true); await flush();
+    expect(f.sent[1].args).toEqual(f.sent[0].args);
+    expect(f.owner.queueState().active.submissionId).toBe(receipt.submissionId);
+    await f.ack(1, "P.conflict-copy", "A", { saveResult: { status: "conflict" } });
+    expect(await receipt.completion).toMatchObject({ status: "acknowledged" });
+    expect(f.sent[2].args).toEqual(["P.conflict-copy", "P.conflict-copy", "B", "none", "A"]);
+    await f.ack(2, "P.conflict-copy", "B");
+    expect(f.buffer()).toBe("C"); expect(f.owner.contentNeedsSave()).toBe(true);
+  });
+  it("cancelled sign-in retains unsaved work and a later Save reopens sign-in", async () => {
+    const login = deferred(), again = deferred();
+    const requestAuthentication = vi.fn().mockReturnValueOnce(login.promise).mockReturnValueOnce(again.promise);
+    const f = fixture({ requestAuthentication }); f.owner.start(); f.edit("A"); f.owner.save(); await flush();
+    f.sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await flush();
+    login.resolve(false); await flush();
+    expect(f.owner.queueState().unresolved).toBe(true); expect(f.buffer()).toBe("A"); expect(f.sent).toHaveLength(1);
+    f.owner.save(); await flush(); expect(requestAuthentication).toHaveBeenCalledTimes(2);
+    again.resolve(true); await flush(); expect(f.sent).toHaveLength(2);
+    await f.ack(1); expect(f.owner.queueState().unresolved).toBe(false);
+  });
+  it.each(["dispose", "discard", "replace"])("late sign-in cannot replay a retired job (%s)", async retirement => {
+    const login = deferred(), f = fixture({ requestAuthentication: () => login.promise });
+    f.owner.start(); f.edit("A"); f.owner.save(); await flush();
+    f.sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await flush();
+    if (retirement === "dispose") f.owner.dispose();
+    else if (retirement === "discard") f.owner.discard();
+    else f.owner.start();
+    login.resolve(true); await flush(); expect(f.sent).toHaveLength(1);
+  });
+  it("a bare 401 or unknown outcome is never retried after authentication", async () => {
+    const requestAuthentication = vi.fn(async () => true), f = fixture({ requestAuthentication });
+    f.owner.start(); f.edit("A"); f.owner.save(); await flush();
+    f.sent[0].reject({ response: { status: 401 } }); await flush();
+    expect(requestAuthentication).not.toHaveBeenCalled(); expect(f.sent).toHaveLength(1);
+    expect(f.owner.queueState().failure.certainty).toBe("unknown");
+  });
   it.each([false, true])("merged acknowledgements adopt only unchanged text and keep the correct next base (newer=%s)", async newer => {
     const f = fixture(); f.owner.start(); f.edit("A"); f.owner.save(); await flush();
     expect(f.sent[0].args[4]).toBe("old");

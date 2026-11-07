@@ -5,6 +5,15 @@
     class="relative flex h-dvh w-screen flex-col overflow-hidden print:max-w-full"
   >
     <PrimeToast />
+    <Modal v-if="reauthentication" :key="reauthentication.id" :model-value="true" name="reauthentication" anchor="dialog"
+      labelledby="reauthentication-title" trap-focus :close-handler-override="reauthentication.cancel">
+      <div class="flex flex-col gap-4 p-6" data-reauthentication>
+        <h2 id="reauthentication-title" class="text-xl font-semibold">Sign in to continue</h2>
+        <p>Your edits stay here. Pending saves will retry after sign-in.</p>
+        <LoginForm :on-authenticated="reauthentication.authenticated" :is-current="reauthentication.isCurrent" />
+        <button type="button" class="self-end rounded px-3 py-2 hover:bg-theme-background-elevated" @click="reauthentication.cancel">Cancel</button>
+      </div>
+    </Modal>
     <SetupModal
       v-if="globalStore.config.setupRequired || globalStore.setupWizardRequested"
       :dismissible="!globalStore.config.setupRequired"
@@ -90,6 +99,9 @@ import CommandPalette from "./components/CommandPalette.vue";
 import LoadingIndicator from "./components/LoadingIndicator.vue";
 import router from "./router.js";
 import { DIALOG_HOST, isActionAvailable, modalStack } from "./modalState.js";
+import Modal from "./components/Modal.vue";
+import LoginForm from "./components/LoginForm.vue";
+import { reauthenticationRequest as reauthentication } from "./reauthentication.js";
 
 const globalStore = useGlobalStore();
 const dialogHost = ref(null);

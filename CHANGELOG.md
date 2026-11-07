@@ -89,6 +89,10 @@ Search displays note-controlled markup as text while keeping match highlights.
 Saved notes and previews preserve safe HTML formatting without executing note
 scripts or event handlers; configured logo accents cannot inject SVG attributes.
 
+An expired session no longer asks you to save or discard edits before sign-in.
+Sign in over the same editor to retry pending saves with their original base;
+cancelling keeps the edits and browser draft unsaved.
+
 Background tabs release both vault-change and plugin-host connections after
 10 seconds, freeing HTTP connections for visible tabs. Returning catches up on
 vault changes and reactivates browser plugins from the current catalog.

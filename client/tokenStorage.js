@@ -1,6 +1,8 @@
 import { readPathPrefix } from "./pathPrefix.js";
+import { ref } from "vue";
 
 const tokenStorageKey = "token";
+const revision = ref(0);
 
 function getBasePath() {
   // Cookie scope: the app root — the path prefix when served under a
@@ -20,9 +22,12 @@ export function storeToken(token, persist = false) {
   if (persist === true) {
     localStorage.setItem(tokenStorageKey, token);
   }
+  revision.value++;
 }
 
 export function getStoredToken() {
+  // Track writes by this capability owner without duplicating token storage.
+  revision.value;
   return sessionStorage.getItem(tokenStorageKey);
 }
 
@@ -38,6 +43,7 @@ export function clearStoredToken() {
   localStorage.removeItem(tokenStorageKey);
   document.cookie =
     getCookieString() + "; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  revision.value++;
 }
 
 export function isCurrentTokenStored() {

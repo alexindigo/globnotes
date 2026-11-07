@@ -68,9 +68,11 @@ export function createNoteSaveQueue(adapters) {
   function pause(job, error, certainty, phase) {
     status = "paused";
     failureSerial++;
-    failure = { submissionId: job.snapshot.submissionId, certainty, phase, message: error?.message ?? String(error), serial: failureSerial };
+    const authenticationRequired = !job.timedOut && error?.response?.status === 401 &&
+      error.response.data?.detail === "Invalid authentication credentials" && ["preparing", "sending"].includes(phase);
+    failure = { submissionId: job.snapshot.submissionId, certainty, phase, message: error?.message ?? String(error), serial: failureSerial, authenticationRequired };
     job.outcome = Object.freeze({ status: "failed", certainty, phase });
-    finishReceipt(job, job.outcome);
+    if (!authenticationRequired) finishReceipt(job, job.outcome);
     notify();
     adapters.failed?.(error, job.snapshot, failure);
   }
@@ -194,6 +196,17 @@ export function createNoteSaveQueue(adapters) {
     },
     state,
     admittedPath,
+    /** Only the inspected pre-write auth rejection can release this barrier.
+     * The failed snapshot, FIFO position and acknowledged base are unchanged.
+     * A network/timeout/partial/integration failure never acquires this right. */
+    resumeAfterAuthentication(serial) {
+      if (disposed || status !== "paused" || !failure?.authenticationRequired || failure.serial !== serial ||
+          !active || active.inFlight || active.timedOut || rebaseConflict) return false;
+      const job = active;
+      active = null; failure = null; job.outcome = null; job.phase = "queued";
+      queued.unshift(job); status = "idle"; notify(); pump();
+      return true;
+    },
     adopt(note) {
       if (state().unresolved || disposed) return false;
       acknowledged = immutable(note); baseContent = note.content;
