@@ -188,6 +188,12 @@ const RAW_CLOCK_ALLOWED: NonNullable<Rule["allowed"]> = [
  * build. Vault effects belong to server/hub/effects.ts. */
 const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
   {
+    file: "server/hub/drivers/secrets.ts",
+    line: "const file = Deno.openSync(this.filename, {",
+    reason:
+      "mode-0600 driver secret store in canonical host state (M5 sec. 3.7, answers 1 and 2)",
+  },
+  {
     file: "server/api/endpoints/_/api/brand/post.ts",
     line: "Deno.removeSync(path.join(dir, name));",
     reason: "branding uploads in <state>/brand (server/brand.ts brandDirPath)",

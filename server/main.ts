@@ -22,6 +22,7 @@ import { VaultHub } from "./hub/hub.ts";
 import { VaultEffects } from "./hub/effects.ts";
 import { HubGate } from "./hub/gate.ts";
 import { subscribeExternalFacts, subscribeIndex } from "./hub/subscribers.ts";
+import { DriverSupervisor } from "./hub/drivers/supervisor.ts";
 import { PluginActions } from "./plugins/actions.ts";
 import { AuxiliaryFilesystem } from "./plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "./plugins/data.ts";
@@ -186,14 +187,17 @@ plugins.configureRuntime({
     filesystem: auxiliaryFilesystem,
   }),
 });
-if (!globalConfig.setupRequired) {
-  plugins.runtime?.reconcile().catch((e) =>
-    logger.error(`plugin runtime reconciliation failed: ${e}`)
-  );
-}
 hub.start();
 subscribeIndex(hub, indexer);
 subscribeExternalFacts(hub, lifecycle);
+const drivers = new DriverSupervisor({ hub, operations, plugins, lifecycle });
+state.drivers = drivers;
+plugins.configureDrivers(drivers);
+if (!globalConfig.setupRequired) {
+  plugins.reconcileOwners().catch(() =>
+    logger.error("plugin owner reconciliation failed")
+  );
+}
 indexer.startBackgroundSync();
 // Render pools still start lazily on the first render call.
 
@@ -291,6 +295,25 @@ const httpServer = Deno.serve({ hostname, port }, (req, info) => {
   // The prefix wrapper must preserve the query — plugin APIs depend on it.
   target.search = url.search;
   return app(new Request(target, req), info);
+});
+// Retire driver admission before closing either key custody or hub metadata.
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await drivers.close();
+  plugins.runtime?.suspend();
+  plugins.stop();
+  hub.stop();
+  // Persistent browser streams do not have a natural completion. Process exit
+  // closes them after the owned driver/storage teardown, as SIGTERM did before.
+  Deno.exit();
+};
+Deno.addSignalListener("SIGTERM", () => {
+  shutdown().catch(() => Deno.exit(1));
+});
+Deno.addSignalListener("SIGINT", () => {
+  shutdown().catch(() => Deno.exit(1));
 });
 // The bound port: equal to GLOBNOTES_PORT, or the OS-assigned one when that
 // is 0 (test launchers read it from this line).

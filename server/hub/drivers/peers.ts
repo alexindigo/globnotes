@@ -44,6 +44,18 @@ export class PeerRevisionConflict extends Error {
 /** One vault's peer metadata. No method stores a plaintext file name or body. */
 export class DriverPeers {
   constructor(readonly store: HubStore) {}
+  /** Attention decisions cannot borrow a previous Worker/server generation's
+   * numeric revision. This contains no paths, bodies or native identifiers. */
+  nextAttentionRevision(): number {
+    this.store.db.prepare(
+      "INSERT INTO meta(key,value) VALUES('driver_attention_revision','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1",
+    ).run();
+    return Number(
+      this.store.db.prepare(
+        "SELECT value FROM meta WHERE key='driver_attention_revision'",
+      ).get()!.value,
+    );
+  }
   key(name: string): string {
     return anonymousPath(this.store.secret, name);
   }

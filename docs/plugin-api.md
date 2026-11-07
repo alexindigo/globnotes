@@ -119,6 +119,66 @@ Driver console arguments are not forwarded; asynchronous exceptions report only
 value-free failures. The instance's host must redact typed state reasons/errors
 before publication. The host retains no read bodies or historical text.
 
+### Instance controls and key custody
+
+The per-vault supervisor starts after the hub inventory and plugin owner
+composition. Instances run concurrently; each session serializes its own cycles
+and attention decisions. Hub publications debounce exports for one second;
+discovery runs every 60 seconds. Hints and Sync now request discovery. Retry uses
+observed time, from five seconds doubling to five minutes, honoring longer native
+retry advice. The public `nextRetry` is the remaining observed milliseconds, not
+a wall-clock deadline. Off, starting, active, locked, failed and read-only paused
+are separate states. Reads alone do not start an instance or advance its revision.
+
+Driver owners participate in PluginManager's policy, permission reduction,
+settings-source recovery and explicit code replacement paths. Disable, instance
+reconfiguration, key changes, access-policy epochs and shutdown synchronously
+retire old Worker/session authority before cleanup. A held native read cannot
+apply through the replacement's authority. Permission recovery rechecks source,
+owner epoch and effective scopes before publishing readiness; code changes need
+the explicit source-replacement workflow. Drivers cannot publish permission
+contributors or request grants themselves.
+Same-code narrowed recovery and automatic retries retain their admitted scope
+ceiling; they cannot borrow a service's expansion before its SDK receipt settles.
+
+All controls use the ordinary authenticated settings authority, captured before
+body acquisition and rechecked at the metadata effect. Bodies are bounded to
+1 MiB and 30 seconds of observed time. Responses are `Cache-Control: no-store`.
+Ids select only the request's vault; unknown or retired instances return 404.
+
+| # | Route | Input / result |
+|---|---|---|
+| 1 | `GET /_/api/drivers` | `{revision,notice,plugins,instances}`; declarations, settings and state, never key values |
+| 2 | `POST /_/api/drivers` | `{plugin,label,settings?}`; creates off, returns `{id,revision}` |
+| 3 | `PUT /_/api/drivers/:id` | `{revision,label,settings,enabled}`; strict declarative values, revision CAS, restart only that instance |
+| 4 | `DELETE /_/api/drivers/:id` | `{revision}`; retires the id permanently and deletes its keys, leaves all vault/remote files |
+| 5 | `PUT /_/api/drivers/:id/secrets/:key` | `{revision,value}`; set/replace a declared key, returns only declarations/set/time plus the new revision |
+| 6 | `DELETE /_/api/drivers/:id/secrets/:key` | `{revision}`; clear and restart; no key GET exists |
+| 7 | `POST /_/api/drivers/:id/sync` | `{revision}`; request a full cycle without changing configuration |
+| 8 | `POST /_/api/drivers/:id/decisions` | `{instanceRevision,attentionRevision,action,paths?}`; fresh revision-bound held restore/delete or remote-empty delete/upload |
+
+Stale configuration/attention returns 409 `driver_stale`; read current state
+before another explicit choice. Missing revision returns 428. Attention decisions
+re-observe the endpoint and retain the request guard across native body waits and
+the managed import gate. Partial completed effects use `operation_partial`, never
+a false no-effect stale success. Attention tokens cannot alias after restart.
+
+`driver-secrets.sqlite` lives beside existing server keys in the configured state
+directory. Its owner creates a regular mode-0600 file, refuses insecure existing
+files/symlinks without changing them, and uses SQLite secure delete with DELETE
+journaling (no WAL). Keys are never part of hub metadata, plugin data/settings,
+Worker initialization, catalogs, facts or diagnostics. Missing declared keys lock
+an instance before Worker construction. RPC serves only a declared key of the
+bound current generation. Raw, URI-encoded and base64 key forms are redacted from
+driver diagnostics and public state. Clearing/removal securely deletes the row;
+shutdown fences and settles sessions before closing key storage or hub metadata.
+
+Key entry uses the page's connection, including ordinary local-domain HTTP. Off a
+trusted LAN, use a TLS reverse proxy such as Caddy or Nginx Proxy Manager to protect
+the link. When state is inside the vault, `notice` names its canonical path:
+outside tools copying the whole folder copy keys too. Keep state outside those
+copies with the existing `GLOBNOTES_INDEX_PATH` setting.
+
 ## Facades
 
 | Surface | Contract |

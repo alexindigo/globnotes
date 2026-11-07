@@ -87,6 +87,20 @@ export type RenderStartOutcome =
   | { state: "ready"; lease: RenderOwnerLease }
   | { state: "failed"; diagnostic: PluginDiagnostic }
   | { state: "retired" };
+/** The vault composes the driver owner; all server roles share policy retirement. */
+export interface DriverOwners {
+  ownerIds(): string[];
+  ownerSources(id: string): Source[];
+  retireOwner(id: string): void;
+  reconcile(): Promise<void>;
+  revokeNetworkReduced(id: string, next: PermissionDeclaration): void;
+  captureSettingsRecovery(
+    id: string,
+    desired: NetworkPolicy,
+  ): SettingsOwnerRecovery | undefined;
+  reloadNetwork(id: string, desired: NetworkPolicy): Promise<void>;
+  suspend(): void;
+}
 export interface PluginManagerOptions {
   settingsEnvironment?: PluginSettingsEnvironment;
   internalRoot?: string;
@@ -114,6 +128,7 @@ export class PluginManager {
   private readonly options: PluginManagerOptions;
   private startPromise: Promise<void> | null = null;
   private serviceRuntime: PluginRuntime | null = null;
+  private driverOwners: DriverOwners | null = null;
   private syncBoundary: Promise<void> = Promise.resolve();
   private renderRequested = false;
   private readonly renderOwners = new Map<string, RenderOwner>();
@@ -194,6 +209,7 @@ export class PluginManager {
             ? [render.source]
             : [],
           ...service ? [service] : [],
+          ...this.driverOwners?.ownerSources(id) ?? [],
         ];
       },
       captureSettingsRecovery: (id, policy) =>
@@ -287,6 +303,7 @@ export class PluginManager {
     const ids = new Set([
       ...this.renderOwners.keys(),
       ...this.serviceRuntime?.ownerIds() ?? [],
+      ...this.driverOwners?.ownerIds() ?? [],
       ...this.seenEnabled.keys(),
     ]);
     for (const id of ids) {
@@ -294,6 +311,7 @@ export class PluginManager {
         this.seenEnabled.set(id, false);
         this.advance(id);
         this.retireRender(id);
+        this.driverOwners?.retireOwner(id);
         if (this.serviceRuntime) {
           this.track(this.serviceRuntime.retireOwner(id, false));
         }
@@ -515,6 +533,22 @@ export class PluginManager {
   }
   get runtime(): PluginRuntime | null {
     return this.serviceRuntime;
+  }
+  configureDrivers(owners: DriverOwners): void {
+    if (this.driverOwners) {
+      throw new Error("driver owners are already configured");
+    }
+    this.driverOwners = owners;
+  }
+  /** Synchronous admission identity, rechecked around asynchronous policy reads. */
+  driverOwner(
+    id: string,
+  ): { epoch: number; enabled: boolean; manifest?: PluginManifest } {
+    return {
+      epoch: this.epoch(id),
+      enabled: this.enabled(id),
+      manifest: this.inventory().find((entry) => entry.id === id)?.manifest,
+    };
   }
   private orderedManifests(): PluginManifest[] {
     const { policy, automatic } = this.policy.selection();
@@ -818,10 +852,14 @@ export class PluginManager {
           serviceSource = this.serviceRuntime?.ownerSource(id);
         const changed =
           (render?.source && !equalSource(render.source, policy.source)) ||
-          (serviceSource && !equalSource(serviceSource, policy.source));
+          (serviceSource && !equalSource(serviceSource, policy.source)) ||
+          this.driverOwners?.ownerSources(id).some((source) =>
+            !equalSource(source, policy.source)
+          );
         if (changed) {
           this.advance(id);
           this.retireRender(id);
+          this.driverOwners?.retireOwner(id);
           if (this.serviceRuntime) {
             this.track(this.serviceRuntime.retireOwner(id, true));
           }
@@ -832,6 +870,7 @@ export class PluginManager {
       }
     }
     await this.serviceRuntime?.reconcile();
+    await this.driverOwners?.reconcile();
     if (this.renderRequested) await this.ensureStarted();
     await Promise.all([...this.retirements]);
     this.networkChanged();
@@ -847,6 +886,7 @@ export class PluginManager {
       )
     ) this.retireRender(id);
     this.serviceRuntime?.revokeNetworkReduced(id, next);
+    this.driverOwners?.revokeNetworkReduced(id, next);
   }
   /** One owner facade captures both roles before settings retirement. */
   private captureSettingsRecovery(
@@ -854,6 +894,7 @@ export class PluginManager {
     desired: NetworkPolicy,
   ): SettingsOwnerRecovery {
     const service = this.serviceRuntime?.captureSettingsRecovery(id, desired);
+    const drivers = this.driverOwners?.captureSettingsRecovery(id, desired);
     const owner = this.renderOwners.get(id), epoch = this.epoch(id);
     const originalSource = owner?.source ?? owner?.recoveryAdmission?.source;
     const old = owner?.host?.delegated ?? owner?.recoveryAdmission?.effective;
@@ -874,6 +915,7 @@ export class PluginManager {
     return {
       validate: () => {
         service?.validate();
+        drivers?.validate();
         if (
           render &&
           (this.renderOwners.get(id) !== render || render.host !== host ||
@@ -888,6 +930,7 @@ export class PluginManager {
       },
       fence: () => {
         service?.fence();
+        drivers?.fence();
         if (
           !fenced && render && this.renderOwners.get(id) === render &&
           render.host === host && this.epoch(id) === epoch
@@ -898,6 +941,7 @@ export class PluginManager {
       },
       admit: async () => {
         await service?.admit();
+        await drivers?.admit();
         if (
           !fenced || !render || !originalSource || this.epoch(id) !== epoch ||
           !this.enabled(id) || this.renderOwners.get(id) !== render ||
@@ -953,6 +997,7 @@ export class PluginManager {
           desired.fingerprint)
     ) this.retireRender(id);
     await this.serviceRuntime?.reloadNetwork(id, desired.effective);
+    await this.driverOwners?.reloadNetwork(id, desired);
     if (epoch !== this.epoch(id) || !this.enabled(id)) {
       throw new PluginContractError(
         409,
@@ -981,6 +1026,7 @@ export class PluginManager {
     }
   }
   stop(): void {
+    this.driverOwners?.suspend();
     for (const id of this.renderOwners.keys()) {
       this.advance(id);
       this.retireRender(id);
