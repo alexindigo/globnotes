@@ -68,8 +68,10 @@ export function createNoteSaveQueue(adapters) {
   function pause(job, error, certainty, phase) {
     status = "paused";
     failureSerial++;
+    // Preparation has not dispatched a write, regardless of the 401's body.
+    // Once sent, only the inspected middleware rejection proves safe retry.
     const authenticationRequired = !job.timedOut && error?.response?.status === 401 &&
-      error.response.data?.detail === "Invalid authentication credentials" && ["preparing", "sending"].includes(phase);
+      (phase === "preparing" || (phase === "sending" && error.response.data?.detail === "Invalid authentication credentials"));
     failure = { submissionId: job.snapshot.submissionId, certainty, phase, message: error?.message ?? String(error), serial: failureSerial, authenticationRequired };
     job.outcome = Object.freeze({ status: "failed", certainty, phase });
     if (!authenticationRequired) finishReceipt(job, job.outcome);
@@ -196,7 +198,7 @@ export function createNoteSaveQueue(adapters) {
     },
     state,
     admittedPath,
-    /** Only the inspected pre-write auth rejection can release this barrier.
+    /** Only an unsent preparation or inspected pre-write auth rejection can release this barrier.
      * The failed snapshot, FIFO position and acknowledged base are unchanged.
      * A network/timeout/partial/integration failure never acquires this right. */
     resumeAfterAuthentication(serial) {

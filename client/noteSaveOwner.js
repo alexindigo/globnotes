@@ -178,7 +178,9 @@ export function createNoteSaveOwner({
     const receipt = queue.submit({ content: getBuffer(), requestedPath: contentOnly ? (latest.requestedPath ?? latest.path) : current.requestedPath,
       contentRevision: current.contentRevision, pathRevision: contentOnly ? (latest.pathRevision ?? Math.max(0, queue.state().acknowledgedPathRevision)) : current.pathRevision,
       draftRevision: current.contentRevision, intent, attachmentPolicy });
-    if (receipt.held) held();
+    // The same barrier covers every intent. Auth-paused work has a recovery
+    // dialog/status already; the non-recovering failure notice would contradict it.
+    if (receipt.held && !queue.state().failure?.authenticationRequired) held();
     return receipt;
   }
 

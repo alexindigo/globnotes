@@ -69,6 +69,36 @@ function fixture(overrides = {}, useDefaults = false) {
 }
 
 describe("save owner submission and acknowledgement", () => {
+  it("a bare preview 401 is known unsent and retries the original rename after cancelled sign-in is reopened", async () => {
+    const cancelled = deferred(), accepted = deferred();
+    const requestAuthentication = vi.fn().mockReturnValueOnce(cancelled.promise).mockReturnValueOnce(accepted.promise);
+    const preview = vi.fn().mockRejectedValueOnce({ response: { status: 401 } }).mockResolvedValue([]);
+    const f = fixture({ requestAuthentication, preview }); f.owner.start(); f.edit("A", "folder/P");
+    f.owner.rename(); await flush();
+    const submissionId = f.owner.queueState().active.submissionId;
+    expect(f.owner.queueState().failure).toMatchObject({ phase: "preparing", certainty: "known-unsent", authenticationRequired: true });
+    expect(requestAuthentication).toHaveBeenCalledTimes(1); expect(f.sent).toHaveLength(0);
+    cancelled.resolve(false); await flush();
+    f.owner.save(); await flush(); expect(requestAuthentication).toHaveBeenCalledTimes(2);
+    accepted.resolve(true); await flush();
+    expect(preview).toHaveBeenCalledTimes(2);
+    expect(f.owner.queueState().active.submissionId).toBe(submissionId);
+    expect(f.sent[0].args).toEqual(["P", "folder/P", "A", "none", "old"]);
+    await f.ack(0, "folder/P"); expect(f.owner.queueState().unresolved).toBe(false);
+  });
+  it.each(["save", "rename"])("newer %s queued for authentication keeps its held receipt without the non-recovering error notification", async intent => {
+    const login = deferred(), f = fixture({ requestAuthentication: () => login.promise });
+    f.owner.start(); f.edit("A"); f.owner.save(); await flush();
+    f.sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await flush();
+    f.edit("B", intent === "rename" ? "Q" : undefined);
+    const receipt = intent === "rename" ? (f.owner.rename(), null) : f.owner.save();
+    if (receipt) expect(receipt.held).toBe(true);
+    expect(f.owner.queueState().queued).toHaveLength(1);
+    expect(f.adapters.held).not.toHaveBeenCalled();
+    login.resolve(true); await flush(); await f.ack(1);
+    expect(f.sent[2].args).toEqual(["P", intent === "rename" ? "Q" : "P", "B", "none", "A"]);
+    await f.ack(2, intent === "rename" ? "Q" : "P"); expect(f.owner.queueState().unresolved).toBe(false);
+  });
   it("a known 401 retains the exact FIFO job and base, then retries after in-place sign-in", async () => {
     const login = deferred(), requestAuthentication = vi.fn(() => login.promise), authenticationRequired = vi.fn();
     const f = fixture({ requestAuthentication, authenticationRequired }); f.owner.start();

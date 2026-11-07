@@ -9,7 +9,7 @@
       labelledby="reauthentication-title" trap-focus :close-handler-override="reauthentication.cancel">
       <div class="flex flex-col gap-4 p-6" data-reauthentication>
         <h2 id="reauthentication-title" class="text-xl font-semibold">Sign in to continue</h2>
-        <p>Your edits stay here. Pending saves will retry after sign-in.</p>
+        <p>Your edits stay here. Saves paused for sign-in will retry.</p>
         <LoginForm :on-authenticated="reauthentication.authenticated" :is-current="reauthentication.isCurrent" />
         <button type="button" class="self-end rounded px-3 py-2 hover:bg-theme-background-elevated" @click="reauthentication.cancel">Cancel</button>
       </div>

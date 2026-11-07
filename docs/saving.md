@@ -88,8 +88,10 @@ flushes its current text to the existing browser draft store. Cancelling sign-in
 keeps the same editor, draft and pending saves, with a **Not saved** status. Press
 **Save** to reopen sign-in; newer typing can join the retained FIFO.
 
-The exact pre-write middleware response (`401`, `Invalid authentication credentials`)
-pauses the FIFO for authentication. After successful sign-in, the save owner
+An unsent preparation's 401 (including a rename preview), or the exact pre-write
+middleware response (`401`, `Invalid authentication credentials`), pauses the FIFO
+for authentication. Newer submissions join the same recovery without a Save held
+error. After successful sign-in, the save owner
 retries that same immutable submission, in order, with its original base. Changes
 made elsewhere during sign-in therefore merge or produce the usual conflict copy.
 Newer typing and queued saves remain owned by the same edit session. A cancelled
@@ -102,7 +104,7 @@ held snapshots or execute an earlier aborted close/logout request. A network
 error, partial operation or unproven error response can leave the outcome
 unknown; receiving an error does not by itself prove that files were untouched.
 
-Network errors, bare/unproven 401s, partial operations, observation timeouts and
+Network errors, bare/unproven 401s after sending, partial operations, observation timeouts and
 integration failures never gain automatic retry permission from sign-in. There
 are no general Retry/Resume/Skip controls, persistent outbox or crash-safe replay.
 

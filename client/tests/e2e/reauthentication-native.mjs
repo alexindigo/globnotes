@@ -115,6 +115,46 @@ try {
   assert(!await session.evaluate("window.sawDeparturePrompt"), "Cancel path opened Save/Discard");
   await capture("cancelled-unsaved");
   results.push({ case: "cancel", diskUnchanged: true, sameEditor: true, draft: cancelled, status: await session.evaluate("document.querySelector('[data-note-save-status]').textContent") });
+
+  const newer = "newer edits queued for sign-in\n";
+  await replace(newer); await session.button("Save", ".content-column");
+  await session.poll("!!document.querySelector('[data-reauthentication]')");
+  assert(!await session.evaluate("document.body.textContent.includes('Save held')"), "Authentication recovery showed the non-recovering Save held error");
+  await login();
+  await until(async () => await Deno.readTextFile(vault + "/AuthNote.md") === newer, "newer auth-held snapshot follows its original job to disk");
+  await session.poll("!document.querySelector('[data-note-save-status]')");
+  assert(writes.length === 5 && writes[3].status === 200 && writes[4].status === 200, "Expected original pending save followed by newer snapshot");
+  assert(writes[3].body.newContent === cancelled && writes[3].body.baseContent === merged && writes[4].body.newContent === newer && writes[4].body.baseContent === cancelled, "Recovery changed the FIFO snapshots or bases");
+  assert(!await session.evaluate("document.body.textContent.includes('Save held')"), "A recovering held submission emitted an error toast");
+  results.push({ case: "newer-auth-held-save", disk: newer, heldError: false, fifoBasesPreserved: true });
+
+  // Model a proxy's bodyless 401 during the read-only rename preparation,
+  // with a genuinely revoked server session. The retry uses the real endpoint.
+  await revoke();
+  let previewRequest;
+  const releasePreview = session.page.onEvent(event => {
+    if (event.method === "Fetch.requestPaused") previewRequest = event.params.requestId;
+  });
+  try {
+    await session.send("Fetch.enable", { patterns: [{ urlPattern: "*/_/api/rename-preview*", requestStage: "Request" }] });
+    await fill('input[placeholder="Folder (root)"]', "Renamed");
+    await session.key("Enter", { code: "Enter", windowsVirtualKeyCode: 13 });
+    await until(() => !!previewRequest, "rename preparation request intercepted");
+    await session.send("Fetch.fulfillRequest", { requestId: previewRequest, responseCode: 401 });
+    await session.send("Fetch.disable");
+    await session.poll("!!document.querySelector('[data-reauthentication]') && document.querySelector('[data-note-save-status]')?.textContent.includes('Not saved')");
+    assert(writes.length === 5, "An unauthorized preview dispatched a write");
+    await login();
+    await until(async () => {
+      try { return await Deno.readTextFile(vault + "/Renamed/AuthNote.md") === newer; }
+      catch (error) { if (error instanceof Deno.errors.NotFound) return false; throw error; }
+    }, "bare preview 401 retries the original rename after sign-in");
+    await session.poll("location.pathname==='/Renamed/AuthNote' && !document.querySelector('[data-note-save-status]')");
+    assert(writes.length === 6 && writes[5].status === 200 && writes[5].body.newPath === "Renamed/AuthNote" && writes[5].body.baseContent === newer, "Rename recovery changed its original target or base");
+    assert(await Deno.stat(vault + "/AuthNote.md").then(() => false, error => error instanceof Deno.errors.NotFound), "Successful rename retained the old file");
+    assert(await session.evaluate("document.querySelector('.cm-content')===window.editorBeforeAuth && !window.sawDeparturePrompt"), "Preview recovery abandoned the editor or opened Save/Discard");
+    results.push({ case: "bare-preview-401", disk: "Renamed/AuthNote.md", automaticRetry: true, basePreserved: true, sameEditor: true });
+  } finally { releasePreview(); await session.send("Fetch.disable"); }
   assert(session.errors.length === 0, `Browser exceptions: ${JSON.stringify(session.errors)}`);
   await Deno.writeTextFile(directory + "/results.json", JSON.stringify({ results, writes, events: session.events }, null, 2));
 } catch (error) {
