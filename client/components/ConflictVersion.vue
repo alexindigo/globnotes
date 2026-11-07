@@ -5,14 +5,14 @@
       <p class="conflict-version__path" :title="member.path">{{ member.path }}</p>
       <p class="conflict-version__metadata">{{ member.mediaType }} | {{ member.size }} bytes</p>
       <p class="conflict-version__hash" :title="member.version">Version: {{ member.version }}</p>
-      <a :href="href" class="text-theme-brand hover:underline">Open file</a>
+      <a :href="href" class="text-theme-brand hover:underline" @click="event => onOpen?.(event, href)">Open file</a>
     </header>
     <pre v-if="member.preview === 'text'" class="conflict-version__source" tabindex="0" :aria-label="`${label} source`">{{ member.content }}</pre>
     <p v-else class="conflict-version__unavailable">{{ unavailable[member.preview] }}</p>
   </section>
 </template>
 <script setup>
-defineProps({ label: { type: String, required: true }, member: { type: Object, required: true }, href: String });
+defineProps({ label: { type: String, required: true }, member: { type: Object, required: true }, href: String, onOpen: Function });
 const unavailable = { binary: "Inline comparison is unavailable for this file type.", too_large: "This file is too large for inline comparison.", invalid_utf8: "This file does not contain valid UTF-8 text. Inline comparison is unavailable." };
 </script>
 <style scoped>

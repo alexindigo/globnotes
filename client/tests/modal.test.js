@@ -4,6 +4,7 @@ import { mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 
 import Modal from "../components/Modal.vue";
+import ConfirmModal from "../components/ConfirmModal.vue";
 
 // Mounted modals register document keydown listeners — unmount between
 // tests so a previous instance's trap/Esc handler can't leak into the next.
@@ -56,6 +57,15 @@ describe("Modal Esc dismissal", () => {
 });
 
 describe("Modal opt-in dialog behavior", () => {
+  it.each([true, false])("restores the real opener before descendant autofocus (initial visible=%s)", async initial => {
+    const opener = document.createElement("button"); opener.textContent = "Open"; document.body.append(opener); opener.focus();
+    const wrapper = track(mount(ConfirmModal, { attachTo: document.body, props: { modelValue: initial, title: "Resolve" },
+      global: { directives: { focus: { mounted: el => el.focus() } } } }));
+    if (!initial) { opener.focus(); await wrapper.setProps({ modelValue: true }); }
+    await nextTick(); expect(document.activeElement.closest('[role="dialog"]')).not.toBeNull();
+    await wrapper.setProps({ modelValue: false }); await nextTick();
+    expect(document.activeElement).toBe(opener);
+  });
   it('honours roving tabindex when wrapping around a radio group', async () => {
     const wrapper=track(mount(Modal,{attachTo:document.body,props:{modelValue:true,name:'radio-group',trapFocus:true},slots:{default:'<button id="radio-close">Close</button><button role="radio" id="radio-selected" tabindex="0">Selected</button><button role="radio" id="radio-other" tabindex="-1">Other</button>'}}));
     await nextTick(); wrapper.find('#radio-close').element.focus();

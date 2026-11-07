@@ -36,8 +36,20 @@ three-way merging, then forgets it; the hub retains metadata only. Conflict
 copies use `<stem>.conflict-YYYYMMDD-HHMMSS-globnotes.md` (UTC, numbered on
 collision) in the original folder. The original is not replaced on conflict.
 A banner on the copy links back to the original through normal navigation.
-Conflict records are stored in schema-v2 hub metadata; version 1 migrates in
-place. The conflict inbox arrives separately in M3.
+Conflict records are stored in metadata-only schema 3; versions 1 and 2 migrate
+automatically in place without changing note content or filenames. No operator
+reset, content backfill or conflict-file import is needed.
+
+The **Conflicts** navigation badge and the editor banner's **Review conflict**
+open the inbox/comparison. Explicit choices keep Original, replace it with Copy,
+keep both, save a manual merge, or postpone. Keep both leaves the existing copy
+filename as an ordinary file. Destructive choices check both reviewed versions
+and name the removed file before confirmation. Browser merge drafts are retained
+separately from hub metadata and need Resume plus a fresh review after recovery.
+Deleting either member outside the app closes the record; recognized renames
+update its paths. An outside closure never silently discards an open merge draft.
+See [Saving notes](docs/saving.md#resolving-a-conflict) for exact effects and
+unknown-outcome/departure protection.
 
 Open notes receive outside-change notifications over ordinary HTTP. Viewing and
 clean editing refresh in place; dirty editing keeps its buffer. An outside

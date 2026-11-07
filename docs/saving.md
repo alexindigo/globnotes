@@ -58,6 +58,59 @@ pair requires **Review current versions**; outside closure stays on the selected
 URL and reports that the conflict was resolved elsewhere. A failed list read
 keeps its previous count and marks it out of date rather than claiming zero.
 
+### Resolving a conflict
+
+Every decision checks both versions you compared and the relationship's revision.
+If either file changes or is renamed, review the current pair, then make a new
+explicit choice. Review never resends a previous decision or replaces your merge
+text. Read-only sessions can compare files but cannot resolve them.
+
+| # | Choice | What remains |
+|---|---|---|
+| 1 | **Keep original** | Original is unchanged; the selected conflict copy is deleted after confirmation |
+| 2 | **Keep conflict copy** | Copy's exact bytes replace Original at Original's filename; Copy is deleted only after replacement is verified |
+| 3 | **Keep both** | Both files keep their existing names and bytes; only this conflict record closes |
+| 4 | **Edit a merge**, then **Save merge** | A source textarea starts from Original once. The exact draft saves at Original's filename and removes Copy after verification and confirmation. No autosave, heading rename, attachment move or link rewrite |
+| 5 | **Postpone** | Neither file nor metadata changes; the conflict stays in the inbox and count |
+
+Binary files, invalid UTF-8 and Markdown larger than 16 MiB support the keep
+choices without lossy decoding. Manual merge is available only when both complete
+Markdown sources can be shown. Destructive confirmations name the real files.
+Resolving one copy does not remove other copies of the same original.
+
+Merge mode hides competing keep choices. Cancel merge with edited text asks before
+discarding it. Navigation, file links, Back/Forward, Postpone, Logout and Access
+handoff share Save merge/Discard draft/Cancel protection. Save explicitly resolves
+the conflict and removes Copy; Discard removes only the browser draft, never a
+vault file. An unchanged seed may close without a discard prompt.
+
+Merge drafts are retained under a separate browser namespace for the deployment,
+logical vault and conflict id. Remembered sign-ins use local storage; otherwise
+session storage. Resume/Discard is explicit, and a recovered draft requires fresh
+review before it can be submitted. The hub never receives or stores an unsent
+draft. Only the matching acknowledged merge clears its captured draft; another
+resolution cannot silently acknowledge it.
+
+One resolution owns one request. A 60-second observation deadline, network loss,
+partial operation or unrecognized reply does not cancel the server operation.
+The choice and draft remain retained; unsafe departure and blind resend are
+blocked. **Review current versions** reads authoritative state without resending.
+An open read does not prove an admitted request stopped. A closed read prevents
+further resolution writes, while an unacknowledged draft still needs explicit
+Discard/Cancel. Text equality is not proof of acknowledgement. Late receipts
+cannot revive an aborted navigation or logout.
+
+The existing in-place sign-in form also preserves conflict work. An unsent read
+401 can recover the read. After dispatch, only the exact pre-write middleware
+authentication rejection permits retry of the same captured resolution after
+sign-in. A bare 401, timeout or unknown result never gains replay permission.
+
+Deleting either member outside globnotes closes the record through the normal
+watcher/scan flow. An open comparison stays on its URL, says it was resolved
+elsewhere, and keeps any merge text selectable and its browser draft intact until
+explicit Discard. It never recreates a deleted file to clear local work. Editing
+both files to equal text does not close the relationship automatically.
+
 An open viewing note updates in place when the vault change stream reports a
 new version. A clean editor likewise refreshes its text and base. A dirty editor
 keeps its text and shows **This note changed elsewhere. Your changes will be

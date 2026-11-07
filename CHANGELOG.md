@@ -33,6 +33,14 @@ Open notes follow changes made elsewhere over the vault change stream, with a
 polling fallback. Clean editors refresh in place; dirty editors keep their text
 and explain that the next save will merge it.
 
+The Conflicts navigation button counts unresolved file pairs and opens a routed
+inbox and side-by-side source comparison. Keep Original, keep Copy, keep both,
+write a manual merge or postpone explicitly. Destructive choices name the files
+and check both reviewed versions before effects; merge drafts survive stale
+review, uncertain replies and outside resolution. Keep both preserves filenames.
+Outside member deletion closes metadata; recognized renames follow the files.
+Hub schema versions 1 and 2 upgrade automatically to metadata-only schema 3.
+
 The legacy backup hook delivers displaced bytes asynchronously after commit.
 Saves never wait on versioning plugins. Each plugin has a bounded in-memory queue
 with visible gaps on overflow; a crash before plugin storage can lose a version.

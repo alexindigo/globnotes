@@ -253,6 +253,43 @@ real HTTP routes through disk and ordinary note consumers. The writer registry
 lists the operation and endpoint as pair-of-version-bases writers with stale
 refusal; every action's missing/stale base coverage lives in the resolution test.
 
+`conflict-resolution-actions.test.js` drives captured pair bases, destructive
+confirmations, single-wire ownership, stale review, unknown/partial/malformed
+responses, observation deadlines, late receipts, exact authentication retry,
+recovered drafts and shared departure/session decisions. It also exercises
+closure-before-receipt and read-before-ack ordering. `conflict-drafts.test.js`
+checks namespacing, local/session selection and ownership-safe acknowledgement.
+`unload-guard.test.js` checks that retiring one claim cannot clear another owner.
+
+The native suite selects `conflict-inbox-native`, `conflict-resolution-native`
+and `conflict-review-native`. These use actual overlapping saves and disk changes,
+native input, both rendered source consumers, ordinary note reads and real file
+effects. They cover the editor Review link, dirty departure, every choice,
+metadata-only polling, prefix/direct routes, read-only comparison, stale versions,
+another browser's closure and a lost reply after actual server effects. Working
+captures and geometry remain in the run artifacts, not in the repository.
+Native Back/Forward and Logout cancellation retain URL, credentials and merge
+text. Desktop/narrow/pinned layouts measure shared header boundaries, icon gaps,
+source foreground equality, long-path titles and action containment.
+Outside-deletion browser latency is recorded with shared-bound readiness, rather
+than an ad hoc deadline. `tests/timing/hub_conflict_invalidation_test.ts` separately
+asserts the 3-second watcher-to-closed-metadata publication budget using the
+existing hub fixture; it does not claim to time browser rendering.
+
+Final acceptance uses the same full browser and separate serial timing modes as
+CI, from the source checkout through the launcher on the authorized execution
+target:
+
+```sh
+timeout 3600 .devcontainer/run.sh --browser --run-dir "$RUNS/final-gate" -- bash scripts/gates.sh --all --browser
+timeout 1800 .devcontainer/run.sh --run-dir "$RUNS/final-timing" -- bash scripts/gates.sh --timing
+```
+
+Set `RUNS` to a fresh disk-backed project evidence directory outside the repository.
+These commands launch all runtimes and captures in the container, never directly
+on the host. Inspect actual child exits and timeout flags, not printed success
+words. Browser app origins remain ordinary local HTTP with secure=false.
+
 | # | Run | Where |
 |---|---|---|
 | 1 | Commit check | `~/TemporaryFiles/globnotes/validation/<stamp>-pre-commit-<tree12>/`: `tree.txt`, `base.txt`, `run/logs/` (`staged.z`, `files.z`, `selection.json`, gate logs, `timings.jsonl`, `summary.txt`, launcher logs) and JSON results under `run/artifacts/` |

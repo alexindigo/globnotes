@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createConflictResolutionController } from "../conflictResolutionController.js";
 import { TOPICS } from "../bus/index.js";
-vi.mock("../api.js", () => ({ getConflict: vi.fn() }));
+vi.mock("../api.js", () => ({ getConflict: vi.fn(), resolveConflict: vi.fn() }));
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 const member = (path, content = "\uFEFF# exact\r\n", version = path) => ({ path, content, version, preview: "text", size: 12, mediaType: "text/markdown" });

@@ -68,12 +68,16 @@ const rootEl = ref(null);
 const dialogHost = inject(DIALOG_HOST, null);
 const ownership = shallowRef(null);
 let opener = null;
+// A newly mounted, already-visible dialog can autofocus a descendant before
+// onMounted runs. Capture its external opener while constructing the owner.
+let initialOpener = isVisible.value ? document.activeElement : null;
 let closing = false;
 
 // Modals are global overlays — publish open/close on the bus.
 function open() {
   if (ownership.value || !isVisible.value) return;
-  opener = document.activeElement;
+  opener = initialOpener ?? document.activeElement;
+  initialOpener = null;
   ownership.value = registerModal({
     name: props.name, onEscape: closeHandler, onTab: onTab,
     onKeydown: event => props.keydownHandler?.(event),
