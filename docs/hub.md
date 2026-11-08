@@ -140,6 +140,26 @@ synchronously, with failing subscribers isolated. Live deletion notifications
 carry the path for consumers; the persisted log has only its anonymous key.
 The hub retains no content for replay.
 
+The search index removes obsolete note text and names too, including FTS5
+segments and SQLite free space. Its owner enables both FTS5 `secure-delete` and
+SQLite `secure_delete`, then checks a TRUNCATE WAL checkpoint after each erasing
+transaction. A committed hub batch shares one checkpoint, including ordinary,
+driver and rename-away changes. Checkpoint failure is reported rather than
+treated as completed erasure. Other tools' copies and versioning retention remain
+independent.
+
+The index is derived data and uses WAL `synchronous=NORMAL`; the hub's durability
+policy is separate. A crash or power loss may lose recent index transactions.
+Restart reconciles the index from the live folder, reapplying and physically
+erasing a deletion if its index transaction was lost. Completed erasure and
+rebuild publication still require the checked checkpoint. Search queries continue
+to use the index while the existing initial-sync process catches up.
+
+Index format 11 performs a one-time fresh-file rebuild of older indexes to purge
+legacy deleted data. It publishes the complete new database by atomic rename;
+an incomplete rebuild leaves the old canonical index available for retry. Fresh
+installs create format 11 directly. No note files are moved by this upgrade.
+
 ## Sync peer metadata (M5)
 
 Each configured driver instance is a separate peer and vector dimension, even

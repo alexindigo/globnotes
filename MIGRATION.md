@@ -51,6 +51,22 @@ update its paths. An outside closure never silently discards an open merge draft
 See [Saving notes](docs/saving.md#resolving-a-conflict) for exact effects and
 unknown-outcome/departure protection.
 
+### Search index deletion privacy
+
+Index format 11 rebuilds an older search index once from the live vault folder,
+into a fresh SQLite file. This removes deleted names and content retained by old
+index files. The complete new index replaces the old one atomically; a failed
+or interrupted rebuild retains a usable canonical index for retry. Search uses
+the existing initial-index behavior during the rebuild. Fresh installs create
+the new format directly, without a migration rebuild.
+
+The index uses FTS5/core secure deletion and checked WAL truncation after erasing
+transactions. It is derived data with NORMAL WAL durability: recent index
+transactions may be lost on a crash or power failure, then recovered from the
+folder on restart. A lost index deletion is re-applied and erased during that
+reconciliation. The hub keeps its existing durability and anonymous tombstones.
+See [hub retention](docs/hub.md#retention-and-consumers).
+
 ### Sync driver metadata and keys (M5)
 
 Hub schema versions 1 through 3 upgrade additively to schema 4 in place, preserving

@@ -90,6 +90,12 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Deleted and replaced notes no longer leave obsolete names or content in search
+index files, WAL or FTS segments. Older indexes receive a one-time atomic
+fresh-file rebuild from the vault. The derived index can recover lost recent
+transactions after restart, while completed erasure checks its checkpoint;
+bulk hub changes share the erasure work.
+
 Existing attachments with special filenames download and follow note moves.
 Preview, move/relink and global reference rewriting compare decoded filenames
 once and write encoded URL paths, including literal percent names. Attachment

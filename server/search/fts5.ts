@@ -20,6 +20,7 @@ import { extractTags } from "@server/search/tags.ts";
 import { resolveTitleInfo } from "@server/search/titles.ts";
 
 const MARKDOWN_EXT = ".md";
+const INDEX_FORMAT = 11;
 const SNIPPET_COLS = 48;
 /** Whoosh parity: highlights wrap matches in <b class="match term0">. The
  * note text between marks is not escaped (server/mcp/snippets.ts). */
@@ -68,6 +69,9 @@ export class Fts5Indexer implements Indexer {
   readonly #environment: Environment;
   readonly #adapters: IndexerAdapters;
   #savepoints = 0;
+  #erasurePending = false;
+  #rebuilt: string | undefined;
+  #rebuildBlocked = false;
 
   constructor(
     stateDir: string,
@@ -82,11 +86,41 @@ export class Fts5Indexer implements Indexer {
     this.#indexPath = path.join(stateDir, "index.sqlite");
     this.#db = this.#adapters.openDatabase(this.#indexPath);
     try {
-      this.#db.exec("PRAGMA journal_mode = WAL");
+      const version = Number(
+        this.#db.prepare("PRAGMA user_version").get()!.user_version,
+      );
+      if (version > INDEX_FORMAT) {
+        throw new Error("Unsupported search index format");
+      }
+      const existing = this.#db.prepare(
+        "SELECT 1 FROM sqlite_schema WHERE name='notes_fts'",
+      ).get();
+      if (existing && version !== INDEX_FORMAT) {
+        // Never erase/repopulate the old file in place. Search uses the new
+        // initial index while it fills, but only a complete rebuild is published.
+        this.#db.close();
+        this.#rebuilt = this.#indexPath + ".rebuild";
+        for (const suffix of ["", "-wal", "-shm"]) {
+          this.#removeIndexFile(this.#rebuilt + suffix);
+        }
+        this.#db = this.#adapters.openDatabase(this.#rebuilt);
+      }
+      // The index can be recovered from the folder after loss of recent WAL
+      // transactions. Erasure and publication still synchronously checkpoint.
+      this.#db.exec(
+        "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA secure_delete = ON",
+      );
       this.#initSchema();
-      this.#migrate();
+      if (!existing || this.#rebuilt) {
+        this.#db.exec(
+          `INSERT INTO notes_fts(notes_fts,rank) VALUES('secure-delete',1);
+           PRAGMA user_version = ${INDEX_FORMAT}`,
+        );
+      }
     } catch (error) {
-      this.#db.close();
+      try {
+        this.#db.close();
+      } catch { /* already closed before a failed replacement open */ }
       throw error;
     }
   }
@@ -138,21 +172,69 @@ export class Fts5Indexer implements Indexer {
     `);
   }
 
-  /** Index is derived data: on schema-version mismatch, wipe and let the
-   * background sync rebuild everything from the markdown files. */
-  #migrate(): void {
-    const SCHEMA_VERSION = 10;
-    const row = this.#db.prepare("PRAGMA user_version").get() as
-      | { user_version: number }
-      | undefined;
-    if (row && row.user_version !== SCHEMA_VERSION) {
-      logger.info(
-        `index schema v${row.user_version} → v${SCHEMA_VERSION}; rebuilding`,
-      );
-      this.#db.exec("DELETE FROM notes_fts");
-      this.#db.exec("DELETE FROM notes_tags");
-      this.#db.exec("DELETE FROM notes_meta");
-      this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  #removeIndexFile(filename: string): void {
+    const allowed = [
+      "-wal",
+      "-shm",
+      ".rebuild",
+      ".rebuild-wal",
+      ".rebuild-shm",
+    ];
+    if (!allowed.some((suffix) => filename === this.#indexPath + suffix)) {
+      throw new Error("Index cleanup escaped its owned state files");
+    }
+    try {
+      Deno.removeSync(filename);
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+  }
+
+  #checkpoint(db = this.#db): void {
+    const result = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    if (
+      !result || result.busy !== 0 || result.log !== 0 ||
+      result.checkpointed !== 0
+    ) {
+      throw new Error("Search index erasure checkpoint did not complete");
+    }
+  }
+
+  #publishRebuild(): void {
+    const rebuilt = this.#rebuilt;
+    if (!rebuilt) return;
+    let closed = false;
+    try {
+      // SQLite syncs the complete new main file before truncating WAL. Neither
+      // database may bring stale WAL frames across the atomic pathname swap.
+      this.#checkpoint();
+      this.#db.close();
+      closed = true;
+      const old = this.#adapters.openDatabase(this.#indexPath);
+      try {
+        this.#checkpoint(old);
+      } finally {
+        old.close();
+      }
+      for (const suffix of ["-wal", "-shm"]) {
+        this.#removeIndexFile(this.#indexPath + suffix);
+      }
+      Deno.renameSync(rebuilt, this.#indexPath);
+      this.#rebuilt = undefined;
+      this.#db = this.#adapters.openDatabase(this.#indexPath);
+      closed = false;
+      this.#db.exec("PRAGMA synchronous = NORMAL; PRAGMA secure_delete = ON");
+      for (const suffix of ["-wal", "-shm"]) {
+        this.#removeIndexFile(rebuilt + suffix);
+      }
+    } catch (error) {
+      if (closed) {
+        this.#db = this.#adapters.openDatabase(
+          this.#rebuilt ?? this.#indexPath,
+        );
+        this.#db.exec("PRAGMA synchronous = NORMAL; PRAGMA secure_delete = ON");
+      }
+      throw error;
     }
   }
 
@@ -174,6 +256,12 @@ export class Fts5Indexer implements Indexer {
 
   reindexNote(path: string): void {
     this.#indexFile(path + MARKDOWN_EXT);
+  }
+
+  /** One projection batch, one durable erasure boundary. Individual note
+   * operations keep their nested savepoints and the caller's failure policy. */
+  batch(work: () => void): void {
+    this.#transaction(work);
   }
 
   /** Index one file by its vault-relative FILENAME — no title validation.
@@ -221,19 +309,29 @@ export class Fts5Indexer implements Indexer {
    * about 15 ms that way, so 10,000 notes took minutes and each batch held
    * the event loop for seconds (plans/mcp-v3 S1 row 5). */
   #transaction<T>(fn: () => T): T {
-    const name = `index_write_${this.#savepoints++}`;
+    const name = `index_write_${this.#savepoints}`;
     this.#db.exec(`SAVEPOINT ${name}`);
+    this.#savepoints++;
+    const pending = this.#erasurePending;
+    let result: T;
     try {
-      const result = fn();
+      result = fn();
       this.#db.exec(`RELEASE ${name}`);
-      return result;
     } catch (error) {
       this.#db.exec(`ROLLBACK TO ${name}`);
       this.#db.exec(`RELEASE ${name}`);
+      this.#erasurePending = pending;
       throw error;
     } finally {
       this.#savepoints--;
     }
+    // Outside the transaction: failure here cannot roll back an accepted delete.
+    // Nested note savepoints share one erasure boundary for a background batch.
+    if (!this.#savepoints && this.#erasurePending) {
+      this.#checkpoint();
+      this.#erasurePending = false;
+    }
+    return result;
   }
 
   /** One note's work in a batched pass, as its own savepoint inside the
@@ -248,6 +346,7 @@ export class Fts5Indexer implements Indexer {
       this.#transaction(fn);
       return true;
     } catch (error) {
+      if (this.#rebuilt) this.#rebuildBlocked = true;
       if (error instanceof Deno.errors.NotFound) {
         logger.info(`'${filename}' vanished during the index ${what}`);
       } else {
@@ -330,9 +429,10 @@ export class Fts5Indexer implements Indexer {
 
   #deleteByFilename(filename: string): void {
     this.#transaction(() => {
-      this.#db
+      const deleted = this.#db
         .prepare(`DELETE FROM notes_fts WHERE filename = ?`)
         .run(filename);
+      if (Number(deleted.changes) > 0) this.#erasurePending = true;
       this.#db
         .prepare(`DELETE FROM notes_tags WHERE filename = ?`)
         .run(filename);
@@ -355,10 +455,12 @@ export class Fts5Indexer implements Indexer {
    * (Python: start_background_sync, daemon thread).
    * Two phases: prune/update (one transaction), then add-new (batched). */
   startBackgroundSync(): void {
+    if (this.#status.syncing) return;
     this.#runBackgroundSync();
   }
 
   async #runBackgroundSync(): Promise<void> {
+    this.#rebuildBlocked = false;
     this.#status = {
       syncing: true,
       initial: false,
@@ -430,6 +532,14 @@ export class Fts5Indexer implements Indexer {
         logger.info(
           `Initial index sync complete (${this.#status.done} indexed, ${this.#status.failed} failed of ${newFiles.length} notes)`,
         );
+      }
+      if (this.#rebuilt) {
+        if (this.#status.failed || this.#rebuildBlocked) {
+          throw new Error(
+            "Search index rebuild incomplete; old index retained",
+          );
+        }
+        this.#publishRebuild();
       }
       // Initial indexing is inventory plus on-sync — never fake creates.
       this.#batchSynced(

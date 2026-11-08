@@ -32,6 +32,8 @@ import type { DriverSupervisor } from "./hub/drivers/supervisor.ts";
 /** Implemented by the FTS5 commit; unset until then (storage still works,
  * index hooks are simply skipped). */
 export interface Indexer {
+  /** Production index owners group a committed hub batch's erasure work. */
+  batch?(work: () => void): void;
   reindexNote(path: string): void;
   deleteFromIndex(path: string): void;
   search(

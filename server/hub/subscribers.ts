@@ -29,15 +29,18 @@ function projectEntries(
 
 export function subscribeIndex(hub: VaultHub, indexer: Indexer): () => void {
   return hub.subscribe((entries) => {
-    projectEntries(entries, "index", (entry) => {
-      const current = notePath(entry.path), old = notePath(entry.oldPath);
-      if (entry.kind === "renamed" && old !== null) {
-        indexer.deleteFromIndex(old);
-      }
-      if (current === null) return;
-      if (entry.kind === "deleted") indexer.deleteFromIndex(current);
-      else indexer.reindexNote(current);
-    });
+    const project = () =>
+      projectEntries(entries, "index", (entry) => {
+        const current = notePath(entry.path), old = notePath(entry.oldPath);
+        if (entry.kind === "renamed" && old !== null) {
+          indexer.deleteFromIndex(old);
+        }
+        if (current === null) return;
+        if (entry.kind === "deleted") indexer.deleteFromIndex(current);
+        else indexer.reindexNote(current);
+      });
+    if (indexer.batch) indexer.batch(project);
+    else project();
   });
 }
 

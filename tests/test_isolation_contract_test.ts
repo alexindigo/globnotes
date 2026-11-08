@@ -317,6 +317,18 @@ const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
     line: "Deno.mkdirSync(stateDir, { recursive: true });",
     reason: "creates the state directory for the search index",
   },
+  {
+    file: "server/search/fts5.ts",
+    line: "Deno.renameSync(rebuilt, this.#indexPath);",
+    reason:
+      "atomic publication of the one-time legacy search index rebuild (Remotely Save answer-3/4)",
+  },
+  {
+    file: "server/search/fts5.ts",
+    line: "Deno.removeSync(filename);",
+    reason:
+      "confined old/stale state-file cleanup for the one-time legacy search index rebuild (Remotely Save answer-3/4)",
+  },
 ];
 
 const RULES: Rule[] = [
