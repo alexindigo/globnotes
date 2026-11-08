@@ -22,6 +22,7 @@ const SERVER_MAIN = new URL("../../server/main.ts", import.meta.url).pathname;
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
 const REPO_DIST = path.join(REPO_ROOT, "client", "dist");
 const LISTENING = /globnotes listening on http:\/\/\S*:(\d+)/;
+const SHUTDOWN_GRACE_MS = 5_000;
 /** Port protocol shared with subprocess fixtures that emulate the server. */
 export const SERVER_PORT_ENV = "GLOBNOTES_PORT";
 
@@ -54,8 +55,8 @@ export interface TestServer {
   logs: () => { stdout: string; stderr: string };
   /** The exit status once the server process has exited, else null. */
   status: () => Deno.CommandStatus | null;
-  /** Stops the server. Fails, with the server's stderr, when the server had
-   * already exited on its own. */
+  /** Stops the server with a 5 s SIGTERM grace, then owned-child SIGKILL.
+   * Fails, with stderr, when the server had already exited on its own. */
   close: () => Promise<void>;
 }
 
@@ -221,14 +222,25 @@ export async function bootServer(
           await exitDetail("server exited on its own before close()"),
         );
       }
+      // Lifetime belongs to this launcher for every caller. A server which
+      // ignores SIGTERM must not keep close() (or its pipes/cwd) alive forever.
+      const killTimer = setTimeout(() => {
+        try {
+          child.kill("SIGKILL");
+        } catch { /* the owned child already exited */ }
+      }, SHUTDOWN_GRACE_MS);
       try {
-        child.kill("SIGTERM");
-      } catch {
-        throw new Error(
-          await exitDetail("server exited on its own before close()"),
-        );
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          throw new Error(
+            await exitDetail("server exited on its own before close()"),
+          );
+        }
+        await status;
+      } finally {
+        clearTimeout(killTimer);
       }
-      await status;
       await draining;
       await releaseCwd();
       // The vault is deliberately NOT removed here: restart-style tests

@@ -41,7 +41,11 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFail
       if (servers.every(p => p.status === "ready" || (allowFailed && p.status === "failed"))) return done();
       return pending(servers);
     }, { label: "e2e server plugins ready", intervalMs: 100, children });
-  } catch (error) { await close(); throw error; }
+  } catch (error) {
+    try { await close(); }
+    catch (cleanupError) { console.error(`e2e server cleanup after readiness failure: ${cleanupError}`); }
+    throw error;
+  }
   return {
     baseUrl,
     close, pid: server.pid, logs,

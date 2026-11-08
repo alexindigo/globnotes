@@ -90,6 +90,12 @@ selection order regardless of completion order. A failure stops new admission,
 waits for in-flight children and rejects the suite. Child timeouts and actual
 exit records remain authoritative.
 
+`tests/helpers/boot.ts` gives SIGTERM five seconds, then sends SIGKILL only
+to its owned child; it drains output and releases the private cwd after exit.
+An unexpected prior exit still rejects close with diagnostics. If native plugin
+readiness already failed, cleanup errors are logged separately and the original
+readiness failure remains the reported error.
+
 `SERIAL_CASES` in `legacy-native-suite.mjs` records exclusive cases and reasons:
 clipboard copy and TOTP use browser-global clipboard state, ownership-control
 checks the global target roster, background-connections changes activation,
