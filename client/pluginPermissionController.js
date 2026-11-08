@@ -4,7 +4,7 @@ import { reactive, ref } from "vue";
 const copy = value => JSON.parse(JSON.stringify(value));
 export const permissionScopeKey = scope => scope.type === "all" ? "all" : `host:${scope.authority}`;
 export const permissionAttentionId=(pluginId,requestId)=>`plugin-access:${JSON.stringify([pluginId,requestId])}`;
-export const hasServerContribution = plugin => !!(plugin?.rendering || plugin?.runtime?.server || plugin?.endpoints);
+export const hasServerContribution = plugin => !!(plugin?.rendering || plugin?.runtime?.server || plugin?.endpoints || plugin?.driver);
 export function permissionControls(view) {
   return copy({ revision: view.revision, signature: view.signature,
     requestSourceKey: view.requestSourceKey, requestSourceRevision: view.requestSourceRevision,

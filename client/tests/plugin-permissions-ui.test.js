@@ -26,12 +26,13 @@ let wrapper;
 beforeEach(() => setActivePinia(createPinia()));
 afterEach(() => { wrapper?.unmount(); wrapper = null; pluginCatalog.value = null; vi.useRealTimers(); });
 
-async function inventory() {
+async function inventory(extra = []) {
   pluginCatalog.value = {
     policy: { revision: 0, signature: "policy", effectiveAutoEnable: true },
     plugins: [
       { id: "mixed", name: "Mixed plugin", enabled: true, status: "ready", runtime: { server: true, client: true }, client: true, runsInBrowser: true, browserComponents: ["editor", "runtime"], pages: [], blocking: { actions: [] } },
       { id: "disabled-editor", name: "Disabled editor", enabled: false, status: "disabled", runtime: {}, client: true, runsInBrowser: true, browserComponents: ["editor"], pages: [], blocking: { actions: [] } },
+      ...extra,
     ],
   };
   wrapper = mount(SettingsModal, { attachTo: document.body, props: { modelValue: true }, global: { stubs: { Modal: { template: "<div role='dialog'><slot /></div>", methods: { focus() {} } }, ConfirmModal: true } } });
@@ -40,6 +41,13 @@ async function inventory() {
 }
 
 describe("actual Settings permissions entry", () => {
+  it("exposes the server permission disclosure for a driver-only plugin", async () => {
+    await inventory([{id:"driver-only",name:"Driver only",enabled:true,status:"ready",runtime:{server:false,client:false},rendering:false,endpoints:false,driver:{apiVersion:1},pages:[],blocking:{actions:[]}}]);
+    const disclosure=document.querySelector('[data-plugin-inventory-id="driver-only"] button[aria-expanded]');
+    expect(disclosure).not.toBeNull();
+    disclosure.click(); await flushPromises();
+    expect(document.querySelector('[data-plugin-inventory-id="driver-only"] [data-plugin-permission-panel]')).not.toBeNull();
+  });
   it("shows the prominent server-only trust boundary", async () => {
     await inventory();
     expect(document.body.textContent).toContain("These permission controls apply to sandboxed server Workers only.");
@@ -75,6 +83,17 @@ function controllerFixture(initial = view()) {
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
 describe("permission controller ownership and actual mutation envelopes", () => {
+  it("admits explicit network consent for a driver-only server contribution", async () => {
+    const {controller,adapters}=controllerFixture();
+    controller.reconcile({plugins:[{id:"p",runtime:{server:false,client:false},rendering:false,endpoints:false,driver:{apiVersion:1},permissions:view()}]});
+    adapters.writeView.mockResolvedValue({view:view("p",1,{allowNetwork:true})});
+    expect(controller.snapshot("p").hasServer).toBe(true);
+    expect(controller.permissionView("p").canChange).toBe(true);
+    await controller.setMaster("p",true);
+    expect(adapters.writeView).toHaveBeenCalledTimes(1);
+    expect(controller.snapshot("p").view.allowNetwork).toBe(true);
+    controller.dispose();
+  });
   it("network approval preserves imports and never implicitly enables the master", async () => {
     const initial = view("p", 0, { approvedImports: [{ type: "host", authority: "code.example:443" }] });
     const { controller, adapters } = controllerFixture(initial);
