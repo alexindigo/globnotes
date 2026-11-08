@@ -5,6 +5,7 @@
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
+import { assert } from "./test-outcomes.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9462);
 const vault = await Deno.makeTempDir({ prefix: "wrap-vault-" });
@@ -112,8 +113,8 @@ try {
 
   if (failures > 0) {
     console.log(`WRAP: ${failures} failure(s)`);
-    process.exit(1);
   }
+  assert(failures === 0, `WRAP: ${failures} failure(s)`);
   console.log("WRAP OK");
 } finally {
   await stopBrowser(browser);

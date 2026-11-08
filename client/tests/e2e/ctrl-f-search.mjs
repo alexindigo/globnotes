@@ -4,6 +4,7 @@
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
+import { assert } from "./test-outcomes.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9461);
 const vault = await Deno.makeTempDir({ prefix: "ctrlf-vault-" });
@@ -159,8 +160,8 @@ try {
 
   if (failures > 0) {
     console.log(`CTRLF: ${failures} failure(s)`);
-    process.exit(1);
   }
+  assert(failures === 0, `CTRLF: ${failures} failure(s)`);
   console.log("CTRLF OK");
 } catch (error) {
   failure = error;

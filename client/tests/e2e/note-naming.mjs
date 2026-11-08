@@ -7,10 +7,8 @@ import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9413);
 
-let failures = 0;
 function assert(cond, msg) {
   if (!cond) {
-    failures++;
     console.error(`FAIL: ${msg}`);
     throw new Error(msg);
   }
@@ -85,5 +83,4 @@ try {
 } finally {
   if (browser) await stopBrowser(browser);
   if (server) await server.close();
-  if (failures > 0) Deno.exit(1);
 }

@@ -98,7 +98,8 @@ exit records remain authoritative.
 
 `ctrl-f-search` records initial viewer latency, requests and navigation in its
 case artifact subtree. Failures capture DOM/console/request state before page
-teardown, plus a working screenshot; JSON evidence is included in CI diagnostics.
+teardown, plus a working screenshot. JSON and `failure.png` are included in CI
+diagnostics.
 
 `tests/helpers/boot.ts` gives SIGTERM five seconds, then sends SIGKILL only
 to its owned child; it drains output and releases the private cwd after exit.

@@ -71,6 +71,7 @@ jobs:
           path: |
             ${{ runner.temp }}/globnotes/*/logs/
             ${{ runner.temp }}/globnotes/*/artifacts/**/*.json
+            ${{ runner.temp }}/globnotes/*/artifacts/**/failure.png
 
   docker-build:
     runs-on: ubuntu-latest

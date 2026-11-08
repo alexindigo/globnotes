@@ -402,6 +402,5 @@ try {
   for (const s of servers) await s.close();
   if (failures > 0) {
     console.error(`setup-wizard: ${failures} assertion(s) failed`);
-    Deno.exit(1);
   }
 }

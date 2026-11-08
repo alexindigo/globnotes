@@ -4,6 +4,7 @@
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
+import { assert } from "./test-outcomes.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9460);
 const vault = await Deno.makeTempDir({ prefix: "anchor-vault-" });
@@ -154,8 +155,8 @@ try {
 
   if (failures > 0) {
     console.log(`ANCHOR HISTORY: ${failures} pinned failure(s)`);
-    process.exit(1);
   }
+  assert(failures === 0, `ANCHOR HISTORY: ${failures} pinned failure(s)`);
   console.log("ANCHOR HISTORY OK");
 } finally {
   await stopBrowser(browser);
