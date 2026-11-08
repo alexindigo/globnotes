@@ -212,6 +212,71 @@ Deno.test("hub scanner: periodic fallback survives unavailable watcher and reads
     f.close();
   }
 });
+Deno.test("hub namespace: scans and managed empty-directory effects invalidate without inventing file entries", () => {
+  const f = fixture();
+  f.hub.scanNow();
+  const observed: { files: boolean; seq: number }[] = [];
+  const dispose = f.hub.subscribeNamespace((files) =>
+    observed.push({ files, seq: f.hub.sequence() })
+  );
+  try {
+    f.hub.scanNow();
+    assertEquals(observed, []);
+    Deno.mkdirSync(`${f.vault}/empty`);
+    f.hub.scanNow([""]);
+    assertEquals(observed, [{ files: false, seq: 0 }]);
+    f.hub.scanNow(["empty"]);
+    assertEquals(observed.length, 1);
+    Deno.removeSync(`${f.vault}/empty`);
+    f.hub.scanNow(["empty"]);
+    assertEquals(observed.length, 2);
+    assertEquals(f.batches, []);
+    const create = f.hub.expect([`${f.vault}/managed`]);
+    Deno.mkdirSync(`${f.vault}/managed`);
+    f.hub.record(
+      create,
+      [{ kind: "mkdir", path: `${f.vault}/managed` }],
+      "api",
+    );
+    assertEquals(observed.length, 3);
+    assertEquals(observed.at(-1), { files: false, seq: 0 });
+    const remove = f.hub.expect([`${f.vault}/managed`]),
+      before = observed.length;
+    Deno.removeSync(`${f.vault}/managed`);
+    f.hub.record(
+      remove,
+      [{ kind: "remove", path: `${f.vault}/managed` }],
+      "api",
+    );
+    assertEquals(observed.length, before + 1);
+    assertEquals(f.batches, []);
+    Deno.writeTextFileSync(`${f.vault}/caf\u00e9.md`, "# note");
+    f.hub.scanNow();
+    assertEquals(observed.at(-1), { files: true, seq: 1 });
+    assertEquals(f.batches.length, 1);
+    const collisionBefore = observed.length;
+    Deno.writeTextFileSync(`${f.vault}/cafe\u0301.md`, "# collision");
+    f.hub.scanNow();
+    assertEquals(observed.length, collisionBefore + 1);
+    assertEquals(observed.at(-1), { files: false, seq: 1 });
+    assertEquals(f.batches.length, 1);
+    f.hub.scanNow();
+    assertEquals(observed.length, collisionBefore + 1);
+    Deno.removeSync(`${f.vault}/cafe\u0301.md`);
+    f.hub.scanNow();
+    assertEquals(observed.length, collisionBefore + 2);
+    assertEquals(f.batches.length, 1);
+    const count = observed.length;
+    dispose();
+    Deno.mkdirSync(`${f.vault}/after`);
+    f.hub.scanNow();
+    assertEquals(observed.length, count);
+  } finally {
+    dispose();
+    f.close();
+  }
+});
+
 Deno.test("hub scanner: expectations shield in-progress paths; subscribers run after commit and are isolated", () => {
   const f = fixture();
   try {

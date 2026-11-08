@@ -312,3 +312,142 @@ Deno.test("metadata projection: cached catalogue rechecks disclosed links and re
     f.close();
   }
 });
+
+for (const operation of ["create", "remove"] as const) {
+  for (const withFileChange of [false, true]) {
+    Deno.test(`metadata namespace: ${operation} of an empty colliding directory invalidates metadata ${withFileChange ? "with an unrelated file edit" : "without file entries"}`, async () => {
+      const f = hubOperationsFixture();
+      const name = "Caf\u00e9",
+        collision = "Cafe\u0301",
+        note = `${name}/note.md`;
+      Deno.mkdirSync(`${f.vault}/${name}`);
+      Deno.writeTextFileSync(
+        `${f.vault}/${note}`,
+        "# Current\nfield:: current",
+      );
+      if (withFileChange) {
+        Deno.writeTextFileSync(`${f.vault}/other.md`, "# other");
+      }
+      if (operation === "remove") {
+        Deno.mkdirSync(`${f.vault}/${collision}`);
+      }
+      f.hub.scanNow();
+      const p = new MetadataProjection(f.hub);
+      try {
+        await caught(p);
+        // Warm all three caches in both the eligible and collision-excluded states.
+        assertEquals(
+          queryMetadata(p, metadataQuery({ prefix: name }), () => true).total,
+          operation === "create" ? 1 : 0,
+        );
+        assertEquals(!!getMetadata(p, note), operation === "create");
+        const seq = f.hub.sequence(),
+          batches = f.batches.length,
+          revision = p.revision;
+        if (operation === "create") Deno.mkdirSync(`${f.vault}/${collision}`);
+        else Deno.removeSync(`${f.vault}/${collision}`);
+        if (withFileChange) {
+          Deno.writeTextFileSync(`${f.vault}/other.md`, "# unrelated edit");
+        }
+        f.hub.scanNow([""]);
+        assertEquals(f.hub.sequence(), seq + (withFileChange ? 1 : 0));
+        assertEquals(f.batches.length, batches + (withFileChange ? 1 : 0));
+        await caught(p);
+        const result = getMetadata(p, note),
+          page = queryMetadata(p, metadataQuery({ prefix: name }), () => true);
+        assertEquals(page.total, operation === "create" ? 0 : 1);
+        if (operation === "create") assertEquals(result, null);
+        else {
+          assert(result?.status === "ready");
+          assertEquals(result.headings[0].text, "Current");
+          assertEquals(result.fields, [{
+            key: "field",
+            value: "current",
+            line: 2,
+          }]);
+        }
+        assert(
+          p.revision !== revision,
+          "directory-only observation did not invalidate query revision",
+        );
+      } finally {
+        p.stop();
+        f.close();
+      }
+    });
+  }
+}
+
+Deno.test("metadata namespace: directory-only change fences a held initial parse before its cursor acknowledgement", async () => {
+  const f = hubOperationsFixture(),
+    parent = "Caf\u00e9",
+    collision = "Cafe\u0301";
+  Deno.mkdirSync(`${f.vault}/${parent}`);
+  Deno.writeTextFileSync(
+    `${f.vault}/${parent}/note.md`,
+    "# hidden by collision",
+  );
+  f.hub.scanNow();
+  const entered = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>();
+  const p = new MetadataProjection(f.hub, {
+    parse: async (text) => {
+      entered.resolve();
+      await release.promise;
+      return parseMetadata(text);
+    },
+  });
+  try {
+    await entered.promise;
+    const seq = f.hub.sequence();
+    Deno.mkdirSync(`${f.vault}/${collision}`);
+    f.hub.scanNow();
+    release.resolve();
+    await caught(p);
+    assertEquals(f.hub.sequence(), seq);
+    assertEquals(queryMetadata(p, metadataQuery({}), () => true).total, 0);
+    assertEquals(getMetadata(p, `${parent}/note.md`), null);
+  } finally {
+    release.resolve();
+    p.stop();
+    f.close();
+  }
+});
+
+Deno.test("metadata namespace: real directory watcher excludes and restores a cached note without file facts", async () => {
+  const f = hubOperationsFixture(),
+    parent = "Caf\u00e9",
+    collision = "Cafe\u0301",
+    note = `${parent}/note.md`;
+  Deno.mkdirSync(`${f.vault}/${parent}`);
+  Deno.writeTextFileSync(`${f.vault}/${note}`, "# Watched");
+  f.hub.scanNow();
+  const p = new MetadataProjection(f.hub);
+  try {
+    f.hub.start();
+    await caught(p);
+    assert(getMetadata(p, note));
+    const seq = f.hub.sequence(), batches = f.batches.length;
+    Deno.mkdirSync(`${f.vault}/${collision}`);
+    await waitUntil(
+      () =>
+        queryMetadata(p, metadataQuery({ prefix: parent }), () => true)
+            .total === 0
+          ? done()
+          : pending(p.revision),
+      { label: "directory watcher hides colliding note" },
+    );
+    Deno.removeSync(`${f.vault}/${collision}`);
+    await waitUntil(() => {
+      const result = getMetadata(p, note);
+      return result?.status === "ready" && !p.catchingUp
+        ? done()
+        : pending({ result, revision: p.revision });
+    }, { label: "directory watcher restores current parsed note" });
+    assertEquals(f.hub.sequence(), seq);
+    assertEquals(f.batches.length, batches);
+  } finally {
+    p.stop();
+    f.close();
+  }
+});

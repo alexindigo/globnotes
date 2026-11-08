@@ -25,6 +25,9 @@ export class VaultHub {
   readonly #scanner: HubScanner;
   readonly #expectations = new Map<Expectation, string[]>();
   readonly #subscribers = new Set<(entries: ChangeEntry[]) => void>();
+  readonly #namespaceSubscribers = new Set<
+    (hasFileEntries: boolean, structureChanged: boolean) => void
+  >();
   readonly #conflictSubscribers = new Set<(revision: number) => void>();
   readonly #intervalMs: number;
   readonly #stateRoot: string;
@@ -131,8 +134,13 @@ export class VaultHub {
     this.#scanning = true;
     const revision = this.conflictRevision();
     try {
-      const { mutations, stats } = this.#scanner.scan(targets);
-      this.#publish(this.store.apply(mutations, "local", null));
+      const { mutations, stats, namespaceChanged } = this.#scanner.scan(
+        targets,
+      );
+      this.#publish(
+        this.store.apply(mutations, "local", null),
+        namespaceChanged,
+      );
       return stats;
     } finally {
       this.#scanning = false;
@@ -160,13 +168,18 @@ export class VaultHub {
       throw new Error("Unknown hub expectation");
     }
     let entries: ChangeEntry[];
+    let namespaceChanged = false;
     const revision = this.conflictRevision();
     try {
       // Fold repeated writes and rename+write to one resulting file observation.
       const mutations = new Map<string, Mutation>();
       for (const effect of effects) {
         const relative = this.relativePath(effect.path);
-        if (effect.kind === "mkdir" || relative === null) continue;
+        if (relative === null) continue;
+        if (effect.kind === "mkdir") {
+          namespaceChanged = true;
+          continue;
+        }
         const old = effect.oldPath
           ? this.relativePath(effect.oldPath) ?? undefined
           : undefined;
@@ -198,7 +211,10 @@ export class VaultHub {
         }
         if (file) {
           const previous = this.store.fileState(relative);
-          if (previous && previous.diskPath !== relative && !old) continue;
+          if (previous && previous.diskPath !== relative && !old) {
+            namespaceChanged = true;
+            continue;
+          }
           mutations.set(pathKey(relative), {
             path: relative,
             file,
@@ -206,16 +222,25 @@ export class VaultHub {
           });
         } else if (this.store.fileState(relative)) {
           mutations.set(pathKey(relative), { path: relative });
-        }
+        } else namespaceChanged = true;
       }
       entries = this.store.apply([...mutations.values()], peer, origin, ack);
     } finally {
       this.#expectations.delete(token);
       this.#publishConflicts(revision);
     }
-    this.#publish(entries!);
+    this.#publish(entries!, namespaceChanged);
   }
-  #publish(entries: ChangeEntry[]): void {
+  #publish(entries: ChangeEntry[], namespaceChanged = false): void {
+    if (entries.length || namespaceChanged) {
+      for (const subscriber of this.#namespaceSubscribers) {
+        try {
+          subscriber(entries.length > 0, namespaceChanged);
+        } catch (error) {
+          logger.error(`Hub namespace subscriber failed: ${error}`);
+        }
+      }
+    }
     if (!entries.length) return;
     for (const subscriber of this.#subscribers) {
       try {
@@ -229,6 +254,16 @@ export class VaultHub {
     this.#subscribers.add(callback);
     return () => {
       this.#subscribers.delete(callback);
+    };
+  }
+  /** Value-free invalidation for file batches and observed directory/collision
+   * changes. File subscriptions retain their nonempty-batch contract. */
+  subscribeNamespace(
+    callback: (hasFileEntries: boolean, structureChanged: boolean) => void,
+  ): () => void {
+    this.#namespaceSubscribers.add(callback);
+    return () => {
+      this.#namespaceSubscribers.delete(callback);
     };
   }
   changesSince(cursor: number, options?: ReplayOptions) {

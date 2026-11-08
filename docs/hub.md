@@ -266,6 +266,15 @@ resolve once per query, and only the bounded candidate window rechecks actual
 routes and exact grants. Global filters/counts remain in-memory scans, not
 filesystem scans. Default driver callers retain fresh, uncached `driverTarget`.
 
+The scanner also observes raw directory/non-file spellings and collision changes,
+including empty directories that produce no file mutations. The hub's value-free
+namespace subscription covers these observations and completed managed directory
+effects. Metadata clears its namespace, safety and catalogue caches at that single
+subscription boundary. Structural changes qualify a new in-memory follower epoch,
+so a fresh inventory parses notes that were previously excluded and fences older
+in-flight parses. Unchanged scans keep caches warm. File-log sequence and ordinary
+file subscriptions do not acquire synthetic directory entries.
+
 ## Sync peer metadata (M5)
 
 Each configured driver instance is a separate peer and vector dimension, even

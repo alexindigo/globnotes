@@ -49,6 +49,7 @@ async function readCurrent(path: string): Promise<Uint8Array> {
 export class MetadataProjection {
   readonly #follower: LogFollower;
   readonly #unsubscribe: () => void;
+  readonly #unsubscribeNamespace: () => void;
   readonly #listeners = new Set<() => void>();
   readonly #records = new Map<string, MetadataRecord>();
   readonly #staged = new Map<string, MetadataRecord>();
@@ -58,6 +59,7 @@ export class MetadataProjection {
   #cursor: PluginCursor | null = null;
   #stopped = false;
   #revision = 0;
+  #namespaceEpoch = 0;
   readonly #identity = crypto.randomUUID();
   #reset: string | null = null;
   constructor(
@@ -69,12 +71,17 @@ export class MetadataProjection {
     } = {},
   ) {
     this.#paths = new DriverPathIndex(hub);
+    this.#unsubscribeNamespace = hub.subscribeNamespace(
+      (_hasFileEntries, structureChanged) => {
+        this.#invalidateNamespace();
+        if (structureChanged) {
+          this.#namespaceEpoch++;
+          this.#follower.wake();
+        }
+        this.#changed();
+      },
+    );
     this.#unsubscribe = hub.subscribe((entries) => {
-      // Release names and parsed catalogue references synchronously, including
-      // deletions. A sibling/ancestor namespace change invalidates safety too.
-      this.#paths.clear();
-      this.#safe.clear();
-      this.#catalog = null;
       for (const entry of entries) {
         this.#records.delete(entry.pathKey);
         this.#staged.delete(entry.pathKey);
@@ -83,11 +90,13 @@ export class MetadataProjection {
           this.#staged.delete(entry.oldPathKey);
         }
       }
-      this.#changed();
     });
+    const authorityKey = () => this.#authorityKey();
     this.#follower = new LogFollower({
       hub,
-      authorityKey: "metadata-v1",
+      get authorityKey() {
+        return authorityKey();
+      },
       current: () => !this.#stopped,
       clock: adapters.clock,
       cursor: {
@@ -113,6 +122,7 @@ export class MetadataProjection {
   }
   get catchingUp(): boolean {
     return this.#reset !== null || this.cursor === null ||
+      this.#cursor?.authorityKey !== this.#authorityKey() ||
       this.cursor < this.hub.sequence() ||
       this.#follower.status.reset !== null ||
       this.#follower.status.lastError !== null;
@@ -127,16 +137,25 @@ export class MetadataProjection {
     this.#revision++;
     for (const fn of this.#listeners) fn();
   }
+  #authorityKey(): string {
+    return `metadata-v1:${this.#namespaceEpoch}`;
+  }
+  #invalidateNamespace(): void {
+    // One owner clears all namespace-derived caches, including directory-only
+    // observations that have no file-log entry to invalidate a key.
+    this.#paths.clear();
+    this.#safe.clear();
+    this.#catalog = null;
+  }
   stop(): void {
     this.#stopped = true;
     this.#follower.stop();
     this.#unsubscribe();
+    this.#unsubscribeNamespace();
     this.#listeners.clear();
     this.#records.clear();
     this.#staged.clear();
-    this.#paths.clear();
-    this.#safe.clear();
-    this.#catalog = null;
+    this.#invalidateNamespace();
     this.#reset = null;
   }
   #base(path: string): Omit<MetadataRecord, "status"> | null {
@@ -305,12 +324,11 @@ export class MetadataProjection {
     );
   }
   async #consume(packet: ChangePacket): Promise<unknown> {
+    const epoch = this.#namespaceEpoch;
     if (packet.type === "gap") {
       this.#records.clear();
       this.#staged.clear();
-      this.#paths.clear();
-      this.#safe.clear();
-      this.#catalog = null;
+      this.#invalidateNamespace();
       this.#reset = packet.resetId;
       this.#changed();
     } else {
@@ -320,7 +338,9 @@ export class MetadataProjection {
       // Sequential reads bound transient byte memory independently of group size.
       for (const name of new Set(names)) {
         const result = await this.#parse(name);
-        if (this.#stopped) return { ack: packet.token };
+        if (this.#stopped || epoch !== this.#namespaceEpoch) {
+          return { ack: packet.token };
+        }
         if (result) this.#staged.set(result.pathKey, result);
       }
       if (packet.type === "snapshot" ? packet.complete : true) {

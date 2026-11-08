@@ -384,6 +384,11 @@ exclusion, escapes, BOM/CRLF, unfinished frontmatter and multiline source positi
 `metadata_projection_test.ts` holds asynchronous parsing across rename/delete,
 checks immediate invalidation, explicit read/UTF-8/size/parser failures, current-byte
 re-planning, retention rebuild and atomic snapshot/multipart group publication.
+Directory-only NFC collision tests create and remove empty parent aliases while
+asserting unchanged file sequence/publications and correct get/query outcomes.
+They also cover unrelated concurrent file changes, a held old parse, and the real
+directory watcher. Hub namespace tests preserve unchanged-scan suppression, managed
+empty-directory effects and the nonempty file-subscription contract.
 
 `metadata_runtime_test.ts` drives actual service Workers through scoped get/query/
 watch without log declarations, granted counts/filters/pagination, invalid input,

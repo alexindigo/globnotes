@@ -58,6 +58,7 @@ export class HubScanner {
   readonly #warned = new Set<string>();
   readonly #unknownWarnings = new Set<string>();
   #collisions: Collision[] = [];
+  #namespace = new Map<string, string>();
   constructor(
     readonly root: string,
     readonly statePath: string,
@@ -67,7 +68,17 @@ export class HubScanner {
   collisions(): Collision[] {
     return structuredClone(this.#collisions);
   }
-  scan(targets = [""]): { mutations: Mutation[]; stats: ScanStats } {
+  scan(
+    targets = [""],
+  ): { mutations: Mutation[]; stats: ScanStats; namespaceChanged: boolean } {
+    const collisionNamespace = () =>
+      JSON.stringify(
+        this.#collisions.map((c) =>
+          JSON.stringify({ key: c.key, paths: [...c.paths].sort() })
+        ).sort(),
+      );
+    const previousCollisions = collisionNamespace();
+    const namespace = new Map<string, string>();
     const known = this.store.files(), found = new Map<string, Observation>();
     const byKey = new Map(known.map((file) => [file.key, file]));
     const names = new Map<string, string[]>(), unreadable: string[] = [];
@@ -106,6 +117,7 @@ export class HubScanner {
           return;
         }
         if (!info.isDirectory) return;
+        namespace.set(relative, "directory");
         const entries = [...Deno.readDirSync(absolute)].sort((a, b) =>
           a.name < b.name ? -1 : a.name > b.name ? 1 : 0
         );
@@ -115,14 +127,19 @@ export class HubScanner {
           // Gate staging files are not vault content (hub/effects.ts).
           if (isStagingName(entry.name)) continue;
           if (entry.isSymlink) {
+            namespace.set(name, "symlink");
             stats.symlinks++;
             continue;
           }
           if (entry.isDirectory) {
+            namespace.set(name, "directory");
             walk(name);
             continue;
           }
-          if (!entry.isFile) continue;
+          if (!entry.isFile) {
+            namespace.set(name, "other");
+            continue;
+          }
           addFile(name);
         }
       } catch (error) {
@@ -190,6 +207,24 @@ export class HubScanner {
         }
       }
     }
+    // Raw non-file spellings matter even when an empty colliding directory
+    // creates no file mutation. Preserve observations below unknown subtrees;
+    // ordinary file names remain owned by the file store, not a second cache.
+    const nextNamespace = new Map(
+      [...this.#namespace].filter(([name]) =>
+        !inScope(name) ||
+        unreadable.some((scope) =>
+          !scope || name === scope || name.startsWith(scope + "/")
+        )
+      ),
+    );
+    for (const [name, kind] of namespace) nextNamespace.set(name, kind);
+    const namespaceChanged = previousCollisions !== collisionNamespace() ||
+      nextNamespace.size !== this.#namespace.size ||
+      [...nextNamespace].some(([name, kind]) =>
+        this.#namespace.get(name) !== kind
+      );
+    this.#namespace = nextNamespace;
     const missing = known.filter((f) =>
       inScope(f.diskPath) && !found.has(f.key) &&
       !this.expected(f.diskPath) && !unreadable.some((d) =>
@@ -233,7 +268,7 @@ export class HubScanner {
     for (const file of missing) {
       if (!moved.has(file.key)) mutations.push({ path: file.diskPath });
     }
-    return { mutations, stats };
+    return { mutations, stats, namespaceChanged };
   }
 }
 
