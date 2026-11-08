@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { driverDeclaration, minimalDriver } from "./helpers/driver_fixture.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 
-Deno.test("driver composition: shutdown completes while a browser change stream is still open", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+async function shutdownWithLiveStream(
+  options: Parameters<typeof bootServer>[1] = {},
+) {
+  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" }, options);
   const stream = await fetch(`${server.baseUrl}/_/api/changes`, {
     headers: { accept: "text/event-stream" },
   });
@@ -21,6 +23,39 @@ Deno.test("driver composition: shutdown completes while a browser change stream 
   } finally {
     await reader.cancel().catch(() => undefined);
     await stopping;
+  }
+  assertEquals(server.status()?.code, 0, "server shutdown must exit cleanly");
+  assertEquals(
+    server.status()?.signal,
+    null,
+    "SIGKILL is cleanup, not shutdown proof",
+  );
+  assertEquals(server.status()?.success, true);
+}
+
+Deno.test("driver composition: shutdown completes while a browser change stream is still open", () =>
+  shutdownWithLiveStream());
+
+Deno.test("driver composition: live-stream shutdown rejects forced cleanup", async () => {
+  const preload = await Deno.makeTempFile({
+    prefix: "ignored-stream-stop-",
+    suffix: ".mjs",
+  });
+  try {
+    await Deno.writeTextFile(
+      preload,
+      `
+const add=Deno.addSignalListener;
+Deno.addSignalListener=(signal,listener)=>add(signal,signal==='SIGTERM'?()=>{}:listener);
+`,
+    );
+    await assertRejects(
+      () => shutdownWithLiveStream({ denoArgs: ["--preload", preload] }),
+      Error,
+      "server shutdown must exit cleanly",
+    );
+  } finally {
+    await Deno.remove(preload);
   }
 });
 
