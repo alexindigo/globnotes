@@ -218,6 +218,14 @@ selector failure, or a v2 release-tag push runs every control. CI also runs for
 gates still run fully. Local `--all` remains exhaustive unless explicitly passed
 `--ci-changes FILE --ci-ref REF`.
 
+On main/v2 branch pushes, `scripts/ci-pr-proof.sh` queries this CI workflow's
+Actions runs with the workflow token (`actions: read`). Only a completed,
+successful pull-request run for the exact head SHA with a successful `test` job
+can replace the duplicate workload. The job remains successful and its summary
+links the PR evidence. Missing proof, malformed results and API errors run tests.
+PRs and release tags always run. The independent Docker build/publish workflows
+retain their own triggers and behavior.
+
 The Podman launcher requires rootless operation and maps the invoking user
 to container UID/GID 1000 with `--userns=keep-id:uid=1000,gid=1000` (Podman
 4.3 or newer). It uses a named bridge network and shares the dev container's

@@ -13,13 +13,26 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
     env:
       GLOBNOTES_CONTAINER_ENGINE: podman
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Check successful PR test evidence
+        id: proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! timeout 180s bash scripts/ci-pr-proof.sh; then
+            printf 'run-tests=true\n' >> "$GITHUB_OUTPUT"
+            printf 'Running tests: PR evidence lookup failed or exceeded its bound.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Prepare harness control diff
+        if: steps.proof.outputs.run-tests != 'false'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -38,12 +51,14 @@ jobs:
           fi
       # Everything runs in the devcontainer (docs/testing.md), as the commit check does.
       - name: "All gates, with the browser suite"
+        if: steps.proof.outputs.run-tests != 'false'
         run: >-
           .devcontainer/run.sh --browser
           --run-dir "$RUNNER_TEMP/globnotes/all"
           -- bash scripts/gates.sh --all --browser
           --ci-changes /run-logs/ci-changes.z --ci-ref "$GITHUB_REF"
       - name: "Timing tests, serially"
+        if: steps.proof.outputs.run-tests != 'false'
         run: >-
           .devcontainer/run.sh
           --run-dir "$RUNNER_TEMP/globnotes/timing"
