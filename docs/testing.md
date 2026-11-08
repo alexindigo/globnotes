@@ -269,10 +269,15 @@ On main/v2 branch pushes, `scripts/ci-pr-proof.sh` queries this CI workflow's
 Actions runs with the workflow token (`actions: read`). Only a completed,
 successful pull-request run for the exact head SHA, targeting the pushed branch
 (`main` or `v2`), with a successful `test` job can replace the duplicate workload.
-The associated PR head must match too; empty/missing PR associations (including
-fork runs) fail closed. One compare request also requires the recorded PR base
-to be an ancestor of the head. The job remains successful and its summary links
-the PR evidence. Missing proof, malformed results and API errors run tests.
+PR association comes from the paginated commit-to-PR API, which retains merged
+PRs even when a workflow run's `pull_requests` list becomes empty after merge.
+The PR head SHA must match the run and push, its base must target the pushed
+branch, and the run/head/base repository identities must all match this repo;
+fork-origin and unknown identities fail closed. A repository's own `fork` flag
+does not identify a cross-repository PR. One compare request also requires the
+reported PR base SHA to be an ancestor of the head. The job remains successful
+and its summary links the PR evidence. Missing proof, malformed results and API
+errors run tests.
 PRs and release tags always run. The independent Docker build/publish workflows
 retain their own triggers and behavior.
 

@@ -21,6 +21,10 @@ if(endpoint.includes('/compare/')){
     if(!endpoint.includes('head_sha='+Deno.env.get('GITHUB_SHA'))||!endpoint.includes('event=pull_request')||!endpoint.includes('status=success'))Deno.exit(99);
     if(mode==='api-error')Deno.exit(22);
     rows=payload.workflow_runs.flatMap(run=>query.includes('.pull_requests[]?')?(run.pull_requests??[]).map(pr=>({run,node:pr})):[{run,node:run}]);
+  }else if(endpoint.includes('/commits/')){
+    if(endpoint!=='repos/owner/repo/commits/'+Deno.env.get('GITHUB_SHA')+'/pulls?per_page=100'||!Deno.args.includes('--paginate'))Deno.exit(99);
+    if(mode==='pr-api-error')Deno.exit(22);
+    rows=payload.associated_prs.map(node=>({node}));
   }else{
     if(!endpoint.includes('runs/123/jobs?filter=latest'))Deno.exit(99);
     if(mode==='job-error')Deno.exit(22);
@@ -40,6 +44,17 @@ for (
     "success",
     "v2-success",
     "identical-base",
+    "merged-pr-success",
+    "merged-base-mismatch",
+    "fork-associated",
+    "unknown-pr-repo",
+    "wrong-run-repo",
+    "unknown-run-repo",
+    "pr-api-error",
+    "no-associated-prs",
+    "later-pr-success",
+    "base-repo-mismatch",
+    "unknown-base-repo",
     "no-runs",
     "api-error",
     "no-job",
@@ -69,19 +84,45 @@ for (
     const root = await Deno.makeTempDir({ prefix: "ci-pr-proof-" });
     const sha = "a".repeat(40), base = "b".repeat(40);
     const branch = mode === "v2-success" ? "v2" : "main";
-    const reusable = ["success", "v2-success", "identical-base"].includes(mode);
+    const reusable = [
+      "success",
+      "v2-success",
+      "identical-base",
+      "merged-pr-success",
+      "later-pr-success",
+    ].includes(mode);
     try {
       await Deno.mkdir(`${root}/bin`);
       const pr = {
+        number: 42,
+        state: mode.startsWith("merged-") ? "closed" : "open",
+        merged_at: mode.startsWith("merged-") ? "2026-11-08T07:53:59Z" : null,
         base: {
-          ref: mode === "base-mismatch" ? "v2" : branch,
+          ref: ["base-mismatch", "merged-base-mismatch"].includes(mode)
+            ? "v2"
+            : branch,
           sha: mode === "missing-base-sha"
             ? null
             : mode === "identical-base"
             ? sha
             : base,
+          repo: mode === "unknown-base-repo" ? null : {
+            full_name: mode === "base-repo-mismatch"
+              ? "other/repo"
+              : "owner/repo",
+          },
         },
-        head: { sha: mode === "pr-head-mismatch" ? base : sha },
+        head: {
+          sha: mode === "pr-head-mismatch" ? base : sha,
+          repo: mode === "unknown-pr-repo" ? null : {
+            full_name: ["fork-empty", "fork-associated"].includes(mode)
+              ? "fork/repo"
+              : "owner/repo",
+            // The destination repository can itself be a fork. Identity,
+            // not this ancestry flag, distinguishes a fork-origin PR.
+            fork: true,
+          },
+        },
       };
       const run = {
         id: 123,
@@ -92,9 +133,18 @@ for (
         event: mode === "wrong-event" ? "push" : "pull_request",
         status: mode === "wrong-run-status" ? "in_progress" : "completed",
         conclusion: mode === "wrong-run-conclusion" ? "failure" : "success",
-        ...(mode === "missing-prs"
-          ? {}
-          : { pull_requests: mode === "fork-empty" ? [] : [pr] }),
+        head_repository: mode === "unknown-run-repo" ? null : {
+          full_name: mode === "wrong-run-repo" ? "fork/repo" : "owner/repo",
+        },
+        ...(mode === "missing-prs" ? {} : {
+          pull_requests: [
+              "fork-empty",
+              "merged-pr-success",
+              "merged-base-mismatch",
+            ].includes(mode)
+            ? []
+            : [pr],
+        }),
       };
       const status = mode === "diverged-base"
         ? "diverged"
@@ -109,6 +159,11 @@ for (
         `${root}/api.json`,
         JSON.stringify({
           workflow_runs: mode === "no-runs" ? [] : [run],
+          associated_prs: ["missing-prs", "no-associated-prs"].includes(mode)
+            ? []
+            : mode === "later-pr-success"
+            ? [{ ...pr, base: { ...pr.base, ref: "v2" } }, pr]
+            : [pr],
           jobs: mode === "no-job" ? [] : [{
             id: 456,
             name: mode === "other-job" ? "docker-build" : "test",
@@ -150,6 +205,12 @@ for (
           ? "https://github.com/owner/repo/actions/runs/123"
           : "Running tests",
       );
+      if (reusable) {
+        assertStringIncludes(
+          await Deno.readTextFile(`${root}/requests`),
+          `/commits/${sha}/pulls?per_page=100`,
+        );
+      }
       if (["pull-request", "release-tag"].includes(mode)) {
         let requested = false;
         try {
@@ -158,7 +219,20 @@ for (
         } catch { /* no API call expected */ }
         assertEquals(requested, false);
       } else if (
-        ["base-mismatch", "fork-empty", "missing-prs", "pr-head-mismatch"]
+        [
+          "base-mismatch",
+          "merged-base-mismatch",
+          "fork-empty",
+          "fork-associated",
+          "unknown-pr-repo",
+          "wrong-run-repo",
+          "unknown-run-repo",
+          "missing-prs",
+          "no-associated-prs",
+          "pr-head-mismatch",
+          "base-repo-mismatch",
+          "unknown-base-repo",
+        ]
           .includes(mode)
       ) {
         const requests = await Deno.readTextFile(`${root}/requests`);
