@@ -97,6 +97,24 @@ describe("Sync workflow ownership", () => {
     const f=await loaded();f.controller.editKey("home","token","typed");expect(await f.controller.remove("home")).toBe(false);expect(f.confirmRemove).not.toHaveBeenCalled();
     f.controller.editKey("home","token","");expect(await f.controller.remove("home")).toBe(true);expect(f.confirmRemove).toHaveBeenCalledWith("Home");expect(f.remove).toHaveBeenCalledWith("home",{revision:1});
   });
+  it.each(["unchanged","runtime state"])("removal confirmation survives a %s refresh of the same instance revision",async change=>{
+    const answer=deferred(), f=await loaded({confirmRemove:()=>answer.promise});
+    const removing=f.controller.remove("home");await flushPromises();
+    if(change==="runtime state")Object.assign(f.view.instances[0],{status:"active",lastSync:123456,attention:{...f.view.instances[0].attention,revision:11}});
+    await f.controller.refresh();expect(row(f).canRemove).toBe(true);
+    answer.resolve(true);expect(await removing).toBe(true);await flushPromises();
+    expect(f.remove).toHaveBeenCalledExactlyOnceWith("home",{revision:1});expect(f.controller.state.instances).toEqual([]);
+  });
+  it.each(["revision","binding","removed","session","disposed"])("removal confirmation cannot cross a changed %s",async change=>{
+    let session="one";const answer=deferred(), f=await loaded({confirmRemove:()=>answer.promise,getSession:()=>session});
+    const removing=f.controller.remove("home");await flushPromises();
+    if(change==="revision")f.view.instances[0].revision++;
+    if(change==="binding")f.view.instances[0].plugin="replacement";
+    if(change==="removed")f.view.instances=[];
+    if(change==="session")session="two";
+    if(change==="disposed")f.controller.dispose();else await f.controller.refresh();
+    answer.resolve(true);expect(await removing).toBe(false);expect(f.remove).not.toHaveBeenCalled();
+  });
   it("creates off without sending a draft secret/settings and cancels only the add draft", async () => {
     const create=vi.fn(async()=>({id:"new",revision:1})), f=await loaded({create});f.controller.startAdd();f.controller.editAdd("label","New remote");
     await f.controller.createInstance();expect(create).toHaveBeenCalledWith({plugin:"test",label:"New remote"});expect(f.controller.state.adding).toBe(false);

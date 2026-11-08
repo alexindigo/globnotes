@@ -252,8 +252,10 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
   }
   async function removeInstance(id) {
     const record = data.records.get(id); if (!record || !snapshotRecord(record).canRemove) return false;
-    const base = record.base;
-    if (!await confirmRemove(base.label) || record.base !== base || !snapshotRecord(record).canRemove) return false;
+    const base = record.base, own = generation;
+    if (!await confirmRemove(base.label) || own !== generation || data.records.get(id) !== record ||
+      record.base.revision !== base.revision || record.base.plugin !== base.plugin || record.base.label !== base.label ||
+      !snapshotRecord(record).canRemove) return false;
     const payload = { revision:base.revision }; return dispatch("remove", id, payload, () => remove(id, payload));
   }
   function secret(id, key, clear = false) {
