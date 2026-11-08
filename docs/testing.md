@@ -472,7 +472,8 @@ driver and talk to the actual authenticated HTTP memory remote. Native input
 adds/configures an instance, enters keys over insecure-context local HTTP, observes
 lock/unlock, disk/list imports, editor export and clean editor reload, inbox
 collision/resolution propagation, held/remote-empty decisions and removal/privacy.
-Geometry and keyboard probes accompany desktop/narrow/dark working captures. Run
+Geometry and keyboard probes accompany desktop/narrow/dark working captures. Build
+the current client first with `deno task build:client` inside the launcher, then run
 them through `run.sh --browser` with `GLOBNOTES_E2E_CASES=sync-settings-native,sync-driver-native`;
 the suite's ordinary result/timeout gates still apply.
 
@@ -583,7 +584,7 @@ The control retains `export-control.json` with value-free ownership/version fact
 and fixture change/conflict metadata, without the vault HMAC secret.
 
 ```sh
-timeout 600 .devcontainer/run.sh --browser --run-dir "$RUNS/remotely-export-owner" -- env RS_NATIVE_EXPORT_CONTROL=1 GLOBNOTES_E2E_CONCURRENCY=2 GLOBNOTES_E2E_ARTIFACTS=/artifacts/native GLOBNOTES_E2E_CASES=sync-driver-native,remotely-save-native-s3-rclone-base64,remotely-save-native-webdav-none,remotely-save-native-webdav-openssl-base64 bash client/tests/e2e/run.sh
+timeout 600 .devcontainer/run.sh --browser --run-dir "$RUNS/remotely-export-owner" -- bash -lc 'timeout 120 deno task build:client && timeout 360 env RS_NATIVE_EXPORT_CONTROL=1 GLOBNOTES_E2E_CONCURRENCY=2 GLOBNOTES_E2E_ARTIFACTS=/artifacts/native GLOBNOTES_E2E_CASES=sync-driver-native,remotely-save-native-s3-rclone-base64,remotely-save-native-webdav-none,remotely-save-native-webdav-openssl-base64 bash client/tests/e2e/run.sh'
 ```
 
 ### Conflict inbox
