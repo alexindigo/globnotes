@@ -3,6 +3,7 @@ import { bootServer } from "../../../tests/helpers/boot.ts";
 import { done, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect } from "./cdp.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const port = Number(Deno.env.get("CDP_PORT") || 9333);
 const vault = await Deno.makeTempDir({ prefix: "save-preview-vault-" });
@@ -175,22 +176,28 @@ try {
   failure = error;
   console.error(`FAIL: ${error.message}`);
 } finally {
-  await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({
-    phase, completed, failure: failure?.message, pending, vault,
-    baseUrl: server?.baseUrl, targetId, events, pageErrors: page?.pageErrors ?? [],
-    preview: page ? await page.evaluate("document.querySelector('.preview-buffer')?.textContent").catch(String) : null,
-    observed: page ? await page.evaluate("({url:location.href,body:document.body.innerText,mode:localStorage.getItem('defaultEditorMode'),focus:document.hasFocus(),active:document.activeElement?.outerHTML})").catch(String) : null,
-  }, null, 2));
-  console.log(`save-preview diagnostics: ${artifacts}/diagnostics.json`);
-  if (failure) {
-    // Retain the dirty page and caller-owned vault; never discard to clean up.
-    console.error(`Retained failed probe: ${server?.baseUrl}; vault ${vault}; target ${targetId}`);
-    console.error(JSON.stringify({ events, pageErrors: page?.pageErrors ?? [] }));
-  } else {
-    await page?.close();
-    await server?.close();
-  }
-  if (failure) { page?.page.close(); page?.browser.close(); }
+  await finalizeNativeCase({
+    error: failure,
+    report: async () => {
+      await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({
+        phase, completed, failure: failure?.message, pending, vault,
+        baseUrl: server?.baseUrl, targetId, events, pageErrors: page?.pageErrors ?? [],
+        preview: page ? await page.evaluate("document.querySelector('.preview-buffer')?.textContent").catch(String) : null,
+        observed: page ? await page.evaluate("({url:location.href,body:document.body.innerText,mode:localStorage.getItem('defaultEditorMode'),focus:document.hasFocus(),active:document.activeElement?.outerHTML})").catch(String) : null,
+      }, null, 2));
+      console.log(`save-preview diagnostics: ${artifacts}/diagnostics.json`);
+    },
+    cleanup: [
+      () => {
+        if (!failure) return page?.close();
+        // Preserve the failed dirty page/vault, releasing only CDP transports.
+        console.error(`Retained failed probe: ${server?.baseUrl}; vault ${vault}; target ${targetId}`);
+        console.error(JSON.stringify({ events, pageErrors: page?.pageErrors ?? [] }));
+        page?.page.close();
+      },
+      () => failure ? page?.browser.close() : server?.close(),
+    ],
+  });
 }
 if (failure) throw failure;
 console.log("SAVE-PREVIEW OK (10 cases)");

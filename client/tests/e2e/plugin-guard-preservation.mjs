@@ -1,5 +1,6 @@
 // Feature-owned native Save/Delete -> real guard -> UI/API/disk/index consumers.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 
@@ -161,11 +162,13 @@ try {
   console.error(`FAIL: ${error.message}`);
   if (current && !current.closed) await capture("failure").catch(captureError => console.error(captureError.message));
 }
-await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, ownership: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server.pid, baseUrl: current.server.baseUrl, targetId: current.session.targetId, browserContextId: current.session.browserContextId }, pageErrors: current?.session.errors }, null, 2), { createNew: true });
-if (failure) {
-  if (current && !current.closed) {
-    await current.session.close(); await current.server.close(); current.closed = true;
+await finalizeNativeCase({
+  error: failure,
+  report: () => Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, ownership: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server.pid, baseUrl: current.server.baseUrl, targetId: current.session.targetId, browserContextId: current.session.browserContextId }, pageErrors: current?.session.errors }, null, 2), { createNew: true }),
+  cleanup: failure && current && !current.closed ? [async () => {
+    await finalizeNativeCase({ cleanup: [() => current.session.close(), () => current.server.close()] });
+    current.closed = true;
     await Deno.writeTextFile(`${current.directory}/failed-fixture-closure.json`, JSON.stringify({ targetClosed: true, serverClosed: true, failureCapturedBeforeClosure: true, filesRetained: true }), { createNew: true });
-  }
-  throw failure;
-}
+  }] : [],
+});
+if (failure) throw failure;

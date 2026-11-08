@@ -1,5 +1,7 @@
 // Feature-owned native access consumers; shared browser/runner helpers unchanged.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
+import { visibleElement } from "./native-actions.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { awaitHealthy, bootServer, parseArguments } from "./harness-helpers.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
@@ -81,9 +83,13 @@ async function access({ pinnedMode = false } = {}) {
   await session.click('[aria-label="Settings"]'); await session.button("Access"); await waitForAccessSummary(session); await session.button("Change access…");
    await session.poll(pinnedMode ? "!!document.querySelector('#setup-title') && document.querySelector('#access-current-password')?.disabled===false" : "!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-none')?.disabled===false");
 }
+async function closeSidebar(session = owned.session) {
+  const selector = '[title="Close sidebar"]';
+  if (await session.evaluate(`(${visibleElement.toString()})(document.querySelector(${JSON.stringify(selector)}))`)) await session.click(selector);
+}
 async function edit(marker) {
   const session = owned.session;
-  if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
+  await closeSidebar(session);
   await session.button("Edit", ".content-column"); await session.button("Source", ".content-column");
   await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')");
   await session.click(".cm-content"); await session.type(marker + "\n");
@@ -133,7 +139,7 @@ try {
   assert((await api("auth-check", "GET", undefined, oldToken)).status === 200, "Opening enrolment invalidated the session");
   await session.click('[aria-label="Dismiss setup"]'); await session.poll("!document.querySelector('#setup-title')");
    assert(await session.evaluate("document.querySelector('.cm-content') === window.__accessEditor && document.querySelector('.cm-content')?.textContent.includes('Native enrolment cancellation marker')"), "Cancelled enrolment lost the dirty editor");
-  if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
+  await closeSidebar(session);
   await session.button("Save", ".content-column");
   await session.poll("(() => { const button=[...document.querySelectorAll('.content-column button')].find(item=>item.textContent.trim()==='Save'); return button?.getAttribute('aria-busy')==='false' && !button.querySelector('.animate-spin'); })()");
   // Await the actual persisted consumer before starting a clean Access attempt.
@@ -157,7 +163,7 @@ try {
   const after = JSON.parse(await saved());
   assert(after.auth_type === "totp" && after.password_hash === owned.initial.password_hash && after.username === username && after.brand_name === owned.initial.brand_name && after.unrelated_fixture.kept, "Confirmed 2FA replaced existing credentials/config");
   assert((await api("auth-check", "GET", undefined, oldToken)).status === 401, "Confirmed 2FA left old session valid");
-  if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
+  await closeSidebar(session);
   await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await unusedWindowCode(bundle.secret, [confirmedCode]));
   await session.button("Log In"); await session.poll("!document.querySelector('#username')");
   const freshToken = await session.evaluate("sessionStorage.getItem('token')");
@@ -178,7 +184,7 @@ try {
   assert(await owned.session.evaluate("document.querySelector('.cm-content')===window.__accessEditor"), "Settings-only lock replaced the editor");
   assert((await api("config")).body.settingsWritable === false, "Public settings did not lock");
   assert((await Deno.readTextFile(`${owned.vault}/Seed.md`)).includes("Native public settings-lock saved marker"), "Handoff Save did not reach disk");
-  if (await owned.session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await owned.session.click('[title="Close sidebar"]');
+  await closeSidebar();
   await owned.session.click(".cm-content"); await owned.session.type("Still public after settings lock\n"); await owned.session.button("Save", ".content-column");
   await owned.session.poll("fetch('/_/api/notes/Seed').then(r=>r.json()).then(n=>n.content.includes('Still public after settings lock'))");
   assert((await Deno.readTextFile(`${owned.vault}/Seed.md`)).includes("Still public after settings lock"), "Locked settings prevented actual public note save");
@@ -228,7 +234,7 @@ try {
   await fill("#access-current-totp", acceptedCode); await owned.session.button("Save access settings"); await owned.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
   assert((await api("auth-check", "GET", undefined, old)).status === 401, "Password change did not invalidate the old session");
   assert(JSON.parse(await saved()).totp_key === owned.initial.totp_key, "Password change replaced the existing authenticator");
-  if (await owned.session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await owned.session.click('[title="Close sidebar"]');
+  await closeSidebar();
   await fill("#username", username); await fill("#password", "changed-native-password"); await fill("#one-time-code", await unusedWindowCode(currentSecret, [acceptedCode]));
   await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, await owned.session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Changed password/current authenticator cannot log in");
@@ -252,7 +258,7 @@ try {
   await owned.session.poll("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Review current access' && !button.disabled)");
   await owned.session.button("Review current access"); await owned.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
   assert(writes === 1, "Lost access receipt was replayed");
-  if (await owned.session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await owned.session.click('[title="Close sidebar"]');
+  await closeSidebar();
   await fill("#username", username); await fill("#password", "recovered-native-password"); await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, await owned.session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Recovered password cannot sign in");
   stop(); await finishCase("native lost-password-receipt durable read-back without replay", { actualPersistedRevision: 1, unresolvedDismissalBlocked: true, writes: 1, explicitReadBackRecovered: true, intendedPasswordLoginAccepted: true });
@@ -272,7 +278,7 @@ try {
   assert(replacementSaved.totp_key === replacement.key && replacementSaved.password_hash === owned.initial.password_hash, "Authenticator replacement changed the password or failed to persist the new key");
   assert((await api("auth-check", "GET", undefined, replacementToken)).status === 401, "Confirmed replacement retained old session authority");
   assert((await api("token", "POST", { username, password: password + newConfirmation })).status === 401, "Replacement enrolment code can be replayed as login");
-  if (await owned.session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await owned.session.click('[title="Close sidebar"]');
+  await closeSidebar();
   const replacementNow = Date.now(), replacementCodes = await Promise.all([replacementNow, replacementNow - 30_000, replacementNow + 30_000].map(time => authenticatorCode(replacement.secret, time)));
   await fill("#username", username); await fill("#password", password); await fill("#one-time-code", replacementCodes.find(code => code !== newConfirmation));
   await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
@@ -436,12 +442,18 @@ try {
   console.log("ACCESS NATIVE CHECKPOINT OK (remaining access matrix still required)");
 } catch (error) { failure = error; console.error(`FAIL: ${error.stack ?? error}`); }
 finally {
-  await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, ownership: owned && { vault: owned.vault, state: owned.state, pid: owned.server.pid, baseUrl: owned.server.baseUrl, targetId: owned.session.targetId, browserContextId: owned.session.browserContextId, peerTargetId: owned.peer?.targetId, peerContextId: owned.peer?.browserContextId }, pageErrors: owned?.session.errors }, null, 2));
-  if (failure && owned && !owned.closed) {
-    await screenshot("failure").catch(error => console.error(error.message));
-    await owned.peer?.close(); await owned.session.close(); await owned.server.close(); owned.closed = true;
-    await Deno.writeTextFile(`${owned.directory}/failed-fixture-closure.json`, JSON.stringify({ targetClosed: true, serverClosed: true, failureCapturedBeforeClosure: true, filesRetained: true }), { createNew: true });
-  }
+  await finalizeNativeCase({
+    error: failure,
+    report: async () => {
+      await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, ownership: owned && { vault: owned.vault, state: owned.state, pid: owned.server.pid, baseUrl: owned.server.baseUrl, targetId: owned.session.targetId, browserContextId: owned.session.browserContextId, peerTargetId: owned.peer?.targetId, peerContextId: owned.peer?.browserContextId }, pageErrors: owned?.session.errors }, null, 2));
+      if (failure && owned && !owned.closed) await screenshot("failure").catch(error => console.error(error.message));
+    },
+    cleanup: failure && owned && !owned.closed ? [async () => {
+      await finalizeNativeCase({ cleanup: [() => owned.peer?.close(), () => owned.session.close(), () => owned.server.close()] });
+      owned.closed = true;
+      await Deno.writeTextFile(`${owned.directory}/failed-fixture-closure.json`, JSON.stringify({ targetClosed: true, serverClosed: true, failureCapturedBeforeClosure: true, filesRetained: true }), { createNew: true });
+    }] : [],
+  });
 }
 if (failure) throw failure;
 import { waitForAccessSummary } from './settings-access-native.mjs';

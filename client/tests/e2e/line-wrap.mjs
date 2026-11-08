@@ -6,6 +6,7 @@ import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { assert } from "./test-outcomes.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9462);
 const vault = await Deno.makeTempDir({ prefix: "wrap-vault-" });
@@ -29,6 +30,7 @@ await Deno.writeTextFile(
 );
 
 let failures = 0;
+let failure;
 function check(name, cond, detail = "") {
   if (cond) console.log(`ok: ${name}`);
   else {
@@ -116,8 +118,10 @@ try {
   }
   assert(failures === 0, `WRAP: ${failures} failure(s)`);
   console.log("WRAP OK");
+} catch (error) {
+  failure = error;
+  throw error;
 } finally {
-  await stopBrowser(browser);
-  await server.close();
+  await finalizeNativeCase({ error: failure, cleanup: [() => stopBrowser(browser), () => server.close()] });
   console.log("Retained wrap fixture/artifacts", vault, artifacts);
 }

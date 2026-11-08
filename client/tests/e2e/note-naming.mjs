@@ -4,6 +4,7 @@
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9413);
 
@@ -17,6 +18,7 @@ function assert(cond, msg) {
 
 let server = null;
 let browser = null;
+let failure;
 try {
   server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" }, applicationServer());
   browser = await launchBrowser({ port: CDP_PORT });
@@ -80,7 +82,9 @@ try {
   assert(sidebarText.includes("My Note"), "sidebar shows the filename");
 
   console.log("NOTE-NAMING OK");
+} catch (error) {
+  failure = error;
+  throw error;
 } finally {
-  if (browser) await stopBrowser(browser);
-  if (server) await server.close();
+  await finalizeNativeCase({ error: failure, cleanup: [() => browser && stopBrowser(browser), () => server?.close()] });
 }

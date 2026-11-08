@@ -5,6 +5,7 @@ import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { assert } from "./test-outcomes.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9461);
 const vault = await Deno.makeTempDir({ prefix: "ctrlf-vault-" });
@@ -165,15 +166,19 @@ try {
   console.log("CTRLF OK");
 } catch (error) {
   failure = error;
-  if (page) {
-    const snapshot = await page.evaluate("({url:location.href,ready:document.readyState,body:document.body?.innerText,viewer:document.querySelector('.toast-viewer')?.outerHTML,editors:[...document.querySelectorAll('.cm-content,.ProseMirror')].map(el=>el.textContent),resources:performance.getEntriesByType('resource').map(row=>({name:row.name,startTime:row.startTime,duration:row.duration}))})").catch(captureError => ({ captureError: String(captureError) }));
-    await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ error: String(error), initialViewerMs, elapsedMs: performance.now() - started, snapshot, pageErrors: page.pageErrors, events: page.events, observations, requests: [...requests.values()], server: server.logs() }, null, 2));
-    await page.screenshot(`${artifacts}/failure.png`).catch(captureError => console.error("Failure screenshot:", String(captureError)));
-  }
   throw error;
 } finally {
-  await Deno.writeTextFile(`${artifacts}/observations.json`, JSON.stringify({ failed: !!failure, initialViewerMs, elapsedMs: performance.now() - started, observations, requests: [...requests.values()], pageErrors: page?.pageErrors, events: page?.events }, null, 2));
-  await stopBrowser(browser);
-  await server.close();
+  await finalizeNativeCase({
+    error: failure,
+    report: async () => {
+      if (failure && page) {
+        const snapshot = await page.evaluate("({url:location.href,ready:document.readyState,body:document.body?.innerText,viewer:document.querySelector('.toast-viewer')?.outerHTML,editors:[...document.querySelectorAll('.cm-content,.ProseMirror')].map(el=>el.textContent),resources:performance.getEntriesByType('resource').map(row=>({name:row.name,startTime:row.startTime,duration:row.duration}))})").catch(captureError => ({ captureError: String(captureError) }));
+        await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ error: String(failure), initialViewerMs, elapsedMs: performance.now() - started, snapshot, pageErrors: page.pageErrors, events: page.events, observations, requests: [...requests.values()], server: server.logs() }, null, 2));
+        await page.screenshot(`${artifacts}/failure.png`).catch(captureError => console.error("Failure screenshot:", String(captureError)));
+      }
+      await Deno.writeTextFile(`${artifacts}/observations.json`, JSON.stringify({ failed: !!failure, initialViewerMs, elapsedMs: performance.now() - started, observations, requests: [...requests.values()], pageErrors: page?.pageErrors, events: page?.events }, null, 2));
+    },
+    cleanup: [() => stopBrowser(browser), () => server.close()],
+  });
   console.log("Retained find fixture", vault);
 }

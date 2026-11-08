@@ -1,5 +1,6 @@
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { nativeSession } from "./native-cdp-session.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 
 export async function exerciseSettingsCrossBrowser({ session: a, server, directory, username, password, vault, state }) {
@@ -30,6 +31,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
     await peer.poll(`fetch('/_/api/plugin-host/session-guard/settings/preferences').then(r=>r.json()).then(d=>d.values.message===${JSON.stringify(value)})`);
   }
    const outcomes = [];
+  let failure;
   async function record(value) {
     outcomes.push(value);
     await Deno.writeTextFile(`${directory}/peer-step-${outcomes.length}.json`, JSON.stringify(value, null, 2), { createNew: true });
@@ -176,9 +178,17 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   await Deno.writeTextFile(`${directory}/peer-diagnostics.json`, JSON.stringify({ b: { errors: b.errors, events: b.events }, c: { errors: c.errors, events: c.events } }, null, 2), { createNew: true });
   assert(b.errors.length === 0 && c.errors.length === 0, "Independent peer browser exception");
   return outcomes;
-  } finally {
-    await Deno.writeTextFile(`${directory}/peer-final-diagnostics.json`, JSON.stringify({ b: { errors: b.errors, events: b.events }, c: { errors: c.errors, events: c.events } }), { createNew: true });
-    await b.close(); await c.close();
-    await Deno.writeTextFile(`${directory}/peer-closure.json`, JSON.stringify({ bClosed: true, cClosed: true }), { createNew: true });
+   } catch (error) {
+    failure = error;
+    throw error;
+   } finally {
+    await finalizeNativeCase({
+      error: failure,
+      report: () => Deno.writeTextFile(`${directory}/peer-final-diagnostics.json`, JSON.stringify({ b: { errors: b.errors, events: b.events }, c: { errors: c.errors, events: c.events } }), { createNew: true }),
+      cleanup: [async () => {
+        await finalizeNativeCase({ cleanup: [() => b.close(), () => c.close()] });
+        await Deno.writeTextFile(`${directory}/peer-closure.json`, JSON.stringify({ bClosed: true, cClosed: true }), { createNew: true });
+      }],
+    });
   }
 }

@@ -1,5 +1,6 @@
 // Feature-owned real Settings foundation consumers; shared native helpers stay unchanged.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { awaitHealthy, bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
@@ -450,16 +451,20 @@ try {
   assert(await Deno.readTextFile(`${vault}/NoteA.md`) === "Seed content.\n", "Read-only warning consumer changed note disk");
 } catch (error) { failure = error; console.error(`FAIL: ${error.message}`); }
 finally {
-  if (failure && session) await screenshot("failure").catch(() => {});
-  const page = session && await inspect("({url:location.href,body:document.body.innerText})").catch(error => ({ error: error.message }));
-  await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, page, writes, pageErrors: session?.errors, events: session?.events, heldRequests: [...held] }, null, 2), { createNew: true });
-  if (session) {
-    for (const requestId of held) await session.send("Fetch.continueRequest", { requestId }).catch(() => {});
-    if (held.size) await session.send("Fetch.disable").catch(() => {});
-    removeObserver?.();
-    await closeFixture("closure");
-  }
-  else if (server) await server.close();
+  await finalizeNativeCase({
+    error: failure,
+    report: async () => {
+      if (failure && session) await screenshot("failure").catch(() => {});
+      const page = session && await inspect("({url:location.href,body:document.body.innerText})").catch(error => ({ error: error.message }));
+      await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, page, writes, pageErrors: session?.errors, events: session?.events, heldRequests: [...held] }, null, 2), { createNew: true });
+    },
+    cleanup: [async () => {
+      if (!session) return;
+      for (const requestId of held) await session.send("Fetch.continueRequest", { requestId }).catch(() => {});
+      if (held.size) await session.send("Fetch.disable").catch(() => {});
+      removeObserver?.();
+    }, () => session ? closeFixture("closure") : server?.close()],
+  });
 }
 if (failure) throw failure;
 console.log(`SETTINGS FOUNDATIONS OK (${outcomes.length} consumer outcomes)`);

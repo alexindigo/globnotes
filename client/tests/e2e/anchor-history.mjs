@@ -5,6 +5,7 @@ import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { assert } from "./test-outcomes.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9460);
 const vault = await Deno.makeTempDir({ prefix: "anchor-vault-" });
@@ -35,6 +36,7 @@ await Deno.writeTextFile(
 await Deno.writeTextFile(`${vault}/other-note.md`, "# Other\n");
 
 let failures = 0;
+let failure;
 function check(name, cond, detail = "") {
   if (cond) {
     console.log(`ok: ${name}`);
@@ -158,8 +160,10 @@ try {
   }
   assert(failures === 0, `ANCHOR HISTORY: ${failures} pinned failure(s)`);
   console.log("ANCHOR HISTORY OK");
+} catch (error) {
+  failure = error;
+  throw error;
 } finally {
-  await stopBrowser(browser);
-  await server.close();
+  await finalizeNativeCase({ error: failure, cleanup: [() => stopBrowser(browser), () => server.close()] });
   console.log("Retained anchor fixture", vault);
 }

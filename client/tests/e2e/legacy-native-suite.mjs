@@ -51,6 +51,7 @@ export const SHARED_CASE_FILES = [
   "legacy-native-suite.mjs", "run.sh", "legacy-native-cases.mjs",
   "legacy-fixture.mjs", "fixtures.mjs", "harness-helpers.mjs", "harness-arguments.mjs", "http-origin.mjs",
   "cdp.mjs", "native-cdp-session.mjs", "native-actions.mjs",
+  "native-case-finalization.mjs",
   "native-clipboard.mjs", "test-outcomes.mjs", "native-consumer-controls.mjs",
   "native-result-controls.mjs", "unit-consumer-controls.mjs",
   "runner-entrypoint-controls.mjs",

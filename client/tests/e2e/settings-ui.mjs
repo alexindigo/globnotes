@@ -1,5 +1,6 @@
 // Corrective native UI probes; expanded at each documented checkpoint.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { SignJWT } from "jose";
@@ -233,22 +234,25 @@ try {
   console.log("SETTINGS SESSION PROBE OK (remaining matrix not yet run)");
 } catch (error) { failure = error; console.error(`FAIL: ${error.message}`); }
 finally {
-  const report = { outcomes, failure: failure?.message, vault, state, server: server && { pid: server.pid, baseUrl: server.baseUrl }, targetId: session?.targetId, browserContextId: session?.browserContextId, pageErrors: session?.errors, events: session?.events };
-  if (session && !fixtures.at(-1)?.closed) report.page = await session.evaluate("({url:location.href,body:document.body.innerText,editors:document.querySelectorAll('.cm-content,.ProseMirror').length})").catch(error => ({ error: error.message }));
-  await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify(report, null, 2));
-  console.log(`settings-ui diagnostics: ${artifacts}/diagnostics.json`);
-  if (!failure) {
-    for (const owned of fixtures.filter(item => !item.closed)) { await owned.session.close(); await owned.server.close(); }
-  }
-  if (failure) {
-    const owned = fixtures.at(-1);
-    if (owned && !owned.closed) {
-      const picture = await owned.session.send("Page.captureScreenshot", { format: "png" }).catch(() => null);
-      if (picture) await Deno.writeFile(`${owned.directory}/failure.png`, Uint8Array.from(atob(picture.data), char => char.charCodeAt(0)), { createNew: true });
-      await owned.session.close(); await owned.server.close(); owned.closed = true;
-      await Deno.writeTextFile(`${owned.directory}/failed-fixture-closure.json`, JSON.stringify({ targetClosed: true, serverClosed: true, failureCapturedBeforeClosure: true, filesRetained: true }), { createNew: true });
-    }
-  }
+  await finalizeNativeCase({
+    error: failure,
+    report: async () => {
+      const report = { outcomes, failure: failure?.message, vault, state, server: server && { pid: server.pid, baseUrl: server.baseUrl }, targetId: session?.targetId, browserContextId: session?.browserContextId, pageErrors: session?.errors, events: session?.events };
+      if (session && !fixtures.at(-1)?.closed) report.page = await session.evaluate("({url:location.href,body:document.body.innerText,editors:document.querySelectorAll('.cm-content,.ProseMirror').length})").catch(error => ({ error: error.message }));
+      await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify(report, null, 2));
+      console.log(`settings-ui diagnostics: ${artifacts}/diagnostics.json`);
+      const owned = fixtures.at(-1);
+      if (failure && owned && !owned.closed) {
+        const picture = await owned.session.send("Page.captureScreenshot", { format: "png" }).catch(() => null);
+        if (picture) await Deno.writeFile(`${owned.directory}/failure.png`, Uint8Array.from(atob(picture.data), char => char.charCodeAt(0)), { createNew: true });
+      }
+    },
+    cleanup: (failure ? [fixtures.at(-1)] : fixtures).filter(owned => owned && !owned.closed).map(owned => async () => {
+      await finalizeNativeCase({ cleanup: [() => owned.session.close(), () => owned.server.close()] });
+      owned.closed = true;
+      if (failure) await Deno.writeTextFile(`${owned.directory}/failed-fixture-closure.json`, JSON.stringify({ targetClosed: true, serverClosed: true, failureCapturedBeforeClosure: true, filesRetained: true }), { createNew: true });
+    }),
+  });
 }
 if (failure) throw failure;
 import { waitForAccessSummary } from './settings-access-native.mjs';

@@ -101,6 +101,11 @@ case artifact subtree. Failures capture DOM/console/request state before page
 teardown, plus a working screenshot. JSON and `failure.png` are included in CI
 diagnostics.
 
+`finalizeNativeCase` owns report/cleanup sequencing: each requested cleanup runs
+even when reporting or an earlier close fails. Report/cleanup failures still fail
+the case and retain any original case error. Drivers supply their own retention
+decisions, including probes that deliberately preserve failed dirty pages.
+
 `tests/helpers/boot.ts` gives SIGTERM five seconds, then sends SIGKILL only
 to its owned child; it drains output and releases the private cwd after exit.
 An unexpected prior exit still rejects close with diagnostics. If native plugin

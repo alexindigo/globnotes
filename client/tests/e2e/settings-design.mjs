@@ -1,5 +1,6 @@
 // Feature-owned inventory/navigation consumers over the actual native application.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
@@ -342,14 +343,19 @@ try {
   assert(session.errors.length === 0, "Browser exceptions during inventory/navigation consumers");
 } catch (error) { failure = error; console.error(`FAIL: ${error.message}`); }
 finally {
-  if (failure && session) await screenshot("failure").catch(() => {});
-  const page = session && await inspect("({url:location.href,body:document.body.innerText})").catch(error => ({ error: error.message }));
-  if (session) {
-    for (const requestId of held) { await session.send("Fetch.continueRequest", { requestId }); held.delete(requestId); }
-    await session.send("Fetch.disable"); stopObserver?.();
-  }
-  await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, page, writes, pageErrors: session?.errors, events: session?.events, heldRequests: [...held], wireError }, null, 2), { createNew: true });
-  await closeFixture();
+  await finalizeNativeCase({
+    error: failure,
+    report: async () => {
+      if (failure && session) await screenshot("failure").catch(() => {});
+      const page = session && await inspect("({url:location.href,body:document.body.innerText})").catch(error => ({ error: error.message }));
+      if (session) {
+        for (const requestId of held) { await session.send("Fetch.continueRequest", { requestId }); held.delete(requestId); }
+        await session.send("Fetch.disable"); stopObserver?.();
+      }
+      await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, page, writes, pageErrors: session?.errors, events: session?.events, heldRequests: [...held], wireError }, null, 2), { createNew: true });
+    },
+    cleanup: [closeFixture],
+  });
 }
 if (failure) throw failure;
 console.log(`SETTINGS DESIGN OK (${outcomes.length} inventory/navigation outcomes)`);

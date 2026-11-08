@@ -1,7 +1,7 @@
 // Feature-owned complete Settings surface matrix. Ordinary HTTP; no test hooks in views.
 import { nativeSession } from './native-cdp-session.mjs';
 import { awaitHealthy, bootServer } from './harness-helpers.mjs';
-import { applicationServer } from './http-origin.mjs';
+import { applicationServer, assertHttpTestUrl } from './http-origin.mjs';
 import { hashPassword } from '../../../server/helpers.ts';
 import { SignJWT } from 'jose';
 import { waitForAccessSummary } from './settings-access-native.mjs';
@@ -27,7 +27,8 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
     await settled();await assertSettingsActionHierarchy(session);await assertSettingRowAlignment(session);await assertSettingsVisualLanes(session);
     if(await inspect("!!document.querySelector('#settings-modal-title')"))await assertSettingsHeaderRuleEdge(session);
      const result=await session.read('[role=dialog]', `(()=>{const dialogs=[...document.querySelectorAll('[role=dialog]')].filter(el=>el.getBoundingClientRect().width);const owners=new Set([document.documentElement,...dialogs]);for(const dialog of dialogs)for(const el of dialog.querySelectorAll('*')){const s=getComputedStyle(el);if(el.getBoundingClientRect().width&&(/auto|scroll/.test(s.overflowX)||/auto|scroll/.test(s.overflowY)))owners.add(el);}return {origin:location.origin,secure:isSecureContext,fontSize:parseFloat(getComputedStyle(document.documentElement).fontSize),owners:[...owners].map(el=>({name:el.getAttribute('aria-label')||el.getAttribute('aria-labelledby')||el.className,overflow:el.scrollWidth-el.clientWidth})),dialogRects:dialogs.map(el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};})};})()`);
-    assert(!result.secure&&result.origin.startsWith('http://generic-plugin-system-globnotes.test:'),'Surface matrix origin');
+    assertHttpTestUrl(result.origin);
+    assert(result.secure===false,'Surface matrix origin');
     assert(result.fontSize===16*cell.textScale,`Text scaling not applied: ${JSON.stringify(result)}`);
      if(result.owners.some(row=>row.overflow>1))result.overflowElements=await inspect("(()=>{const dialog=document.querySelector('[data-modal-top=true] [role=dialog]');if(!dialog)return [];const edge=dialog.getBoundingClientRect().right;return [...dialog.querySelectorAll('*')].filter(el=>el.getBoundingClientRect().width&&el.getBoundingClientRect().right>edge+.5).map(el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return {tag:el.tagName,id:el.id,classes:el.getAttribute('class'),width:r.width,right:r.right,parentWidth:el.parentElement.getBoundingClientRect().width,minWidth:s.minWidth,display:s.display,visibility:s.visibility,inactive:!!el.closest('[inert],[aria-hidden=true]')};}).slice(0,40);})()");
     assert(result.owners.every(row=>row.overflow<=1),`${name} ${JSON.stringify(cell)} scroll-owner overflow: ${JSON.stringify(result)}`);

@@ -6,6 +6,7 @@ import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { join } from "node:path";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9399);
 const ARTIFACTS = await Deno.makeTempDir({ prefix: "setup-wizard-shots-" });
@@ -118,6 +119,7 @@ async function geometrySweep(page, baseUrl, viewport) {
 
 const servers = [];
 let browser = null;
+let failure;
 try {
   // Fixture vaults are caller-owned (written before boot, cleaned in finally).
   const vaultA = await Deno.makeTempDir({ prefix: "wizard-vault-a-" });
@@ -397,9 +399,11 @@ try {
 
   console.log(`\nartifacts: ${ARTIFACTS}`);
   console.log("SETUP WIZARD OK");
+} catch (error) {
+  failure = error;
+  throw error;
 } finally {
-  if (browser) await stopBrowser(browser);
-  for (const s of servers) await s.close();
+  await finalizeNativeCase({ error: failure, cleanup: [() => browser && stopBrowser(browser), ...servers.map(server => () => server.close())] });
   if (failures > 0) {
     console.error(`setup-wizard: ${failures} assertion(s) failed`);
   }
