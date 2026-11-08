@@ -1,6 +1,6 @@
 // Feature-owned native CDP; all targets/contexts are explicitly owned.
 import { assertHttpTestUrl } from "./http-origin.mjs";
-import { clickReady } from "./native-actions.mjs";
+import { clickReady, dispatchNativeClick } from "./native-actions.mjs";
 import { done, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
 export function connectSocket(url, { timeout = 15000, Socket = WebSocket } = {}) {
   return new Promise((resolve, reject) => {
@@ -102,6 +102,7 @@ export async function nativeSession({ port = 9333, width = 1280, height = 900, d
   });
   try {
     await page.send("Runtime.enable");
+    await page.send("Runtime.addBinding", { name: "__globnotesNativeClickResult" });
     await page.send("Page.enable");
     await page.send("Network.enable");
     await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: dpr, mobile: false });
@@ -117,8 +118,8 @@ export async function nativeSession({ port = 9333, width = 1280, height = 900, d
       return value ? done(value) : waitPending({ expression, value });
     }, { label: "page condition", intervalMs: 50 });
   }
-  const pointer = { evaluate, poll, async click(_selector, point) {
-    for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
+  const pointer = { evaluate, poll, async click(_selector, _point, locate) {
+    await dispatchNativeClick({ evaluate, poll, onEvent: page.onEvent }, (method, params) => page.send(method, params), locate);
   } };
   const click = selector => clickReady(pointer, selector);
   return { ...owned, browser, errors, events, version, evaluate, poll, click, send: page.send,

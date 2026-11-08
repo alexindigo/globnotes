@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connectSocket, createOwnedTarget } from "./native-cdp-session.mjs";
-import { parseArguments } from "./harness-helpers.mjs";
+import { parseArguments } from "./harness-arguments.mjs";
 
 class FakeSocket extends EventTarget {
   static instance;

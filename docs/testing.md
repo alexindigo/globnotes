@@ -81,6 +81,35 @@ Gates 16-19 need the Chromium sidecar; a full `--browser` run checks
 the CDP endpoint first. The native suite records each child's actual exit and
 timeout state; printed PASS/OK words cannot grant success.
 
+The native suite admits three children at a time, locally and in CI.
+`GLOBNOTES_E2E_CONCURRENCY=1` restores serial admission; any positive integer
+sets the pool size. Each child owns its artifact subtree, fixture, port-0
+server and private client-build working directory, plus its browser context.
+Completed child output prints as one stdout/stderr block; `suite.json` retains
+selection order regardless of completion order. A failure stops new admission,
+waits for in-flight children and rejects the suite. Child timeouts and actual
+exit records remain authoritative.
+
+`SERIAL_CASES` in `legacy-native-suite.mjs` records exclusive cases and reasons:
+clipboard copy and TOTP use browser-global clipboard state, ownership-control
+checks the global target roster, background-connections changes activation,
+and autosave-timer asserts real-time input/timer budgets. Each drains the pool
+and runs alone. The same reasons appear in `suite.json`.
+
+Native click admission also checks the actual event-time owner. Layout can move
+after a CDP geometry sample, even in serial runs. A missed press is suppressed
+before reaching the page and fails closed. No input is replayed.
+Release follows the same element through press-induced reflow. A CDP binding
+observes the trusted click before link navigation retires the old document;
+the live document's trusted-event fact also proves completion when that observer
+notification is delayed. Native controls force reflow and delayed-notification
+boundaries, checking rejected stale input, one admitted click and zero decoy events.
+
+The Sync native fixture waits for the rendered mutation controls after each
+write/sync. A cleared PUT busy flag alone precedes the owning snapshot; restoring
+Add/Remove rows can still move lower inputs. The positive controls-ready marker
+keeps the next native gesture after that snapshot's actual UI result.
+
 ## Browser tests: a local HTTP domain
 
 Browser tests open the application only through an ordinary local HTTP

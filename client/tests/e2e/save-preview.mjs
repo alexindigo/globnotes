@@ -179,6 +179,7 @@ try {
     phase, completed, failure: failure?.message, pending, vault,
     baseUrl: server?.baseUrl, targetId, events, pageErrors: page?.pageErrors ?? [],
     preview: page ? await page.evaluate("document.querySelector('.preview-buffer')?.textContent").catch(String) : null,
+    observed: page ? await page.evaluate("({url:location.href,body:document.body.innerText,mode:localStorage.getItem('defaultEditorMode'),focus:document.hasFocus(),active:document.activeElement?.outerHTML})").catch(String) : null,
   }, null, 2));
   console.log(`save-preview diagnostics: ${artifacts}/diagnostics.json`);
   if (failure) {

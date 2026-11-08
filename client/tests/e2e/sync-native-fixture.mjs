@@ -58,15 +58,19 @@ export async function syncCase(name, run) {
         if(await session.evaluate("document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width>0"))await session.click('[title="Close sidebar"]');
       },
       async fill(selector,text) {await session.click(selector);await session.key("a",{modifiers:2,code:"KeyA",windowsVirtualKeyCode:65});await session.type(text);await session.poll(`document.querySelector(${JSON.stringify(selector)})?.value===${JSON.stringify(text)}`);},
-      async key(value) {await f.fill('#driver-key-home-token',value);await session.button("Save key",".driver-instance");await session.poll("document.querySelector('#driver-key-home-token')?.value==='' && !document.querySelector('[data-sync-settings] [aria-busy=true]')");},
+      // A PUT receipt clears busy before its owning snapshot restores controls.
+      // Wait for that rendered consumer, not just the absence of a busy flag:
+      // restored Add/Remove rows change the position of lower fields.
+      async controlsReady() {await session.poll("!!document.querySelector('.driver-instance__header [role=switch]') && !document.querySelector('[data-sync-settings] [aria-busy=true]')");},
+      async key(value) {await f.fill('#driver-key-home-token',value);await session.button("Save key",".driver-instance");await session.poll("document.querySelector('#driver-key-home-token')?.value===''");await f.controlsReady();},
       async one(){return (await api("drivers")).instances.find(row=>row.id==="home");},
-      async sync(){await session.button("Sync now",".driver-instance");await session.poll("!document.querySelector('[data-sync-settings] [aria-busy=true]')");},
+      async sync(){await session.button("Sync now",".driver-instance");await f.controlsReady();},
       async active(){await session.poll("document.querySelector('.driver-instance__state')?.textContent==='Active'");},
       async add(key=token) {
         await session.button("Add","[data-sync-settings]");await f.fill("#sync-label","Home");await session.button("Add instance","[data-sync-settings]");
-        await session.poll("document.querySelector('.driver-instance__state')?.textContent==='Off'");
-        await f.fill("#driver-home-baseUrl",remoteUrl);await session.button("Save settings",".driver-instance");await session.poll("!document.querySelector('[data-sync-settings] [aria-busy=true]')");
-        await f.key(key);await session.poll("!!document.querySelector('.driver-instance__header [role=switch]')");await session.click('.driver-instance__header [role="switch"]');
+        await session.poll("document.querySelector('.driver-instance__state')?.textContent==='Off'");await f.controlsReady();
+        await f.fill("#driver-home-baseUrl",remoteUrl);await session.button("Save settings",".driver-instance");await f.controlsReady();
+        await f.key(key);await session.click('.driver-instance__header [role="switch"]');
       },
       async absent(path){return await Deno.stat(`${vault}/${path}`).then(()=>false,error=>{if(error instanceof Deno.errors.NotFound)return true;throw error;});},
       async privacy() {const dump=await session.evaluate("JSON.stringify({local:{...localStorage},session:{...sessionStorage},cookies:document.cookie})");for(const marker of [token,encodeURIComponent(token),btoa(token)])assert(!dump.includes(marker),"Driver key reached browser storage");assert(!JSON.stringify(server.logs()).includes(token),"Driver key reached process logs");},

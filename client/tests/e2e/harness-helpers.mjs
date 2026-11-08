@@ -3,67 +3,33 @@
 // the local test domain's address (http-origin.mjs).
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
-const ROOT = new URL("../../..", import.meta.url).pathname;
+import { bootServer as launchServer } from "../../../tests/helpers/boot.ts";
 
 export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFailed = false, headers = {} } = {}) {
   const hostname = bindAddress();
-  const listener = Deno.listen({ port: 0, hostname });
-  const port = listener.addr.port;
-  listener.close();
-  const child = new Deno.Command(Deno.execPath(), {
-    args: [
-      "run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`,
-      "--unstable-worker-options", "--allow-net", "--allow-read",
-      "--allow-write", "--allow-env", `${ROOT}/server/main.ts`,
-    ],
-    cwd: ROOT,
-    clearEnv: true,
-    env: {
+  // Reuse the owner of port-0 binding, private build/cwd and clean child env.
+  const server = await launchServer({
       ...env,
-      PATH: Deno.env.get("PATH") ?? "",
-      HOME: Deno.env.get("HOME") ?? "",
-      NO_COLOR: "1",
       GLOBNOTES_PATH: vault,
       GLOBNOTES_INDEX_PATH: stateDir,
       GLOBNOTES_AUTH_TYPE: env.GLOBNOTES_AUTH_TYPE ?? "none",
-      GLOBNOTES_HOST: hostname,
-      GLOBNOTES_PORT: String(port),
-    },
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const logs = { stdout: "", stderr: "" };
-  const drains = ["stdout", "stderr"].map(async name => {
-    const file = logsDir ? await Deno.open(`${logsDir}/server-${name}.log`, { write: true, createNew: true }) : null;
-    try {
-      for await (const chunk of child[name]) {
-        logs[name] += new TextDecoder().decode(chunk);
-        if (file) {
-          let offset = 0;
-          while (offset < chunk.length) offset += await file.write(chunk.subarray(offset));
-        }
-      }
-    } finally { file?.close(); }
-  });
+  }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${new URL("../../../deno.json", import.meta.url).pathname}`] });
+  const logs = server.output;
   let closed = false;
   async function close() {
     if (closed) return;
     closed = true;
-    try { child.kill("SIGTERM"); } catch { /* the owned child already exited */ }
-    let timer;
-    const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);
-    clearTimeout(timer);
-    if (!status) {
-      try { child.kill("SIGKILL"); } catch { /* already exited */ }
-      await child.status;
+    try { await server.close(); }
+    finally {
+      if (logsDir) for (const name of ["stdout", "stderr"]) {
+        await Deno.writeTextFile(`${logsDir}/server-${name}.log`, logs[name], { createNew: true });
+      }
     }
-    await Promise.all(drains);
   }
-  const baseUrl = httpOrigin(port);
+  const baseUrl = server.baseUrl;
   const prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
-  const children = [watchChild(child, () => logs)];
+  const children = [{ pid: server.pid, status: server.status, logs: server.logs }];
   try {
-    await awaitHealthy(`${baseUrl}${prefix}`, { label: "e2e server healthy", child, logs: () => logs });
     // Wait for plugin runtime readiness through the catalog.
     await waitUntil(async signal => {
       const res = await fetch(`${baseUrl}${prefix}/_/api/plugin-host`, { headers, signal });
@@ -78,7 +44,7 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFail
   } catch (error) { await close(); throw error; }
   return {
     baseUrl,
-    close, pid: child.pid, logs,
+    close, pid: server.pid, logs,
   };
 }
 
@@ -110,22 +76,7 @@ export function awaitPluginReady(base, id, { label = `plugin '${id}' ready`, chi
   }, { label, intervalMs, children: child ? [watchChild(child, logs)] : [] });
 }
 
-export function parseArguments(args) {
-  const result = { help: false, artifacts: null };
-  const seen = new Set();
-  for (let index = 0; index < args.length; index++) {
-    const option = args[index];
-    if (seen.has(option)) throw new Error(`Duplicate argument: ${option}`);
-    seen.add(option);
-    if (option === "--help") result.help = true;
-    else if (option === "--artifacts") {
-      const directory = args[++index];
-      if (!directory || directory.startsWith("--")) throw new Error("--artifacts requires a directory");
-      result.artifacts = directory;
-    } else throw new Error(`Unknown argument: ${option}`);
-  }
-  return result;
-}
+export { parseArguments } from "./harness-arguments.mjs";
 
 export const writeFile = (path, content) => Deno.writeTextFile(path, content);
 export const mkdir = (path, opts) => Deno.mkdir(path, opts);
