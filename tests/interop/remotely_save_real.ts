@@ -7,6 +7,7 @@ import { done, pending, waitUntil } from "../helpers/wait.ts";
 import { referenceCodecs, referenceStore } from "./remotely_save_reference.mjs";
 import { referencePlanner } from "./remotely_save_planner.mjs";
 import { nativeNameBoundaries } from "./remotely_save_boundaries.ts";
+import { incrementalTraffic } from "./remotely_save_traffic.ts";
 
 const s3Endpoint = Deno.env.get("RS_S3_ENDPOINT");
 const davEndpoint = Deno.env.get("RS_DAV_ENDPOINT");
@@ -562,7 +563,10 @@ for (const backend of ["s3", "webdav"]) {
     }
   }
 }
-if (!selectedCase) await nativeNameBoundaries(davEndpoint);
+if (!selectedCase) {
+  await nativeNameBoundaries(davEndpoint);
+  await incrementalTraffic(s3Endpoint, davEndpoint);
+}
 await Deno.writeTextFile(
   "/artifacts/matrix.json",
   JSON.stringify(reports, null, 2),

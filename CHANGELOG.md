@@ -99,6 +99,11 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Remotely Save discovery reuses generation-local name and strong-validator body
+validation metadata. Warm scans and create bursts no longer download unchanged
+strong-validator bodies; cold, changed and weak/missing-validator observations
+still validate actual bytes, with fresh mutation checks and no body cache.
+
 Malformed numeric XML references from sync storage are rejected as invalid XML,
 including out-of-range values and invalid XML1.0 characters in text or attributes.
 The XML parser dependency is updated to5.12.0.

@@ -13,6 +13,7 @@ const encoder = new TextEncoder();
  * backend cursors, names or traversal queues escape in persisted cursors. */
 export function createMapping(configuration, backend, codec, http, ctx) {
   let active = new Map(), staging, handle;
+  const names = new Map(), validations = new Map();
   let closed = false;
   const locked = () =>
     http.error(
@@ -43,8 +44,32 @@ export function createMapping(configuration, backend, codec, http, ctx) {
       ]),
     );
   };
+  // A receipt attests only to bytes already validated in this generation. It is
+  // never an inventory entry or a source of bytes for reads/base checks.
+  const remember = (native, metadata, plaintextSize, token) => {
+    check();
+    if (metadata.etag) {
+      validations.set(native, {
+        etag: metadata.etag,
+        modified: metadata.modified,
+        size: metadata.size,
+        plaintextSize,
+        revision: token,
+      });
+    }
+  };
+  const matching = (native, metadata) => {
+    const receipt = validations.get(native);
+    return metadata.etag && receipt?.etag === metadata.etag &&
+        receipt.modified === metadata.modified && receipt.size === metadata.size
+      ? receipt
+      : undefined;
+  };
   const observed = async (native, discovery) => {
+    check();
+    validations.delete(native);
     const result = await backend.get(native);
+    check();
     if (
       discovery &&
       (result.etag !== discovery.etag || result.size !== discovery.size ||
@@ -56,9 +81,12 @@ export function createMapping(configuration, backend, codec, http, ctx) {
       );
     }
     const bytes = await codec.decrypt(result.bytes);
-    return { result, bytes, revision: await revision(native, result) };
+    const token = await revision(native, result);
+    remember(native, result, bytes.length, token);
+    return { result, bytes, revision: token };
   };
   const start = () => {
+    check();
     active.clear();
     staging = {
       map: new Map(),
@@ -75,6 +103,7 @@ export function createMapping(configuration, backend, codec, http, ctx) {
   async function scanStep() {
     if (!staging.pending.length && staging.more) {
       const page = await backend.list(staging.cursor);
+      check();
       if (
         page.entries.length > 1000 ||
         encoder.encode(JSON.stringify(page.entries)).length > 1024 * 1024
@@ -95,7 +124,9 @@ export function createMapping(configuration, backend, codec, http, ctx) {
       if (!entry.key && entry.folder) continue; // A prefix-root marker, not a note.
       if (staging.native.has(entry.key)) throw locked();
       staging.native.add(entry.key);
-      const path = await codec.decryptName(entry.key);
+      const path = names.get(entry.key) ?? await codec.decryptName(entry.key);
+      check();
+      names.set(entry.key, path);
       if (entry.folder || path.endsWith("/")) continue;
       if (reserved.has(path)) continue;
       const comparison = path.normalize("NFC");
@@ -104,9 +135,15 @@ export function createMapping(configuration, backend, codec, http, ctx) {
       const bounds = codec.bounds(entry.size);
       let size = bounds.min, token;
       if (entry.size <= MAX_WIRE && bounds.min <= MAX_PLAINTEXT) {
-        const value = await observed(entry.key, entry);
-        size = value.bytes.length;
-        token = value.revision;
+        const receipt = matching(entry.key, entry);
+        if (receipt) {
+          size = receipt.plaintextSize;
+          token = receipt.revision;
+        } else {
+          const value = await observed(entry.key, entry);
+          size = value.bytes.length;
+          token = value.revision;
+        }
         // Never retain the body in either metadata map.
       } else {
         // Oversize remains an observed unsupported file, not omission. No bounded
@@ -122,6 +159,7 @@ export function createMapping(configuration, backend, codec, http, ctx) {
           ]),
         );
       }
+      check();
       staging.map.set(path, {
         native: entry.key,
         revision: token,
@@ -130,6 +168,11 @@ export function createMapping(configuration, backend, codec, http, ctx) {
       });
     }
     if (!staging.more && !staging.pending.length) {
+      for (const cache of [names, validations]) {
+        for (const native of cache.keys()) {
+          if (!staging.native.has(native)) cache.delete(native);
+        }
+      }
       active = staging.map;
       staging.output = [...active].map(([key, value]) => ({
         key,
@@ -185,7 +228,7 @@ export function createMapping(configuration, backend, codec, http, ctx) {
     // SDK captures support before open. Send strong ETag conditions opportunistically,
     // but make no universal native-condition promise across DAV servers/codecs.
     conditions: { create: false, update: false, delete: false },
-    identity: async () => configuration.endpoint,
+    identity: () => configuration.endpoint,
     scope: () => configuration.scope,
     exclude: (path) =>
       configuration.excluded.some((prefix) => path.startsWith(prefix)),
@@ -217,7 +260,7 @@ export function createMapping(configuration, backend, codec, http, ctx) {
           throw http.invalid("Expired inventory page handle");
         }
         if (!staging.output) await scanStep();
-        let entries = [];
+        const entries = [];
         if (staging.output) {
           let bytes = 0;
           while (
@@ -297,6 +340,8 @@ export function createMapping(configuration, backend, codec, http, ctx) {
       }
       const native = value?.native ?? await codec.encryptName(path);
       const wire = await codec.encrypt(bytes);
+      check();
+      validations.delete(native);
       const accepted = await backend.put(native, wire, {
         ...(value?.metadata.etag ? { ifMatch: value.metadata.etag } : {}),
         ...(!value ? { ifNoneMatch: "*" } : {}),
@@ -315,6 +360,8 @@ export function createMapping(configuration, backend, codec, http, ctx) {
       }
       // Missing/weak ETag requires bytes to compute the returned observation.
       const token = await revision(native, { ...accepted, bytes: wire });
+      remember(native, accepted, bytes.length, token);
+      names.set(native, path);
       active.set(path, {
         native,
         revision: token,
@@ -328,15 +375,20 @@ export function createMapping(configuration, backend, codec, http, ctx) {
       if (!value) throw http.error("not_found", "Remote object is absent");
       const current = await observed(value.native);
       compare({ revision: current.revision }, condition);
+      validations.delete(value.native);
       await backend.delete(
         value.native,
         current.result.etag ? { ifMatch: current.result.etag } : {},
       );
+      check();
+      names.delete(value.native);
       active.delete(path);
     },
     close() {
       closed = true;
       active.clear();
+      names.clear();
+      validations.clear();
       staging = undefined;
       handle = undefined;
       codec.close();

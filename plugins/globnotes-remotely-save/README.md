@@ -51,6 +51,29 @@ Larger remote objects remain visible as unsupported; they are not truncated or
 inferred absent. Revisions and cursor handles are path-free; keys and decoded
 names are not persisted by the driver.
 
+### Discovery traffic
+
+Every scan still lists the entire remote metadata inventory and checks all names
+and aliases before publishing any known files. A cold instance downloads and
+decrypts every eligible body once to validate the configured format/key and
+exact plaintext size; requested imports read their bodies separately. Decoded
+names and positive validation receipts live only in that instance's memory, with
+no bodies retained. Restarting, changing keys or closing the instance discards
+them.
+
+An unchanged strong ETag, modification time and wire size reuse that validation:
+warm scans download no unchanged bodies, while K new/changed objects require K
+validation reads. Weak or missing ETags still require full body reads every
+scan. Metadata listing/comparison and memory remain O(N) in the number of native
+names.
+
+Creates retain fresh complete canonical-name listing walks (up to two per file),
+but do not download unchanged strong-validator bodies. Actual reads and mutation
+base checks always fetch current bytes. WebDAV additionally downloads each
+upload to verify its accepted bytes; weak-to-strong validator transitions may
+require another validation read. Completed omissions/deletes retire receipts,
+and failed observations cannot leave an older positive receipt reusable.
+
 S3's 1024-byte native-key limit includes the configured prefix and encrypted
 name expansion. Unrepresentable outgoing names are reported as unsupported
 before dispatch; they are never truncated or renamed. WebDAV outgoing native

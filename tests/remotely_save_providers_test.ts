@@ -117,6 +117,275 @@ async function setup(
   };
 }
 
+for (const backend of ["s3", "webdav"] as const) {
+  for (const mode of ["none", "openssl-base64", "rclone-base64"] as const) {
+    Deno.test(`remotely-save: incremental ${backend}/${mode} warm discovery reads only changed objects and prunes removed validation`, async () => {
+      const f = await setup(backend, mode);
+      const native = new Map<string, string>();
+      let decodedNames = 0;
+      const decryptName = f.codec.decryptName;
+      f.codec.decryptName = (key: string) => {
+        decodedNames++;
+        return decryptName(key);
+      };
+      const gets = () =>
+        f.remote.requests.filter((row) =>
+          row.method === "GET" && row.key !== ""
+        );
+      try {
+        for (const path of ["A.md", "B.md", "folder/C.md"]) {
+          native.set(path, await f.codec.encryptName(path));
+          f.remote.set(
+            native.get(path)!,
+            await f.codec.encrypt(encoder.encode(`initial:${path}`)),
+          );
+        }
+        await f.discover();
+        assertEquals(
+          gets().length,
+          3,
+          "Cold inventory must actually validate every eligible body",
+        );
+        let before = gets().length;
+        const beforeNames = decodedNames;
+        await f.discover();
+        assertEquals(
+          gets().length - before,
+          0,
+          "Warm strong-validator inventory must not download unchanged bodies",
+        );
+        assertEquals(decodedNames, beforeNames);
+        f.remote.set(
+          native.get("B.md")!,
+          await f.codec.encrypt(encoder.encode("changed body")),
+        );
+        before = gets().length;
+        const changed = (await f.discover()).find((row) =>
+          "path" in row && row.path === "B.md"
+        );
+        assertEquals(gets().slice(before).map((row) => row.key), [
+          native.get("B.md"),
+        ]);
+        assert(changed?.state === "known");
+        const read = await f.driver.read({
+          path: changed.path,
+          revision: changed.revision,
+        });
+        assert(read.state === "known");
+        assertEquals(new TextDecoder().decode(read.bytes), "changed body");
+        assertEquals(
+          gets().length - before,
+          2,
+          "An explicit read must still acquire current endpoint bytes",
+        );
+        const removed = native.get("A.md")!,
+          previous = f.remote.objects.get(removed)!;
+        f.remote.objects.delete(removed);
+        assertEquals((await f.discover()).length, 2);
+        f.remote.objects.set(removed, previous);
+        before = gets().length;
+        assertEquals((await f.discover()).length, 3);
+        assertEquals(
+          gets().slice(before).map((row) => row.key),
+          [removed],
+          "A completed omission must retire its validation receipt",
+        );
+        f.remote.set(
+          native.get("B.md")!,
+          encoder.encode("Salted__corrupt required content"),
+        );
+        let cursor, incomplete = false;
+        const exposed = [];
+        do {
+          const corrupt = await f.driver.discover({
+            mode: "snapshot",
+            ...(cursor ? { cursor } : {}),
+          });
+          exposed.push(...corrupt.entries);
+          incomplete = corrupt.completion === "incomplete";
+          cursor = corrupt.cursor;
+        } while (cursor && !incomplete);
+        assert(incomplete);
+        assert(
+          exposed.every((row) => row.state !== "known"),
+          "Changed corrupt content must block the complete staged inventory",
+        );
+        f.remote.set(
+          native.get("B.md")!,
+          await f.codec.encrypt(encoder.encode("recovered")),
+        );
+        assertEquals((await f.discover()).length, 3);
+      } finally {
+        await f.close();
+      }
+    });
+    Deno.test(`remotely-save: incremental ${backend}/${mode} sixteen creates retain fresh listings without re-reading unchanged bodies`, async () => {
+      const f = await setup(backend, mode);
+      const gets = () =>
+        f.remote.requests.filter((row) =>
+          row.method === "GET" && row.key !== ""
+        );
+      const listings = () =>
+        f.remote.requests.filter((row) =>
+          row.method === "PROPFIND" || row.method === "GET" && row.key === ""
+        );
+      try {
+        for (const path of ["A.md", "B.md", "folder/C.md"]) {
+          f.remote.set(
+            await f.codec.encryptName(path),
+            await f.codec.encrypt(encoder.encode(path)),
+          );
+        }
+        await f.discover();
+        const before = gets().length, beforeLists = listings().length;
+        const oldNames = new Set(f.remote.objects.keys());
+        const beforeRequests = f.remote.requests.length;
+        for (let i = 0; i < 16; i++) {
+          const [receipt] = await f.driver.apply([{
+            id: `create-${i}`,
+            op: "put",
+            path: `New-${i}.md`,
+            bytes: encoder.encode(`new ${i}`),
+            base: { absent: true },
+            batch: i + 1,
+          }]);
+          assertEquals(receipt.state, "settled");
+        }
+        const fetched = gets().slice(before);
+        const puts = f.remote.requests.slice(beforeRequests).filter((row) =>
+          row.method === "PUT"
+        );
+        assertEquals(puts.length, 16);
+        assertEquals(
+          fetched.filter((row) => oldNames.has(row.key)).length,
+          0,
+          "Create burst must not download any unchanged pre-existing bodies",
+        );
+        for (const put of puts) {
+          assertEquals(
+            fetched.filter((row) => row.key === put.key).length,
+            backend === "webdav" ? 1 : 0,
+            "Keep DAV's required post-upload byte verification, but do not reread that object in subsequent listings",
+          );
+        }
+        assertEquals(fetched.length, backend === "webdav" ? 16 : 0);
+        assert(
+          listings().length >= beforeLists + 16,
+          "Every create must retain its fresh complete canonical lookup",
+        );
+        assertEquals((await f.discover()).length, 19);
+        assertEquals(
+          gets().length - before,
+          fetched.length,
+          "Accepted own strong-validator writes also provide validation receipts",
+        );
+      } finally {
+        await f.close();
+      }
+    });
+    Deno.test(`remotely-save: incremental ${backend}/${mode} failed reads and uncertain writes retire positive validation, as does deletion`, async () => {
+      const f = await setup(backend, mode);
+      const gets = () =>
+        f.remote.requests.filter((row) =>
+          row.method === "GET" && row.key !== ""
+        ).length;
+      try {
+        const native = await f.codec.encryptName("A.md");
+        f.remote.set(native, await f.codec.encrypt(encoder.encode("initial")));
+        const [entry] = await f.discover();
+        assert(entry.state === "known");
+        f.remote.fault((request) =>
+          request.method === "GET" &&
+            new URL(request.url).pathname.endsWith(native)
+            ? new Response(null, { status: 500 })
+            : undefined
+        );
+        assertEquals(
+          (await f.driver.read({ path: entry.path, revision: entry.revision }))
+            .state,
+          "unknown",
+        );
+        f.remote.fault(undefined);
+        let before = gets();
+        await f.discover();
+        assertEquals(
+          gets() - before,
+          1,
+          "Failed explicit reads retire receipts",
+        );
+        f.remote.fault((request) =>
+          request.method === "PUT"
+            ? new Response(null, { status: 500 })
+            : undefined
+        );
+        assertEquals(
+          (await f.driver.apply([{
+            id: "uncertain",
+            op: "put",
+            path: entry.path,
+            bytes: encoder.encode("different length replacement"),
+            base: { revision: entry.revision },
+            batch: 1,
+          }]))[0].state,
+          "uncertain",
+        );
+        f.remote.fault(undefined);
+        before = gets();
+        await f.discover();
+        assertEquals(gets() - before, 1, "Uncertain mutations retire receipts");
+        const previous = f.remote.objects.get(native)!;
+        assertEquals(
+          (await f.driver.apply([{
+            id: "delete",
+            op: "delete",
+            path: entry.path,
+            base: { revision: entry.revision },
+            batch: 2,
+          }]))[0].state,
+          "settled",
+        );
+        f.remote.objects.set(native, previous);
+        before = gets();
+        await f.discover();
+        assertEquals(
+          gets() - before,
+          1,
+          "Successful deletion retires receipts",
+        );
+      } finally {
+        await f.close();
+      }
+    });
+  }
+}
+for (const weak of [true, "missing"] as const) {
+  for (const mode of ["none", "openssl-base64", "rclone-base64"] as const) {
+    Deno.test(`remotely-save: incremental DAV ${weak}/${mode} still reads every body without a strong validator`, async () => {
+      const f = await setup("webdav", mode, weak);
+      try {
+        for (const path of ["A.md", "B.md"]) {
+          f.remote.set(
+            await f.codec.encryptName(path),
+            await f.codec.encrypt(encoder.encode(path)),
+          );
+        }
+        await f.discover();
+        const before = f.remote.requests.filter((row) =>
+          row.method === "GET"
+        ).length;
+        await f.discover();
+        assertEquals(
+          f.remote.requests.filter((row) => row.method === "GET").length -
+            before,
+          2,
+        );
+      } finally {
+        await f.close();
+      }
+    });
+  }
+}
+
 Deno.test("remotely-save: weak-to-strong DAV validator transition refuses an old revision without dispatch and a fresh base recovers", async () => {
   const f = await setup("webdav", "none", true);
   const decoder = new TextDecoder();

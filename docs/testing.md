@@ -429,6 +429,16 @@ one case for diagnosis and reports the actual completed count. It never grants
 full-matrix acceptance. MinIO's former community image is unavailable; this test
 uses a maintained S3-compatible server, not a MinIO source build.
 
+The default matrix also records `incremental-traffic.json`: all six backend/codec
+combinations use the production mapping/SDK and a forwarding HTTP observer against
+the real services. Independent upstream codecs seed and verify the complete tree.
+It asserts cold validation, zero warm body GETs, one changed-body GET, fresh
+explicit reads and zero unchanged seed-body GETs across 16 creates. DAV's required
+upload verification and any weak-validator transition reads are counted separately;
+after validators settle, a warm scan again reads zero bodies. Deterministic provider
+tests additionally cover weak/missing ETags, omission/deletion pruning and failed
+read/uncertain-mutation receipt invalidation.
+
 Independent HTTP/SigV4/Digest clients and downloaded pinned upstream crypto
 exports read the complete remote trees and metadata. The unchanged pinned v3
 planner consumes real observations with prevSync, a skewed local clock and rapid

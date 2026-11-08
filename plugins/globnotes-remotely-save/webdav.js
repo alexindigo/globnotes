@@ -361,7 +361,7 @@ export function createWebdav(configuration, http) {
             "unknown",
           );
         }
-        return { ...meta, bytes: after.bytes };
+        return meta;
       });
     },
     async delete(key, condition) {
