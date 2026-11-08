@@ -23,12 +23,13 @@ const describedby = computed(() => [props.help && helpId, props.pin && pinId, pr
 .setting-row { display:flex; flex-direction:column; gap:0.5rem; min-width:0; }
 .setting-row-copy { min-width:0; }
 .setting-row-label { display:flex; align-items:baseline; justify-content:space-between; gap:1rem; font-size:14px; }
+.setting-row-label > :first-child { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 p { margin-top:0.25rem; font-size:13px; max-width:65ch; }
 .setting-row-control { min-width:0; }
-.setting-row-short { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; column-gap:1rem; row-gap:0; }
+.setting-row-short { flex-direction:row; flex-wrap:wrap; align-items:center; column-gap:1rem; }
 .setting-row-short .setting-row-copy { display:contents; }
-.setting-row-short .setting-row-label { grid-column:1; grid-row:1; }
-.setting-row-short .setting-row-control { display:flex; align-items:center; grid-column:2; grid-row:1; }
-.setting-row-short .setting-row-copy > p { grid-column:1 / -1; }
+.setting-row-short .setting-row-label { flex:1 1 auto; min-width:0; }
+.setting-row-short .setting-row-control { display:flex; align-items:center; max-width:100%; }
+.setting-row-short .setting-row-copy > p { flex-basis:100%; order:1; max-width:none; }
 p:not([role="alert"]) { color:rgb(var(--theme-text-muted)); }
 </style>
