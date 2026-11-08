@@ -95,6 +95,36 @@ design:
 - **[Zod](https://zod.dev/)**, Copyright (c) 2025 Colin McDonnell — the MCP
   tools' input and output schemas. MIT License
 
+### Remotely Save driver dependencies
+
+The Remotely Save driver uses `@fyears/rclone-crypt` 0.0.7, Copyright (c)
+2023 fyears, and `fast-xml-parser` 5.2.5, Copyright (c) 2017 Amit Kumar Gupta.
+Both are MIT licensed. Their published packages retain their LICENSE files;
+exact transitive versions and package integrity hashes are in `deno.lock`.
+The OpenSSL codec is independently implemented. No Remotely Save source code
+is included in the production plugin; pinned upstream sources are downloaded
+only into test scratch for reference-vector generation.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ### Frontend
 
 - **[Vue.js](https://vuejs.org/)** with **[Vue Router](https://router.vuejs.org/)** and **[Pinia](https://pinia.vuejs.org/)** — the application framework

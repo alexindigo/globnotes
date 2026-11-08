@@ -1,0 +1,168 @@
+{
+  "id": "globnotes-remotely-save",
+  "name": "Remotely Save",
+  "version": "1.0.0",
+  "license": "LGPL-3.0-only",
+  "capabilities": { "network": true, "imports": false },
+  "driver": {
+    "entry": "driver.js",
+    "apiVersion": 1,
+    "settings": [
+      {
+        "key": "backend",
+        "label": "Backend",
+        "type": "select",
+        "default": "s3",
+        "options": [
+          { "label": "S3-compatible", "value": "s3" },
+          { "label": "WebDAV", "value": "webdav" }
+        ]
+      },
+      {
+        "key": "s3Endpoint",
+        "label": "S3 endpoint",
+        "type": "text",
+        "default": "",
+        "maxLength": 4096,
+        "visibleWhen": { "field": "backend", "equals": "s3" },
+        "description": "HTTP(S) server URL without the bucket name."
+      },
+      {
+        "key": "s3Region",
+        "label": "S3 region",
+        "type": "text",
+        "default": "us-east-1",
+        "maxLength": 256,
+        "visibleWhen": { "field": "backend", "equals": "s3" }
+      },
+      {
+        "key": "s3Bucket",
+        "label": "S3 bucket",
+        "type": "text",
+        "default": "",
+        "maxLength": 63,
+        "visibleWhen": { "field": "backend", "equals": "s3" }
+      },
+      {
+        "key": "s3Prefix",
+        "label": "S3 remote prefix",
+        "type": "text",
+        "default": "",
+        "maxLength": 4096,
+        "visibleWhen": { "field": "backend", "equals": "s3" }
+      },
+      {
+        "key": "s3PathStyle",
+        "label": "S3 path-style addressing",
+        "type": "toggle",
+        "default": false,
+        "visibleWhen": { "field": "backend", "equals": "s3" }
+      },
+      {
+        "key": "webdavUrl",
+        "label": "WebDAV URL",
+        "type": "text",
+        "default": "",
+        "maxLength": 4096,
+        "visibleWhen": { "field": "backend", "equals": "webdav" }
+      },
+      {
+        "key": "webdavBaseDir",
+        "label": "WebDAV base directory",
+        "type": "text",
+        "default": "",
+        "maxLength": 4096,
+        "visibleWhen": { "field": "backend", "equals": "webdav" },
+        "description": "Use the exact Remotely Save remoteBaseDir; no vault-name suffix is added."
+      },
+      {
+        "key": "webdavUsername",
+        "label": "WebDAV username",
+        "type": "text",
+        "default": "",
+        "maxLength": 1024,
+        "visibleWhen": { "field": "backend", "equals": "webdav" }
+      },
+      {
+        "key": "webdavAuth",
+        "label": "WebDAV authentication",
+        "type": "select",
+        "default": "anonymous",
+        "options": [
+          { "label": "Anonymous", "value": "anonymous" },
+          { "label": "Basic", "value": "basic" },
+          { "label": "Digest", "value": "digest" }
+        ],
+        "visibleWhen": { "field": "backend", "equals": "webdav" }
+      },
+      {
+        "key": "encryption",
+        "label": "Encryption",
+        "type": "select",
+        "default": "none",
+        "options": [
+          { "label": "None", "value": "none" },
+          {
+            "label": "OpenSSL (base64 names, reads old base32)",
+            "value": "openssl-base64"
+          },
+          { "label": "rclone (base64)", "value": "rclone-base64" }
+        ],
+        "description": "Match the existing Remotely Save setup. This does not convert stored data."
+      },
+      {
+        "key": "excludedPrefixes",
+        "label": "Excluded prefixes",
+        "type": "textarea",
+        "default": "",
+        "maxLength": 32768,
+        "description": "One literal vault-relative prefix per line. Hidden files are included unless excluded here."
+      }
+    ],
+    "secrets": [
+      {
+        "key": "s3_access_key",
+        "label": "S3 access key",
+        "required": false,
+        "description": "Required for S3."
+      },
+      {
+        "key": "s3_secret_key",
+        "label": "S3 secret key",
+        "required": false,
+        "description": "Required for S3."
+      },
+      {
+        "key": "s3_session_token",
+        "label": "S3 session token",
+        "required": false,
+        "description": "Optional temporary S3 credential."
+      },
+      {
+        "key": "webdav_password",
+        "label": "WebDAV password",
+        "required": false,
+        "description": "Required for Basic or Digest authentication."
+      },
+      {
+        "key": "encryption_password",
+        "label": "Encryption password",
+        "required": false,
+        "description": "Required for OpenSSL or rclone encryption."
+      }
+    ],
+    "capabilities": {
+      "discovery": { "snapshot": true, "delta": false },
+      "revisions": "exact",
+      "mutations": {
+        "create": "emulated",
+        "update": "emulated",
+        "delete": "emulated",
+        "move": "none"
+      },
+      "groups": "none",
+      "history": { "baseText": false },
+      "limits": { "maxBatch": 16 }
+    }
+  }
+}

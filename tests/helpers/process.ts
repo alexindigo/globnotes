@@ -26,6 +26,11 @@ const BASE_KEYS = [
 
 export const DENO = Deno.execPath();
 
+/** Inject only into restricted-Worker fixtures to assert run denial.
+ * The caller must reject successful execution; this is not a host launcher. */
+export const workerCommandDenialProbeSource =
+  `() => new Deno.Command('/usr/bin/true', {clearEnv:true, env:{}}).output()`;
+
 /** The complete environment a child receives. */
 export function childEnvironment(
   env: Record<string, string> = {},
