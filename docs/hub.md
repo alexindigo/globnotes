@@ -151,8 +151,11 @@ independent.
 The index is derived data and uses WAL `synchronous=NORMAL`; the hub's durability
 policy is separate. A crash or power loss may lose recent index transactions.
 Restart reconciles the index from the live folder, reapplying and physically
-erasing a deletion if its index transaction was lost. Completed erasure and
-rebuild publication still require the checked checkpoint. Search queries continue
+erasing a deletion if its index transaction was lost. A current-format reopen
+also retries the erasure checkpoint at its first outer transaction, even when
+the committed deletion survived and there is no remaining row to reconcile.
+Completed erasure and rebuild publication still require the checked checkpoint.
+Search queries continue
 to use the index while the existing initial-sync process catches up.
 
 Index format 11 performs a one-time fresh-file rebuild of older indexes to purge

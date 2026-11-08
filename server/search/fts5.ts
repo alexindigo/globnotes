@@ -117,6 +117,10 @@ export class Fts5Indexer implements Indexer {
            PRAGMA user_version = ${INDEX_FORMAT}`,
         );
       }
+      // A committed delete may survive a crash after its erasure checkpoint
+      // failed. No row remains for reconciliation to rediscover that obligation.
+      // Retry at the first outer transaction, without taking a new lock on open.
+      this.#erasurePending = !!existing && version === INDEX_FORMAT;
     } catch (error) {
       try {
         this.#db.close();

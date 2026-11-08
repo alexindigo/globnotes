@@ -42,5 +42,28 @@ initState(
   new FileServing(vault),
   null,
 );
+if (boundary === "pending-erasure") {
+  const name = "pendingerasurenamecanary", body = "pendingerasurebodycanary";
+  index.reindexNote(name);
+  const reader = new DatabaseSync(`${storage}/index.sqlite`, {
+    readOnly: true,
+  });
+  reader.exec("BEGIN");
+  if (
+    reader.prepare("SELECT filename FROM notes_fts").get()?.filename !==
+      `${name}.md`
+  ) Deno.exit(78);
+  Deno.removeSync(`${vault}/${name}.md`);
+  let rejected = false;
+  try {
+    index.deleteFromIndex(name);
+  } catch (error) {
+    rejected = error instanceof Error &&
+      error.message === "Search index erasure checkpoint did not complete";
+  }
+  if (!rejected || index.search(body).length !== 0) Deno.exit(78);
+  // Exit with BOTH connections open: a committed delete is not an erased WAL.
+  Deno.exit(79);
+}
 index.startBackgroundSync();
 Deno.exit(78); // A missed crash boundary must fail the parent's expectation.

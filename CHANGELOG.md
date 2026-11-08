@@ -103,6 +103,10 @@ Malformed numeric XML references from sync storage are rejected as invalid XML,
 including out-of-range values and invalid XML1.0 characters in text or attributes.
 The XML parser dependency is updated to5.12.0.
 
+Reopening a current search index retries pending erasure after an interrupted
+checkpoint, including a deletion that committed before the crash left no row
+for reconciliation to remove.
+
 Driver-only plugins expose their server network consent controls in Settings,
 using the same explicit approvals and separate Allow network switch as other
 server plugins.

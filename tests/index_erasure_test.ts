@@ -433,6 +433,52 @@ Deno.test("index erasure: a pinned WAL reader makes erasure fail explicitly afte
   }
 });
 
+Deno.test("index erasure: a committed deletion surviving a crash retries its lost pending checkpoint on reopen", async () => {
+  const f = fixture();
+  try {
+    const name = "pendingerasurenamecanary", body = "pendingerasurebodycanary";
+    Deno.writeTextFileSync(`${f.vault}/${name}.md`, body);
+    const result = await command(DENO, {
+      args: [
+        "run",
+        "--allow-read",
+        "--allow-write",
+        "--allow-env",
+        new URL("helpers/index_rebuild_child.ts", import.meta.url).pathname,
+        f.vault,
+        f.storage,
+        "pending-erasure",
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(result.code, 79, new TextDecoder().decode(result.stderr));
+    const wal = new TextDecoder().decode(
+      Deno.readFileSync(`${f.storage}/index.sqlite-wal`),
+    );
+    assert(
+      wal.includes(name) && wal.includes(body),
+      "Crash fixture must retain actual pre-delete WAL bytes",
+    );
+    const restarted = f.make();
+    assertEquals(
+      restarted.search(body),
+      [],
+      "The deletion itself must survive crash recovery",
+    );
+    restarted.startBackgroundSync();
+    await awaitIndexReady(restarted);
+    assertEquals(restarted.search(body), []);
+    absentFromIndexFiles(f.storage, [name, body]);
+    f.closeDatabases();
+    const again = f.make();
+    assertEquals(again.search(body), []);
+    absentFromIndexFiles(f.storage, [name, body]);
+  } finally {
+    f.close();
+  }
+});
+
 for (const boundary of ["during-stage", "before-swap", "after-swap"]) {
   Deno.test(`index erasure: actual child interruption ${boundary} preserves a complete canonical index and restart converges`, async () => {
     const f = fixture();
