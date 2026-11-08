@@ -87,12 +87,16 @@ async function setup(label, { password = false, create = false } = {}) {
   // FIFO_FONT_READY_PRECONDITION_START
   // Measure native Save only after its actual local label face has settled.
   await session.poll("[...document.querySelectorAll('.content-column button')].some(el=>el.textContent.trim()==='Save' && el.getBoundingClientRect().width)");
-  const fontReadiness = await session.evaluate(`(async () => {
+  const descriptor = await session.poll(`(() => {
     const button=[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save');
     const label=button?.querySelector('span');
-    if(!label)throw Error('Actual Save label missing for font readiness');
+    if(!label)return false;
     const css=getComputedStyle(label),family=css.fontFamily.split(',')[0].trim().replace(/['"]/g,'');
     const font=css.fontStyle+' '+css.fontWeight+' '+css.fontSize+' '+css.fontFamily;
+    return {font,family};
+  })()`);
+  const fontReadiness = await session.evaluate(`(async () => {
+    const {font,family}=${JSON.stringify(descriptor)};
     const faces=await document.fonts.load(font,'Save');
     await document.fonts.ready;
     if(!faces.length || faces.some(face=>face.status!=='loaded' || face.family.replace(/['"]/g,'')!==family))
@@ -143,9 +147,9 @@ try {
   for (const mode of ["Source", "WYSIWYG", "Preview"]) {
     await setup(`abc-${mode.toLowerCase()}`);
     await text("FIFO-A", mode);
-    const geometry = await current.session.evaluate("(() => {const button=[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save'); const svg=button.querySelector('svg'); return {button:button.getBoundingClientRect().toJSON(),svg:svg.getBoundingClientRect().toJSON(),cssWidth:getComputedStyle(svg).width,cssHeight:getComputedStyle(svg).height,viewBox:svg.getAttribute('viewBox')};})()");
+     const geometry = await current.session.poll("(() => {const button=[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save'),svg=button?.querySelector('svg');if(!svg)return false; return {button:button.getBoundingClientRect().toJSON(),svg:svg.getBoundingClientRect().toJSON(),cssWidth:getComputedStyle(svg).width,cssHeight:getComputedStyle(svg).height,viewBox:svg.getAttribute('viewBox')};})()");
     await save(); await request(0);
-    const activity = await current.session.evaluate("(() => {const button=[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save'); const svg=button.querySelector('svg'); return {disabled:button.disabled,busy:button.getAttribute('aria-busy'),animation:getComputedStyle(svg).animationName,button:button.getBoundingClientRect().toJSON(),svg:svg.getBoundingClientRect().toJSON(),cssWidth:getComputedStyle(svg).width,cssHeight:getComputedStyle(svg).height,viewBox:svg.getAttribute('viewBox')};})()");
+     const activity = await current.session.poll("(() => {const button=[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save'),svg=button?.querySelector('svg');if(!svg)return false; return {disabled:button.disabled,busy:button.getAttribute('aria-busy'),animation:getComputedStyle(svg).animationName,button:button.getBoundingClientRect().toJSON(),svg:svg.getBoundingClientRect().toJSON(),cssWidth:getComputedStyle(svg).width,cssHeight:getComputedStyle(svg).height,viewBox:svg.getAttribute('viewBox')};})()");
     assert(!activity.disabled && activity.busy === "true" && activity.animation.includes("spin"), "Save activity is missing or Save disabled");
     await Deno.writeTextFile(`${current.directory}/geometry.json`, JSON.stringify({ geometry, activity }, null, 2)); await snapshot("saving");
     // Rotation changes the axis-aligned visual bounding box, not its layout
@@ -203,7 +207,7 @@ try {
     await current.session.click('[title="Open sidebar"]'); await current.session.poll("!!document.querySelector('[aria-label=Settings]')"); await current.session.click('[aria-label="Settings"]'); await current.session.button(action === "logout" ? "Account" : "Access");
     if (action === "logout") await current.session.button("Log out");
     else {
-      await waitForAccessSummary(current.session); await current.session.button("Change access…"); await current.session.poll("!!document.querySelector('#access-current-password') && !document.querySelector('#setup-mode-read_only').disabled");
+      await waitForAccessSummary(current.session); await current.session.button("Change access…"); await current.session.poll("!!document.querySelector('#access-current-password') && document.querySelector('#setup-mode-read_only')?.disabled===false");
       await current.session.click("#access-current-password"); await current.session.type("fifo-secret");
       await current.session.click("#setup-mode-read_only"); await current.session.button("Save access settings");
     }

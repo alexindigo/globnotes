@@ -53,7 +53,7 @@ async function settings(session, page = "Plugins") {
   await session.button(page, '[aria-label="Settings pages"]');
   await session.poll("!!document.querySelector('#settings-modal-title')");
 }
-async function access(session) { await settings(session, "Access"); await session.button("Change access mode"); await session.poll("!!document.querySelector('#setup-title') && !document.querySelector('#setup-mode-password').disabled"); }
+ async function access(session) { await settings(session, "Access"); await session.button("Change access mode"); await session.poll("!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-password')?.disabled===false"); }
 async function closeSettings(session) { await session.click('[aria-label="Close settings"]'); await session.poll("!document.querySelector('#settings-modal-title')"); }
 async function api(path, method = "GET", body, session) {
   const token = session ? await session.evaluate("sessionStorage.getItem('token')||localStorage.getItem('token')") : null;
@@ -207,11 +207,11 @@ try {
   await current.peer.poll("!document.querySelector('#setup-title')");
   const before = await Deno.readTextFile(`${current.state}/config.json`);
   await current.session.button("Save access settings");
-  await current.session.poll("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Review current access') && document.querySelector('[aria-labelledby=setup-title] button[type=submit]').disabled");
+   await current.session.poll("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Review current access') && document.querySelector('[aria-labelledby=setup-title] button[type=submit]')?.disabled");
   assert(await Deno.readTextFile(`${current.state}/config.json`) === before, "Conflicted Access changed stored credentials");
   await capture("access-conflict-review"); await current.session.button("Review current access");
   await current.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('Current access reviewed')");
-  assert(await current.session.evaluate("document.querySelector('#setup-password').value==='review-fixture-new-password' && !!document.querySelector('#setup-totp-qr img')"), "Review discarded proposal or bundle");
+   assert(await current.session.evaluate("document.querySelector('#setup-password')?.value==='review-fixture-new-password' && !!document.querySelector('#setup-totp-qr img')"), "Review discarded proposal or bundle");
   assert(bundles.length === 1 && current.requests.filter(row => row.method === "PUT" && row.path === "/_/api/access").length === 1, "Review minted/replayed Access work");
   const oldToken = await current.session.evaluate("sessionStorage.getItem('token')");
   const confirmed = await authenticatorCode(bundle.secret, Date.now()); await fill(current.session, "#setup-totp-code", confirmed);
@@ -238,7 +238,7 @@ try {
   await browserCode("A"); await togglePeer(true); await until(() => current.browserHolds.length === 1, "Old browser activation did not enter module barrier");
   await togglePeer(false); await current.session.poll("!document.querySelector('[data-review-owner=A]')");
   await browserCode("B"); await togglePeer(true); await current.session.poll("!!document.querySelector('[data-review-owner=B]')");
-  const nonce = await current.session.evaluate("document.querySelector('[data-review-owner=B]').dataset.nonce");
+   const nonce = await current.session.read('[data-review-owner=B]', "document.querySelector('[data-review-owner=B]').dataset.nonce");
   current.browserHolds[0].resolve(); await current.session.poll("document.querySelector('[data-retired-audit=A]')?.dataset.denied==='4'"); await delay(150);
   // Open and run the actual palette command via its native input/selection.
   await current.session.key("p", { modifiers: 2, code: "KeyP", windowsVirtualKeyCode: 80 });
@@ -250,7 +250,7 @@ try {
   await current.session.click(".cm-content"); await current.session.type("Browser replacement consumer\n"); await current.session.button("Save", ".content-column");
   await current.session.poll("document.querySelector('[data-review-owner=B]')?.dataset.events==='1'");
   assert((await Deno.readTextFile(`${current.vault}/Seed.md`)).includes("Browser replacement consumer"), "Replacement subscription probe has no actual saved note");
-  const actual = await current.session.evaluate("({nonce:document.querySelector('[data-review-owner=B]')?.dataset.nonce,commands:document.querySelector('[data-review-owner=B]')?.dataset.commands,events:document.querySelector('[data-review-owner=B]')?.dataset.events,old:!!document.querySelector('[data-review-owner=A]'),audit:{...document.querySelector('[data-retired-audit=A]').dataset}})");
+   const actual = await current.session.read(['[data-review-owner=B]', '[data-retired-audit=A]'], "({nonce:document.querySelector('[data-review-owner=B]')?.dataset.nonce,commands:document.querySelector('[data-review-owner=B]')?.dataset.commands,events:document.querySelector('[data-review-owner=B]')?.dataset.events,old:!!document.querySelector('[data-review-owner=A]'),audit:{...document.querySelector('[data-retired-audit=A]').dataset}})");
   assert(actual.nonce === nonce && !actual.old && !actual.audit.ghostEvent && !actual.audit.ghostTimer && !actual.audit.ghostInterval, "Retired activation affected B or created ghost delivery");
   await outcome("A/B activation", { nonce, commandExecutions: actual.commands, realSaveEvents: actual.events, oldOwnerRemoved: true });
   await outcome("retired registration", { deniedCreates: Number(actual.audit.denied), ghostDeliveries: 0, savedNoteObservedByB: true });
@@ -297,7 +297,7 @@ try {
   await current.session.button("Change access mode");
   // Complete the wizard's own Access GET and mounted initial-focus admission
   // before measuring whether the separately held permission reply moves it.
-  await current.session.poll("!!document.querySelector('#setup-title') && !document.querySelector('#setup-mode-password').disabled && document.activeElement?.id==='setup-mode-password' && document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]')?.contains(document.activeElement)");
+   await current.session.poll("!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-password')?.disabled===false && document.activeElement?.id==='setup-mode-password' && document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]')?.contains(document.activeElement)");
   const beforeFocus = await current.session.evaluate("({id:document.activeElement?.id,wizardOwnsFocus:document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]')?.contains(document.activeElement),promptPresent:!!document.querySelector('#permission-request-title')})");
   await Deno.writeTextFile(`${current.directory}/wizard-focus-before.json`, JSON.stringify(beforeFocus, null, 2), { createNew: true });
   const focus = beforeFocus.id;

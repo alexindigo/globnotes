@@ -91,7 +91,7 @@ async function capture(f, name, selectors) {
   await f.page.screenshot(`${directory}/${name}.png`);
   // Review clips are working evidence in the guest, never user deliverables.
   for (const [label, selector] of Object.entries(selectors)) {
-    const clip = await f.page.evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();const x=Math.max(0,r.x),y=Math.max(0,r.y);return {x,y,width:Math.min(innerWidth,r.right)-x,height:Math.min(innerHeight,r.bottom)-y,scale:1};})()`);
+     const clip = await f.page.read(selector, `(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();const x=Math.max(0,r.x),y=Math.max(0,r.y);return {x,y,width:Math.min(innerWidth,r.right)-x,height:Math.min(innerHeight,r.bottom)-y,scale:1};})()`);
     const { data } = await f.page.send("Page.captureScreenshot", { format: "png", clip });
     await Deno.writeFile(`${directory}/review-${name}-${label}.png`, Uint8Array.from(atob(data), c => c.charCodeAt(0)));
   }
@@ -186,7 +186,7 @@ export async function renameReconciliation(f, scenarios = [
         const count = f.writes.length; await sleep(3000);
         assert(f.writes.length === count && await Deno.readTextFile(`${f.vault}/${path}.md`) === rewritten,
           "Transformed rename with newer text automatically wrote references");
-        assert(await f.page.evaluate("Array.from(document.querySelectorAll('.cm-content .cm-line'),el=>el.textContent).join('\\n')") === mine,
+         assert(await f.page.evaluate("document.querySelector('.cm-content') ? Array.from(document.querySelectorAll('.cm-content .cm-line'),el=>el.textContent).join('\\n') : null") === mine,
           "Barrier changed the user's retained text");
         if (overlap) await f.page.button("Save", ".content-column");
         else {
@@ -241,7 +241,7 @@ export async function autosaveTimer(f) {
       await f.page.click(`[data-theme-id="${theme}"]`);
       await f.page.click('[data-settings-nav-id="plugin:globnotes-autosave-timer"]');
       await f.page.poll("!!document.querySelector('.settings-section-warning #settings-field-enabled')");
-      const banner = await f.page.evaluate(`(()=>{const section=document.querySelector('.settings-section-warning'),toggle=section.querySelector('[role=switch]'),r=section.getBoundingClientRect(),t=toggle.getBoundingClientRect();return {theme:localStorage.getItem('globnotes-theme'),heading:section.querySelector('h3').textContent,paragraphs:section.querySelectorAll('.settings-section-prose p').length,toggleInside:r.left<t.left&&r.right>t.right&&r.top<t.top&&r.bottom>t.bottom,checked:toggle.getAttribute('aria-checked'),pause:document.querySelector('#settings-field-pauseSeconds')?.value,interval:!!document.querySelector('#settings-field-intervalSeconds'),secure:isSecureContext};})()`);
+       const banner = await f.page.read(['.settings-section-warning [role=switch]', '.settings-section-warning h3', '#settings-field-pauseSeconds'], `(()=>{const section=document.querySelector('.settings-section-warning'),toggle=section.querySelector('[role=switch]'),r=section.getBoundingClientRect(),t=toggle.getBoundingClientRect();return {theme:localStorage.getItem('globnotes-theme'),heading:section.querySelector('h3').textContent,paragraphs:section.querySelectorAll('.settings-section-prose p').length,toggleInside:r.left<t.left&&r.right>t.right&&r.top<t.top&&r.bottom>t.bottom,checked:toggle.getAttribute('aria-checked'),pause:document.querySelector('#settings-field-pauseSeconds')?.value,interval:!!document.querySelector('#settings-field-intervalSeconds'),secure:isSecureContext};})()`);
       assert(banner.theme === theme && banner.heading === "Before you turn this on" && banner.paragraphs === 3 && banner.toggleInside && banner.checked === "false" && banner.pause === "2" && !banner.interval && banner.secure === false, `Banner/defaults contract: ${JSON.stringify(banner)}`);
       results.push({ case: "settings-banner", ...banner });
     }
@@ -307,7 +307,7 @@ export async function autosaveTimer(f) {
     for (const [path, text] of [["Heading", "# Heading\n\nCreated without clicking Save.\n"], ["Untitled", "A new note without a heading.\n"]]) {
       await f.page.goto(f.baseUrl + "/_/new");
       await f.page.button("Source", ".content-column"); await f.page.poll(`!!document.querySelector('${editor}')`);
-      const actualPath = path === "Untitled" ? await f.page.evaluate("document.querySelector('input[placeholder=Title]').value") : path;
+       const actualPath = path === "Untitled" ? await f.page.read('input[placeholder=Title]', "document.querySelector('input[placeholder=Title]').value") : path;
       assert(path !== "Untitled" || /^Untitled(?: \d+)?$/.test(actualPath), "Unexpected no-heading name");
       await replace(f, editor, text);
       const created = await disk(f, actualPath, text); await f.page.poll(clean);

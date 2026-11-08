@@ -167,7 +167,7 @@ try {
   await waitForAccessSummary(session); await session.button("Change access…");
   await session.poll("!!document.querySelector('#setup-title')");
   assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Opening the optional wizard destroyed the dirty editor instance");
-  assert(await session.evaluate("document.querySelector('.cm-content').textContent.includes('GPS immediate dirty marker')"), "Optional wizard lost typed content");
+   assert(await session.evaluate("document.querySelector('.cm-content')?.textContent.includes('GPS immediate dirty marker')"), "Optional wizard lost typed content");
   await session.click('[aria-label="Dismiss setup"]');
   await session.poll("!document.querySelector('#setup-title')");
   assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Dismissing optional wizard replaced the editor");
@@ -180,7 +180,7 @@ try {
     await edit(marker);
     await settings("Access");
     await waitForAccessSummary(session); await session.button("Change access…");
-    await session.poll("!!document.querySelector('#access-current-password') && !document.querySelector('#setup-username').disabled && document.querySelector('#setup-username').value==='session-fixture'");
+     await session.poll("!!document.querySelector('#access-current-password') && document.querySelector('#setup-username')?.disabled===false && document.querySelector('#setup-username')?.value==='session-fixture'");
     await session.click("#setup-username"); await session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); await session.type("new-fixture");
     await session.click("#setup-password"); await session.type("new-fixture-secret");
     await session.click("#access-current-password"); await session.type(password);

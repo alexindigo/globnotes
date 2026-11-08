@@ -41,7 +41,7 @@ async function fixture(label, protectedMode = false, narrow = false) {
   await session.poll("!!document.querySelector('.toast-viewer')");
   await session.button("Edit", ".content-column"); await session.button("Source", ".content-column"); await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')");
   await session.click(".cm-content"); await session.type(`Retained ${label} buffer\n`);
-  await session.poll(`document.querySelector('.cm-content').textContent.includes(${JSON.stringify(label)})`);
+   await session.poll(`document.querySelector('.cm-content')?.textContent.includes(${JSON.stringify(label)})`);
   await session.poll("(()=>{const line=document.querySelector('.cm-activeLineGutter')?.textContent.trim();return !!line&&location.hash==='#source:L'+line;})()");
   await session.evaluate("window.__extraEditor=document.querySelector('.cm-content');window.__extraBuffer=window.__extraEditor.textContent;window.__extraUrl=location.href;true");
   if (narrow) {
@@ -65,14 +65,14 @@ async function open(waitForLoaded = true) {
 }
 async function capture(label) {
   const s = current.session; await s.evaluate("document.fonts.ready.then(()=>true)");
-  const geometry = await s.evaluate("(()=>{const box=document.querySelector('[aria-labelledby=setup-title]'),r=box.getBoundingClientRect();return {url:location.href,body:document.body.innerText,rect:r.toJSON(),overflowX:box.scrollWidth-box.clientWidth,contained:r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,editorRetained:document.querySelector('.cm-content')===window.__extraEditor,buffer:document.querySelector('.cm-content')?.textContent};})()");
+   const geometry = await s.read('[aria-labelledby=setup-title]', "(()=>{const box=document.querySelector('[aria-labelledby=setup-title]'),r=box.getBoundingClientRect();return {url:location.href,body:document.body.innerText,rect:r.toJSON(),overflowX:box.scrollWidth-box.clientWidth,contained:r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,editorRetained:document.querySelector('.cm-content')===window.__extraEditor,buffer:document.querySelector('.cm-content')?.textContent};})()");
   assert(geometry.contained && geometry.overflowX <= 1 && geometry.editorRetained, "Extra Access state escaped/lost its owner");
   const { data } = await s.send("Page.captureScreenshot", { format: "png" });
   await Deno.writeFile(`${current.directory}/${label}.png`, Uint8Array.from(atob(data), char => char.charCodeAt(0)), { createNew: true });
   await Deno.writeTextFile(`${current.directory}/${label}.json`, JSON.stringify(geometry, null, 2), { createNew: true });
 }
 async function retained() {
-  assert(await current.session.evaluate("document.querySelector('.cm-content')===window.__extraEditor && document.querySelector('.cm-content').textContent===window.__extraBuffer && location.href===window.__extraUrl"), "Extra Access state discarded the literal editor buffer/URL");
+   assert(await current.session.evaluate("document.querySelector('.cm-content')===window.__extraEditor && document.querySelector('.cm-content')?.textContent===window.__extraBuffer && location.href===window.__extraUrl"), "Extra Access state discarded the literal editor buffer/URL");
 }
 async function close() {
   if (!current || current.closed) return;
@@ -107,7 +107,7 @@ try {
     assert(await readClipboardText(s) === (granted ? bundle.secret : marker), granted ? "Actual clipboard consumer did not receive the minted key" : "Refused copy changed the actual clipboard");
     const beforeFocus = await s.evaluate("({active:document.activeElement?.id,caption:document.querySelector('#setup-totp-copy-feedback')?.textContent})");
     await capture("second-click-feedback"); await s.click("#access-current-password");
-    await Deno.writeTextFile(`${current.directory}/clipboard-focus-observation.json`, JSON.stringify({ before: beforeFocus, after: await s.evaluate("({active:document.activeElement?.id,caption:document.querySelector('#setup-totp-copy-feedback')?.textContent,hit:document.querySelector('#access-current-password')===document.elementFromPoint(...(()=>{const r=document.querySelector('#access-current-password').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2];})())})") }, null, 2), { createNew: true });
+     await Deno.writeTextFile(`${current.directory}/clipboard-focus-observation.json`, JSON.stringify({ before: beforeFocus, after: await s.read('#access-current-password', "({active:document.activeElement?.id,caption:document.querySelector('#setup-totp-copy-feedback')?.textContent,hit:document.querySelector('#access-current-password')===document.elementFromPoint(...(()=>{const r=document.querySelector('#access-current-password').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2];})())})") }, null, 2), { createNew: true });
     await s.poll("document.activeElement===document.querySelector('#access-current-password')");
     await s.poll("!document.querySelector('#setup-totp-copy-feedback')");
     await retained(); assert(await Deno.readTextFile(`${current.state}/config.json`) === current.original && (await api("auth-check")).status === 200, "Clipboard flow changed account/session");
@@ -134,7 +134,8 @@ try {
     if (lost) {
       await s.poll("[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Review current access')?.disabled===false"); await s.button("Review current access");
     } else {
-      assert(await s.evaluate("[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Review current access').disabled"), "In-flight unknown wire allowed review");
+       const review = await s.poll("(()=>{const button=[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Review current access');return button?{disabled:button.disabled}:false;})()");
+       assert(review.disabled, "In-flight unknown wire allowed review");
       await s.click('[aria-label="Dismiss setup"]'); assert(await s.evaluate("!!document.querySelector('#setup-title')"), "Unknown wire dismissed its owner");
       await s.send("Fetch.continueRequest", { requestId: gate.held.requestId });
     }
@@ -150,14 +151,14 @@ try {
   await current.session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Save Changes')"); await current.session.button("Save", '[data-modal-top="true"]');
   await current.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('Access settings changed')");
   await retained(); await capture("stale-response");
-  assert(await current.session.evaluate("document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='true'") && (await api("config")).body.settingsWritable, "Stale error lost proposed choice or overwrote concurrent policy");
+   assert(await current.session.evaluate("document.querySelector('#setup-read-only-settings')?.getAttribute('aria-checked')==='true'") && (await api("config")).body.settingsWritable, "Stale error lost proposed choice or overwrote concurrent policy");
   await done({ actualStaleMutationRejected: true, currentChoicesRetained: true, editorBufferRetained: true, concurrentPolicyRetained: true });
   await fixture("load-error", false);
   const s = current.session;
   s.page.onEvent(event => { if (event.method === "Fetch.requestPaused") s.send("Fetch.fulfillRequest", { requestId: event.params.requestId, responseCode: 503, responseHeaders: [{ name: "content-type", value: "application/json" }], body: btoa(JSON.stringify({ detail: "Fixture access read unavailable" })) }).catch(() => {}); });
   await s.send("Fetch.enable", { patterns: [{ urlPattern: "*/_/api/access", requestStage: "Response" }] }); await open(false);
   await s.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('Fixture access read unavailable')");
-  assert(await s.evaluate("document.querySelector('[aria-labelledby=setup-title] button[type=submit]').disabled"), "Failed initial access read allowed submission");
+   assert(await s.read('[aria-labelledby=setup-title] button[type=submit]', "document.querySelector('[aria-labelledby=setup-title] button[type=submit]').disabled"), "Failed initial access read allowed submission");
   await retained(); await capture("read-error"); assert(await Deno.readTextFile(`${current.state}/config.json`) === current.original, "Read error changed configuration");
   await s.send("Fetch.disable"); await s.click('[aria-label="Dismiss setup"]'); await s.poll("!document.querySelector('#setup-title')"); await retained();
   await done({ realReadResponseFailureRendered: true, submitUnavailable: true, configurationUnchanged: true, literalDirtyBufferRetained: true });

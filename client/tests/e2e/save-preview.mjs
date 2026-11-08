@@ -121,7 +121,7 @@ try {
             await page.send("Input.dispatchKeyEvent", { type, key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2 });
           }
           await page.send("Input.insertText", { text: title });
-          await page.poll(`document.querySelector('input[placeholder="Title"]').value === ${JSON.stringify(title)}`);
+           await page.poll(`document.querySelector('input[placeholder="Title"]')?.value === ${JSON.stringify(title)}`);
         }
         // WYSIWYG includes noneditable property widgets; click its paragraph,
         // not the container center, so native input reaches editable content.

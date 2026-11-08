@@ -45,7 +45,7 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   await session.poll("!!document.querySelector('[data-command-binding=\"app:open-settings\"] button')");
   await session.click('[data-command-binding="app:open-settings"] button');
   await session.key("g", { code: "KeyG", modifiers: 3, windowsVirtualKeyCode: 71 });
-  await session.poll("document.querySelector('[data-command-binding=\"app:open-settings\"]').textContent.includes('Ctrl+Alt+G')");
+   await session.poll("document.querySelector('[data-command-binding=\"app:open-settings\"]')?.textContent.includes('Ctrl+Alt+G')");
   await close();
   if (await inspect("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
   await session.key("g", { code: "KeyG", modifiers: 3, windowsVirtualKeyCode: 71 });
@@ -64,10 +64,10 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   const config = JSON.parse(await Deno.readTextFile(`${state}/config.json`));
   assert(config.brand_name === "Native inline brand", "Inline branding did not reach persisted config");
   await session.button("Reset branding…", "[data-branding-settings]");
-  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?')");
+   await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Reset branding?')");
   await session.key("Escape", { windowsVirtualKeyCode: 27 });
-  await session.poll("!document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?')");
-  assert(await inspect("document.querySelector('#brand-name').value === 'Native inline brand'"), "Cancelling reset erased Branding");
+   await session.poll("!!document.querySelector('#brand-name') && !document.querySelector('[data-modal-top=true]')?.textContent.includes('Reset branding?')");
+   assert(await inspect("document.querySelector('#brand-name')?.value === 'Native inline brand'"), "Cancelling reset erased Branding");
   await record({ name: "inline-branding-disk-and-cancel", persisted: config.brand_name });
 
   await session.button("Keybindings");
@@ -98,13 +98,14 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   const beforeInvalid = await stored();
   await replace("#settings-field-limit", "");
   await session.button("Appearance");
-  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
-  assert(await inspect("[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Save').disabled"), "Invalid input was allowed to save");
+   await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
+   const invalidSave = await session.poll("(()=>{const button=[...document.querySelectorAll('[data-modal-top=true] button')].find(b=>b.textContent.trim()==='Save');return button?{disabled:button.disabled}:false;})()");
+   assert(invalidSave.disabled, "Invalid input was allowed to save");
   await session.key("Escape", { windowsVirtualKeyCode: 27 });
-  await session.poll("!!document.querySelector('#settings-field-limit') && !document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
-  assert(await inspect("document.querySelector('#settings-field-limit').value === ''"), "Escape discarded invalid raw input");
+   await session.poll("!!document.querySelector('#settings-field-limit') && !document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
+   assert(await inspect("document.querySelector('#settings-field-limit')?.value === ''"), "Escape discarded invalid raw input");
   await session.button("Appearance");
-  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
+   await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
   await session.button("Discard", '[data-modal-top="true"]');
   await session.poll("!!document.querySelector('[data-appearance-settings]')");
   await session.click('[data-settings-nav-id="plugin:session-guard"]');
@@ -118,13 +119,13 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   const guard = await inspect(`fetch('/_/api/notes/NoteA',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({newContent:'GPS-blocked inline settings',baseContent:${JSON.stringify(before)}})}).then(async r=>({status:r.status,body:await r.json()}))`);
   assert(guard.status === 409 && guard.body.detail === "session guard protection", "Real pre-save guard did not consume the native toggle");
   assert(await Deno.readTextFile(`${vault}/NoteA.md`) === before, "Guarded write changed disk");
-  assert(await inspect("document.querySelector('.cm-content') === window.__gpsEditor && document.querySelector('.cm-content').textContent.includes('GPS inline dirty marker')"), "Inline Settings lost the original dirty editor");
+   assert(await inspect("document.querySelector('.cm-content') === window.__gpsEditor && document.querySelector('.cm-content')?.textContent.includes('GPS inline dirty marker')"), "Inline Settings lost the original dirty editor");
   await close();
   await record({ name: "native-toggle-hook-consumer", status: guard.status, diskUnchanged: true, dirtyEditorRetained: true });
   await palette("Native Settings Consumer");
   await session.poll("document.querySelector('[data-native-settings-consumer]')?.textContent==='native committed message' && !!document.querySelector('[data-native-settings-consumer]').getBoundingClientRect().width");
-  assert(await inspect("(()=>{const el=document.querySelector('[data-native-settings-consumer]'),r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()"), "Palette consumer output was not visibly hittable");
-  assert(await inspect("document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content').textContent.includes('GPS inline dirty marker')"), "Palette consumer replaced or lost the dirty editor");
+   assert(await session.read('[data-native-settings-consumer]', "(()=>{const el=document.querySelector('[data-native-settings-consumer]'),r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()"), "Palette consumer output was not visibly hittable");
+   assert(await inspect("document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content')?.textContent.includes('GPS inline dirty marker')"), "Palette consumer replaced or lost the dirty editor");
   await record({ name: "native-palette-settings-consumer", rendered: "native committed message", sdkSettingsRead: true, sameEditor: true });
   return evidence;
 }

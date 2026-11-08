@@ -97,7 +97,7 @@ try {
     assert(await Deno.readTextFile(`${vault}/${copy}.md`) === writes.at(-1).newContent, `${mode}: copy lost submitted text`);
     assert(await Deno.readTextFile(`${vault}/${path}.md`) === theirs, `${mode}: original was overwritten`);
     assert(await session.evaluate("document.querySelector('.cm-content, .ProseMirror')?.textContent.includes('typed-mine-first')"), `${mode}: editor did not retain conflict content`);
-    assert(await session.evaluate(`document.querySelector('[data-conflict-banner]').textContent.includes(${JSON.stringify(`‹${path}› changed elsewhere`)})`), `${mode}: conflict origin missing`);
+     assert(await session.read('[data-conflict-banner]', `document.querySelector('[data-conflict-banner]').textContent.includes(${JSON.stringify(`‹${path}› changed elsewhere`)})`), `${mode}: conflict origin missing`);
     await capture(`${mode.toLowerCase()}-conflict`);
     results.push({ case: "conflict", mode, original: path, copy, copyMatchesSubmission: true, originalUnchanged: true });
   }

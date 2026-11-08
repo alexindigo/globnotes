@@ -82,7 +82,7 @@ try {
   await page.waitForTimeout(600);
   // Proof: the scroller moved AND the match renders inside the viewport
   // (CM6 only DOM-renders the visible region, so presence == in view).
-  const revealed = await page.evaluate(`(() => {
+   const revealed = await page.read('.cm-scroller', `(() => {
     const scroller = document.querySelector(".cm-scroller");
     const sr = scroller.getBoundingClientRect();
     const hit = [...document.querySelectorAll(".cm-content *")]

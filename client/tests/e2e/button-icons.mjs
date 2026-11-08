@@ -126,7 +126,7 @@ async function markControls() {
 
 async function observe(state, editMode, dirty = false) {
   const label = `${phase} ${state}`;
-  const m = await page.evaluate(`(${toolbar.toString()})()`);
+   const m = await page.read([editSelector, saveSelector], `(${toolbar.toString()})()`);
   measurements.push({ label, measured: m });
   console.log(JSON.stringify({ label, measured: m }));
   await page.screenshot(join(artifacts, `${phase}-${state}.png`));

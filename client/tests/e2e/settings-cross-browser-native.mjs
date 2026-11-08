@@ -36,7 +36,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
     await Deno.writeTextFile(`${directory}/peer-diagnostics-${outcomes.length}.json`, JSON.stringify({ b: { errors: b.errors, events: b.events }, c: { errors: c.errors, events: c.events } }, null, 2), { createNew: true });
   }
   const persistenceStages = [];
-  const aBuffer = await a.evaluate("({url:location.href,text:document.querySelector('.cm-content').textContent})");
+   const aBuffer = await a.read('.cm-content', "({url:location.href,text:document.querySelector('.cm-content').textContent})");
   async function persistence(label) {
     const acknowledged = await api(a, "/_/api/plugin-host/session-guard/settings/preferences");
     const peer = await api(b, "/_/api/plugin-host/session-guard/settings/preferences");
@@ -44,7 +44,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
     const values = acknowledged.body.values;
     const diskSettings = JSON.parse(await Deno.readTextFile(`${state}/plugin-data/session-guard/settings.json`));
     assert(diskSettings.revision === acknowledged.body.revision && JSON.stringify(diskSettings.values.preferences) === JSON.stringify(values), `${label}: actual settings file differs`);
-    assert(await b.evaluate(`document.querySelector('#settings-field-message').value===${JSON.stringify(values.message)} && !!document.querySelector('#settings-field-protect .text-theme-brand')===${JSON.stringify(values.protect)}`), `${label}: peer Settings UI did not consume saved message/toggle`);
+     assert(await b.read(['#settings-field-message', '#settings-field-protect'], `document.querySelector('#settings-field-message').value===${JSON.stringify(values.message)} && !!document.querySelector('#settings-field-protect .text-theme-brand')===${JSON.stringify(values.protect)}`), `${label}: peer Settings UI did not consume saved message/toggle`);
     const reportRoute = "/_/api/plugin-host/session-guard/commands/report";
     const reportOptions = { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" };
     const before = await api(b, reportRoute, reportOptions);
@@ -58,7 +58,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
     await b.evaluate("document.fonts.ready.then(()=>true)");
     const literal = `GPS persistence ${label}: ${values.message}\n`;
     await replace(b, ".cm-content", literal);
-    assert(await b.evaluate("(()=>{const el=document.querySelector('.cm-content'),r=el.getBoundingClientRect();return (el===document.activeElement||el.contains(document.activeElement))&&el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()"), `${label}: native persistence editor focus/hit precondition failed`);
+     assert(await b.read('.cm-content', "(()=>{const el=document.querySelector('.cm-content'),r=el.getBoundingClientRect();return (el===document.activeElement||el.contains(document.activeElement))&&el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()"), `${label}: native persistence editor focus/hit precondition failed`);
     await b.button("Save", ".content-column");
     await b.poll(`fetch('/_/api/notes/Persistence').then(r=>r.json()).then(note=>note.content===${JSON.stringify(literal)})`);
     await b.poll("(()=>{const button=[...document.querySelectorAll('.content-column button')].find(button=>button.textContent.trim()==='Save');return button?.getAttribute('aria-busy')==='false'&&!button.querySelector('.animate-spin');})()");
@@ -71,9 +71,9 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
     assert(await Deno.readTextFile(`${vault}/Persistence.md`) === literal, `${label}: native Save did not reach exact note disk bytes`);
     const privateData = JSON.parse(await Deno.readTextFile(`${state}/plugin-data/session-guard/data.json`));
     assert(privateData.values.hookRuns === result.hookRuns && JSON.stringify(privateData.values.hookLast) === JSON.stringify(result.hookLast), `${label}: hook consumer did not persist actual private data`);
-    assert(await a.evaluate(`location.href===${JSON.stringify(aBuffer.url)} && document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content').textContent===${JSON.stringify(aBuffer.text)}`), `${label}: peer persistence changed A's URL/editor/literal dirty buffer`);
+     assert(await a.evaluate(`location.href===${JSON.stringify(aBuffer.url)} && document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content')?.textContent===${JSON.stringify(aBuffer.text)}`), `${label}: peer persistence changed A's URL/editor/literal dirty buffer`);
     await open(b, "Native preferences");
-    await b.poll(`document.querySelector('#settings-field-message').value===${JSON.stringify(values.message)}`);
+     await b.poll(`document.querySelector('#settings-field-message')?.value===${JSON.stringify(values.message)}`);
     const row = { name: label, revision: acknowledged.body.revision, values, command: { message: result.message, limit: result.limit, protect: result.protect }, hook: result.hookLast, hookRuns: result.hookRuns, exactNoteApiAndDisk: true, privateDataDisk: true, independentPeer: true, originalDirtyEditorAndUrlRetained: true };
     persistenceStages.push(row);
     await Deno.writeTextFile(`${directory}/persistence-${label}.json`, JSON.stringify(row, null, 2), { createNew: true });
@@ -92,29 +92,29 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   assert(a.browserContextId !== b.browserContextId && b.browserContextId !== c.browserContextId, "Peer contexts share authentication state");
   await b.goto(`${server.baseUrl}/Persistence`); await b.poll("!!document.querySelector('.toast-viewer') && document.querySelector('.toast-viewer').textContent.includes('Persistence seed.')");
   await open(a, "Native preferences"); await editMessage(a, "A persisted across browsers");
-  await open(b, "Native preferences"); await b.poll("document.querySelector('#settings-field-message').value==='A persisted across browsers'");
+   await open(b, "Native preferences"); await b.poll("document.querySelector('#settings-field-message')?.value==='A persisted across browsers'");
   await persistence("native-text-enter");
   const beforeBlur = await api(b, "/_/api/plugin-host/session-guard/settings/preferences");
   await replace(b, "#settings-field-message", "B acknowledged value"); await b.click("#settings-field-limit");
   await b.poll("fetch('/_/api/plugin-host/session-guard/settings/preferences').then(r=>r.json()).then(d=>d.values.message==='B acknowledged value')");
   assert((await api(b, "/_/api/plugin-host/session-guard/settings/preferences")).body.revision === beforeBlur.body.revision + 1, "Distinct native blur did not commit exactly once");
-  await a.poll("document.querySelector('#settings-field-message').value==='B acknowledged value'");
+   await a.poll("document.querySelector('#settings-field-message')?.value==='B acknowledged value'");
   await persistence("native-text-blur");
   await b.click('[aria-label="Close settings"]'); await b.poll("!document.querySelector('#settings-modal-title')");
-  await open(b, "Native preferences"); await b.poll("document.querySelector('#settings-field-message').value==='B acknowledged value'");
+   await open(b, "Native preferences"); await b.poll("document.querySelector('#settings-field-message')?.value==='B acknowledged value'");
   await persistence("settings-reopen");
   await record({ name: "independent-authenticated-settings-consumers", contexts: [a.browserContextId, b.browserContextId, c.browserContextId], rejectedRead: rejectedRead.status, rejectedCommand: rejectedCommand.status, rejectedWorkerEffects: count.body.result, reconciled: "B acknowledged value" });
 
   await replace(a, "#settings-field-limit", "");
   await editMessage(b, "B newer revision");
-  await a.poll("document.querySelector('#settings-field-limit').value===''");
+   await a.poll("document.querySelector('#settings-field-limit')?.value===''");
   await replace(a, "#settings-field-message", "A retained conflict"); await a.key("Enter", { windowsVirtualKeyCode: 13 });
-  await a.poll("document.querySelector('[data-modal-top=true]').textContent.includes('These settings changed elsewhere')");
-  assert(await a.evaluate("document.querySelector('#settings-field-message').value==='A retained conflict' && document.querySelector('#settings-field-limit').value===''") , "Conflict erased invalid/newer local drafts");
-  await a.button("Appearance"); await a.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
+   await a.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('These settings changed elsewhere')");
+   assert(await a.evaluate("document.querySelector('#settings-field-message')?.value==='A retained conflict' && document.querySelector('#settings-field-limit')?.value===''") , "Conflict erased invalid/newer local drafts");
+   await a.button("Appearance"); await a.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
   await a.key("Escape", { windowsVirtualKeyCode: 27 });
   await a.poll("document.querySelector('#settings-field-message')?.value==='A retained conflict' && document.querySelector('#settings-field-limit')?.value===''");
-  await a.button("Reload (discards your edits)…"); await a.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
+   await a.button("Reload (discards your edits)…"); await a.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
   await a.button("Discard", '[data-modal-top="true"]');
   await a.poll("document.querySelector('#settings-field-message')?.value==='B newer revision' && document.querySelector('#settings-field-limit')?.value==='5'");
   await record({ name: "actual-cas-conflict-invalid-draft-recovery", retained: "A retained conflict", explicitDiscardReadBack: "B newer revision", topmostEscapeKeptDraft: true });
@@ -122,7 +122,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   await b.evaluate("window.__settingsPeerDocument='before-reload';true"); await b.send("Page.reload");
   await b.poll("window.__settingsPeerDocument===undefined && (!!document.querySelector('[title=\"Open sidebar\"]') || !!document.querySelector('[aria-label=Settings]')?.getBoundingClientRect().width)");
   await b.poll("typeof window.__settingsPeerThemeEvents==='number'");
-  await open(b, "Native preferences"); await b.poll("document.querySelector('#settings-field-message').value==='B newer revision'");
+   await open(b, "Native preferences"); await b.poll("document.querySelector('#settings-field-message')?.value==='B newer revision'");
   await persistence("fresh-document-reload");
   await a.click("#settings-field-protect");
   await a.poll("fetch('/_/api/plugin-host/session-guard/settings/preferences').then(r=>r.json()).then(d=>d.values.protect===true)");
@@ -132,8 +132,8 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   assert(guarded.status === 409, "Enabled guard did not consume the persisted peer setting");
   await replace(a, "#settings-field-message", "A recovery after remote disable");
   await open(b, "Plugins"); await b.click('[data-plugin-inventory-id="session-guard"] .plugin-row-actions [role=switch]');
-  await a.poll("document.querySelector('#settings-field-message').readOnly && document.querySelector('[data-modal-top=true]').textContent.includes('This page is unavailable')");
-  assert(await a.evaluate("document.querySelector('#settings-field-message').value==='A recovery after remote disable'"), "Remote disable lost the recovery draft");
+   await a.poll("document.querySelector('#settings-field-message')?.readOnly && document.querySelector('[data-modal-top=true]')?.textContent.includes('This page is unavailable')");
+   assert(await a.evaluate("document.querySelector('#settings-field-message')?.value==='A recovery after remote disable'"), "Remote disable lost the recovery draft");
   const disabledCommand = await api(b, "/_/api/plugin-host/session-guard/commands/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   const disabledEndpoint = await api(b, "/_/api/plugins/session-guard/ping");
   const unguarded = await patchNote(b, "/_/api/notes/NoteA", "GPS-blocked peer write");
@@ -143,8 +143,8 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   await b.poll("document.body.classList.contains('dark')"); assert(await b.evaluate("window.__settingsPeerThemeEvents") === beforeDisabledTheme, "Disabled managed browser subscription still fired");
   await open(b, "Keybindings"); assert(!await b.evaluate("!!document.querySelector('[data-command-binding=\"plugin:session-guard:sdk-settings\"]')"), "Disabled browser command remained registered");
   await open(b, "Plugins"); await b.click('[data-plugin-inventory-id="session-guard"] .plugin-row-actions [role=switch]');
-  await a.poll("!document.querySelector('#settings-field-message').readOnly");
-  assert(await a.evaluate("document.querySelector('#settings-field-message').value==='A recovery after remote disable'"), "Re-enable discarded the recovery draft");
+   await a.poll("document.querySelector('#settings-field-message')?.readOnly===false");
+   assert(await a.evaluate("document.querySelector('#settings-field-message')?.value==='A recovery after remote disable'"), "Re-enable discarded the recovery draft");
   const enabledInventory = await settleSettingsInventory(b, "document.querySelector('[data-plugin-inventory-id=\"session-guard\"] .plugin-row-actions [role=switch]')?.getAttribute('aria-checked')==='true'");
   // Explicitly focus the recovered field before admitting its retained edit.
   await a.click("#settings-field-message"); await a.key("Enter", { windowsVirtualKeyCode: 13 });
@@ -155,20 +155,20 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   const reenabledEndpoint = await api(b, "/_/api/plugins/session-guard/ping");
   const reenabledGuard = await patchNote(b, "/_/api/notes/NoteA", "GPS-blocked second peer write");
   assert(reenabledEndpoint.status === 200 && reenabledGuard.status === 409, "Re-enable failed to restore endpoint/guard consumers");
-  assert(await a.evaluate("document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content').textContent.includes('GPS cross-browser dirty marker')"), "Peer reconciliation replaced or lost A's dirty editor");
+   assert(await a.evaluate("document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content')?.textContent.includes('GPS cross-browser dirty marker')"), "Peer reconciliation replaced or lost A's dirty editor");
   await record({ name: "remote-disable-reenable-owned-contributions", disabledCommand: 404, disabledEndpoint: 404, disabledGuardRemoved: 200, reenabledEndpoint: 200, reenabledGuard: 409, recoveredDraft: "A recovery after remote disable", enabledSubscriptionDelta: 1, dirtyEditorRetained: true, inventorySettlement: [disabledInventory, enabledInventory] });
-  await a.poll("!document.querySelector('[data-modal-top=true]').textContent.includes('Saving…')");
+   await a.poll("!!document.querySelector('#settings-modal-title') && !document.querySelector('[data-modal-top=true]')?.textContent.includes('Saving…')");
   const beforeRestart = await api(a, "/_/api/plugin-host/session-guard/settings/preferences");
   const aUrl = await a.evaluate("location.href");
   const restarted = await server.restart();
   const afterRestart = await api(a, "/_/api/plugin-host/session-guard/settings/preferences");
   assert(afterRestart.status === 200 && JSON.stringify(afterRestart.body) === JSON.stringify(beforeRestart.body), "Restart did not retain exact settings/revision under the existing credentials");
-  await open(b, "Native preferences"); await b.poll("document.querySelector('#settings-field-message').value==='A recovery after remote disable'");
+   await open(b, "Native preferences"); await b.poll("document.querySelector('#settings-field-message')?.value==='A recovery after remote disable'");
   await persistence("backend-restart");
   const restartedCommand = await api(b, "/_/api/plugin-host/session-guard/commands/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   const restartedGuard = await patchNote(b, "/_/api/notes/NoteA", "GPS-blocked restart write");
   assert(restartedCommand.status === 200 && restartedCommand.body.result.message === "A recovery after remote disable" && restartedGuard.status === 409, "Restarted command/hook did not consume persisted values");
-  assert(await a.evaluate(`location.href===${JSON.stringify(aUrl)} && document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content').textContent.includes('GPS cross-browser dirty marker')`), "Backend restart changed A's URL/editor/dirty buffer");
+   assert(await a.evaluate(`location.href===${JSON.stringify(aUrl)} && document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content')?.textContent.includes('GPS cross-browser dirty marker')`), "Backend restart changed A's URL/editor/dirty buffer");
   await record({ name: "same-origin-server-restart-settings-consumers", ...restarted, revision: afterRestart.body.revision, values: afterRestart.body.values, command: restartedCommand.body.result, guard: restartedGuard.status, existingCredentialsRetained: true, dirtyEditorAndUrlRetained: true, expectedStreamTransportClosure: true });
   assert(persistenceStages.length === 6, "Incomplete native settings persistence matrix");
   await record({ name: "native-settings-persistence-command-and-hook-matrix", stages: persistenceStages });

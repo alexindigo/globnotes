@@ -4,7 +4,7 @@ import { nativeSession } from './native-cdp-session.mjs';
 import { bootServer } from './harness-helpers.mjs';
 
 export async function settingsActionZones(session) {
-  return session.evaluate(`(()=>{
+   return session.read('[role=dialog]', `(()=>{
     const visible=el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0&&!el.closest('[inert]');};
     const rect=el=>el.getBoundingClientRect().toJSON();
     const gap=(a,b)=>Math.min(a.bottom,b.bottom)>Math.max(a.top,b.top)+.5
@@ -44,16 +44,16 @@ export async function assertSettingsActionZones(session) {
 }
 
 export async function primaryStyle(session, selector) {
-  return session.evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw Error('Missing primary consumer');const s=getComputedStyle(el);return Object.fromEntries(['backgroundColor','color','webkitTextStroke','paintOrder','fontWeight','fontFamily','paddingTop','paddingRight','paddingBottom','paddingLeft','fontSize','lineHeight','opacity'].map(key=>[key,s[key]]));})()`);
+   return session.read(selector, `(()=>{const el=document.querySelector(${JSON.stringify(selector)});const s=getComputedStyle(el);return Object.fromEntries(['backgroundColor','color','webkitTextStroke','paintOrder','fontWeight','fontFamily','paddingTop','paddingRight','paddingBottom','paddingLeft','fontSize','lineHeight','opacity'].map(key=>[key,s[key]]));})()`);
 }
 
 async function hoverStyle(session, selector, directory, label) {
-  const geometry=await session.evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);return {rect:r.toJSON(),point:{x,y},hit:hit&&{tag:hit.tagName,classes:hit.className,text:hit.textContent.slice(0,120)},targetHit:el.contains(hit),sidebarVisible:localStorage.getItem('sidebarVisible'),viewport:{width:innerWidth,height:innerHeight,outerWidth,outerHeight},visibility:document.visibilityState,focused:document.hasFocus()};})()`);
+   const geometry=await session.read(selector, `(()=>{const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);return {rect:r.toJSON(),point:{x,y},hit:hit&&{tag:hit.tagName,classes:hit.className,text:hit.textContent.slice(0,120)},targetHit:el.contains(hit),sidebarVisible:localStorage.getItem('sidebarVisible'),viewport:{width:innerWidth,height:innerHeight,outerWidth,outerHeight},visibility:document.visibilityState,focused:document.hasFocus()};})()`);
   await Deno.writeTextFile(`${directory}/${label}-hover.json`,JSON.stringify(geometry,null,2),{createNew:true});
   if(!geometry.targetHit)throw Error(`Hover target is obstructed: ${label} ${JSON.stringify(geometry)}`);
   const point=geometry.point;
   await session.send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
-  await session.poll(`document.querySelector(${JSON.stringify(selector)}).matches(':hover')`);
+   await session.poll(`document.querySelector(${JSON.stringify(selector)})?.matches(':hover')`);
   return primaryStyle(session,selector);
 }
 

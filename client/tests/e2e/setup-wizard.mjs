@@ -62,7 +62,7 @@ async function twoFrames(page) {
 async function selectMode(page, value) {
   await page.click(`input[name=access-mode][value=${value}]`);
   await page.poll(
-    `document.querySelector('input[name=access-mode][value=${value}]').checked`,
+     `document.querySelector('input[name=access-mode][value=${value}]')?.checked`,
   );
 }
 
@@ -95,9 +95,9 @@ async function geometrySweep(page, baseUrl, viewport) {
     );
     // Intermediate frames: measure right after the input lands, and after
     // two rAFs — both must equal the settled geometry (no animation).
-    const mid = await page.evaluate(rectList());
+     const mid = await page.read(['[role=dialog]', 'form .setup-details', 'button[type=submit]'], rectList());
     await twoFrames(page);
-    const end = await page.evaluate(rectList());
+     const end = await page.read(['[role=dialog]', 'form .setup-details', 'button[type=submit]'], rectList());
     compareRects(mid, end, `mid-frame (${viewport.w}x${viewport.h}, ${mode})`);
     if (settled.prev) {
       compareRects(settled.prev, end, `mode→${mode} (${viewport.w}x${viewport.h})`);
@@ -109,7 +109,7 @@ async function geometrySweep(page, baseUrl, viewport) {
     `document.documentElement.scrollWidth - window.innerWidth`,
   );
   assert(overflow <= 0, `no horizontal overflow at ${viewport.w}x${viewport.h}`);
-  const finishVisible = await page.evaluate(`(() => {
+   const finishVisible = await page.read('button[type=submit]', `(() => {
     const r = document.querySelector("button[type=submit]").getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   })()`);
@@ -175,7 +175,7 @@ try {
       type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9,
     });
     const inside = await page.evaluate(
-      `document.querySelector("[role=dialog]").contains(document.activeElement)`,
+       `document.querySelector("[role=dialog]")?.contains(document.activeElement)`,
     );
     assert(inside, `Tab containment holds (step ${i + 1})`);
   }
@@ -190,7 +190,7 @@ try {
     type: "keyUp", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40,
   });
   await page.poll(
-    `document.querySelector('input[name=access-mode][value=read_only]').checked`,
+     `document.querySelector('input[name=access-mode][value=read_only]')?.checked`,
   );
   console.log("ok: arrow-key radio selection");
   await selectMode(page, "password");
@@ -198,7 +198,7 @@ try {
   // -- 3. Pending + failure with a controlled request -----------------------
   await fillField(page, "#setup-username", "wizard-user");
   await fillField(page, "#setup-password", "wizard-pass");
-  const finishBefore = await page.evaluate(`(() => {
+   const finishBefore = await page.read('button[type=submit]', `(() => {
     const r = document.querySelector("button[type=submit]").getBoundingClientRect();
     return { w: r.width, h: r.height };
   })()`);
@@ -236,10 +236,10 @@ try {
 
   await page.click("button[type=submit]");
   await page.poll(
-    `document.querySelector("p[role=alert]").textContent.includes("Setup failed")`,
+     `document.querySelector("p[role=alert]")?.textContent.includes("Setup failed")`,
   );
   assert(intercepted === 1, "exactly one setup request made");
-  const finishAfter = await page.evaluate(`(() => {
+   const finishAfter = await page.read('button[type=submit]', `(() => {
     const r = document.querySelector("button[type=submit]").getBoundingClientRect();
     return { w: r.width, h: r.height };
   })()`);
@@ -249,7 +249,7 @@ try {
     "finish button size stable through failure",
   );
   const retained = await page.evaluate(
-    `document.querySelector("#setup-username").value`,
+     `document.querySelector("#setup-username")?.value`,
   );
   assert(retained === "wizard-user", "credentials retained after failure");
   await page.screenshot(join(ARTIFACTS, "wizard-failure.png"));
@@ -258,9 +258,9 @@ try {
   interceptMode = "slow";
   await page.click("button[type=submit]");
   await page.poll(
-    `document.querySelector("button[type=submit]").textContent.includes("Setting up")`,
+     `document.querySelector("button[type=submit]")?.textContent.includes("Setting up")`,
   );
-  const busyDisabled = await page.evaluate(
+   const busyDisabled = await page.read('button[type=submit]',
     `document.querySelector("button[type=submit]").disabled`,
   );
   assert(busyDisabled, "busy state disables the action");
@@ -344,12 +344,12 @@ try {
   await page.poll(`document.querySelector("[role=dialog]") !== null`);
   await selectMode(page, "none");
   // Finish stays disabled until the acknowledgement is checked.
-  const disabledBefore = await page.evaluate(
+   const disabledBefore = await page.read('button[type=submit]',
     `document.querySelector("button[type=submit]").disabled`,
   );
   assert(disabledBefore, "finish disabled until open-access acknowledgement");
   await page.click("input[type=checkbox]");
-  const disabledAfter = await page.evaluate(
+   const disabledAfter = await page.read('button[type=submit]',
     `document.querySelector("button[type=submit]").disabled`,
   );
   assert(!disabledAfter, "finish enabled once acknowledged");

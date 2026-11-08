@@ -96,7 +96,7 @@ async function markEditor() {
   await current.session.evaluate("window.__ownerEditor=document.querySelector('.cm-content'); true");
 }
 async function assertOwner(buffer, reads) {
-  assert(await current.session.evaluate(`document.querySelector('.cm-content') === window.__ownerEditor && document.querySelector('.cm-content').textContent === ${JSON.stringify(buffer)} && typeof window.onbeforeunload === 'function'`), "Query transition replaced the editor/buffer/unload protection");
+   assert(await current.session.evaluate(`document.querySelector('.cm-content') === window.__ownerEditor && document.querySelector('.cm-content')?.textContent === ${JSON.stringify(buffer)} && typeof window.onbeforeunload === 'function'`), "Query transition replaced the editor/buffer/unload protection");
   assert(current.reads.length === reads, "Query transition performed another note GET");
 }
 async function finish(evidence = {}) {
@@ -147,11 +147,11 @@ try {
 
   await setup("queued-delete-barrier"); await text("OWNER-delete-A"); await save(); await request(0); await text("OWNER-delete-B"); await save(); await text("OWNER-delete-D");
   await current.session.button("Delete", ".content-column");
-  assert(await current.session.evaluate("!document.body.innerText.includes('Confirm Deletion') && !document.body.innerText.includes('Save Changes') && document.querySelector('.cm-content').textContent === 'OWNER-delete-D'"), "Pending Delete bypassed the queue barrier");
+   assert(await current.session.evaluate("!document.body.innerText.includes('Confirm Deletion') && !document.body.innerText.includes('Save Changes') && document.querySelector('.cm-content')?.textContent === 'OWNER-delete-D'"), "Pending Delete bypassed the queue barrier");
   await release(0); await request(1); await release(1); await current.session.poll("document.body.innerText.includes('Save Changes')");
   assert(current.records.length === 2 && await current.session.evaluate("!document.body.innerText.includes('Confirm Deletion')"), "Delete skipped the newer-work decision");
   await current.session.button("Cancel", '[data-modal-top="true"]'); const deleteSaved = await readBack();
-  assert(deleteSaved.disk === "OWNER-delete-B" && await current.session.evaluate("document.querySelector('.cm-content').textContent === 'OWNER-delete-D' && typeof window.onbeforeunload === 'function'"), "Cancelled Delete lost C/D work"); await finish(deleteSaved);
+   assert(deleteSaved.disk === "OWNER-delete-B" && await current.session.evaluate("document.querySelector('.cm-content')?.textContent === 'OWNER-delete-D' && typeof window.onbeforeunload === 'function'"), "Cancelled Delete lost C/D work"); await finish(deleteSaved);
 
   await setup("read-only-delete", { view: true, readonly: true }); assert(await current.session.evaluate("![...document.querySelectorAll('.content-column button')].some(el=>el.textContent.trim()==='Delete' && el.getBoundingClientRect().width)"), "Read-only Delete became visible"); await finish(await readBack());
 
@@ -162,12 +162,12 @@ try {
 
   await setup("new-prefill-create-token", { create: true }); await text("OWNER-new-D");
   await routeLink("/_/new?path=Second&folder=target"); await current.session.poll("document.body.innerText.includes('Save Changes')");
-  await current.session.button("Cancel", '[data-modal-top="true"]'); assert(await current.session.evaluate("location.search.includes('First') && document.querySelector('.cm-content').textContent === 'OWNER-new-D'"), "Cancelled prefill lost state/URL");
+   await current.session.button("Cancel", '[data-modal-top="true"]'); assert(await current.session.evaluate("location.search.includes('First') && document.querySelector('.cm-content')?.textContent === 'OWNER-new-D'"), "Cancelled prefill lost state/URL");
   await routeLink("/_/new?path=Second&folder=target"); await current.session.button("Discard", '[data-modal-top="true"]'); await current.session.poll("location.search.includes('Second') && !!document.querySelector('.cm-content')");
   await text("OWNER-create-A"); await save(); await request(0); await text("OWNER-create-B"); await save(); await text("OWNER-create-D"); await markEditor();
   await release(0); await request(1); assert(current.records[0].method === "POST" && current.records[1].method === "PATCH", "Canonical create reset the queue");
   await release(1); await current.session.poll("location.pathname === '/Second' && !document.querySelector('.content-column .animate-spin')");
-  assert(await current.session.evaluate("document.querySelector('.cm-content') === window.__ownerEditor && document.querySelector('.cm-content').textContent === 'OWNER-create-D'"), "Canonical token replaced current editor"); await finish(await readBack("Second"));
+   assert(await current.session.evaluate("document.querySelector('.cm-content') === window.__ownerEditor && document.querySelector('.cm-content')?.textContent === 'OWNER-create-D'"), "Canonical token replaced current editor"); await finish(await readBack("Second"));
 
   for (const kind of ["edit", "paste"]) {
     await setup(`wysiwyg-immediate-${kind}`); await current.session.button("WYSIWYG", ".content-column"); await current.session.poll("!!document.querySelector('.ProseMirror[contenteditable=true] > p')");

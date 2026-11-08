@@ -60,7 +60,7 @@ try {
   check("300-char token wraps (no page-level horizontal overflow)", noPageOverflow);
 
   // 2. The long code line scrolls inside its block, never the column.
-  const pre = await page.evaluate(`(() => {
+   const pre = await page.read('.rendered-markdown pre', `(() => {
     const pre = [...document.querySelectorAll(".rendered-markdown pre")][0];
     return {
       blockScrolls: pre.scrollWidth > pre.clientWidth,
@@ -78,7 +78,7 @@ try {
   check("page column still doesn't overflow with the long code line", columnNoOverflow);
 
   // 3. Line-numbers gutter stays aligned with its code lines.
-  const aligned = await page.evaluate(`(() => {
+   const aligned = await page.read('.rendered-markdown pre .line-numbers-rows > span', `(() => {
     const pre = document.querySelector(".rendered-markdown pre");
     const rows = [...pre.querySelectorAll(".line-numbers-rows > span")];
     if (!rows.length) return { rows: 0 };

@@ -23,7 +23,7 @@ await conflictCase("conflict-resolution-native", async f => {
     await s.button(label, ".conflicts-page");
     if (action !== "both") {
       await s.poll("!!document.querySelector('[role=dialog]')");
-      assert(await s.evaluate(`document.querySelector('[role=dialog]').textContent.includes(${JSON.stringify(row.path)}) && document.querySelector('[role=dialog]').textContent.includes(${JSON.stringify(row.copyPath)})`), "Confirmation omitted actual filenames");
+       assert(await s.read('[role=dialog]', `document.querySelector('[role=dialog]').textContent.includes(${JSON.stringify(row.path)}) && document.querySelector('[role=dialog]').textContent.includes(${JSON.stringify(row.copyPath)})`), "Confirmation omitted actual filenames");
       await s.key("Tab", { windowsVirtualKeyCode: 9 }); assert(await s.evaluate("!!document.activeElement.closest('[role=dialog]')"), "Confirmation leaked focus");
       await s.button("Cancel", "[role=dialog]");
       assert(f.writes.length === (action === "merge" ? 3 : action === "copy" ? 1 : 0), "Cancelled confirmation dispatched a resolution");

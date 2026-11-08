@@ -7,7 +7,7 @@ export async function chooseNativeColor(session, selector, previous) {
   await session.poll(`document.activeElement===document.querySelector(${JSON.stringify(selector)})`);
   if (!socket) {
     await session.key("ArrowRight", { modifiers: 2, windowsVirtualKeyCode: 39 });
-    await session.poll(`document.querySelector(${JSON.stringify(selector)}).value!==${JSON.stringify(previous)}`);
+     await session.poll(`!!document.querySelector(${JSON.stringify(selector)}) && document.querySelector(${JSON.stringify(selector)}).value!==${JSON.stringify(previous)}`);
     await session.key("Enter", { windowsVirtualKeyCode: 13 });
     return;
   }
@@ -33,7 +33,7 @@ export async function chooseNativeColor(session, selector, previous) {
     // identical fixture titles; restored after the native interaction.
     await session.evaluate(`document.title=${JSON.stringify(marker)};true`);
     await key(["-M", "ctrl", "-k", "Right", "-m", "ctrl"]);
-    await session.poll(`document.querySelector(${JSON.stringify(selector)}).value!==${JSON.stringify(previous)}`);
+     await session.poll(`!!document.querySelector(${JSON.stringify(selector)}) && document.querySelector(${JSON.stringify(selector)}).value!==${JSON.stringify(previous)}`);
     await key(["-k", "Return"]);
   } finally {
     await session.evaluate(`document.title=${JSON.stringify(originalTitle)};true`);

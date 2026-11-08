@@ -131,7 +131,7 @@ async function actions(scope, name) {
   const selector=scope+' [data-settings-actions]:has([data-variant=cta],[data-variant=danger-primary])';
   await inspect(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({block:'center'})`);
   await settled();
-  const result = await inspect(`(()=>{
+   const result = await session.read(selector, `(()=>{
     const box=document.querySelector(${JSON.stringify(selector)});
     if(!box)return {missing:true};
     const r=box.getBoundingClientRect(),style=getComputedStyle(box),rem=parseFloat(getComputedStyle(document.documentElement).fontSize);
@@ -165,7 +165,7 @@ async function actions(scope, name) {
   return result;
 }
 async function invariant() {
-  assert(await inspect("document.querySelector('.cm-content')===window.__foundationEditor && document.querySelector('.cm-content').textContent.includes('Foundation unsaved note') && sessionStorage.getItem('token')===window.__foundationToken"), "Foundation interaction replaced editor/token or lost note draft");
+   assert(await inspect("document.querySelector('.cm-content')===window.__foundationEditor && document.querySelector('.cm-content')?.textContent.includes('Foundation unsaved note') && sessionStorage.getItem('token')===window.__foundationToken"), "Foundation interaction replaced editor/token or lost note draft");
   assert(await Deno.readTextFile(`${vault}/NoteA.md`) === "Seed content.\n", "Foundation interaction wrote the unsaved note");
 }
 async function closeFixture(name) {
@@ -186,7 +186,7 @@ async function warningObservation(selector, kind) {
   await session.poll(`!!document.querySelector(${JSON.stringify(selector)})`);
   await inspect(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
   await settled();
-  const row = await inspect(`(()=>{
+   const row = await session.read(selector, `(()=>{
     const el=document.querySelector(${JSON.stringify(selector)}),s=getComputedStyle(el),root=getComputedStyle(document.documentElement);
     const rgb=value=>(value.match(/[\\d.]+/g)??[]).slice(0,3).map(Number);
     const luminance=values=>values.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
@@ -236,10 +236,10 @@ try {
   await session.button("Source", ".content-column");
   await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')");
   await session.click(".cm-content"); await session.type("Foundation unsaved note\n");
-  await session.poll("document.querySelector('.cm-content').textContent.includes('Foundation unsaved note')");
+   await session.poll("document.querySelector('.cm-content')?.textContent.includes('Foundation unsaved note')");
   await inspect("window.__foundationEditor=document.querySelector('.cm-content');window.__foundationToken=sessionStorage.getItem('token');true");
   await open();
-  const themeIds = await inspect("(()=>{const ids=[...document.querySelectorAll('[data-theme-id]')].map(el=>el.dataset.themeId);return ids.filter(id=>id!=='system');})()");
+   const themeIds = await session.read('[data-appearance-settings] [data-theme-id]', "(()=>{const ids=[...document.querySelectorAll('[data-theme-id]')].map(el=>el.dataset.themeId);return ids.filter(id=>id!=='system');})()");
   assert(themeIds.length === 15, `Expected 15 shipped explicit themes, got ${themeIds.length}`);
   for (const id of themeIds) {
     await theme(id);
@@ -269,7 +269,7 @@ try {
       await replace("#brand-name", `Foundation retained draft ${name}`);
       await session.poll("[...document.querySelectorAll('[data-branding-settings] button')].some(b=>b.textContent.trim()==='Save branding'&&!b.disabled)");
       await session.button("Appearance", '[aria-label="Settings pages"]');
-      await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
+       await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
        const departure = await actions('[data-modal-top="true"]', `${name}-departure`);
        assert(departure.right[0].text === "Keep editing" && departure.left.some(button => button.text === "Discard"), "Grouped departure lost decision semantics");
       const screenshotPath = await screenshot(`${name}-departure`);
@@ -284,33 +284,33 @@ try {
        await session.key("Tab", { windowsVirtualKeyCode: 9 });
        await session.poll("document.activeElement===document.querySelector('[data-modal-top=true] [data-settings-actions-end] button:first-child')");
       await session.key(" ", { code: "Space", windowsVirtualKeyCode: 32 });
-      await session.poll("!document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes') && document.activeElement?.textContent.trim()==='Appearance'");
-      assert(await inspect(`document.querySelector('#brand-name').value===${JSON.stringify(`Foundation retained draft ${name}`)}`), "Keep editing lost Branding draft");
+       await session.poll("!document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes') && document.activeElement?.textContent.trim()==='Appearance'");
+       assert(await inspect(`document.querySelector('#brand-name')?.value===${JSON.stringify(`Foundation retained draft ${name}`)}`), "Keep editing lost Branding draft");
       await session.button("Reset branding…", "[data-branding-settings]");
-      await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?')");
+       await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Reset branding?')");
       const reset = await actions('[data-modal-top="true"]', `${name}-reset`);
       const resetScreenshot = await screenshot(`${name}-reset`);
       if (dpr === 1) {
         await tabTo('[data-modal-top="true"] [data-settings-actions-end] button:first-child');
         for (const type of ["keyDown", "keyUp"]) await session.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, ...(type === "keyDown" ? { text: "\r", unmodifiedText: "\r" } : {}) });
       } else await session.key("Escape", { windowsVirtualKeyCode: 27 });
-      await session.poll("!document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?') && document.activeElement?.textContent.trim()==='Reset branding…'");
+       await session.poll("!document.querySelector('[data-modal-top=true]')?.textContent.includes('Reset branding?') && document.activeElement?.textContent.trim()==='Reset branding…'");
       await session.button("Appearance", '[aria-label="Settings pages"]');
-      await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
+       await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
       await session.button("Discard", '[data-modal-top="true"]');
       await session.poll("!!document.querySelector('[data-appearance-settings]')");
       await session.button("Access", '[aria-label="Settings pages"]');
       await waitForAccessSummary(session); await session.button("Change access…");
-      await session.poll("!!document.querySelector('#setup-title') && !document.querySelector('#setup-mode-password').disabled");
+       await session.poll("!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-password')?.disabled===false");
       await session.click("#setup-mode-password");
       const accessFocus = await tabTo("#setup-username"); focusAssertion(accessFocus);
       await replace("#setup-username", "foundation-proposal");
       await session.click("#setup-mode-none");
       const toggleFocus = await tabTo("#setup-read-only-settings"); focusAssertion(toggleFocus);
-      const previous = await inspect("document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')");
+       const previous = await session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')");
       await session.key(" ", { code: "Space", windowsVirtualKeyCode: 32 });
-      await session.poll(`document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')!==${JSON.stringify(previous)}`);
-      const submit = await inspect("(()=>{const b=document.querySelector('#setup-title').closest('[role=dialog]').querySelector('button[type=submit]'),s=getComputedStyle(b);return {type:b.type,disabled:b.disabled,opacity:parseFloat(s.opacity),padding:parseFloat(s.paddingTop),busy:b.getAttribute('aria-busy')};})()");
+       await session.poll(`!!document.querySelector('#setup-read-only-settings') && document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')!==${JSON.stringify(previous)}`);
+       const submit = await session.read('[aria-labelledby=setup-title] button[type=submit]', "(()=>{const b=document.querySelector('#setup-title').closest('[role=dialog]').querySelector('button[type=submit]'),s=getComputedStyle(b);return {type:b.type,disabled:b.disabled,opacity:parseFloat(s.opacity),padding:parseFloat(s.paddingTop),busy:b.getAttribute('aria-busy')};})()");
       assert(submit.type === "submit" && submit.disabled && submit.opacity === 0.4 && submit.padding === 10, "Access CTA lost form ownership/disabled treatment");
       const accessScreenshot = await screenshot(`${name}-access`);
       await session.key("Escape", { windowsVirtualKeyCode: 27 });
@@ -332,17 +332,17 @@ try {
   await waitUntil(() => heldBrand ? done() : pending({ heldBrand: null }), { label: "Owned Branding response held", intervalMs: 50 });
   assert(heldBrand.responseStatusCode === 200, "Held Branding write failed upstream");
   await replace("#brand-name", "Foundation newer B");
-  assert(await inspect("!document.querySelector('#brand-name').readOnly && !document.querySelector('#brand-name').disabled"), "Pending Branding disabled newer draft editing");
+   assert(await session.read('#brand-name', "!document.querySelector('#brand-name').readOnly && !document.querySelector('#brand-name').disabled"), "Pending Branding disabled newer draft editing");
   const persisted = JSON.parse(await Deno.readTextFile(`${state}/config.json`));
   assert(persisted.brand_name === "Foundation persisted A", "Held Branding response did not persist captured A");
   await session.send("Fetch.continueRequest", { requestId: heldBrand.requestId }); held.delete(heldBrand.requestId);
-  await session.poll("document.querySelector('#brand-name').value==='Foundation newer B' && !document.querySelector('[data-branding-settings] [role=status]')");
+   await session.poll("document.querySelector('#brand-name')?.value==='Foundation newer B' && !document.querySelector('[data-branding-settings] [role=status]')");
   await session.send("Fetch.disable");
   await invariant();
   assert(writes.length === 1 && writes[0].path === brandPath, "Branding newer-draft flow repeated a mutation");
   await record("branding-pending-newer-draft", { capturedPersisted: persisted.brand_name, newerVisible: "Foundation newer B", writes, screenshot: await screenshot("branding-pending-newer-draft") });
   await session.button("Appearance", '[aria-label="Settings pages"]');
-  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')");
+   await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
   await session.button("Discard", '[data-modal-top="true"]');
   await session.poll("!!document.querySelector('[data-appearance-settings]')");
   await close();
@@ -352,7 +352,7 @@ try {
   await session.button("Branding", '[aria-label="Settings pages"]');
   await session.poll("document.querySelector('#brand-name')?.value==='Foundation persisted A'");
   await session.button("Reset branding…", "[data-branding-settings]");
-  await session.poll("document.querySelector('[data-modal-top=true]').textContent.includes('Reset branding?')");
+   await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Reset branding?')");
   assert(writes.length === 1, "Reset sent a write before explicit confirmation");
   await session.button("Reset branding", '[data-modal-top="true"]');
   await session.poll("document.querySelector('#brand-name')?.value==='' && !document.querySelector('[data-branding-settings] [role=status]')");

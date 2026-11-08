@@ -51,9 +51,9 @@ export async function exerciseSettingsMenu({ session, server, state }) {
   const on = await api("/_/api/plugin-host");
   assert(on.policy.revision === before.policy.revision + 2, "Native policy toggles were not distinct acknowledged writes");
   await session.button("Access");
-  assert(await session.evaluate("[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access…')"), "Writable no-auth Access action disappeared");
+   assert(await session.read('[data-modal-top=true]', "[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access…')"), "Writable no-auth Access action disappeared");
   await session.button("Account");
-  assert(await session.evaluate("document.querySelector('[data-modal-top=true]').textContent.includes('This session has no account.') && ![...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Log out')"), "No-auth Account exposed a meaningless logout");
+   assert(await session.read('[data-modal-top=true]', "document.querySelector('[data-modal-top=true]').textContent.includes('This session has no account.') && ![...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Log out')"), "No-auth Account exposed a meaningless logout");
   await close();
   assert(!await session.evaluate("!!document.querySelector('[title=Menu]')"), "Obsolete floating Settings menu remains");
   // The Settings opener leaves its unpinned sidebar overlay open. Dismiss
@@ -62,7 +62,7 @@ export async function exerciseSettingsMenu({ session, server, state }) {
   await session.goto(`${server.baseUrl}/_/search?term=Seed`);
   await session.poll("location.pathname==='/_/search' && new URL(location.href).searchParams.get('term')==='Seed'");
   await session.poll("(()=>{const button=[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Sort By: Score' && button.getBoundingClientRect().width);button?.setAttribute('data-native-sort-opener','');return !!button;})()");
-  assert(await session.evaluate("(()=>{const button=document.querySelector('[data-native-sort-opener]'),r=button.getBoundingClientRect();return button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()"), "Search sort opener is covered by another control");
+   assert(await session.read('[data-native-sort-opener]', "(()=>{const button=document.querySelector('[data-native-sort-opener]'),r=button.getBoundingClientRect();return button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()"), "Search sort opener is covered by another control");
   await session.click("[data-native-sort-opener]");
   await session.poll("(()=>{const item=[...document.querySelectorAll('[role=menuitem]')].find(item=>item.textContent.trim()==='Sort By: Last Modified');item?.setAttribute('data-native-sort','');return !!item;})()");
   await session.click("[data-native-sort]");

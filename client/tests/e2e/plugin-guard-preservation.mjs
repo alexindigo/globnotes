@@ -71,20 +71,20 @@ async function badges() {
   await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
   await session.button("Plugins");
   await session.poll("!!document.querySelector('[data-plugin-inventory-id=native-guard]') && !!document.querySelector('[data-plugin-inventory-id=native-observer]')");
-  assert(await session.evaluate("document.querySelector('[data-plugin-inventory-id=native-guard]').textContent.includes('Can block: save, delete') && !document.querySelector('[data-plugin-inventory-id=native-observer]').textContent.includes('Can block:')"), "Blocking inventory badges do not distinguish pre/on-only plugins");
+   assert(await session.read(['[data-plugin-inventory-id=native-guard]', '[data-plugin-inventory-id=native-observer]'], "document.querySelector('[data-plugin-inventory-id=native-guard]').textContent.includes('Can block: save, delete') && !document.querySelector('[data-plugin-inventory-id=native-observer]').textContent.includes('Can block:')"), "Blocking inventory badges do not distinguish pre/on-only plugins");
   await capture("only-pre-inventory-badge");
   await session.click('[data-settings-nav-id="plugin:native-guard"]'); await session.poll("document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='plugin:native-guard:preferences' && !!document.querySelector('#settings-field-enabled')");
-  assert(await session.evaluate("document.querySelector('[data-settings-content]').textContent.includes('Can block: save, delete') && document.querySelector('[data-settings-content]').textContent.includes('Errors or timeouts')"), "Actual guard page omitted blocking consequence");
+   assert(await session.read('[data-settings-content]', "document.querySelector('[data-settings-content]').textContent.includes('Can block: save, delete') && document.querySelector('[data-settings-content]').textContent.includes('Errors or timeouts')"), "Actual guard page omitted blocking consequence");
   await capture("guard-page-badge");
   await session.click('[data-settings-nav-id="plugin:native-observer"]'); await session.poll("document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='plugin:native-observer:preferences' && !!document.querySelector('#settings-field-enabled')");
-  assert(await session.evaluate("!document.querySelector('[data-settings-content]').textContent.includes('Can block:')"), "On-only declarative page gained blocking badge");
+   assert(await session.read('[data-settings-content]', "!document.querySelector('[data-settings-content]').textContent.includes('Can block:')"), "On-only declarative page gained blocking badge");
   await capture("observer-page-no-blocking-badge");
   await session.click('[aria-label="Close settings"]'); await session.poll("!document.querySelector('#settings-modal-title')");
   if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
 }
 async function mark() {
   const { session } = current;
-  current.before = await session.evaluate("({url:location.href,buffer:document.querySelector('.cm-content').textContent,folder:document.querySelector('input[placeholder=\"Folder (root)\"]').value,title:document.querySelector('input[placeholder=Title]').value})");
+   current.before = await session.read(['.cm-content', 'input[placeholder="Folder (root)"]', 'input[placeholder=Title]'], "({url:location.href,buffer:document.querySelector('.cm-content').textContent,folder:document.querySelector('input[placeholder=\"Folder (root)\"]').value,title:document.querySelector('input[placeholder=Title]').value})");
   await session.evaluate("window.__gps05Editor=document.querySelector('.cm-content');true");
   // GPS05_RETENTION_DIAGNOSTIC: persist the actual admitted baseline, not a guess.
   await Deno.writeTextFile(`${current.directory}/before-native-operation.json`, JSON.stringify({ ...current.before, observedAt: Date.now(), navigation: current.navigation }, null, 2), { createNew: true });
@@ -101,9 +101,9 @@ async function response() {
 async function retained(result) {
   const { session, before, vault } = current;
   // GPS05_RETENTION_DIAGNOSTIC: identify first divergent value before asserting.
-  const after = await session.evaluate("({url:location.href,buffer:document.querySelector('.cm-content').textContent,folder:document.querySelector('input[placeholder=\"Folder (root)\"]').value,title:document.querySelector('input[placeholder=Title]').value,sameEditor:document.querySelector('.cm-content')===window.__gps05Editor})");
+   const after = await session.evaluate("({url:location.href,buffer:document.querySelector('.cm-content')?.textContent,folder:document.querySelector('input[placeholder=\"Folder (root)\"]')?.value,title:document.querySelector('input[placeholder=Title]')?.value,sameEditor:document.querySelector('.cm-content')===window.__gps05Editor})");
   await Deno.writeTextFile(`${current.directory}/retention-comparison.json`, JSON.stringify({ before, after, equal: Object.fromEntries(Object.keys(before).map(key => [key, before[key] === after[key]])), observedAt: Date.now(), navigation: current.navigation }, null, 2), { createNew: true });
-  assert(await session.evaluate(`location.href===${JSON.stringify(before.url)} && document.querySelector('.cm-content')===window.__gps05Editor && document.querySelector('.cm-content').textContent===${JSON.stringify(before.buffer)} && document.querySelector('input[placeholder="Folder (root)"]').value===${JSON.stringify(before.folder)} && document.querySelector('input[placeholder=Title]').value===${JSON.stringify(before.title)}`), "Cancelled native operation changed URL/editor/buffer/path intent");
+   assert(await session.evaluate(`location.href===${JSON.stringify(before.url)} && document.querySelector('.cm-content')===window.__gps05Editor && document.querySelector('.cm-content')?.textContent===${JSON.stringify(before.buffer)} && document.querySelector('input[placeholder="Folder (root)"]')?.value===${JSON.stringify(before.folder)} && document.querySelector('input[placeholder=Title]')?.value===${JSON.stringify(before.title)}`), "Cancelled native operation changed URL/editor/buffer/path intent");
   assert(JSON.stringify(await api("notes/NoteA")) === JSON.stringify(current.originalNote), "Cancelled operation changed note API");
   assert(await Deno.readTextFile(`${vault}/NoteA.md`) === seed, "Cancelled operation changed exact note disk bytes");
   assert(JSON.stringify(await api("note-index")) === JSON.stringify(current.originalIndex), "Cancelled operation changed actual note index");
@@ -133,9 +133,9 @@ try {
   await current.session.click(".cm-content"); await current.session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); await current.session.type("GPS05 retained unsaved buffer\n\n[attachment](asset.bin)\n");
   await current.session.click('input[placeholder="Folder (root)"]'); await current.session.type("Destination");
   // GPS05_RETENTION_DIAGNOSTIC: no-Save control observes native caret URL first.
-  const immediate = await current.session.evaluate("({url:location.href,buffer:document.querySelector('.cm-content').textContent})");
+   const immediate = await current.session.evaluate("({url:location.href,buffer:document.querySelector('.cm-content')?.textContent})");
   await current.session.poll("location.hash==='#source:L4'");
-  const settled = await current.session.evaluate("({url:location.href,buffer:document.querySelector('.cm-content').textContent})");
+   const settled = await current.session.evaluate("({url:location.href,buffer:document.querySelector('.cm-content')?.textContent})");
   const beforeControl = await api("plugin-host/native-guard/commands/counts", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   assert(current.requests.length === 0 && beforeControl.body.result.saves === 0 && beforeControl.body.result.deletes === 0 && immediate.buffer === settled.buffer, "No-Save caret control executed an operation or changed the buffer");
   assert(JSON.stringify(await api("notes/NoteA")) === JSON.stringify(current.originalNote) && JSON.stringify(await api("note-index")) === JSON.stringify(current.originalIndex), "No-Save caret control changed note/index");

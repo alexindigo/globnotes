@@ -36,7 +36,7 @@ function stable(before, after, label) {
 }
 
 async function shell() {
-  return await page.evaluate(`(() => {
+   return await page.read(['[role=dialog] form > p[role=alert]', 'button[type=submit]'], `(() => {
     const dialog = document.querySelector('[role=dialog]');
     if(document.querySelector('button[type=submit]').getBoundingClientRect().top<dialog.querySelector('form > p[role=alert]').getBoundingClientRect().bottom)throw Error('Finish overlaps or precedes its feedback lane');
     const rect = (el) => {
@@ -53,7 +53,7 @@ async function shell() {
 }
 
 async function fit(label) {
-  const measured = await page.evaluate(`(() => {
+   const measured = await page.read(['#setup-totp-qr img', '.setup-totp-fields', '.setup-totp-enrolment', '#setup-totp-code', '#setup-totp-label', '#setup-password', 'button[type=submit]', 'form > p[role=alert]'], `(() => {
     const dialog = document.querySelector('[role=dialog]');
     const qr = document.querySelector('#setup-totp-qr img');
     const qrLane = qr.parentElement.parentElement;
@@ -187,8 +187,8 @@ try {
       const label = `${size.w}x${size.h}-${theme}`;
       const before = await shell();
       assert(
-        await page.evaluate(
-          "document.querySelector('#setup-totp').getAttribute('role') === 'switch'",
+         await page.read('#setup-totp',
+           "document.querySelector('#setup-totp').getAttribute('role') === 'switch'",
         ),
         `${label}: actual switch`,
       );
@@ -224,8 +224,8 @@ try {
       );
       assert(bundle?.secret, `${label}: observed enrolment response`);
       assert(
-        await page.evaluate(
-          `!document.querySelector('[role=dialog]').textContent.includes(${
+         await page.read('[role=dialog]',
+           `!document.querySelector('[role=dialog]').textContent.includes(${
             JSON.stringify(bundle.secret)
           })`,
         ),
@@ -277,7 +277,7 @@ try {
       for (const mode of ["read_only", "none", "password"]) {
         await page.click(`input[name=access-mode][value=${mode}]`);
         await page.poll(
-          `document.querySelector('input[name=access-mode][value=${mode}]').checked`,
+           `document.querySelector('input[name=access-mode][value=${mode}]')?.checked`,
         );
         stable(before, await shell(), `${label} mode-${mode}`);
       }

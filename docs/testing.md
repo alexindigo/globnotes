@@ -116,6 +116,18 @@ write/sync. A cleared PUT busy flag alone precedes the owning snapshot; restorin
 Add/Remove rows can still move lower inputs. The positive controls-ready marker
 keeps the next native gesture after that snapshot's actual UI result.
 
+Native read-only DOM snapshots use `session.read(requiredSelectors, expression)`.
+Required nodes and the synchronous snapshot are observed in one page task through
+the shared readiness helper; a separate presence poll followed by evaluate leaves
+a replacement race. False, zero and null snapshot values remain data, and probe
+exceptions fail immediately. Named-item predicates may return a guarded snapshot
+from `poll` itself. Keep mutations single-shot in native actions/evaluate; keep
+absence, focus and dirty-owner retention assertions immediate and null-safe so
+waiting cannot hide a temporary loss. The manual audit includes standalone cases
+outside the default selection. There is no broad static DOM-read classifier:
+nullable aliases, guarded optional regions and action callbacks need semantic
+review, and a noisy heuristic would reject valid invariants or miss real reads.
+
 ## Browser tests: a local HTTP domain
 
 Browser tests open the application only through an ordinary local HTTP

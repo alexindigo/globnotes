@@ -12,10 +12,10 @@ export async function exerciseSettingsEditor({ session, server, vault, mode }) {
   const typingSelector = mode === "WYSIWYG" ? ".ProseMirror > p:last-of-type" : selector;
   await session.poll(`!!document.querySelector(${JSON.stringify(typingSelector)})`);
   await session.click(typingSelector);
-  if (mode === "WYSIWYG") await session.poll("(()=>{const editor=document.querySelector('.ProseMirror'),selection=getSelection();return editor.contains(selection?.anchorNode) && !document.querySelector('.properties-panel')?.contains(selection?.anchorNode);})()");
+   if (mode === "WYSIWYG") await session.poll("(()=>{const editor=document.querySelector('.ProseMirror'),selection=getSelection();return !!editor&&editor.contains(selection?.anchorNode) && !document.querySelector('.properties-panel')?.contains(selection?.anchorNode);})()");
   await session.key("End", { modifiers: 2, windowsVirtualKeyCode: 35 });
   await session.type(`\n${marker}`);
-  await session.poll(`document.querySelector('${selector}').textContent.includes(${JSON.stringify(marker)})`);
+   await session.poll(`document.querySelector('${selector}')?.textContent.includes(${JSON.stringify(marker)})`);
   // Source caret selection owns a debounced URL aspect. Observe its actual
   // publication before using this URL as the Settings/command baseline.
   if (mode === "Source") await session.poll("(()=>{const line=document.querySelector('.cm-activeLineGutter')?.textContent.trim();return !!line && location.hash==='#source:L'+line;})()");
@@ -29,13 +29,13 @@ export async function exerciseSettingsEditor({ session, server, vault, mode }) {
   await settleInventory("session-guard", false);
   await session.button("Keybindings");
   await session.poll("!document.querySelector('[data-command-binding=\"plugin:session-guard:sdk-settings\"]')");
-  assert(await session.evaluate(`document.querySelector('${selector}')===window.__gpsEditor && document.querySelector('${selector}').textContent.includes(${JSON.stringify(marker)}) && location.href===window.__gpsEditorUrl`), "Command removal reset the mounted dirty editor/URL");
+   assert(await session.evaluate(`document.querySelector('${selector}')===window.__gpsEditor && document.querySelector('${selector}')?.textContent.includes(${JSON.stringify(marker)}) && location.href===window.__gpsEditorUrl`), "Command removal reset the mounted dirty editor/URL");
   await session.button("Plugins");
   await session.click('[data-plugin-inventory-id="session-guard"] .plugin-row-actions [role=switch]');
   await settleInventory("session-guard", true);
   await session.button("Keybindings");
   await session.poll("document.querySelectorAll('[data-command-binding=\"plugin:session-guard:sdk-settings\"]').length===1");
-  assert(await session.evaluate(`document.querySelector('${selector}')===window.__gpsEditor && document.querySelector('${selector}').textContent.includes(${JSON.stringify(marker)})`), "Command restoration reset the dirty editor");
+   assert(await session.evaluate(`document.querySelector('${selector}')===window.__gpsEditor && document.querySelector('${selector}')?.textContent.includes(${JSON.stringify(marker)})`), "Command restoration reset the dirty editor");
   await session.button("Plugins");
   await session.click('[data-plugin-inventory-id="globnotes-properties"] .plugin-row-actions [role=switch]');
   await session.poll("fetch('/_/api/plugin-host').then(r=>r.json()).then(c=>c.plugins.find(p=>p.id==='globnotes-properties').enabled===false)");

@@ -177,7 +177,7 @@ if (options.controls) {
     await session.poll("document.activeElement === document.querySelector('#settings-field-retention')");
     await session.key("Home", { windowsVirtualKeyCode: 36 });
     for (let index = 1; index < count; index++) await session.key("ArrowRight", { windowsVirtualKeyCode: 39 });
-    await session.poll(`document.querySelector('#settings-field-retention').value === '${count}'`);
+     await session.poll(`document.querySelector('#settings-field-retention')?.value === '${count}'`);
     await session.key("Enter", { windowsVirtualKeyCode: 13 });
     await session.poll(`fetch('/_/api/plugin-host/globnotes-backup/settings/backup').then(r=>r.json()).then(v=>v.values.retention===${count})`);
   }
@@ -227,7 +227,7 @@ if (options.controls) {
         const rows = [];
         for (const count of options.case ? [2] : Array.from({ length: 10 }, (_, index) => index + 1)) {
           await retention(count); await closeSettings(); await open();
-          equal(Number(await current.session.evaluate("document.querySelector('#settings-field-retention').value")), count, `BACKUP_NATIVE_${kind}: reopened slider`);
+           equal(Number(await current.session.read('#settings-field-retention', "document.querySelector('#settings-field-retention').value")), count, `BACKUP_NATIVE_${kind}: reopened slider`);
           if (count === 2) await picture("retention-slider");
           const path = options.case ? "Note" : `Count${count}`;
           if (!options.case) equal((await api("/_/api/notes", "POST", { path, content: "v0" })).status, 200, "native fixture note create");
@@ -266,7 +266,7 @@ if (options.controls) {
         const pin = { GLOBNOTES_PLUGIN_SETTINGS: JSON.stringify({ "globnotes-backup": { backup: { basePath: root } } }) };
         await fixture(label, pin, { retention: 2, basePath: "stored" }); await Deno.mkdir(root);
         await open();
-        assert(await current.session.evaluate(`document.querySelector('#settings-field-basePath').readOnly && document.querySelector('#settings-field-basePath').value===${JSON.stringify(root)} && document.querySelector('[data-modal-top=true]').textContent.includes('Set by the server configuration')`), "BACKUP_NATIVE_pin: effective readonly field");
+         assert(await current.session.read(['#settings-field-basePath', '[data-modal-top=true]'], `document.querySelector('#settings-field-basePath').readOnly && document.querySelector('#settings-field-basePath').value===${JSON.stringify(root)} && document.querySelector('[data-modal-top=true]').textContent.includes('Set by the server configuration')`), "BACKUP_NATIVE_pin: effective readonly field");
         await picture("environment-pin"); await retention(3); await closeSettings();
         const raw = JSON.parse(await Deno.readTextFile(`${current.state}/plugin-data/globnotes-backup/settings.json`));
         equal(raw.values.backup.basePath, "stored", "BACKUP_NATIVE_pin: stored fallback preserved by sibling save");
@@ -275,7 +275,7 @@ if (options.controls) {
           await restart({ GLOBNOTES_PLUGIN_SETTINGS: '{"globnotes-backup":{"backup":{"basePath":""}}}' });
           equal((await settings()).body.values.basePath, "", "BACKUP_NATIVE_pin: explicit empty override"); await save("Note", "C"); await ring(current.vault, "Note", ["B"], kind);
           await restart(); await open(); equal((await settings()).body.values.basePath, "stored", "BACKUP_NATIVE_pin: unpinned fallback restored");
-          assert(!await current.session.evaluate("document.querySelector('#settings-field-basePath').readOnly"), "BACKUP_NATIVE_pin: unpinned field writable");
+           assert(!await current.session.read('#settings-field-basePath', "document.querySelector('#settings-field-basePath').readOnly"), "BACKUP_NATIVE_pin: unpinned field writable");
           await picture("restored-fallback"); await closeSettings(); await save("Note", "D"); await ring(`${current.vault}/stored`, "Note", ["C"], kind); await ring(root, "Note", ["A"], kind);
         }
         await finish(kind, { root, persistedFallback: raw.values.backup.basePath });
@@ -337,15 +337,15 @@ if (options.controls) {
         await session.poll("document.querySelector('.cm-content')?.textContent.includes('dirty retained')");
         await session.evaluate("window.__backupUrl=location.href;true");
         await open();
-        assert(await session.evaluate("document.querySelector('.cm-content')===window.__backupEditor && document.querySelector('.cm-content').textContent.includes('dirty retained') && location.href===window.__backupUrl"), "BACKUP_NATIVE_failure: literal editor and URL retained");
+         assert(await session.evaluate("document.querySelector('.cm-content')===window.__backupEditor && document.querySelector('.cm-content')?.textContent.includes('dirty retained') && location.href===window.__backupUrl"), "BACKUP_NATIVE_failure: literal editor and URL retained");
         await picture("failure-retained-editor");
         const observer = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
         try { await observer.goto(`${current.server.baseUrl}/_/api/plugins/globnotes-backup/status`); await observer.poll("document.body.textContent.includes('backup_alien_slot')"); await picture("failure-status", observer); }
         finally { await observer.close(); }
-        await closeSettings(); assert(await session.evaluate("document.querySelector('.cm-content')===window.__backupEditor && document.querySelector('.cm-content').textContent.includes('dirty retained')"), "BACKUP_NATIVE_failure: modal close retains newer draft");
+         await closeSettings(); assert(await session.evaluate("document.querySelector('.cm-content')===window.__backupEditor && document.querySelector('.cm-content')?.textContent.includes('dirty retained')"), "BACKUP_NATIVE_failure: modal close retains newer draft");
         await finish(kind, { failed, editorRetained: true, draftRetained: true, urlRetained: true });
       } else {
-        await fixture("settings-lock"); await open(); assert(await current.session.evaluate("document.querySelector('#settings-field-retention').disabled && document.querySelector('#settings-field-basePath').readOnly"), "BACKUP_NATIVE_settings-lock: settings readonly");
+         await fixture("settings-lock"); await open(); assert(await current.session.read(['#settings-field-retention', '#settings-field-basePath'], "document.querySelector('#settings-field-retention').disabled && document.querySelector('#settings-field-basePath').readOnly"), "BACKUP_NATIVE_settings-lock: settings readonly");
         const before = (await settings()).body;
         equal((await api("/_/api/plugin-host/globnotes-backup/settings/backup", "PUT", { revision: before.revision, sourceKey: before.sourceKey, values: { retention: 3, basePath: "" } })).status, 403, "BACKUP_NATIVE_settings-lock: API rejects settings mutation");
         await closeSettings(); await save("Note", "B"); await ring(current.vault, "Note", ["A"], "settings-lock"); await finish("settings-lock", { noteWritable: true, settingsWritable: false });

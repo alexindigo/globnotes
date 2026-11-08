@@ -69,7 +69,7 @@ try {
   await page.waitForTimeout(400);
   const h1 = await page.evaluate("history.length");
   check("anchor click pushes no history entry", h1 === h0, `len ${h0}→${h1}`);
-  const scrolled = await page.evaluate(
+   const scrolled = await page.read('#section-one',
     `(() => { const el = document.getElementById("section-one"); const r = el.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; })()`,
   );
   check("anchor click scrolls the target into view", scrolled);

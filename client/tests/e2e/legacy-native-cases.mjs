@@ -35,8 +35,7 @@ async function theme(f, id) {
   await f.page.evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
 }
 async function viewImage(f, loaded = true) {
-  await f.page.poll(`!!document.querySelector('.toast-viewer img')?.complete && (document.querySelector('.toast-viewer img').naturalWidth>0)===${loaded}`);
-  return f.page.evaluate("(()=>{const image=document.querySelector('.toast-viewer img');return{path:location.pathname,src:image.getAttribute('src'),resolved:image.src,loaded:image.complete&&image.naturalWidth>0};})()");
+  return f.page.poll(`(()=>{const image=document.querySelector('.toast-viewer img');if(!image?.complete||(image.naturalWidth>0)!==${loaded})return false;return{path:location.pathname,src:image.getAttribute('src'),resolved:image.src,loaded:image.naturalWidth>0};})()`);
 }
 async function edit(f) {
   await f.page.button("Edit", ".content-column");
@@ -102,7 +101,7 @@ export const cases = {
     const outcomes = [];
     for (const [id, dark, background, brand] of PALETTES) {
       await theme(f, id);
-      const value = await f.page.evaluate("({background:getComputedStyle(document.body).backgroundColor,nav:getComputedStyle(document.querySelector('nav')).backgroundColor,dark:document.body.classList.contains('dark'),brand:document.documentElement.style.getPropertyValue('--theme-brand').trim()})");
+      const value = await f.page.read("nav", "({background:getComputedStyle(document.body).backgroundColor,nav:getComputedStyle(document.querySelector('nav')).backgroundColor,dark:document.body.classList.contains('dark'),brand:document.documentElement.style.getPropertyValue('--theme-brand').trim()})");
       assert(value.dark === dark && value.background === rgb(background) && value.nav === rgb(background), `${id}: palette did not reach body/navbar`);
       assert(value.brand === [0, 2, 4].map(offset => parseInt(brand.slice(offset, offset + 2), 16)).join(" "), `${id}: wrong brand palette`);
       outcomes.push({ id, ...value });
@@ -112,7 +111,7 @@ export const cases = {
       const [, dark, background] = PALETTES.find(row => row[0] === "globnotes-" + mode);
       await f.page.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: mode }] });
       await f.page.poll(`document.body.classList.contains('dark')===${dark}&&getComputedStyle(document.body).backgroundColor===${JSON.stringify(rgb(background))}`);
-      const value = await f.page.evaluate("({body:getComputedStyle(document.body).backgroundColor,nav:getComputedStyle(document.querySelector('nav')).backgroundColor})");
+      const value = await f.page.read("nav", "({body:getComputedStyle(document.body).backgroundColor,nav:getComputedStyle(document.querySelector('nav')).backgroundColor})");
       assert(value.body === rgb(background) && value.nav === rgb(background), `System ${mode}: palette did not reach actual surfaces`);
       outcomes.push({ id: "system", mode, ...value });
     }
@@ -125,7 +124,7 @@ export const cases = {
       const [, , background, , text, border] = PALETTES.find(row => row[0] === id);
       await theme(f, id);
       await f.page.poll("document.querySelector('aside')?.getBoundingClientRect().width>0");
-      const value = await f.page.evaluate("(()=>{const aside=document.querySelector('aside'),background=getComputedStyle(document.body).backgroundColor,button=getComputedStyle(document.querySelector('[title=Search] svg')).stroke,role=getComputedStyle(document.documentElement).getPropertyValue('--theme-text-muted').trim().split(' ').filter(Boolean).join(', '),l=css=>css.match(/[0-9.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0),a=l(button),b=l(background);return{body:background,nav:getComputedStyle(document.querySelector('nav')).backgroundColor,sidebar:getComputedStyle(aside).backgroundColor,text:getComputedStyle(document.querySelector('.content-column')).color,border:getComputedStyle(aside).borderRightColor,button,expectedButton:'rgb('+role+')',buttonContrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};})()");
+      const value = await f.page.read(["aside", "[title=Search] svg", ".content-column", "nav"], "(()=>{const aside=document.querySelector('aside'),background=getComputedStyle(document.body).backgroundColor,button=getComputedStyle(document.querySelector('[title=Search] svg')).stroke,role=getComputedStyle(document.documentElement).getPropertyValue('--theme-text-muted').trim().split(' ').filter(Boolean).join(', '),l=css=>css.match(/[0-9.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0),a=l(button),b=l(background);return{body:background,nav:getComputedStyle(document.querySelector('nav')).backgroundColor,sidebar:getComputedStyle(aside).backgroundColor,text:getComputedStyle(document.querySelector('.content-column')).color,border:getComputedStyle(aside).borderRightColor,button,expectedButton:'rgb('+role+')',buttonContrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};})()");
       assert([value.body, value.nav, value.sidebar].every(color => color === rgb(background)), `${id}: a surface retained a stale background`);
       assert(value.text === rgb(text) && value.border === rgb(border), `${id}: text/border palette did not reach consumers`);
       assert(value.button === value.expectedButton && value.buttonContrast >= 4.5, `${id}: button glyph did not consume its readable derived palette`);
@@ -138,7 +137,7 @@ export const cases = {
     const samples = [];
     for (const [id, color] of [["tokyo-night", "bb9af7"], ["dracula", "ff79c6"], ["catppuccin-latte", "8839ef"]]) {
       await theme(f, id); await f.page.poll("!!document.querySelector('.toast-viewer .token.keyword')");
-      samples.push({ theme: id, actual: await f.page.evaluate(`(()=>{const token=document.querySelector('.toast-viewer .token.keyword');return (${visibleElement.toString()})(token)?getComputedStyle(token).color:null;})()`), expected: rgb(color) });
+      samples.push({ theme: id, actual: await f.page.read(".toast-viewer .token.keyword", `(()=>{const token=document.querySelector('.toast-viewer .token.keyword');return (${visibleElement.toString()})(token)?getComputedStyle(token).color:null;})()`), expected: rgb(color) });
     }
     tokenColors(samples); return samples;
   },
@@ -146,7 +145,7 @@ export const cases = {
     await prepareClipboardWitness(f.page); await open(f);
     const prior = await captureClipboard(f.page);
     try {
-      const expected = await f.page.evaluate("document.querySelector('.toast-viewer pre code').textContent");
+      const expected = await f.page.read(".toast-viewer pre code", "document.querySelector('.toast-viewer pre code').textContent");
       await f.page.click(".code-copy-btn");
       await waitUntil(async () => {
         const clipboard = await f.page.readClipboard();
@@ -171,7 +170,7 @@ export const cases = {
     await f.page.evaluate("(()=>{const pm=document.querySelector('.ProseMirror'),paragraph=[...pm.querySelectorAll('p')].find(el=>el.textContent==='Fixture rendering/code-blocks. #inbox');if(!paragraph)throw Error('Missing editable selection fixture');pm.focus();const range=document.createRange();range.selectNodeContents(paragraph);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);return true;})()");
     await f.page.poll("getSelection().toString()==='Fixture rendering/code-blocks. #inbox'");
     await f.page.click('.wysiwyg-toolbar button[title="Bold"]');
-    await f.page.poll("(()=>{const pm=document.querySelector('.ProseMirror'),selection=getSelection();return pm.contains(document.activeElement)&&!!pm.querySelector('strong')&&!selection.isCollapsed&&selection.toString().length>0;})()");
+    await f.page.poll("(()=>{const pm=document.querySelector('.ProseMirror'),selection=getSelection();return !!pm&&pm.contains(document.activeElement)&&!!pm.querySelector('strong')&&!selection.isCollapsed&&selection.toString().length>0;})()");
     await f.page.button("Source", ".content-column");
     await f.page.poll("document.querySelector('.cm-content')?.textContent.includes('def greet')");
     const marker = "Stored keymap fallback saved through Obsidian";
@@ -253,8 +252,7 @@ export const cases = {
     const expected = [...CHAIN].reverse().slice(0, 5).map(path => "/" + path);
     const apiOrder = [...notes].sort((a, b) => b.lastModified - a.lastModified).slice(0, 5).map(note => "/" + note.path);
     assert(JSON.stringify(apiOrder) === JSON.stringify(expected), "Recent-order fixture/API disagree");
-    await f.page.poll("(()=>{const title=[...document.querySelectorAll('aside p')].find(el=>el.textContent.trim()==='Recent');return title?.parentElement.querySelectorAll('a').length===5;})()");
-    const actual = await f.page.evaluate("(()=>{const title=[...document.querySelectorAll('aside p')].find(el=>el.textContent.trim()==='Recent');return [...title.parentElement.querySelectorAll('a')].map(el=>el.getAttribute('href'));})()");
+    const actual = await f.page.poll("(()=>{const title=[...document.querySelectorAll('aside p')].find(el=>el.textContent.trim()==='Recent');if(!title||title.parentElement.querySelectorAll('a').length!==5)return false;return [...title.parentElement.querySelectorAll('a')].map(el=>el.getAttribute('href'));})()");
     assert(JSON.stringify(actual) === JSON.stringify(expected), `Recent notes have wrong identity/order: ${JSON.stringify({ actual, expected })}`);
     await f.page.reload(); await f.page.poll("document.querySelector('aside')?.getBoundingClientRect().width>0");
     await f.page.poll("[...document.querySelectorAll('aside p')].some(el=>el.textContent.trim()==='Recent')");
@@ -278,23 +276,22 @@ export const cases = {
   async "quick-switcher"(f) {
     await open(f, "rendering/code-blocks"); await f.page.click('[title="Search"]');
     await f.page.poll("!!document.querySelector('input[placeholder=\"Search or switch to note…\"]')");
-    const first = await f.page.evaluate("(()=>{const row=document.querySelector('ul.switcher-results li');return [...row.querySelectorAll('*')].filter(el=>el.childElementCount===0).map(el=>el.textContent.trim());})()");
+    const first = await f.page.read('ul.switcher-results li [title^="Open result"]', "(()=>{const row=document.querySelector('ul.switcher-results li');return [...row.querySelectorAll('*')].filter(el=>el.childElementCount===0).map(el=>el.textContent.trim());})()");
     assert(first.includes("rendering/code-blocks"), "Exact recently-opened identity not first");
     const input = 'input[placeholder="Search or switch to note…"]';
     await f.page.fill(input, "math"); await f.page.poll("document.querySelector('ul.switcher-results')?.textContent.includes('math')");
     await f.page.key("Enter", { windowsVirtualKeyCode: 13 }); await f.page.poll("location.pathname==='/rendering/math'");
     await f.page.click('[title="Search"]'); await f.page.fill(input, "code");
     await f.page.poll("[...document.querySelectorAll('ul.switcher-results li')].some(el=>el.textContent.includes('Search for'))");
-    await f.page.evaluate("[...document.querySelectorAll('ul.switcher-results li')].find(el=>el.textContent.includes('Search for')).setAttribute('data-native-full-search',''); true");
-    await f.page.click('[data-native-full-search]');
+    await f.page.click('ul.switcher-results li:has([title="Open the full search page"])');
     await f.page.poll("location.pathname==='/_/search' && new URLSearchParams(location.search).get('term')==='code'");
     await f.page.click('[title="Search"]'); await f.page.fill(input, "#");
     await f.page.evaluate(`document.querySelector(${JSON.stringify(input)}).setSelectionRange(1,1);true`);
     await f.page.key("Shift", { code: "ShiftLeft", windowsVirtualKeyCode: 16 });
-    await f.page.poll(`(()=>{const input=document.querySelector(${JSON.stringify(input)});return [...input.parentElement.querySelectorAll('p')].some(el=>el.textContent.trim()==='#inbox'&&el.getBoundingClientRect().height>0);})()`);
-    await f.page.evaluate("(()=>{const input=document.querySelector('input[placeholder=\"Search or switch to note…\"]');const item=[...input.parentElement.querySelectorAll('p')].find(el=>el.textContent.trim()==='#inbox');if(!item)throw Error('Missing tag suggestion');item.setAttribute('data-native-tag','');return true;})()");
+    await f.page.poll(`(()=>{const input=document.querySelector(${JSON.stringify(input)});return !!input&&[...input.parentElement.querySelectorAll('p')].some(el=>el.textContent.trim()==='#inbox'&&el.getBoundingClientRect().height>0);})()`);
+    await f.page.poll("(()=>{const input=document.querySelector('input[placeholder=\"Search or switch to note…\"]');if(!input)return false;const item=[...input.parentElement.querySelectorAll('p')].find(el=>el.textContent.trim()==='#inbox');if(!item)return false;item.setAttribute('data-native-tag','');return true;})()");
     await f.page.click('[data-native-tag]');
-    await f.page.poll(`document.querySelector(${JSON.stringify(input)}).value==='#inbox'`);
+    await f.page.poll(`document.querySelector(${JSON.stringify(input)})?.value==='#inbox'`);
     return { recentlyOpened: first, fuzzyOpened: "rendering/math", fullSearch: "code", tagSuggestion: "inbox" };
   },
 };

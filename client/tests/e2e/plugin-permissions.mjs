@@ -151,7 +151,7 @@ async function review(session = current.session) {
 async function master(session = current.session) {
   const before = await view();
   await session.poll("(()=>{const button=document.querySelector('[data-plugin-inventory-id=networked] [data-plugin-permission-panel] [role=switch]');if(!button||button.disabled||button.closest('[inert]'))return false;button.scrollIntoView({block:'center'});return !!button.getBoundingClientRect().width;})()");
-  const admission = await session.evaluate("(()=>{const button=document.querySelector('[data-plugin-inventory-id=networked] [data-plugin-permission-panel] [role=switch]');const r=button.getBoundingClientRect();return {disabled:button.disabled,pressed:button.getAttribute('aria-checked'),hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('button')===button};})()");
+   const admission = await session.read('[data-plugin-inventory-id=networked] [data-plugin-permission-panel] [role=switch]', "(()=>{const button=document.querySelector('[data-plugin-inventory-id=networked] [data-plugin-permission-panel] [role=switch]');const r=button.getBoundingClientRect();return {disabled:button.disabled,pressed:button.getAttribute('aria-checked'),hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('button')===button};})()");
   assert(admission.hit && !admission.disabled, "master control not natively interactable at admission");
   await Deno.writeTextFile(`${current.directory}/master-admission-${before.revision}.json`, JSON.stringify(admission, null, 2));
   await session.click('[data-plugin-inventory-id=networked] [data-plugin-permission-panel] [role=switch]');
@@ -169,7 +169,7 @@ async function promptFocus(session = current.session) {
   await session.poll("document.querySelector('[data-modal-top=true] [role=dialog]')?.contains(document.activeElement)");
   const observations = [];
   for (let index = 0; index < 18; index++) {
-    const state = await session.evaluate("(()=>{const mask=document.querySelector('[data-modal-top=true]'),dialog=mask.querySelector('[role=dialog]'),r=dialog.getBoundingClientRect();return {inside:dialog.contains(document.activeElement),focused:document.activeElement?.textContent?.trim()||document.activeElement?.getAttribute('type'),lowerInert:[...document.querySelectorAll('[data-modal-top=false]')].every(el=>el.inert),shellInert:document.querySelector('[data-app-shell]').inert,rect:r.toJSON(),contained:r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight};})()");
+     const state = await session.read(['[data-modal-top=true] [role=dialog]', '[data-app-shell]'], "(()=>{const mask=document.querySelector('[data-modal-top=true]'),dialog=mask.querySelector('[role=dialog]'),r=dialog.getBoundingClientRect();return {inside:dialog.contains(document.activeElement),focused:document.activeElement?.textContent?.trim()||document.activeElement?.getAttribute('type'),lowerInert:[...document.querySelectorAll('[data-modal-top=false]')].every(el=>el.inert),shellInert:document.querySelector('[data-app-shell]').inert,rect:r.toJSON(),contained:r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight};})()");
     assert(state.inside && state.lowerInert && state.shellInert && state.contained, "request focus/stack/viewport ownership failed");
     observations.push(state);
     if (index === 7) await capture("prompt-decisions", session);
@@ -200,7 +200,7 @@ try {
   await capture("inventory-review");
   await outcome("PERMISSIONS-01 INVENTORY TRUST OK", { disabledCustomBadge: true, reviewNotice: true });
   const unrelated = (await invoke("unrelated", "inspect")).body.result.instance;
-  const browserNonce = await current.session.evaluate("document.querySelector('[data-permission-browser-nonce]')?.dataset.permissionBrowserNonce");
+   const browserNonce = await current.session.read('[data-permission-browser-nonce]', "document.querySelector('[data-permission-browser-nonce]').dataset.permissionBrowserNonce");
   assert(browserNonce, "actual browser runtime marker missing");
   await current.session.button("Approve", rowSelector("network"));
   let value = await committed(value => value.approvedNetwork.length === 1, "network approval"); assert(value.allowNetwork === false && !value.effectiveNetwork.length, "approval implicitly enabled master");
@@ -250,7 +250,7 @@ try {
   // Verify no browser isolation/badge suppression: the metadata remains despite master off.
   await current.session.goto(`${current.server.base}/NoteA`); await current.session.poll("!!document.querySelector('.toast-viewer')");
   await review(); await master();
-  assert(await current.session.evaluate("!!document.querySelector('[data-plugin-inventory-id=networked] .plugin-row-browser') && document.querySelector('[data-plugin-trust-notice]').textContent.includes('Browser/editor plugin code')"), "master off hid browser trust metadata");
+   assert(await current.session.read('[data-plugin-trust-notice]', "!!document.querySelector('[data-plugin-inventory-id=networked] .plugin-row-browser') && document.querySelector('[data-plugin-trust-notice]').textContent.includes('Browser/editor plugin code')"), "master off hid browser trust metadata");
   await outcome("PERMISSIONS-08 BROWSER TRUST OK", { masterOff: true, badgeVisible: true });
   await finish();
   await fixture("isolated-import-parent", { importParent: true }); await dismissPrompt(); await review();
@@ -277,21 +277,21 @@ try {
   await current.session.evaluate("window.__permissionEditor = document.querySelector('.cm-content'); window.__permissionUrl = location.href; true");
   const oldWorker = (await invoke("networked", "inspect")).body.result.instance;
   const oldOther = (await invoke("unrelated", "inspect")).body.result.instance;
-  const oldBrowser = await current.session.evaluate("document.querySelector('[data-permission-browser-nonce]')?.dataset.permissionBrowserNonce");
+   const oldBrowser = await current.session.read('[data-permission-browser-nonce]', "document.querySelector('[data-permission-browser-nonce]').dataset.permissionBrowserNonce");
   await inventory(); await current.session.click('[data-settings-nav-id="plugin:networked"]');
   await current.session.poll("!!document.querySelector('input[type=number]') && !document.querySelector('input[type=number]').readOnly && !document.querySelector('input[type=number]').disabled");
   await current.session.click('input[type=number]'); await current.session.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 }); await current.session.key("Backspace", { code: "Backspace", windowsVirtualKeyCode: 8 });
   await current.session.key("Tab", { code: "Tab", windowsVirtualKeyCode: 9 });
   await current.session.poll("document.body.textContent.includes('Enter a number')");
-  const retainedPage=await current.session.evaluate("({page:document.querySelector('[data-settings-content]').dataset.settingsCurrentPage,url:location.href})");
+   const retainedPage=await current.session.read('[data-settings-content]', "({page:document.querySelector('[data-settings-content]').dataset.settingsCurrentPage,url:location.href})");
   assert(await current.session.evaluate("document.querySelectorAll('[data-settings-attention] button').length===1"),'Postponed request is missing from Needs attention');
   await openAttentionRequest();
   await promptFocus();
   await current.session.key("Escape", { code: "Escape", windowsVirtualKeyCode: 27 });
   await current.session.poll("!document.querySelector('#permission-request-title') && !!document.querySelector('#settings-field-limit')");
   await current.session.poll("document.activeElement?.matches('[data-settings-attention] button') && !!document.activeElement.closest('[data-modal-top=true]')");
-  assert(await current.session.evaluate(`document.querySelector('[data-settings-content]').dataset.settingsCurrentPage===${JSON.stringify(retainedPage.page)} && location.href===${JSON.stringify(retainedPage.url)} && !document.body.textContent.includes('Unsaved changes')`),'Attention opening navigated or ran a departure decision');
-  assert(await current.session.evaluate("document.querySelector('.cm-content') === window.__permissionEditor && location.href === window.__permissionUrl && document.querySelector('.cm-content').textContent.includes('PERMISSION-D')"), "prompt Escape lost editor/URL/live D");
+   assert(await current.session.evaluate(`document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage===${JSON.stringify(retainedPage.page)} && location.href===${JSON.stringify(retainedPage.url)} && !document.body.textContent.includes('Unsaved changes')`),'Attention opening navigated or ran a departure decision');
+   assert(await current.session.evaluate("document.querySelector('.cm-content') === window.__permissionEditor && location.href === window.__permissionUrl && document.querySelector('.cm-content')?.textContent.includes('PERMISSION-D')"), "prompt Escape lost editor/URL/live D");
   assert(current.noteWrites.length === 1, "permission review dispatched queued B before A acknowledgement");
   await openAttentionRequest();
   await current.session.click('[data-permission-request-choices] [role=switch]');
@@ -309,7 +309,7 @@ try {
   const actual = await json("notes/NoteA"), disk = await Deno.readTextFile(`${current.vault}/NoteA.md`);
   assert(actual.status === 200 && disk === actual.body.content && disk.includes("PERMISSION-B") && !disk.includes("PERMISSION-D"), "A/B FIFO did not reach API/disk B exactly");
   assert(current.noteWrites.map(record => record.body.newContent).join('|') === "PERMISSION-A|PERMISSION-B", "permission flow changed A/B snapshots");
-  assert(await current.session.evaluate("document.querySelector('.cm-content') === window.__permissionEditor && location.href === window.__permissionUrl && document.querySelector('.cm-content').textContent.includes('PERMISSION-D') && typeof window.onbeforeunload === 'function'"), "final approval/FIFO acknowledgement lost current D or protection");
+   assert(await current.session.evaluate("document.querySelector('.cm-content') === window.__permissionEditor && location.href === window.__permissionUrl && document.querySelector('.cm-content')?.textContent.includes('PERMISSION-D') && typeof window.onbeforeunload === 'function'"), "final approval/FIFO acknowledgement lost current D or protection");
    const dirtyWork = { apiDisk: disk, literalRequests: current.noteWrites.map(record => record.body.newContent), protectedLiveD: true, settingsInvalidDraft: true, oldWorker, oldOther, oldBrowser };
    await finish();
    await fixture("guard-reload-interruption", { gateSaves: true, guardSaves: true }); await dismissPrompt(); await review();
@@ -337,7 +337,7 @@ try {
    assert(current.noteWrites.length === 1 && rejectedSave.body.newContent === "GUARD-PERMISSION-A", "guard interruption dispatched held B or changed A");
    const untouched = await json("notes/NoteA");
    assert(untouched.body.content === "Seed content.\n" && await Deno.readTextFile(`${current.vault}/NoteA.md`) === untouched.body.content, "interrupted guard changed API/disk");
-   assert(await current.session.evaluate("document.querySelector('.cm-content')===window.__guardEditor && location.href===window.__guardUrl && document.querySelector('.cm-content').textContent.includes('GUARD-PERMISSION-D') && typeof window.onbeforeunload==='function' && document.querySelector('[data-note-save-status]').textContent.includes('1 held saves')"), "guard interruption lost protected work or reported saved success");
+    assert(await current.session.evaluate("document.querySelector('.cm-content')===window.__guardEditor && location.href===window.__guardUrl && document.querySelector('.cm-content')?.textContent.includes('GUARD-PERMISSION-D') && typeof window.onbeforeunload==='function' && document.querySelector('[data-note-save-status]')?.textContent.includes('1 held saves')"), "guard interruption lost protected work or reported saved success");
    await capture("guard-rejection-retained");
    await outcome("PERMISSIONS-07 DIRTY WORK OK", { ...dirtyWork, guardInterruption: { status: rejectedSave.backendStatus, persisted: untouched.body.content, submitted: rejectedSave.body.newContent, heldB: true, protectedLiveD: true, sameEditorAndUrl: true } });
    await finish();

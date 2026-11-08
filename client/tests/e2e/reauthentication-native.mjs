@@ -51,7 +51,7 @@ async function capture(name) {
   const { data } = await session.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   await Deno.writeFile(`${directory}/${name}.png`, Uint8Array.from(atob(data), c => c.charCodeAt(0)));
   if (name === "reauthentication-dialog") {
-    const clip = await session.evaluate("(()=>{const r=document.querySelector('[role=dialog]').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,scale:1};})()");
+     const clip = await session.read('[role=dialog]', "(()=>{const r=document.querySelector('[role=dialog]').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,scale:1};})()");
     const crop = await session.send("Page.captureScreenshot", { format: "png", clip });
     await Deno.writeFile(`${directory}/review-dialog.png`, Uint8Array.from(atob(crop.data), c => c.charCodeAt(0)));
   }
@@ -80,7 +80,7 @@ try {
   assert(await session.evaluate("sessionStorage.getItem('globnotes:draft:AuthNote')") === mine, "401 did not retain the existing draft");
   assert(!await session.evaluate("window.sawDeparturePrompt"), "401 opened a Save/Discard prompt");
   await capture("reauthentication-dialog");
-  const geometry = await session.evaluate("(()=>{const dialog=document.querySelector('[role=dialog]').getBoundingClientRect(),username=document.querySelector('#username').getBoundingClientRect(),password=document.querySelector('#password').getBoundingClientRect(),button=document.querySelector('[data-reauthentication] button').getBoundingClientRect();return {dialog:dialog.toJSON(),username:username.toJSON(),password:password.toJSON(),button:button.toJSON(),width:innerWidth,height:innerHeight};})()");
+   const geometry = await session.read(['[role=dialog]', '#username', '#password', '[data-reauthentication] button'], "(()=>{const dialog=document.querySelector('[role=dialog]').getBoundingClientRect(),username=document.querySelector('#username').getBoundingClientRect(),password=document.querySelector('#password').getBoundingClientRect(),button=document.querySelector('[data-reauthentication] button').getBoundingClientRect();return {dialog:dialog.toJSON(),username:username.toJSON(),password:password.toJSON(),button:button.toJSON(),width:innerWidth,height:innerHeight};})()");
   assert(geometry.dialog.x >= 0 && geometry.dialog.y >= 0 && geometry.dialog.right <= geometry.width && geometry.dialog.bottom <= geometry.height, "Sign-in dialog exceeds the viewport");
   assert(Math.abs(geometry.username.x - geometry.password.x) < 1 && Math.abs(geometry.username.width - geometry.password.width) < 1 && Math.abs(geometry.username.x - geometry.button.x) < 1 && Math.abs(geometry.username.width - geometry.button.width) < 1, "Reused sign-in controls lost their structural alignment");
   await Deno.writeTextFile(directory + "/dialog-geometry.json", JSON.stringify(geometry, null, 2));
@@ -109,12 +109,12 @@ try {
   await session.poll("!!document.querySelector('[data-reauthentication]')");
   await session.button("Cancel", "[data-reauthentication]");
   await session.poll("!document.querySelector('[data-reauthentication]') && document.querySelector('[data-note-save-status]')?.textContent.includes('Not saved')");
-  assert(await session.evaluate("document.querySelector('.cm-content')===window.editorBeforeAuth && document.querySelector('.cm-content').textContent.includes('cancelled-sign-in edits stay unsaved')"), "Cancelling login lost the edits");
+   assert(await session.evaluate("document.querySelector('.cm-content')===window.editorBeforeAuth && document.querySelector('.cm-content')?.textContent.includes('cancelled-sign-in edits stay unsaved')"), "Cancelling login lost the edits");
   assert(await session.evaluate("sessionStorage.getItem('globnotes:draft:AuthNote')") === cancelled, "Cancelling login lost its persisted draft");
   assert(await Deno.readTextFile(vault + "/AuthNote.md") === merged && writes.length === 3, "Cancelling sign-in sent a save or changed disk");
   assert(!await session.evaluate("window.sawDeparturePrompt"), "Cancel path opened Save/Discard");
   await capture("cancelled-unsaved");
-  results.push({ case: "cancel", diskUnchanged: true, sameEditor: true, draft: cancelled, status: await session.evaluate("document.querySelector('[data-note-save-status]').textContent") });
+   results.push({ case: "cancel", diskUnchanged: true, sameEditor: true, draft: cancelled, status: await session.read('[data-note-save-status]', "document.querySelector('[data-note-save-status]').textContent") });
 
   const newer = "newer edits queued for sign-in\n";
   await replace(newer); await session.button("Save", ".content-column");

@@ -27,7 +27,7 @@ try {
   // New note: the title field starts Untitled; typing an H1 moves it.
   await page.goto(`${server.baseUrl}/_/new`);
   await page.poll(`document.querySelector(".cm-content, .ProseMirror") !== null`);
-  const initial = await page.evaluate(
+   const initial = await page.read('input[placeholder=Title]',
     `document.querySelector("input[placeholder=Title]").value`,
   );
   assert(initial === "Untitled", `title field starts Untitled (got "${initial}")`);
@@ -39,7 +39,7 @@ try {
   })()`);
   await page.send("Input.insertText", { text: "# Hello World\n\nbody\n" });
   await page.poll(
-    `document.querySelector("input[placeholder=Title]").value === "Hello World"`,
+     `document.querySelector("input[placeholder=Title]")?.value === "Hello World"`,
     { timeout: 8000 },
   );
   console.log("ok: filename follows the first H1");
@@ -61,7 +61,7 @@ try {
   })()`);
   await page.send("Input.insertText", { text: "more text\n" });
   await page.waitForTimeout(600);
-  const held = await page.evaluate(
+   const held = await page.read('input[placeholder=Title]',
     `document.querySelector("input[placeholder=Title]").value`,
   );
   assert(held === "My Note", `touched title stops following (got "${held}")`);

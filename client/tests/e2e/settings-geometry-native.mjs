@@ -9,7 +9,7 @@ export async function exerciseSettingsGeometry({ session, directory }) {
       if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
       await session.poll("!!document.querySelector('[aria-label=Settings]')?.getBoundingClientRect().width");
       await session.evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
-      const footer = await session.evaluate(`(()=>{
+       const footer = await session.read(['[aria-label=Settings]', '[title="Recent notes"]'], `(()=>{
         const gear=document.querySelector('[aria-label=Settings]'),recent=document.querySelector('[title="Recent notes"]');
         const a=gear.getBoundingClientRect(),b=recent.getBoundingClientRect();
         const hit=el=>{const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('button')===el;};
@@ -22,7 +22,7 @@ export async function exerciseSettingsGeometry({ session, directory }) {
       await session.click(`[data-theme-id="globnotes-${theme}"]`);
       await session.poll(`document.body.classList.contains('dark')===${theme === "dark"}`);
       await session.evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
-      const dialog = await session.evaluate(`(()=>{
+       const dialog = await session.read(['[data-modal-top=true] [role=dialog] nav', '[data-app-shell]'], `(()=>{
         const box=document.querySelector('[data-modal-top=true] [role=dialog]'),r=box.getBoundingClientRect();
         const nav=box.querySelector('nav'),content=nav.nextElementSibling;
         return {rect:r.toJSON(),nav:nav.getBoundingClientRect().toJSON(),content:content.getBoundingClientRect().toJSON(),contained:r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,overflowX:box.scrollWidth-box.clientWidth,navScrollable:nav.scrollHeight>nav.clientHeight,contentScrollable:content.scrollHeight>content.clientHeight,shellInert:document.querySelector('[data-app-shell]').inert,focusedInside:box.contains(document.activeElement),editorRetained:document.querySelector('.cm-content')===window.__gpsEditor};
@@ -33,11 +33,11 @@ export async function exerciseSettingsGeometry({ session, directory }) {
       const scrolling = {};
       for (const name of ["nav", "content"]) {
         if (!dialog[`${name}Scrollable`]) continue;
-        const before = await session.evaluate(`(()=>{const nav=document.querySelector('[role=dialog] nav'),content=nav.nextElementSibling;return {nav:nav.scrollTop,content:content.scrollTop};})()`);
+         const before = await session.read('[role=dialog] nav', `(()=>{const nav=document.querySelector('[role=dialog] nav'),content=nav.nextElementSibling;return {nav:nav.scrollTop,content:content.scrollTop};})()`);
         const r = dialog[name];
         await session.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: r.x + r.width / 2, y: r.y + r.height / 2, deltaX: 0, deltaY: 300 });
-        await session.poll(`(()=>{const nav=document.querySelector('[role=dialog] nav'),content=nav.nextElementSibling;return ${name}.scrollTop>${before[name]};})()`);
-        const after = await session.evaluate("(()=>{const nav=document.querySelector('[role=dialog] nav'),content=nav.nextElementSibling;return {nav:nav.scrollTop,content:content.scrollTop};})()");
+         await session.poll(`(()=>{const nav=document.querySelector('[role=dialog] nav'),content=nav?.nextElementSibling;return !!nav&&!!content&&${name}.scrollTop>${before[name]};})()`);
+         const after = await session.read('[role=dialog] nav', "(()=>{const nav=document.querySelector('[role=dialog] nav'),content=nav.nextElementSibling;return {nav:nav.scrollTop,content:content.scrollTop};})()");
         const other = name === "nav" ? "content" : "nav";
         assert(after[other] === before[other], `${label}: ${name} wheel moved the other scroll owner`);
         scrolling[name] = { before, after };
@@ -47,7 +47,7 @@ export async function exerciseSettingsGeometry({ session, directory }) {
       await session.click('[aria-label="Settings"]');
       await session.poll("document.activeElement===document.querySelector('[aria-label=\"Close settings\"]')");
       await session.key("Tab", { modifiers: 8, windowsVirtualKeyCode: 9 });
-      const wrappedLast = await session.evaluate("(()=>{const box=document.querySelector('[role=dialog]'),buttons=[...box.querySelectorAll('button:not([disabled])')].filter(el=>el.tabIndex>=0&&!el.closest('[inert]')&&el.getBoundingClientRect().width);return box.contains(document.activeElement)&&document.activeElement===buttons.at(-1);})()");
+       const wrappedLast = await session.read('[role=dialog]', "(()=>{const box=document.querySelector('[role=dialog]'),buttons=[...box.querySelectorAll('button:not([disabled])')].filter(el=>el.tabIndex>=0&&!el.closest('[inert]')&&el.getBoundingClientRect().width);return box.contains(document.activeElement)&&document.activeElement===buttons.at(-1);})()");
       assert(wrappedLast, `${label}: Shift+Tab did not wrap within the top Settings dialog`);
       await session.key("Tab", { windowsVirtualKeyCode: 9 });
       await session.poll("document.activeElement===document.querySelector('[aria-label=\"Close settings\"]')");

@@ -84,7 +84,7 @@ async function launch(id, page) {
   await session.click(`${item(id)} [data-settings-page-id]`);
   await session.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
   const declarations = declaredPages.get(id) ?? [];
-  const tabs = await inspect("[...document.querySelectorAll('[role=tab]')].map(el=>({id:el.dataset.settingsTabId,label:el.textContent.trim()}))");
+   const tabs = await session.read('#settings-field-message', "[...document.querySelectorAll('[role=tab]')].map(el=>({id:el.dataset.settingsTabId,label:el.textContent.trim()}))");
   const expectedTabs = declarations.length >= 2 ? declarations.map(page => ({id:`plugin:${id}:${page.id}`,label:page.label})) : [];
   assert(JSON.stringify(tabs) === JSON.stringify(expectedTabs), `${id}: complete page IDs, labels and registry order not preserved in tabs`);
   const tab = `[data-settings-tab-id="plugin:${id}:${page}"]`;
@@ -102,7 +102,7 @@ async function manifest(value, files = {}) {
 async function inventoryPages(id, expectedPages) {
   const selector = item(id);
   const expectedIds = expectedPages.map(page => `plugin:${id}:${page.id}`);
-  const actual = await inspect(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});return el?[...el.querySelectorAll('[data-settings-page-id]')].map(b=>({id:b.dataset.settingsPageId,label:b.textContent.trim()})):null;})()`);
+   const actual = await session.read(selector, `(()=>{const el=document.querySelector(${JSON.stringify(selector)});return [...el.querySelectorAll('[data-settings-page-id]')].map(b=>({id:b.dataset.settingsPageId,label:b.textContent.trim()}));})()`);
   const launchIds = expectedIds.slice(0,1);
   assert(actual && JSON.stringify(actual.map(row => row.id)) === JSON.stringify(launchIds), `inventory-pages contract ${id}: expected first-page launcher ${JSON.stringify(launchIds)}, got ${JSON.stringify(actual)}`);
   assert(actual.every(row => row.label === "Open settings"), `${id}: shared launcher caption lost`);
@@ -116,9 +116,9 @@ async function geometry(id, expectedPages, name) {
   const hits = [];
   for (const target of [...expectedIds.slice(0,1).map(page => `${selector} [data-settings-page-id="${page}"]`), `${selector} .plugin-row-actions [role=switch]`]) {
     await inspect(`document.querySelector(${JSON.stringify(target)}).scrollIntoView({block:'center'})`); await settled();
-    hits.push(await inspect(`(()=>{const el=document.querySelector(${JSON.stringify(target)}),r=el.getBoundingClientRect(),s=getComputedStyle(el);return {target:${JSON.stringify(target)},rect:r.toJSON(),hit:el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),type:el.type,disabled:el.disabled,paddingX:parseFloat(s.paddingLeft),paddingY:parseFloat(s.paddingTop),fontWeight:s.fontWeight,background:s.backgroundColor,color:s.color,whiteSpace:s.whiteSpace};})()`));
+     hits.push(await session.read(target, `(()=>{const el=document.querySelector(${JSON.stringify(target)}),r=el.getBoundingClientRect(),s=getComputedStyle(el);return {target:${JSON.stringify(target)},rect:r.toJSON(),hit:el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),type:el.type,disabled:el.disabled,paddingX:parseFloat(s.paddingLeft),paddingY:parseFloat(s.paddingTop),fontWeight:s.fontWeight,background:s.backgroundColor,color:s.color,whiteSpace:s.whiteSpace};})()`));
   }
-  const row = await inspect(`(()=>{
+   const row = await session.read([selector+' .plugin-row-name', selector+' .plugin-row-actions [role=switch]', '[aria-label="Settings pages"]'], `(()=>{
     const plugin=document.querySelector(${JSON.stringify(selector)}),pane=plugin.closest('[data-settings-content]'),dialog=plugin.closest('[role=dialog]');
     const first=plugin.querySelector('.plugin-row-name').getClientRects()[0],toggle=plugin.querySelector('.plugin-row-actions [role=switch]').getBoundingClientRect();
     const nav=document.querySelector('[aria-label="Settings pages"]');
@@ -178,7 +178,7 @@ try {
   await session.button("Edit", ".content-column"); await session.button("Source", ".content-column");
   await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')");
   await session.click(".cm-content"); await session.type("Design newer unsaved note\n");
-  await session.poll("document.querySelector('.cm-content').textContent.includes('Design newer unsaved note')");
+   await session.poll("document.querySelector('.cm-content')?.textContent.includes('Design newer unsaved note')");
   // The source editor's selection owner debounces URL publication. Establish
   // an observed native caret/fragment before pinning the navigation invariant.
   await session.key("Home", { modifiers: 2, windowsVirtualKeyCode: 36 });
@@ -192,19 +192,19 @@ try {
   assert(catalog.plugins.find(plugin => plugin.id === failed.id)?.status === "failed", "Valid-page failed runtime fixture did not fail");
   assert(catalog.plugins.find(plugin => plugin.id === disabled.id)?.enabled === false, "Disabled fixture implicitly enabled");
   // Fail-first consumer deliberately observes the original missing inventory Backups action.
-  const backupButtons = await inspect(`(()=>{const row=document.querySelector(${JSON.stringify(item(backup.id))});return row?[...row.querySelectorAll('button')].map(button=>button.textContent.trim()):[];})()`);
+   const backupButtons = await session.read(item(backup.id), `(()=>{const row=document.querySelector(${JSON.stringify(item(backup.id))});return [...row.querySelectorAll('button')].map(button=>button.textContent.trim());})()`);
   assert(backupButtons.includes("Open settings"), `inventory-pages contract: missing shipped Backups launcher; actual buttons ${JSON.stringify(backupButtons)}`);
   for (const [id, pages] of [[backup.id, backup.pages], [multi.id, multi.settings], [coreNamed.id, coreNamed.settings], [disabled.id, disabled.settings], [failed.id, failed.settings], [zero.id, []]]) await inventoryPages(id, pages);
   await session.click(pageButton(backup.id, "backup"));
   await session.poll("!!document.querySelector('#settings-field-retention') && !!document.querySelector('#settings-field-basePath') && !document.querySelector('#settings-field-retention').disabled");
-  assert(await inspect("document.querySelector('[data-modal-top=true]').textContent.includes('Retained versions') && document.querySelector('[data-modal-top=true]').textContent.includes('Backup base path')"), "Inventory Backups did not open shipped fields");
+   assert(await session.read('[data-modal-top=true]', "document.querySelector('[data-modal-top=true]').textContent.includes('Retained versions') && document.querySelector('[data-modal-top=true]').textContent.includes('Backup base path')"), "Inventory Backups did not open shipped fields");
   await invariant(); assert(writes.length === 0, "Backups navigation issued a mutation");
   const initialBackup = await api("/_/api/plugin-host/globnotes-backup/settings/backup");
   await session.click("#settings-field-retention");
   await session.poll("document.activeElement===document.querySelector('#settings-field-retention')");
   await session.key("Home", { windowsVirtualKeyCode: 36 });
   for (let count = 1; count < 3; count++) await session.key("ArrowRight", { windowsVirtualKeyCode: 39 });
-  await session.poll("document.querySelector('#settings-field-retention').value==='3'");
+   await session.poll("document.querySelector('#settings-field-retention')?.value==='3'");
   await session.key("Enter", { windowsVirtualKeyCode: 13 });
   await session.poll("fetch('/_/api/plugin-host/globnotes-backup/settings/backup').then(r=>r.json()).then(d=>d.values.retention===3)");
   await nav("Plugins"); await session.click(pageButton(backup.id, "backup"));
@@ -250,7 +250,7 @@ try {
       await Deno.writeTextFile(`${artifacts}/${name}.geometry.json`, JSON.stringify({ viewport, dpr, mode, rows }, null, 2), { createNew: true });
       if (viewport.width === 320) {
         await launch(multi.id,"long");
-        const tab = await inspect(`(()=>{const el=document.querySelector('[data-settings-tab-id="plugin:${multi.id}:long"]'),pane=el.closest('[data-settings-content]');return {height:el.getBoundingClientRect().height,lineHeight:parseFloat(getComputedStyle(el).lineHeight),overflow:pane.scrollWidth-pane.clientWidth};})()`);
+         const tab = await session.read(`[data-settings-tab-id="plugin:${multi.id}:long"]`, `(()=>{const el=document.querySelector('[data-settings-tab-id="plugin:${multi.id}:long"]'),pane=el.closest('[data-settings-content]');return {height:el.getBoundingClientRect().height,lineHeight:parseFloat(getComputedStyle(el).lineHeight),overflow:pane.scrollWidth-pane.clientWidth};})()`);
         assert(tab.height>tab.lineHeight*2 && tab.overflow<=1,"Narrow unbroken page label did not wrap within its tab/page owner");
         await nav("Plugins");
       }
@@ -301,7 +301,7 @@ try {
   await waitUntil(() => heldPolicy ? done() : pending({ heldPolicy: null }), { label: "Owned policy request intercepted", intervalMs: 50 });
   await session.click(pageButton(multi.id, "new"));
   await session.poll("document.querySelector('[data-plugin-inventory]')?.textContent.includes('outcome is unknown')");
-  assert(await inspect("!!document.querySelector('[data-plugin-inventory]') && !document.querySelector('#settings-field-message') && !document.querySelector('[data-modal-top=true]').textContent.includes('Unsaved changes')"), "Held inventory policy allowed page departure or unresolved-wire discard"); await invariant();
+   assert(await inspect("!!document.querySelector('[data-plugin-inventory]') && !document.querySelector('#settings-field-message') && !document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')"), "Held inventory policy allowed page departure or unresolved-wire discard"); await invariant();
   const policyShot = await screenshot("held-policy-blocks-page");
   await session.send("Fetch.continueRequest", { requestId: heldPolicy.requestId }); held.delete(heldPolicy.requestId); heldPolicy = null;
   await session.send("Fetch.disable");
@@ -314,7 +314,7 @@ try {
   const headerCases = [];
   for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 640 }]) {
     await session.send("Emulation.setDeviceMetricsOverride", { ...viewport, deviceScaleFactor: 1, mobile: false }); await settled();
-    const header = await inspect(`(()=>{const title=document.querySelector('#settings-modal-title'),label=document.querySelector('[data-app-version]'),close=document.querySelector('[aria-label="Close settings"]');const rect=el=>el?el.getBoundingClientRect().toJSON():null;return {text:label?label.textContent.trim():null,insideTitle:!!label&&title.contains(label),title:rect(title),label:rect(label),close:rect(close)};})()`);
+     const header = await session.read(['#settings-modal-title', '[data-app-version]', '[aria-label="Close settings"]'], `(()=>{const title=document.querySelector('#settings-modal-title'),label=document.querySelector('[data-app-version]'),close=document.querySelector('[aria-label="Close settings"]');const rect=el=>el?el.getBoundingClientRect().toJSON():null;return {text:label?label.textContent.trim():null,insideTitle:!!label&&title.contains(label),title:rect(title),label:rect(label),close:rect(close)};})()`);
     assert(header.text === expectedVersion, `header-version ${viewport.width}: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(header.text)}`);
     assert(!header.insideTitle, `header-version ${viewport.width}: version is inside the title heading`);
     const overlap = header.label.right > header.close.left && header.label.left < header.close.right && header.label.bottom > header.close.top && header.label.top < header.close.bottom;
@@ -329,12 +329,12 @@ try {
   await session.poll("!!document.querySelector('#permission-request-title')"); await session.button('Review later','[data-modal-top=true]');
   await session.poll("!document.querySelector('#permission-request-title') && document.querySelectorAll('[data-settings-attention] button').length===1");
   await nav('Plugins');
-  assert(await inspect(`document.querySelector('${item(attentionPlugin.id)}').textContent.includes('1 access request')`),'Plugins count diverged from attention items');
+   assert(await session.read(item(attentionPlugin.id), `document.querySelector('${item(attentionPlugin.id)}').textContent.includes('1 access request')`),'Plugins count diverged from attention items');
   await session.click('[data-settings-nav-id="plugin:globnotes-backup"]'); await session.poll("!!document.querySelector('#settings-field-retention')");
-  const beforeAttention=await inspect("({page:document.querySelector('[data-settings-content]').dataset.settingsCurrentPage,url:location.href,field:document.querySelector('#settings-field-retention').value})");
-  assert(await inspect("document.querySelector('[data-settings-attention] h3').textContent==='Needs attention (1)' && !document.querySelector('[data-settings-attention] button').hasAttribute('aria-current')"),'Attention count/button semantics failed');
+   const beforeAttention=await session.read(['[data-settings-content]', '#settings-field-retention'], "({page:document.querySelector('[data-settings-content]').dataset.settingsCurrentPage,url:location.href,field:document.querySelector('#settings-field-retention').value})");
+   assert(await session.read(['[data-settings-attention] h3', '[data-settings-attention] button'], "document.querySelector('[data-settings-attention] h3').textContent==='Needs attention (1)' && !document.querySelector('[data-settings-attention] button').hasAttribute('aria-current')"),'Attention count/button semantics failed');
   await session.click('[data-settings-attention] button'); await session.poll("!!document.querySelector('#permission-request-title')");
-  const afterAttention=await inspect("({page:document.querySelector('[data-settings-content]').dataset.settingsCurrentPage,url:location.href,field:document.querySelector('#settings-field-retention').value})");
+   const afterAttention=await inspect("({page:document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage,url:location.href,field:document.querySelector('#settings-field-retention')?.value})");
   assert(JSON.stringify(beforeAttention)===JSON.stringify(afterAttention),'Attention changed page, URL or field'); await invariant();
   await assertSettingsActionHierarchy(session);
   await session.button('Deny','[data-modal-top=true]'); await session.poll("!document.querySelector('#permission-request-title') && !document.querySelector('[data-settings-attention]')");

@@ -13,7 +13,7 @@ async function closeDrawer() {
   })()`);
   if (drawerOpen) {
     await page.evaluate(`document.querySelector('aside button[title="Close sidebar"]')?.click()`);
-    await page.poll(`getComputedStyle(document.querySelector("aside")).display === "none"`);
+     await page.poll(`(()=>{const aside=document.querySelector('aside');return !aside||getComputedStyle(aside).display==='none';})()`);
   }
 }
 
@@ -38,13 +38,13 @@ await page.poll(`location.hash === "#source"`);
 await page.click(".cm-content");
 await page.key("Home", { modifiers: 2, windowsVirtualKeyCode: 36 });
 await page.key("ArrowRight", { windowsVirtualKeyCode: 39 });
-const sourceText = () => page.evaluate(`[...document.querySelectorAll('.cm-content .cm-line')].map(el => el.textContent).join('\\n')`);
+ const sourceText = () => page.read('.cm-content', `[...document.querySelectorAll('.cm-content .cm-line')].map(el => el.textContent).join('\\n')`);
 const beforeCaretWrite = await sourceText();
 await page.poll(`/^#source:L\\d+/.test(location.hash)`);
 await page.waitForTimeout(650);
 const caretAfterWrite = await page.evaluate(`({ collapsed: getSelection().isCollapsed, selected: getSelection().toString(), hash: location.hash })`);
 await page.send("Input.insertText", { text: "caret-probe" });
-await page.poll(`document.querySelector('.cm-content').textContent.includes('caret-probe')`);
+ await page.poll(`document.querySelector('.cm-content')?.textContent.includes('caret-probe')`);
 const afterCaretType = await sourceText();
 if (!caretAfterWrite.collapsed || !(await page.evaluate(`getSelection().isCollapsed`)) ||
     afterCaretType !== beforeCaretWrite.slice(0, 1) + "caret-probe" + beforeCaretWrite.slice(1)) {
@@ -118,7 +118,7 @@ await page.evaluate(`history.back()`);
 await page.poll(`!!document.querySelector(".cm-editor")`, { timeout: 15000 });
 await page.poll(`/^#source/.test(location.hash)`);
 await page.evaluate(`document.querySelector('.cm-content').focus()`);
-await page.poll(`getSelection().toString() === document.querySelector('.cm-content .cm-line').textContent`);
+ await page.poll(`!!document.querySelector('.cm-content .cm-line') && getSelection().toString() === document.querySelector('.cm-content .cm-line').textContent`);
 
 // 9. Same-document fragment changes (pasting a link into an open tab)
 // are reconciled without a reload: view -> source, source -> edit,
@@ -134,7 +134,7 @@ await page.goto(`${NOTE}#source:L3`);
 await page.poll(`!!document.querySelector(".cm-editor")`, { timeout: 15000 });
 await page.poll(`/^#source:L3/.test(location.hash)`);
 await page.evaluate(`document.querySelector('.cm-content').focus()`);
-await page.poll(`getSelection().toString() === document.querySelectorAll('.cm-content .cm-line')[2].textContent`);
+ await page.poll(`!!document.querySelectorAll('.cm-content .cm-line')[2] && getSelection().toString() === document.querySelectorAll('.cm-content .cm-line')[2].textContent`);
 
 // 10. SPA-navigating to a different note while editing: the edit session
 // ends with the URL — no fragment, viewer shown, editor gone. Opening the

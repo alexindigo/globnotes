@@ -74,7 +74,7 @@ async function palette(session) {
   await session.poll("document.querySelector('[data-modal-top=true] li')?.textContent.includes('GPS08 browser settings consumer')");
   await session.key("Enter", { windowsVirtualKeyCode: 13 });
   await session.poll("!document.querySelector('#command-palette-title') && !!document.querySelector('[data-gps08-consumer]')");
-  assert(await session.evaluate("(()=>{const element=document.querySelector('[data-gps08-consumer]'),r=element.getBoundingClientRect();return r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight&&element.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()"), "Actual SDK palette consumer is not rendered/hittable");
+   assert(await session.read('[data-gps08-consumer]', "(()=>{const element=document.querySelector('[data-gps08-consumer]'),r=element.getBoundingClientRect();return r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight&&element.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()"), "Actual SDK palette consumer is not rendered/hittable");
 }
 async function screenshot(session, label) {
   const { data } = await session.send("Page.captureScreenshot", { format: "png" });
@@ -158,8 +158,8 @@ async function configured() {
     await Deno.writeTextFile(`${directory}/peer-ownership.json`, JSON.stringify(current.sessions.slice(1).map(peer => ({ targetId: peer.targetId, browserContextId: peer.browserContextId }))), { createNew: true });
     assert(new Set(current.sessions.map(peer => peer.browserContextId)).size === 3, "Password peers do not have independent cookie contexts");
   } else await session.poll("!!window.__gps08Runtime && !!document.querySelector('.toast-viewer')");
-  assert(await session.evaluate(`document.querySelector('meta[name="globnotes-prefix"]').content===${JSON.stringify(prefix)} && window.__gps08Runtime.version===1`), "Actual runtime/HTML prefix/SDK consumer mismatch");
-  const sdk = await session.evaluate("JSON.parse(document.querySelector('script[type=importmap]').textContent).imports['@globnotes/plugin-sdk']");
+   assert(await session.read('meta[name="globnotes-prefix"]', `document.querySelector('meta[name="globnotes-prefix"]').content===${JSON.stringify(prefix)} && window.__gps08Runtime.version===1`), "Actual runtime/HTML prefix/SDK consumer mismatch");
+   const sdk = await session.read('script[type=importmap]', "JSON.parse(document.querySelector('script[type=importmap]').textContent).imports['@globnotes/plugin-sdk']");
   assert(sdk.startsWith(`${prefix}/_/assets/`) && (await api(sdk.slice(prefix.length), "GET", undefined, null)).status === 200, "Actual public bootstrap SDK/import map has wrong prefix");
   if (prefix) {
     for (const route of ["/_/api/plugin-host", "/notes-other/_/api/plugin-host"]) {
@@ -176,7 +176,7 @@ async function configured() {
     await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.button("GPS08 preferences");
     await session.poll("document.querySelector('#settings-field-message')?.readOnly===true");
     await session.click('[aria-label="Close settings"]'); await session.click('[title="Close sidebar"]');
-    await palette(session); await session.poll("document.querySelector('[data-gps08-consumer]').textContent==='GPS08 default'");
+     await palette(session); await session.poll("document.querySelector('[data-gps08-consumer]')?.textContent==='GPS08 default'");
     return { readonlyAdmissions: 3, readonlyBrowserSdkConsumer: true, queries: queried.body.query };
   }
   const message = `GPS08 saved ${current.label}`;
@@ -188,8 +188,8 @@ async function configured() {
   await session.click('[title="Close sidebar"]');
   const settings = await api("/_/api/plugin-host/gps08/settings/preferences");
   assert(settings.status === 200 && settings.body.revision === 1 && settings.body.values.message === message, "Native prefixed settings commit not acknowledged");
-  await palette(session); await session.poll(`document.querySelector('[data-gps08-consumer]').textContent===${JSON.stringify(message)}`);
-  if (current.peer) { await palette(current.peer); await current.peer.poll(`document.querySelector('[data-gps08-consumer]').textContent===${JSON.stringify(message)}`); }
+   await palette(session); await session.poll(`document.querySelector('[data-gps08-consumer]')?.textContent===${JSON.stringify(message)}`);
+   if (current.peer) { await palette(current.peer); await current.peer.poll(`document.querySelector('[data-gps08-consumer]')?.textContent===${JSON.stringify(message)}`); }
   const command = await api("/_/api/plugin-host/gps08/commands/consume", "POST", {});
   assert(command.status === 200 && command.body.result.message === message && command.body.result.commands === 1, "Actual server command did not consume prefixed settings");
   await session.button("Edit", ".content-column"); await session.button("Source", ".content-column");
@@ -199,7 +199,7 @@ async function configured() {
   assert(await session.evaluate("window.__gps08Runtime.sdk===window.__gps08Editor.sdk && window.__gps08Runtime.milk===window.__gps08Editor.milk && window.__gps08Editor.version===1"), "Actual runtime/editor imports duplicate SDK/package instances");
   const marker = `GPS08 WYSIWYG ${current.label}`;
   await session.click(".ProseMirror"); await session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); await session.type(marker);
-  await session.poll(`document.querySelector('.ProseMirror').textContent.includes(${JSON.stringify(marker)})`);
+   await session.poll(`document.querySelector('.ProseMirror')?.textContent.includes(${JSON.stringify(marker)})`);
   await session.button("Save", ".content-column");
   await session.poll(`fetch(${JSON.stringify(prefix + "/_/api/notes/Seed")},{headers:{authorization:'Bearer '+(sessionStorage.getItem('token')??'')}}).then(r=>r.json()).then(note=>note.content.includes(${JSON.stringify(marker)}))`);
   const note = (await api("/_/api/notes/Seed")).body, disk = await Deno.readTextFile(`${vault}/Seed.md`);

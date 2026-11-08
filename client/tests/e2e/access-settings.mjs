@@ -79,7 +79,7 @@ async function access({ pinnedMode = false } = {}) {
   const session = owned.session;
   if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
   await session.click('[aria-label="Settings"]'); await session.button("Access"); await waitForAccessSummary(session); await session.button("Change access…");
-  await session.poll(pinnedMode ? "!!document.querySelector('#setup-title') && !!document.querySelector('#access-current-password') && !document.querySelector('#access-current-password').disabled" : "!!document.querySelector('#setup-title') && !document.querySelector('#setup-mode-none').disabled");
+   await session.poll(pinnedMode ? "!!document.querySelector('#setup-title') && document.querySelector('#access-current-password')?.disabled===false" : "!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-none')?.disabled===false");
 }
 async function edit(marker) {
   const session = owned.session;
@@ -115,7 +115,7 @@ async function finishCase(name, consumers) {
 try {
   await fixture("initial-public-prefixed", "setup");
   await owned.session.click("#setup-mode-read_only"); await owned.session.click("#setup-mode-password"); await owned.session.click("#setup-mode-none");
-  assert(await owned.session.evaluate("document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='false'"), "First-run radio exploration incorrectly selected migration locking");
+   assert(await owned.session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='false'"), "First-run radio exploration incorrectly selected migration locking");
   await screenshot("initial-public-default-off");
   await owned.session.click("#setup-ack"); await owned.session.button("Finish setup"); await owned.session.poll("!document.querySelector('#setup-title')");
   assert((await api("config")).body.settingsWritable === true && JSON.parse(await saved()).read_only_settings === false, "First-run public default did not persist unlocked");
@@ -132,7 +132,7 @@ try {
   assert(await saved() === bytes, "Opening enrolment changed configuration");
   assert((await api("auth-check", "GET", undefined, oldToken)).status === 200, "Opening enrolment invalidated the session");
   await session.click('[aria-label="Dismiss setup"]'); await session.poll("!document.querySelector('#setup-title')");
-  assert(await session.evaluate("document.querySelector('.cm-content') === window.__accessEditor && document.querySelector('.cm-content').textContent.includes('Native enrolment cancellation marker')"), "Cancelled enrolment lost the dirty editor");
+   assert(await session.evaluate("document.querySelector('.cm-content') === window.__accessEditor && document.querySelector('.cm-content')?.textContent.includes('Native enrolment cancellation marker')"), "Cancelled enrolment lost the dirty editor");
   if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
   await session.button("Save", ".content-column");
   await session.poll("(() => { const button=[...document.querySelectorAll('.content-column button')].find(item=>item.textContent.trim()==='Save'); return button?.getAttribute('aria-busy')==='false' && !button.querySelector('.animate-spin'); })()");
@@ -171,7 +171,7 @@ try {
   const workflowOwner = (await api("plugin-host/access-workflow/commands/report", "POST", {})).body.result.owner;
   await edit("Native public settings-lock saved marker");
   await access();
-  assert(await owned.session.evaluate("document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='false'"), "Existing public lock default differs from saved value");
+   assert(await owned.session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='false'"), "Existing public lock default differs from saved value");
   await owned.session.click("#setup-read-only-settings"); await owned.session.click("#setup-ack"); await screenshot("public-settings-lock");
   await owned.session.button("Save access settings"); await owned.session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Save Changes')");
   await owned.session.button("Save", '[data-modal-top="true"]'); await owned.session.poll("!document.querySelector('#setup-title')");
@@ -188,7 +188,7 @@ try {
   for (const [route, method] of [["brand", "POST"], ["plugin-host/policy", "PUT"], ["plugin-host/missing/enabled", "PUT"], ["plugin-host/missing/settings/page", "PUT"], ["plugin-host/missing/permissions", "PUT"], ["plugin-host/missing/permission-requests/request/decision", "POST"], ["access", "PUT"], ["access/totp-enrolment", "POST"], ["setup/reset", "POST"]]) assert((await api(route, method, {})).status === 403, `Locked public mutation escaped: ${route}`);
   if (await owned.session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await owned.session.click('[title="Open sidebar"]');
   await owned.session.click('[aria-label="Settings"]'); await owned.session.button("Access");
-  assert(!await owned.session.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access…')"), "Locked Access can unlock itself");
+   assert(!await owned.session.read('[data-access-summary]', "[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access…')"), "Locked Access can unlock itself");
   await owned.session.button("Appearance"); await owned.session.click('[data-theme-id="globnotes-light"]');
   await owned.session.poll("localStorage.getItem('globnotes-theme')==='globnotes-light' && !document.body.classList.contains('dark')");
   await finishCase("native public lock keeps note editing and local preferences while denying controls", { publicNoteSavePersisted: true, sameEditor: true, settingsApisDenied: 9, accessUnlockUnavailable: true, localThemeAvailable: true, sameWorkflowOwner: true, privateWorkflowConsumerPersisted: true });
@@ -198,14 +198,14 @@ try {
     await edit(`Native migration ${decision} marker`);
     const before = await saved(), token = await owned.session.evaluate("sessionStorage.getItem('token')");
     await access(); await owned.session.click("#setup-mode-none");
-    assert(await owned.session.evaluate("document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='true'"), "Protected migration did not default settings locking on");
+     assert(await owned.session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='true'"), "Protected migration did not default settings locking on");
     await fill("#access-current-password", password); await owned.session.click("#setup-ack");
     await owned.session.button("Save access settings"); await owned.session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Save Changes')");
     await owned.session.button(decision, '[data-modal-top="true"]');
     if (decision === "Cancel") {
       await owned.session.poll("!!document.querySelector('#setup-title') && !document.querySelector('[data-modal-top=true]')?.textContent.includes('Save Changes')");
       assert(await saved() === before && (await api("auth-check", "GET", undefined, token)).status === 200, "Cancel changed access/session");
-      assert(await owned.session.evaluate("document.querySelector('.cm-content')===window.__accessEditor && document.querySelector('.cm-content').textContent.includes('Native migration Cancel marker')"), "Cancel lost editor/buffer");
+       assert(await owned.session.evaluate("document.querySelector('.cm-content')===window.__accessEditor && document.querySelector('.cm-content')?.textContent.includes('Native migration Cancel marker')"), "Cancel lost editor/buffer");
     } else {
       await owned.session.poll("!document.querySelector('#setup-title')");
       assert((await api("config")).body.settingsWritable === false, "Migration failed to persist settings lock");
@@ -244,7 +244,7 @@ try {
   await owned.session.button("Save access settings");
   await owned.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('outcome is unknown')");
   assert(paused && JSON.parse(await saved()).access_revision === 1, "Response gate did not observe a persisted password change");
-  assert(await owned.session.evaluate("document.querySelector('[aria-labelledby=setup-title] button[type=submit]').disabled"), "Unresolved Access wire permits duplicate writes");
+   assert(await owned.session.read('[aria-labelledby=setup-title] button[type=submit]', "document.querySelector('[aria-labelledby=setup-title] button[type=submit]').disabled"), "Unresolved Access wire permits duplicate writes");
   await owned.session.click('[aria-label="Dismiss setup"]');
   assert(await owned.session.evaluate("!!document.querySelector('#setup-title')"), "Unresolved Access write was dismissed");
   await owned.session.send("Fetch.failRequest", { requestId: paused.requestId, errorReason: "Failed" });
@@ -288,10 +288,10 @@ try {
   await peer.click('[title="Open sidebar"]'); await peer.click('[aria-label="Settings"]'); await peer.click('[data-settings-nav-id="plugin:access-workflow"]');
   await peer.poll("!!document.querySelector('#settings-field-limit') && !document.querySelector('#settings-field-limit').readOnly");
   await peer.click("#settings-field-limit"); await peer.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 }); await peer.key("Backspace", { windowsVirtualKeyCode: 8 });
-  await peer.poll("document.querySelector('#settings-field-limit').value === ''");
+   await peer.poll("document.querySelector('#settings-field-limit')?.value === ''");
   await access(); await owned.session.click("#setup-read-only-settings"); await owned.session.click("#setup-ack"); await owned.session.button("Save access settings"); await owned.session.poll("!document.querySelector('#setup-title')");
   await peer.poll("document.querySelector('#settings-field-limit')?.readOnly || document.querySelector('#settings-field-limit')?.disabled");
-  assert(await peer.evaluate("document.querySelector('#settings-field-limit').value === '' && document.querySelector('.cm-content')===window.__peerEditor && document.querySelector('.cm-content').textContent.includes('Peer retained dirty note marker')"), "Remote lock discarded the peer's invalid setting or dirty editor");
+   assert(await peer.evaluate("document.querySelector('#settings-field-limit')?.value === '' && document.querySelector('.cm-content')===window.__peerEditor && document.querySelector('.cm-content')?.textContent.includes('Peer retained dirty note marker')"), "Remote lock discarded the peer's invalid setting or dirty editor");
   assert((await api("plugin-host/access-workflow/settings/preferences", "PUT", { values: { message: "blocked peer", limit: 5 }, revision: 0 })).status === 403, "Peer can mutate settings after remote lock");
   const preRestartOwner = (await api("plugin-host/access-workflow/commands/report", "POST", {})).body.result.owner;
   const restart = await owned.server.restart();
@@ -300,7 +300,7 @@ try {
   await peer.poll(`fetch('/_/api/plugin-host/access-workflow/commands/report',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(r=>r.json()).then(report=>report.result.owner!==${JSON.stringify(preRestartOwner)})`);
   assert(await peer.evaluate("fetch('/_/api/config').then(r=>r.json()).then(config=>config.settingsWritable===false && config.readOnlySettings===true)"), "Peer did not observe persisted policy from the restarted backend");
   await peer.poll("document.querySelector('#settings-field-limit')?.readOnly || document.querySelector('#settings-field-limit')?.disabled");
-  assert(await peer.evaluate("document.querySelector('#settings-field-limit').value === '' && document.querySelector('.cm-content')===window.__peerEditor"), "Restart reconciliation replaced peer drafts/editor");
+   assert(await peer.evaluate("document.querySelector('#settings-field-limit')?.value === '' && document.querySelector('.cm-content')===window.__peerEditor"), "Restart reconciliation replaced peer drafts/editor");
   assert((await api("notes", "POST", { path: "AfterRestart", content: "Public after restart\n" })).status === 200 && await Deno.readTextFile(`${owned.vault}/AfterRestart.md`) === "Public after restart\n", "Restart/settings lock blocked public note writes");
   assert(peer.errors.length === 0, "Peer page exception");
   await peer.close();
@@ -308,7 +308,7 @@ try {
 
   await fixture("initial-public-explicit-lock-prefixed", "setup");
   await owned.session.click("#setup-mode-none");
-  assert(await owned.session.evaluate("document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='false'"), "Explicit first-run choice did not start unlocked");
+   assert(await owned.session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='false'"), "Explicit first-run choice did not start unlocked");
   await owned.session.click("#setup-read-only-settings"); await owned.session.click("#setup-ack");
   await owned.session.button("Finish setup"); await owned.session.poll("!document.querySelector('#setup-title')");
   assert(JSON.parse(await saved()).read_only_settings === true && (await api("config")).body.settingsWritable === false, "Explicit first-run lock was not persisted/effective");
@@ -319,10 +319,10 @@ try {
 
   await fixture("protected-public-explicit-unlocked", true);
   await access(); await owned.session.click("#setup-mode-none");
-  assert(await owned.session.evaluate("document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='true'"), "Explicit migration did not start from locked default");
+   assert(await owned.session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='true'"), "Explicit migration did not start from locked default");
   await owned.session.click("#setup-read-only-settings");
   await owned.session.click("#setup-mode-read_only"); await owned.session.click("#setup-mode-none");
-  assert(await owned.session.evaluate("document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='false'"), "Radio exploration erased the explicit migration choice");
+   assert(await owned.session.evaluate("document.querySelector('#setup-read-only-settings')?.getAttribute('aria-checked')==='false'"), "Radio exploration erased the explicit migration choice");
   await fill("#access-current-password", password); await owned.session.click("#setup-ack"); await owned.session.button("Save access settings");
   await owned.session.poll("!document.querySelector('#setup-title')");
   const explicitlyOpen = JSON.parse(await saved());
@@ -354,7 +354,7 @@ try {
       else await owned.session.click("#setup-totp");
       await owned.session.poll("document.querySelector('#setup-totp-qr img')?.naturalWidth>0");
       await owned.session.evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
-      const geometry = await owned.session.evaluate(`(()=>{
+       const geometry = await owned.session.read(['[data-modal-top=true] [aria-labelledby=setup-title] form>fieldset', '.setup-totp-enrolment', '[data-app-shell]'], `(()=>{
         const box=document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]'),r=box.getBoundingClientRect(),form=box.querySelector('form');
         const body=form.firstElementChild.getBoundingClientRect(),enrolment=box.querySelector('.setup-totp-enrolment').getBoundingClientRect(),confirmation=box.querySelector('form>fieldset').getBoundingClientRect();
         const visible=[...box.querySelectorAll('input,button,label[for]')].filter(el=>!el.closest('[inert],[aria-hidden=true]')&&getComputedStyle(el).visibility==='visible'&&el.getBoundingClientRect().width>0);
@@ -369,7 +369,7 @@ try {
       assert(geometry.sameEditor && geometry.shellInert, `${label}: protected geometry lost editor/inertness`);
       await owned.session.click("#setup-totp-qr");
       await owned.session.poll("document.querySelector('#setup-totp-copy-feedback')?.textContent==='Click again to copy the setup key.'");
-      const copyConfirmation = await owned.session.evaluate("(()=>{const box=document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]'),tooltip=box.querySelector('#setup-totp-copy-feedback'),qr=box.querySelector('#setup-totp-qr');return {dialog:box.getBoundingClientRect().toJSON(),qr:qr.getBoundingClientRect().toJSON(),feedback:tooltip.getBoundingClientRect().toJSON(),scrollWidth:box.scrollWidth,clientWidth:box.clientWidth};})()");
+       const copyConfirmation = await owned.session.read(['[data-modal-top=true] #setup-totp-copy-feedback', '#setup-totp-qr'], "(()=>{const box=document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]'),tooltip=box.querySelector('#setup-totp-copy-feedback'),qr=box.querySelector('#setup-totp-qr');return {dialog:box.getBoundingClientRect().toJSON(),qr:qr.getBoundingClientRect().toJSON(),feedback:tooltip.getBoundingClientRect().toJSON(),scrollWidth:box.scrollWidth,clientWidth:box.clientWidth};})()");
       await screenshot(`protected-${label}-copy-confirmation`);
       await Deno.writeTextFile(`${owned.directory}/protected-${label}-copy-confirmation.json`, JSON.stringify(copyConfirmation, null, 2), { createNew: true });
       assert(copyConfirmation.scrollWidth - copyConfirmation.clientWidth <= 1 && copyConfirmation.feedback.x >= copyConfirmation.dialog.x - 0.5 && copyConfirmation.feedback.right <= copyConfirmation.dialog.right + 0.5, `${label}: authenticator copy confirmation escaped horizontally`);
@@ -377,21 +377,21 @@ try {
       await owned.session.click("#access-current-password");
       await owned.session.poll("document.activeElement===document.querySelector('#access-current-password')");
       await owned.session.poll("!document.querySelector('#setup-totp-copy-feedback')");
-      const focused = await owned.session.evaluate("(()=>{const el=document.querySelector('#access-current-password'),r=el.getBoundingClientRect();return {rect:r.toJSON(),hit:el===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2),insideDialog:el.closest('[role=dialog]').contains(document.activeElement)};})()");
+       const focused = await owned.session.read('#access-current-password', "(()=>{const el=document.querySelector('#access-current-password'),r=el.getBoundingClientRect();return {rect:r.toJSON(),hit:el===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2),insideDialog:el.closest('[role=dialog]').contains(document.activeElement)};})()");
       assert(focused.hit && focused.insideDialog, `${label}: native current-password focus is not reachable`);
       await screenshot(`protected-${label}-current-proof`);
       await Deno.writeTextFile(`${owned.directory}/protected-${label}-current-proof.json`, JSON.stringify(focused, null, 2), { createNew: true });
       if (currentAuthenticator) {
-        assert(await owned.session.evaluate("document.querySelector('label[for=setup-totp-code]').textContent.trim()==='Code from the new authenticator' && document.querySelector('label[for=access-current-totp]').textContent.trim()==='Code from the current authenticator'"), `${label}: current/new authenticator proof labels are not distinct`);
+         assert(await owned.session.read(['label[for=setup-totp-code]', 'label[for=access-current-totp]'], "document.querySelector('label[for=setup-totp-code]').textContent.trim()==='Code from the new authenticator' && document.querySelector('label[for=access-current-totp]').textContent.trim()==='Code from the current authenticator'"), `${label}: current/new authenticator proof labels are not distinct`);
         await owned.session.click("#access-current-totp"); await owned.session.poll("document.activeElement===document.querySelector('#access-current-totp')");
-        const currentProof = await owned.session.evaluate("(()=>{const el=document.querySelector('#access-current-totp'),r=el.getBoundingClientRect();return {rect:r.toJSON(),hit:el===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2),insideDialog:el.closest('[role=dialog]').contains(document.activeElement)};})()");
+         const currentProof = await owned.session.read('#access-current-totp', "(()=>{const el=document.querySelector('#access-current-totp'),r=el.getBoundingClientRect();return {rect:r.toJSON(),hit:el===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2),insideDialog:el.closest('[role=dialog]').contains(document.activeElement)};})()");
         await screenshot(`protected-${label}-current-authenticator-proof`);
         await Deno.writeTextFile(`${owned.directory}/protected-${label}-current-authenticator-proof.json`, JSON.stringify(currentProof, null, 2), { createNew: true });
         assert(currentProof.hit && currentProof.insideDialog, `${label}: native current-authenticator focus is not reachable`);
       }
       await owned.session.click('[aria-label="Dismiss setup"]'); await owned.session.poll("!document.querySelector('#setup-title')");
       assert(await saved() === geometryBytes && (await api("auth-check", "GET", undefined, geometryToken)).status === 200, `${label}: geometry/enrolment dismissal changed config/session`);
-      assert(await owned.session.evaluate("document.querySelector('.cm-content')===window.__accessEditor && document.querySelector('.cm-content').textContent.includes('Protected geometry retained editor marker')"), `${label}: geometry dismissal discarded editor/buffer`);
+       assert(await owned.session.evaluate("document.querySelector('.cm-content')===window.__accessEditor && document.querySelector('.cm-content')?.textContent.includes('Protected geometry retained editor marker')"), `${label}: geometry dismissal discarded editor/buffer`);
       geometryFrames.push({ label, contained: true, nativeCurrentProofReachable: true, configurationUnchanged: true, sameEditor: true });
     }
   }
@@ -412,7 +412,7 @@ try {
   await owned.session.click('[aria-label="Settings"]'); await owned.session.button("Appearance"); await owned.session.click('[data-theme-id="globnotes-light"]');
   await owned.session.poll("!document.body.classList.contains('dark')"); await owned.session.click('[aria-label="Close settings"]'); await owned.session.poll("!document.querySelector('#settings-modal-title')");
   await access({ pinnedMode: true });
-  assert(await owned.session.evaluate("document.querySelectorAll('input[name=access-mode]').length===3 && [...document.querySelectorAll('input[name=access-mode]')].every(input=>input.disabled) && ['setup-username','setup-password','setup-totp'].every(id=>document.getElementById(id).disabled)"), "Pinned Access mutation fields remain available");
+   assert(await owned.session.read(['#setup-username', '#setup-password', '#setup-totp'], "document.querySelectorAll('input[name=access-mode]').length===3 && [...document.querySelectorAll('input[name=access-mode]')].every(input=>input.disabled) && ['setup-username','setup-password','setup-totp'].every(id=>document.getElementById(id).disabled)"), "Pinned Access mutation fields remain available");
   await fill("#access-current-password", "wrong-current-proof"); await owned.session.button("Save access settings");
   await owned.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('confirmation failed')");
   await screenshot("pinned-current-proof-error-wide-light");
@@ -426,11 +426,11 @@ try {
   await owned.session.send("Emulation.setDeviceMetricsOverride", { width: 360, height: 640, deviceScaleFactor: 2, mobile: false });
   await access({ pinnedMode: true }); await fill("#access-current-password", "wrong-current-proof"); await owned.session.button("Save access settings");
   await owned.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('confirmation failed')");
-  const pinnedGeometry = await owned.session.evaluate("(()=>{const box=document.querySelector('[aria-labelledby=setup-title]'),r=box.getBoundingClientRect(),alert=box.querySelector('[role=alert]').getBoundingClientRect();return {rect:r.toJSON(),alert:alert.toJSON(),scrollWidth:box.scrollWidth,clientWidth:box.clientWidth,contained:r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight};})()");
+   const pinnedGeometry = await owned.session.read('[aria-labelledby=setup-title] [role=alert]', "(()=>{const box=document.querySelector('[aria-labelledby=setup-title]'),r=box.getBoundingClientRect(),alert=box.querySelector('[role=alert]').getBoundingClientRect();return {rect:r.toJSON(),alert:alert.toJSON(),scrollWidth:box.scrollWidth,clientWidth:box.clientWidth,contained:r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight};})()");
   await screenshot("pinned-current-proof-error-narrow-dpr-2-dark");
   await Deno.writeTextFile(`${owned.directory}/pinned-error-geometry.json`, JSON.stringify(pinnedGeometry, null, 2), { createNew: true });
   assert(pinnedGeometry.contained && pinnedGeometry.scrollWidth - pinnedGeometry.clientWidth <= 1 && pinnedGeometry.alert.x >= pinnedGeometry.rect.x - 0.5 && pinnedGeometry.alert.right <= pinnedGeometry.rect.right + 0.5, "Pinned error feedback escaped horizontally");
-  assert(await owned.session.evaluate("document.querySelector('.cm-content')===window.__accessEditor && document.querySelector('.cm-content').textContent.includes('Pinned confirmation retained editor marker')"), "Pinned error discarded the retained editor");
+   assert(await owned.session.evaluate("document.querySelector('.cm-content')===window.__accessEditor && document.querySelector('.cm-content')?.textContent.includes('Pinned confirmation retained editor marker')"), "Pinned error discarded the retained editor");
   assert(await saved() === pinnedBytes && (await api("auth-check", "GET", undefined, pinnedToken)).status === 200, "Pinned error/override changed account authority");
   await finishCase("native pinned Access controls and real fresh-proof errors retain account/editor authority", { effectiveFieldsPinned: true, invalidCurrentProofRetainedConfigAndSession: true, directPinnedOverrideRejected: true, sameEditor: true, pinnedErrorGeometry: pinnedGeometry });
   console.log("ACCESS NATIVE CHECKPOINT OK (remaining access matrix still required)");

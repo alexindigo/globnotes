@@ -76,6 +76,29 @@ export async function createOwnedTarget(browser, connectTarget) {
   } };
 }
 
+// Readiness and its read-only consumer snapshot must share one browser task.
+// A successful presence poll followed by evaluate() is a TOCTOU window.
+export function createPagePoll(evaluate) {
+  return expression => waitUntil(async () => {
+    const value = await evaluate(expression);
+    return value ? done(value) : waitPending({ expression, value });
+  }, { label: "page condition", intervalMs: 50 });
+}
+
+export function createPageRead(poll) {
+  return async (selectors, expression) => {
+    const required = typeof selectors === "string" ? [selectors] : selectors;
+    if (!Array.isArray(required) || !required.length || required.some(selector => typeof selector !== "string" || !selector)) throw Error("DOM snapshot requires owning selectors");
+    const result = await poll(`(()=>{
+      if(!${JSON.stringify(required)}.every(selector=>document.querySelector(selector)))return false;
+      const value=(${expression});
+      if(value&&typeof value.then==='function')throw Error('DOM snapshot must be synchronous');
+      return {value};
+    })()`);
+    return result.value;
+  };
+}
+
 export async function nativeSession({ port = 9333, width = 1280, height = 900, dpr = 1 } = {}) {
   const discovery = async path => {
     const response = await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(5000) });
@@ -112,17 +135,13 @@ export async function nativeSession({ port = 9333, width = 1280, height = 900, d
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
     return result.result?.value;
   }
-  function poll(expression) {
-    return waitUntil(async () => {
-      const value = await evaluate(expression);
-      return value ? done(value) : waitPending({ expression, value });
-    }, { label: "page condition", intervalMs: 50 });
-  }
+  const poll = createPagePoll(evaluate);
+  const read = createPageRead(poll);
   const pointer = { evaluate, poll, async click(_selector, _point, locate) {
     await dispatchNativeClick({ evaluate, poll, onEvent: page.onEvent }, (method, params) => page.send(method, params), locate);
   } };
   const click = selector => clickReady(pointer, selector);
-  return { ...owned, browser, errors, events, version, evaluate, poll, click, send: page.send,
+  return { ...owned, browser, errors, events, version, evaluate, poll, read, click, send: page.send,
     // Every application page load is checked before and after navigation: plain
     // HTTP on the local test domain, and an insecure context (AXIOMS §1).
     async goto(url) {
