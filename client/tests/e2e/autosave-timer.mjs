@@ -83,6 +83,43 @@ async function lateActivation(f) {
   } finally { release(); await f.page.send("Fetch.disable"); }
 }
 
+export async function newNoteVaultReset(f) {
+  await configure(f, { enabled: true, mode: "pause", pauseSeconds: 2 });
+  let held, indexReads = 0;
+  const noteReads = [];
+  const release = f.page.onEvent(event => {
+    if (event.method === "Fetch.requestPaused") held = event.params.requestId;
+    if (event.method === "Network.requestWillBeSent") {
+      const { request } = event.params, path = new URL(request.url).pathname;
+      if (path === "/_/api/note-index") indexReads++;
+      if (request.method === "GET" && path.startsWith("/_/api/notes/")) noteReads.push(request.url);
+    }
+  });
+  try {
+    // Hold the real stream until the proposed filename and editor are visible.
+    // An ahead cursor makes the real hub return reset, without fabricating facts.
+    await f.page.send("Fetch.enable", { patterns: [{ urlPattern: "*/_/api/changes?*", requestStage: "Request" }] });
+    await f.page.goto(f.baseUrl + "/_/new");
+    await f.page.poll("!!document.querySelector('input[placeholder=Title]') && [...document.querySelectorAll('.content-column button')].some(el=>el.textContent.trim()==='Source')");
+    await waitUntil(() => held ? done() : pending({ held: null }), { label: "new-note vault stream held", intervalMs: 25 });
+    const before = indexReads;
+    await f.page.send("Fetch.continueRequest", { requestId: held, url: f.baseUrl + "/_/api/changes?since=" + Number.MAX_SAFE_INTEGER });
+    // The note-index consumer issues a new read only after receiving reset.
+    await waitUntil(() => indexReads > before ? done() : pending({ before, indexReads }), { label: "real vault reset consumed by note index", intervalMs: 25 });
+    assert(noteReads.length === 0, `Uncreated note was read as a vault file after reset: ${JSON.stringify(noteReads)}`);
+    const uncreatedNoteReads = noteReads.length;
+    assert(await f.page.evaluate("!document.querySelector('[data-vault-notice]')"), "Uncreated note displayed an external-change notice");
+    await f.page.button("Source", ".content-column");
+    await f.page.poll(`!!document.querySelector('${editor}')`);
+    const text = "# Reset creation\n\nCreated after a real vault reset.\n";
+    await replace(f, editor, text);
+    const saved = await disk(f, "Reset creation", text); await f.page.poll(clean);
+    assert(await f.page.evaluate("decodeURIComponent(location.pathname)") === "/Reset creation", "Reset creation lost its acknowledged identity");
+    await exit(f);
+    return { case: "new-note-vault-reset", resetConsumed: true, uncreatedNoteReads, ...saved };
+  } finally { release(); await f.page.send("Fetch.disable"); }
+}
+
 async function capture(f, name, selectors) {
   const directory = Deno.env.get("GLOBNOTES_AUTOSAVE_SCREENSHOTS");
   if (!directory) return;
@@ -303,6 +340,7 @@ export async function autosaveTimer(f) {
     results.push(await wysiwygBaseline(f));
     results.push({ case: "rename-reconciliation", scenarios: await renameReconciliation(f) });
     results.push(await lateActivation(f));
+    results.push(await newNoteVaultReset(f));
 
     for (const [path, text] of [["Heading", "# Heading\n\nCreated without clicking Save.\n"], ["Untitled", "A new note without a heading.\n"]]) {
       await f.page.goto(f.baseUrl + "/_/new");

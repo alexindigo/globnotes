@@ -446,6 +446,9 @@ export function createNoteController({
   }
   function reviewConflict() { return router.push(reviewConflictTarget(conflictInbox, note.value.path)); }
   function openVaultPath() {
+    // A proposed filename is not a vault identity. Only creation's receipt can
+    // admit observation while its canonical route/prop update is still pending.
+    if (isNewNote.value) return saveOwner.queueState()?.acknowledged?.path;
     return loadStatus.value !== "loaded" || isNoteNotFound.value ? getContext().path : note.value.path;
   }
   function followPendingVaultChange() {

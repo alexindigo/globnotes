@@ -79,6 +79,42 @@ describe("note workflow ownership", () => {
     initial.resolve({ path: "folder/P", content: "Seed", version: "v1" }); await loading; await flush();
     expect(f.controller.state.note.content).toBe("Elsewhere"); expect(f.adapters.read).toHaveBeenCalledTimes(2);
   });
+  it.each(["reset", "created", "deleted", "renamed"].flatMap(event => [false, true].map(dirty => [event, dirty])))
+    ("an uncreated note has no vault identity for %s (dirty=%s)", async (event, dirty) => {
+      const read = vi.fn().mockRejectedValue({ response: { status: 404 } });
+      // An explicit requested name may already belong to somebody else's file.
+      const f = fixture({ read }, { path: undefined, query: { path: "Proposed" } });
+      await f.controller.mount(); f.controller.registerEditor(f.port);
+      f.input(dirty ? "My new text" : "");
+      if (event === "reset") await f.handlers.get(TOPICS.VAULT_RESET)({ next: 10 });
+      else await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: event === "renamed" ? "Other.md" : "Proposed.md",
+        oldPath: event === "renamed" ? "Proposed.md" : undefined, kind: event, hash: "v2" });
+      await flush();
+      expect(f.adapters.read).not.toHaveBeenCalled();
+      expect(f.controller.state.vaultNotice).toBe("");
+      expect(f.controller.state.isNoteNotFound).toBe(false);
+      expect(f.controller.currentBuffer()).toBe(dirty ? "My new text" : "");
+      expect(f.controller.state.note.path).toBe("Proposed");
+    });
+  it("creation acknowledgement, not the requested name or route update, admits vault observation", async () => {
+    const wire = deferred(); createNote.mockReturnValueOnce(wire.promise);
+    const read = vi.fn().mockRejectedValue({ response: { status: 404 } });
+    const f = fixture({ read }, { path: undefined, query: { path: "Proposed" } });
+    await f.controller.mount(); f.controller.registerEditor(f.port); f.input("Mine");
+    f.controller.saveHandler(); await flush();
+    await f.handlers.get(TOPICS.VAULT_RESET)({ next: 10 });
+    expect(read).not.toHaveBeenCalled(); expect(f.controller.state.vaultNotice).toBe("");
+    wire.resolve({ path: "Created", content: "Mine", version: "v1" }); await flush();
+    // Simulate the prop update lagging the save's canonical URL integration.
+    expect(f.controller.state.isNewNote).toBe(true);
+    expect(f.controller.state.note.path).toBe("Created");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "Proposed.md", kind: "deleted" });
+    expect(f.controller.state.vaultNotice).toBe("");
+    await f.handlers.get(TOPICS.VAULT_RESET)({ next: 11 });
+    expect(read).toHaveBeenCalledExactlyOnceWith("Created");
+    expect(f.controller.state.vaultNotice).toContain("saving will re-create it");
+    expect(f.controller.currentBuffer()).toBe("Mine");
+  });
   it.each(["view", "clean", "dirty"])("external changes refresh or retain the open note (%s)", async mode => {
     const f = fixture({ read: vi.fn().mockResolvedValueOnce({ path: "folder/P", content: "Seed", version: "v1" })
       .mockResolvedValue({ path: "folder/P", content: "Elsewhere", version: "v2" }) });
