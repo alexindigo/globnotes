@@ -226,6 +226,15 @@ links the PR evidence. Missing proof, malformed results and API errors run tests
 PRs and release tags always run. The independent Docker build/publish workflows
 retain their own triggers and behavior.
 
+The server lifecycle overflow test drives only the hanging observer's captured
+`processClock.deadline` callback. Startup guard-readiness tests capture their
+`deadlineAt` admission, assert the requested operation/per-plugin budget and
+pending-before-expiry state, then observe the real guard rejection, blocking
+catalogue and unchanged disk. These use the existing clock seam, restoring it
+before other work; they do not fake worker heartbeats or lower production bounds.
+Deliberate real-time checks remain in `tests/timing/`. Endpoint handler checking
+in the `handlers` gate is type checking, not handler runtime waiting.
+
 The Podman launcher requires rootless operation and maps the invoking user
 to container UID/GID 1000 with `--userns=keep-id:uid=1000,gid=1000` (Podman
 4.3 or newer). It uses a named bridge network and shares the dev container's

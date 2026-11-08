@@ -257,51 +257,91 @@ for (const boundary of ["operation", "per-plugin"] as const) {
         gate.ready.promise,
         "registered real required guard",
       );
-      const origin = performance.now();
-      const guarded = boundary === "operation"
-        ? runtime.guard("pre-create", {}, processClock.now() + 100)
-        : new NoteOperations({
-          notes: new FileSystemNotes(fixture.vault, {}, env),
-          files: new FileServing(fixture.vault),
-          indexer: null,
-          runtime: () => runtime,
-          lifecycle,
-        }).createNote(
-          { path: "forbidden", content: "must not mutate" },
-          fixtureApiOrigin(lifecycle),
+      const expectedBudget = boundary === "operation"
+        ? 100
+        : runtime.limits.preHookMs;
+      const captured = Promise.withResolvers<
+        { expire(): void; budget: number }
+      >();
+      const originalDeadlineAt = processClock.deadlineAt;
+      let cancelled = false;
+      // Restore this existing seam as soon as readiness arms its deadline.
+      // Heartbeats and the rest of the process clock stay real.
+      processClock.deadlineAt = (until, callback) => {
+        processClock.deadlineAt = originalDeadlineAt;
+        captured.resolve({
+          expire: callback,
+          budget: until - processClock.now(),
+        });
+        return () => {
+          cancelled = true;
+        };
+      };
+      try {
+        const guarded = boundary === "operation"
+          ? runtime.guard("pre-create", {}, processClock.now() + 100)
+          : new NoteOperations({
+            notes: new FileSystemNotes(fixture.vault, {}, env),
+            files: new FileServing(fixture.vault),
+            indexer: null,
+            runtime: () => runtime,
+            lifecycle,
+          }).createNote(
+            { path: "forbidden", content: "must not mutate" },
+            fixtureApiOrigin(lifecycle),
+          );
+        const outcome = guarded.catch((error) => error);
+        let settled = false;
+        outcome.then(() => {
+          settled = true;
+        });
+        const deadline = await livenessBounded(
+          captured.promise,
+          "required guard readiness deadline armed",
         );
-      const error = await livenessBounded(
-        guarded.catch((error) => error),
-        "required guard deadline",
-        7000,
-      );
-      assertEquals(error.code, "plugin_guard_failed");
-      assertEquals(error.status, 503);
-      const elapsed = performance.now() - origin;
-      assert(
-        elapsed >= (boundary === "operation" ? 90 : 4900) &&
-          elapsed < (boundary === "operation" ? 1500 : 6500),
-      );
-      assertEquals(runtime.status("liveness-guard")!.status, "starting");
-      await assertRejects(
-        () => Deno.stat(`${fixture.vault}/forbidden.md`),
-        Deno.errors.NotFound,
-      );
-      assertEquals(
-        (await manager.catalog()).plugins.find((item) =>
-          item.id === "liveness-guard"
-        )!.blocking.active,
-        true,
-      );
-      console.log(
-        JSON.stringify({
-          guardBoundary: boundary,
-          elapsed,
-          errorCode: error.code,
-          noFilesystemMutation: true,
-          retainedLivenessFixture: fixture.root,
-        }),
-      );
+        assert(
+          deadline.budget >=
+              expectedBudget - (boundary === "operation" ? 10 : 100) &&
+            deadline.budget <= expectedBudget,
+        );
+        await Promise.resolve();
+        assertEquals(
+          settled,
+          false,
+          "required guard must stay pending before expiry",
+        );
+        assertEquals(cancelled, false);
+        deadline.expire();
+        const error = await livenessBounded(
+          outcome,
+          "required guard deadline",
+        );
+        assertEquals(error.code, "plugin_guard_failed");
+        assertEquals(error.status, 503);
+        assertEquals(cancelled, true);
+        assertEquals(runtime.status("liveness-guard")!.status, "starting");
+        await assertRejects(
+          () => Deno.stat(`${fixture.vault}/forbidden.md`),
+          Deno.errors.NotFound,
+        );
+        assertEquals(
+          (await manager.catalog()).plugins.find((item) =>
+            item.id === "liveness-guard"
+          )!.blocking.active,
+          true,
+        );
+        console.log(
+          JSON.stringify({
+            guardBoundary: boundary,
+            requestedBudgetMs: deadline.budget,
+            errorCode: error.code,
+            noFilesystemMutation: true,
+            retainedLivenessFixture: fixture.root,
+          }),
+        );
+      } finally {
+        processClock.deadlineAt = originalDeadlineAt;
+      }
     } finally {
       await runtime.close();
       manager.stop();

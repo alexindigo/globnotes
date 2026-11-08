@@ -84,12 +84,6 @@ const READINESS_ALLOWED: NonNullable<Rule["allowed"]> = [
     reason:
       "ambiguous, kept as is: the 2.5 s bound tells watcher delivery from the 60 s default periodic scan",
   },
-  {
-    file: "tests/plugin_lifecycle_test.ts",
-    line: "const hangDeadline = Date.now() + serviceCallMs + 5000;",
-    reason:
-      "ambiguous, kept as is: the bound is the product's call deadline (serviceCallMs) plus margin and its expiry is not a failure (the test then accepts failed or deliveryFailures >= 1)",
-  },
 ];
 
 /** Server lines that read a raw clock or arm a raw timer outside the

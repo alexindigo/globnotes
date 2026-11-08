@@ -37,6 +37,7 @@ import {
 } from "./helpers/plugin_lifecycle.ts";
 import { pluginSettled } from "./helpers/plugin_ready.ts";
 import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
+import { processClock } from "../server/observed_time.ts";
 
 for (
   const change of [
@@ -859,20 +860,39 @@ Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action
     // Fill the observer lane synchronously: one active hanging delivery,
     // queuedJobs waiting deliveries, then an overflow. Target only the hanger
     // so the healthy recorder still observes exactly the real note actions.
+    let expire: (() => void) | undefined, cancelled = false;
     for (let i = 0; i < queuedJobs + 2; i++) {
       const operationId = `overflow-${i}`;
-      b.runtime.post(
-        "on-save",
-        {
-          operationId,
-          action: "save",
-          origin: "api",
-          timestamp: new Date().toISOString(),
-          path: "a",
-        },
-        { operationId, action: "save" },
-        "hanger",
-      );
+      // Capture only this hanging delivery's owned deadline, restoring the
+      // clock before worker I/O (the same seam used by PR #41). Healthy
+      // consumers, queued calls and all other deadlines remain real.
+      const originalDeadline = processClock.deadline;
+      if (i === 0) {
+        processClock.deadline = (budget, callback) => {
+          assertEquals(budget, serviceCallMs);
+          assertEquals(expire, undefined);
+          expire = callback;
+          return () => {
+            cancelled = true;
+          };
+        };
+      }
+      try {
+        b.runtime.post(
+          "on-save",
+          {
+            operationId,
+            action: "save",
+            origin: "api",
+            timestamp: new Date().toISOString(),
+            path: "a",
+          },
+          { operationId, action: "save" },
+          "hanger",
+        );
+      } finally {
+        processClock.deadline = originalDeadline;
+      }
     }
     // Rejected admission reports on a microtask, without waiting for a timer.
     await Promise.resolve();
@@ -913,12 +933,18 @@ Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action
     assertEquals(saves.length, 3);
     // The hanger's observer deadline failure is recorded — host failed,
     // diagnostic visible — and the note actions were never blocked.
-    const hangDeadline = Date.now() + serviceCallMs + 5000;
-    while (Date.now() < hangDeadline) {
-      const s = b.runtime.status("hanger");
-      if (s?.status === "failed") break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    assert(expire, "hanging observer must arm its production call deadline");
+    assertEquals(cancelled, false);
+    assertEquals(b.runtime.status("hanger")?.status, "ready");
+    expire();
+    await waitUntil(
+      () =>
+        b.runtime.status("hanger")?.status === "failed"
+          ? done()
+          : waitPending(b.runtime.status("hanger")),
+      { label: "expired hanging observer retired" },
+    );
+    assertEquals(cancelled, true);
     const status = b.runtime.status("hanger");
     assert(status !== null);
     assert(
