@@ -34,6 +34,7 @@ import {
   type ReleaseOutcome,
 } from "./execution_context.ts";
 import { compileEndpointTable } from "./endpoint_table.ts";
+import { METADATA_LIMITS, metadataQuery } from "../metadata/contracts.ts";
 import {
   DRIVER_METHODS,
   type DriverInstanceSnapshot,
@@ -68,6 +69,8 @@ export interface RpcAuthority {
   /** Private transport receipt plus activation/initial-sync settlement. */
   receipt?: Promise<ReleaseOutcome>;
   readiness?: Promise<ReleaseOutcome>;
+  /** Host-only synchronous result rebuild immediately before RPC disclosure. */
+  disclose?(prepare: () => unknown): void;
 }
 export interface InvocationOptions {
   generation?: string;
@@ -675,6 +678,7 @@ export class PluginHost {
               timer,
             });
           }
+          let prepareResult: (() => unknown) | undefined;
           const authority: RpcAuthority = {
             generation: slot.generation,
             role: this.role,
@@ -688,6 +692,9 @@ export class PluginHost {
             source: slot.source,
             receipt: receipt?.release,
             readiness: slot.background.release,
+            disclose: (prepare) => {
+              prepareResult = prepare;
+            },
           };
           if (!authority.current()) {
             worker.postMessage(
@@ -721,13 +728,16 @@ export class PluginHost {
           }).then(
             (value) => {
               if (authority.current()) {
+                // Rebuild and post in the same synchronous turn. A separate
+                // promise transform would reopen a check/disclosure microtask gap.
+                const disclosed = prepareResult ? prepareResult() : value;
                 worker.postMessage(
                   {
                     type: "rpcResponse",
                     generation: slot.generation,
                     id: data.id,
                     ok: true,
-                    value,
+                    value: disclosed,
                     receiptRequired,
                   } satisfies HostMessage,
                 );
@@ -735,6 +745,7 @@ export class PluginHost {
                 if (receipt) receipt.sent = true;
               }
             },
+          ).catch(
             (error) => {
               if (authority.current()) {
                 worker.postMessage(
@@ -869,6 +880,20 @@ export class PluginHost {
           })),
         { handlerId: "tentative-endpoint", descriptor: definition },
       ]);
+    } else if (registration.kind === "metadata-watch") {
+      if (
+        registration.id !== "metadata-watch" ||
+        registration.definition !== undefined ||
+        Object.keys(value).some((key) =>
+          !["kind", "id", "query"].includes(key)
+        ) ||
+        [...this.registry.values()].filter((r) => r.kind === "metadata-watch")
+            .length >= METADATA_LIMITS.watches
+      ) {
+        throw new Error("invalid or excess metadata watch");
+      }
+      metadataQuery(registration.query);
+      return;
     } else if (registration.kind === "changes") {
       if (
         !this.manifest.changes || registration.id !== "changes" ||

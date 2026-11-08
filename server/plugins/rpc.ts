@@ -12,6 +12,8 @@ import { readManagedFile } from "../notes/operations.ts";
 import type { AuxiliaryFilesystem } from "./auxiliary_fs.ts";
 import { FsError } from "./contracts.ts";
 import { versionOf } from "../hub/merge.ts";
+import type { MetadataProjection } from "../metadata/projection.ts";
+import { metadataRead } from "../metadata/service.ts";
 
 export function pluginRpc(
   method: string,
@@ -81,6 +83,7 @@ export interface ServiceRpcDeps {
   statePath: string;
   actions(): PluginActions | null;
   filesystem?: AuxiliaryFilesystem;
+  metadata?: MetadataProjection;
 }
 
 interface ReadRpcDeps {
@@ -192,6 +195,22 @@ export function servicePluginRpc(
 ) => Promise<unknown> {
   return (manifest, method, args, authority): Promise<unknown> => {
     try {
+      if (method === "metadata.get" || method === "metadata.query") {
+        if (!deps.metadata) throw new Error("metadata unavailable");
+        const prepare = () =>
+          metadataRead(
+            deps.metadata!,
+            manifest,
+            method,
+            args,
+            authority.current,
+          );
+        if (authority.disclose) {
+          authority.disclose(prepare);
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(prepare());
+      }
       if (method.startsWith("fs.")) {
         if (!deps.filesystem) throw new FsError("fs_denied");
         return deps.filesystem.rpc(manifest, method, args, authority);

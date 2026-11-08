@@ -2,6 +2,7 @@
 
 /** Serializable plugin contract. Authority always comes from the owning host. */
 import type { Source } from "./network_contracts.ts";
+import type { MetadataQuery } from "../metadata/contracts.ts";
 import type {
   DriverCapabilities,
   DriverInstanceSnapshot,
@@ -174,8 +175,10 @@ export interface HandlerRegistration {
     | "endpoint"
     | "versioning"
     | "changes"
+    | "metadata-watch"
     | "driver";
   id: string;
+  query?: MetadataQuery;
   definition?: CommandDefinition | EndpointDescriptor;
 }
 export const HTTP_METHODS = [

@@ -23,6 +23,7 @@ import { VaultEffects } from "./hub/effects.ts";
 import { HubGate } from "./hub/gate.ts";
 import { subscribeExternalFacts, subscribeIndex } from "./hub/subscribers.ts";
 import { DriverSupervisor } from "./hub/drivers/supervisor.ts";
+import { MetadataProjection } from "./metadata/projection.ts";
 import { PluginActions } from "./plugins/actions.ts";
 import { AuxiliaryFilesystem } from "./plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "./plugins/data.ts";
@@ -173,8 +174,11 @@ lifecycle.onSync((fact) => {
     logger.error(`plugin sync delivery failed: ${e}`)
   );
 });
+const metadata = new MetadataProjection(hub);
+state.metadata = metadata;
 plugins.configureRuntime({
   hub,
+  metadata,
   operational: () => lifecycle.operational(),
   writable: () => lifecycle.writable(),
   commit: (effect) => lifecycle.gate.run(effect),
@@ -186,6 +190,7 @@ plugins.configureRuntime({
     statePath: globalConfig.statePath,
     actions: () => actions,
     filesystem: auxiliaryFilesystem,
+    metadata,
   }),
 });
 hub.start();
@@ -305,6 +310,7 @@ const shutdown = async () => {
   await drivers.close();
   plugins.runtime?.suspend();
   plugins.stop();
+  metadata.stop();
   hub.stop();
   // Persistent browser streams do not have a natural completion. Process exit
   // closes them after the owned driver/storage teardown, as SIGTERM did before.

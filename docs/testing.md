@@ -376,6 +376,36 @@ timeout 600 .devcontainer/run.sh --run-dir "$RUNS/log-consumers" -- bash -lc 'ti
 Use fresh disk-backed evidence directories and the authorized rootless engine.
 CI owns the full browser and serial timing gates; this is targeted server evidence.
 
+### Current metadata consumers
+
+`metadata_parse_test.ts` observes ordered scalar/list/raw frontmatter, reference and
+wiki links/embeds, nested task paragraphs, duplicate inline fields, code/raw-HTML
+exclusion, escapes, BOM/CRLF, unfinished frontmatter and multiline source positions.
+`metadata_projection_test.ts` holds asynchronous parsing across rename/delete,
+checks immediate invalidation, explicit read/UTF-8/size/parser failures, current-byte
+re-planning, retention rebuild and atomic snapshot/multipart group publication.
+
+`metadata_runtime_test.ts` drives actual service Workers through scoped get/query/
+watch without log declarations, granted counts/filters/pagination, invalid input,
+16-watch admission, byte windows/oversized records, failure/backoff, disposal and
+retirement. A held actual FIFO proves deletion/grant narrowing rebuilds queued
+results, rather than sending previously parsed values. It also checks canonical grants
+at the actual RPC post boundary (including an intervening-microtask negative
+control) and a combined byte window containing its full grant-qualified revision.
+`metadata_acceptance_test.ts` boots the real server, connects the M5 HTTP memory
+remote and observes properties,
+headings, links, tasks, fields and raw-byte versions at Worker get/query/watch
+consumers for all four write origins, changes, rename/delete and startup rebuild.
+
+```sh
+timeout 1800 .devcontainer/run.sh --run-dir "$RUNS/m7-targeted" -- bash -lc 'timeout 1600 deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net tests/plugin_changes_*_test.ts tests/metadata_*_test.ts tests/hub_store_test.ts tests/hub_changes_test.ts tests/hub_driver_native_acceptance_test.ts tests/plugin_runtime_test.ts tests/plugin_authority_test.ts tests/hub_versioning_test.ts tests/backup_plugin_test.ts tests/backup_plugin_controls_test.ts tests/test_isolation_contract_test.ts'
+timeout 300 .devcontainer/run.sh --run-dir "$RUNS/m7-cold" -- bash -lc 'timeout 120 deno task build:client && timeout 90 deno run --allow-all scripts/cold-load.mjs /workspace m7-log-facts'
+```
+
+Use fresh disk-backed evidence directories through the authorized rootless engine.
+The build/cold-load command proves build and startup only. CI owns the full browser
+and serial timing gates; these commands are targeted milestone acceptance.
+
 ### Driver contract and SDK
 
 `hub_driver_sdk_test.ts` checks native/emulated conditions, exact ETag reads,

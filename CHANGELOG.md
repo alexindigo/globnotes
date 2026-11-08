@@ -15,6 +15,13 @@ names and current read authority. Hub schema 5 upgrades in place without retaini
 file bodies. Current reads still cannot recover overwritten history; the legacy
 backup's best-effort delivery remains unchanged.
 
+Service plugins can read current parsed note metadata and run bounded structured
+or live queries for properties, links, headings, tasks and inline fields. Ordinary
+read grants filter records, counts and pages; narrow grants need no log
+subscription. The per-vault, memory-only projection follows all peers, invalidates
+old values immediately and rebuilds after restart/gaps. Unavailable reads/parses
+are explicit; queued watch results recheck current grants and generation.
+
 AI agents can work with the vault over the Model Context Protocol (MCP). The
 globnotes server now serves an MCP endpoint at `<prefix>/_/mcp` with seven tools:
 search notes, read a note, list a folder, list tags, and create, update (or

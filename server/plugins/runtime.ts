@@ -18,6 +18,7 @@ import { PluginDataStore } from "./data.ts";
 import type { VaultHub } from "../hub/hub.ts";
 import type { LogFollower } from "../hub/follower.ts";
 import { changesAuthority, followPluginChanges } from "./changes.ts";
+import { MetadataWatches } from "../metadata/service.ts";
 import { CHANGES_API_VERSION } from "./change_contract.ts";
 import type { DisplacementOffer, Versioning } from "../hub/versioning.ts";
 import { readGrantCovers } from "./lifecycle.ts";
@@ -86,6 +87,7 @@ export interface RuntimeAdapters {
   ownerEpoch?(id: string): number;
   ownerEnabled?(id: string): boolean;
   hub?: VaultHub;
+  metadata?: import("../metadata/projection.ts").MetadataProjection;
 }
 interface RuntimeEntry {
   source: RuntimeSource;
@@ -98,6 +100,7 @@ interface RuntimeEntry {
   sourceToken?: Source;
   recoveryAdmission?: NetworkPolicy;
   changes?: LogFollower;
+  metadata?: MetadataWatches;
 }
 export interface GuardLease {
   pluginId: string;
@@ -431,11 +434,16 @@ export class PluginRuntime implements Versioning {
           },
           effective: policy?.effective,
           source: policy?.source,
-          registrationChanged: () => this.changed(),
+          registrationChanged: () => {
+            entry.metadata?.sync();
+            this.changed();
+          },
           failed: () => {
             if (entry.host !== host || !currentActivation()) return;
             entry.changes?.stop();
             entry.changes = undefined;
+            entry.metadata?.stop();
+            entry.metadata = undefined;
             entry.status = "failed";
             this.diagnostic(
               entry,
@@ -486,6 +494,24 @@ export class PluginRuntime implements Versioning {
       }
       entry.status = "ready";
       entry.recoveryAdmission = undefined;
+      if (this.adapters.metadata) {
+        entry.metadata = new MetadataWatches({
+          projection: this.adapters.metadata,
+          manifest,
+          host,
+          current: () =>
+            currentActivation() && entry.host === host &&
+            entry.status === "ready" && this.adapters.operational(),
+          failed: () => {
+            entry.deliveryFailures++;
+            this.diagnostic(
+              entry,
+              "metadata_watch_failed",
+              "metadata watch failed; current query will retry",
+            );
+          },
+        });
+      }
       if (manifest.changes) {
         entry.changes = followPluginChanges({
           manifest,
@@ -512,6 +538,8 @@ export class PluginRuntime implements Versioning {
       if (!currentActivation()) return;
       entry.changes?.stop();
       entry.changes = undefined;
+      entry.metadata?.stop();
+      entry.metadata = undefined;
       if (entry.host === candidate) entry.host = null;
       entry.starting = null;
       entry.sourceToken = undefined;
@@ -638,6 +666,8 @@ export class PluginRuntime implements Versioning {
     if (!entry) return Promise.resolve();
     entry.changes?.stop();
     entry.changes = undefined;
+    entry.metadata?.stop();
+    entry.metadata = undefined;
     if (enabled !== undefined) entry.source = { ...entry.source, enabled };
     const host = entry.host;
     entry.host = null; // Revoke authority before draining or disposal.
@@ -1155,6 +1185,8 @@ export class PluginRuntime implements Versioning {
     for (const entry of this.entries.values()) {
       entry.changes?.stop();
       entry.changes = undefined;
+      entry.metadata?.stop();
+      entry.metadata = undefined;
       const host = entry.host;
       entry.host = null;
       entry.activation = undefined;

@@ -36,6 +36,7 @@ import type {
   PermissionView,
   Source,
 } from "./network_contracts.ts";
+import { metadataPath, metadataQuery } from "../metadata/contracts.ts";
 import {
   type Driver,
   DRIVER_METHODS,
@@ -113,6 +114,11 @@ export interface PluginCtx {
    * The write never waits for this handler. */
   versioning: { onOffer(handler: Handler): Disposer };
   changes: { subscribe(handler: Handler): Disposer };
+  metadata: {
+    get(path: string): Promise<unknown>;
+    query(query: unknown): Promise<unknown>;
+    watch(query: unknown, handler: Handler): Disposer;
+  };
   snapshot: JsonValues;
   register(disposer: Disposer): Disposer;
   timers: {
@@ -320,6 +326,16 @@ const ctx: PluginCtx = {
   changes: {
     subscribe: (handler) =>
       register({ kind: "changes", id: "changes" }, handler),
+  },
+  metadata: {
+    get: (path) => rpc("metadata.get", [metadataPath(path)]),
+    query: (query) => rpc("metadata.query", [metadataQuery(query)]),
+    watch: (query, handler) =>
+      register({
+        kind: "metadata-watch",
+        id: "metadata-watch",
+        query: metadataQuery(query),
+      }, handler),
   },
   fs: {
     stat: (path, options) =>
@@ -705,7 +721,14 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
         const handler = handlers.get(message.handlerId);
         if (!handler) throw new Error("handler registration is unavailable");
         if (
-          ["hook", "settings-change", "action-result", "versioning", "changes"]
+          [
+            "hook",
+            "settings-change",
+            "action-result",
+            "versioning",
+            "changes",
+            "metadata-watch",
+          ]
             .includes(
               handlerKinds.get(message.handlerId) ?? "",
             )

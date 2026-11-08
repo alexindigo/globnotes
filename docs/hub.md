@@ -226,6 +226,32 @@ legacy deleted data. It publishes the complete new database by atomic rename;
 an incomplete rebuild leaves the old canonical index available for retry. Fresh
 installs create format 11 directly. No note files are moved by this upgrade.
 
+## Current parsed metadata
+
+`server/metadata/projection.ts` is one memory-only owner per vault, composed by
+`main.ts` and injected into service RPC/runtime owners. It follows the same
+`LogFollower` gap/snapshot/replay contract with an in-memory cursor, not a plugin
+cursor row. Restart or retention loss rebuilds from current files. It persists
+no parsed values, names or content in a new database.
+
+Its hub subscription synchronously removes changed, deleted and old rename keys
+from the current and staged maps. Later follower turns read bounded current bytes,
+verify the planned raw-byte hash, decode strict UTF-8 and run the pure Markdown
+parser. Every asynchronous result rechecks current seq and safe canonical target;
+retirement fences it before hub close. A changed byte version re-plans, confirmed
+absence reconciles through the scanner, and unknown I/O/parser/size failures are
+explicit per-note unavailable records rather than stale values or empty success.
+Snapshot pages and multipart groups stage ready results and publish together.
+Queries report catch-up state and revision-invalidated paging.
+
+`parse.ts` uses the existing markdown-it token rules and shared frontmatter subset,
+without loading the renderer, Prism or plugins. `query.ts` owns bounded structured
+filters/windows; `service.ts` owns exact current read-grant projection and managed
+Worker watches. Ordinary FIFO dispatch rebuilds a watch result immediately before
+disclosure. RPC replies use the same synchronous disclosure boundary. These APIs
+do not require whole-vault log access. See [metadata API](plugin-api.md#current-note-metadata)
+for record types, unavailable/count semantics, parser boundaries and limits.
+
 ## Sync peer metadata (M5)
 
 Each configured driver instance is a separate peer and vector dimension, even

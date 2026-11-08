@@ -296,6 +296,12 @@ versioner/RAG consumer must verify current-read hashes and supply any historical
 completeness from its own source history. Existing operation hooks and backup
 delivery remain separate contracts.
 
+Service-side consumers can also use [current parsed metadata](plugin-api.md#current-note-metadata)
+get/query/watch for properties, links, headings, tasks and inline fields. The
+per-vault projection follows these same all-peer facts without persistent parsed
+content; narrow ordinary read grants are sufficient. It is current-state parsing,
+not driver history or a RAG archive. Driver-role Workers do not receive that facade.
+
 Keys are server-held per instance in mode-0600 `driver-secrets.sqlite` in the
 configured state directory, with secure delete and no WAL. Reads disclose only
 declaration/set/time; there is no key GET. Raw, URI-encoded and base64 forms are

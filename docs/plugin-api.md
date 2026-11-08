@@ -283,6 +283,88 @@ including removal while the server was stopped. Re-enable resumes or resets as
 required. Read-only mode permits observation and host progress, but does not grant
 plugin data/content mutations; setup-pending starts no subscriber.
 
+## Current note metadata
+
+Service Workers have `ctx.metadata.get(path)`, `query(q)` and `watch(q,handler)`.
+These need only the ordinary declared read grants, including narrow roots; no
+`changes` declaration or whole-vault log grant is required. They observe the same
+local-folder, editor/API, plugin and sync-driver facts. Driver Workers do not get
+this facade. Read-only observation is permitted; setup and retired owners cannot
+use it.
+
+`get` accepts one strict vault-relative `.md` filename, including its extension,
+and returns a current record or `null` for absence. Dot/parent/empty path segments,
+backslashes, staging names and paths above 4096 UTF-8 bytes are rejected. Canonical
+state and descendant symlinks are excluded. The host checks the exact read grant
+and generation again at result disclosure, even for cached records.
+
+```js
+const note = await ctx.metadata.get("Work/Today.md");
+const page = await ctx.metadata.query({
+  prefix: "Work",
+  property: { key: "status", equals: "active" },
+  task: { checked: false },
+  offset: 0,
+  limit: 50,
+});
+const dispose = ctx.metadata.watch({ prefix: "Work" }, (page) => {
+  // Replace your current view; restart pagination when revision changes.
+});
+```
+
+Ready records are `{path,pathKey,version,seq,status:"ready",properties,headings,
+links,tasks,fields}`. `version` hashes the raw current bytes; it is not a historical
+lookup token. Properties preserve the shared frontmatter subset as ordered
+`{key,value}` entries: scalar strings, string lists or raw text, without YAML type
+coercion. Headings are `{level,text,line}`; links are `{target,label,embed,line}`;
+tasks are `{text,checked,line}`; fields are `{key,value,line}`. Lines are 1-based.
+Task text covers its first Markdown paragraph, including lazy continuations.
+Repeated properties and inline fields retain order and occurrences. Link targets
+are raw destinations (including reference links and wiki aliases/embeds), without
+resolution, fetching or renderer URL rewriting. Treat them as data, not safe HTML.
+
+The pure parser uses Markdown tokens and the shared frontmatter parser. Fenced,
+indented and inline code and raw HTML do not create task/field/wiki facts. BOM and
+CRLF preserve source coordinates; an unfinished opening frontmatter block produces
+no body facts until it closes. No render plugin or HTML renderer runs.
+
+Queries accept only `{prefix?,property?:{key,equals:string},task?:{checked:boolean},
+offset?,limit?}`. Filters are ANDed; prefix is an NFC, segment-aware path without a
+trailing slash. Property equality matches exact scalar strings or list members,
+not raw values; task matches any task with that checked state. There is no SQL,
+evaluation, regex, Dataview syntax or backlink resolution. Default limit is 50,
+maximum 128; offsets are nonnegative safe integers. Results sort by NFC path.
+
+Pages are `{revision,cursor,catchingUp,total,rows,unavailable,nextOffset?}`. Only
+read-granted notes enter filtering, counts or pagination. `total` counts matching
+ready records plus eligible unavailable candidates whose filters cannot yet be
+determined. `rows` contains ready records and `unavailable` the explicit unknown
+records in that same window; both consume the limit/offset. Never treat unknown
+as a matching value or absence. `nextOffset` resumes the shared sorted window.
+Any changed revision, including canonical grant drift, requires starting again
+at offset 0. `catchingUp` means the projection has not reached the current log
+cursor or is recovering/retrying; it does not promise historical completeness.
+
+Unavailable records contain only `{path,pathKey,version,seq,status:"unavailable",
+reason}`. Reasons are `reading`, `read_failed`, `too_large` (>16 MiB raw bytes),
+`invalid_utf8`, `parse_failed` and `record_too_large`. Current values are invalidated
+synchronously on a recorded change/delete, before asynchronous read/parse work.
+Changed read versions re-plan; missing reads reconcile absence. Stale asynchronous
+work cannot put back a deleted/renamed version. Ready results for one hub group
+publish together, including groups spanning follower pages. Nothing parsed is
+persisted to the hub or another host content database.
+
+Get and query/watch results are bounded to 1 MiB encoded JSON. A single oversized
+record becomes `record_too_large`; a page may return fewer records with
+`nextOffset` when its combined byte bound is reached. Watch allows at most 16
+registrations per plugin, returns a managed disposer, delivers an initial page,
+then coalesces projection changes with one outstanding invocation per watch.
+Queued results are rebuilt at actual FIFO dispatch under current grants; no
+deleted parsed payload waits in the host queue. Handler failures report
+`metadata_watch_failed` and retry after 5 seconds of observed time, doubling to
+5 minutes. Disable, disposal, replacement, failure and shutdown fence old watches.
+This is generation-scoped live observation, not a durable job or plugin store.
+
 ## Facades
 
 | Surface | Contract |
@@ -296,6 +378,7 @@ plugin data/content mutations; setup-pending starts no subscriber.
 | `ctx.files.read(path)` / `ctx.files.requestWrite(path, bytes, {base, onStale?})` | grant-checked mediated file access with the file's `version`; guarded `file-write` action |
 | Server `ctx.versioning.onOffer(handler)` | captured displaced bytes delivered after commit ([Versioning](#versioning)) |
 | Server `ctx.changes.subscribe(handler)` | opt-in acknowledged all-peer metadata feed (changes API 1, above) |
+| Server `ctx.metadata.get(path)` / `query(q)` / `watch(q,handler)` | current parsed notes, bounded read-granted pages and managed live queries (above) |
 | Server `ctx.permissions.declare({network,imports}, options?)` | complete host-bound contributor/source request snapshot; cannot grant access |
 | Server `ctx.permissions.requestAccess({kind,hosts,reason}, options?)` | prompt admission `{requestId,revision,status,blockedReasons}`; does not wait for a human or grant traffic |
 | Server `ctx.permissions.status()` | owning current request/approval/effective projection and source token |
