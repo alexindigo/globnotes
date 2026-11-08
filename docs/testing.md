@@ -249,11 +249,22 @@ gates still run fully. Local `--all` remains exhaustive unless explicitly passed
 
 On main/v2 branch pushes, `scripts/ci-pr-proof.sh` queries this CI workflow's
 Actions runs with the workflow token (`actions: read`). Only a completed,
-successful pull-request run for the exact head SHA with a successful `test` job
-can replace the duplicate workload. The job remains successful and its summary
-links the PR evidence. Missing proof, malformed results and API errors run tests.
+successful pull-request run for the exact head SHA, targeting the pushed branch
+(`main` or `v2`), with a successful `test` job can replace the duplicate workload.
+The associated PR head must match too; empty/missing PR associations (including
+fork runs) fail closed. One compare request also requires the recorded PR base
+to be an ancestor of the head. The job remains successful and its summary links
+the PR evidence. Missing proof, malformed results and API errors run tests.
 PRs and release tags always run. The independent Docker build/publish workflows
 retain their own triggers and behavior.
+
+Pull-request runs test a merge commit, not the head in isolation. Run/check-suite
+metadata reports the head SHA/tree, not an immutable tested merge SHA; the current
+PR merge ref may have moved and is not used as proof. Merge-tree equivalence
+therefore relies on this repository's fast-forward-only branch updates: the
+target's base at test time must be an ancestor of any head later fast-forwarded
+onto that branch, making the merge tree equal to the head tree. The recorded-base
+compare check fails closed for divergence; it does not replace that assumption.
 
 The server lifecycle overflow test drives only the hanging observer's captured
 `processClock.deadline` callback. Startup guard-readiness tests capture their
