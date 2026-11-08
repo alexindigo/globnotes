@@ -119,7 +119,8 @@ export class Fts5Indexer implements Indexer {
       }
       // A committed delete may survive a crash after its erasure checkpoint
       // failed. No row remains for reconciliation to rediscover that obligation.
-      // Retry at the first outer transaction, without taking a new lock on open.
+      // Retry before background inventory or at the next outer transaction,
+      // without taking a new lock on open.
       this.#erasurePending = !!existing && version === INDEX_FORMAT;
     } catch (error) {
       try {
@@ -201,6 +202,20 @@ export class Fts5Indexer implements Indexer {
       result.checkpointed !== 0
     ) {
       throw new Error("Search index erasure checkpoint did not complete");
+    }
+  }
+
+  /** Checkpoint failure cannot undo committed index work. Background inventory
+   * reports it independently so subsequent phases and completion still run;
+   * direct writes retain their explicit erasure failure. Never lose the retry. */
+  #retryErasure(failure: "throw" | "report" = "throw"): void {
+    if (!this.#erasurePending) return;
+    try {
+      this.#checkpoint();
+      this.#erasurePending = false;
+    } catch (error) {
+      if (failure === "throw") throw error;
+      logger.error("Search index erasure remains pending:", error);
     }
   }
 
@@ -312,7 +327,10 @@ export class Fts5Indexer implements Indexer {
    * commit, synced to disk (WAL, synchronous=FULL): indexing a note took
    * about 15 ms that way, so 10,000 notes took minutes and each batch held
    * the event loop for seconds (plans/mcp-v3 S1 row 5). */
-  #transaction<T>(fn: () => T): T {
+  #transaction<T>(
+    fn: () => T,
+    erasureFailure: "throw" | "report" = "throw",
+  ): T {
     const name = `index_write_${this.#savepoints}`;
     this.#db.exec(`SAVEPOINT ${name}`);
     this.#savepoints++;
@@ -331,10 +349,7 @@ export class Fts5Indexer implements Indexer {
     }
     // Outside the transaction: failure here cannot roll back an accepted delete.
     // Nested note savepoints share one erasure boundary for a background batch.
-    if (!this.#savepoints && this.#erasurePending) {
-      this.#checkpoint();
-      this.#erasurePending = false;
-    }
+    if (!this.#savepoints) this.#retryErasure(erasureFailure);
     return result;
   }
 
@@ -484,6 +499,10 @@ export class Fts5Indexer implements Indexer {
         (Deno.statSync(path.join(state.config.notesPath, filename)).mtime
           ?.getTime() ?? 0) / 1000;
 
+      // Retry a prior process's obligation separately from inventory work. A
+      // pinned WAL must not stop indexing new notes or publishing sync progress.
+      this.#retryErasure("report");
+
       // Prune deleted; update modified. Python stats each INDEXED file
       // directly for deletion (the filename-list cache must not hide
       // external deletes).
@@ -500,7 +519,7 @@ export class Fts5Indexer implements Indexer {
             }
           });
         }
-      });
+      }, "report");
 
       // Add new — breadth-first so top-level notes are indexed early.
       const newFiles = [...fsFiles]
@@ -525,7 +544,7 @@ export class Fts5Indexer implements Indexer {
               batchAdded.push(filename);
             }
           }
-        });
+        }, "report");
         // Facts and progress describe committed additions, never attempts.
         added.push(...batchAdded);
         this.#status.done += batchAdded.length;

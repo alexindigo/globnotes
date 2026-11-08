@@ -11,6 +11,9 @@ import { awaitIndexReady, restoreState } from "./helpers/state.ts";
 import { subscribeIndex } from "../server/hub/subscribers.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import { command, DENO } from "./helpers/process.ts";
+import { logger } from "../server/logger.ts";
+import type { OperationFact } from "../server/plugins/contracts.ts";
+import type { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 
 function fixture() {
   const previous = { ...state },
@@ -428,6 +431,93 @@ Deno.test("index erasure: a pinned WAL reader makes erasure fail explicitly afte
     index.batch(() => {});
     absentFromIndexFiles(f.storage, [name, body]);
   } finally {
+    reader?.close();
+    f.close();
+  }
+});
+
+Deno.test("index erasure: a pinned startup WAL does not skip new notes or completion, and pending erasure retries later", async () => {
+  const f = fixture(), originalLogger = { ...logger };
+  let reader: DatabaseSync | undefined;
+  const errors: string[] = [], facts: OperationFact[] = [];
+  try {
+    const name = "startupdeletednamecanary", body = "startupdeletedbodycanary";
+    Deno.writeTextFileSync(`${f.vault}/${name}.md`, body);
+    const original = f.make();
+    original.reindexNote(name);
+    reader = new DatabaseSync(`${f.storage}/index.sqlite`, { readOnly: true });
+    reader.exec("BEGIN");
+    assertEquals(
+      reader.prepare("SELECT content FROM notes_fts").get()!.content,
+      body,
+    );
+    Deno.removeSync(`${f.vault}/${name}.md`);
+    assertThrows(
+      () => original.deleteFromIndex(name),
+      Error,
+      "erasure checkpoint did not complete",
+    );
+    const restarted = f.make();
+    assertEquals(restarted.search(body), []);
+    for (const note of ["first", "second", "third"]) {
+      Deno.writeTextFileSync(`${f.vault}/${note}.md`, `newsearchable ${note}`);
+    }
+    state.lifecycle = {
+      syncCompleted: (fact: OperationFact) => facts.push(fact),
+    } as unknown as PluginLifecycle;
+    logger.error = (...args: unknown[]) =>
+      errors.push(args.map(String).join(" "));
+    restarted.startBackgroundSync();
+    await awaitIndexReady(restarted);
+    assertEquals(
+      restarted.search("newsearchable").map((row) => row.path).sort(),
+      ["first", "second", "third"],
+    );
+    assertEquals(restarted.indexStatus, {
+      syncing: false,
+      initial: false,
+      done: 3,
+      total: 3,
+      failed: 0,
+    });
+    assertEquals(
+      facts.map((
+        fact,
+      ) => [fact.action, fact.initial, [...fact.changedPaths!].sort()]),
+      [["sync", true, ["first", "second", "third"]]],
+    );
+    assert(
+      errors.some((line) =>
+        line.includes("erasure") && line.includes("pending")
+      ),
+      errors.join("\n"),
+    );
+    assert(
+      !errors.some((line) => line.includes("Background index sync failed")),
+      errors.join("\n"),
+    );
+    const wal = () =>
+      new TextDecoder().decode(
+        Deno.readFileSync(`${f.storage}/index.sqlite-wal`),
+      );
+    assert(
+      wal().includes(body),
+      "The pinned reader must still prevent physical erasure",
+    );
+    assertThrows(
+      () => restarted.batch(() => {}),
+      Error,
+      "erasure checkpoint did not complete",
+    );
+    reader.exec("ROLLBACK");
+    reader.close();
+    reader = undefined;
+    restarted.batch(() => {});
+    assertEquals(Deno.statSync(`${f.storage}/index.sqlite-wal`).size, 0);
+    absentFromIndexFiles(f.storage, [name, body]);
+    assertEquals(restarted.search("newsearchable").length, 3);
+  } finally {
+    Object.assign(logger, originalLogger);
     reader?.close();
     f.close();
   }
