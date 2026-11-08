@@ -120,7 +120,9 @@ for (const backend of ["s3", "webdav"]) {
       if (selectedCase && selectedCase !== label) continue;
       console.log(`REAL ${label}`);
       const endpoint = backend === "s3" ? s3Endpoint : davEndpoint;
-      const prefix = backend === "s3" ? label : `${variant}/${label}`;
+      const prefix = backend === "s3"
+        ? `${label} space + root`
+        : `${variant}/${label}`;
       const reference = referenceStore(
         backend,
         endpoint,
@@ -135,6 +137,8 @@ for (const backend of ["s3", "webdav"]) {
         ["folder/Imported.md", utf8.encode("remote first\n")],
         ["Survivor.md", utf8.encode("unchanged survivor\n")],
         ["empty.md", new Uint8Array()],
+        ["a b.md", utf8.encode("spaced name\n")],
+        ["a+b.md", utf8.encode("literal plus name\n")],
         ["assets/Unicode-\u00e9.bin", Uint8Array.from([0, 255, 1, 254])],
       ]);
       for (const [path, bytes] of initial) {

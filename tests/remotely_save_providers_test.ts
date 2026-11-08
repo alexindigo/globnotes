@@ -40,7 +40,11 @@ async function setup(
   weak: boolean | "missing" = false,
   settings: Record<string, unknown> = {},
 ) {
-  const remote = await remotelySaveRemote(backend);
+  const remote = await remotelySaveRemote(backend, {
+    s3Prefix: typeof settings.s3Prefix === "string"
+      ? settings.s3Prefix
+      : "prefix",
+  });
   remote.weak(weak);
   const context = ctx(
     {
@@ -247,6 +251,57 @@ Deno.test("remotely-save: numeric XML references reject invalid scalar values wi
   );
   assertEquals(parseXml("<a>&amp;#9999999;</a>", http.invalid).a, "&#9999999;");
 });
+
+for (const encoding of ["url", "raw"] as const) {
+  Deno.test(`remotely-save: S3 ${encoding} listings preserve spaces, literal plus and percent names in keys and prefix`, async () => {
+    const f = await setup("s3", "none", false, { s3Prefix: "pre fix+root" });
+    f.remote.encoding(encoding);
+    try {
+      for (const path of ["a b.md", "a+b.md", "literal%20.md"]) {
+        f.remote.set(path, path);
+      }
+      const entries = await f.discover();
+      assertEquals(
+        entries.map((entry) => "path" in entry ? entry.path : "").sort(),
+        ["a b.md", "a+b.md", "literal%20.md"],
+      );
+      for (const entry of entries) {
+        assert(entry.state === "known");
+        const read = await f.driver.read({
+          path: entry.path,
+          revision: entry.revision,
+        });
+        assert(read.state === "known");
+        assertEquals(new TextDecoder().decode(read.bytes), entry.path);
+      }
+      const spaced = entries.find((entry) =>
+        "path" in entry && entry.path === "a b.md"
+      );
+      assert(spaced?.state === "known");
+      assertEquals(
+        (await f.driver.apply([{
+          id: "replace",
+          op: "put",
+          path: spaced.path,
+          bytes: encoder.encode("edited separately"),
+          base: { revision: spaced.revision },
+          batch: 1,
+        }]))[0].state,
+        "settled",
+      );
+      assertEquals(
+        new TextDecoder().decode(f.remote.objects.get("a+b.md")!.bytes),
+        "a+b.md",
+      );
+      assertEquals(
+        new TextDecoder().decode(f.remote.objects.get("a b.md")!.bytes),
+        "edited separately",
+      );
+    } finally {
+      await f.close();
+    }
+  });
+}
 
 Deno.test("remotely-save: normalized filters bind scope independently of credentials and endpoint identity", async () => {
   const settings = {

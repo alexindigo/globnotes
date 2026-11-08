@@ -86,7 +86,8 @@ export async function signS3(
 }
 
 export function strongEtag(value) {
-  return typeof value === "string" && /^"[^"\x00-\x20\x7f]+"$/.test(value)
+  return typeof value === "string" &&
+      /^"[\x21\x23-\x7e\x80-\uffff]+"$/.test(value)
     ? value
     : null;
 }
@@ -176,7 +177,9 @@ export function createS3(configuration, http) {
         let key = text(c(item, "Key"));
         if (encoded === "url") {
           try {
-            key = decodeURIComponent(key);
+            // ListObjects URL encoding also uses form-style '+' for spaces;
+            // literal plus is %2B. Decode once, only for encoded responses.
+            key = decodeURIComponent(key.replaceAll("+", " "));
           } catch {
             throw http.invalid("Invalid S3 key encoding");
           }

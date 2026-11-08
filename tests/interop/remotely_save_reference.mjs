@@ -15,7 +15,11 @@ const escape = (value) =>
     (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
   );
 const path = (value) => value.split("/").map(escape).join("/");
-const xml = new XMLParser({ removeNSPrefix: true, parseTagValue: false });
+const xml = new XMLParser({
+  removeNSPrefix: true,
+  parseTagValue: false,
+  htmlEntities: true,
+});
 const array = (value) =>
   value === undefined ? [] : Array.isArray(value) ? value : [value];
 
@@ -306,8 +310,15 @@ export function referenceStore(
           log.push(...listClient.log);
           const value = xml.parse(text.decode(result.bytes)).ListBucketResult;
           for (const item of array(value.Contents)) {
+            const native = value.EncodingType === "url"
+              ? new URLSearchParams(`key=${item.Key}`).get("key")
+              : item.Key;
+            assert(
+              native.startsWith(prefix + "/"),
+              "reference listing escaped prefix",
+            );
             entries.push({
-              key: decodeURIComponent(item.Key).slice(prefix.length + 1),
+              key: native.slice(prefix.length + 1),
               etag: item.ETag,
               size: Number(item.Size),
               modified: Date.parse(item.LastModified),

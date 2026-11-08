@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 // Deterministic protocol peer, not a replacement for the real-service matrix.
-export function remotelySaveRemote(backend: "s3" | "webdav") {
+export function remotelySaveRemote(
+  backend: "s3" | "webdav",
+  { s3Prefix = "prefix" }: { s3Prefix?: string } = {},
+) {
   const objects = new Map<
     string,
     {
@@ -21,6 +24,7 @@ export function remotelySaveRemote(backend: "s3" | "webdav") {
   let counter = 0, tick = Math.floor(Date.now() / 1000) * 1000;
   let weak: boolean | "missing" = false;
   let tickStep = 1000;
+  let encoding: "url" | "raw" = "url";
   let fault:
     | ((request: Request, key: string) => Response | undefined)
     | undefined;
@@ -49,7 +53,10 @@ export function remotelySaveRemote(backend: "s3" | "webdav") {
     async (request) => {
       tick += tickStep;
       const url = new URL(request.url),
-        root = backend === "s3" ? "/bucket/prefix/" : "/dav/base/";
+        root = backend === "s3"
+          ? "/bucket/" + s3Prefix.split("/").map(encodeURIComponent).join("/") +
+            "/"
+          : "/dav/base/";
       const key = url.pathname.startsWith(root)
         ? decodeURIComponent(url.pathname.slice(root.length))
         : "";
@@ -74,12 +81,14 @@ export function remotelySaveRemote(backend: "s3" | "webdav") {
         const rows = [...objects].sort(([a], [b]) => a.localeCompare(b));
         const page = rows.slice(start, start + 2);
         return xml(
-          `<s:ListBucketResult xmlns:s="urn:s3"><s:EncodingType>url</s:EncodingType><s:IsTruncated>${
-            start + 2 < rows.length
-          }</s:IsTruncated>${
+          `<s:ListBucketResult xmlns:s="urn:s3">${
+            encoding === "url" ? "<s:EncodingType>url</s:EncodingType>" : ""
+          }<s:IsTruncated>${start + 2 < rows.length}</s:IsTruncated>${
             page.map(([key, object]) =>
               `<s:Contents><s:Key>${
-                encodeURIComponent(prefix + key)
+                encoding === "url"
+                  ? encodeURIComponent(prefix + key).replaceAll("%20", "+")
+                  : escaped(prefix + key)
               }</s:Key><s:Size>${object.bytes.length}</s:Size><s:ETag>${
                 escaped(object.etag)
               }</s:ETag><s:LastModified>${
@@ -190,6 +199,9 @@ export function remotelySaveRemote(backend: "s3" | "webdav") {
     clock(value: number, step = 1000) {
       tick = value;
       tickStep = step;
+    },
+    encoding(value: "url" | "raw") {
+      encoding = value;
     },
     async close() {
       await server.shutdown();
