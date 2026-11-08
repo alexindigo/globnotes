@@ -3,11 +3,14 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   type Change,
   type Context,
+  CONTROL_GATES,
   loadContext,
   parseNameStatus,
   selectChecks,
+  selectHarnessControls,
   SHARED_INPUTS,
   STATIC_GATES,
+  validateControlSelection,
   validateSelection,
 } from "../scripts/select-checks.ts";
 
@@ -48,6 +51,82 @@ const modified = (path: string): Change => ({
 });
 const select = (...paths: string[]) =>
   selectChecks(paths.map(modified), fixture());
+
+Deno.test("CI controls: only guarded inputs select controls; pre-commit remains separate", () => {
+  const controls = (...paths: string[]) =>
+    selectHarnessControls(paths.map(modified), "refs/pull/42/merge");
+  assertEquals(
+    controls(
+      "client/views/Note.vue",
+      "server/notes/operations.ts",
+      "docs/testing.md",
+    ).gates,
+    [],
+  );
+  assertEquals(controls("client/tests/e2e/save-preview.mjs").gates, [
+    "native-controls",
+  ]);
+  assertEquals(controls("client/tests/e2e/legacy-native-suite.mjs").gates, [
+    "native-results",
+    "native-controls",
+  ]);
+  assertEquals(controls("client/tests/e2e/run.sh").gates, [
+    "native-controls",
+    "entrypoint-results",
+  ]);
+  assertEquals(controls("client/tests/modal.test.js").gates, ["unit-controls"]);
+  assertEquals(controls("scripts/gates.sh").gates, [...CONTROL_GATES]);
+  assertEquals(controls(".github/workflows/ci.yml").gates, [...CONTROL_GATES]);
+  validateControlSelection(controls("README.md"));
+  assertThrows(() => validateSelection(controls("README.md")));
+});
+
+Deno.test("CI controls: unavailable diffs, refs and v2 release tags run every control", () => {
+  for (
+    const [changes, ref] of [[null, "refs/heads/main"], [[], ""], [
+      [],
+      "refs/tags/v2.9.0",
+    ]] as const
+  ) {
+    const selected = selectHarnessControls(
+      changes === null ? null : [...changes],
+      ref,
+    );
+    assertEquals(selected.gates, [...CONTROL_GATES]);
+    assert(selected.reasons.length > 0);
+  }
+  assertEquals(selectHarnessControls([], "refs/heads/v2").gates, []);
+});
+
+Deno.test("CI controls: removed and renamed guarded paths retain their coverage", () => {
+  const selected = selectHarnessControls(
+    parseNameStatus(
+      "R100\0client/tests/e2e/run.sh\0docs/retired.md\0D\0client/tests/modal.test.js\0",
+    ),
+    "refs/heads/main",
+  );
+  assertEquals(selected.gates, [
+    "unit-controls",
+    "native-controls",
+    "entrypoint-results",
+  ]);
+});
+
+Deno.test("CI controls: malformed selections cannot suppress controls", () => {
+  for (
+    const value of [null, {}, {
+      version: 1,
+      kind: "harness-controls",
+      gates: ["native"],
+      reasons: [],
+    }, {
+      ...selectHarnessControls([], "refs/heads/main"),
+      gates: ["native-results", "native-results"],
+    }]
+  ) {
+    assertThrows(() => validateControlSelection(value));
+  }
+});
 
 Deno.test("select-checks: every change gets whole-tree static gates and contracts", () => {
   for (const paths of [[], ["README.md"], ["server/unused.ts"], ["unknown"]]) {

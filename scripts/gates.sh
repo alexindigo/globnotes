@@ -18,7 +18,7 @@ usage() {
     printf 'usage: gates.sh --plan STAGED FILES | --select SELECTION [--serial] | --all [--browser] [--serial] | --timing\n' >&2
     exit 2
 }
-mode="" browser=false serial=false staged="" files="" selection=""
+mode="" browser=false serial=false staged="" files="" selection="" ci_changes="" ci_ref=""
 while (($#)); do
     case "$1" in
         --plan) mode=plan; staged="${2:?}"; files="${3:?}"; shift 3 ;;
@@ -27,6 +27,8 @@ while (($#)); do
         --timing) mode=timing; shift ;;
         --browser) browser=true; shift ;;
         --serial) serial=true; shift ;;
+        --ci-changes) ci_changes="${2:?}"; shift 2 ;;
+        --ci-ref) ci_ref="${2:?}"; shift 2 ;;
         *) usage ;;
     esac
 done
@@ -188,6 +190,27 @@ unit_controls() {
         deno run "${script_flags[@]}" --allow-sys client/tests/e2e/unit-consumer-controls.mjs
 }
 
+# Local --all remains exhaustive. CI opts in with diff/ref inputs. Any selector
+# execution or validation error keeps all controls, never an empty selection.
+select_controls() {
+    controls=(unit-controls native-results native-controls entrypoint-results)
+    [[ -n "$ci_changes" ]] || return 0
+    local output
+    if bounded deno run "${script_flags[@]}" scripts/select-checks.ts --ci-controls "$ci_changes" "$ci_ref" > "$logs/control-selection.json" &&
+        output="$(bounded deno run "${script_flags[@]}" scripts/select-checks.ts --control-field "$logs/control-selection.json")"; then
+        controls=()
+        if [[ -n "$output" ]]; then mapfile -t controls <<< "$output"; fi
+        printf 'CI harness controls: %s; reasons: %s\n' "${controls[*]:-none}" "$logs/control-selection.json"
+    else
+        printf 'CI harness control selection failed; running all controls\n' >&2
+    fi
+}
+control_selected() {
+    local control
+    for control in "${controls[@]}"; do [[ "$control" != "$1" ]] || return 0; done
+    return 1
+}
+
 field() {
     deno run --cached-only --frozen --config=deno.json --allow-read="$logs" \
         scripts/select-checks.ts --field "$selection" "$1"
@@ -259,9 +282,13 @@ case "$mode" in
         gate server server_tests --ignore=tests/timing/ tests/
         gate client env VITEST_MAX_WORKERS=4 deno task test:client
         build_gates
-        unit_controls
+        select_controls
+        if control_selected unit-controls; then unit_controls; fi
         if "$browser"; then
-            for name in native native-results native-controls entrypoint-results; do browser_gate "$name"; done
+            browser_gate native
+            for name in native-results native-controls entrypoint-results; do
+                if control_selected "$name"; then browser_gate "$name"; fi
+            done
         fi
         ;;
     timing)

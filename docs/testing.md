@@ -207,6 +207,17 @@ enabled. CI uses Podman because Docker's default isolation on the hosted
 runner blocks the namespace creation Chromium needs for its sandbox.
 The `docker-build` job builds the production image.
 
+CI selects harness self-controls from the PR base/head diff or push before/head
+range. `scripts/select-checks.ts` owns the mapping and records reasons in
+`control-selection.json`: native consumer harness inputs select native-controls,
+suite/result inputs select native-results, shell entrypoint inputs select
+entrypoint-results, and the named unit producers/consumers select unit-controls.
+Shared execution/toolchain inputs select all four. A missing or malformed diff,
+selector failure, or a v2 release-tag push runs every control. CI also runs for
+`v2.*` tags. This only changes harness self-controls: ordinary test/build/native
+gates still run fully. Local `--all` remains exhaustive unless explicitly passed
+`--ci-changes FILE --ci-ref REF`.
+
 The Podman launcher requires rootless operation and maps the invoking user
 to container UID/GID 1000 with `--userns=keep-id:uid=1000,gid=1000` (Podman
 4.3 or newer). It uses a named bridge network and shares the dev container's

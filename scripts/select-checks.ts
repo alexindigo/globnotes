@@ -44,6 +44,116 @@ export const SHARED_INPUTS = [
   "Dockerfile",
 ];
 
+export const CONTROL_GATES = [
+  "unit-controls",
+  "native-results",
+  "native-controls",
+  "entrypoint-results",
+] as const;
+type ControlGate = typeof CONTROL_GATES[number];
+export interface ControlSelection {
+  version: 1;
+  kind: "harness-controls";
+  gates: ControlGate[];
+  reasons: { path: string; selects: string }[];
+}
+
+// The single path-to-control owner. Prefixes end in "/". Controls run when
+// their producer/consumer harness or its execution/toolchain inputs change.
+const CONTROL_INPUTS: Record<ControlGate, string[]> = {
+  "unit-controls": [
+    "client/tests/e2e/unit-consumer-controls.mjs",
+    "client/tests/e2e/test-outcomes.mjs",
+    "client/keybindings/editor-keymap.js",
+    "client/tests/keybinding-conflicts.test.js",
+    "client/components/Modal.vue",
+    "client/tests/modal.test.js",
+    "client/sidebarTree.js",
+    "client/tests/sidebar-hydration.test.js",
+    "client/tests/setup.js",
+  ],
+  "native-results": [
+    "client/tests/e2e/legacy-native-suite.mjs",
+    "client/tests/e2e/test-outcomes.mjs",
+    "client/tests/e2e/native-result-controls.mjs",
+  ],
+  "native-controls": ["client/tests/e2e/", "tests/helpers/"],
+  "entrypoint-results": [
+    "client/tests/e2e/run.sh",
+    "client/tests/e2e/runner-entrypoint-controls.mjs",
+  ],
+};
+const matchesInput = (path: string, input: string) =>
+  input.endsWith("/") ? path.startsWith(input) : path === input;
+
+export function selectHarnessControls(
+  changes: Change[] | null,
+  ref: string,
+): ControlSelection {
+  const full = changes === null
+    ? "diff unavailable or malformed: fail safe"
+    : /^refs\/tags\/v2(?:\.|$)/.test(ref)
+    ? "v2 release tag"
+    : !/^refs\/(heads|pull|tags)\//.test(ref)
+    ? "ref unavailable: fail safe"
+    : null;
+  if (full) {
+    return {
+      version: 1,
+      kind: "harness-controls",
+      gates: [...CONTROL_GATES],
+      reasons: [{ path: "*", selects: full }],
+    };
+  }
+  const gates = new Set<ControlGate>();
+  const reasons: ControlSelection["reasons"] = [];
+  for (const change of changes!) {
+    const shared = [
+      ...SHARED_INPUTS,
+      ".github/workflows/",
+      ".githooks/",
+      "scripts/",
+    ].some((input) => matchesInput(change.path, input));
+    const selected = CONTROL_GATES.filter((gate) =>
+      shared ||
+      CONTROL_INPUTS[gate].some((input) => matchesInput(change.path, input))
+    );
+    for (const gate of selected) gates.add(gate);
+    if (selected.length) {
+      reasons.push({ path: change.path, selects: selected.join(", ") });
+    }
+  }
+  if (!reasons.length) {
+    reasons.push({ path: "*", selects: "no guarded harness inputs changed" });
+  }
+  return {
+    version: 1,
+    kind: "harness-controls",
+    gates: CONTROL_GATES.filter((gate) => gates.has(gate)),
+    reasons,
+  };
+}
+
+export function validateControlSelection(
+  value: unknown,
+): asserts value is ControlSelection {
+  const selection = value as ControlSelection | null;
+  if (
+    !selection || selection.version !== 1 ||
+    selection.kind !== "harness-controls" ||
+    !Array.isArray(selection.gates) ||
+    new Set(selection.gates).size !== selection.gates.length ||
+    selection.gates.some((gate) => !CONTROL_GATES.includes(gate)) ||
+    !Array.isArray(selection.reasons) || !selection.reasons.length ||
+    selection.reasons.some((reason) =>
+      !reason || typeof reason.path !== "string" ||
+      typeof reason.selects !== "string"
+    )
+  ) {
+    throw new Error("invalid harness control selection");
+  }
+}
+
 const TEST_FILE = /(^|\/)([^/]*[_.])?test\.(ts|tsx|mts|js|mjs|jsx)$/;
 export interface Change {
   status: string;
@@ -363,6 +473,24 @@ function printField(selection: Selection, field: string): void {
 }
 
 async function main(args: string[]): Promise<void> {
+  if (args[0] === "--ci-controls" && args.length === 3) {
+    let changes: Change[] | null = null;
+    try {
+      changes = parseNameStatus(await Deno.readTextFile(args[1]));
+    } catch (error) {
+      console.error(`CI control diff unavailable: ${error}`);
+    }
+    console.log(
+      JSON.stringify(selectHarnessControls(changes, args[2]), null, 2),
+    );
+    return;
+  }
+  if (args[0] === "--control-field" && args.length === 2) {
+    const selection: unknown = JSON.parse(await Deno.readTextFile(args[1]));
+    validateControlSelection(selection);
+    for (const gate of selection.gates) console.log(gate);
+    return;
+  }
   if (args[0] === "--field" && args.length === 3) {
     const selection: unknown = JSON.parse(await Deno.readTextFile(args[1]));
     validateSelection(selection);

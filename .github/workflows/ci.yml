@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main, v2]
+    tags: ["v2.*"]
   pull_request:
 
 permissions:
@@ -16,12 +17,32 @@ jobs:
       GLOBNOTES_CONTAINER_ENGINE: podman
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Prepare harness control diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/globnotes/all/logs"
+          changes="$RUNNER_TEMP/globnotes/all/logs/ci-changes.z"
+          # Missing history, a new ref or a failed diff leaves no selection input:
+          # select-checks.ts then runs every control (also always for v2 tags).
+          if [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+              git diff --name-status -M -z "$BASE_SHA...$HEAD_SHA" > "$changes" || rm -f "$changes"
+            else
+              git diff --name-status -M -z "$BASE_SHA" "$HEAD_SHA" > "$changes" || rm -f "$changes"
+            fi
+          fi
       # Everything runs in the devcontainer (docs/testing.md), as the commit check does.
       - name: "All gates, with the browser suite"
         run: >-
           .devcontainer/run.sh --browser
           --run-dir "$RUNNER_TEMP/globnotes/all"
           -- bash scripts/gates.sh --all --browser
+          --ci-changes /run-logs/ci-changes.z --ci-ref "$GITHUB_REF"
       - name: "Timing tests, serially"
         run: >-
           .devcontainer/run.sh
