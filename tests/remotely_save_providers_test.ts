@@ -213,6 +213,41 @@ Deno.test("remotely-save: XML is bounded, namespace/text preserving and rejects 
   ) assertThrows(() => parseXml(xml, invalid));
 });
 
+Deno.test("remotely-save: numeric XML references reject invalid scalar values with typed invalid errors", () => {
+  const http = createHttp(StorageError);
+  for (
+    const reference of [
+      "&#9999999;",
+      "&#x110000;",
+      "&#0;",
+      "&#xD800;",
+      "&#xFFFF;",
+    ]
+  ) {
+    for (const xml of [`<a>${reference}</a>`, `<a value="${reference}"/>`]) {
+      const error = assertThrows(
+        () => parseXml(xml, http.invalid),
+        StorageError,
+      );
+      assertEquals(error.code, "invalid");
+      assertEquals(error.effect, "none");
+    }
+  }
+  assertEquals(
+    parseXml(
+      '<a value="&#x1F30D;">&#9;&#10;&#13;&#32;&#x10FFFF;</a>',
+      http.invalid,
+    ),
+    {
+      a: {
+        "#text": "\t\n\r " + String.fromCodePoint(0x10FFFF),
+        "@_value": String.fromCodePoint(0x1F30D),
+      },
+    },
+  );
+  assertEquals(parseXml("<a>&amp;#9999999;</a>", http.invalid).a, "&#9999999;");
+});
+
 Deno.test("remotely-save: normalized filters bind scope independently of credentials and endpoint identity", async () => {
   const settings = {
     backend: "webdav",

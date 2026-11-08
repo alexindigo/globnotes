@@ -99,6 +99,10 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Malformed numeric XML references from sync storage are rejected as invalid XML,
+including out-of-range values and invalid XML1.0 characters in text or attributes.
+The XML parser dependency is updated to5.12.0.
+
 Driver-only plugins expose their server network consent controls in Settings,
 using the same explicit approvals and separate Allow network switch as other
 server plugins.

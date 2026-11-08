@@ -98,9 +98,12 @@ design:
 ### Remotely Save driver dependencies
 
 The Remotely Save driver uses `@fyears/rclone-crypt` 0.0.7, Copyright (c)
-2023 fyears, and `fast-xml-parser` 5.2.5, Copyright (c) 2017 Amit Kumar Gupta.
-Both are MIT licensed. Their published packages retain their LICENSE files;
-exact transitive versions and package integrity hashes are in `deno.lock`.
+2023 fyears, and `fast-xml-parser` 5.12.0, Copyright (c) 2017 Amit Kumar Gupta.
+Both are MIT licensed. The XML parser's MIT-licensed runtime dependencies by
+Amit Gupta are `@nodable/entities` 3.1.0, `fast-xml-builder` 1.3.1,
+`is-unsafe` 2.0.3, `path-expression-matcher` 1.6.2, `strnum` 2.5.1 and
+`xml-naming` 0.3.0. Published license declarations and supplied LICENSE files
+are retained; exact transitive versions and integrity hashes are in `deno.lock`.
 The OpenSSL codec is independently implemented. No Remotely Save source code
 is included in the production plugin; pinned upstream sources are downloaded
 only into test scratch for reference-vector generation.

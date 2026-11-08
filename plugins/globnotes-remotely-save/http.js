@@ -8,6 +8,9 @@ const xmlParser = new XMLParser({
   parseAttributeValue: false,
   trimValues: false,
   processEntities: true,
+  // Enables numeric decoding in fast-xml-parser. parseXml's allowlist still
+  // rejects every named entity except the five predefined XML entities.
+  htmlEntities: true,
   removeNSPrefix: false,
 });
 
@@ -15,10 +18,31 @@ export function parseXml(text, invalid) {
   if (
     new TextEncoder().encode(text).length > METADATA_LIMIT ||
     /<!\s*(?:DOCTYPE|ENTITY)/i.test(text) ||
-    /&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/.test(text) ||
-    XMLValidator.validate(text) !== true
+    /&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/.test(text)
   ) throw invalid("Invalid or oversized remote XML");
-  return xmlParser.parse(text);
+  // XML 1.0 Char, not merely a JavaScript code point. Check both attributes and
+  // content before parser entity expansion (which may throw or leave it raw).
+  for (const [, reference] of text.matchAll(/&#(x[0-9a-fA-F]+|\d+);/g)) {
+    const value = reference.startsWith("x")
+      ? Number.parseInt(reference.slice(1), 16)
+      : Number(reference);
+    if (
+      !(value === 9 || value === 10 || value === 13 ||
+        value >= 0x20 && value <= 0xD7FF ||
+        value >= 0xE000 && value <= 0xFFFD ||
+        value >= 0x10000 && value <= 0x10FFFF)
+    ) {
+      throw invalid("Invalid remote XML character reference");
+    }
+  }
+  try {
+    if (XMLValidator.validate(text) !== true) {
+      throw invalid("Invalid remote XML");
+    }
+    return xmlParser.parse(text);
+  } catch {
+    throw invalid("Invalid remote XML");
+  }
 }
 
 export const array = (value) =>
