@@ -6,7 +6,11 @@ import { logger } from "../logger.ts";
 import type { StorageEffect } from "./effects.ts";
 import { pathKey, within } from "./paths.ts";
 import { HubScanner, observeFile } from "./scanner.ts";
-import { HubStore, type PeerAcknowledgement } from "./store.ts";
+import {
+  HubStore,
+  type PeerAcknowledgement,
+  type ReplayOptions,
+} from "./store.ts";
 import type {
   ChangeEntry,
   Conflict,
@@ -227,8 +231,8 @@ export class VaultHub {
       this.#subscribers.delete(callback);
     };
   }
-  changesSince(cursor: number) {
-    return this.store.changesSince(cursor);
+  changesSince(cursor: number, options?: ReplayOptions) {
+    return this.store.changesSince(cursor, options);
   }
   sequence(): number {
     return this.store.sequence();

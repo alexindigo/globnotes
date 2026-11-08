@@ -4,7 +4,7 @@
 The vault folder is the only content store. `hub.sqlite` in the configured
 state directory stores hashes, sizes, mtimes, vectors and change metadata,
 never note contents or previous versions. It uses `node:sqlite`, WAL, and
-schema version 4 (versions 1 through 3 migrate in place). Peers are `local`
+schema version 5 (versions 1 through 4 migrate in place). Peers are `local`
 (outside programs), `globnotes` (managed writes, with `api` or `plugin:<id>`
 origin detail), and configured sync driver instance ids.
 
@@ -139,6 +139,55 @@ predates retained history. The newest 100,000 entries are retained.
 synchronously, with failing subscribers isolated. Live deletion notifications
 carry the path for consumers; the persisted log has only its anonymous key.
 The hub retains no content for replay.
+
+### Acknowledged log followers
+
+`server/hub/follower.ts` is the per-consumer replay/reset owner. A publication
+only marks it dirty. Reads and callbacks run on a later turn, outside the
+synchronous write/scan stack. One follower has one outstanding bounded packet,
+one wake-up flag and at most one transient current-file metadata inventory.
+No plugin can pin retention, and no note bytes are captured or persisted here.
+
+Schema v5 adds a random, nonsecret `meta.log_id` and
+`plugin_cursors(plugin,log_id,seq,authority_key,updated_at)`. The existing vault
+secret and all file/peer/conflict metadata survive migration. Cursors store only
+identity/progress, not paths or parsed data. Host-only compare-and-swap updates
+the expected cursor; disable retains it, uninstall removes it. Each vault has
+its own store and log identity. Replaced logs and changed read authority reset.
+
+`changesSince(cursor, {maxEntries,maxBytes})` adds SQL keyset pages of at most
+128 entries and 1 MiB of encoded control data. Existing callers omitting options
+retain their original `{gap,entries}` shape and unbounded retained replay.
+Cursors must be nonnegative safe integers. Fitting batches stay together;
+oversized batches span pages with `{batch,part,complete}` boundaries. `part` is
+the one-based entry offset within the original batch, not a page number, so it
+stays stable across byte-sized pages and compaction. Consumers persist multipart
+staging before ack, publish only on completion and discard staging on reset.
+
+Every packet has an opaque one-use token. Only an exact `{ack:token}` from its
+current owner permits cursor CAS. A gap must be acknowledged before a fresh
+snapshot starts. Snapshot pages are transient metadata, at most 128 entries and
+1 MiB; only the final ack installs the inventory's watermark. The inventory and
+watermark are captured synchronously, then writes during paging replay strictly
+after that watermark. Retention is rechecked at each page and after snapshot
+delivery. Incomplete inventories are never durable progress; restart, retention
+loss or five minutes of observed expiry starts a new reset.
+
+Replay always rereads SQLite, including on retry, rather than retaining live
+publication names. Deleted entries can therefore be anonymous even when an
+earlier created/modified entry is replayed. Named replay/snapshot candidates
+recheck canonical containment, state/staging exclusion and descendant symlinks
+through the existing driver-path checks, without receiving driver authority.
+Queued transports call the follower's disclosure callback at actual dispatch,
+so deletion during an ordinary service FIFO wait cannot reveal an earlier name.
+Ordinary delivery errors retain the cursor and report `changes_delivery_failed`,
+retrying after five seconds of observed time, doubling to five minutes. Owner
+retirement fences late replies and releases timers/inventory/subscriptions.
+
+This is at-least-once delivery of retained recorded facts, not historical byte
+storage or exactly-once external effects. A current read can already be newer
+than a logged hash. Hashes are versions, not historical retrieval handles.
+Neither this feed nor its snapshots strengthen the legacy backup guarantee.
 
 The search index removes obsolete note text and names too, including FTS5
 segments and SQLite free space. Its owner enables both FTS5 `secure-delete` and

@@ -12,6 +12,31 @@ import type {
 } from "./types.ts";
 
 export const CHANGE_LIMIT = 100_000;
+export interface PluginCursor {
+  logId: string;
+  seq: number;
+  authorityKey: string;
+}
+export interface ReplayOptions {
+  maxEntries: number;
+  maxBytes: number;
+}
+export interface BatchPart {
+  batch: number;
+  /** One-based entry offset within the original batch, stable after compaction. */
+  part: number;
+  complete: boolean;
+}
+export interface ReplayPage {
+  gap: boolean;
+  entries: ChangeEntry[];
+  batches?: BatchPart[];
+}
+export function validCursor(seq: number): void {
+  if (!Number.isSafeInteger(seq) || seq < 0) {
+    throw new TypeError("cursor must be a nonnegative safe integer");
+  }
+}
 /** Runs synchronously within the file metadata transaction, before publication. */
 export type PeerAcknowledgement = (entries: readonly ChangeEntry[]) => void;
 
@@ -19,6 +44,7 @@ export type PeerAcknowledgement = (entries: readonly ChangeEntry[]) => void;
 export class HubStore {
   readonly db: DatabaseSync;
   readonly secret: string;
+  readonly logId: string;
   constructor(
     statePath: string,
     private readonly options: { changeLimit?: number } = {},
@@ -49,7 +75,9 @@ export class HubStore {
     const version = this.db.prepare(
       "SELECT value FROM meta WHERE key='schema_version'",
     ).get();
-    if (version && !["1", "2", "3", "4"].includes(version.value as string)) {
+    if (
+      version && !["1", "2", "3", "4", "5"].includes(version.value as string)
+    ) {
       throw new Error("Unsupported hub schema");
     }
     this.db.exec(`BEGIN IMMEDIATE;
@@ -93,8 +121,19 @@ export class HubStore {
       CREATE TABLE IF NOT EXISTS peer_files(peer TEXT NOT NULL, path_key TEXT NOT NULL,
         version TEXT, revision TEXT, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
         next_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(peer,path_key));
-      INSERT OR REPLACE INTO meta VALUES ('schema_version','4'); COMMIT;
+      CREATE TABLE IF NOT EXISTS plugin_cursors(plugin TEXT PRIMARY KEY,
+        log_id TEXT NOT NULL, seq INTEGER NOT NULL, authority_key TEXT NOT NULL,
+        updated_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS changes_batch ON changes(COALESCE(batch,seq),seq);
     `);
+    this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('log_id',?)").run(
+      crypto.randomUUID(),
+    );
+    this.db.exec(
+      "INSERT OR REPLACE INTO meta VALUES ('schema_version','5'); COMMIT;",
+    );
+    this.logId = this.db.prepare("SELECT value FROM meta WHERE key='log_id'")
+      .get()!.value as string;
     const secret = [...crypto.getRandomValues(new Uint8Array(32))]
       .map((v) => v.toString(16).padStart(2, "0")).join("");
     this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('path_secret',?)").run(
@@ -285,30 +324,138 @@ export class HubStore {
     if (scrubbed) this.checkpoint();
     return entries;
   }
-  changesSince(cursor: number): { gap: boolean; entries: ChangeEntry[] } {
+  changesSince(cursor: number, options?: ReplayOptions): ReplayPage {
+    validCursor(cursor);
     const oldest = this.db.prepare("SELECT MIN(seq) AS seq FROM changes").get()!
       .seq as number | null;
     if (oldest !== null && cursor < oldest - 1) {
       return { gap: true, entries: [] };
     }
-    return {
-      gap: false,
-      entries: this.db.prepare("SELECT * FROM changes WHERE seq>? ORDER BY seq")
-        .all(cursor).map((r) => ({
-          seq: r.seq as number,
-          batch: (r.batch ?? r.seq) as number,
-          path: r.path as string | null,
-          pathKey: r.path_key as string,
-          kind: r.kind as ChangeEntry["kind"],
-          oldPath: r.old_path as string | null,
-          oldPathKey: r.old_path_key as string | null,
-          beforeHash: r.before_hash as string | null,
-          afterHash: r.after_hash as string | null,
-          peer: r.peer as Peer,
-          origin: r.origin as string | null,
-          at: r.at as string,
-        })),
-    };
+    if (!options) {
+      return {
+        gap: false,
+        entries: this.db.prepare(
+          "SELECT * FROM changes WHERE seq>? ORDER BY seq",
+        )
+          .all(cursor).map(decodeChange),
+      };
+    }
+    if (
+      !Number.isSafeInteger(options.maxEntries) || options.maxEntries < 1 ||
+      options.maxEntries > 128 || !Number.isSafeInteger(options.maxBytes) ||
+      options.maxBytes < 256 || options.maxBytes > 1024 * 1024
+    ) throw new TypeError("invalid replay bounds");
+    // Keyset SQL bounds row materialization, independently of log retention.
+    const candidates = this.db.prepare(
+      "SELECT * FROM changes WHERE seq>? ORDER BY seq LIMIT ?",
+    ).all(cursor, options.maxEntries + 1).map(decodeChange);
+    let entries: ChangeEntry[] = [];
+    const batches: BatchPart[] = [];
+    const fits = (rows: ChangeEntry[], parts: BatchPart[]) =>
+      new TextEncoder().encode(
+        JSON.stringify({ gap: false, entries: rows, batches: parts }),
+      )
+        .length <= options.maxBytes;
+    for (let at = 0; at < candidates.length;) {
+      const batch = candidates[at].batch;
+      const end = Number(
+        this.db.prepare(
+          "SELECT MAX(seq) AS seq FROM changes WHERE COALESCE(batch,seq)=?",
+        ).get(batch)!.seq,
+      );
+      let until = at + 1;
+      while (until < candidates.length && candidates[until].batch === batch) {
+        until++;
+      }
+      const group = candidates.slice(at, until);
+      const part = {
+        batch,
+        part: group[0].seq - batch + 1,
+        complete: group.at(-1)!.seq === end,
+      };
+      if (
+        entries.length + group.length <= options.maxEntries &&
+        fits([...entries, ...group], [...batches, part])
+      ) {
+        entries.push(...group);
+        batches.push(part);
+        at = until;
+        continue;
+      }
+      // Never split a batch to fill the tail of a preceding packet.
+      if (entries.length) break;
+      const split: ChangeEntry[] = [];
+      for (const entry of group) {
+        const nextPart = { ...part, complete: entry.seq === end };
+        if (
+          split.length === options.maxEntries ||
+          !fits([...split, entry], [nextPart])
+        ) break;
+        split.push(entry);
+      }
+      if (!split.length) {
+        throw new RangeError("hub change exceeds replay byte bound");
+      }
+      entries = split;
+      batches.push({ ...part, complete: split.at(-1)!.seq === end });
+      break;
+    }
+    return { gap: false, entries, batches };
+  }
+  pluginCursor(plugin: string): PluginCursor | null {
+    const row = this.db.prepare("SELECT * FROM plugin_cursors WHERE plugin=?")
+      .get(plugin);
+    return row
+      ? {
+        logId: row.log_id as string,
+        seq: row.seq as number,
+        authorityKey: row.authority_key as string,
+      }
+      : null;
+  }
+  /** Host-only CAS. Handler tokens and generation are checked by the follower. */
+  advancePluginCursor(
+    plugin: string,
+    expected: PluginCursor | null,
+    next: PluginCursor,
+  ): boolean {
+    validCursor(next.seq);
+    if (next.logId !== this.logId || next.seq > this.sequence()) return false;
+    if (
+      expected?.logId === next.logId &&
+      expected.authorityKey === next.authorityKey && next.seq < expected.seq
+    ) return false;
+    if (!expected) {
+      return Number(
+        this.db.prepare(
+          "INSERT OR IGNORE INTO plugin_cursors VALUES(?,?,?,?,?)",
+        ).run(
+          plugin,
+          next.logId,
+          next.seq,
+          next.authorityKey,
+          new Date().toISOString(),
+        ).changes,
+      ) === 1;
+    }
+    return Number(
+      this.db.prepare(
+        `UPDATE plugin_cursors SET log_id=?,seq=?,authority_key=?,updated_at=?
+       WHERE plugin=? AND log_id=? AND seq=? AND authority_key=?`,
+      ).run(
+        next.logId,
+        next.seq,
+        next.authorityKey,
+        new Date().toISOString(),
+        plugin,
+        expected.logId,
+        expected.seq,
+        expected.authorityKey,
+      ).changes,
+    ) === 1;
+  }
+  removePluginCursor(plugin: string): void {
+    this.db.prepare("DELETE FROM plugin_cursors WHERE plugin=?").run(plugin);
   }
   checkpoint(): void {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -386,6 +533,22 @@ export class HubStore {
   close(): void {
     this.db.close();
   }
+}
+function decodeChange(r: Record<string, unknown>): ChangeEntry {
+  return {
+    seq: r.seq as number,
+    batch: (r.batch ?? r.seq) as number,
+    path: r.path as string | null,
+    pathKey: r.path_key as string,
+    kind: r.kind as ChangeEntry["kind"],
+    oldPath: r.old_path as string | null,
+    oldPathKey: r.old_path_key as string | null,
+    beforeHash: r.before_hash as string | null,
+    afterHash: r.after_hash as string | null,
+    peer: r.peer as Peer,
+    origin: r.origin as string | null,
+    at: r.at as string,
+  };
 }
 function decodeConflict(r: Record<string, unknown>): Conflict {
   return {

@@ -279,7 +279,7 @@ Deno.test("driver native acceptance: state paths are refused at the hub boundary
       f.hub.store.db.prepare(
         "SELECT value FROM meta WHERE key='schema_version'",
       ).get()!.value,
-      "4",
+      "5",
     );
     assertEquals(
       f.hub.store.db.prepare("PRAGMA integrity_check").get()!.integrity_check,

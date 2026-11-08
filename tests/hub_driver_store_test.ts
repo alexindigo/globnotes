@@ -36,7 +36,7 @@ Deno.test("driver store: v3 migration preserves conflict revisions and old batch
       resolvedAt: null,
     });
     store.db.exec(
-      "UPDATE meta SET value='3' WHERE key='schema_version'; ALTER TABLE changes DROP COLUMN batch; ALTER TABLE peers DROP COLUMN plugin; ALTER TABLE peers DROP COLUMN settings; ALTER TABLE peers DROP COLUMN enabled; ALTER TABLE peers DROP COLUMN revision; DROP TABLE peer_files; DROP TABLE peer_sync;",
+      "UPDATE meta SET value='3' WHERE key='schema_version'; DROP INDEX changes_batch; ALTER TABLE changes DROP COLUMN batch; ALTER TABLE peers DROP COLUMN plugin; ALTER TABLE peers DROP COLUMN settings; ALTER TABLE peers DROP COLUMN enabled; ALTER TABLE peers DROP COLUMN revision; DROP TABLE peer_files; DROP TABLE peer_sync;",
     );
     const secret = store.secret;
     store.close();
@@ -48,7 +48,7 @@ Deno.test("driver store: v3 migration preserves conflict revisions and old batch
     assertEquals(
       store.db.prepare("SELECT value FROM meta WHERE key='schema_version'")
         .get()!.value,
-      "4",
+      "5",
     );
   } finally {
     store.close();

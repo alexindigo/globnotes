@@ -333,6 +333,24 @@ directories' `logs/` and JSON artifacts.
 
 ## Evidence
 
+### Bounded log follower foundation
+
+`plugin_changes_store_test.ts` proves v4-to-v5 identity/cursor migration,
+per-vault/plugin CAS isolation, preserved default replay, UTF-8 byte/count
+bounds, fitting batch packing and stable multipart offsets. Existing store and
+conflict tests cover earlier schema migrations and physical deletion scrubbing.
+`plugin_changes_follower_test.ts` drives the shared observed-clock seam to check
+gap-before-snapshot acknowledgements, watermark catch-up, forged replies,
+backoff, retirement, independent progress, current containment checks and
+retention/expiry during recovery. No sleep benchmark or browser is involved.
+
+```sh
+timeout 180 .devcontainer/run.sh --run-dir "$RUNS/log-foundation" -- deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net tests/plugin_changes_store_test.ts tests/plugin_changes_follower_test.ts tests/hub_store_test.ts tests/hub_driver_store_test.ts tests/hub_conflicts_test.ts tests/test_isolation_contract_test.ts
+```
+
+Use a fresh disk-backed run directory. These tests prove the follower foundation;
+plugin Worker and current-metadata consumers have separate acceptance coverage.
+
 ### Driver contract and SDK
 
 `hub_driver_sdk_test.ts` checks native/emulated conditions, exact ETag reads,
