@@ -26,7 +26,10 @@ export function remotelySaveRemote(
   let tickStep = 1000;
   let encoding: "url" | "raw" = "url";
   let fault:
-    | ((request: Request, key: string) => Response | undefined)
+    | ((
+      request: Request,
+      key: string,
+    ) => Response | undefined | Promise<Response | undefined>)
     | undefined;
   const escaped = (value: string) =>
     value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(
@@ -67,7 +70,10 @@ export function remotelySaveRemote(
         headers: new Headers(request.headers),
         bytes,
       });
-      const extra = fault?.(request, key);
+      const intercepted = fault?.(request, key);
+      const extra = intercepted instanceof Promise
+        ? await intercepted
+        : intercepted;
       if (extra) return extra;
       const headers = new Headers({ date: new Date(tick).toUTCString() });
       const xml = (body: string) =>

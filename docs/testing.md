@@ -567,6 +567,25 @@ cleanup even when diagnostics fail, preserving the original case error.
 These are targeted local checks. CI owns the full browser/static/server/client/
 build/cold-load and serial timing gates; a local targeted run does not claim them.
 
+Native round trips keep remote visibility and host acknowledgement as separate
+observations. After checking the automatic editor export at the real remote
+consumer, `driver-export-owner.mjs` reads the fixture's hub database read-only and
+waits for the matching current file version and this peer's settled native receipt.
+Only then does the case start another external edit. A sent version marked
+`uncertain` is not acknowledgement, even when its bytes are already visible.
+Both Remotely Save and the generic sync-driver native case share that observer.
+
+`driver_export_owner_test.ts` checks this phase boundary, peer/version binding,
+absence and asynchronous HTTP gating. The opt-in WebDAV-none control holds its
+post-PUT verification GET; the original early external write produces a stale-base
+conflict, while the owner-qualified case completes a clean import/editor reload.
+The control retains `export-control.json` with value-free ownership/version facts
+and fixture change/conflict metadata, without the vault HMAC secret.
+
+```sh
+timeout 600 .devcontainer/run.sh --browser --run-dir "$RUNS/remotely-export-owner" -- env RS_NATIVE_EXPORT_CONTROL=1 GLOBNOTES_E2E_CONCURRENCY=2 GLOBNOTES_E2E_ARTIFACTS=/artifacts/native GLOBNOTES_E2E_CASES=sync-driver-native,remotely-save-native-s3-rclone-base64,remotely-save-native-webdav-none,remotely-save-native-webdav-openssl-base64 bash client/tests/e2e/run.sh
+```
+
 ### Conflict inbox
 
 Conflict lifecycle/read coverage lives in `tests/hub_conflicts_test.ts` and

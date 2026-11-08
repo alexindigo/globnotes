@@ -9,6 +9,8 @@ await syncCase("sync-driver-native",async f=>{
   await s.click(".cm-content");await s.key("a",{modifiers:2,code:"KeyA",windowsVirtualKeyCode:65});await s.type("edited in the browser\n\nlast\n");
   await s.button("Save",".content-column");await s.poll("[...document.querySelectorAll('.content-column button')].find(b=>b.textContent.trim()==='Save')?.getAttribute('aria-busy')==='false'");
   await until(()=>f.remote.text("Live.md")==="edited in the browser\n\nlast\n","editor bytes reached remote");
+  // Begin the next external edit only after this export's owner acknowledges it.
+  await f.waitForExport("Live.md","edited in the browser\n\nlast\n");
   f.remote.put("Live.md","changed on the remote\n\nlast\n");await f.open();await f.sync();await f.close();
   await s.poll("document.querySelector('.cm-content')?.textContent.includes('changed on the remote')");
   assert(await Deno.readTextFile(`${f.vault}/Live.md`)==="changed on the remote\n\nlast\n","Clean editor reload lacks matching disk bytes");

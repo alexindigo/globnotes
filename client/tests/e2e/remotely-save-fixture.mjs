@@ -10,6 +10,8 @@ import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
+import { readExportOwner, waitForDriverExport } from "./driver-export-owner.mjs";
+import { DatabaseSync } from "node:sqlite";
 export { assert };
 export const until = (predicate, label) => waitUntil(async () => await predicate() ? done() : pending({label}), {label, intervalMs:50});
 const utf8 = new TextEncoder(), text = new TextDecoder();
@@ -30,7 +32,7 @@ export async function remotelySaveCase(backend, mode, run) {
     for (const entry of Deno.readDirSync(source)) if (entry.isFile && (entry.name.endsWith(".js") || entry.name === "manifest.json")) {
       await Deno.copyFile(new URL(entry.name, source), `${state}/plugins/globnotes-remotely-save/${entry.name}`);
     }
-    let server, session, peer, codec, error;
+    let server, session, peer, codec, error, exportControl;
     const results = [], packets = [];
     const captures = backend === "webdav" && mode === "rclone-base64";
     try {
@@ -54,6 +56,7 @@ export async function remotelySaveCase(backend, mode, run) {
       async function put(path, content) {
         const name = await nativeName(path), bytes = real ? await codec.encode(utf8.encode(content)) : await codec.encrypt(utf8.encode(content));
         if (store) await store.put(name, bytes); else peer.set(name, bytes);
+        if(path === "Live.md" && exportControl?.armed) exportControl.release("external-write");
       }
       async function read(path) {
         const name = await nativeName(path);
@@ -75,6 +78,7 @@ export async function remotelySaveCase(backend, mode, run) {
       const s = session;
       const scope = '[data-driver-id="home"]';
       const f = {s,scope,label,directory,vault,state,results,api,put,read,captures,backend,mode,real,
+        waitForExport:(path,content)=>waitForDriverExport(state,path,content,{onPending:owner=>exportControl?.release("unacknowledged-owner-observed",owner)}),
         async fill(selector, value) {
           await s.click(selector); await s.key("a", {modifiers:2,code:"KeyA",windowsVirtualKeyCode:65});
           await s.key("Backspace", {windowsVirtualKeyCode:8}); if (value) await s.type(value);
@@ -177,6 +181,19 @@ export async function remotelySaveCase(backend, mode, run) {
         await s.button("Save key", '.driver-secret:has(#driver-key-home-encryption_password)'); await f.controls();
       } else await s.click(`${scope} .driver-instance__header [role=switch]`);
       await f.active();
+      // Opt-in causal control: verification cannot finish until the consumer
+      // observes its pending owner or starts the next (premature) external write.
+      if(!real&&backend==="webdav"&&mode==="none"&&Deno.env.get("RS_NATIVE_EXPORT_CONTROL")==="1"){
+        const gate=Promise.withResolvers();const trace=[];
+        exportControl={armed:false,released:false,trace,release(reason,owner){
+          if(this.released)return;
+          this.released=true;trace.push({event:reason,owner:owner??readExportOwner(state,"Live.md")});gate.resolve();
+        }};
+        peer.fault((request,key)=>{
+          if(key==="Live.md"&&request.method==="PUT"){exportControl.armed=true;trace.push({event:"put-dispatched",owner:readExportOwner(state,"Live.md")});}
+          if(key==="Live.md"&&request.method==="GET"&&exportControl.armed&&!exportControl.released){trace.push({event:"verification-held",owner:readExportOwner(state,"Live.md")});return gate.promise;}
+        });
+      }
       assert(await s.read(scope, `document.querySelector('${scope}').textContent.includes('This storage cannot check versions while writing; a change made there at the same moment can be overwritten.')`), "Emulation notice missing");
       await run(f);
       const storage = await s.read('[data-app-shell]', "JSON.stringify({local:{...localStorage},session:{...sessionStorage},cookies:document.cookie})");
@@ -187,8 +204,13 @@ export async function remotelySaveCase(backend, mode, run) {
       reports.push({label,real,results,events:s.events});
     } catch(cause) { error=cause; throw cause; }
     finally {
+      exportControl?.release("case-teardown");
       await finalizeNativeCase({error,
         report:async()=>{
+          if(exportControl){
+            const db=new DatabaseSync(`${state}/hub.sqlite`,{readOnly:true});
+            try {await Deno.writeTextFile(`${directory}/export-control.json`,JSON.stringify({trace:exportControl.trace,owner:readExportOwner(state,"Live.md"),changes:db.prepare("SELECT seq,path,kind,peer,origin,before_hash,after_hash FROM changes ORDER BY seq").all(),conflicts:db.prepare("SELECT path,copy_path,reason,state FROM conflicts").all()},null,2));}finally{db.close();}
+          }
           await Deno.writeTextFile(`${directory}/results.json`, JSON.stringify({label,real,error:error?String(error):null,results,events:session?.events,errors:session?.errors,server:server?.logs()},null,2));
           if(error&&session) {
             const image = await session.send("Page.captureScreenshot", {format:"png",captureBeyondViewport:false});

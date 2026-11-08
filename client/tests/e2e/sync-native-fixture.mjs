@@ -5,6 +5,7 @@ import { applicationServer, bindAddress, httpOrigin } from "./http-origin.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
+import { waitForDriverExport } from "./driver-export-owner.mjs";
 export { assert };
 export const until = (predicate, label) => waitUntil(async () => await predicate() ? done() : pending({label}), {label,intervalMs:50});
 export async function syncCase(name, run) {
@@ -44,6 +45,7 @@ export async function syncCase(name, run) {
     session=await nativeSession({port:Number(Deno.env.get("CDP_PORT")??9335),width:1280,height:1400});
     session.page.onEvent(event=>{if(event.method==="Network.requestWillBeSent"&&event.params.request.url.includes("/_/api/drivers")&&event.params.request.method!=="GET")writes.push({method:event.params.request.method,path:new URL(event.params.request.url).pathname});});
     const f={directory,vault,state,remote,remoteUrl,token,session,api,capture,results,writes,
+      waitForExport:(path,content)=>waitForDriverExport(state,path,content),
       url:path=>`${server.baseUrl}${path}`,
       async open() {
         if(!await session.evaluate("!!document.querySelector('#settings-modal-title')")){

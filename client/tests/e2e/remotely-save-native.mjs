@@ -13,6 +13,8 @@ await remotelySaveCase(Deno.args[0], Deno.args[1], async f=>{
   await s.button("Save", ".content-column");
   await s.poll("[...document.querySelectorAll('.content-column button')].find(b=>b.textContent.trim()==='Save')?.getAttribute('aria-busy')==='false'");
   await until(async()=>await f.read("Live.md")==="edited in the browser\n\nlast\n", "native editor output at remote");
+  // Remote bytes precede upload verification and the host's settled receipt.
+  await f.waitForExport("Live.md","edited in the browser\n\nlast\n");
   await f.put("Live.md", "changed on the remote\n\nlast\n"); await f.open(); await f.sync(); await f.close();
   await s.poll("document.querySelector('.cm-content')?.textContent.includes('changed on the remote')");
   assert(await Deno.readTextFile(`${f.vault}/Live.md`)==="changed on the remote\n\nlast\n", "Clean editor differs from imported disk");
