@@ -44,10 +44,19 @@ export function planImport(
     return { kind: "unchanged" };
   }
   if (!input.bytes) throw new TypeError("Known import requires bytes");
-  if (current?.version === versionOf(input.bytes)) return { kind: "adopt" };
+  const incomingVersion = versionOf(input.bytes);
+  if (current?.version === incomingVersion) return { kind: "adopt" };
   if (!current) {
     if (deleted && !input.restore) return { kind: "held" };
     return { kind: "write", bytes: input.bytes, base: { kind: "absent" } };
+  }
+  // Native validators can change without an endpoint edit. Keep the acknowledged
+  // content version while adopting its new revision, so a newer local file still
+  // exports against that revision instead of manufacturing a conflict copy.
+  // Held bytes were observed, not accepted: a locally recreated path must still
+  // preserve that alternative through the existing held/conflict flow.
+  if (mapping?.version === incomingVersion && mapping.state !== "held") {
+    return { kind: "adopt" };
   }
   if (mapping?.version === current.version) {
     return {

@@ -82,6 +82,123 @@ Deno.test("driver import: base table, equal adoption, history merge and deletion
     );
   }
 });
+Deno.test("driver import: byte-identical remote revision changes adopt without conflicting with a local edit", () => {
+  for (const state of ["synced", "pending", "uncertain"] as const) {
+    assertEquals(
+      planImport(
+        {
+          path: "a.md",
+          revision: "new-native-validator",
+          bytes: bytes("base"),
+          expectedVersion: version("local edit"),
+        },
+        { ...mapping, state },
+        { version: version("local edit"), bytes: bytes("local edit") },
+        false,
+      ),
+      { kind: "adopt" },
+      `unchanged endpoint bytes with ${state} mapping`,
+    );
+  }
+  const metadataOnly = {
+    path: "a.md",
+    revision: "metadata-only",
+    bytes: bytes("base"),
+    expectedVersion: null,
+  };
+  assertEquals(planImport(metadataOnly, mapping, null, true).kind, "held");
+  assertEquals(
+    planImport({ ...metadataOnly, restore: true }, mapping, null, true).kind,
+    "write",
+  );
+  assertEquals(planImport(metadataOnly, mapping, null, false).kind, "write");
+  for (const state of ["excluded", "unsupported"] as const) {
+    assertEquals(
+      planImport(metadataOnly, { ...mapping, state }, {
+        version: version("local edit"),
+      }, false).kind,
+      "unchanged",
+    );
+  }
+  assertEquals(
+    planImport(metadataOnly, { ...mapping, state: "held" }, {
+      version: version("recreated here"),
+    }, false).kind,
+    "conflict",
+    "held observations are not accepted remote bases",
+  );
+});
+
+Deno.test("driver import: managed metadata-only adoption preserves local bytes and acknowledges only the remote version", async () => {
+  const f = hubOperationsFixture(), peers = new DriverPeers(f.hub.store);
+  try {
+    const created = peers.create("test", "Metadata remote");
+    const peer = peers.update(created.id, created.revision, {
+      ...created,
+      enabled: true,
+    });
+    const inputs = ["A.md", "binary.bin"].map((path) => ({
+      path,
+      revision: "r1",
+      bytes: bytes("base"),
+      expectedVersion: null,
+    }));
+    await f.operations.applyDriverImport(peer.id, inputs);
+    for (const input of inputs) {
+      Deno.writeFileSync(`${f.vault}/${input.path}`, bytes("local edit"));
+    }
+    f.hub.scanNow();
+    const seq = f.hub.sequence(), batches = f.batches.length;
+    const result = await f.operations.applyDriverImport(
+      peer.id,
+      inputs.map((input) => ({
+        ...input,
+        revision: "r2",
+        expectedVersion: version("local edit"),
+      })),
+    );
+    assertEquals(result.map((row) => row.status), ["adopt", "adopt"]);
+    assertEquals(f.hub.sequence(), seq);
+    assertEquals(f.batches.length, batches);
+    assertEquals(f.hub.conflicts(), []);
+    for (const input of inputs) {
+      assertEquals(
+        Deno.readFileSync(`${f.vault}/${input.path}`),
+        bytes("local edit"),
+      );
+      assertEquals(f.hub.fileState(input.path)?.hash, version("local edit"));
+      const row = peers.file(peer.id, input.path);
+      assertEquals({
+        version: row?.version,
+        revision: row?.revision,
+        state: row?.state,
+      }, { version: version("base"), revision: "r2", state: "synced" });
+    }
+    const collision = await f.operations.applyDriverImport(peer.id, [{
+      ...inputs[0],
+      revision: "genuine-edit",
+      bytes: bytes("remote edit"),
+      expectedVersion: version("local edit"),
+    }]);
+    assertEquals(collision[0].status, "conflict");
+    assertEquals(f.hub.conflicts().length, 1);
+    assertEquals(
+      Deno.readFileSync(`${f.vault}/${collision[0].copyPath}`),
+      bytes("remote edit"),
+    );
+    Deno.removeSync(`${f.vault}/binary.bin`);
+    f.hub.scanNow();
+    const held = await f.operations.applyDriverImport(peer.id, [{
+      ...inputs[1],
+      revision: "r3",
+    }]);
+    assertEquals(held[0].status, "held");
+    assertEquals(f.hub.fileState("binary.bin"), null);
+  } finally {
+    f.close();
+  }
+});
+
 Deno.test("driver import: only complete comparable nonempty snapshots infer absence", () => {
   const pass = {
     complete: true,

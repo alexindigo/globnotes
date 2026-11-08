@@ -189,6 +189,45 @@ Deno.test("driver session: grouped imports and echo-free export converge through
   }
 });
 
+Deno.test("driver session: metadata-only native conflicts recover the owed local export without copies across restart", async () => {
+  for (const restart of [false, true]) {
+    const f = sessionFixture();
+    try {
+      f.remote.put("A.md", "base");
+      const original = f.make();
+      await original.run();
+      Deno.writeFileSync(`${f.vault}/A.md`, bytes("local edit"));
+      f.hub.scanNow();
+      const seq = f.hub.sequence();
+      let nextRevision = "";
+      f.remote.applyConflict = () => {
+        f.remote.put("A.md", "base");
+        nextRevision = f.remote.files.get("A.md")!.revision;
+      };
+      await original.run(false);
+      assertEquals(f.peers.file(f.instance.id, "A.md")?.state, "pending");
+      assertEquals(f.remote.writes.length, 1);
+      assertEquals(f.hub.conflicts(), []);
+      if (restart) original.retire();
+      const session = restart ? f.make() : original;
+      await session.run();
+      assertEquals(disk(f, "A.md"), "local edit");
+      assertEquals(f.remote.files.get("A.md")?.bytes, bytes("local edit"));
+      assertEquals(f.remote.writes.length, 2);
+      assertEquals(f.remote.writes[1][0].base, { revision: nextRevision });
+      assertEquals(f.peers.file(f.instance.id, "A.md")?.state, "synced");
+      assertEquals(f.hub.conflicts(), []);
+      assertEquals(f.hub.sequence(), seq);
+      for (let cycle = 0; cycle < 5; cycle++) await session.run();
+      assertEquals(f.remote.writes.length, 2);
+      assertEquals(f.hub.sequence(), seq);
+      assertEquals(f.hub.conflicts(), []);
+    } finally {
+      f.close();
+    }
+  }
+});
+
 Deno.test("driver session: unknown incomplete and exclusions cannot infer deletions or export", async () => {
   const f = sessionFixture();
   try {

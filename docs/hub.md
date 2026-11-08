@@ -193,7 +193,11 @@ Actual effects reconcile cache/index and reach the normal asynchronous
 best-effort versioning path. All incoming bytes and native historical base text
 live only for the call.
 
-Equal bytes are adopted without a write. A changed remote revision replaces a
+Equal bytes are adopted without a write. A metadata-only native revision change
+also adopts without a copy when its bytes still match the acknowledged endpoint
+version, preserving any newer local edit and its owed export against the fresh
+revision. Held observations are not accepted bases: a locally recreated held path
+still preserves the remote alternative. A changed remote revision replaces a
 still-matching mapped hub version. Divergence with a verifiable historical text
 base can merge; otherwise the incoming bytes become a sibling conflict copy
 named with the instance id (`stale-base`, or `unknown-base` on first collision).
