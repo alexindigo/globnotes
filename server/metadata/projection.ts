@@ -3,7 +3,7 @@ import { LogFollower } from "../hub/follower.ts";
 import type { VaultHub } from "../hub/hub.ts";
 import { anonymousPath } from "../hub/paths.ts";
 import type { PluginCursor } from "../hub/store.ts";
-import { driverTarget } from "../hub/drivers/paths.ts";
+import { DriverPathIndex } from "../hub/drivers/paths.ts";
 import { versionOf } from "../hub/merge.ts";
 import type { ChangePacket } from "../plugins/change_contract.ts";
 import {
@@ -52,6 +52,9 @@ export class MetadataProjection {
   readonly #listeners = new Set<() => void>();
   readonly #records = new Map<string, MetadataRecord>();
   readonly #staged = new Map<string, MetadataRecord>();
+  readonly #paths: DriverPathIndex;
+  readonly #safe = new Map<string, { seq: number; safe: boolean }>();
+  #catalog: readonly MetadataRecord[] | null = null;
   #cursor: PluginCursor | null = null;
   #stopped = false;
   #revision = 0;
@@ -65,7 +68,13 @@ export class MetadataProjection {
       clock?: ObservedClock;
     } = {},
   ) {
+    this.#paths = new DriverPathIndex(hub);
     this.#unsubscribe = hub.subscribe((entries) => {
+      // Release names and parsed catalogue references synchronously, including
+      // deletions. A sibling/ancestor namespace change invalidates safety too.
+      this.#paths.clear();
+      this.#safe.clear();
+      this.#catalog = null;
       for (const entry of entries) {
         this.#records.delete(entry.pathKey);
         this.#staged.delete(entry.pathKey);
@@ -125,6 +134,9 @@ export class MetadataProjection {
     this.#listeners.clear();
     this.#records.clear();
     this.#staged.clear();
+    this.#paths.clear();
+    this.#safe.clear();
+    this.#catalog = null;
     this.#reset = null;
   }
   #base(path: string): Omit<MetadataRecord, "status"> | null {
@@ -138,28 +150,105 @@ export class MetadataProjection {
       }
       : null;
   }
-  /** Only current/safe rows can leave the owner, even during recovery. */
-  records(): MetadataRecord[] {
+  #candidate(base: Omit<MetadataRecord, "status">): MetadataRecord {
+    const cached = this.#records.get(base.pathKey);
+    return cached?.seq === base.seq && cached.version === base.version
+      ? cached
+      : { ...base, status: "unavailable", reason: "reading" };
+  }
+  #knownSafe(base: Omit<MetadataRecord, "status">): boolean {
+    const cached = this.#safe.get(base.pathKey);
+    if (cached?.seq === base.seq) return cached.safe;
+    let safe = true;
+    try {
+      this.#paths.target(base.path);
+    } catch {
+      safe = false;
+    }
+    this.#safe.set(base.pathKey, { seq: base.seq, safe });
+    return safe;
+  }
+  /** Direct current-key lookup. A get never constructs the vault catalogue. */
+  record(path: string): MetadataRecord | null {
     if (this.#stopped) throw new Error("metadata projection stopped");
+    const base = this.#base(path);
+    if (!base || !base.path.endsWith(".md")) return null;
+    const record = this.#candidate(base);
+    return this.disclose(record) ? record : null;
+  }
+  /** Recheck only disclosed routes. Collision inventory belongs to the current
+   * publication, but symlink/type/state/seq checks remain fresh at dispatch. */
+  disclose(record: MetadataRecord): boolean {
+    if (this.#stopped) return false;
+    const current = this.hub.fileState(record.path);
+    if (
+      !current || current.seq !== record.seq || current.hash !== record.version
+    ) return false;
+    try {
+      this.#paths.target(record.path);
+      if (this.#safe.get(record.pathKey)?.safe === false) {
+        this.#safe.set(record.pathKey, { seq: record.seq, safe: true });
+        this.#catalog = null;
+        this.#changed();
+      }
+      return true;
+    } catch {
+      const changed = this.#safe.get(record.pathKey)?.safe !== false;
+      this.#safe.set(record.pathKey, { seq: record.seq, safe: false });
+      this.#catalog = null;
+      if (changed) this.#changed();
+      return false;
+    }
+  }
+  /** Binary-search the NFC-sorted observed namespace before grant/filter work. */
+  #window(prefix?: string): readonly MetadataRecord[] {
+    const rows = this.#catalog!;
+    if (!prefix) return rows;
+    const key = prefix.normalize("NFC");
+    const lower = (target: string) => {
+      let low = 0, high = rows.length;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (rows[mid].path.normalize("NFC") < target) low = mid + 1;
+        else high = mid;
+      }
+      return low;
+    };
+    const exact = lower(key), from = lower(key + "/");
+    let end = from;
+    while (
+      end < rows.length && rows[end].path.normalize("NFC").startsWith(key + "/")
+    ) end++;
+    return [
+      ...(rows[exact]?.path.normalize("NFC") === key ? [rows[exact]] : []),
+      ...rows.slice(from, end),
+    ];
+  }
+  /** Safety/count candidates are cached per publication/seq, not rescanned on warm reads. */
+  records(prefix?: string): readonly MetadataRecord[] {
+    if (this.#stopped) throw new Error("metadata projection stopped");
+    if (this.#catalog) return this.#window(prefix);
     const out: MetadataRecord[] = [];
     for (const file of this.hub.store.files()) {
       if (!file.diskPath.endsWith(".md")) continue;
-      try {
-        driverTarget(this.hub, file.diskPath);
-      } catch {
-        continue;
-      }
-      const base = this.#base(file.diskPath)!;
-      const cached = this.#records.get(base.pathKey);
-      out.push(
-        cached?.seq === base.seq && cached.version === base.version ? cached : {
-          ...base,
-          status: "unavailable",
-          reason: "reading",
-        },
-      );
+      const base = {
+        path: file.diskPath,
+        pathKey: anonymousPath(this.hub.store.secret, file.key),
+        version: file.hash,
+        seq: file.seq,
+      };
+      if (this.#knownSafe(base)) out.push(this.#candidate(base));
     }
-    return out;
+    this.#catalog = Object.freeze(
+      out.sort((a, b) =>
+        a.path.normalize("NFC") < b.path.normalize("NFC")
+          ? -1
+          : a.path.normalize("NFC") > b.path.normalize("NFC")
+          ? 1
+          : 0
+      ),
+    );
+    return this.#window(prefix);
   }
   async #parse(path: string): Promise<MetadataRecord | null> {
     if (!path.endsWith(".md")) return null;
@@ -169,13 +258,13 @@ export class MetadataProjection {
       "read_failed";
     let parsed: ParsedMetadata | undefined;
     try {
-      const target = driverTarget(this.hub, path);
+      const target = this.#paths.target(path);
       if (this.hub.fileState(path)!.size > METADATA_LIMITS.body) {
         throw new RangeError("too_large");
       }
       const bytes = await (this.adapters.read ?? readCurrent)(target);
       if (this.#stopped) return null;
-      driverTarget(this.hub, path);
+      this.#paths.target(path);
       if (bytes.length > METADATA_LIMITS.body) {
         throw new RangeError("too_large");
       }
@@ -205,7 +294,7 @@ export class MetadataProjection {
       return null;
     }
     try {
-      driverTarget(this.hub, path);
+      this.#paths.target(path);
     } catch {
       return null;
     }
@@ -219,6 +308,9 @@ export class MetadataProjection {
     if (packet.type === "gap") {
       this.#records.clear();
       this.#staged.clear();
+      this.#paths.clear();
+      this.#safe.clear();
+      this.#catalog = null;
       this.#reset = packet.resetId;
       this.#changed();
     } else {
@@ -243,6 +335,7 @@ export class MetadataProjection {
             }
           }
           this.#staged.clear();
+          this.#catalog = null;
           this.#changed();
         }
       }

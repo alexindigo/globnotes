@@ -2,7 +2,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { MetadataProjection } from "../server/metadata/projection.ts";
 import { parseMetadata } from "../server/metadata/parse.ts";
-import { queryMetadata } from "../server/metadata/query.ts";
+import { getMetadata, queryMetadata } from "../server/metadata/query.ts";
 import { metadataQuery } from "../server/metadata/contracts.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
@@ -266,6 +266,47 @@ Deno.test("metadata projection: changed bytes during planned read re-plan instea
     assert(row.status === "ready");
     assertEquals(row.headings[0].text, "newer body");
     assertEquals(row.version, f.hub.fileState("note.md")!.hash);
+  } finally {
+    p.stop();
+    f.close();
+  }
+});
+
+Deno.test("metadata projection: cached catalogue rechecks disclosed links and replaces namespace/collision observations on publication", async () => {
+  const f = hubOperationsFixture();
+  Deno.mkdirSync(`${f.vault}/notes`);
+  Deno.writeTextFileSync(`${f.vault}/notes/visible.md`, "# visible");
+  f.hub.scanNow();
+  const p = new MetadataProjection(f.hub);
+  try {
+    await caught(p);
+    assertEquals(p.records().length, 1);
+    const before = p.revision;
+    Deno.renameSync(`${f.vault}/notes`, `${f.vault}/kept`);
+    Deno.symlinkSync(f.config.statePath, `${f.vault}/notes`);
+    assertEquals(getMetadata(p, "notes/visible.md"), null);
+    assertEquals(queryMetadata(p, metadataQuery({}), () => true).total, 0);
+    assert(p.revision !== before);
+    Deno.removeSync(`${f.vault}/notes`);
+    Deno.renameSync(`${f.vault}/kept`, `${f.vault}/notes`);
+    assert(getMetadata(p, "notes/visible.md"));
+    Deno.writeTextFileSync(`${f.vault}/\u00e9.md`, "# first");
+    f.hub.scanNow();
+    await caught(p);
+    assert(getMetadata(p, "\u00e9.md"));
+    Deno.writeTextFileSync(`${f.vault}/e\u0301.md`, "# collision");
+    Deno.writeTextFileSync(
+      `${f.vault}/notes/visible.md`,
+      "# changed publication",
+    );
+    f.hub.scanNow();
+    await caught(p);
+    assertEquals(getMetadata(p, "\u00e9.md"), null);
+    assertEquals(p.records().map((row) => row.path), ["notes/visible.md"]);
+    Deno.removeSync(`${f.vault}/e\u0301.md`);
+    Deno.removeSync(`${f.vault}/\u00e9.md`);
+    f.hub.scanNow();
+    assert(!JSON.stringify(p.records()).includes("first"));
   } finally {
     p.stop();
     f.close();

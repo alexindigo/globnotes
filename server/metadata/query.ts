@@ -14,9 +14,12 @@ export function queryMetadata(
   projection: MetadataProjection,
   q: MetadataQuery,
   eligible: (path: string) => boolean,
-  revision = projection.revision,
+  revision: string | (() => string) = () => projection.revision,
+  disclose: (record: MetadataRecord) => boolean = () => true,
 ): MetadataPage {
-  const candidates = projection.records().filter((r) => eligible(r.path))
+  const candidates = projection.records(q.prefix).filter((r) =>
+    eligible(r.path)
+  )
     .filter((r) =>
       (!q.prefix || r.path.normalize("NFC") === q.prefix.normalize("NFC") ||
         r.path.normalize("NFC").startsWith(q.prefix.normalize("NFC") + "/")) &&
@@ -29,15 +32,22 @@ export function queryMetadata(
               p.value.items.includes(q.property!.equals))
         )) &&
           (!q.task || r.tasks.some((t) => t.checked === q.task!.checked))))
-    ).sort((a, b) =>
-      a.path.normalize("NFC") < b.path.normalize("NFC")
-        ? -1
-        : a.path.normalize("NFC") > b.path.normalize("NFC")
-        ? 1
-        : 0
     );
+  // Only the requested window touches current filesystem/grant routes. Complete
+  // these checks before constructing/bounding the final revisioned envelope.
+  const selected: MetadataRecord[] = [];
+  let index = q.offset, inspected = 0;
+  while (index < candidates.length && inspected++ < q.limit) {
+    const candidate = candidates[index];
+    if (!projection.disclose(candidate) || !disclose(candidate)) {
+      candidates.splice(index, 1);
+      continue;
+    }
+    selected.push(candidate);
+    index++;
+  }
   const page: MetadataPage = {
-    revision,
+    revision: typeof revision === "function" ? revision() : revision,
     cursor: projection.cursor,
     catchingUp: projection.catchingUp,
     total: candidates.length,
@@ -45,8 +55,8 @@ export function queryMetadata(
     unavailable: [],
   };
   let offset = q.offset;
-  while (offset < candidates.length && offset - q.offset < q.limit) {
-    const record = boundedRecord(candidates[offset]);
+  for (const candidate of selected) {
+    const record = boundedRecord(candidate);
     const target = record.status === "ready" ? page.rows : page.unavailable;
     target.push(record);
     // Reserve the pagination envelope too, including an arbitrary safe offset.
@@ -65,7 +75,5 @@ export function getMetadata(
   projection: MetadataProjection,
   path: string,
 ): MetadataRecord | null {
-  return projection.records().find((r) =>
-    r.path.normalize("NFC") === path.normalize("NFC")
-  ) ?? null;
+  return projection.record(path);
 }

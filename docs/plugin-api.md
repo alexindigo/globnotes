@@ -354,6 +354,15 @@ work cannot put back a deleted/renamed version. Ready results for one hub group
 publish together, including groups spanning follower pages. Nothing parsed is
 persisted to the hub or another host content database.
 
+The projection owns a publication/sequence-qualified safety catalogue and cached
+NFC directory-name indexes. Recorded changes synchronously release obsolete names,
+parsed catalogue references and safety observations. Get uses one current-key
+lookup; prefix queries binary-search the sorted catalogue. Counts/filters use that
+observed namespace in memory, while only the requested window rechecks current
+route kind, symlinks, canonical state and exact read grants at disclosure. A page
+can be shorter when a selected route has become unsafe; its changed revision
+invalidates prior pagination. Warm reads do not walk every vault directory again.
+
 Get and query/watch results are bounded to 1 MiB encoded JSON. A single oversized
 record becomes `record_too_large`; a page may return fewer records with
 `nextOffset` when its combined byte bound is reached. Watch allows at most 16

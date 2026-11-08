@@ -256,6 +256,16 @@ disclosure. RPC replies use the same synchronous disclosure boundary. These APIs
 do not require whole-vault log access. See [metadata API](plugin-api.md#current-note-metadata)
 for record types, unavailable/count semantics, parser boundaries and limits.
 
+The owner caches the sorted read catalogue and safety by path key/sequence.
+Namespace publications clear directory-name indexes and safety observations, and
+release parsed catalogue references synchronously. `DriverPathIndex` shares the
+existing containment policy while observing each directory's NFC names once per
+projection namespace; it never caches route kind, symlinks or canonical state.
+Get is a direct current-key lookup. Prefix windows use binary search, grant roots
+resolve once per query, and only the bounded candidate window rechecks actual
+routes and exact grants. Global filters/counts remain in-memory scans, not
+filesystem scans. Default driver callers retain fresh, uncached `driverTarget`.
+
 ## Sync peer metadata (M5)
 
 Each configured driver instance is a separate peer and vector dimension, even

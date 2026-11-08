@@ -406,6 +406,18 @@ Use fresh disk-backed evidence directories through the authorized rootless engin
 The build/cold-load command proves build and startup only. CI owns the full browser
 and serial timing gates; these commands are targeted milestone acceptance.
 
+`metadata_read_cost_test.ts` observes actual directory enumeration, route stats,
+canonical resolution and hub inventory calls. Warm get is a direct lookup; a
+narrow prefix classifies only its candidates, and filesystem work stays bounded
+by the requested window, including when an entire directory becomes unsafe.
+Durations are logged measurements, not widened timing assertions. A 10,000-note
+real-filesystem fixture pauses parser scheduling to isolate read ownership from
+cold parsing; normal Worker acceptance separately covers ready parsed records.
+
+```sh
+timeout 900 .devcontainer/run.sh --run-dir "$RUNS/metadata-read-cost" -- env GLOBNOTES_METADATA_COST_NOTES=10000 deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net tests/metadata_read_cost_test.ts
+```
+
 ### Driver contract and SDK
 
 `hub_driver_sdk_test.ts` checks native/emulated conditions, exact ETag reads,

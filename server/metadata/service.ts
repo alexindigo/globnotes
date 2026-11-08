@@ -11,6 +11,8 @@ import {
 } from "./contracts.ts";
 import type { MetadataProjection } from "./projection.ts";
 import { getMetadata, queryMetadata } from "./query.ts";
+import * as path from "@std/path";
+import { within } from "../hub/paths.ts";
 
 export function metadataRead(
   projection: MetadataProjection,
@@ -21,7 +23,7 @@ export function metadataRead(
 ): unknown {
   if (!current()) throw new Error("metadata owner retired");
   if (args.length !== 1) throw new Error("metadata expects one argument");
-  const eligible = (path: string) =>
+  const currentGrant = (path: string) =>
     readGrantCovers(
       manifest,
       projection.hub.root,
@@ -30,10 +32,14 @@ export function metadataRead(
     );
   if (method === "metadata.get") {
     const path = metadataPath(args[0]);
-    if (!eligible(path)) {
+    if (!currentGrant(path)) {
       throw new Error("path is outside the plugin's declared read grants");
     }
-    return getMetadata(projection, path);
+    const record = getMetadata(projection, path);
+    if (record && !currentGrant(record.path)) {
+      throw new Error("path is outside the plugin's declared read grants");
+    }
+    return record;
   }
   // Pagination also expires when canonical read roots change without a source edit.
   const roots = manifest.capabilities.read.map((grant) => {
@@ -47,9 +53,22 @@ export function metadataRead(
       return null;
     }
   });
-  const revision = projection.revision + ":" +
-    createHash("sha256").update(JSON.stringify(roots)).digest("hex");
-  return queryMetadata(projection, metadataQuery(args[0]), eligible, revision);
+  const fingerprint = createHash("sha256").update(JSON.stringify(roots)).digest(
+    "hex",
+  );
+  // The projection's safe namespace is canonical and vault-contained. Resolve
+  // grant roots once, then classify/count candidates without per-note realpaths.
+  const eligible = (name: string) =>
+    roots.some((root) =>
+      root !== null && within(root, path.join(projection.hub.root, name))
+    );
+  return queryMetadata(
+    projection,
+    metadataQuery(args[0]),
+    eligible,
+    () => projection.revision + ":" + fingerprint,
+    (record) => currentGrant(record.path),
+  );
 }
 
 interface Watch {
