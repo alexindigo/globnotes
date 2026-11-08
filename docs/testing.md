@@ -81,7 +81,13 @@ Gates 16-19 need the Chromium sidecar; a full `--browser` run checks
 the CDP endpoint first. The native suite records each child's actual exit and
 timeout state; printed PASS/OK words cannot grant success.
 
-The native suite admits three children at a time, locally and in CI.
+The native suite defaults to three children locally. CI's shared 4-vCPU runner
+uses two, passed inside the container workload command as
+`env GLOBNOTES_E2E_CONCURRENCY=2`. A job-level host variable alone does not cross
+the launcher's explicit environment boundary. Loaded peer-group measurements
+reduced worst initial viewer readiness from 12.42 s at three to 9.07 s at two,
+increasing headroom below the unchanged 15 s bound from 1.21x to 1.65x. This reserves
+capacity rather than extending waits; runner variation still requires CI evidence.
 `GLOBNOTES_E2E_CONCURRENCY=1` restores serial admission; any positive integer
 sets the pool size. Each child owns its artifact subtree, fixture, port-0
 server and private client-build working directory, plus its browser context.
@@ -89,6 +95,10 @@ Completed child output prints as one stdout/stderr block; `suite.json` retains
 selection order regardless of completion order. A failure stops new admission,
 waits for in-flight children and rejects the suite. Child timeouts and actual
 exit records remain authoritative.
+
+`ctrl-f-search` records initial viewer latency, requests and navigation in its
+case artifact subtree. Failures capture DOM/console/request state before page
+teardown, plus a working screenshot; JSON evidence is included in CI diagnostics.
 
 `tests/helpers/boot.ts` gives SIGTERM five seconds, then sends SIGKILL only
 to its owned child; it drains output and releases the private cwd after exit.
@@ -244,7 +254,7 @@ on the [GitHub-hosted Ubuntu runner](https://github.com/actions/runner-images/bl
 
 ```sh
 export GLOBNOTES_CONTAINER_ENGINE=podman
-.devcontainer/run.sh --browser --run-dir "$RUNNER_TEMP/globnotes/all" -- bash scripts/gates.sh --all --browser
+.devcontainer/run.sh --browser --run-dir "$RUNNER_TEMP/globnotes/all" -- env GLOBNOTES_E2E_CONCURRENCY=2 bash scripts/gates.sh --all --browser
 .devcontainer/run.sh --run-dir "$RUNNER_TEMP/globnotes/timing" -- bash scripts/gates.sh --timing
 ```
 

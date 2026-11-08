@@ -7,6 +7,10 @@ import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9461);
 const vault = await Deno.makeTempDir({ prefix: "ctrlf-vault-" });
+const artifacts = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "ctrlf-artifacts-" });
+const observations = [], requests = new Map();
+const started = performance.now();
+let page, failure, initialViewerMs;
 const filler = Array.from(
   { length: 200 },
   (_, i) => `Filler paragraph number ${i + 1} with ordinary words.`,
@@ -32,7 +36,20 @@ const server = await bootServer({
 }, applicationServer());
 const browser = await launchBrowser({ port: CDP_PORT });
 try {
-  const page = await connect({ port: CDP_PORT, binding: browser });
+  page = await connect({ port: CDP_PORT, binding: browser });
+  page.onEvent(event => {
+    const data = event.params, at = performance.now() - started;
+    if (event.method === "Network.requestWillBeSent") {
+      const row = { at, url: data.request.url, type: data.type };
+      requests.set(data.requestId, row); observations.push({ event: event.method, ...row });
+    } else if (event.method === "Network.responseReceived") {
+      const row = requests.get(data.requestId);
+      if (row) { row.status = data.response.status; row.responseAt = at; }
+    } else if (["Network.loadingFinished", "Network.loadingFailed"].includes(event.method)) {
+      const row = requests.get(data.requestId);
+      if (row) { row.finishedAt = at; row.failure = data.errorText; }
+    } else if (["Page.frameNavigated", "Page.navigatedWithinDocument"].includes(event.method)) observations.push({ at, event: event.method, data });
+  });
   await page.send("Emulation.setDeviceMetricsOverride", {
     width: 1280, height: 900, deviceScaleFactor: 1, mobile: false,
   });
@@ -52,7 +69,10 @@ try {
 
   // -- Source mode: panel opens, off-screen match found + revealed ---------
   await page.goto(`${server.baseUrl}/long`);
+  const viewerStarted = performance.now();
   await page.poll(`document.querySelector(".rendered-markdown") !== null`);
+  initialViewerMs = performance.now() - viewerStarted;
+  await Deno.writeTextFile(`${artifacts}/initial-viewer.json`, JSON.stringify({ initialViewerMs, observations, requests: [...requests.values()] }, null, 2));
   await page.clickText("Edit");
   await page.poll(`document.querySelector(".cm-host") !== null`);
   // Focus the editor so its keymap sees the key.
@@ -142,7 +162,16 @@ try {
     process.exit(1);
   }
   console.log("CTRLF OK");
+} catch (error) {
+  failure = error;
+  if (page) {
+    const snapshot = await page.evaluate("({url:location.href,ready:document.readyState,body:document.body?.innerText,viewer:document.querySelector('.toast-viewer')?.outerHTML,editors:[...document.querySelectorAll('.cm-content,.ProseMirror')].map(el=>el.textContent),resources:performance.getEntriesByType('resource').map(row=>({name:row.name,startTime:row.startTime,duration:row.duration}))})").catch(captureError => ({ captureError: String(captureError) }));
+    await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ error: String(error), initialViewerMs, elapsedMs: performance.now() - started, snapshot, pageErrors: page.pageErrors, events: page.events, observations, requests: [...requests.values()], server: server.logs() }, null, 2));
+    await page.screenshot(`${artifacts}/failure.png`).catch(captureError => console.error("Failure screenshot:", String(captureError)));
+  }
+  throw error;
 } finally {
+  await Deno.writeTextFile(`${artifacts}/observations.json`, JSON.stringify({ failed: !!failure, initialViewerMs, elapsedMs: performance.now() - started, observations, requests: [...requests.values()], pageErrors: page?.pageErrors, events: page?.events }, null, 2));
   await stopBrowser(browser);
   await server.close();
   console.log("Retained find fixture", vault);

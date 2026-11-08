@@ -55,7 +55,7 @@ jobs:
         run: >-
           .devcontainer/run.sh --browser
           --run-dir "$RUNNER_TEMP/globnotes/all"
-          -- bash scripts/gates.sh --all --browser
+          -- env GLOBNOTES_E2E_CONCURRENCY=2 bash scripts/gates.sh --all --browser
           --ci-changes /run-logs/ci-changes.z --ci-ref "$GITHUB_REF"
       - name: "Timing tests, serially"
         if: steps.proof.outputs.run-tests != 'false'
