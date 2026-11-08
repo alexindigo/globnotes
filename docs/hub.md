@@ -154,6 +154,10 @@ secret and all file/peer/conflict metadata survive migration. Cursors store only
 identity/progress, not paths or parsed data. Host-only compare-and-swap updates
 the expected cursor; disable retains it, uninstall removes it. Each vault has
 its own store and log identity. Replaced logs and changed read authority reset.
+Only the fully acknowledged snapshot uses an explicit reset CAS that may replace
+an ahead cursor with its captured watermark. Ordinary progress cannot regress;
+the reset still requires the exact expected row and a valid current-log boundary,
+even when writes during snapshot delivery have overtaken the previous cursor.
 
 `changesSince(cursor, {maxEntries,maxBytes})` adds SQL keyset pages of at most
 128 entries and 1 MiB of encoded control data. Existing callers omitting options

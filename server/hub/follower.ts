@@ -17,6 +17,7 @@ import type { PluginCursor } from "./store.ts";
 export interface CursorOwner {
   load(): PluginCursor | null;
   commit(expected: PluginCursor | null, next: PluginCursor): boolean;
+  reset?(expected: PluginCursor | null, next: PluginCursor): boolean;
 }
 export interface FollowerStatus {
   cursor: number | null;
@@ -353,7 +354,10 @@ export class LogFollower {
           authorityKey,
           seq: packet.type === "snapshot" ? packet.watermark : packet.to,
         };
-        if (!owner.commit(expected, next)) {
+        const committed = packet.type === "snapshot" && owner.reset
+          ? owner.reset(expected, next)
+          : owner.commit(expected, next);
+        if (!committed) {
           throw new Error("cursor compare-and-swap failed");
         }
         if (packet.type === "snapshot") {

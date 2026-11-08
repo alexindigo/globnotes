@@ -79,6 +79,38 @@ Deno.test("changes store: v4 migration preserves metadata/secret and adds stable
   }
 });
 
+Deno.test("changes store: snapshot reset retains exact CAS and log bounds without relaxing ordinary progress", () => {
+  const f = fixture();
+  try {
+    f.store.apply(rows(3), "local", null);
+    const cursor = { logId: f.store.logId, seq: 3, authorityKey: "all" };
+    assert(f.store.advancePluginCursor("one", null, cursor));
+    const reset = { ...cursor, seq: 1 };
+    assert(!f.store.advancePluginCursor("one", cursor, reset));
+    assert(!f.store.resetPluginCursor("one", { ...cursor, seq: 2 }, reset));
+    assert(
+      !f.store.resetPluginCursor(
+        "one",
+        { ...cursor, authorityKey: "other" },
+        reset,
+      ),
+    );
+    assert(
+      !f.store.resetPluginCursor("one", cursor, {
+        ...reset,
+        logId: "other-log",
+      }),
+    );
+    assert(!f.store.resetPluginCursor("one", cursor, { ...reset, seq: 4 }));
+    assert(f.store.resetPluginCursor("one", cursor, reset));
+    assertEquals(f.store.pluginCursor("one"), reset);
+    assert(!f.store.resetPluginCursor("one", cursor, reset));
+    assertEquals(f.store.pluginCursor("two"), null);
+  } finally {
+    f.close();
+  }
+});
+
 Deno.test("changes store: bounded keyset replay keeps whole fitting batches and explicit stable multipart offsets", () => {
   const f = fixture();
   try {

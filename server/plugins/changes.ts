@@ -56,6 +56,8 @@ export function followPluginChanges(options: {
       commit: (expected, next) =>
         current() &&
         hub.store.advancePluginCursor(manifest.id, expected, next),
+      reset: (expected, next) =>
+        current() && hub.store.resetPluginCursor(manifest.id, expected, next),
     },
     current,
     deliver: (_packet, disclose) =>

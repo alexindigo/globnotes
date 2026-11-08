@@ -419,10 +419,26 @@ export class HubStore {
     expected: PluginCursor | null,
     next: PluginCursor,
   ): boolean {
+    return this.#commitPluginCursor(plugin, expected, next, false);
+  }
+  /** Only the host follower's fully acknowledged snapshot may replace progress. */
+  resetPluginCursor(
+    plugin: string,
+    expected: PluginCursor | null,
+    next: PluginCursor,
+  ): boolean {
+    return this.#commitPluginCursor(plugin, expected, next, true);
+  }
+  #commitPluginCursor(
+    plugin: string,
+    expected: PluginCursor | null,
+    next: PluginCursor,
+    reset: boolean,
+  ): boolean {
     validCursor(next.seq);
     if (next.logId !== this.logId || next.seq > this.sequence()) return false;
     if (
-      expected?.logId === next.logId &&
+      !reset && expected?.logId === next.logId &&
       expected.authorityKey === next.authorityKey && next.seq < expected.seq
     ) return false;
     if (!expected) {

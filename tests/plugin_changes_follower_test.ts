@@ -21,6 +21,8 @@ function fixture(limit?: number) {
     load: () => f.hub.store.pluginCursor("test"),
     commit: (expected, next) =>
       f.hub.store.advancePluginCursor("test", expected, next),
+    reset: (expected, next) =>
+      f.hub.store.resetPluginCursor("test", expected, next),
   };
   const add = (options: {
     cursor?: CursorOwner;
@@ -228,6 +230,53 @@ Deno.test("log follower: cursor resumes on restart; changed authority, replaced 
       assertEquals(packet.reason, reason);
       follower.stop();
     }
+  } finally {
+    f.close();
+  }
+});
+
+Deno.test("log follower: acknowledged future-cursor snapshot resets the real stored cursor even when writes overtake it during delivery", async () => {
+  const f = fixture();
+  try {
+    f.write("one.md");
+    const old = { logId: f.hub.store.logId, seq: 0, authorityKey: "all" };
+    assert(f.hub.store.advancePluginCursor("test", null, old));
+    // Model restoring an older vault log while its stored progress is ahead.
+    f.hub.store.db.prepare(
+      "UPDATE plugin_cursors SET seq=3 WHERE plugin='test'",
+    ).run();
+    const follower = f.add({
+      deliver(packet) {
+        if (packet.type === "snapshot") {
+          for (const name of ["two.md", "three.md", "four.md"]) f.write(name);
+        }
+        return Promise.resolve({ ack: packet.token });
+      },
+    });
+    await f.step();
+    assertEquals(f.packets[0].type, "gap");
+    assertEquals(
+      f.packets[0].type === "gap" && f.packets[0].reason,
+      "future_cursor",
+    );
+    await f.step();
+    assertEquals(f.hub.sequence(), 4);
+    assertEquals(f.owner.load()?.seq, 1);
+    assertEquals(follower.status.lastError, null);
+    // Only the explicitly acknowledged reset can regress; ordinary writes cannot.
+    assert(
+      !f.hub.store.advancePluginCursor("test", f.owner.load(), {
+        ...old,
+        seq: 0,
+      }),
+    );
+    await f.step();
+    assertEquals(f.owner.load()?.seq, 4);
+    assertEquals(f.packets.map((packet) => packet.type), [
+      "gap",
+      "snapshot",
+      "changes",
+    ]);
   } finally {
     f.close();
   }
