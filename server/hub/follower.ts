@@ -36,6 +36,7 @@ export interface FollowerOptions {
 }
 interface Inventory {
   expected: PluginCursor | null;
+  authorityKey: string;
   resetId: string;
   watermark: number;
   entries: SnapshotEntry[];
@@ -120,7 +121,11 @@ export class LogFollower {
     ) return "retention";
     return null;
   }
-  #snapshot(resetId: string, expected: PluginCursor | null): void {
+  #snapshot(
+    resetId: string,
+    expected: PluginCursor | null,
+    authorityKey: string,
+  ): void {
     const { hub } = this.options;
     // No await: the metadata inventory and watermark are one observation.
     const entries = hub.store.files().map((file) => ({
@@ -135,6 +140,7 @@ export class LogFollower {
     const watermark = hub.sequence();
     this.#inventory = {
       expected,
+      authorityKey,
       resetId,
       watermark,
       entries,
@@ -157,8 +163,22 @@ export class LogFollower {
       return false;
     }
   }
-  #disclose(packet: ChangePacket): ChangePacket {
+  #authorityKey(): string {
+    try {
+      return this.options.authorityKey;
+    } catch (error) {
+      // Unavailable/narrow canonical grants cannot keep an obsolete inventory
+      // alive until their next successful delivery or expiry.
+      this.#reset("authority_changed");
+      throw error;
+    }
+  }
+  #disclose(packet: ChangePacket, authorityKey: string): ChangePacket {
     if (!this.#current()) throw new Error("follower retired");
+    if (this.#authorityKey() !== authorityKey) {
+      this.#reset("authority_changed");
+      throw new Error("follower read authority changed while queued");
+    }
     const { hub } = this.options;
     if (packet.type === "gap") return checkPacket(packet);
     if (packet.type === "snapshot") {
@@ -201,8 +221,13 @@ export class LogFollower {
     const { hub, cursor: owner } = this.options;
     const expected = this.#inventory ? this.#inventory.expected : owner.load();
     try {
+      // authorityKey can be an owner getter: canonical grant roots may change
+      // without a manifest edit. One delivery/reset never borrows new rights.
+      const authorityKey = this.#authorityKey();
       if (this.#inventory) {
-        if (this.#clock.now() >= this.#inventory.expires) {
+        if (this.#inventory.authorityKey !== authorityKey) {
+          this.#reset("authority_changed");
+        } else if (this.#clock.now() >= this.#inventory.expires) {
           this.#reset("snapshot_expired");
         } else if (
           hub.changesSince(this.#inventory.watermark, {
@@ -291,13 +316,18 @@ export class LogFollower {
       }
       const result = await this.options.deliver(
         checkPacket(packet),
-        () => this.#disclose(packet),
+        () => this.#disclose(packet, authorityKey),
       );
       // Retirement/expiry cannot borrow the replacement's cursor or inventory.
       if (
         !this.#current() || (inventory && this.#inventory !== inventory) ||
         (gap && this.#gap !== gap)
       ) return;
+      if (this.#authorityKey() !== authorityKey) {
+        this.#reset("authority_changed");
+        this.#dirty = true;
+        return;
+      }
       if (!acknowledge(result, token)) {
         throw new Error("invalid acknowledgement");
       }
@@ -312,14 +342,15 @@ export class LogFollower {
         this.#dirty = true;
         return;
       }
-      if (packet.type === "gap") this.#snapshot(packet.resetId, expected);
-      else if (packet.type === "snapshot" && !packet.complete) {
+      if (packet.type === "gap") {
+        this.#snapshot(packet.resetId, expected, authorityKey);
+      } else if (packet.type === "snapshot" && !packet.complete) {
         inventory!.offset = snapshotOffset;
         inventory!.page++;
       } else {
         const next: PluginCursor = {
           logId: hub.store.logId,
-          authorityKey: this.options.authorityKey,
+          authorityKey,
           seq: packet.type === "snapshot" ? packet.watermark : packet.to,
         };
         if (!owner.commit(expected, next)) {

@@ -287,6 +287,15 @@ are unknown-base ("Different on both sides"). No API manufactures a base from
 timestamps, ETags or arrival order. The hub stores neither old text nor patches.
 Native remote history and optional versioning plugins have separate retention.
 
+Service plugins can opt into [changes API 1](plugin-api.md#acknowledged-log-facts-changes-api-1)
+for acknowledged facts from local observations, editor/API writes, plugin writes
+and driver imports. An import's peer remains its instance id; adoption/export
+acknowledgement never invents another author. This feed has explicit gaps and
+current metadata snapshots, not retained historical bodies or preimages. A
+versioner/RAG consumer must verify current-read hashes and supply any historical
+completeness from its own source history. Existing operation hooks and backup
+delivery remain separate contracts.
+
 Keys are server-held per instance in mode-0600 `driver-secrets.sqlite` in the
 configured state directory, with secure delete and no WAL. Reads disclose only
 declaration/set/time; there is no key GET. Raw, URI-encoded and base64 forms are

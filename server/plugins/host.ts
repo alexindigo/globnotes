@@ -75,6 +75,8 @@ export interface InvocationOptions {
   /** Best-effort post-commit offers: an independent bounded lane, not a
    * pre-hook (the handler may use ctx.fs). */
   lane?: "versioning";
+  /** Host-only synchronous disclosure at actual dispatch, after FIFO waits. */
+  prepareArgs?(): unknown[];
 }
 export type RpcHandler = (
   method: string,
@@ -483,6 +485,17 @@ export class PluginHost {
               );
               return;
             }
+            if (
+              this.manifest.changes &&
+              [...this.registry.values()].filter((r) => r.kind === "changes")
+                  .length !== 1
+            ) {
+              this.fail(
+                slot,
+                "changes requires exactly one subscription before ready",
+              );
+              return;
+            }
           }
           if (
             this.role === "driver" &&
@@ -554,12 +567,15 @@ export class PluginHost {
           this.registry.delete(data.handlerId);
           this.options.registrationChanged?.();
           if (
-            !this.stopping && (removed?.kind === "driver" ||
+            !this.stopping &&
+            (removed?.kind === "driver" || removed?.kind === "changes" ||
               removed?.kind === "hook" && removed.id.startsWith("pre-"))
           ) {
             this.fail(
               slot,
-              removed?.kind === "driver"
+              removed?.kind === "changes"
+                ? "required changes registration disposed"
+                : removed?.kind === "driver"
                 ? "required driver registration disposed"
                 : "required pre-hook registration disposed",
             );
@@ -853,6 +869,12 @@ export class PluginHost {
           })),
         { handlerId: "tentative-endpoint", descriptor: definition },
       ]);
+    } else if (registration.kind === "changes") {
+      if (
+        !this.manifest.changes || registration.id !== "changes" ||
+        Object.keys(value).some((key) => key !== "kind" && key !== "id") ||
+        [...this.registry.values()].some((r) => r.kind === "changes")
+      ) throw new Error("invalid or duplicate changes subscription");
     } else if (registration.kind === "versioning") {
       if (!this.manifest.versioning) {
         throw new Error("versioning is not declared by this plugin");
@@ -1080,6 +1102,18 @@ export class PluginHost {
       job.reject(new Error("plugin target generation replaced"));
       return;
     }
+    // A retired owner or scrubbed candidate must never enter a Worker merely
+    // because it was admitted while an earlier ordinary job was still running.
+    let args: unknown[];
+    try {
+      args = job.invocation?.prepareArgs?.() ?? job.args;
+    } catch (error) {
+      job.timer();
+      job.reject(
+        error instanceof Error ? error : new Error("disclosure failed"),
+      );
+      return;
+    }
     job.context = executionContext(
       job.kind === "dispose" ? "disposal" : "invocation",
       job.pre,
@@ -1107,12 +1141,12 @@ export class PluginHost {
         type: "invoke",
         ...common,
         handlerId: job.name,
-        args: job.args,
+        args,
         pre: job.pre,
       }
       : job.kind === "dispose"
       ? { type: "dispose", ...common }
-      : { type: "call", ...common, fn: job.name, args: job.args };
+      : { type: "call", ...common, fn: job.name, args };
     slot.worker.postMessage(message);
   }
   /** FIFO broadcast reserves every replica's sync boundary before later renders. */

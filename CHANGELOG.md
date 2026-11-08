@@ -8,6 +8,13 @@ A per-vault hub tracks file hashes, versions and an ordered change log for
 outside programs and globnotes writes. Deleted files leave anonymous keyed-path
 tombstones; the hub retains no note content or previous versions.
 
+Service plugins can opt into changes API 1: bounded acknowledged log facts for
+local, editor, plugin and sync-driver writes, durable per-plugin cursors, explicit
+retention gaps and current metadata snapshots. Queued disclosure rechecks scrubbed
+names and current read authority. Hub schema 5 upgrades in place without retaining
+file bodies. Current reads still cannot recover overwritten history; the legacy
+backup's best-effort delivery remains unchanged.
+
 AI agents can work with the vault over the Model Context Protocol (MCP). The
 globnotes server now serves an MCP endpoint at `<prefix>/_/mcp` with seven tools:
 search notes, read a note, list a folder, list tags, and create, update (or

@@ -15,6 +15,10 @@ import {
   type PluginStatus,
 } from "./contracts.ts";
 import { PluginDataStore } from "./data.ts";
+import type { VaultHub } from "../hub/hub.ts";
+import type { LogFollower } from "../hub/follower.ts";
+import { changesAuthority, followPluginChanges } from "./changes.ts";
+import { CHANGES_API_VERSION } from "./change_contract.ts";
 import type { DisplacementOffer, Versioning } from "../hub/versioning.ts";
 import { readGrantCovers } from "./lifecycle.ts";
 import { PluginHost, type RpcAuthority } from "./host.ts";
@@ -81,6 +85,7 @@ export interface RuntimeAdapters {
   settingsEnvironment?: PluginSettingsEnvironment;
   ownerEpoch?(id: string): number;
   ownerEnabled?(id: string): boolean;
+  hub?: VaultHub;
 }
 interface RuntimeEntry {
   source: RuntimeSource;
@@ -92,6 +97,7 @@ interface RuntimeEntry {
   activation?: object;
   sourceToken?: Source;
   recoveryAdmission?: NetworkPolicy;
+  changes?: LogFollower;
 }
 export interface GuardLease {
   pluginId: string;
@@ -175,6 +181,11 @@ export class PluginRuntime implements Versioning {
       }
       this.order = sources.map((source) => source.id);
       const present = new Set(this.order);
+      // Also cover a plugin removed while the process was down. Temporary
+      // disablement remains present in inventory and keeps its progress.
+      for (const id of this.adapters.hub?.store.pluginCursorOwners() ?? []) {
+        if (!present.has(id)) this.adapters.hub!.store.removePluginCursor(id);
+      }
       for (const [id, entry] of this.entries) {
         if (!present.has(id)) {
           entry.source = { ...entry.source, enabled: false };
@@ -284,6 +295,10 @@ export class PluginRuntime implements Versioning {
           throw new Error("service installed source is unavailable");
         }
         manifest = installed;
+      }
+      if (manifest.changes) {
+        if (!this.adapters.hub) throw new Error("changes feed is unavailable");
+        changesAuthority(manifest, this.adapters.hub);
       }
       const host: PluginHost = new PluginHost(
         manifest,
@@ -412,12 +427,15 @@ export class PluginRuntime implements Versioning {
           snapshot: {
             pluginId: manifest.id,
             contractVersion: PLUGIN_CONTRACT_VERSION,
+            changesApiVersion: CHANGES_API_VERSION,
           },
           effective: policy?.effective,
           source: policy?.source,
           registrationChanged: () => this.changed(),
           failed: () => {
             if (entry.host !== host || !currentActivation()) return;
+            entry.changes?.stop();
+            entry.changes = undefined;
             entry.status = "failed";
             this.diagnostic(
               entry,
@@ -468,10 +486,32 @@ export class PluginRuntime implements Versioning {
       }
       entry.status = "ready";
       entry.recoveryAdmission = undefined;
+      if (manifest.changes) {
+        entry.changes = followPluginChanges({
+          manifest,
+          hub: this.adapters.hub!,
+          host,
+          current: () =>
+            currentActivation() && entry.host === host &&
+            entry.status === "ready" && this.adapters.operational(),
+          changed: (status) => {
+            if (status.lastError) {
+              entry.deliveryFailures++;
+              this.diagnostic(
+                entry,
+                "changes_delivery_failed",
+                "log delivery failed; cursor retained for retry",
+              );
+            } else this.changed();
+          },
+        });
+      }
       this.changed();
     })().catch((error) => {
       candidate?.stop();
       if (!currentActivation()) return;
+      entry.changes?.stop();
+      entry.changes = undefined;
       if (entry.host === candidate) entry.host = null;
       entry.starting = null;
       entry.sourceToken = undefined;
@@ -479,7 +519,9 @@ export class PluginRuntime implements Versioning {
       entry.status = "failed";
       this.diagnostic(
         entry,
-        "plugin_activation_failed",
+        error instanceof PluginContractError
+          ? error.code
+          : "plugin_activation_failed",
         error instanceof Error ? error.message : "activation failed",
       );
     });
@@ -594,6 +636,8 @@ export class PluginRuntime implements Versioning {
   retireOwner(id: string, enabled?: boolean, immediate = false): Promise<void> {
     const entry = this.entries.get(id);
     if (!entry) return Promise.resolve();
+    entry.changes?.stop();
+    entry.changes = undefined;
     if (enabled !== undefined) entry.source = { ...entry.source, enabled };
     const host = entry.host;
     entry.host = null; // Revoke authority before draining or disposal.
@@ -640,6 +684,16 @@ export class PluginRuntime implements Versioning {
       degraded: entry.deliveryFailures > 0,
       deliveryFailures: entry.deliveryFailures,
       diagnostics: structuredClone(entry.diagnostics),
+      ...(entry.source.manifest?.changes
+        ? {
+          changes: entry.changes?.status ?? {
+            cursor: this.adapters.hub?.store.pluginCursor(id)?.seq ?? null,
+            lag: null,
+            reset: null,
+            lastError: null,
+          },
+        }
+        : {}),
       ...(entry.source.manifest?.versioning
         ? { versioningPending: entry.host?.versioningPending ?? 0 }
         : {}),
@@ -1099,6 +1153,8 @@ export class PluginRuntime implements Versioning {
   /** Access transitions revoke old generations synchronously before config changes. */
   suspend(): void {
     for (const entry of this.entries.values()) {
+      entry.changes?.stop();
+      entry.changes = undefined;
       const host = entry.host;
       entry.host = null;
       entry.activation = undefined;

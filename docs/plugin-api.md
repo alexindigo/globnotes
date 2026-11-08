@@ -9,6 +9,9 @@ browser preferences.
 
 ## The default: `on-*` hooks
 
+For replayable facts from **all peers**, use the opt-in log feed below. `on-*`
+remains the best-effort operation interface, with its existing payloads/order.
+
 The normal integration point is an **after-the-fact hook**: the operation has
 already succeeded, and your handler receives immutable snapshots.
 
@@ -193,6 +196,93 @@ the link. When state is inside the vault, `notice` names its canonical path:
 outside tools copying the whole folder copy keys too. Keep state outside those
 copies with the existing `GLOBNOTES_INDEX_PATH` setting.
 
+## Acknowledged log facts (changes API 1)
+
+Declare `"runtime":{"server":"service.js"},"changes":{"apiVersion":1}` and
+register exactly one `ctx.changes.subscribe(handler)` during activation. Unknown
+changes keys/versions, missing service entry, missing registration, duplicate
+registration and undeclared subscription are rejected. Disposal retires the
+required subscription's Worker. No declaration means no log feed.
+
+The existing vault enablement and canonical file-read grants authorize delivery.
+Raw log access requires a read grant covering the **whole vault**: anonymous
+deletions cannot be safely classified under a narrow pathname grant. Narrow grants
+are explicitly rejected (`changes_read_grant_required`), not silently expanded.
+Network permission never grants file access. Canonical host state, staging files
+and descendant symlinks stay excluded. This is not driver or secret authority.
+
+```js
+export async function activate(ctx) {
+  ctx.changes.subscribe(async (packet) => {
+    await persistAndDeduplicate(packet); // your private JSON CAS or own storage
+    return { ack: packet.token }; // exact token, only after successful processing
+  });
+}
+```
+
+| # | Packet | Meaning |
+|---|---|---|
+| 1 | `{type:"gap",gap:true,reason,logId,next,resetId,token}` | Ack the reset barrier before snapshots. `next` is informational, never permission to skip recovery |
+| 2 | `{type:"snapshot",resetId,watermark,entries,page,complete,token}` | Current-file metadata pages; each entry is `{path,pathKey,hash,size,mtimeMs,vector,seq}`. Only final ack installs watermark |
+| 3 | `{type:"changes",logId,from,to,entries,batches,token}` | Ordered retained facts strictly after `from`, ack the entire scanned page through `to`, including filtered entries |
+
+Entries contain `{seq,batch,path,pathKey,kind,oldPath,oldPathKey,beforeHash,
+afterHash,peer,origin,at}`. Names include extensions. `kind` is created, modified,
+renamed or deleted. `peer` is local, globnotes or the driver instance id; `origin`
+is the recorded detail, such as api or plugin:<id>. Equal-byte adoption/export
+acknowledgement creates no new authorship. No endpoint URL, settings or key crosses
+the feed. Packets and nested values are frozen in the Worker.
+
+Deletion scrubs names in SQLite, including earlier creates/modifications. Always
+handle null `path`/`oldPath` and remove anonymous deletions by their vault-local
+opaque HMAC `pathKey`. Never reconstruct names from another host cache. Both replay
+and snapshot candidates are rechecked at actual Worker dispatch after FIFO waits.
+
+One subscriber has one outstanding callback, at most 128 entries and 1 MiB encoded
+control data, one pending wake-up and one transient metadata inventory. Fitting hub
+batches stay together. Oversized batches use `{batch,part,complete}`: `part` is the
+one-based entry offset within that batch. Persist staging before each ack, publish
+the group only on completion, discard staging on reset. Restart can resume at a
+tail only when your staged prefix was stored. Compaction never waits for a plugin.
+
+Persist `(logId,seq)` deduplication and reset/page identities with your effects.
+Delivery is at least once: a crash after your persistence but before host cursor
+CAS repeats the facts. Undefined, partial, stale and forged acknowledgements do
+not advance. External effects plus host cursor storage are not one transaction.
+Failures show `changes_delivery_failed`, retain progress, and retry in observed
+time after 5 seconds doubling to 5 minutes. The ordinary 30-second service-call
+budget includes FIFO wait; guard and versioning lanes keep their own isolation.
+
+The newest 100,000 log entries are retained independently of cursors. First
+subscription, retention loss, replaced log, future cursor, changed read authority
+or five-minute observed snapshot expiry produce explicit gaps. Gap/intermediate
+page acks do not install progress. A snapshot inventories metadata and watermark
+together, then replays writes after that watermark. It is not an atomic snapshot
+of historical file bytes. A gap means your old projection is no longer caught up.
+
+Read **current** bytes with `ctx.files.read(path)` -> `{body,mediaType,version}`.
+Compare `version` with `afterHash`/snapshot `hash`: a mismatch is superseded,
+NotFound is gone, other I/O errors are unknown. Null names have no byte read.
+Track per-key applied seq/version so older replay cannot roll a newer snapshot
+record backward. Hashes are versions, not historic-retrieval handles. Rapidly
+overwritten versions, deleted bodies and unobserved local edits are unavailable
+unless your plugin has its own history. The host stores no content spool.
+
+See the test-only [log example](../tests/fixtures/plugins/globnotes-log-example/service.js)
+for private JSON CAS, reset/page identities, multipart staging, deduplication and
+version-checked reads. It maintains current keyed state, not an archive. No example
+plugin is installed in production. The legacy backup remains on `ctx.versioning`;
+log following does not strengthen its best-effort preservation guarantee.
+
+The catalog publishes `changesApiVersion:1` separately from plugin contract 2,
+the declaration and `changesStatus:{cursor,lag,reset,lastError}`. Runtime status
+and bounded value-free diagnostics report failures. Disable, source/grant/access
+replacement, setup, failure and shutdown fence dispatch and late acks, cancel
+timers and release inventories. Disable retains the cursor; uninstall removes it,
+including removal while the server was stopped. Re-enable resumes or resets as
+required. Read-only mode permits observation and host progress, but does not grant
+plugin data/content mutations; setup-pending starts no subscriber.
+
 ## Facades
 
 | Surface | Contract |
@@ -204,7 +294,8 @@ copies with the existing `GLOBNOTES_INDEX_PATH` setting.
 | `ctx.data.load()/save(values, revision)` | private JSON with revision CAS; never in the settings catalog |
 | `ctx.actions.request(action, args)` | acceptance-only `{ requestId }`; outcome via `ctx.actions.result(id)` / `onResult`; every write states its `base` ([Writes state their base](#writes-state-their-base)) |
 | `ctx.files.read(path)` / `ctx.files.requestWrite(path, bytes, {base, onStale?})` | grant-checked mediated file access with the file's `version`; guarded `file-write` action |
-| Server `ctx.versioning.onOffer(handler)` | displaced bytes before the hub replaces, deletes or moves them ([Versioning](#versioning)) |
+| Server `ctx.versioning.onOffer(handler)` | captured displaced bytes delivered after commit ([Versioning](#versioning)) |
+| Server `ctx.changes.subscribe(handler)` | opt-in acknowledged all-peer metadata feed (changes API 1, above) |
 | Server `ctx.permissions.declare({network,imports}, options?)` | complete host-bound contributor/source request snapshot; cannot grant access |
 | Server `ctx.permissions.requestAccess({kind,hosts,reason}, options?)` | prompt admission `{requestId,revision,status,blockedReasons}`; does not wait for a human or grant traffic |
 | Server `ctx.permissions.status()` | owning current request/approval/effective projection and source token |
@@ -495,7 +586,7 @@ under ordinary serving policy.
 ## Versioning
 
 This asynchronous, best-effort hook is kept for the **legacy v2 backup plugin**.
-Future v3 versioning plugins will follow the hub change log (M5/M7). It does not
+V3 versioning plugins can follow the acknowledged log feed above. It does not
 add a save participant or change the rest of plugin contract 2.
 
 The legacy service declares it and registers one handler:

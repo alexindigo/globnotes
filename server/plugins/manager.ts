@@ -20,6 +20,7 @@ import {
 } from "./manifest.ts";
 import { renderPluginRpc } from "./rpc.ts";
 import { PluginRuntime, type RuntimeAdapters } from "./runtime.ts";
+import { CHANGES_API_VERSION } from "./change_contract.ts";
 import type { OperationFact, PluginLimits } from "./contracts.ts";
 import {
   HOOK_NAMES,
@@ -341,6 +342,7 @@ export class PluginManager {
     const { policy, metadata } = await this.policy.read();
     return {
       contractVersion: PLUGIN_CONTRACT_VERSION,
+      changesApiVersion: CHANGES_API_VERSION,
       policy: metadata,
       plugins: await Promise.all(
         this.inventory(policy).map(
@@ -400,6 +402,8 @@ export class PluginManager {
                 client: !!manifest?.runtime.client,
               },
               rendering: !!manifest?.entry,
+              changes: manifest?.changes ?? null,
+              changesStatus: runtime?.changes ?? null,
               endpoints: manifest?.hasEndpoints ?? false,
               driver: manifest?.driver
                 ? {

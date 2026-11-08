@@ -117,7 +117,7 @@ offered, preventing recursive backup.
 The host persists none of these bytes: no spool or content journal. A server
 crash before the plugin stores a version loses that backup, as in v2. Outside
 programs' changes are already on disk when observed and cannot be offered.
-Future v3 versioners follow the hub change log (M5/M7); see
+V3 versioners can follow the acknowledged log feed; see
 [the legacy hook contract](plugin-api.md#versioning).
 
 The contract rule `single-vault-writer` (`tests/test_isolation_contract_test.ts`)
@@ -188,6 +188,20 @@ This is at-least-once delivery of retained recorded facts, not historical byte
 storage or exactly-once external effects. A current read can already be newer
 than a logged hash. Hashes are versions, not historical retrieval handles.
 Neither this feed nor its snapshots strengthen the legacy backup guarantee.
+
+`server/plugins/changes.ts` binds each declared subscription to its current
+service Worker, canonical whole-vault read authority and host-selected plugin id.
+The runtime starts it only after combined readiness and stops it synchronously
+on failure/retirement/setup/access transitions. Ordinary FIFO argument preparation
+performs the final disclosure check; no eager packet is sent after a queue wait.
+Read-only observation can update host delivery progress without authorizing
+plugin content/private-data writes. Catalog/status expose declaration, API version,
+cursor/lag/reset/last-error metadata; uninstall also sweeps cursors for plugins
+removed while offline. See [plugin API](plugin-api.md#acknowledged-log-facts-changes-api-1).
+Canonical grant roots are re-derived at planning, dispatch and acknowledgement.
+Retargeting a grant symlink cannot disclose an already-queued packet or relabel
+an old snapshot's ack with new authority. A changed key resets recovery; an
+unavailable whole-vault grant releases the inventory and reports delivery failure.
 
 The search index removes obsolete note text and names too, including FTS5
 segments and SQLite free space. Its owner enables both FTS5 `secure-delete` and

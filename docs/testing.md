@@ -351,6 +351,31 @@ timeout 180 .devcontainer/run.sh --run-dir "$RUNS/log-foundation" -- deno test -
 Use a fresh disk-backed run directory. These tests prove the follower foundation;
 plugin Worker and current-metadata consumers have separate acceptance coverage.
 
+### Plugin log consumers
+
+`plugin_changes_runtime_test.ts` uses real Workers to reject undeclared, narrow,
+duplicate and missing subscriptions and malformed acknowledgements. It observes
+durable cursors, disable/resume/uninstall, setup fencing and read-only observation
+without plugin write authority. `plugin_changes_transport_test.ts` holds the actual
+ordinary FIFO, deletes queued replay/snapshot members and inspects the Worker's
+received values. It also loses an ack after private persistence, then proves
+deduplicated replay, multipart staging across Worker replacement and retention
+reset against final private JSON state.
+
+`plugin_changes_acceptance_test.ts` installs only the test-owned log example in a
+real server and connects the M5 HTTP memory remote. It checks persisted keyed
+state and exact disk/read versions for local folder, editor, plugin and driver
+origins, rename/delete, disabled backlog and server restart. Anonymous deletes
+remove names/bodies from the example's current-state record. These checks do not
+claim historical bytes or exactly-once external effects.
+
+```sh
+timeout 600 .devcontainer/run.sh --run-dir "$RUNS/log-consumers" -- bash -lc 'timeout 480 deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net tests/plugin_changes_*_test.ts tests/plugin_runtime_test.ts tests/plugin_authority_test.ts tests/hub_versioning_test.ts tests/backup_plugin_test.ts tests/backup_plugin_controls_test.ts tests/test_isolation_contract_test.ts'
+```
+
+Use fresh disk-backed evidence directories and the authorized rootless engine.
+CI owns the full browser and serial timing gates; this is targeted server evidence.
+
 ### Driver contract and SDK
 
 `hub_driver_sdk_test.ts` checks native/emulated conditions, exact ETag reads,

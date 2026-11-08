@@ -112,6 +112,7 @@ export interface PluginCtx {
   /** Legacy backup: best-effort displaced bytes delivered after commit.
    * The write never waits for this handler. */
   versioning: { onOffer(handler: Handler): Disposer };
+  changes: { subscribe(handler: Handler): Disposer };
   snapshot: JsonValues;
   register(disposer: Disposer): Disposer;
   timers: {
@@ -315,6 +316,10 @@ const ctx: PluginCtx = {
   versioning: {
     onOffer: (handler) =>
       register({ kind: "versioning", id: "versioning" }, handler),
+  },
+  changes: {
+    subscribe: (handler) =>
+      register({ kind: "changes", id: "changes" }, handler),
   },
   fs: {
     stat: (path, options) =>
@@ -700,9 +705,10 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
         const handler = handlers.get(message.handlerId);
         if (!handler) throw new Error("handler registration is unavailable");
         if (
-          ["hook", "settings-change", "action-result", "versioning"].includes(
-            handlerKinds.get(message.handlerId) ?? "",
-          )
+          ["hook", "settings-change", "action-result", "versioning", "changes"]
+            .includes(
+              handlerKinds.get(message.handlerId) ?? "",
+            )
         ) message.args.forEach(immutable);
         value = await handler(...message.args);
       } else {

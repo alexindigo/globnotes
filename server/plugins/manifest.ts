@@ -83,8 +83,9 @@ export interface PluginManifest {
   hasClient: boolean;
   runtime: { server?: string; client?: string };
   driver?: DriverDeclaration;
+  changes?: { apiVersion: 1 };
   hooks: HookName[];
-  /** Displaced bytes offered before the hub replaces, deletes or moves them
+  /** Captured displaced bytes delivered after the hub commits
    * (docs/plugin-api.md "Versioning"); `extensions` omitted = every file. */
   versioning?: { extensions?: string[] };
   settings: SettingsPage[];
@@ -304,6 +305,15 @@ export function readManifest(dir: string): PluginManifest {
     throw new Error("versioning requires runtime.server");
   }
   const settings = validateSettingsPages(raw.settings);
+  let changes: PluginManifest["changes"];
+  if (raw.changes !== undefined) {
+    const declaration = record(raw.changes, "changes");
+    if (
+      Object.keys(declaration).length !== 1 || declaration.apiVersion !== 1 ||
+      !runtime.server
+    ) throw new Error("changes requires apiVersion 1 and runtime.server");
+    changes = { apiVersion: 1 };
+  }
   const driver = driverDeclaration(raw.driver, dir);
   const caps = raw.capabilities === undefined
     ? {}
@@ -386,6 +396,7 @@ export function readManifest(dir: string): PluginManifest {
     hasClient,
     runtime,
     ...(driver ? { driver } : {}),
+    ...(changes ? { changes } : {}),
     hooks: hooks as HookName[],
     ...(versioning ? { versioning } : {}),
     settings,

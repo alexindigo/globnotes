@@ -174,6 +174,7 @@ lifecycle.onSync((fact) => {
   );
 });
 plugins.configureRuntime({
+  hub,
   operational: () => lifecycle.operational(),
   writable: () => lifecycle.writable(),
   commit: (effect) => lifecycle.gate.run(effect),

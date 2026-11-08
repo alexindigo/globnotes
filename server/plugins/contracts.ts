@@ -173,6 +173,7 @@ export interface HandlerRegistration {
     | "action-result"
     | "endpoint"
     | "versioning"
+    | "changes"
     | "driver";
   id: string;
   definition?: CommandDefinition | EndpointDescriptor;

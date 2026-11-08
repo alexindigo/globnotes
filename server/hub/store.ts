@@ -457,6 +457,11 @@ export class HubStore {
   removePluginCursor(plugin: string): void {
     this.db.prepare("DELETE FROM plugin_cursors WHERE plugin=?").run(plugin);
   }
+  pluginCursorOwners(): string[] {
+    return this.db.prepare("SELECT plugin FROM plugin_cursors").all().map(
+      (row) => row.plugin as string,
+    );
+  }
   checkpoint(): void {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }

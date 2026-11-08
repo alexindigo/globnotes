@@ -30,7 +30,9 @@ function fixture(limit?: number) {
     const follower = new LogFollower({
       hub: f.hub,
       cursor: options.cursor ?? owner,
-      authorityKey: options.authorityKey ?? "all",
+      get authorityKey() {
+        return options.authorityKey ?? "all";
+      },
       current: () => active,
       clock,
       deliver: (packet) => {
@@ -101,6 +103,44 @@ Deno.test("log follower: acknowledged reset snapshots current metadata, then cat
       lastError: null,
     });
   } finally {
+    f.close();
+  }
+});
+
+Deno.test("log follower: current canonical authority fences in-flight snapshot ack and starts a fresh reset", async () => {
+  const f = fixture();
+  const reply = Promise.withResolvers<unknown>();
+  let authority = "first";
+  try {
+    f.write("one.md");
+    f.add({
+      get authorityKey() {
+        return authority;
+      },
+      deliver(packet) {
+        if (packet.type === "snapshot" && authority === "first") {
+          return reply.promise;
+        }
+        return Promise.resolve({ ack: packet.token });
+      },
+    });
+    await f.step();
+    await f.step();
+    const snapshot = f.packets.at(-1)!;
+    assert(snapshot.type === "snapshot");
+    authority = "replacement";
+    reply.resolve({ ack: snapshot.token });
+    await f.step();
+    assertEquals(f.owner.load(), null);
+    await f.step();
+    const gap = f.packets.at(-1)!;
+    assert(gap.type === "gap");
+    assertEquals(gap.reason, "authority_changed");
+    await f.step();
+    assertEquals(f.owner.load()?.authorityKey, "replacement");
+    assertEquals(f.owner.load()?.seq, 1);
+  } finally {
+    reply.resolve(undefined);
     f.close();
   }
 });

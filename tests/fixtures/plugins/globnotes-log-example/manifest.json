@@ -1,0 +1,12 @@
+{
+  "id": "globnotes-log-example",
+  "name": "Log consumer example (test only)",
+  "runtime": { "server": "service.js" },
+  "changes": { "apiVersion": 1 },
+  "capabilities": {
+    "read": ["vault"],
+    "write": ["vault"],
+    "network": false,
+    "imports": false
+  }
+}
