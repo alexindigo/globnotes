@@ -300,7 +300,14 @@ or Nginx Proxy Manager to protect the link. When state lives inside the vault,
 the instance view names its path and explains that outside whole-folder copies
 include keys. Keep state outside such copies using `GLOBNOTES_INDEX_PATH`.
 
-The foundation does not implement Remotely Save codecs, encryption, a production
-Git/BEP/LiveSync/FUTO driver, driver-private storage or chunked transfer above
-16 MiB. A driver that decrypts is trusted with plaintext and its instance's key;
-encryption of its endpoint does not encrypt the hub's live folder or other peers.
+The shipped [Remotely Save driver](../plugins/globnotes-remotely-save/README.md)
+is a production storage-SDK example: S3-compatible/WebDAV transports, bounded
+native-name mapping and plaintext/OpenSSL/rclone codecs remain inside the plugin.
+It declares emulated conditions and no historical base text. Its optional keys
+are validated against the selected backend/codec in open, before network I/O.
+The hub still owns every reconciliation and folder effect.
+
+Production Git/BEP/LiveSync/FUTO drivers, driver-private storage and chunked
+transfer above 16 MiB are separate work. A driver that decrypts is trusted with
+plaintext and its instance's key; encryption of its endpoint does not encrypt
+the hub's live folder or other peers.

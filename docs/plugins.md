@@ -184,8 +184,20 @@ Open **Settings -> Sync**, choose **Add**, select an enabled sync plugin and nam
 the instance. New instances are off. Review its settings, save its keys and switch
 it on. Multiple instances of one plugin are independent peers. Sync now requests
 a full cycle; Off/Starting/Active/Locked/Failed/Paused describe its current state.
-Plain local-domain HTTP supports the entire workflow. No production driver is
-shipped by M5; the memory-remote driver lives only in test fixtures.
+Plain local-domain HTTP supports the entire workflow. The memory-remote driver
+lives only in test fixtures. The shipped Remotely Save plugin connects existing
+S3-compatible or WebDAV stores; see its [setup and compatibility guide](../plugins/globnotes-remotely-save/README.md).
+
+For Remotely Save, match the existing backend, exact remote prefix/base directory,
+addressing/authentication choice and encryption mode. Configure the instance while
+off. Enter the selected backend's credentials and, for OpenSSL or rclone, its
+encryption password under Keys. Irrelevant optional keys may remain unset; a
+missing needed key locks the instance instead of treating the remote as empty.
+OpenSSL reads old base32 names as well as base64 names; no mode converts a store.
+The driver preserves reserved legacy metadata, folder markers, case and dotfiles.
+Storage has no historical base text: collisions become copies in the hub inbox,
+not timestamp-selected overwrites. The 16 MiB plaintext and native-name limits,
+upload-time behavior and simultaneous-write limitations are in the plugin guide.
 
 Settings drafts use explicit Save settings or Discard edits. Leaving Settings or
 changing pages asks before losing local work; unknown requests must settle and be

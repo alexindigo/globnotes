@@ -49,7 +49,16 @@ Each instance runs in its own sandboxed Worker with isolated write-only keys.
 Settings -> Sync adds configuration, key entry on plain HTTP, state, manual sync
 and revision-bound deleted-here/remote-empty decisions. Removing an instance
 preserves files on both sides. The driver author guide and test-only HTTP memory
-remote document and exercise the contract; real endpoint drivers follow later.
+remote document and exercise the contract.
+
+The Remotely Save plugin joins existing v3 S3-compatible and WebDAV stores with
+plaintext, OpenSSL (including old base32 names) or rclone-base64 encryption.
+Per-instance optional keys support backend and encryption choices without dummy
+credentials. Reserved legacy metadata and folder markers stay untouched; the hub
+owns conflict copies, deletion review and uncertain-write recovery. Same-size
+uploads require a later server-visible timestamp so Remotely Save can detect them.
+Files are limited to 16 MiB plaintext; unsupported native names are reported,
+never renamed. Conditional writes remain explicitly emulated across providers.
 
 The legacy backup hook delivers displaced bytes asynchronously after commit.
 Saves never wait on versioning plugins. Each plugin has a bounded in-memory queue
@@ -89,6 +98,18 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 `name 2.png`, ...), and the note's link follows it.
 
 ### Fixed
+
+Driver-only plugins expose their server network consent controls in Settings,
+using the same explicit approvals and separate Allow network switch as other
+server plugins.
+
+Short settings rows keep labels on one line and move wide controls below them
+when the pair cannot fit. Help text stays below the pair across settings pages.
+
+Metadata-only sync revisions no longer manufacture conflict copies while local
+edits are pending. The hub adopts a changed native validator when its bytes still
+match the accepted endpoint version, then exports the newer local edit against
+that validator. Held alternatives retain their explicit review behavior.
 
 Deleted and replaced notes no longer leave obsolete names or content in search
 index files, WAL or FTS segments. Older indexes receive a one-time atomic

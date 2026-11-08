@@ -394,6 +394,79 @@ a sync fact while inventory reconciliation is suspended: the runtime publishes a
 complete roster before awaiting cleanup, so driver-only inventories cannot expose
 a partially populated observer registry.
 
+### Remotely Save interoperability
+
+The production plugin is exercised by `remotely_save_format_test.ts`,
+`remotely_save_providers_test.ts` and `remotely_save_acceptance_test.ts`.
+Checked-in upstream-generated vectors cover both encrypted formats and old
+OpenSSL base32 names. Deterministic HTTP peers cover protocol failures and actual
+restricted Worker/SDK/hub/disk consumers; they do not replace real storage proof.
+
+```sh
+timeout 1800 .devcontainer/run.sh --run-dir "$RUNS/remotely-protocol" -- deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net tests/remotely_save_format_test.ts tests/remotely_save_providers_test.ts tests/remotely_save_acceptance_test.ts
+timeout 1800 .devcontainer/run.sh --run-dir "$RUNS/remotely-vectors" -- deno run --allow-read --allow-write --allow-net --allow-env tests/interop/generate-remotely-save.mjs --revision 34db181af002f8d71ea0a87e7965abc57b294914 --check tests/fixtures/remotely-save
+```
+
+The additional targeted real-service runner uses the feature-owned
+`tests/interop/remotely-save.sh` on ark with rootless Podman. It composes the
+unchanged launcher, pins official SeaweedFS 4.50 and Apache mod_dav images by
+digest, and retains ownership receipts, logs and disk-backed data. Service caps
+are 1 GB memory=memory+swap, 128 PIDs and one CPU each. Unique aliases, including
+the actual S3 bucket virtual host, stay on the private `globnotes-test` network.
+No ports are published, no host networking or engine socket is used. Readiness,
+bucket setup and every probe run inside the dev workload. Exact owned CIDs are
+removed on exit; unrelated containers and all evidence are retained.
+
+```sh
+GLOBNOTES_CONTAINER_ENGINE=podman timeout 1800 bash tests/interop/remotely-save.sh --browser --run-dir "$RUNS/remotely-real" -- deno run --unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net tests/interop/remotely_save_real.ts
+```
+
+Use a fresh disk-backed run directory whose parent already exists. The default
+matrix runs all three codecs with S3 path/virtual-host addressing and DAV
+anonymous/Basic/Digest authentication (15 cases), plus actual Apache native-name
+boundaries. `--case=<backend>-<codec>-<variant>` after the runner filename selects
+one case for diagnosis and reports the actual completed count. It never grants
+full-matrix acceptance. MinIO's former community image is unavailable; this test
+uses a maintained S3-compatible server, not a MinIO source build.
+
+Independent HTTP/SigV4/Digest clients and downloaded pinned upstream crypto
+exports read the complete remote trees and metadata. The unchanged pinned v3
+planner consumes real observations with prevSync, a skewed local clock and rapid
+equal-size writes; its decisions are applied to another client's plaintext tree.
+Original sources, import/runtime shims and hashes remain in artifacts, not the
+product. Native-condition probes cover pagination, user metadata and stale/create
+conditions. The plugin's conservative emulation declaration remains in force.
+Apache can upgrade a recent weak ETag to strong without changing bytes; validator
+adoption and pending-conflict recovery must produce no echo or extra conflict.
+
+`--browser` additionally builds the current client and runs all six
+`remotely-save-native` argument variants against the same real services. It uses
+independent upstream codecs and HTTP clients to seed and read remote bytes. Omitting
+`--browser` runs only the server matrix. Neither mode silently skips a selected
+consumer on failure.
+
+The ordinary native case uses deterministic protocol peers and the unmodified
+production plugin, with six backend/codec configurations. Native input enables
+the plugin, explicitly approves its requested network scope and separate master,
+selects settings, and enters/clears write-only keys. It observes live list/editor
+imports, editor exports at the remote, clean editor reload, and conflict inbox
+resolution propagated back to storage. Desktop/narrow/dark geometry and keyboard
+probes accompany working full screenshots. These are UI-consumer checks; the
+independent vectors and real-service consumers establish format interoperability.
+
+```sh
+timeout 600 .devcontainer/run.sh --browser --run-dir "$RUNS/remotely-native" -- bash -lc 'timeout 120 deno task build:client && timeout 360 env GLOBNOTES_E2E_CASES=remotely-save-native-s3-none,remotely-save-native-s3-openssl-base64,remotely-save-native-s3-rclone-base64,remotely-save-native-webdav-none,remotely-save-native-webdav-openssl-base64,remotely-save-native-webdav-rclone-base64,sync-settings-native,sync-driver-native,conflict-review-native bash client/tests/e2e/run.sh'
+```
+
+Native app origins are ordinary local-domain HTTP with secure=false. The existing
+suite records every selected child's actual exit and timeout state, including
+shared native controls. Each backend/codec variant owns its fixture and retains
+the existing 120-second child bound. The shared finalizer attempts each owned
+cleanup even when diagnostics fail, preserving the original case error.
+
+These are targeted local checks. CI owns the full browser/static/server/client/
+build/cold-load and serial timing gates; a local targeted run does not claim them.
+
 ### Conflict inbox
 
 Conflict lifecycle/read coverage lives in `tests/hub_conflicts_test.ts` and

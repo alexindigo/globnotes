@@ -113,6 +113,50 @@ async function setup(
   };
 }
 
+Deno.test("remotely-save: weak-to-strong DAV validator transition refuses an old revision without dispatch and a fresh base recovers", async () => {
+  const f = await setup("webdav", "none", true);
+  const decoder = new TextDecoder();
+  try {
+    f.remote.set("A.md", "same");
+    const [entry] = await f.discover();
+    assert(entry.state === "known");
+    let reads = 0;
+    f.remote.fault((request, key) => {
+      if (request.method === "GET" && key === "A.md" && ++reads === 3) {
+        f.remote.weak(false);
+      }
+      return undefined;
+    });
+    const item = {
+      id: "replace",
+      op: "put" as const,
+      path: "A.md",
+      batch: 1,
+      base: { revision: entry.revision },
+      bytes: encoder.encode("next"),
+    };
+    assertEquals((await f.driver.apply([item]))[0].state, "conflict");
+    assertEquals(
+      f.remote.requests.filter((request) => request.method === "PUT"),
+      [],
+    );
+    assertEquals(decoder.decode(f.remote.objects.get("A.md")!.bytes), "same");
+    f.remote.fault(undefined);
+    const [fresh] = await f.discover();
+    assert(fresh.state === "known");
+    assert(fresh.revision !== entry.revision);
+    assertEquals(
+      (await f.driver.apply([{ ...item, base: { revision: fresh.revision } }]))[
+        0
+      ].state,
+      "settled",
+    );
+    assertEquals(decoder.decode(f.remote.objects.get("A.md")!.bytes), "next");
+  } finally {
+    await f.close();
+  }
+});
+
 Deno.test("remotely-save: selected configuration locks before IO and credential replacement preserves path-free identity", async () => {
   const settings = {
     backend: "s3",
