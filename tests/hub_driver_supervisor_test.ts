@@ -16,11 +16,13 @@ import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import { LivenessClock } from "./helpers/worker_liveness.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 import { fixturePage } from "./helpers/plugin_fixture.ts";
+import { memoryRemote } from "./helpers/memory_remote.ts";
 
 const guard = () => {};
 function fixture(
   source = minimalDriver,
   network: string[] | false = false,
+  declaration: Record<string, unknown> = driverDeclaration,
 ) {
   const f = hubOperationsFixture();
   const dir = `${f.config.statePath}/plugins/test-driver`;
@@ -29,7 +31,7 @@ function fixture(
     `${dir}/manifest.json`,
     JSON.stringify({
       id: "test-driver",
-      driver: driverDeclaration,
+      driver: declaration,
       capabilities: { network, imports: false },
     }),
   );
@@ -193,6 +195,95 @@ Deno.test("driver supervisor: off by default, missing keys construct no Worker, 
   } finally {
     globalThis.Worker = Native;
     await f.close();
+  }
+});
+
+Deno.test("driver supervisor: optional keys reach SDK open, lock before IO and clear without losing files or mappings", async () => {
+  const remote = memoryRemote();
+  remote.put("optional.md", "imported through optional-key Worker");
+  const source = Deno.readTextFileSync(
+    new URL(
+      "fixtures/plugins/globnotes-test-driver/driver.js",
+      import.meta.url,
+    ),
+  ).replace(
+    "ctx.instance.settings;",
+    `{baseUrl:${
+      JSON.stringify(remote.baseUrl)
+    },prefix:'',exclude:'',forbiddenCharacters:''};`,
+  ).replace(
+    'identity: async () => await (await request("/identity")).json(),',
+    `identity: async () => {
+      if (!await ctx.secrets.get('token')) throw new StorageError('unauthorized', {effect:'none',message:'needs Access token'});
+      return await (await request('/identity')).json();
+    },`,
+  );
+  const f = fixture(source, [new URL(remote.baseUrl).host], {
+    ...driverDeclaration,
+    secrets: [
+      { key: "token", label: "Access token", required: false },
+      { key: "spare", label: "Other backend key", required: false },
+    ],
+  });
+  const Native = globalThis.Worker;
+  let constructions = 0;
+  globalThis.Worker = new Proxy(Native, {
+    construct(target, args, newTarget) {
+      constructions++;
+      return Reflect.construct(target, args, newTarget);
+    },
+  });
+  try {
+    const a = await f.create("Optional"), b = await f.create("Isolated");
+    await f.approve();
+    await f.enable(a.id);
+    assertEquals(constructions, 1);
+    assertEquals((await f.one(a.id)).status, "locked");
+    assertEquals((await f.one(a.id)).reason, "needs Access token");
+    assertEquals(remote.requests.length, 0);
+    await f.key(a.id, "memory-token");
+    assertEquals((await f.one(a.id)).status, "active");
+    assertEquals(
+      Deno.readTextFileSync(`${f.vault}/optional.md`),
+      "imported through optional-key Worker",
+    );
+    assertEquals((await f.one(b.id)).secrets[0].set, false);
+    assertEquals(
+      (await f.one(a.id)).secrets.map(({ set }: { set: boolean }) => set),
+      [
+        true,
+        false,
+      ],
+    );
+    assertEquals((await f.one(a.id)).declaration.secrets[0].required, false);
+    const mappings = f.supervisor.peers.files(a.id);
+    const requests = remote.requests.length;
+    const beforeClear = constructions;
+    await f.supervisor.secret(
+      a.id,
+      "token",
+      {
+        revision: f.supervisor.peers.instance(a.id)!.revision,
+      },
+      true,
+      guard,
+    );
+    assertEquals(constructions, beforeClear + 1);
+    assertEquals((await f.one(a.id)).status, "locked");
+    assertEquals(remote.requests.length, requests);
+    assertEquals(f.supervisor.peers.files(a.id), mappings);
+    assertEquals(
+      Deno.readTextFileSync(`${f.vault}/optional.md`),
+      "imported through optional-key Worker",
+    );
+    await f.key(a.id, "memory-token");
+    assertEquals((await f.one(a.id)).status, "active");
+    assertEquals(remote.requests.filter(({ method }) => method !== "GET"), []);
+    assertEquals(f.supervisor.peers.files(a.id), mappings);
+  } finally {
+    globalThis.Worker = Native;
+    await f.close();
+    await remote.close();
   }
 });
 

@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { DatabaseSync } from "node:sqlite";
 import * as path from "@std/path";
+import type { DriverSecretDeclaration } from "../../plugins/driver_contract.ts";
 
-export interface SecretDeclaration {
-  key: string;
-  label: string;
-  description?: string;
-}
-export interface SecretStatus extends SecretDeclaration {
+export interface SecretStatus extends DriverSecretDeclaration {
   set: boolean;
   updatedAt: string | null;
 }
@@ -69,7 +65,7 @@ export class DriverSecrets {
   }
   status(
     peer: string,
-    declarations: readonly SecretDeclaration[],
+    declarations: readonly DriverSecretDeclaration[],
   ): SecretStatus[] {
     const rows = new Map(
       this.#db.prepare("SELECT key,updated_at FROM secrets WHERE peer=?").all(

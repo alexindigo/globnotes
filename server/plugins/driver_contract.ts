@@ -130,6 +130,15 @@ export interface DriverInstanceSnapshot {
   settings: Record<string, unknown>;
 }
 
+/** Values are host-held per instance. Omitted required preserves API 1's
+ * pre-Worker lock; optional keys are checked by the selected provider in open. */
+export interface DriverSecretDeclaration {
+  key: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+}
+
 export class DriverContractError extends PluginContractError {
   constructor(detail = "Invalid driver API value") {
     super(422, "driver_contract_violation", detail);

@@ -15,6 +15,7 @@ import { validateSettingsPages } from "./settings.ts";
 import {
   DRIVER_API_VERSION,
   type DriverCapabilities,
+  type DriverSecretDeclaration,
   validateDriverCapabilities,
 } from "./driver_contract.ts";
 import {
@@ -96,7 +97,7 @@ export interface DriverDeclaration {
   entry: string;
   apiVersion: 1;
   settings: SettingsPage["fields"];
-  secrets: { key: string; label: string; description?: string }[];
+  secrets: DriverSecretDeclaration[];
   capabilities: DriverCapabilities;
 }
 
@@ -150,12 +151,14 @@ function driverDeclaration(
     const secret = record(value, "driver secret");
     if (
       Object.keys(secret).some((key) =>
-        !["key", "label", "description"].includes(key)
+        !["key", "label", "description", "required"].includes(key)
       ) ||
       typeof secret.key !== "string" ||
       !/^[a-z][a-z0-9_]{0,31}$/.test(secret.key) || keys.has(secret.key) ||
       (secret.description !== undefined &&
-        typeof secret.description !== "string")
+        typeof secret.description !== "string") ||
+      (Object.hasOwn(secret, "required") &&
+        typeof secret.required !== "boolean")
     ) {
       throw new Error("invalid driver secret declaration");
     }
@@ -166,6 +169,9 @@ function driverDeclaration(
       ...(secret.description === undefined
         ? {}
         : { description: secret.description as string }),
+      ...(secret.required === undefined
+        ? {}
+        : { required: secret.required as boolean }),
     };
   });
   return {

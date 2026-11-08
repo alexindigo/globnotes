@@ -48,6 +48,16 @@ Settings use the existing declarative-v1 field types, as one per-instance page,
 without filesystem grants. Declare at most eight secret keys, matching
 `^[a-z][a-z0-9_]{0,31}$`. Never put a token or passphrase in ordinary settings.
 
+Each declaration accepts `required?: boolean`: omitted or `true` keeps the
+pre-Worker lock when unset. Use `required:false` for backend-specific credentials
+or optional encryption. The flag is preserved in catalog and key-status views;
+it does not change declaration-bound, per-instance secret RPC authorization.
+Validate the selected configuration in provider `identity()` (called by SDK
+`open()`), before endpoint I/O. A missing needed optional key throws
+`new ctx.driver.StorageError("unauthorized", {effect:"none",message:"needs Password"})`:
+the SDK returns typed `open(): locked`, never an empty remote. Defer lookup until
+open, rather than failing activation. Irrelevant optional keys may remain absent.
+
 Capabilities are static and inspectable without running code. Snapshot discovery
 is required; delta is optional. Revisions are `exact` or `none`. Each mutation
 declares `conditional`, `emulated` or `none`; move is `native` or `none`.
@@ -70,7 +80,7 @@ The frozen context contains `createUuid`, frozen `instance: {id,label,settings}`
 `secrets.get(key)`, `driver.serve`, `driver.hint`, `driver.storage`,
 `driver.StorageError`, managed `timers` and `register`. Secret lookup is an RPC
 for a declared key of this exact instance/generation, not an initialization
-payload. Missing declared keys prevent Worker construction. There are no note,
+payload. Missing required keys prevent Worker construction. There are no note,
 file, data, hook, command, endpoint, permission or versioning facades.
 
 Call `serve` once with all five methods. Functions stay in the Worker:

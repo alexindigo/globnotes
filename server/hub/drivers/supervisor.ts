@@ -345,7 +345,7 @@ export class DriverSupervisor implements DriverOwners {
     const missing = this.#secrets.status(
       slot.instance.id,
       manifest.driver!.secrets,
-    ).find((key) => !key.set);
+    ).find((key) => key.required !== false && !key.set);
     if (missing) {
       slot.view = this.#state("locked", `needs ${missing.label}`);
       return;

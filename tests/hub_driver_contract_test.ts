@@ -20,6 +20,7 @@ import {
   driverCapabilities as caps,
   driverDeclaration,
   driverFixture,
+  minimalDriver,
 } from "./helpers/driver_fixture.ts";
 
 const binding = { endpoint: { id: "remote", epoch: "1" }, scope: "all" };
@@ -341,6 +342,14 @@ Deno.test("drivers: manifest accepts driver-only plugins and grants no direct va
         { ...driverDeclaration, extra: "no" },
         { ...driverDeclaration, entry: "../driver.js" },
         { ...driverDeclaration, secrets: [{ key: "Token", label: "Key" }] },
+        ...[null, 0, "false", {}, []].map((required) => ({
+          ...driverDeclaration,
+          secrets: [{ key: "token", label: "Key", required }],
+        })),
+        {
+          ...driverDeclaration,
+          secrets: [{ key: "token", label: "Key", optional: true }],
+        },
         {
           ...driverDeclaration,
           secrets: [{ key: "token", label: "Key" }, {
@@ -366,6 +375,40 @@ Deno.test("drivers: manifest accepts driver-only plugins and grants no direct va
       assertThrows(() => readManifest(fixture.dir));
     }
   } finally {
+    await fixture.dispose();
+  }
+});
+
+Deno.test("drivers: optional declarations survive manifest and worker-free catalog projection", async () => {
+  const secrets = [
+    { key: "required", label: "Required" },
+    { key: "explicit", label: "Explicit", required: true },
+    {
+      key: "optional",
+      label: "Optional",
+      description: "Selected backend only",
+      required: false,
+    },
+  ];
+  const fixture = await driverFixture(minimalDriver, { secrets });
+  const manager = createPluginManager(
+    fixture.vault,
+    undefined,
+    1,
+    fixture.statePath,
+    {
+      internalRoot: `${fixture.root}/no-built-ins`,
+    },
+  );
+  try {
+    assertEquals(fixture.manifest.driver?.secrets, secrets);
+    const plugin = (await manager.catalog()).plugins.find((plugin) =>
+      plugin.id === "test-driver"
+    )!;
+    assertEquals(plugin.driver?.secrets, secrets);
+    assertEquals(manager.hosts.size, 0);
+  } finally {
+    manager.stop();
     await fixture.dispose();
   }
 });

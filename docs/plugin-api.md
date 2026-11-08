@@ -73,7 +73,10 @@ filesystem envelope.
 A manifest may additionally declare `driver: {entry, apiVersion: 1, settings,
 secrets, capabilities}`. It can be the plugin's only contribution. `entry` is a
 contained basename module, `settings` is one declarative-v1 field array, and
-`secrets` declares at most eight `{key,label,description?}` fields. Secret keys
+`secrets` declares at most eight `{key,label,description?,required?}` fields.
+`required` is strictly boolean and defaults to true. Missing optional keys permit
+Worker construction; selected-configuration requirements return typed locked from
+`open`, before endpoint I/O (see [driver guide](drivers.md)). Secret keys
 match `^[a-z][a-z0-9_]{0,31}$`; values never belong in settings. The catalog
 exposes only these declarations and static capabilities, without running code.
 Unknown driver/capability properties and unsupported API versions are rejected.
@@ -178,7 +181,7 @@ a false no-effect stale success. Attention tokens cannot alias after restart.
 directory. Its owner creates a regular mode-0600 file, refuses insecure existing
 files/symlinks without changing them, and uses SQLite secure delete with DELETE
 journaling (no WAL). Keys are never part of hub metadata, plugin data/settings,
-Worker initialization, catalogs, facts or diagnostics. Missing declared keys lock
+Worker initialization, catalogs, facts or diagnostics. Missing required keys lock
 an instance before Worker construction. RPC serves only a declared key of the
 bound current generation. Raw, URI-encoded and base64 key forms are redacted from
 driver diagnostics and public state. Clearing/removal securely deletes the row;

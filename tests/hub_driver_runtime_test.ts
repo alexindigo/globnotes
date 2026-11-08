@@ -155,6 +155,7 @@ Deno.test("drivers: late secret replies cannot cross configuration retirement", 
       "open: () =>",
       "open: async () => (await ctx.secrets.get('token'),",
     ).replace("scope:'all' }),", "scope:'all' })),"),
+    { secrets: [{ key: "token", label: "Optional token", required: false }] },
   );
   const reached = Promise.withResolvers<void>(),
     release = Promise.withResolvers<string>();

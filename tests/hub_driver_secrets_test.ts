@@ -17,6 +17,7 @@ Deno.test("drivers: private mode-0600 keys, write-only status, instance isolatio
     const declarations = [{ key: "token", label: "Access token" }, {
       key: "password",
       label: "Password",
+      required: false,
     }];
     const status = store.status("one", declarations);
     assertEquals(status.map(({ key, set }) => ({ key, set })), [{
@@ -24,6 +25,8 @@ Deno.test("drivers: private mode-0600 keys, write-only status, instance isolatio
       set: true,
     }, { key: "password", set: false }]);
     assertEquals(JSON.stringify(status).includes(key), false);
+    assertEquals(status[1].required, false);
+    assertEquals(status[0].required, undefined);
     assertEquals(store.get("one", "token"), key);
     assertEquals(store.get("two", "token"), "other-key");
     assertEquals(store.get("three", "token"), null);
