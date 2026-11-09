@@ -10,8 +10,13 @@ origin detail), and configured sync driver instance ids.
 
 ## Observations
 
-`start()` does a full scan and starts a recursive filesystem watcher plus
-a periodic full scan. `GLOBNOTES_HUB_SCAN_INTERVAL` is read once per hub
+`start()` does a full scan, watches the vault root nonrecursively, and owns one
+recursive watch per non-dot top-level directory, adding and closing watches as
+directories appear, disappear or are renamed. Top-level dot folders are never
+watched: runtime event matching can open changed SQLite files before application
+filters run and invalidate process-owned locks. Dot-folder content remains covered
+by periodic full scans, except the excluded state directory.
+`GLOBNOTES_HUB_SCAN_INTERVAL` is read once per hub
 (seconds, positive, default 60). Watch events debounce for 300 ms and scan
 affected directories; they are hints, not the source of truth. A failed
 watcher leaves periodic scans active. Scans are synchronous and serialized

@@ -34,7 +34,7 @@ export class VaultHub {
   readonly #configuredRoot: string;
   #timer?: ReturnType<typeof setInterval>;
   #debounce?: ReturnType<typeof setTimeout>;
-  #watcher?: Deno.FsWatcher;
+  readonly #watchers = new Map<string, Deno.FsWatcher>();
   #hints = new Set<string>();
   #started = false;
   #scanning = false;
@@ -79,26 +79,80 @@ export class VaultHub {
     this.#started = true;
     this.scanNow();
     this.#timer = setInterval(() => this.#rescan(), this.#intervalMs);
-    try {
-      this.#watcher = Deno.watchFs(this.root, { recursive: true });
-      this.#watch(this.#watcher);
-    } catch (error) {
-      logger.warning(`Hub watcher unavailable; periodic scans only: ${error}`);
-    }
+    // Runtime event matching can open/close changed files before our filters run,
+    // dropping process-owned SQLite locks. Never recursively watch the vault root:
+    // top-level dot directories (especially .globnotes) must not be watched at all.
+    this.#addWatch("", false);
+    this.#syncDirectoryWatches();
   }
   stop(): void {
     this.#started = false;
     clearInterval(this.#timer);
     clearTimeout(this.#debounce);
-    this.#watcher?.close();
-    this.#watcher = undefined;
+    for (const watcher of this.#watchers.values()) watcher.close();
+    this.#watchers.clear();
+    this.#hints.clear();
     this.store.close();
   }
-  async #watch(watcher: Deno.FsWatcher): Promise<void> {
+  #addWatch(directory: string, recursive: boolean): void {
+    try {
+      const watcher = Deno.watchFs(path.join(this.root, directory), {
+        recursive,
+      });
+      this.#watchers.set(directory, watcher);
+      void this.#watch(directory, watcher);
+    } catch (error) {
+      logger.warning(
+        `Hub watcher unavailable; periodic scans active: ${error}`,
+      );
+    }
+  }
+  #syncDirectoryWatches(): void {
+    try {
+      const directories = new Set(
+        [...Deno.readDirSync(this.root)]
+          .filter((entry) =>
+            entry.isDirectory && !entry.name.startsWith(".") &&
+            !within(this.#stateRoot, path.join(this.root, entry.name))
+          )
+          .map((entry) => entry.name),
+      );
+      for (const [directory, watcher] of this.#watchers) {
+        if (directory && !directories.has(directory)) {
+          this.#watchers.delete(directory);
+          watcher.close();
+        }
+      }
+      for (const directory of directories) {
+        if (!this.#watchers.has(directory)) this.#addWatch(directory, true);
+      }
+    } catch (error) {
+      logger.warning(
+        `Hub watcher inventory failed; periodic scans active: ${error}`,
+      );
+    }
+  }
+  async #watch(directory: string, watcher: Deno.FsWatcher): Promise<void> {
     try {
       for await (const event of watcher) {
-        if (!this.#started) break;
+        if (!this.#started || this.#watchers.get(directory) !== watcher) break;
         if (event.kind === "access") continue;
+        if (directory === "") {
+          // A removed/renamed directory may already have a replacement at the
+          // same path by this turn. Retire the old inode's watch before inventory.
+          if (["create", "remove", "rename"].includes(event.kind)) {
+            for (const absolute of event.paths) {
+              const name = this.relativePath(absolute);
+              if (!name || name.includes("/")) continue;
+              const previous = this.#watchers.get(name);
+              if (previous) {
+                this.#watchers.delete(name);
+                previous.close();
+              }
+            }
+          }
+          this.#syncDirectoryWatches();
+        }
         for (const absolute of event.paths) {
           const relative = this.relativePath(absolute);
           if (
@@ -118,7 +172,12 @@ export class VaultHub {
       }
     } catch (error) {
       if (this.#started) {
-        logger.warning(`Hub watcher failed; periodic scans only: ${error}`);
+        logger.warning(`Hub watcher failed; periodic scans active: ${error}`);
+      }
+    } finally {
+      if (this.#watchers.get(directory) === watcher) {
+        this.#watchers.delete(directory);
+        watcher.close();
       }
     }
   }

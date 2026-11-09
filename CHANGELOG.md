@@ -113,6 +113,8 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Hub watches skip top-level dot folders to preserve SQLite locks; periodic scans still observe their content except the state directory.
+
 Remotely Save discovery reuses generation-local name and strong-validator body
 validation metadata. Warm scans and create bursts no longer download unchanged
 strong-validator bodies; cold, changed and weak/missing-validator observations
