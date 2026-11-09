@@ -113,7 +113,8 @@ export class VaultHub {
         [...Deno.readDirSync(this.root)]
           .filter((entry) =>
             entry.isDirectory && !entry.name.startsWith(".") &&
-            !within(this.#stateRoot, path.join(this.root, entry.name))
+            !within(this.#stateRoot, path.join(this.root, entry.name)) &&
+            !within(path.join(this.root, entry.name), this.#stateRoot)
           )
           .map((entry) => entry.name),
       );

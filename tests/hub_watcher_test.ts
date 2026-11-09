@@ -4,13 +4,13 @@ import { VaultHub } from "../server/hub/hub.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 
-function fixture() {
+function fixture(stateDirectory = ".globnotes") {
   const root = Deno.makeTempDirSync();
   const vault = `${root}/vault`;
   Deno.mkdirSync(vault);
   const hub = new VaultHub(
     vault,
-    `${vault}/.globnotes`,
+    `${vault}/${stateDirectory}`,
     testEnvironment({
       GLOBNOTES_HUB_SCAN_INTERVAL: "3600",
     }),
@@ -140,6 +140,35 @@ Deno.test("hub watcher: dot-folder edits wait for the periodic scan seam", async
     assertEquals(f.hub.fileState(".obsidian/config.json")?.vector, {
       local: 2,
     });
+  } finally {
+    f.close();
+  }
+});
+
+Deno.test("hub watcher: a top-level directory containing nested state is scan-only", async () => {
+  const f = fixture("data/state");
+  try {
+    Deno.writeTextFileSync(`${f.vault}/data/note.md`, "initial");
+    f.hub.start();
+    assertEquals(
+      f.watches.map((watch) => [watch.path, watch.recursive]),
+      [[f.vault, false]],
+      "no recursive watch may cover the directory containing state",
+    );
+    const before = f.hub.sequence();
+    Deno.writeTextFileSync(`${f.vault}/data/state/private.md`, "state");
+    Deno.writeTextFileSync(`${f.vault}/data/note.md`, "edited later");
+    // Observe beyond the debounce; the hour-long periodic interval cannot run.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assertEquals(f.hub.sequence(), before);
+    assertEquals(
+      f.watches.flatMap((watch) => watch.events.flatMap((event) => event.paths))
+        .filter((name) => name.startsWith(`${f.vault}/data/`)),
+      [],
+    );
+    f.hub.scanNow();
+    assertEquals(f.hub.fileState("data/note.md")?.vector, { local: 2 });
+    assertEquals(f.hub.fileState("data/state/private.md"), null);
   } finally {
     f.close();
   }

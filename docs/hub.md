@@ -16,6 +16,8 @@ directories appear, disappear or are renamed. Top-level dot folders are never
 watched: runtime event matching can open changed SQLite files before application
 filters run and invalidate process-owned locks. Dot-folder content remains covered
 by periodic full scans, except the excluded state directory.
+If a non-dot top-level directory contains the state directory, that entire subtree
+is also scan-only, including its other files.
 `GLOBNOTES_HUB_SCAN_INTERVAL` is read once per hub
 (seconds, positive, default 60). Watch events debounce for 300 ms and scan
 affected directories; they are hints, not the source of truth. A failed
