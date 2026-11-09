@@ -85,13 +85,14 @@ async function lateActivation(f) {
 
 export async function newNoteVaultReset(f) {
   await configure(f, { enabled: true, mode: "pause", pauseSeconds: 2 });
-  let held, indexReads = 0;
+  // Observe the existing diagnostics consumer of the actual vault:reset fact.
+  const { identifier } = await f.page.addInitScript('window.__autosaveResetDebug = localStorage.getItem("debug"); localStorage.setItem("debug", "true");');
+  let held;
   const noteReads = [];
   const release = f.page.onEvent(event => {
     if (event.method === "Fetch.requestPaused") held = event.params.requestId;
     if (event.method === "Network.requestWillBeSent") {
       const { request } = event.params, path = new URL(request.url).pathname;
-      if (path === "/_/api/note-index") indexReads++;
       if (request.method === "GET" && path.startsWith("/_/api/notes/")) noteReads.push(request.url);
     }
   });
@@ -102,10 +103,12 @@ export async function newNoteVaultReset(f) {
     await f.page.goto(f.baseUrl + "/_/new");
     await f.page.poll("!!document.querySelector('input[placeholder=Title]') && [...document.querySelectorAll('.content-column button')].some(el=>el.textContent.trim()==='Source')");
     await waitUntil(() => held ? done() : pending({ held: null }), { label: "new-note vault stream held", intervalMs: 25 });
-    const before = indexReads;
     await f.page.send("Fetch.continueRequest", { requestId: held, url: f.baseUrl + "/_/api/changes?since=" + Number.MAX_SAFE_INTEGER });
-    // The note-index consumer issues a new read only after receiving reset.
-    await waitUntil(() => indexReads > before ? done() : pending({ before, indexReads }), { label: "real vault reset consumed by note index", intervalMs: 25 });
+    // The bus dispatches reset to every handler synchronously. Its diagnostic
+    // toast renders afterward, so the editor has handled this same reset before
+    // we assert. An unrelated note-index retry cannot produce this witness.
+    await waitUntil(async () => await f.page.evaluate("[...document.querySelectorAll('[data-pc-section=summary]')].some(el=>el.textContent==='vault:reset')")
+      ? done() : pending({ resetToastRendered: false }), { label: "new-note editor handled real vault reset", intervalMs: 25 });
     assert(noteReads.length === 0, `Uncreated note was read as a vault file after reset: ${JSON.stringify(noteReads)}`);
     const uncreatedNoteReads = noteReads.length;
     assert(await f.page.evaluate("!document.querySelector('[data-vault-notice]')"), "Uncreated note displayed an external-change notice");
@@ -117,7 +120,12 @@ export async function newNoteVaultReset(f) {
     assert(await f.page.evaluate("decodeURIComponent(location.pathname)") === "/Reset creation", "Reset creation lost its acknowledged identity");
     await exit(f);
     return { case: "new-note-vault-reset", resetConsumed: true, uncreatedNoteReads, ...saved };
-  } finally { release(); await f.page.send("Fetch.disable"); }
+  } finally {
+    release();
+    await f.page.send("Fetch.disable");
+    await f.page.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+    await f.page.evaluate('(()=>{const before=window.__autosaveResetDebug;if(before===null)localStorage.removeItem("debug");else if(before!==undefined)localStorage.setItem("debug",before);delete window.__autosaveResetDebug;return true;})()');
+  }
 }
 
 async function capture(f, name, selectors) {
