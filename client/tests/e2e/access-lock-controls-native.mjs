@@ -1,6 +1,6 @@
 // Callback-injected actual Settings/permission/local-preference consumers.
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
-export async function exerciseLockedControls({ session, api, baseUrl, state, vault, openAccess, capture }) {
+export async function exerciseLockedControls({ session, api, baseUrl, state, vault, openAccess, closeSidebar, capture }) {
   const assert = (value, message) => { if (!value) throw Error(message); };
   const id = "access-workflow", settingsRoute = `plugin-host/${id}/settings/preferences`;
   const seeded = await api(settingsRoute, "PUT", { values: { message: "locked retained settings consumer", limit: 5 }, revision: 0 });
@@ -34,11 +34,9 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
   async function disabledButton(text, scope) {
      const expression = `(()=>{const button=[...document.querySelectorAll(${JSON.stringify(scope + " button")})].find(button=>button.textContent.trim()===${JSON.stringify(text)});return button?{disabled:button.disabled}:false;})()`;
      assert((await session.poll(expression)).disabled, `${text}: actual mutation control is not disabled`);
-    await session.button(text, scope);
   }
   async function disabledControl(selector) {
      assert(await session.read(selector, `document.querySelector(${JSON.stringify(selector)}).disabled===true`),`${selector}: actual mutation control is not disabled`);
-    await session.click(selector);
   }
   await open(); await session.button("Branding");
   await session.poll("document.querySelector('#brand-name')?.value==='Native locked brand'");
@@ -100,10 +98,10 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
   await session.key("g", { code: "KeyG", modifiers: 3, windowsVirtualKeyCode: 71 });
    await session.poll("document.querySelector('[data-command-binding=\"app:open-settings\"]')?.textContent.includes('Ctrl+Alt+G')");
   await close();
-  if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
+  await closeSidebar();
   await session.key("g", { code: "KeyG", modifiers: 3, windowsVirtualKeyCode: 71 }); await session.poll("!!document.querySelector('#settings-modal-title')");
   assert(await session.evaluate("document.querySelectorAll('#settings-modal-title').length===1"), "Locked local remap did not reach the one Settings handler"); await close();
-  if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
+  await closeSidebar();
   await session.button("Edit", ".content-column"); await session.button("Source", ".content-column");
   await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')"); await session.click(".cm-content"); await session.type("Locked controls public note consumer\n"); await session.button("Save", ".content-column");
   await session.poll("fetch('/_/api/notes/Seed').then(r=>r.json()).then(note=>note.content.includes('Locked controls public note consumer'))");
@@ -125,7 +123,7 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
   // fresh document legitimately reviews the still-pending readonly request.
   await session.poll("!!document.querySelector('#permission-request-title')");
   await session.button("Review later", "[data-modal-top=true]"); await session.poll("!document.querySelector('#permission-request-title')");
-  if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
+  await closeSidebar();
   await session.button("Edit", ".content-column");
   await session.poll("!!document.querySelector('.toast-viewer')&&!document.querySelector('.cm-content')&&document.body.classList.contains('dark')&&document.querySelectorAll('.toast-viewer .line-numbers-rows>span').length>=2");
   await session.key("g", { code: "KeyG", modifiers: 3, windowsVirtualKeyCode: 71 }); await session.poll("!!document.querySelector('#settings-modal-title')"); await close();

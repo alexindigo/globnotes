@@ -279,8 +279,7 @@ try {
   assert((await api("auth-check", "GET", undefined, replacementToken)).status === 401, "Confirmed replacement retained old session authority");
   assert((await api("token", "POST", { username, password: password + newConfirmation })).status === 401, "Replacement enrolment code can be replayed as login");
   await closeSidebar();
-  const replacementNow = Date.now(), replacementCodes = await Promise.all([replacementNow, replacementNow - 30_000, replacementNow + 30_000].map(time => authenticatorCode(replacement.secret, time)));
-  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", replacementCodes.find(code => code !== newConfirmation));
+  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await unusedWindowCode(replacement.secret, [newConfirmation]));
   await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   disposeReplacement(); await finishCase("native current/new authenticator proofs and replacement login", { activeKeyUnchangedDuringEnrolment: true, passwordHashRetained: true, confirmedNewKeyPersisted: true, spentNewCodeRejected: true, replacementLoginAccepted: true });
 
@@ -406,7 +405,7 @@ try {
   await exerciseProtectedGeometry(true);
   await exerciseProtectedGeometry("totp");
   await fixture("locked-controls", false);
-  const lockedControls = await exerciseLockedControls({ session: owned.session, api, baseUrl: owned.server.baseUrl, state: owned.state, vault: owned.vault, openAccess: access, capture: screenshot });
+  const lockedControls = await exerciseLockedControls({ session: owned.session, api, baseUrl: owned.server.baseUrl, state: owned.state, vault: owned.vault, openAccess: access, closeSidebar, capture: screenshot });
   await finishCase("native locked real settings controls and local preferences with public hook consumers", lockedControls);
   await fixture("pinned-credentials", true);
   await edit("Pinned confirmation retained editor marker");
