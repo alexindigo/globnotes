@@ -105,7 +105,7 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
       display:String(draft.settings[field.key] ?? ""), error:record.errors[field.key] ?? "",
     }));
     const hasKeyInput = base.secrets.some(secret => !!inputs.get(inputId(base.id, secret.key)));
-    const secrets = base.secrets.map(secret => {
+    const secrets = visibleSettingsFields({ fields:base.secrets }, draft.settings).map(secret => {
       const name = inputId(base.id, secret.key);
       // Live getters deliberately avoid copying password strings into old snapshots.
       return { ...secret, id:`driver-key-${base.id}-${secret.key}`, get input() { return inputs.get(name) ?? ""; },

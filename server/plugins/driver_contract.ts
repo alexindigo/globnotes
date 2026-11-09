@@ -137,6 +137,7 @@ export interface DriverSecretDeclaration {
   label: string;
   description?: string;
   required?: boolean;
+  visibleWhen?: import("./contracts.ts").SettingsVisibility;
 }
 
 export class DriverContractError extends PluginContractError {

@@ -130,6 +130,12 @@ export type FieldKind =
   | "file"
   | "folder"
   | "color";
+export type VisibilityCondition =
+  & { field: string }
+  & ({ equals: string | number | boolean } | {
+    oneOf: (string | number | boolean)[];
+  });
+export type SettingsVisibility = VisibilityCondition | VisibilityCondition[];
 export interface SettingsField {
   key: string;
   label: string;
@@ -142,7 +148,7 @@ export interface SettingsField {
   minLength?: number;
   maxLength?: number;
   options?: { label: string; value: string | number | boolean }[];
-  visibleWhen?: { field: string; equals: string | number | boolean };
+  visibleWhen?: SettingsVisibility;
 }
 export interface SettingsGroup {
   id: string;

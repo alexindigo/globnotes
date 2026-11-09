@@ -2,6 +2,10 @@ import { remotelySaveCase, assert, until } from "./remotely-save-fixture.mjs";
 assert(Deno.args.length === 2, "Expected backend and codec arguments");
 await remotelySaveCase(Deno.args[0], Deno.args[1], async f=>{
   const {s,scope}=f;
+  const visible=await s.read(scope, `({fields:[...document.querySelectorAll('${scope} .driver-instance__settings [id^="driver-home-"]')].map(el=>el.id),keys:[...document.querySelectorAll('${scope} .driver-secret input')].map(el=>el.id),secure:isSecureContext})`);
+  assert(!visible.secure,"Sync visibility must be observed on ordinary HTTP");
+  assert(visible.fields.some(id=>id.includes(f.backend==='s3'?'s3Endpoint':'webdavUrl'))&&!visible.fields.some(id=>id.includes(f.backend==='s3'?'webdavUrl':'s3Endpoint')), "Backend fields do not match the selected backend");
+  assert(JSON.stringify(visible.keys)===JSON.stringify([...(f.backend==='s3'?['s3_access_key','s3_secret_key','s3_session_token']:[]),...(f.mode==='none'?[]:['encryption_password'])].map(key=>`driver-key-home-${key}`)), "Keys do not match backend, authentication and encryption");
   await f.geometry("desktop"); await f.capture("active");
   await f.close();
   await s.poll("[...document.querySelectorAll('.content-column a')].some(a=>a.textContent.includes('Live')&&a.getBoundingClientRect().width>0)");

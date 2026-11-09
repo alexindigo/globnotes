@@ -2,7 +2,10 @@
 export function visibleSettingsFields(page, values) {
   return (page.fields ?? []).filter((field) => {
     if (!field.visibleWhen) return true;
-    return values[field.visibleWhen.field] === field.visibleWhen.equals;
+    const conditions = Array.isArray(field.visibleWhen) ? field.visibleWhen : [field.visibleWhen];
+    return conditions.every(condition => condition.oneOf
+      ? condition.oneOf.includes(values[condition.field])
+      : values[condition.field] === condition.equals);
   });
 }
 

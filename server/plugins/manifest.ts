@@ -11,7 +11,10 @@ import {
   text,
   uniqueStrings,
 } from "./contracts.ts";
-import { validateSettingsPages } from "./settings.ts";
+import {
+  validateSettingsPages,
+  validateSettingsVisibility,
+} from "./settings.ts";
 import {
   DRIVER_API_VERSION,
   type DriverCapabilities,
@@ -152,7 +155,9 @@ function driverDeclaration(
     const secret = record(value, "driver secret");
     if (
       Object.keys(secret).some((key) =>
-        !["key", "label", "description", "required"].includes(key)
+        !["key", "label", "description", "required", "visibleWhen"].includes(
+          key,
+        )
       ) ||
       typeof secret.key !== "string" ||
       !/^[a-z][a-z0-9_]{0,31}$/.test(secret.key) || keys.has(secret.key) ||
@@ -164,6 +169,10 @@ function driverDeclaration(
       throw new Error("invalid driver secret declaration");
     }
     keys.add(secret.key);
+    validateSettingsVisibility(
+      secret.visibleWhen,
+      new Map(settings.map((field) => [field.key, field])),
+    );
     return {
       key: secret.key,
       label: text(secret.label, "driver secret label"),
@@ -173,6 +182,10 @@ function driverDeclaration(
       ...(secret.required === undefined
         ? {}
         : { required: secret.required as boolean }),
+      ...(secret.visibleWhen === undefined ? {} : {
+        visibleWhen: secret
+          .visibleWhen as DriverSecretDeclaration["visibleWhen"],
+      }),
     };
   });
   return {

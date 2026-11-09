@@ -4,6 +4,7 @@ import { flushPromises } from "@vue/test-utils";
 import { watch } from "vue";
 import { createDriverSettings } from "../driverSettingsController.js";
 import { TOPICS } from "../bus/index.js";
+import remotelySave from "../../plugins/globnotes-remotely-save/manifest.json";
 vi.mock("../router.js", () => ({ default:{} }));
 const copy = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -27,6 +28,29 @@ function fixture(options = {}) {
 const loaded = async options => { const f=fixture(options);f.controller.activate();await flushPromises();return f; };
 const row = f => f.controller.state.instances[0];
 describe("Sync workflow ownership", () => {
+  it("projects shipped backend/auth/encryption visibility from drafts without erasing hidden settings or keys", async () => {
+    const f=fixture(), definition=copy(remotelySave.driver), base=f.view.instances[0];
+    base.declaration=definition;
+    base.settings=Object.fromEntries(definition.settings.map(field=>[field.key,field.default]));
+    Object.assign(base.settings,{s3Bucket:"retained-bucket",webdavUrl:"http://retained-dav"});
+    base.secrets=definition.secrets.map(secret=>({...secret,set:true,updatedAt:"saved"}));
+    f.controller.activate();await flushPromises();
+    const fields=()=>row(f).fields.map(item=>item.field.key), keys=()=>row(f).secrets.map(item=>item.key);
+    expect(fields()).toContain("s3Bucket");expect(fields()).not.toContain("webdavUrl");
+    expect(keys()).toEqual(["s3_access_key","s3_secret_key","s3_session_token"]);
+    f.controller.editKey("home","s3_access_key","retained-input");
+    f.controller.edit("home","backend","webdav");
+    expect(fields()).toContain("webdavUrl");expect(fields()).not.toContain("s3Bucket");expect(keys()).toEqual([]);
+    expect(f.controller.saveKey("home","s3_access_key")).toBe(false);
+    for(const auth of ["basic","digest"]) {f.controller.edit("home","webdavAuth",auth);expect(keys()).toEqual(["webdav_password"]);}
+    for(const encryption of ["openssl-base64","rclone-base64"]) {f.controller.edit("home","encryption",encryption);expect(keys()).toEqual(["webdav_password","encryption_password"]);}
+    f.controller.edit("home","encryption","none");expect(keys()).toEqual(["webdav_password"]);
+    expect(await f.controller.save("home")).toBe(true);await flushPromises();
+    expect(f.update.mock.calls[0][1].settings).toMatchObject({backend:"webdav",s3Bucket:"retained-bucket",webdavUrl:"http://retained-dav",encryption:"none"});
+    expect(f.setKey).not.toHaveBeenCalled();expect(f.view.instances[0].secrets.every(secret=>secret.set)).toBe(true);
+    f.controller.edit("home","backend","s3");expect(keys()).toEqual(["s3_access_key","s3_secret_key","s3_session_token"]);
+    expect(row(f).secrets[0].input).toBe("retained-input");expect(row(f).fields.find(item=>item.field.key==="s3Bucket").value).toBe("retained-bucket");
+  });
   it("starts lazily, subscribes before reading and projects empty/error without invented success", async () => {
     const f=fixture();expect(f.read).not.toHaveBeenCalled();f.view.instances=[];f.controller.activate();await flushPromises();
     expect(f.subscribe.mock.invocationCallOrder[0]).toBeLessThan(f.read.mock.invocationCallOrder[0]);

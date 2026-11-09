@@ -189,15 +189,7 @@ export function validateSettingsPages(value: unknown): SettingsPage[] {
       fields.set(validated.key, validated);
     }
     for (const field of fields.values()) {
-      if (field.visibleWhen !== undefined) {
-        const condition = record(field.visibleWhen, "visibility condition");
-        only(condition, ["field", "equals"], "visibility condition");
-        const dependency = fields.get(condition.field as string);
-        if (!dependency || dependency.key === field.key) {
-          invalid("visibility condition requires another declared field");
-        }
-        validateFieldValue(dependency, condition.equals);
-      }
+      validateSettingsVisibility(field.visibleWhen, fields, field.key);
     }
     if (page.groups !== undefined) {
       if (!Array.isArray(page.groups)) invalid("groups must be an array");
@@ -226,6 +218,37 @@ export function validateSettingsPages(value: unknown): SettingsPage[] {
     pages.push(jsonValues(page) as unknown as SettingsPage);
   }
   return pages;
+}
+
+/** The same metadata contract governs ordinary fields and write-only keys. */
+export function validateSettingsVisibility(
+  value: unknown,
+  fields: ReadonlyMap<string, SettingsField>,
+  ownKey?: string,
+): void {
+  if (value === undefined) return;
+  const conditions = Array.isArray(value) ? value : [value];
+  if (!conditions.length) invalid("visibility conditions must not be empty");
+  for (const input of conditions) {
+    const condition = record(input, "visibility condition");
+    only(condition, ["field", "equals", "oneOf"], "visibility condition");
+    const dependency = fields.get(condition.field as string);
+    if (!dependency || dependency.key === ownKey) {
+      invalid("visibility condition requires another declared field");
+    }
+    if (
+      Object.hasOwn(condition, "equals") === Object.hasOwn(condition, "oneOf")
+    ) {
+      invalid("visibility condition requires equals or oneOf");
+    }
+    const values = Object.hasOwn(condition, "equals")
+      ? [condition.equals]
+      : condition.oneOf;
+    if (!Array.isArray(values) || !values.length) {
+      invalid("visibility alternatives must not be empty");
+    }
+    for (const value of values) validateFieldValue(dependency, value);
+  }
 }
 
 /** Source-owned definition comparison shared by persistence and preparation.

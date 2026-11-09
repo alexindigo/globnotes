@@ -123,30 +123,38 @@
       {
         "key": "s3_access_key",
         "label": "S3 access key",
+        "visibleWhen": { "field": "backend", "equals": "s3" },
         "required": false,
         "description": "Required for S3."
       },
       {
         "key": "s3_secret_key",
         "label": "S3 secret key",
+        "visibleWhen": { "field": "backend", "equals": "s3" },
         "required": false,
         "description": "Required for S3."
       },
       {
         "key": "s3_session_token",
         "label": "S3 session token",
+        "visibleWhen": { "field": "backend", "equals": "s3" },
         "required": false,
         "description": "Optional temporary S3 credential."
       },
       {
         "key": "webdav_password",
         "label": "WebDAV password",
+        "visibleWhen": [
+          { "field": "backend", "equals": "webdav" },
+          { "field": "webdavAuth", "oneOf": ["basic", "digest"] }
+        ],
         "required": false,
         "description": "Required for Basic or Digest authentication."
       },
       {
         "key": "encryption_password",
         "label": "Encryption password",
+        "visibleWhen": { "field": "encryption", "oneOf": ["openssl-base64", "rclone-base64"] },
         "required": false,
         "description": "Required for OpenSSL or rclone encryption."
       }

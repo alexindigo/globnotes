@@ -34,7 +34,7 @@ export async function remotelySaveCase(backend, mode, run) {
     }
     let server, session, peer, codec, error, exportControl;
     const results = [], packets = [];
-    const captures = backend === "webdav" && mode === "rclone-base64";
+    const captures = backend === "webdav" && ["none", "rclone-base64"].includes(mode);
     try {
       peer = real ? null : remotelySaveRemote(backend);
       const endpoint = real ? Deno.env.get(backend === "s3" ? "RS_S3_ENDPOINT" : "RS_DAV_ENDPOINT") : peer.url;

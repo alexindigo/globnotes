@@ -412,3 +412,54 @@ Deno.test("drivers: optional declarations survive manifest and worker-free catal
     await fixture.dispose();
   }
 });
+
+Deno.test("drivers: visibility metadata validates declared typed dependencies and survives catalog projection", async () => {
+  const shipped = JSON.parse(
+    await Deno.readTextFile("plugins/globnotes-remotely-save/manifest.json"),
+  ).driver;
+  const fixture = await driverFixture(minimalDriver, {
+    settings: shipped.settings,
+    secrets: shipped.secrets,
+  });
+  const manager = createPluginManager(
+    fixture.vault,
+    undefined,
+    1,
+    fixture.statePath,
+    { internalRoot: `${fixture.root}/no-built-ins` },
+  );
+  try {
+    const plugin = (await manager.catalog()).plugins.find((plugin) =>
+      plugin.id === "test-driver"
+    )!;
+    assertEquals(plugin.driver?.settings, shipped.settings);
+    assertEquals(plugin.driver?.secrets, shipped.secrets);
+    for (
+      const visibleWhen of [
+        [],
+        {},
+        { field: "missing", equals: "s3" },
+        { field: "backend", equals: true },
+        { field: "backend", oneOf: [] },
+        { field: "backend", oneOf: ["s3", "invented"] },
+        { field: "backend", equals: "s3", oneOf: ["s3"] },
+        { field: "backend", oneOf: ["s3"], extra: true },
+      ]
+    ) {
+      await Deno.writeTextFile(
+        `${fixture.dir}/manifest.json`,
+        JSON.stringify({
+          id: "test-driver",
+          driver: {
+            ...shipped,
+            secrets: [{ key: "token", label: "Key", visibleWhen }],
+          },
+        }),
+      );
+      assertThrows(() => readManifest(fixture.dir));
+    }
+  } finally {
+    manager.stop();
+    await fixture.dispose();
+  }
+});

@@ -9,6 +9,12 @@ const fields = [
 ];
 
 describe("declarative settings descriptor policy", () => {
+  it("combines declared conditions and typed alternatives for settings and secrets", () => {
+    const field={key:"password",visibleWhen:[{field:"backend",equals:"webdav"},{field:"auth",oneOf:["basic","digest"]}]};
+    for(const auth of ["basic","digest"])expect(visibleSettingsFields({fields:[field]},{backend:"webdav",auth})).toEqual([field]);
+    expect(visibleSettingsFields({fields:[field]},{backend:"s3",auth:"basic"})).toEqual([]);
+    expect(visibleSettingsFields({fields:[field]},{backend:"webdav",auth:"anonymous"})).toEqual([]);
+  });
   it("uses strict persisted-value equality, including false and zero", () => {
     expect(visibleSettingsFields({ fields }, { enabled: true, count: 0 }).map(field => field.key)).toEqual(["enabled", "detail", "zero", "tail"]);
     expect(visibleSettingsFields({ fields }, { enabled: "true", count: "0" }).map(field => field.key)).toEqual(["enabled", "tail"]);

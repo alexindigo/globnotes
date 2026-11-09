@@ -309,6 +309,15 @@ redacted from driver state/errors. Driver console values and arbitrary exception
 are not forwarded. Clearing/removal fences the old Worker and deletes key rows.
 Removal never deletes vault or endpoint files.
 
+Settings and secret declarations can use `visibleWhen` to show only relevant
+controls in Sync. A condition is `{ "field": "backend", "equals": "s3" }` or
+`{ "field": "encryption", "oneOf": ["openssl-base64", "rclone-base64"] }`.
+An array of conditions requires all of them to match. Dependencies must name
+declared settings and comparisons must be valid values for that setting.
+The controller evaluates visibility against the current settings draft; hiding
+a control never clears its saved setting, key or unsaved input. Visibility is
+presentation metadata, not permission or validation of a driver's credentials.
+
 Key entry and ordinary workflows work on local-domain plain HTTP, without a
 browser secure context. Off a trusted LAN, use a TLS reverse proxy such as Caddy
 or Nginx Proxy Manager to protect the link. When state lives inside the vault,
