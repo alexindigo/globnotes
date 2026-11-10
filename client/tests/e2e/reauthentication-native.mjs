@@ -96,7 +96,7 @@ try {
   await login();
   const merged = "mine-first\n\nmiddle\n\ntheirs\n";
   await until(async () => await Deno.readTextFile(vault + "/AuthNote.md") === merged, "automatic base-aware save reaches disk after sign-in");
-  await session.poll("!document.querySelector('[data-reauthentication]') && document.querySelector('[data-vault-notice]')?.textContent.includes('Merged with changes made elsewhere')");
+  await session.poll("!document.querySelector('[data-reauthentication]') && [...document.querySelectorAll('[data-pc-name=toast] [data-pc-section=detail]')].some(el=>el.textContent==='Merged with changes made elsewhere')");
   await session.poll("document.querySelector('.cm-content')?.textContent.includes('theirs')");
   assert(writes.length === 2 && writes[0].status === 401 && writes[1].status === 200, "Expected rejected original and one automatic retry");
   assert(JSON.stringify(writes[0].body) === JSON.stringify(writes[1].body) && writes[1].body.baseContent === base, "Authentication retry changed its submitted text or original base");
@@ -122,7 +122,7 @@ try {
   assert(!await session.evaluate("document.body.textContent.includes('Save held')"), "Authentication recovery showed the non-recovering Save held error");
   await login();
   await until(async () => await Deno.readTextFile(vault + "/AuthNote.md") === newer, "newer auth-held snapshot follows its original job to disk");
-  await session.poll("!document.querySelector('[data-note-save-status]')");
+  await session.poll("document.querySelector('[data-note-save-status]')?.textContent===''");
   assert(writes.length === 5 && writes[3].status === 200 && writes[4].status === 200, "Expected original pending save followed by newer snapshot");
   assert(writes[3].body.newContent === cancelled && writes[3].body.baseContent === merged && writes[4].body.newContent === newer && writes[4].body.baseContent === cancelled, "Recovery changed the FIFO snapshots or bases");
   assert(!await session.evaluate("document.body.textContent.includes('Save held')"), "A recovering held submission emitted an error toast");
@@ -149,7 +149,7 @@ try {
       try { return await Deno.readTextFile(vault + "/Renamed/AuthNote.md") === newer; }
       catch (error) { if (error instanceof Deno.errors.NotFound) return false; throw error; }
     }, "bare preview 401 retries the original rename after sign-in");
-    await session.poll("location.pathname==='/Renamed/AuthNote' && !document.querySelector('[data-note-save-status]')");
+  await session.poll("location.pathname==='/Renamed/AuthNote' && document.querySelector('[data-note-save-status]')?.textContent===''");
     assert(writes.length === 6 && writes[5].status === 200 && writes[5].body.newPath === "Renamed/AuthNote" && writes[5].body.baseContent === newer, "Rename recovery changed its original target or base");
     assert(await Deno.stat(vault + "/AuthNote.md").then(() => false, error => error instanceof Deno.errors.NotFound), "Successful rename retained the old file");
     assert(await session.evaluate("document.querySelector('.cm-content')===window.editorBeforeAuth && !window.sawDeparturePrompt"), "Preview recovery abandoned the editor or opened Save/Discard");

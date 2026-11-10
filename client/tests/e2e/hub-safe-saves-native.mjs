@@ -71,14 +71,15 @@ try {
     await prefixFirst(inputMode, "mine-");
     if (mode === "Preview") await session.button("Preview", ".content-column");
     await shellWrite(path, "first\n\nmiddle\n\ntheirs\n");
-    await session.poll("document.querySelector('[data-vault-notice]')?.textContent.includes('will be merged')");
+    await session.poll("document.querySelector('[data-note-save-status]')?.textContent.includes('will be merged')");
     await capture(`${mode.toLowerCase()}-dirty`);
+    await session.evaluate("window.__priorMergeToasts=new Set(document.querySelectorAll('[data-pc-name=toast] [data-pc-section=detail]'));true");
     await session.button("Save", ".content-column");
     await saved();
     const selector = mode === "Preview" ? ".preview-buffer" : mode === "WYSIWYG" ? ".ProseMirror" : ".cm-content";
     await session.poll(`document.querySelector(${JSON.stringify(selector)})?.textContent.includes('mine-first') && document.querySelector(${JSON.stringify(selector)})?.textContent.includes('theirs')`);
     assert(await Deno.readTextFile(`${vault}/${path}.md`) === "mine-first\n\nmiddle\n\ntheirs\n", `${mode}: both edits did not reach disk`);
-    assert(await session.evaluate("document.querySelector('[data-vault-notice]')?.textContent.includes('Merged with changes made elsewhere')"), `${mode}: merged notice missing`);
+    assert(await session.evaluate("[...document.querySelectorAll('[data-pc-name=toast] [data-pc-section=detail]')].some(el=>!window.__priorMergeToasts.has(el)&&el.textContent==='Merged with changes made elsewhere')"), `${mode}: this save's merged toast missing`);
     assert(writes.at(-1).baseContent === base, `${mode}: editor did not send its loaded base`);
     await capture(`${mode.toLowerCase()}-merged`);
     results.push({ case: "merge", mode, content: await Deno.readTextFile(`${vault}/${path}.md`) });

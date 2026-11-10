@@ -2,6 +2,8 @@ import { conflictCase, assert, until } from "./conflict-native-fixture.mjs";
 
 await conflictCase("conflict-inbox-native", async f => {
   const s = f.session;
+  const statusWidth = Deno.args.includes("narrow-status") ? 480 : 1280;
+  await s.send("Emulation.setDeviceMetricsOverride", { width: statusWidth, height: 1100, deviceScaleFactor: 1, mobile: false });
   // Real editor overlap proves M2 banner/URL -> M3 badge/Review integration.
   await Deno.writeTextFile(`${f.vault}/Editor.md`, "first\n\nlast\n");
   await s.goto(f.url("/Editor")); await s.poll("document.querySelector('.toast-viewer')?.textContent.includes('first')");
@@ -13,24 +15,28 @@ await conflictCase("conflict-inbox-native", async f => {
   // background update must not move the header out from under native input.
   const send = s.page.send;
   let saveGesture;
+  const gestureGeometry = "(()=>{const save=[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save');const status=document.querySelector('[data-note-save-status]'),style=getComputedStyle(status);return {save:save.getBoundingClientRect().toJSON(),body:document.querySelector('.cm-editor').getBoundingClientRect().toJSON(),content:document.querySelector('.cm-content').getBoundingClientRect().toJSON(),status:status.getBoundingClientRect().toJSON(),message:status.textContent,title:status.title,whiteSpace:style.whiteSpace,textOverflow:style.textOverflow,overflow:style.overflow,clipped:status.scrollWidth>status.clientWidth};})()";
   s.page.send = async (method, params) => {
     const pressed = method === "Input.dispatchMouseEvent" && params.type === "mousePressed";
-    const before = pressed ? await s.evaluate("[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save').getBoundingClientRect().toJSON()") : null;
+    const before = pressed ? await s.read(['.cm-editor', '[data-note-save-status]'], gestureGeometry) : null;
     const result = await send(method, params);
     if (pressed) {
       await Deno.writeTextFile(`${f.vault}/Editor.md`, "outside\n\nlast\n");
-      await s.poll("document.querySelector('[data-vault-notice]')?.textContent.includes('This note changed elsewhere.')");
-      const after = await s.evaluate("[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save').getBoundingClientRect().toJSON()");
-      saveGesture = { before, after, point: { x: params.x, y: params.y } };
+      await s.poll("document.querySelector('[data-note-save-status]')?.textContent.includes('This note changed elsewhere.')");
+      const after = await s.read(['.cm-editor', '[data-note-save-status]'], gestureGeometry);
+      saveGesture = { width: statusWidth, before, after, point: { x: params.x, y: params.y } };
       await f.capture("external-notice-during-save");
     }
     return result;
   };
   try { await s.button("Save", ".content-column"); }
   finally { s.page.send = send; }
-  assert(saveGesture && ["x", "y", "width", "height"].every(key => saveGesture.before[key] === saveGesture.after[key]), `External notice displaced Save during native input: ${JSON.stringify(saveGesture)}`);
+  assert(saveGesture && ["save", "body", "content", "status"].every(region => ["x", "y", "width", "height"].every(key => saveGesture.before[region][key] === saveGesture.after[region][key])), `External state displaced Save, note body/content or status during native input: ${JSON.stringify(saveGesture)}`);
+  assert(saveGesture.before.message === "" && saveGesture.after.message === "This note changed elsewhere. Your changes will be merged when you save." && saveGesture.after.title === saveGesture.after.message, "Header status lost its full accessible state message");
+  assert(saveGesture.after.whiteSpace === "nowrap" && saveGesture.after.textOverflow === "ellipsis" && saveGesture.after.overflow === "hidden" && (statusWidth !== 480 || saveGesture.after.clipped), "Header state is not a single reserved, truncating line");
   f.results.push({ externalNoticeDuringSave: saveGesture });
   await s.poll("location.pathname.includes('.conflict-') && !!document.querySelector('[data-conflict-banner]')"); await f.detailCount(1);
+  if (statusWidth !== 1280) await s.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1100, deviceScaleFactor: 1, mobile: false });
   await s.button("Review conflict"); await s.poll("location.pathname.includes('/_/conflicts/') && !!document.querySelector('[aria-label=\"Conflict copy source\"]')");
   const row = (await f.api("conflicts")).conflicts[0];
    assert(await s.read(['[aria-label="Original source"]', '[aria-label="Conflict copy source"]'], "document.querySelector('[aria-label=\"Original source\"]').textContent==='outside\\n\\nlast\\n' && document.querySelector('[aria-label=\"Conflict copy source\"]').textContent==='mine\\n\\nlast\\n'"), "Review did not render actual conflict members");

@@ -111,8 +111,14 @@ mode, or disposing its controller while editing, publishes
 | `noteIndex.js`, `quickAccess.js`, `sidebarTree.js`, `searchResults.js` | `vault:change` for Markdown members and `vault:reset`, through `vaultNoteInvalidation.js` | Refreshes live note-list projections for every peer, not only browser-authored writes. Synchronous group facts coalesce into one snapshot invalidation; mounted consumers release it on dispose. App's existing shared connection supplies transport. |
 | `serverViewer.js` | `plugin:toggle`, `plugin:auto-enable`, `theme:change` | Re-renders the open note for plugin switches and the current Mermaid palette; releases subscriptions on dispose. |
 | `noteController.js` | `editor:save`, `editor:save-close`, `editor:exit-edit`, `editor:toggle-edit`, `editor:toggle-source-mode` | Owns note actions for the mounted view; registers at mount and unsubscribes on dispose. |
+| `noteController.js` | `vault:change`, `vault:reset` | Refreshes clean snapshots or retains dirty/deleted state. Current state is projected into the fixed-footprint header status; one-time update, merge and recreation messages use its existing toast helper. |
 | `MarkdownEditor.vue` | Formatting/structure and `editor:find` topics in `sourceEditorActions.js`; `keybindings:change` | Applies source edits or opens find; reconfigures the layer keymap. Mount/unmount owns subscriptions; action availability is checked before execution. |
 | `WysiwygEditorInner.vue` / `WysiwygEditor.vue` | Command topics / link-popover topic in `wysiwygEditorActions.js` | Inner editor calls the mapped Milkdown command; wrapper opens its toolbar link popover. Mount/unmount owns subscriptions; action availability is checked before execution. |
+
+Note notifications do not add or republish domain facts. External observations
+arrive through the vault topics above; acknowledged saves still publish once
+from `noteSaveOwner.js`. The controller chooses state text and toast messages;
+the view only renders its snapshot.
 
 ## Subscribing from a component
 

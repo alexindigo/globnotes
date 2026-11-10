@@ -128,7 +128,8 @@ describe("note workflow ownership", () => {
       expect(f.adapters.read).toHaveBeenCalledTimes(1);
     } else {
       expect(f.controller.state.note.content).toBe("Elsewhere");
-      expect(f.controller.state.vaultNotice).toBe("Updated with changes from elsewhere");
+      expect(f.controller.state.vaultNotice).toBe("");
+      expect(f.adapters.toast.add).toHaveBeenCalledWith(expect.objectContaining({ detail: "Updated with changes from elsewhere", severity: "info" }));
       if (mode === "clean") {
         expect(f.controller.currentBuffer()).toBe("Elsewhere"); expect(f.controller.isDirty()).toBe(false);
         f.input("Next"); updateNote.mockResolvedValueOnce({ path: "folder/P", content: "Next", version: "v3" });
@@ -162,20 +163,47 @@ describe("note workflow ownership", () => {
     f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "deleted" });
     expect(f.controller.state.isNoteNotFound).toBe(true);
     await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "created", hash: "v1" });
-    expect(f.controller.state.isNoteNotFound).toBe(false); expect(f.controller.state.vaultNotice).toBe("Updated with changes from elsewhere");
+    expect(f.controller.state.isNoteNotFound).toBe(false); expect(f.controller.state.vaultNotice).toBe("");
+    expect(f.adapters.toast.add).toHaveBeenCalledWith(expect.objectContaining({ detail: "Updated with changes from elsewhere", severity: "info" }));
   });
   it.each(["view", "clean", "dirty"])("deletion and rename-away retain the right protections (%s)", async mode => {
     const f = fixture(); await f.controller.mount();
     if (mode !== "view") f.enter(); if (mode === "dirty") f.input("Mine");
     await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "Elsewhere.md", oldPath: "folder/P.md", kind: "renamed" });
     expect(f.controller.state.isNoteNotFound).toBe(mode === "view");
-    expect(f.controller.state.vaultNotice).toBe(mode === "view" ? "This note was deleted elsewhere" : "Deleted elsewhere — saving will re-create it");
+    expect(f.controller.state.vaultNotice).toBe(mode === "view" ? "This note was deleted elsewhere" : "Deleted elsewhere - saving will re-create it");
+    expect(f.controller.state.saveFeedback).toBe(f.controller.state.vaultNotice);
     if (mode !== "view") {
       updateNote.mockResolvedValueOnce({ path: "folder/P", content: mode === "dirty" ? "Mine" : "Seed", version: "recreated", saveResult: { status: "saved", recreated: true } });
       f.controller.saveHandler(); await flush();
       expect(updateNote.mock.calls.at(-1)[4]).toBe("Seed");
-      expect(f.controller.state.vaultNotice).toContain("your save re-created it");
+      expect(f.controller.state.vaultNotice).toBe("");
+      expect(f.adapters.toast.add).toHaveBeenCalledWith(expect.objectContaining({ detail: "'folder/P' was deleted elsewhere; your save re-created it", severity: "success" }));
     }
+  });
+  it("persistent external state is exposed in the save-status snapshot, not a toast", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter(); f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    expect(f.controller.state.saveFeedback).toBe("This note changed elsewhere. Your changes will be merged when you save.");
+    expect(f.adapters.toast.add).not.toHaveBeenCalled();
+  });
+  it("an acknowledged merge emits one success toast and clears persistent external state", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter(); f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    updateNote.mockResolvedValueOnce({ path: "folder/P", content: "Merged", version: "v3", saveResult: { status: "merged" } });
+    f.controller.saveHandler(); await flush();
+    expect(f.controller.state.saveFeedback).toBe(""); expect(f.controller.state.vaultNotice).toBe("");
+    expect(f.adapters.toast.add).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ detail: "Merged with changes made elsewhere", severity: "success" }));
+    // The save owner publishes NOTE_SAVE; the controller must not duplicate it.
+    expect(f.adapters.publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_SAVE)).toHaveLength(0);
+  });
+  it("save failures take priority over external state without dropping that state", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter(); f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    updateNote.mockRejectedValueOnce({ response: { status: 401, data: {} } });
+    f.controller.saveHandler(); await flush();
+    expect(f.controller.state.saveFeedback).toContain("Saving paused");
+    expect(f.controller.state.vaultNotice).toContain("will be merged");
   });
   it("explicit Save & close recreates an unchanged deleted note before exiting", async () => {
     const f = fixture(); await f.controller.mount(); f.enter();

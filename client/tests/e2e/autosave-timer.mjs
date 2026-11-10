@@ -111,7 +111,8 @@ export async function newNoteVaultReset(f) {
       ? done() : pending({ resetToastRendered: false }), { label: "new-note editor handled real vault reset", intervalMs: 25 });
     assert(noteReads.length === 0, `Uncreated note was read as a vault file after reset: ${JSON.stringify(noteReads)}`);
     const uncreatedNoteReads = noteReads.length;
-    assert(await f.page.evaluate("!document.querySelector('[data-vault-notice]')"), "Uncreated note displayed an external-change notice");
+    const status = await f.page.read('[data-note-save-status]', "document.querySelector('[data-note-save-status]').textContent");
+    assert(status === "", "Uncreated note displayed an external-change state");
     await f.page.button("Source", ".content-column");
     await f.page.poll(`!!document.querySelector('${editor}')`);
     const text = "# Reset creation\n\nCreated after a real vault reset.\n";

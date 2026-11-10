@@ -54,27 +54,8 @@
       <button type="button" class="mt-2 text-theme-brand hover:underline" @click="controller.openConflictOriginal">Open original</button>
       <button type="button" class="mt-2 ml-4 text-theme-brand hover:underline" @click="controller.reviewConflict">Review conflict</button>
     </div>
-    <!-- 404 / Not Found -->
-    <div
-      v-if="isNoteNotFound"
-      class="flex h-full flex-col items-center justify-center"
-    >
-      <Icon
-       
-        icon="tabNotesOff"
-        size="4em"
-        class="mb-4 text-theme-brand"
-      />
-      <span class="mb-4 max-w-80 text-center text-lg text-theme-text-muted">
-        Note not found
-      </span>
-      <div v-if="canModify" class="w-full max-w-80">
-        <CtaButton label="Create note 'New note'" :callback="createFromWikilink" />
-      </div>
-    </div>
-
     <!-- Header (sits outside the scrollable content) -->
-    <div v-if="!isNoteNotFound">
+    <div v-if="!isNoteNotFound || vaultNotice" class="shrink-0">
       <div class="flex flex-col-reverse md:flex-row md:items-baseline">
         <!-- Title -->
         <div class="min-w-0 grow">
@@ -132,7 +113,7 @@
         <div class="flex shrink-0 self-end md:self-end print:hidden">
           <!-- Delete Button -->
           <CustomButton
-            v-show="canModify && !isNewNote"
+            v-show="canModify && !isNewNote && !isNoteNotFound"
             label="Delete"
             :iconPath="tabTrash"
             @click="deleteHandler"
@@ -149,7 +130,7 @@
           />
           <!-- Edit Toggle -->
           <Toggle
-            v-if="canModify"
+            v-if="canModify && !isNoteNotFound"
             label="Edit"
             :isOn="editMode"
             class="ml-1"
@@ -157,13 +138,19 @@
           />
         </div>
       </div>
-      <p v-if="editMode && saveFeedback" role="status" class="mt-1 text-sm text-theme-text-muted" data-note-save-status>{{ saveFeedback }}</p>
+      <StatusLine :message="saveFeedback" class="mt-1 text-sm text-theme-text-muted" data-note-save-status />
 
       <hr v-if="!editMode" class="mt-4 mb-6 border-theme-border" />
     </div>
 
-    <!-- Live vault notices must not displace the header's active controls. -->
-    <p v-if="vaultNotice" role="status" data-vault-notice class="mb-3 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-3 text-sm">{{ vaultNotice }}</p>
+    <!-- 404 / Not Found -->
+    <div v-if="isNoteNotFound" class="flex h-full flex-col items-center justify-center">
+      <Icon icon="tabNotesOff" size="4em" class="mb-4 text-theme-brand" />
+      <span class="mb-4 max-w-80 text-center text-lg text-theme-text-muted">Note not found</span>
+      <div v-if="canModify" class="w-full max-w-80">
+        <CtaButton label="Create note 'New note'" :callback="createFromWikilink" />
+      </div>
+    </div>
 
     <!-- Moved-files banner -->
     <div
@@ -293,6 +280,7 @@ import Toggle from "../components/Toggle.vue";
 import MarkdownEditor from "../components/MarkdownEditor.vue";
 import WysiwygEditor from "../components/WysiwygEditor.vue";
 import ServerViewer from "../components/ServerViewer.vue";
+import StatusLine from "../components/StatusLine.vue";
 import { handleAnchorClick } from "../anchorClicks.js";
 import { useGlobalStore } from "../globalStore.js";
 import { currentLayerId } from "../keybindings/store.js";

@@ -120,7 +120,7 @@ export function createNoteController({
     ? "Not saved. Sign in to finish saving; your edits and pending saves are retained. Press Save to sign in again."
     : queueState.value.status === "paused"
     ? `Saving paused at submission ${queueState.value.failure?.submissionId}. ${queueState.value.queued.length} held saves; current edits are retained. ${queueState.value.failure?.certainty === 'unknown' ? 'The write outcome is unknown; do not resend it.' : queueState.value.failure?.certainty === 'known-committed' ? 'The write committed; its UI integration failed. Do not resend it.' : ''} ${queueState.value.failure?.message ?? ''}`
-    : saving.value ? `Saving… ${queueState.value.queued.length} queued.` : "");
+    : saving.value ? `Saving... ${queueState.value.queued.length} queued.` : vaultNotice.value);
   const saveChangesMessage = computed(() => queueState.value.unresolved
     ? "Save work is retained. Discard removes queued saves and current unsaved changes only when all sent writes have a known outcome."
     : "Do you want to save your changes?");
@@ -173,8 +173,8 @@ export function createNoteController({
       deletedElsewhere = false;
       vaultNotice.value = "";
       if (result.saveResult?.status === "conflict") conflictBanners.set(result.path, originalPath);
-      if (result.saveResult?.status === "merged") vaultNotice.value = "Merged with changes made elsewhere";
-      if (result.saveResult?.recreated) vaultNotice.value = `‹${result.path}› was deleted elsewhere; your save re-created it`;
+      if (result.saveResult?.status === "merged") notify("Merged with changes made elsewhere", "Note merged", "success");
+      if (result.saveResult?.recreated) notify(`'${result.path}' was deleted elsewhere; your save re-created it`, "Note re-created", "success");
     },
     refreshDirtyState,
     invalid: message => notify(message, "Invalid", "error"),
@@ -483,7 +483,8 @@ export function createNoteController({
       }
       note.value = fresh; isNoteNotFound.value = false; deletedElsewhere = false; viewerRevision.value++;
       publishTitle(); refreshDirtyState();
-      vaultNotice.value = "Updated with changes from elsewhere";
+      vaultNotice.value = "";
+      notify("Updated with changes from elsewhere", "Note updated", "info");
     } catch (error) {
       if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path) return;
       if (error.response?.status === 404) markDeletedElsewhere();
@@ -493,7 +494,7 @@ export function createNoteController({
   function markDeletedElsewhere() {
     externalRead++;
     deletedElsewhere = true;
-    vaultNotice.value = editMode.value ? "Deleted elsewhere — saving will re-create it" : "This note was deleted elsewhere";
+    vaultNotice.value = editMode.value ? "Deleted elsewhere - saving will re-create it" : "This note was deleted elsewhere";
     if (!editMode.value) isNoteNotFound.value = true;
   }
   function onVaultChange(entry) {
