@@ -9,7 +9,27 @@ await conflictCase("conflict-inbox-native", async f => {
   await s.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 }); await s.type("mine\n\nlast\n");
   await s.click(".conflict-badge"); await s.poll("!!document.querySelector('[role=dialog]')"); await s.button("Cancel", "[role=dialog]");
    assert(await s.evaluate("location.pathname.endsWith('/Editor') && document.querySelector('.cm-content')?.textContent.includes('mine')"), "Dirty note badge departure lost text/URL");
-  await Deno.writeTextFile(`${f.vault}/Editor.md`, "outside\n\nlast\n"); await s.button("Save", ".content-column");
+  // Deliver the real external-change notice during a held Save gesture. A
+  // background update must not move the header out from under native input.
+  const send = s.page.send;
+  let saveGesture;
+  s.page.send = async (method, params) => {
+    const pressed = method === "Input.dispatchMouseEvent" && params.type === "mousePressed";
+    const before = pressed ? await s.evaluate("[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save').getBoundingClientRect().toJSON()") : null;
+    const result = await send(method, params);
+    if (pressed) {
+      await Deno.writeTextFile(`${f.vault}/Editor.md`, "outside\n\nlast\n");
+      await s.poll("document.querySelector('[data-vault-notice]')?.textContent.includes('This note changed elsewhere.')");
+      const after = await s.evaluate("[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save').getBoundingClientRect().toJSON()");
+      saveGesture = { before, after, point: { x: params.x, y: params.y } };
+      await f.capture("external-notice-during-save");
+    }
+    return result;
+  };
+  try { await s.button("Save", ".content-column"); }
+  finally { s.page.send = send; }
+  assert(saveGesture && ["x", "y", "width", "height"].every(key => saveGesture.before[key] === saveGesture.after[key]), `External notice displaced Save during native input: ${JSON.stringify(saveGesture)}`);
+  f.results.push({ externalNoticeDuringSave: saveGesture });
   await s.poll("location.pathname.includes('.conflict-') && !!document.querySelector('[data-conflict-banner]')"); await f.detailCount(1);
   await s.button("Review conflict"); await s.poll("location.pathname.includes('/_/conflicts/') && !!document.querySelector('[aria-label=\"Conflict copy source\"]')");
   const row = (await f.api("conflicts")).conflicts[0];

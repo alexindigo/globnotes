@@ -49,7 +49,6 @@
   />
 
   <LoadingIndicator ref="loadingIndicator" class="flex h-full flex-col">
-    <p v-if="vaultNotice" role="status" data-vault-notice class="mb-3 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-3 text-sm">{{ vaultNotice }}</p>
     <div v-if="conflictOriginal" role="status" data-conflict-banner class="mb-3 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-3 text-sm">
       <p>Your version was saved here because ‹{{ conflictOriginal }}› changed elsewhere.</p>
       <button type="button" class="mt-2 text-theme-brand hover:underline" @click="controller.openConflictOriginal">Open original</button>
@@ -162,6 +161,9 @@
 
       <hr v-if="!editMode" class="mt-4 mb-6 border-theme-border" />
     </div>
+
+    <!-- Live vault notices must not displace the header's active controls. -->
+    <p v-if="vaultNotice" role="status" data-vault-notice class="mb-3 rounded-lg border border-theme-brand/20 bg-theme-background-elevated p-3 text-sm">{{ vaultNotice }}</p>
 
     <!-- Moved-files banner -->
     <div
