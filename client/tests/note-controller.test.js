@@ -202,6 +202,7 @@ describe("note workflow ownership", () => {
         f.controller.onSaveChoice("discard"); await flush();
       }
       expect(f.controller.state.editMode).toBe(false);
+      await flush();
       expect(f.controller.currentBuffer()).toBe("Seed");
       expect(f.controller.state.saveFeedback).toBe(deleted ? notice : "");
       expect(f.controller.state.vaultNotice).toBe(deleted ? notice : "");
@@ -213,6 +214,78 @@ describe("note workflow ownership", () => {
         expect(updateNote).toHaveBeenLastCalledWith("folder/P", "folder/P", "Seed", "none", "Seed");
       }
     }
+  });
+  it.each(["discard", "revert"])("reloads pending external content when %s makes the note clean", async action => {
+    const disk = deferred();
+    const read = vi.fn().mockResolvedValueOnce({ path: "folder/P", content: "Seed", version: "v1" }).mockReturnValueOnce(disk.promise);
+    const f = fixture({ read }); await f.controller.mount(); f.enter(); f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    if (action === "discard") expect(f.participant().discard()).toBe(true);
+    else f.input("Seed");
+    await flush();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(f.controller.state.saveFeedback).not.toBe("");
+    if (action === "discard") expect(f.controller.state.saveFeedback).not.toContain("will be merged");
+    disk.resolve({ path: "folder/P", content: "Disk", version: "v2" }); await flush();
+    expect(f.controller.state.note).toMatchObject({ content: "Disk", version: "v2" });
+    expect(f.controller.state.saveFeedback).toBe("");
+    if (action === "discard") f.enter();
+    expect(f.controller.currentBuffer()).toBe("Disk");
+    expect(f.controller.isDirty()).toBe(false);
+    expect(read).toHaveBeenCalledTimes(2);
+    f.input("Next"); updateNote.mockResolvedValueOnce({ path: "folder/P", content: "Next", version: "v3" });
+    f.controller.saveHandler(); await flush();
+    expect(updateNote).toHaveBeenLastCalledWith("folder/P", "folder/P", "Next", "none", "Disk");
+  });
+  it("reconciles a dirty reset through the same reload owner after discard", async () => {
+    const read = vi.fn().mockResolvedValueOnce({ path: "folder/P", content: "Seed", version: "v1" })
+      .mockResolvedValueOnce({ path: "folder/P", content: "Disk", version: "v2" })
+      .mockResolvedValue({ path: "folder/P", content: "Latest", version: "v3" });
+    const f = fixture({ read }); await f.controller.mount(); f.enter(); f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_RESET)({ next: 10 });
+    expect(f.controller.currentBuffer()).toBe("Mine");
+    expect(f.participant().discard()).toBe(true); await flush();
+    expect(f.controller.state.saveFeedback).toBe("");
+    f.enter(); expect(f.controller.currentBuffer()).toBe("Latest");
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+  it("keeps newer typing when a pending clean reload completes after edit re-entry", async () => {
+    const disk = deferred();
+    const read = vi.fn().mockResolvedValueOnce({ path: "folder/P", content: "Seed", version: "v1" })
+      .mockReturnValueOnce(disk.promise).mockResolvedValue({ path: "folder/P", content: "Disk", version: "v2" });
+    const f = fixture({ read }); await f.controller.mount(); f.enter(); f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    expect(f.participant().discard()).toBe(true); f.enter(); f.input("New typing");
+    disk.resolve({ path: "folder/P", content: "Disk", version: "v2" }); await flush();
+    expect(f.controller.currentBuffer()).toBe("New typing");
+    expect(f.controller.state.saveFeedback).toContain("will be merged");
+    expect(f.participant().discard()).toBe(true); await flush();
+    f.enter(); expect(f.controller.currentBuffer()).toBe("Disk");
+  });
+  it("keeps pending external state truthful if the clean-note reload fails after discard", async () => {
+    const error = new Error("Disk unavailable");
+    const read = vi.fn().mockResolvedValueOnce({ path: "folder/P", content: "Seed", version: "v1" })
+      .mockRejectedValueOnce(error).mockResolvedValue({ path: "folder/P", content: "Disk", version: "v2" });
+    const f = fixture({ read }); await f.controller.mount(); f.enter(); f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    expect(f.participant().discard()).toBe(true); await flush();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(f.controller.state.editMode).toBe(false);
+    expect(f.controller.state.note.content).toBe("Seed");
+    expect(f.controller.state.saveFeedback).toContain("changed elsewhere");
+    expect(f.controller.state.saveFeedback).toContain("reload failed");
+    expect(f.controller.state.saveFeedback).not.toContain("will be merged");
+    expect(f.adapters.failed).toHaveBeenCalledWith(error);
+    f.enter(); expect(f.controller.state.saveFeedback).not.toBe("");
+    await f.handlers.get(TOPICS.VAULT_RESET)({ next: 11 }); await flush();
+    expect(f.controller.currentBuffer()).toBe("Disk");
+    expect(f.controller.state.saveFeedback).toBe("");
+  });
+  it("retires pending external reload work before disposal ends edit state", async () => {
+    const f = fixture(); await f.controller.mount(); f.enter(); f.input("Mine");
+    await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
+    f.controller.dispose(); await flush();
+    expect(f.adapters.read).toHaveBeenCalledTimes(1);
   });
   it("an acknowledged merge emits one success toast and clears persistent external state", async () => {
     const f = fixture(); await f.controller.mount(); f.enter(); f.input("Mine");

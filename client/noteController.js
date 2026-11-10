@@ -126,6 +126,7 @@ export function createNoteController({
     : "Do you want to save your changes?");
   let applyingAcknowledgement = false, loadGeneration = 0;
   let releaseChanges = null, externalRead = 0, pendingVaultEntry = null, pendingVaultReset = false;
+  let vaultRefreshPending = false;
   let contentChangedTimeout = null, titleFollowTimer = null;
   let pendingNavTarget = null, pendingSessionDecision = null, pendingDecisionPromise = null;
   const resourceIdentity = computed(() => noteResourceIdentity(getContext().path, getContext().query));
@@ -170,6 +171,7 @@ export function createNoteController({
     },
     saved: (result, { originalPath }) => {
       externalRead++;
+      vaultRefreshPending = false;
       deletedElsewhere = false;
       vaultNotice.value = "";
       if (result.saveResult?.status === "conflict") conflictBanners.set(result.path, originalPath);
@@ -219,6 +221,7 @@ export function createNoteController({
     clearEditTimers();
     saveOwner.reset();
     externalRead++; pendingVaultEntry = null; pendingVaultReset = false; vaultNotice.value = ""; deletedElsewhere = false;
+    vaultRefreshPending = false;
     const generation = ++loadGeneration, resource = resourceIdentity.value;
     const isCurrentLoad = () => generation === loadGeneration && resource === resourceIdentity.value;
     drafts.release();
@@ -386,12 +389,17 @@ export function createNoteController({
     return true;
   }
   function refreshDirtyState() {
-    const dirty = isDirty(); unsavedChanges.value = dirty; setUnload(dirty);
+    const dirty = isDirty(), becameClean = unsavedChanges.value && !dirty;
+    unsavedChanges.value = dirty; setUnload(dirty);
     const fact = { path: newPath.value ?? note.value.path, revision: contentRevision.value,
       editing: editMode.value, unsaved: dirty, canSave: editMode.value && !notePathError(newPath.value) && queueState.value.status !== "paused" && !queueState.value.rebaseConflict };
     if (!lastEditState || Object.keys(fact).some(key => fact[key] !== lastEditState[key])) {
       lastEditState = fact;
       publishFact(TOPICS.NOTE_EDIT_STATE, fact);
+    }
+    if (becameClean && vaultRefreshPending && !deletedElsewhere) {
+      vaultNotice.value = "This note changed elsewhere. Reloading saved content...";
+      refreshFromVault();
     }
   }
   function noteSaveFailure(error) { showNoteError(error, noteSaveError(error, queueState.value.failure)); }
@@ -406,7 +414,6 @@ export function createNoteController({
   function exitEditState() {
     saveOwner.revokeRenamePrompt(); clearEditTimers();
     editMode.value = false; editorLine.value = null; editorInitialLine.value = null;
-    if (!deletedElsewhere) vaultNotice.value = "";
     refreshDirtyState();
     publishTitle(); publishFact(TOPICS.NOTE_EDIT_END, { path: note.value.path }); saveOwner.end();
   }
@@ -467,8 +474,11 @@ export function createNoteController({
     try {
       const fresh = await read(path);
       if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path) return;
-      if (!deletedElsewhere && !isNoteNotFound.value && fresh.version && fresh.version === note.value.version) return;
+      if (!deletedElsewhere && !isNoteNotFound.value && fresh.version && fresh.version === note.value.version) {
+        vaultRefreshPending = false; vaultNotice.value = ""; return;
+      }
       if (editMode.value && isDirty()) {
+        vaultRefreshPending = true;
         vaultNotice.value = "This note changed elsewhere. Your changes will be merged when you save.";
         return;
       }
@@ -483,17 +493,22 @@ export function createNoteController({
         saveOwner.adopt(fresh);
       }
       note.value = fresh; isNoteNotFound.value = false; deletedElsewhere = false; viewerRevision.value++;
+      vaultRefreshPending = false;
       publishTitle(); refreshDirtyState();
       vaultNotice.value = "";
       notify("Updated with changes from elsewhere", "Note updated", "info");
     } catch (error) {
       if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path) return;
       if (error.response?.status === 404) markDeletedElsewhere();
-      else failed(error);
+      else {
+        if (vaultRefreshPending) vaultNotice.value = "This note changed elsewhere, but reload failed; the displayed version may be out of date.";
+        failed(error);
+      }
     }
   }
   function markDeletedElsewhere() {
     externalRead++;
+    vaultRefreshPending = false;
     deletedElsewhere = true;
     vaultNotice.value = editMode.value ? "Deleted elsewhere - saving will re-create it" : "This note was deleted elsewhere";
     if (!editMode.value) isNoteNotFound.value = true;
@@ -506,6 +521,7 @@ export function createNoteController({
     if (entry.kind === "deleted" || (entry.kind === "renamed" && entry.oldPath === `${path}.md`)) { markDeletedElsewhere(); return; }
     if (!deletedElsewhere && !isNoteNotFound.value && entry.hash && entry.hash === note.value.version) return;
     if (editMode.value && isDirty()) {
+      vaultRefreshPending = true;
       vaultNotice.value = "This note changed elsewhere. Your changes will be merged when you save.";
       return;
     }
@@ -540,6 +556,7 @@ export function createNoteController({
   function routeHashChanged(hash) { if (!editMode.value) viewLine.value = viewLineFromFragment(parseFragment(hash), viewLine.value); }
   function captureEditorForRemount() { if (editMode.value && editorMode.value === "wysiwyg" && editor) editorInitialValue.value = currentBuffer(); }
   function dispose() {
+    vaultRefreshPending = false;
     if (editMode.value) { editMode.value = false; refreshDirtyState(); }
     clearEditTimers();
     preview.dispose();
