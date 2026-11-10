@@ -6,6 +6,9 @@
 
 Typed TOML configuration defaults and validation, preparatory to the v3 startup cutover.
 
+Vault settings can persist in partial TOML with external-edit protection
+(preparatory owner, not yet connected to normal startup).
+
 Instance and vault configuration scopes, typed path/admin declarations and shared
 metadata paths (preparatory to startup cutover).
 

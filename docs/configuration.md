@@ -64,3 +64,10 @@ check target access, preserve ownership/mode, sync a sibling temporary file and
 recheck the captured binding before replacement. Owners serialize their writes;
 only the owner parses policy and publishes updated state at successful replacement.
 Cleanup failures remain errors, including after replacement has already committed.
+
+The preparatory `VaultConfigStore` saves partial vault TOML through this boundary.
+App writes preserve omitted leaves and explicit empty values, and cannot replace
+env-pinned leaves (even with the same value). External edits take effect on restart;
+interference with an app write is a conflict, never an implicit reload or overwrite.
+Invalid TOML is retained. Plugin policy/settings writes still go to their existing
+owners, not to a second app-saved TOML copy. Branding images remain in `brand/`.
