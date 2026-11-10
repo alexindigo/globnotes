@@ -1,0 +1,24 @@
+# Complete vault defaults; N is the escaped upper-case vault name in env variables.
+[brand]
+# Custom name; empty uses app branding; GLOBNOTES_N_BRAND_NAME.
+name = ""
+# Custom #rrggbb accent; empty uses app branding; GLOBNOTES_N_BRAND_ACCENT.
+accent = ""
+
+[quickaccess]
+# Hide the Home quick-access list; GLOBNOTES_N_QUICKACCESS_HIDE.
+hide = false
+# Home list title; GLOBNOTES_N_QUICKACCESS_TITLE.
+title = "RECENTLY MODIFIED"
+# Home list search term; GLOBNOTES_N_QUICKACCESS_TERM.
+term = "*"
+# score, title or lastModified; GLOBNOTES_N_QUICKACCESS_SORT.
+sort = "lastModified"
+# Maximum Home list results; GLOBNOTES_N_QUICKACCESS_LIMIT.
+limit = 4
+
+[plugins]
+# Baseline for plugins absent from saved policy, not a pin; GLOBNOTES_N_PLUGINS_AUTOENABLE.
+autoenable = true
+# Addressed JSON deployment pins, validated by installed plugin schemas; GLOBNOTES_N_PLUGINS_SETTINGS.
+settings = "{}"

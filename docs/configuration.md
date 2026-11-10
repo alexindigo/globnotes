@@ -21,3 +21,37 @@ missing/unreadable file is an error. Diagnostics identify keys and sources, neve
 setting values. Integers must be safe whole numbers; durations are finite seconds;
 booleans accept only `true`/`false`. Empty strings and empty lists are real choices.
 The defaults file documents each leaf's units and environment spelling.
+
+## Vault scopes and declarations
+
+`defaults/vault.toml` is a separate complete baseline. A vault reads partial saved
+`<vault metadata>/config.toml`, then its env leaves. `my_notes` becomes `MY__NOTES`:
+every underscore in the name doubles. For example,
+`GLOBNOTES_MY__NOTES_QUICKACCESS_LIMIT=8`. Names match `[a-z][a-z0-9_]*`; `_` and
+`metadata` are reserved. `metadata` would collide with the exact instance variable
+`GLOBNOTES_METADATA_PATH`; other schema section names such as `brand` remain valid.
+
+Declare an external path and optional admin login together:
+
+```toml
+[vaults.entries.family]
+path = "/srv/family"
+admin = "alex"
+```
+
+The env equivalents are `GLOBNOTES_FAMILY_PATH` and `GLOBNOTES_FAMILY_ADMIN`.
+Declarations merge by name and leaf. An omitted/empty admin is valid and grants
+no configured administrator; this loader does not create accounts or grants.
+The shipped `vaults.entrydefaults` is a template, not an operator setting.
+
+Without relocation, instance data is `<base>/.globnotes/` and each vault's data
+is `<notes>/.globnotes/`. With `GLOBNOTES_METADATA_PATH=/etc/globnotes`, instance
+data is `/etc/globnotes/_/` and vault data `/etc/globnotes/<name>/`. There is no
+per-vault `_INDEX` alias. The loader calculates paths and validates all supplied
+scopes, never discovers folders, creates vaults or moves state. The future registry
+supplies persisted scopes alongside declarations; declaring one external vault
+does not erase saved vaults. Unavailable paths are not silently created.
+
+Plugin deployment settings remain addressed JSON under `plugins.settings`, not
+arbitrary TOML plugin tables. Installed plugin schemas still own address/field
+validation before workers start. Credentials and ACLs are not vault TOML leaves.
