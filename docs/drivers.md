@@ -118,8 +118,11 @@ The panel lists every connection, its state, plain reason and next retry or last
 sync, with a link to Sync settings.
 
 The drivers view includes `activity: "sending" | "receiving" | null` and
-`failingSince: number | null` (Unix milliseconds). Failure onset is vault metadata
-that survives Worker and server restarts; starting a replacement is not recovery.
+`failingSince: number | null` (Unix milliseconds). The server decides `warning`
+using its own wall clock and supplies `warningAfterMs`, a relative delay for one
+fresh status read, or null when no deadline remains. Browser clock skew cannot
+advance or delay the warning. Failure onset is vault metadata that survives
+Worker and server restarts; starting a replacement is not recovery.
 Activity start/stop transitions use the existing `drivers` invalidation on the
 vault change stream. There is no separate status polling loop; hidden tabs
 release their subscription and refresh on return.

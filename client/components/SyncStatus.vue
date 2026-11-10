@@ -29,7 +29,9 @@ const props=defineProps({snapshot:{type:Object,required:true},onSettings:{type:F
 const open=ref(false),root=ref(),trigger=ref(),panel=ref();
 function close(restore=false) { open.value=false;if(restore) trigger.value?.focus(); }
 async function toggle() { open.value=!open.value;if(open.value) { await nextTick();panel.value?.focus(); } }
-function leave(event) { if(!root.value?.contains(event.relatedTarget)) close(); }
+// A null destination is not an outside focus move: some browsers do not focus
+// pointer-pressed buttons. Let that trigger click, or outside pointerdown, own it.
+function leave(event) { if(event.relatedTarget && !root.value?.contains(event.relatedTarget)) close(); }
 function outside(event) { if(!root.value?.contains(event.target)) close(); }
 function settings() { close();props.onSettings(); }
 watch(() => props.snapshot.visible,value=>{if(!value)close();});

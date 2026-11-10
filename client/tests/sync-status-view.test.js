@@ -12,6 +12,20 @@ it("uses the generated outline paths from the pinned Tabler package",()=>{
   }
 });
 const snapshot = {visible:true,icon:"tabCloudDownload",tone:"danger",label:"Sync: receiving changes: needs attention",instances:[{id:"home",label:"Home",enabled:true,pluginName:"Remote",status:"failed",stateLabel:"Failed",reasonLabel:"Could not reach the server",failingLabel:"9:00 AM",retryLabel:"Next retry: 9:10 AM"}]};
+it("keeps an unknown focus destination open so a non-focusing trigger click closes once",async()=>{
+  const view=mount(SyncStatus,{props:{snapshot,onSettings:vi.fn()},attachTo:document.body});
+  await view.get("[data-sync-status]").trigger("click");
+  await view.get('[role="dialog"]').trigger("focusout",{relatedTarget:null});
+  expect(view.find('[role="dialog"]').exists()).toBe(true);
+  await view.get("[data-sync-status]").trigger("click");expect(view.find('[role="dialog"]').exists()).toBe(false);
+});
+it("dismisses only a real external focus destination or an outside pointer",async()=>{
+  const view=mount(SyncStatus,{props:{snapshot,onSettings:vi.fn()},attachTo:document.body});
+  await view.get("[data-sync-status]").trigger("click");
+  await view.get('[role="dialog"]').trigger("focusout",{relatedTarget:view.get("[data-sync-status]").element});expect(view.find('[role="dialog"]').exists()).toBe(true);
+  await view.get('[role="dialog"]').trigger("focusout",{relatedTarget:document.body});expect(view.find('[role="dialog"]').exists()).toBe(false);
+  await view.get("[data-sync-status]").trigger("click");document.body.dispatchEvent(new Event("pointerdown",{bubbles:true}));await view.vm.$nextTick();expect(view.find('[role="dialog"]').exists()).toBe(false);
+});
 it("renders the controller's Tabler shape, tone, panel rows and settings intent",async()=>{
   const onSettings=vi.fn(),view=mount(SyncStatus,{props:{snapshot,onSettings},attachTo:document.body});
   expect(view.findAll("svg path").map(p=>p.attributes("d"))).toEqual(ICON_PATHS.tabCloudDownload);

@@ -66,6 +66,25 @@ export class DriverPeers {
       .get(`driver_failure:${peer}`);
     return row ? Number(row.value) : null;
   }
+  /** The server compares its persisted wall time; browsers receive only a
+   * readiness decision and relative time for their next authoritative read. */
+  failureStatus(
+    peer: string,
+    status: string,
+    enabled: boolean,
+    now = new Date().getTime(),
+  ) {
+    const failingSince = enabled ? this.failingSince(peer) : null;
+    const remaining =
+      failingSince !== null && ["failed", "locked", "starting"].includes(status)
+        ? Math.max(0, 120_000 - (now - failingSince))
+        : null;
+    return {
+      failingSince,
+      warning: remaining === 0,
+      warningAfterMs: remaining !== null && remaining > 0 ? remaining : null,
+    };
+  }
   observeStatus(peer: string, status: string, enabled: boolean): void {
     const key = `driver_failure:${peer}`;
     if (enabled && ["failed", "locked"].includes(status)) {

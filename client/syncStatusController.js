@@ -9,26 +9,25 @@ import { permissionEligibility, permissionSessionKey } from "./appSessionPolicy.
 import { driverStates, driverReason } from "./driverPresentation.js";
 
 export const SYNC_STATUS = Symbol("sync-status");
-export const SYNC_FAILURE_DELAY = 2 * 60 * 1000;
 export const SYNC_ACTIVITY_MIN_MS = 1000;
 
-/** Status only: the vault stream owns transport cadence. One local timer handles
- * warning/display thresholds, never polling. Hidden documents release and catch up. */
+/** The vault stream owns transport cadence. The server alone decides warnings;
+ * its relative deadline requests one fresh status read, not a polling loop.
+ * A separate local timer holds brief activity. Hidden documents release both. */
 export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
   acquireChanges = acquireVaultChanges, lifetime = connectionLifetime,
   now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout,
   token = getStoredToken } = {}) {
   const data = reactive({ instances:[], visible:false, icon:"tabCloud",tone:"idle",label:"Sync",error:"" });
   let active = false, visible = false, disposed = false, identity = null;
-  let generation = 0, flight = null, dirty = false, releases = [], timer = null, stopContext;
+  let generation = 0, flight = null, dirty = false, releases = [], timer = null, warningTimer = null, stopContext;
   let shownActivity = null, activityUntil = 0;
   const live = () => active && visible && !disposed;
   function derive() {
     clearTimer(timer);timer = null;
     const currentTime = now(), enabled = data.instances.filter(row => row.enabled);
     data.visible = enabled.length > 0;
-    const ages = enabled.filter(row => ["failed","locked","starting"].includes(row.status) && Number.isFinite(row.failingSince)).map(row => row.failingSince + SYNC_FAILURE_DELAY - currentTime);
-    const trouble = ages.some(remaining => remaining <= 0);
+    const trouble = enabled.some(row => row.warning === true);
     const actual = enabled.some(row => row.activity === "receiving") ? "receiving" : enabled.some(row => row.activity === "sending") ? "sending" : null;
     if (!data.visible) { shownActivity = null;activityUntil = 0; }
     else if (actual) {
@@ -38,18 +37,18 @@ export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
     data.icon = shownActivity === "receiving" ? "tabCloudDownload" : shownActivity === "sending" ? "tabCloudUpload" : trouble ? "tabCloudExclamation" : "tabCloud";
     data.tone = trouble ? "danger" : shownActivity ? "active" : "idle";
     data.label = `Sync${shownActivity === "receiving" ? ": receiving changes" : shownActivity === "sending" ? ": sending changes" : ""}${trouble ? ": needs attention" : ""}`;
-    const wakeups = ages.filter(remaining => remaining > 0);
-    if (!actual && shownActivity) wakeups.push(activityUntil - currentTime);
-    if (live() && wakeups.length) timer = setTimer(derive, Math.max(1,Math.min(...wakeups)));
+    if (live() && !actual && shownActivity) timer = setTimer(derive, Math.max(1,activityUntil - currentTime));
   }
   function retire(clear = true) {
     generation++;flight = null;dirty = false;clearTimer(timer);timer = null;
+    clearTimer(warningTimer);warningTimer = null;
     releases.splice(0).forEach(release => release());
     shownActivity = null;activityUntil = 0;
     if(clear) { data.instances = [];data.error = "";derive(); }
   }
   async function refresh() {
     if(!live()) return false;
+    clearTimer(warningTimer);warningTimer = null;
     if(flight) { dirty = true;return flight; }
     const own = generation;
     const work = (async () => {
@@ -62,6 +61,11 @@ export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
           failingLabel:Number.isFinite(row.failingSince) ? new Date(row.failingSince).toLocaleString() : "",
           retryLabel:Number.isFinite(row.nextRetry) ? `Next retry: ${new Date(now() + row.nextRetry).toLocaleTimeString()}` : "No retry scheduled" }));
         data.error = "";
+        const deadlines = data.instances.filter(row => row.enabled && !row.warning && Number.isFinite(row.warningAfterMs) && row.warningAfterMs > 0).map(row => row.warningAfterMs);
+        if(deadlines.length) warningTimer = setTimer(() => {
+          warningTimer = null;
+          if(own === generation) void refresh();
+        },Math.min(2_147_483_647,...deadlines));
         derive();return true;
       } catch (error) {
         if(own === generation && !dirty) {

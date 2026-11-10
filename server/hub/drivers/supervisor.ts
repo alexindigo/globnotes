@@ -627,9 +627,11 @@ export class DriverSupervisor implements DriverOwners {
             plugin?.driver?.secrets ?? [],
           ),
           ...stateView,
-          failingSince: instance.enabled
-            ? this.peers.failingSince(instance.id)
-            : null,
+          ...this.peers.failureStatus(
+            instance.id,
+            view.status,
+            instance.enabled,
+          ),
           activity: slot && !slot.retired ? slot.activity : null,
           nextRetry: slot && Number.isFinite(slot.nextRetry)
             ? Math.max(0, slot.nextRetry - this.#clock.now())

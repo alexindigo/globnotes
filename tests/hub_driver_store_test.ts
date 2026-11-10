@@ -13,6 +13,48 @@ const observation = (diskPath: string, hash = "abc") => ({
   size: 3,
   mtimeMs: 1,
 });
+Deno.test("driver store: the server owns warning readiness and the relative refresh deadline", () => {
+  const root = Deno.makeTempDirSync(),
+    store = new HubStore(root),
+    peers = new DriverPeers(store);
+  try {
+    const peer = peers.create("test", "Remote").id;
+    peers.observeStatus(peer, "failed", true);
+    const onset = peers.failingSince(peer)!;
+    assertEquals(peers.failureStatus(peer, "failed", true, onset + 119_999), {
+      failingSince: onset,
+      warning: false,
+      warningAfterMs: 1,
+    });
+    assertEquals(peers.failureStatus(peer, "locked", true, onset + 120_000), {
+      failingSince: onset,
+      warning: true,
+      warningAfterMs: null,
+    });
+    assertEquals(
+      peers.failureStatus(peer, "starting", true, onset + 200_000).warning,
+      true,
+    );
+    assertEquals(peers.failureStatus(peer, "failed", false, onset + 200_000), {
+      failingSince: null,
+      warning: false,
+      warningAfterMs: null,
+    });
+    assertEquals(
+      peers.failureStatus(peer, "paused", true, onset + 200_000).warning,
+      false,
+    );
+    peers.observeStatus(peer, "active", true);
+    assertEquals(peers.failureStatus(peer, "active", true, onset + 200_000), {
+      failingSince: null,
+      warning: false,
+      warningAfterMs: null,
+    });
+  } finally {
+    store.close();
+    Deno.removeSync(root, { recursive: true });
+  }
+});
 Deno.test("driver store: failure onset survives restart and replacement, but recovery and Off reset it", () => {
   const root = Deno.makeTempDirSync();
   let store = new HubStore(root);

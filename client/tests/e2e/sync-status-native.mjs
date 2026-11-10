@@ -87,6 +87,11 @@ try {
   // does not exercise Chromium's button activation default.
   await s.send("Input.dispatchKeyEvent",{type:"keyDown",key:"Enter",code:"Enter",text:"\r",unmodifiedText:"\r",windowsVirtualKeyCode:13});
   await s.send("Input.dispatchKeyEvent",{type:"keyUp",key:"Enter",code:"Enter",windowsVirtualKeyCode:13});await s.read("#sync-status-panel","true");
+  // Model browsers where a pointer press on the trigger does not focus it:
+  // blur yields null relatedTarget before the one trusted click arrives.
+  await s.evaluate("document.querySelector('[data-sync-status]').addEventListener('pointerdown',event=>{event.preventDefault();document.activeElement?.blur();},{once:true})");
+  await s.click("[data-sync-status]");assert(await s.read("[data-sync-status]","!document.querySelector('#sync-status-panel')"),"A non-focusing trigger click reopened the panel");
+  await s.click("[data-sync-status]");await s.read("#sync-status-panel","true");
   await s.click(".sync-status__settings");await s.read("[data-sync-settings]","true");
   await s.click('[aria-label="Close settings"]');await s.click("[data-sync-status]");
   await s.send("Emulation.setDeviceMetricsOverride",{width:390,height:900,deviceScaleFactor:1,mobile:false});await geometry();await capture("narrow-working");
