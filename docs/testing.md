@@ -13,7 +13,7 @@ plus the serial timing tests.
 |---|---|---|
 | 1 | Dev image | `.devcontainer/Dockerfile`: Deno 2.9.6 (the root `Dockerfile`'s version) and git, user `dev` (uid/gid 1000). Tagged `localhost/globnotes-dev:<first 16 hex of the Dockerfile's SHA-256>` and built only when that tag is missing |
 | 2 | Browser image | `.devcontainer/chromium/Dockerfile`: headless Chromium, user `chromium`, CDP on `127.0.0.1:9335`. Started only with `--browser`, in the dev container's network namespace |
-| 3 | Resource caps | Dev container: 8 GB memory = memory+swap, 512 PIDs, 4 CPUs (`DEV_CAPS` in `run.sh`, equal to `runArgs` in `devcontainer.json`; `tests/devcontainer_caps_test.ts` keeps them equal). Chromium: 2 GB, 512 PIDs, 2 CPUs, 1 GB shared memory |
+| 3 | Resource caps | Dev container: 8 GB memory = memory+swap, 2048 PIDs (threads count; a test server with all plugins uses about 250), 4 CPUs (`DEV_CAPS` in `run.sh`, equal to `runArgs` in `devcontainer.json`; `tests/devcontainer_caps_test.ts` keeps them equal). Chromium: 2 GB, 512 PIDs, 2 CPUs, 1 GB shared memory |
 | 4 | Network | Own network `globnotes-test`; no published ports. The dev container's hostname is `globnotes.test` |
 | 5 | Mounts | `/workspace` = the source directory, `/run-tmp` (`TMPDIR`), `/run-logs`, `/artifacts` = the run directory's `tmp`, `logs`, `artifacts`; `/deno-dir` = the dependency cache (row 6) |
 | 6 | Engine | Rootless Podman when installed, else Docker; `GLOBNOTES_CONTAINER_ENGINE=podman\|docker` chooses. Podman maps the host user to `dev` (`--userns=keep-id`) and uses the cache volume `globnotes-deno-cache`; Docker runs as the host user with the cache in `~/.cache/globnotes-run/deno-dir` (see CI) |

@@ -5,7 +5,7 @@
     "context": "."
   },
   // Keep these caps equal to DEV_CAPS in run.sh.
-  "runArgs": ["--memory=8g", "--memory-swap=8g", "--pids-limit=512", "--cpus=4"],
+  "runArgs": ["--memory=8g", "--memory-swap=8g", "--pids-limit=2048", "--cpus=4"],
   "remoteUser": "dev",
   "containerUser": "dev",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",

@@ -146,7 +146,7 @@ else
 fi
 
 step configure-dev-container configure-dev.log
-DEV_CAPS=(--memory=8g --memory-swap=8g --pids-limit=512 --cpus=4)
+DEV_CAPS=(--memory=8g --memory-swap=8g --pids-limit=2048 --cpus=4)
 dev_args=(--rm "${DEV_CAPS[@]}" --network globnotes-test --hostname globnotes.test
     --workdir /workspace --entrypoint ''
     --volume "$source_dir:/workspace:rw" --volume "$run_dir/tmp:/run-tmp:rw"
