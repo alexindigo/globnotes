@@ -90,6 +90,13 @@ Normal boot still uses the temporary legacy adapter until the startup cutover.
 
 ## Service inputs
 
+Public config and branding snapshots expose per-leaf origin classes and pin
+flags, never deployment paths, raw files or addressed plugin values. Explicit
+unsupported `vault` targets reject rather than selecting another vault. Branding
+pins disable only the named field; siblings and images retain their normal
+workflow. Reset omits pinned leaves and explains what it can clear. The resolved
+facade is preparatory until the startup cutover; authentication remains separate.
+
 Index pacing, directory-cache TTL and hub scan interval are configured in seconds;
 the configuration boundary converts them once to milliseconds for their consumers.
 Session days become JWT expiry seconds at that boundary. Render workers remain per

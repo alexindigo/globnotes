@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { reactive } from "vue";
 import { settingsFieldGroups } from "./declarativeSettings.js";
+import { pinExplanation } from "./configurationProvenance.js";
 
 const copy = value => JSON.parse(JSON.stringify(value));
 export function validateSettingsInput(field, raw) {
@@ -81,7 +82,7 @@ export function createSettingsPageState({ registry, confirm }) {
     const fieldViews = Object.fromEntries((record.page.descriptor?.fields ?? []).map(field => [field.key, {
       value:Object.hasOwn(record.drafts, field.key) ? record.drafts[field.key] : values[field.key],
       readonly:!writable || !record.available || !record.loaded || !!record.fields[field.key]?.readonly,
-      error:record.errors[field.key] ?? '', pin:record.fields[field.key]?.source === 'environment' ? 'Set by the server configuration' : '',
+      error:record.errors[field.key] ?? '', pin:pinExplanation(record.fields[field.key]),
     }]));
     return { ...record, fieldViews, fieldGroups:settingsFieldGroups(record.page.descriptor ?? {}, values), retainedText:JSON.stringify(record.drafts, null, 2),
       blockingText:blocking?.actions?.length ? `${blocking.active===false ? 'Can block when on' : 'Can block'}: ${blocking.actions.join(', ')}. Errors or timeouts also cancel the action.` : '',

@@ -13,6 +13,24 @@ import { Fts5Indexer } from "../server/search/fts5.ts";
 import { state } from "../server/state.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { awaitIndexReady, restoreState, setupState } from "./helpers/state.ts";
+import { command } from "./helpers/process.ts";
+
+Deno.test("config consumers: pre-initialization diagnostics are plain stderr, never machine stdout", async () => {
+  const script = `import { logger } from ${
+    JSON.stringify(new URL("../server/logger.ts", import.meta.url).href)
+  }; logger.debug("configuration diagnostic"); logger.error("configuration error"); console.log("machine-only");`;
+  const result = await command(Deno.execPath(), {
+    args: ["eval", script],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(result.code, 0);
+  assertEquals(new TextDecoder().decode(result.stdout).trim(), "machine-only");
+  assertEquals(
+    new TextDecoder().decode(result.stderr).trim(),
+    "configuration diagnostic\nconfiguration error",
+  );
+});
 
 function configured(env: Record<string, string> = {}) {
   return serviceSettings(loadInstanceConfig({ overlayPath: null, env }).config);

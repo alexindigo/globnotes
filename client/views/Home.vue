@@ -50,11 +50,7 @@
             No notes yet
           </p>
           <p class="mb-6 max-w-96 text-center text-sm text-theme-text-muted">
-            globnotes serves the files from your notes vault at
-            <code
-              class="rounded bg-theme-background-elevated px-1.5 py-0.5 text-theme-text"
-              >{{ globalStore.config.notesPath }}</code
-            >, which is currently empty. Point it at your existing notes{{
+            Your notes vault is currently empty. Add existing notes to the vault{{
               canCreateNote(globalStore.config.authType)
                 ? ", or create your first note here"
                 : ""

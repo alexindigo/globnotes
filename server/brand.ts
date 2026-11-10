@@ -8,6 +8,7 @@
 
 import * as path from "@std/path";
 import type { GlobalConfig } from "./config.ts";
+import { brandFields } from "./config/projection.ts";
 
 const DEFAULT_NAME = "globnotes";
 const DEFAULT_ACCENT = "#38BDF8";
@@ -44,6 +45,7 @@ export interface BrandBlock {
   name: string | null;
   accent: string | null;
   files: string[];
+  fields?: ReturnType<typeof brandFields>;
 }
 
 /** The brand state the client needs — same shape from config GET and
@@ -53,6 +55,7 @@ export function brandBlock(config: GlobalConfig): BrandBlock {
     name: config.brandName,
     accent: config.brandAccent,
     files: listBrandFiles(config.statePath),
+    ...(config.resolved ? { fields: brandFields(config) } : {}),
   };
 }
 

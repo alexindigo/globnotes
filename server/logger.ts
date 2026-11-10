@@ -33,7 +33,13 @@ function ts(): string {
 }
 
 function write(level: Level, args: unknown[]): void {
-  if (threshold !== undefined && LEVELS[level] < threshold) return;
+  // Configuration tools may own stdout before logging has been initialized.
+  // Preserve their diagnostics without inventing a level or contaminating data.
+  if (threshold === undefined) {
+    console.error(...args);
+    return;
+  }
+  if (LEVELS[level] < threshold) return;
   const line = `${ts()} [${level}]:`;
   if (level === "ERROR") console.error(line, ...args);
   else if (level === "WARNING") console.warn(line, ...args);

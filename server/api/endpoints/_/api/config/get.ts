@@ -5,11 +5,17 @@
 
 import { brandBlock } from "@server/brand.ts";
 import { state } from "@server/state.ts";
+import {
+  assertVaultTarget,
+  publicProvenance,
+} from "@server/config/projection.ts";
+import type { PathfinderRequest } from "@pathfinder/pathfinder";
 
 export const auth = false;
 
-export default function (): Record<string, unknown> {
+export default function (request?: PathfinderRequest): Record<string, unknown> {
   const c = state.config;
+  assertVaultTarget(c, request);
   return {
     setupRequired: c.setupRequired,
     authType: c.authType,
@@ -17,7 +23,7 @@ export default function (): Record<string, unknown> {
     readOnlySettings: c.readOnlySettings,
     accessRevision: c.storedConfig?.access_revision ?? 0,
     accessUpdateId: c.storedConfig?.access_update_id ?? null,
-    notesPath: c.notesPath,
+    ...(c.resolved ? { provenance: publicProvenance(c) } : {}),
     quickAccessHide: c.quickAccessHide,
     quickAccessTitle: c.quickAccessTitle,
     quickAccessTerm: c.quickAccessTerm,

@@ -23,6 +23,7 @@ import { logger } from "@server/logger.ts";
 import { state } from "@server/state.ts";
 import { settingsWriteGuard } from "@server/auth/middleware.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
+import { assertVaultTarget } from "@server/config/projection.ts";
 
 const ACCENT_RE = /^#[0-9a-fA-F]{6}$/;
 const IMAGE_EXTS = new Set([
@@ -77,8 +78,10 @@ function saveBrandConfig(
 }
 
 export default async function (request: PathfinderRequest) {
+  assertVaultTarget(state.config, request);
   const guard = await settingsWriteGuard(request._raw);
   const config = state.config;
+  const vaultSnapshot = config.resolved?.vault.capture();
   const snapshot = config.captureStoredConfig();
   const base = snapshot.raw === null ? null : JSON.parse(snapshot.raw);
   if (JSON.stringify(base) !== JSON.stringify(config.storedConfig)) {
@@ -88,6 +91,17 @@ export default async function (request: PathfinderRequest) {
     );
   }
   const form = await request.body.form();
+  const checkPins = () => {
+    for (const key of ["name", "accent"]) {
+      if (
+        form.has(key) &&
+        config.resolved?.vault.provenance[`brand.${key}`]?.layer === "env"
+      ) {
+        throw new HttpError(409, `${key} is pinned by server configuration.`);
+      }
+    }
+  };
+  checkPins();
 
   const changes: Partial<StoredConfig> = {};
   const deletions: string[] = [];
@@ -150,6 +164,8 @@ export default async function (request: PathfinderRequest) {
       );
     }
     config.assertStoredConfigUnchanged(snapshot);
+    checkPins();
+    if (vaultSnapshot) config.resolved!.vault.assertUnchanged(vaultSnapshot);
     for (const upload of uploads) {
       Deno.mkdirSync(dir, { recursive: true });
       clearSlotFiles(dir, upload.slot);
@@ -160,7 +176,15 @@ export default async function (request: PathfinderRequest) {
     }
     for (const slot of removals) clearSlotFiles(dir, slot);
     if (changed) {
-      saveBrandConfig(config, snapshot, base, changes, deletions);
+      if (vaultSnapshot) {
+        const brand = {
+          ...(name !== null ? { name: String(name) } : {}),
+          ...(accent !== null ? { accent: String(accent) } : {}),
+        };
+        if (Object.keys(brand).length) {
+          config.resolved!.vault.save({ brand }, vaultSnapshot, guard);
+        }
+      } else saveBrandConfig(config, snapshot, base, changes, deletions);
       if (name !== null) config.brandName = String(name) || null;
       if (accent !== null) config.brandAccent = String(accent) || null;
       logger.info("Instance branding updated.");

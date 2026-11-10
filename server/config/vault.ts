@@ -66,6 +66,10 @@ export class VaultConfigStore {
   capture(): VaultConfigSnapshot {
     return this.#snapshot;
   }
+  assertUnchanged(expected: VaultConfigSnapshot): void {
+    if (expected !== this.#snapshot) throw new StoredConfigConflict();
+    this.#file.assertUnchanged(expected.persistence);
+  }
 
   #spelling = (key: string) =>
     `GLOBNOTES_${escapeVaultName(this.name)}_${

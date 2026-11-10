@@ -11,6 +11,8 @@ import { type Environment, processEnvironment } from "./environment.ts";
 import { getEnv, type GetEnvOptions } from "./helpers.ts";
 import { type AllowedHost, parseAllowedHosts } from "./host_admission.ts";
 import { logger } from "./logger.ts";
+import type { InstanceConfig } from "./config/schema.ts";
+import type { VaultConfigStore } from "./config/vault.ts";
 import {
   BoundFileStore,
   type StoredConfigSnapshot,
@@ -66,44 +68,79 @@ export class GlobalConfig {
    * (server/host_admission.ts); null = any. */
   readonly allowedHosts: AllowedHost[] | null;
   /** White-label branding: env wins over stored config, null when unset. */
-  brandName: string | null;
-  brandAccent: string | null;
+  #brandName: string | null = null;
+  #brandAccent: string | null = null;
+  get brandName(): string | null {
+    return this.resolved
+      ? this.resolved.vault.settings.brand.name || null
+      : this.#brandName;
+  }
+  set brandName(value: string | null) {
+    this.#brandName = value;
+  }
+  get brandAccent(): string | null {
+    return this.resolved
+      ? this.resolved.vault.settings.brand.accent || null
+      : this.#brandAccent;
+  }
+  set brandAccent(value: string | null) {
+    this.#brandAccent = value;
+  }
 
   /** Configuration input; every env-derived value of this deployment
    * (including later reads by auth, hub and plugins) comes from here. */
   readonly environment: Environment;
 
-  constructor(environment: Environment = processEnvironment) {
+  constructor(
+    environment: Environment = processEnvironment,
+    readonly resolved?: {
+      instance: InstanceConfig;
+      vault: VaultConfigStore;
+      notesPath: string;
+      statePath: string;
+    },
+  ) {
     this.environment = environment;
     logger.debug("Loading global config...");
     // One absolute normalized spelling for storage, index, hub and plugins.
-    this.notesPath = path.resolve(
-      this.#env("GLOBNOTES_PATH", { mandatory: true }),
-    );
+    this.notesPath = resolved?.notesPath ??
+      path.resolve(this.#env("GLOBNOTES_PATH", { mandatory: true }));
     // getEnv returns "" for unset vars — `||` treats that (and an
     // explicitly empty value) as absent, per the env-wins rule.
-    this.statePath = this.#env("GLOBNOTES_INDEX_PATH") ||
-      path.join(this.notesPath, ".globnotes");
+    this.statePath = resolved?.statePath ??
+      (this.#env("GLOBNOTES_INDEX_PATH") ||
+        path.join(this.notesPath, ".globnotes"));
     this.storedConfig = this.#loadStoredConfig();
     this.authType = this.#loadAuthType();
     this.setupRequired = this.authType === null;
-    this.quickAccessHide = this.#quickAccessHide();
-    this.quickAccessTitle = this.#quickAccessTitle();
-    this.quickAccessTerm = this.#quickAccessTerm();
-    this.quickAccessSort = this.#quickAccessSort();
-    this.quickAccessLimit = this.#quickAccessLimit();
-    this.autoEnablePlugins = this.#env("GLOBNOTES_AUTO_ENABLE_PLUGINS", {
-      castBool: true,
-      default: true,
-    }) ===
-      "true";
-    this.mcpEnabled = this.#env("GLOBNOTES_MCP_ENABLED", {
-      castBool: true,
-      default: true,
-    }) === "true";
-    this.mcpRateLimit = this.#loadMcpRateLimit();
-    this.allowedHosts = this.#loadAllowedHosts();
-    this.pathPrefix = this.#loadPathPrefix();
+    this.quickAccessHide = resolved?.vault.settings.quickaccess.hide ??
+      this.#quickAccessHide();
+    this.quickAccessTitle = resolved?.vault.settings.quickaccess.title ??
+      this.#quickAccessTitle();
+    this.quickAccessTerm = resolved?.vault.settings.quickaccess.term ??
+      this.#quickAccessTerm();
+    this.quickAccessSort = resolved?.vault.settings.quickaccess.sort ??
+      this.#quickAccessSort();
+    this.quickAccessLimit = resolved?.vault.settings.quickaccess.limit ??
+      this.#quickAccessLimit();
+    this.autoEnablePlugins = resolved?.vault.settings.plugins.autoenable ??
+      (this.#env("GLOBNOTES_AUTO_ENABLE_PLUGINS", {
+        castBool: true,
+        default: true,
+      }) ===
+        "true");
+    this.mcpEnabled = resolved?.instance.mcp.enabled ??
+      (this.#env("GLOBNOTES_MCP_ENABLED", {
+        castBool: true,
+        default: true,
+      }) === "true");
+    this.mcpRateLimit = resolved?.instance.mcp.ratelimit ??
+      this.#loadMcpRateLimit();
+    this.allowedHosts = resolved
+      ? parseAllowedHosts(resolved.instance.server.allowedhosts.join(","))
+      : this.#loadAllowedHosts();
+    this.pathPrefix = resolved?.instance.server.pathprefix ??
+      this.#loadPathPrefix();
     // getEnv returns "" for unset vars — `||` treats that (and an
     // explicitly empty value) as absent, per the env-wins rule.
     this.brandName = this.#env("GLOBNOTES_BRAND_NAME") ||
