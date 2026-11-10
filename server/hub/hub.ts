@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import * as path from "@std/path";
-import { type Environment, processEnvironment } from "../environment.ts";
-import { getEnv } from "../helpers.ts";
+import type { HubSettings } from "../config/consumers.ts";
+import { hubSettings, type LegacyInput } from "../config/legacy.ts";
 import { logger } from "../logger.ts";
 import type { StorageEffect } from "./effects.ts";
 import { pathKey, within } from "./paths.ts";
@@ -45,21 +45,12 @@ export class VaultHub {
   constructor(
     notesPath: string,
     statePath: string,
-    environment: Environment = processEnvironment,
+    settings?: LegacyInput<HubSettings>,
     options: { changeLimit?: number } = {},
   ) {
     this.#configuredRoot = path.resolve(notesPath);
     this.root = Deno.realPathSync(notesPath);
-    this.#intervalMs = Number(
-      getEnv(
-        "GLOBNOTES_HUB_SCAN_INTERVAL",
-        { default: "60" },
-        environment,
-      ),
-    ) * 1000;
-    if (!(this.#intervalMs > 0) || !Number.isFinite(this.#intervalMs)) {
-      throw new Error("GLOBNOTES_HUB_SCAN_INTERVAL must be positive");
-    }
+    this.#intervalMs = hubSettings(settings).scanIntervalMs;
     this.store = new HubStore(statePath, options);
     this.#stateRoot = Deno.realPathSync(statePath);
     this.#scanner = new HubScanner(

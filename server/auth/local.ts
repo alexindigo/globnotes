@@ -17,6 +17,8 @@ import { AuthType, type GlobalConfig } from "../config.ts";
 import { getEnv, timingSafeEqual, verifyPassword } from "../helpers.ts";
 import { logger } from "../logger.ts";
 import type { Login, Token } from "./models.ts";
+import type { SessionSettings } from "../config/consumers.ts";
+import { sessionSettings } from "../config/legacy.ts";
 
 const JWT_ALGORITHM = "HS256";
 
@@ -52,7 +54,7 @@ export class LocalAuth {
   private readonly password: string | null;
   private readonly passwordHash: string | null;
   private readonly secretKey: string;
-  private readonly sessionExpiryDays: number;
+  private readonly sessionExpirySeconds: number;
   readonly isTotpEnabled: boolean;
   /** True when the TOTP key came from GLOBNOTES_TOTP_KEY (not wizard). */
   readonly totpKeyFromEnv: boolean;
@@ -60,7 +62,10 @@ export class LocalAuth {
   private unpaddedTotpSecret = "";
   private lastUsedTotp: string | null = null;
 
-  constructor(globalConfig: GlobalConfig) {
+  constructor(
+    globalConfig: GlobalConfig,
+    settings: SessionSettings = sessionSettings(globalConfig.environment),
+  ) {
     // Credentials come from environment variables when set (env always
     // wins), otherwise from the stored first-run setup config.
     const stored = globalConfig.storedConfig ?? {};
@@ -83,13 +88,7 @@ export class LocalAuth {
       );
       Deno.exit(1);
     }
-    this.sessionExpiryDays = Number(
-      getEnv(
-        "GLOBNOTES_SESSION_EXPIRY_DAYS",
-        { castInt: true, default: 30 },
-        globalConfig.environment,
-      ),
-    );
+    this.sessionExpirySeconds = settings.expirySeconds;
 
     // TOTP — key from the environment, falling back to the stored
     // first-run setup config (wizard enrolment persists it there). Env
@@ -211,7 +210,7 @@ export class LocalAuth {
   async #createAccessToken(): Promise<string> {
     const key = new TextEncoder().encode(this.secretKey);
     const exp = Math.floor(Date.now() / 1000) +
-      this.sessionExpiryDays * 86_400;
+      this.sessionExpirySeconds;
     return await new SignJWT({ sub: this.username })
       .setProtectedHeader({ alg: JWT_ALGORITHM })
       .setExpirationTime(exp)

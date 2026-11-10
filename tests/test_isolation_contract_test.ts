@@ -150,7 +150,7 @@ const RAW_CLOCK_ALLOWED: NonNullable<Rule["allowed"]> = [
   },
   {
     file: "server/notes/file_system.ts",
-    line: "const now = performance.now() / 1000;",
+    line: "const now = performance.now();",
     reason:
       "scan-cache freshness against outside edits; a stall only expires the cache",
   },
@@ -391,9 +391,9 @@ const RULES: Rule[] = [
     id: "single-process-env-owner",
     scopes: ["server"],
     pattern: /Deno\.env\b/,
-    owners: ["server/environment.ts", "server/logger.ts"],
+    owners: ["server/environment.ts"],
     why:
-      "server components receive an Environment (server/environment.ts); logger.ts reads LOGLEVEL once at import",
+      "server/environment.ts is the process-env owner; consumers and logger receive configuration inputs",
   },
   {
     id: "observed-time-owner",

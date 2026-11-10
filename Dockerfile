@@ -47,6 +47,7 @@ WORKDIR ${APP_PATH}
 
 COPY LICENSE THIRD-PARTY-NOTICES.md deno.json deno.lock ./
 COPY server ./server
+COPY defaults ./defaults
 COPY shared ./shared
 COPY plugins ./plugins
 
