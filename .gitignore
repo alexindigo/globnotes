@@ -252,3 +252,4 @@ data/
 .globnotes
 .dsh_config
 client/.vite/
+/config/*.toml

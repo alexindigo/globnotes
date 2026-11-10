@@ -7,12 +7,14 @@ const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
 const port = listener.addr.port;
 listener.close();
 const baseUrl = `http://127.0.0.1:${port}`;
+const tmpdir = Deno.env.get("TMPDIR");
 const child = new Deno.Command(Deno.execPath(), {
   args: ["run", "--cached-only", "--frozen", `--config=${root}/deno.json`,
     "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env", `${root}/server/main.ts`],
   cwd: root,
   clearEnv: true,
   env: { PATH: Deno.env.get("PATH"), HOME: Deno.env.get("HOME"), NO_COLOR: "1",
+    ...(tmpdir === undefined ? {} : { TMPDIR: tmpdir }),
     GLOBNOTES_PATH: fixture, GLOBNOTES_INDEX_PATH: `${fixture}/.globnotes`,
     GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_HOST: "0.0.0.0", GLOBNOTES_PORT: String(port) },
   stdout: "piped", stderr: "piped",
