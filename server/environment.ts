@@ -19,3 +19,8 @@ export interface Environment {
 export const processEnvironment: Environment = {
   get: (key) => Deno.env.get(key),
 };
+
+/** One immutable input record for the layered boundary; consumers do not reread it. */
+export function snapshotEnvironment(): Record<string, string> {
+  return Object.freeze(Deno.env.toObject());
+}

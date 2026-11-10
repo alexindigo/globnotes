@@ -1,0 +1,48 @@
+# Complete shipped instance defaults. Put operator changes in config/globnotes.toml.
+[server]
+# Bind address; GLOBNOTES__SERVER_HOST.
+host = "0.0.0.0"
+# TCP port (0 selects an ephemeral port); GLOBNOTES__SERVER_PORT.
+port = 8080
+# Optional URL prefix, without a trailing slash; GLOBNOTES__SERVER_PATHPREFIX.
+pathprefix = ""
+# Accepted Host authorities; empty permits any host; GLOBNOTES__SERVER_ALLOWEDHOSTS.
+allowedhosts = []
+
+[vaults]
+# Base for vault directories, not a notes root; GLOBNOTES__VAULTS_BASEPATH.
+basepath = "/data"
+
+[metadata]
+# Optional metadata parent; empty keeps in-tree state; exact GLOBNOTES_METADATA_PATH.
+path = ""
+
+[index]
+# Notes per indexing batch; GLOBNOTES__INDEX_BATCHSIZE.
+batchsize = 200
+# Seconds between batches; GLOBNOTES__INDEX_BATCHDELAY.
+batchdelay = 0.1
+# Directory scan cache lifetime in seconds; GLOBNOTES__INDEX_SCANCACHETTL.
+scancachettl = 15
+
+[hub]
+# Full reconciliation interval in seconds; GLOBNOTES__HUB_SCANINTERVAL.
+scaninterval = 60
+
+[plugins]
+# Render workers per vault pool; total scales with vault count; GLOBNOTES__PLUGINS_RENDERWORKERS.
+renderworkers = 2
+
+[sessions]
+# Login lifetime in days; GLOBNOTES__SESSIONS_EXPIRYDAYS.
+expirydays = 30
+
+[log]
+# DEBUG, INFO, WARNING or ERROR; GLOBNOTES__LOG_LEVEL.
+level = "INFO"
+
+[mcp]
+# Enable the MCP endpoint; GLOBNOTES__MCP_ENABLED.
+enabled = true
+# Tool calls per minute per client, 0 disables limiting; GLOBNOTES__MCP_RATELIMIT.
+ratelimit = 600

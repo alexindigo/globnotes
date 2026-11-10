@@ -13,6 +13,7 @@ const child = new Deno.Command(Deno.execPath(), {
   cwd: root,
   clearEnv: true,
   env: { PATH: Deno.env.get("PATH"), HOME: Deno.env.get("HOME"), NO_COLOR: "1",
+    TMPDIR: Deno.env.get("TMPDIR"),
     GLOBNOTES_PATH: fixture, GLOBNOTES_INDEX_PATH: `${fixture}/.globnotes`,
     GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_HOST: "0.0.0.0", GLOBNOTES_PORT: String(port) },
   stdout: "piped", stderr: "piped",

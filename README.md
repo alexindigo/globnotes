@@ -87,6 +87,9 @@ for environment pins, status, ownership/recovery and text/durability limits.
 
 ## Getting started
 
+For the upcoming v3 configuration interface, see [layered configuration](docs/configuration.md)
+(preparatory; not yet the normal startup path).
+
 ```bash
 docker run -d \
   --name globnotes \
