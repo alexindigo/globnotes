@@ -55,3 +55,15 @@ does not erase saved vaults. Unavailable paths are not silently created.
 Plugin deployment settings remain addressed JSON under `plugins.settings`, not
 arbitrary TOML plugin tables. Installed plugin schemas still own address/field
 validation before workers start. Credentials and ACLs are not vault TOML leaves.
+
+## Persistence boundary
+
+`BoundFileStore` provides checked replacement for both JSON callers and the
+upcoming vault TOML owner. File/directory symlinks retain their identities.
+Writes check target access, preserve ownership/mode and sync a sibling temporary
+file. Bound-file identity and bytes are rechecked immediately before an atomic
+rename; a detected change causes a conflict. The check and rename are separate
+operations: a concurrent external edit in that short window can still be
+overwritten. Owners serialize their own writes; only the owner parses policy
+and publishes updated state at successful replacement. Cleanup failures remain
+errors, including after replacement has already committed.
