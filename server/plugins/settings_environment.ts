@@ -14,7 +14,7 @@ import { projectPageValues, validateFieldValue } from "./settings.ts";
 import { pluginCodePath } from "./manifest.ts";
 
 export interface SettingProvenance {
-  source: "environment" | "vault" | "default";
+  source: "environment" | "toml" | "vault" | "default";
   readonly: boolean;
 }
 export interface SettingsContext {
@@ -54,12 +54,17 @@ function invalid(): never {
   throw new PluginContractError(
     422,
     "invalid_plugin_settings_environment",
-    "GLOBNOTES_PLUGIN_SETTINGS contains malformed, unknown or invalid addressed settings; values are not logged.",
+    "plugins.settings contains malformed, unknown or invalid addressed settings; values are not logged.",
   );
 }
 export class PluginSettingsEnvironment {
   readonly #values: JsonValues;
-  constructor(raw?: string) {
+  readonly #source: "environment" | "toml";
+  constructor(
+    raw?: string,
+    source: "environment" | "toml" = "environment",
+  ) {
+    this.#source = source;
     try {
       if (
         raw !== undefined &&
@@ -111,7 +116,7 @@ export class PluginSettingsEnvironment {
       const pinned = Object.hasOwn(pins, field.key);
       fields[field.key] = {
         source: pinned
-          ? "environment"
+          ? this.#source
           : Object.hasOwn(stored, field.key)
           ? "vault"
           : "default",

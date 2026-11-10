@@ -997,7 +997,7 @@ Deno.test("plugin policy: opt-ins, auto-enable materialization, CAS, operator ed
       async () => {
         const pinned = new PluginPolicyStore(fixture.statePath, writable, {
           autoEnable: false,
-          environment: true,
+          pin: { value: true, source: "environment" },
         });
         const before = await pinned.read();
         assertEquals(before.metadata.autoEnableSource, "environment");

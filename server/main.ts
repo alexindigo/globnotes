@@ -35,7 +35,11 @@ import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { admitHost, createRebindingWarner } from "./host_admission.ts";
 import { initializeLogger, logger } from "./logger.ts";
-import { legacyLogLevel, legacyServiceSettings } from "./config/legacy.ts";
+import {
+  legacyLogLevel,
+  legacyPluginSettings,
+  legacyServiceSettings,
+} from "./config/legacy.ts";
 import { createMcpEndpoint } from "./mcp/endpoint.ts";
 import { createRateLimiter } from "./mcp/rate_limit.ts";
 import { initState, state } from "./state.ts";
@@ -90,7 +94,7 @@ const plugins = new PluginManager(
     persistence: {
       commit: (effect) => state.lifecycle!.gate.run(effect),
     },
-    env: environment,
+    settings: legacyPluginSettings(environment),
   },
 );
 const auth = globalConfig.authType === AuthType.PASSWORD ||

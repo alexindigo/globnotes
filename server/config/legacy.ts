@@ -3,17 +3,19 @@
 import { type Environment, processEnvironment } from "../environment.ts";
 import { getEnv } from "../helpers.ts";
 import { isLogLevel, type LogLevel } from "../logger.ts";
-import { loadInstanceConfig } from "./loader.ts";
-import type { InstanceConfig } from "./schema.ts";
+import { loadInstanceConfig, loadVaultConfig } from "./loader.ts";
+import type { InstanceConfig, VaultConfig } from "./schema.ts";
 import type {
   HubSettings,
   IndexSettings,
   NotesSettings,
+  PluginSettings,
   SessionSettings,
 } from "./consumers.ts";
 
 export type LegacyInput<T> = T | Environment;
 let defaults: InstanceConfig | undefined;
+let vaultDefaults: VaultConfig | undefined;
 function baseline(): InstanceConfig {
   return defaults ??= loadInstanceConfig({ env: {}, overlayPath: null }).config;
 }
@@ -73,6 +75,38 @@ export function legacyLogLevel(
 ): LogLevel {
   const value = (env.get("LOGLEVEL") ?? baseline().log.level).toUpperCase();
   return isLogLevel(value) ? value : baseline().log.level as LogLevel;
+}
+export function legacyPluginSettings(
+  env: Environment = processEnvironment,
+  overrides: {
+    renderWorkers?: number;
+    autoEnable?: boolean;
+    environment?: boolean;
+  } = {},
+): PluginSettings {
+  const vault = vaultDefaults ??= loadVaultConfig("globnotes", null, {}).config;
+  const stated = getEnv("GLOBNOTES_AUTO_ENABLE_PLUGINS", {}, env);
+  const pin = overrides.environment ??
+    (stated
+      ? getEnv("GLOBNOTES_AUTO_ENABLE_PLUGINS", { castBool: true }, env) ===
+        "true"
+      : undefined);
+  return {
+    renderWorkers: overrides.renderWorkers ?? Number(
+      getEnv("GLOBNOTES_RENDER_WORKERS", {
+        castInt: true,
+        default: baseline().plugins.renderworkers,
+      }, env),
+    ),
+    autoEnable: overrides.autoEnable ?? vault.plugins.autoenable,
+    ...(pin === undefined
+      ? {}
+      : { autoEnablePin: { value: pin, source: "environment" } }),
+    addressed: {
+      raw: env.get("GLOBNOTES_PLUGIN_SETTINGS") ?? vault.plugins.settings,
+      source: "environment",
+    },
+  };
 }
 export function legacyServiceSettings(env: Environment = processEnvironment) {
   return {

@@ -37,6 +37,7 @@ export async function auxiliaryFixture(options: {
   read?: unknown[];
   write?: unknown[];
   environment?: string;
+  pinSource?: "toml" | "environment";
   stateInVault?: boolean;
   prepare?(): Promise<void>;
   commit?<T>(effect: () => T | Promise<T>): Promise<T>;
@@ -93,7 +94,10 @@ export async function auxiliaryFixture(options: {
     fixture.statePath,
     {
       internalRoot: `${fixture.root}/no-internal`,
-      settingsEnvironment: new PluginSettingsEnvironment(options.environment),
+      settingsEnvironment: new PluginSettingsEnvironment(
+        options.environment,
+        options.pinSource,
+      ),
       persistence: { commit },
     },
   );

@@ -117,6 +117,13 @@ Async RPC to the host (values are structured-cloned):
 
 ## Ordering, enablement and the generic platform
 
+The preparatory v3 [configuration boundary](configuration.md#plugin-deployment-pins-preparatory)
+keeps saved policy beneath explicit TOML/env pins. Addressed JSON uses existing
+manifest page/field validation, including inactive installed plugins, before
+Workers start. TOML and env pins share source fingerprints, schema leases,
+secret redaction and approval handling; they do not create new saved copies.
+Production startup switches to this vocabulary in the later cutover step.
+
 `<state dir>/plugins.json` is vault policy: `order`, `disabled`, `enabled`,
 `autoEnable` and `revision`. Explicit disabled wins over explicit enabled,
 which wins over the auto-enable default (a stated
