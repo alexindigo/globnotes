@@ -34,7 +34,12 @@ import { servicePluginRpc } from "./plugins/rpc.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { getEnv, rewriteIndexHtml } from "./helpers.ts";
 import { admitHost, createRebindingWarner } from "./host_admission.ts";
-import { logger } from "./logger.ts";
+import { initializeLogger, logger } from "./logger.ts";
+import {
+  legacyLogLevel,
+  legacyServiceSettings,
+  sessionSettings,
+} from "./config/legacy.ts";
 import { createMcpEndpoint } from "./mcp/endpoint.ts";
 import { createRateLimiter } from "./mcp/rate_limit.ts";
 import { initState, state } from "./state.ts";
@@ -53,24 +58,26 @@ function fileExists(p: string): boolean {
 // Release identity first: a missing or invalid VERSION/GLOBNOTES_REVISION
 // stops startup before anything else is touched.
 const appVersion = readAppVersion();
+initializeLogger(legacyLogLevel());
 logger.info(`globnotes ${formatVersion(appVersion)}`);
 
 const globalConfig = new GlobalConfig();
 const environment = globalConfig.environment;
+const services = legacyServiceSettings(environment);
 // One effects owner for the vault; vault effects run only inside the gate.
 const effects = new VaultEffects(globalConfig.notesPath);
 const notes = new FileSystemNotes(
   globalConfig.notesPath,
   {},
-  environment,
+  services.notes,
   effects,
 );
-const indexer = new Fts5Indexer(globalConfig.statePath, environment);
+const indexer = new Fts5Indexer(globalConfig.statePath, services.index);
 const fileServing = new FileServing(globalConfig.notesPath, effects);
 const hub = new VaultHub(
   globalConfig.notesPath,
   globalConfig.statePath,
-  environment,
+  services.hub,
 );
 // Versioning plugins are offered displaced bytes before every gate write.
 const gate = new HubGate({ hub, versioning: () => plugins.runtime });
@@ -92,7 +99,7 @@ const plugins = new PluginManager(
 );
 const auth = globalConfig.authType === AuthType.PASSWORD ||
     globalConfig.authType === AuthType.TOTP
-  ? new LocalAuth(globalConfig)
+  ? new LocalAuth(globalConfig, sessionSettings(environment))
   : null;
 initState(globalConfig, auth, notes, indexer, fileServing, plugins, hub);
 

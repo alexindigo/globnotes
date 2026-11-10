@@ -6,6 +6,7 @@
 !client/**
 !deno.json
 !deno.lock
+!defaults/**
 !entrypoint.sh
 !healthcheck.sh
 !LICENSE

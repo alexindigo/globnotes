@@ -3,10 +3,11 @@
 /**
  * Minimal leveled logger, matching the Python server's format:
  *   YYYY-MM-DD HH:MM:SS [LEVEL]: message
- * Level from LOGLEVEL env (default INFO).
+ * The composition root initializes a validated level after configuration resolution.
  */
 
-type Level = "DEBUG" | "INFO" | "WARNING" | "ERROR";
+export type LogLevel = "DEBUG" | "INFO" | "WARNING" | "ERROR";
+type Level = LogLevel;
 
 const LEVELS: Record<Level, number> = {
   DEBUG: 10,
@@ -15,8 +16,13 @@ const LEVELS: Record<Level, number> = {
   ERROR: 40,
 };
 
-const configured = (Deno.env.get("LOGLEVEL") ?? "INFO").toUpperCase() as Level;
-const threshold = LEVELS[configured] ?? LEVELS.INFO;
+let threshold: number | undefined;
+export const isLogLevel = (value: string): value is LogLevel =>
+  Object.hasOwn(LEVELS, value);
+export function initializeLogger(level: string): void {
+  if (!isLogLevel(level)) throw new Error("Invalid log level");
+  threshold = LEVELS[level];
+}
 
 function ts(): string {
   // Local time, matching the Python logger's %(asctime)s.
@@ -27,6 +33,12 @@ function ts(): string {
 }
 
 function write(level: Level, args: unknown[]): void {
+  // Configuration tools may own stdout before logging has been initialized.
+  // Preserve their diagnostics without inventing a level or contaminating data.
+  if (threshold === undefined) {
+    console.error(...args);
+    return;
+  }
   if (LEVELS[level] < threshold) return;
   const line = `${ts()} [${level}]:`;
   if (level === "ERROR") console.error(line, ...args);

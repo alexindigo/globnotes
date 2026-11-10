@@ -7,7 +7,8 @@
  * change stream owns index updates, not this storage layer.
  */
 
-import { type Environment, processEnvironment } from "../environment.ts";
+import type { NotesSettings } from "../config/consumers.ts";
+import { type LegacyInput, notesSettings } from "../config/legacy.ts";
 import type { FileRef, Note, NoteCreate, NoteUpdate } from "./models.ts";
 import {
   InvalidPathError,
@@ -138,15 +139,13 @@ export class FileSystemNotes {
   constructor(
     storagePath: string,
     probes: StorageProbes = {},
-    environment: Environment = processEnvironment,
+    settings?: LegacyInput<NotesSettings>,
     effects: VaultEffects = new VaultEffects(storagePath),
   ) {
     this.storagePath = storagePath;
     this.effects = effects;
     this.probes = probes;
-    this.#scanCacheTtl = Number(
-      environment.get("GLOBNOTES_SCAN_CACHE_TTL") ?? "15",
-    );
+    this.#scanCacheTtl = notesSettings(settings).scanCacheTtlMs;
   }
 
   private readonly probes: StorageProbes;
@@ -789,7 +788,7 @@ export class FileSystemNotes {
    * use it). TTL-cached; invalidated on writes. */
   listAllNoteFilenames(): string[] {
     const ttl = this.#scanCacheTtl;
-    const now = performance.now() / 1000;
+    const now = performance.now();
     if (this.#scanCache !== null && now - this.#scanCache.ts < ttl) {
       return this.#scanCache.names;
     }

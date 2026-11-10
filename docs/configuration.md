@@ -68,6 +68,16 @@ overwritten. Owners serialize their own writes; only the owner parses policy
 and publishes updated state at successful replacement. Cleanup failures remain
 errors, including after replacement has already committed.
 
+## Service inputs
+
+Index pacing, directory-cache TTL and hub scan interval are configured in seconds;
+the configuration boundary converts them once to milliseconds for their consumers.
+Session days become JWT expiry seconds at that boundary. Render workers remain per
+vault, so total worker count grows with vault count. Services receive snapshots,
+not live environment lookups. The temporary pre-cutover `config/legacy.ts` adapter
+preserves existing startup and test inputs until step 8 removes old names.
+Runtime images include the shipped defaults required by this preparatory adapter.
+
 The preparatory `VaultConfigStore` saves partial vault TOML through this boundary.
 App writes preserve omitted leaves and explicit empty values, and cannot replace
 env-pinned leaves (even with the same value). External edits take effect on restart.

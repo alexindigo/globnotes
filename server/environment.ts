@@ -8,8 +8,8 @@
  * process environment on every lookup exactly as before. Tests inject their
  * own (see tests/helpers/environment.ts), so concurrent test modules — which
  * share one OS process under `deno test --parallel` — never see each other's
- * configuration. The only other `Deno.env` reader in server/ is logger.ts
- * (LOGLEVEL, read once at import).
+ * configuration. The preparatory consumers receive typed snapshots via the
+ * temporary config/legacy.ts adapter; logger initialization also receives a level.
  */
 
 export interface Environment {

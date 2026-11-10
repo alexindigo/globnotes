@@ -3,7 +3,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { createUuid } from "../../shared/uuid.ts";
 import * as path from "@std/path";
-import { type Environment, processEnvironment } from "@server/environment.ts";
+import type { IndexSettings } from "../config/consumers.ts";
+import { indexSettings, type LegacyInput } from "../config/legacy.ts";
 import type { Indexer } from "@server/state.ts";
 import { isReadableNotePath } from "@server/helpers.ts";
 import { logger } from "@server/logger.ts";
@@ -55,18 +56,20 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export interface IndexerAdapters {
   readText(filepath: string): string;
   openDatabase(filepath: string): DatabaseSync;
+  pace(milliseconds: number): Promise<unknown>;
 }
 
 export const fileAdapters: IndexerAdapters = {
   readText: (filepath) => Deno.readTextFileSync(filepath),
   openDatabase: (filepath) => new DatabaseSync(filepath),
+  pace: delay,
 };
 
 export class Fts5Indexer implements Indexer {
   #db: DatabaseSync;
   #indexPath: string;
   #status = { syncing: false, initial: false, done: 0, total: 0, failed: 0 };
-  readonly #environment: Environment;
+  readonly #settings: IndexSettings;
   readonly #adapters: IndexerAdapters;
   #savepoints = 0;
   #erasurePending = false;
@@ -75,10 +78,10 @@ export class Fts5Indexer implements Indexer {
 
   constructor(
     stateDir: string,
-    environment: Environment = processEnvironment,
+    settings?: LegacyInput<IndexSettings>,
     adapters: Partial<IndexerAdapters> = {},
   ) {
-    this.#environment = environment;
+    this.#settings = indexSettings(settings);
     this.#adapters = { ...fileAdapters, ...adapters };
     // The arg IS the state dir (index.sqlite's home) — no join; the
     // caller resolves GLOBNOTES_INDEX_PATH vs <vault>/.globnotes.
@@ -526,12 +529,8 @@ export class Fts5Indexer implements Indexer {
         .filter((f) => !indexedMtimes.has(f))
         .sort((a, b) => a.split("/").length - b.split("/").length);
       this.#status.total = newFiles.length;
-      const batchSize = Number(
-        this.#environment.get("GLOBNOTES_INDEX_BATCH_SIZE") ?? "200",
-      );
-      const batchDelay =
-        Number(this.#environment.get("GLOBNOTES_INDEX_BATCH_DELAY") ?? "0.1") *
-        1000;
+      const batchSize = this.#settings.batchSize;
+      const batchDelay = this.#settings.batchDelayMs;
       const added: string[] = [];
       for (let i = 0; i < newFiles.length; i += batchSize) {
         const batch = newFiles.slice(i, i + batchSize);
@@ -549,7 +548,7 @@ export class Fts5Indexer implements Indexer {
         added.push(...batchAdded);
         this.#status.done += batchAdded.length;
         this.#status.failed += batch.length - batchAdded.length;
-        if (batchDelay > 0) await delay(batchDelay);
+        if (batchDelay > 0) await this.#adapters.pace(batchDelay);
       }
       if (newFiles.length > 0) {
         logger.info(
