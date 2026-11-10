@@ -13,6 +13,8 @@
 import type { Middleware } from "@pathfinder/pathfinder";
 
 import { enforceAuth } from "@server/auth/middleware.ts";
+import { assertVaultTarget } from "@server/config/projection.ts";
+import { state } from "@server/state.ts";
 
 declare module "@pathfinder/pathfinder" {
   interface Meta {
@@ -22,6 +24,7 @@ declare module "@pathfinder/pathfinder" {
 
 export default (async (request, context) => {
   if (context.miss !== undefined) return; // 404/405 stay public
+  assertVaultTarget(state.config, request);
   if (context.meta.auth === false) return; // opted-out routes
   await enforceAuth(request._raw);
 }) satisfies Middleware;

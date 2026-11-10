@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { isDeploymentSource } from "./configurationProvenance.js";
 import { computed, reactive, readonly, ref, watch } from "vue";
 import {
   getConfig, getAccessSettings, postBrand, getTree, putPluginEnabled, putPluginPolicy,
@@ -162,8 +163,8 @@ export function createSettingsSession({
       canReview:state.canReview, canRetry:state.canRetry, canDiscard:state.canDiscard } : null;
   }
   const autoEnableView = computed(() => ({ value:catalogPolicy.value?.effectiveAutoEnable ?? true,
-    canToggle:inventorySnapshot.value.canMutate && catalogPolicy.value?.autoEnableSource !== 'environment',
-    note:catalogPolicy.value?.autoEnableSource === 'environment' ? 'Set by the server configuration' : '',
+    canToggle:inventorySnapshot.value.canMutate && !isDeploymentSource(catalogPolicy.value?.autoEnableSource),
+    note:isDeploymentSource(catalogPolicy.value?.autoEnableSource) ? 'Set by the server configuration' : '',
     recovery:inventorySnapshot.value.intent?.type === 'auto-enable' ? policyRecovery() : null }));
   const pluginRows = computed(() => {
     const plugins = new Map(catalogPlugins.value.map(plugin => [plugin.id, plugin]));

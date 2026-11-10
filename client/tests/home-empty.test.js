@@ -37,7 +37,7 @@ describe("Home empty vault", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("No notes yet");
-    expect(wrapper.text()).toContain("/vault");
+    expect(wrapper.text()).not.toContain("/vault");
     // The CTA must be a real rendered button — an unresolved component
     // renders nothing (regression guard for missing imports).
     const btn = wrapper.find("button");

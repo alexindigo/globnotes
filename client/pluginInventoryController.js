@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { isDeploymentSource } from "./configurationProvenance.js";
 import { reactive } from "vue";
 
 const copy = value => JSON.parse(JSON.stringify(value));
@@ -112,7 +113,7 @@ export function createPluginInventoryController({ getCatalog, getSession, writab
   }
   function admit(intent, expected = policy()) {
     if (disposed || !writable() || hasWork() || !Number.isSafeInteger(expected?.revision) || typeof expected.signature !== "string") return Promise.resolve(false);
-    if (intent.type === "auto-enable" && policy()?.autoEnableSource === "environment") return Promise.resolve(false);
+    if (intent.type === "auto-enable" && isDeploymentSource(policy()?.autoEnableSource)) return Promise.resolve(false);
     if (typeof intent.value !== "boolean") return Promise.resolve(false);
     const captured = { intent: copy(intent), base: copy({ revision: expected.revision, signature: expected.signature }),
       key: getSession(), owner: captureOwner(), version: ++state.version, sent: false, committed: null };

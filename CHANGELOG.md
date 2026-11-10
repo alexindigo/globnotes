@@ -6,6 +6,8 @@
 
 Typed TOML configuration defaults and validation, preparatory to the v3 startup cutover.
 
+Explain pinned settings without exposing deployment paths or secret values.
+
 Preserve saved plugin policy beneath explicit deployment pins (preparatory to
 startup cutover), with TOML/env provenance and inactive-plugin pin validation.
 

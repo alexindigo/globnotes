@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { pinExplanation } from "./configurationProvenance.js";
 export function visibleSettingsFields(page, values) {
   return (page.fields ?? []).filter((field) => {
     if (!field.visibleWhen) return true;
@@ -26,7 +27,7 @@ export function settingsFieldGroups(page, values) {
 /** Control formatting and event adaptation are shared plain-module concerns. */
 export function settingsFieldPresentation(field, value, provenance) {
   return { short:['toggle','select','number','color'].includes(field.type),
-    pin:provenance?.source === 'environment' ? 'Set by the server configuration' : '',
+    pin:pinExplanation(provenance),
     text:String(value ?? ''), selected:JSON.stringify(value),
     browseLabel:field.type === 'folder' ? 'Choose folder…' : field.type === 'file' ? 'Choose file…' : null };
 }

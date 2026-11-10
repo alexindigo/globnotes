@@ -8,6 +8,7 @@ import { saveViewLineNumbers, viewLineNumbers } from "./pluginSettings.js";
 import { currentTheme, setTheme, themePreviews } from "./themes.js";
 import { CUSTOM_BASE_LAYER_ID, CUSTOM_LAYER_ID, LAYER_ORDER, LAYERS } from "./keybindings/layers.js";
 import { isMac, platformKey } from "./keybindings/keys.js";
+import { pinExplanation } from "./configurationProvenance.js";
 import { currentLayerId, customOverridesMap, effectiveBindings, isCustomLayer, removeCustomBinding, setCustomBinding, setLayer } from "./keybindings/store.js";
 
 const slots = ["logo", "icon"];
@@ -29,6 +30,10 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
     picked: { logo: null, icon: null }, urls: { logo: null, icon: null }, remove: { logo: false, icon: false }, versions: { name: 0, accent: 0, logo: 0, icon: 0 },
     pending: false, inFlight: false, reviewing: false, unknown: false, readBack: false, error: "", reload: 0, capturing: null });
   let disposed = false, wire = null, uncertain = null;
+  const origin = key => getBrand()?.fields?.[key] ?? state.committed.fields?.[key];
+  const canEdit = key => writable() && !origin(key)?.readonly;
+  const blockedEdits = () => !canEdit('name') && state.name !== (state.committed.name ?? '') || !canEdit('accent') && (state.accentTouched || state.accentCleared);
+  const hasResettableBranding = () => canEdit('name') && !!state.committed.name || canEdit('accent') && !!state.committed.accent || !!state.committed.files?.length;
   function releaseUrl(slot) { if (state.urls[slot]) URL.revokeObjectURL(state.urls[slot]); state.urls[slot] = null; }
   function loadBrand() {
     if (state.loaded && (brandDirty() || state.pending || state.inFlight || state.reviewing || state.unknown)) return;
@@ -40,11 +45,11 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
   function customFile(slot) { return state.committed.files?.find(file => file.startsWith(`${slot}.`)); }
   function brandSnapshot() {
     if (!state.loaded) loadBrand();
-    return { name: state.name, accent: state.accent, accentCleared: state.accentCleared, dirty: brandDirty(), busy: state.pending || state.inFlight || state.reviewing, reviewing: state.reviewing,
+    return { name: state.name, accent: state.accent, nameReadonly:!canEdit('name'), accentReadonly:!canEdit('accent'), namePin:pinExplanation(origin('name')), accentPin:pinExplanation(origin('accent')), accentCleared: state.accentCleared, dirty: brandDirty(), busy: state.pending || state.inFlight || state.reviewing, reviewing: state.reviewing,
       slots: slots.map(id => ({ id, label: id === 'logo' ? 'Logo' : 'Icon', accept:brandFileAccept, help:brandFileHelp })), accept:brandFileAccept,
       canCancel:!!brandDirty() && !state.pending && !state.inFlight && !state.reviewing && !state.unknown,
-      canSave:writable() && !!brandDirty() && !state.pending && !state.inFlight && !state.reviewing && !state.unknown,
-      canReset:writable() && !state.pending && !state.inFlight && !state.reviewing && !!(state.committed.name || state.committed.accent || state.committed.files?.length),
+      canSave:writable() && !blockedEdits() && !!brandDirty() && !state.pending && !state.inFlight && !state.reviewing && !state.unknown,
+      canReset:writable() && !state.pending && !state.inFlight && !state.reviewing && hasResettableBranding(),
       pendingText:state.unknown ? 'Waiting for the server to confirm…' : state.reviewing ? 'Reading current branding…' : 'Saving branding…',
       writable: writable(), unknown: state.unknown, error: state.error, canRetry: state.unknown && !state.inFlight,
       hasBranding: !!(state.committed.name || state.committed.accent || state.committed.files?.length),
@@ -52,12 +57,12 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
         preview: state.urls[slot] || (customFile(slot) && !state.remove[slot] ? `${prefix}/_/brand/${customFile(slot)}?v=${state.reload}` : null) }])) };
   }
   function editBrand(key, value) {
-    if (!writable()) return;
+    if (!canEdit(key)) return;
     if (!state.loaded) loadBrand(); state.versions[key]++;
     if (key === "name") state.name = value;
     if (key === "accent") { state.accent = value; state.accentTouched = true; state.accentCleared = false; }
   }
-  function clearAccent() { if (!writable()) return; state.versions.accent++; state.accentTouched = false; state.accentCleared = true; }
+  function clearAccent() { if (!canEdit('accent')) return; state.versions.accent++; state.accentTouched = false; state.accentCleared = true; }
   function chooseFile(slot, file) { if (!writable() || !file) return; state.versions[slot]++; releaseUrl(slot); state.picked[slot] = file; state.urls[slot] = URL.createObjectURL(file); state.remove[slot] = false; }
   function discardFile(slot) { if (!writable()) return; state.versions[slot]++; releaseUrl(slot); state.picked[slot] = null; }
   function removeFile(slot) { if (!writable()) return; state.versions[slot]++; state.remove[slot] = true; }
@@ -70,8 +75,9 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
   }
   async function saveBrand(reset = false) {
     if (!writable() || state.pending || state.inFlight || state.reviewing || (state.unknown && !state.readBack)) return false;
+    if (!reset && blockedEdits()) return false;
     const submitted = { versions: { ...state.versions }, reset }, form = new FormData();
-    if (reset) { form.append("name", ""); form.append("accent", ""); form.append("removeLogo", "true"); form.append("removeIcon", "true"); }
+    if (reset) { if(canEdit('name'))form.append("name", ""); if(canEdit('accent'))form.append("accent", ""); form.append("removeLogo", "true"); form.append("removeIcon", "true"); }
     else {
       if (state.name !== (state.committed.name ?? "")) form.append("name", state.name);
       if (state.accentCleared) form.append("accent", ""); else if (state.accentTouched) form.append("accent", state.accent);
@@ -101,10 +107,10 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
       for (const slot of slots) {
         if (state.remove[slot] && !fresh.files?.some(file => file.startsWith(`${slot}.`))) state.remove[slot] = false;
       }
-      if (uncertain?.submitted.reset && !fresh.name && !fresh.accent && !fresh.files?.length) {
+      if (uncertain?.submitted.reset && ["name", "accent"].every(key => !uncertain.form.has(key) || (fresh[key] ?? "") === uncertain.form.get(key)) && !fresh.files?.length) {
         const submitted = uncertain.submitted;
-        if (state.versions.name === submitted.versions.name) state.name = "";
-        if (state.versions.accent === submitted.versions.accent) { state.accent = "#38bdf8"; state.accentTouched = false; state.accentCleared = false; }
+        if (state.versions.name === submitted.versions.name) state.name = fresh.name ?? "";
+        if (state.versions.accent === submitted.versions.accent) { state.accent = fresh.accent ?? "#38bdf8"; state.accentTouched = false; state.accentCleared = false; }
         for (const slot of slots) if (state.versions[slot] === submitted.versions[slot]) { releaseUrl(slot); state.picked[slot] = null; state.remove[slot] = false; }
       }
       // File names cannot acknowledge uploaded bytes. Keep chosen File drafts
@@ -117,7 +123,7 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
   }
   async function settle() { if (state.inFlight) { try { await observe(wire); } catch {} } return !state.inFlight && !state.pending && !state.reviewing && !state.unknown; }
   function discardBrand() { if (state.pending || state.inFlight || state.reviewing || (state.unknown && !state.readBack)) return false; state.unknown = false; state.loaded = false; loadBrand(); return true; }
-  function resetMessage() { const parts = []; if (state.committed.name) parts.push(`name "${state.committed.name}"`); if (state.committed.accent) parts.push(`accent ${state.committed.accent}`); if (state.committed.files?.length) parts.push(`${state.committed.files.length} uploaded files (${state.committed.files.join(", ")})`); return `This clears ${parts.join(", ")}. Unsaved branding choices are also replaced only when this reset succeeds. The instance returns to default globnotes branding.`; }
+  function resetMessage() { const parts = []; if (canEdit('name') && state.committed.name) parts.push(`name "${state.committed.name}"`); if (canEdit('accent') && state.committed.accent) parts.push(`accent ${state.committed.accent}`); if (state.committed.files?.length) parts.push(`${state.committed.files.length} uploaded files (${state.committed.files.join(", ")})`); return `This clears ${parts.join(", ")}. Unsaved branding choices are also replaced only when this reset succeeds. ${origin('name')?.readonly || origin('accent')?.readonly ? 'Pinned settings remain unchanged.' : 'The instance returns to default globnotes branding.'}`; }
 
   const layers = LAYER_ORDER.map(id => id === CUSTOM_LAYER_ID ? { id, label: "Custom", description: `Starts as a copy of ${LAYERS[CUSTOM_BASE_LAYER_ID].label}; overrides are stored in this browser.` } : LAYERS[id]);
   function display(binding) { if (!binding) return "Unassigned"; const key = platformKey(binding); return binding.alias ? `${key} or ${display(binding.alias)}` : key; }
