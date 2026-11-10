@@ -406,6 +406,7 @@ export function createNoteController({
   function exitEditState() {
     saveOwner.revokeRenamePrompt(); clearEditTimers();
     editMode.value = false; editorLine.value = null; editorInitialLine.value = null;
+    if (!deletedElsewhere) vaultNotice.value = "";
     refreshDirtyState();
     publishTitle(); publishFact(TOPICS.NOTE_EDIT_END, { path: note.value.path }); saveOwner.end();
   }

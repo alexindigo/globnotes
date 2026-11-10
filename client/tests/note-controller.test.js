@@ -187,6 +187,33 @@ describe("note workflow ownership", () => {
     expect(f.controller.state.saveFeedback).toBe("This note changed elsewhere. Your changes will be merged when you save.");
     expect(f.adapters.toast.add).not.toHaveBeenCalled();
   });
+  it("discard retires the merge promise on every edit exit but preserves external deletion", async () => {
+    for (const deleted of [true, false]) for (const exit of ["session", "close", "navigation"]) {
+      const f = fixture(); await f.controller.mount(); f.enter(); f.input("Mine");
+      await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: deleted ? "deleted" : "modified", hash: "v2" });
+      const notice = deleted ? "Deleted elsewhere - saving will re-create it" : "This note changed elsewhere. Your changes will be merged when you save.";
+      expect(f.controller.state.saveFeedback).toBe(notice);
+      if (exit === "session") expect(f.participant().discard()).toBe(true);
+      else if (exit === "navigation") {
+        expect(await f.controller.gateNavigation(f.to())).toBe(false);
+        f.controller.onSaveChoice("discard");
+      } else {
+        f.controller.toggleEditModeHandler(); await flush();
+        f.controller.onSaveChoice("discard"); await flush();
+      }
+      expect(f.controller.state.editMode).toBe(false);
+      expect(f.controller.currentBuffer()).toBe("Seed");
+      expect(f.controller.state.saveFeedback).toBe(deleted ? notice : "");
+      expect(f.controller.state.vaultNotice).toBe(deleted ? notice : "");
+      f.enter();
+      expect(f.controller.state.saveFeedback).toBe(deleted ? notice : "");
+      if (deleted) {
+        updateNote.mockResolvedValueOnce({ path: "folder/P", content: "Seed", saveResult: { status: "saved", recreated: true } });
+        f.controller.saveHandler(); await flush();
+        expect(updateNote).toHaveBeenLastCalledWith("folder/P", "folder/P", "Seed", "none", "Seed");
+      }
+    }
+  });
   it("an acknowledged merge emits one success toast and clears persistent external state", async () => {
     const f = fixture(); await f.controller.mount(); f.enter(); f.input("Mine");
     await f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "folder/P.md", kind: "modified", hash: "v2" });
