@@ -3,13 +3,22 @@ import { parse } from "@std/toml";
 import { fromFileUrl } from "@std/path";
 import { snapshotEnvironment } from "../environment.ts";
 import {
+  DECLARATION_SCHEMA,
   INSTANCE_SCHEMA,
   type InstanceConfig,
   type Leaf,
   type Schema,
   type Tree,
   type Value,
+  VAULT_SCHEMA,
+  type VaultConfig,
 } from "./schema.ts";
+import {
+  decodeVaultName,
+  escapeVaultName,
+  isVaultName,
+  vaultConfigPath,
+} from "./paths.ts";
 
 export interface Provenance {
   layer: "defaults" | "toml" | "env";
@@ -25,6 +34,12 @@ export interface Sources {
   defaultsPath?: string;
   overlayPath?: string | null;
   env: Record<string, string>;
+  vaultDefaultsPath?: string;
+  /** Scope bindings supplied by the registry/composition owner, not disk discovery. */
+  vaults?: Record<string, { path: string; overlayPath?: string | null }>;
+}
+export interface InstanceLoadResult extends LoadResult<InstanceConfig> {
+  vaults: Record<string, LoadResult<VaultConfig>>;
 }
 export class ConfigError extends Error {
   constructor(readonly problems: string[]) {
@@ -38,11 +53,22 @@ export const defaultsPath = fromFileUrl(
 export const overlayPath = fromFileUrl(
   new URL("../../config/globnotes.toml", import.meta.url),
 );
+export const vaultDefaultsPath = fromFileUrl(
+  new URL("../../defaults/vault.toml", import.meta.url),
+);
 export const isTree = (value: unknown): value is Tree =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 export const isLeaf = (node: Leaf | Schema): node is Leaf =>
   typeof node.type === "string";
 export function envName(key: string): string {
+  const declaration = /^vaults\.entries\.([a-z][a-z0-9_]*)\.(path|admin)$/.exec(
+    key,
+  );
+  if (declaration) {
+    return `GLOBNOTES_${escapeVaultName(declaration[1])}_${
+      declaration[2].toUpperCase()
+    }`;
+  }
   return key === "metadata.path"
     ? "GLOBNOTES_METADATA_PATH"
     : `GLOBNOTES__${key.replaceAll(".", "_").toUpperCase()}`;
@@ -173,6 +199,7 @@ export function loadLayers(
   explicit: boolean,
   problems: string[],
   name = envName,
+  overlaySchema?: (tree: Tree) => Schema,
 ): LoadResult<Tree> {
   const config: Tree = {},
     provenance: Record<string, Provenance> = {},
@@ -207,7 +234,7 @@ export function loadLayers(
     loaded.push(overlayFile);
     applyLayer(
       overlay,
-      schema,
+      overlaySchema?.(overlay) ?? schema,
       config,
       provenance,
       overlayFile,
@@ -264,8 +291,11 @@ export function freeze<T>(value: T): T {
 }
 export function loadInstanceConfig(
   sources: Sources,
-): LoadResult<InstanceConfig> {
+): InstanceLoadResult {
   const problems: string[] = [];
+  const { instanceEnv, declarationNames, vaultEnv } = splitEnvironment(
+    sources.env,
+  );
   const explicit = Object.hasOwn(sources.env, "GLOBNOTES_CONFIG");
   if (explicit && sources.env.GLOBNOTES_CONFIG.trim() === "") {
     problems.push("config: GLOBNOTES_CONFIG: expected nonempty file path");
@@ -280,12 +310,110 @@ export function loadInstanceConfig(
       : sources.overlayPath,
     explicit,
     problems,
+    envName,
+    (overlay) => declarationSchema(overlay, declarationNames, problems),
   );
-  applyEnvironment(result, INSTANCE_SCHEMA, sources.env, problems);
+  if (!isTree(result.config.vaults)) result.config.vaults = {};
+  const vaultSection = result.config.vaults as Tree;
+  if (!isTree(vaultSection.entries)) vaultSection.entries = {};
+  const entries = vaultSection.entries as Tree;
+  for (const name of declarationNames) {
+    if (!Object.hasOwn(entries, name)) entries[name] = {};
+  }
+  const template = vaultSection.entrydefaults;
+  for (const [name, entry] of Object.entries(entries)) {
+    if (!isTree(entry)) continue;
+    for (const [key] of leaves(DECLARATION_SCHEMA)) {
+      if (
+        !Object.hasOwn(entry, key) && isTree(template) &&
+        Object.hasOwn(template, key)
+      ) {
+        set(
+          result.config,
+          `vaults.entries.${name}.${key}`,
+          template[key] as Value,
+        );
+        result.provenance[`vaults.entries.${name}.${key}`] = {
+          layer: "defaults",
+          source: sources.defaultsPath ?? defaultsPath,
+          pinned: false,
+        };
+      }
+    }
+  }
+  applyEnvironment(
+    result,
+    declarationSchema({ vaults: { entries } }, declarationNames, problems),
+    instanceEnv,
+    problems,
+  );
+  for (const [name, entry] of Object.entries(entries)) {
+    if (!isTree(entry) || !valid(entry.path, DECLARATION_SCHEMA.path as Leaf)) {
+      problems.push(
+        `config: vaults.entries.${name}.path (${
+          envName(`vaults.entries.${name}.path`)
+        }): declared vault requires a nonempty path`,
+      );
+    }
+  }
+  const base = loadLayers(
+    VAULT_SCHEMA,
+    sources.vaultDefaultsPath ?? vaultDefaultsPath,
+    null,
+    false,
+    problems,
+    (key) => `GLOBNOTES_<NAME>_${key.replaceAll(".", "_").toUpperCase()}`,
+  );
+  const vaults: Record<string, LoadResult<VaultConfig>> = {};
+  const names = new Set([
+    ...Object.keys(entries),
+    ...Object.keys(sources.vaults ?? {}),
+    ...Object.keys(vaultEnv),
+  ]);
+  for (const name of names) {
+    if (!isVaultName(name)) {
+      problems.push(`config: vaults.${name}: invalid vault name`);
+      continue;
+    }
+    const declared = Object.hasOwn(entries, name) && isTree(entries[name])
+      ? entries[name] as Tree
+      : undefined;
+    const binding = Object.hasOwn(sources.vaults ?? {}, name)
+      ? sources.vaults![name]
+      : undefined;
+    const notes = typeof declared?.path === "string" && declared.path
+      ? declared.path
+      : binding?.path;
+    if (!notes) {
+      if (!declared) {
+        problems.push(
+          `config: vaults.${name} (GLOBNOTES_${
+            escapeVaultName(name)
+          }_PATH): vault env requires a declared or supplied scope`,
+        );
+      }
+      resolveVaultConfig(name, null, vaultEnv[name] ?? {}, base, problems);
+      continue;
+    }
+    const metadata = get(result.config, "metadata.path");
+    const file = binding?.overlayPath === null ? null : binding?.overlayPath ??
+      vaultConfigPath(
+        notes,
+        typeof metadata === "string" ? metadata : "",
+        name,
+      );
+    vaults[name] = resolveVaultConfig(
+      name,
+      file,
+      vaultEnv[name] ?? {},
+      base,
+      problems,
+    ) as unknown as LoadResult<VaultConfig>;
+  }
   if (problems.length) throw new ConfigError(problems);
-  return freeze(result) as unknown as LoadResult<InstanceConfig>;
+  return freeze({ ...result, vaults }) as unknown as InstanceLoadResult;
 }
-let memo: LoadResult<InstanceConfig> | undefined;
+let memo: InstanceLoadResult | undefined;
 export function config(): InstanceConfig {
   return (memo ??= loadInstanceConfig({ env: snapshotEnvironment() })).config;
 }
@@ -314,8 +442,120 @@ export function setConfigForTests(
     config: base as unknown as InstanceConfig,
     provenance,
     loaded: [],
+    vaults: {},
   });
 }
 export function resetConfigForTests(): void {
   memo = undefined;
+}
+
+function declarationSchema(
+  overlay: Tree,
+  envNames: Set<string>,
+  problems: string[],
+): Schema {
+  const entries = get(overlay, "vaults.entries");
+  const names = new Set([
+    ...envNames,
+    ...isTree(entries) ? Object.keys(entries) : [],
+  ]);
+  const schema: Schema = {};
+  for (const name of names) {
+    if (!isVaultName(name)) {
+      problems.push(`config: vaults.entries.${name}: invalid vault name`);
+      continue;
+    }
+    schema[name] = DECLARATION_SCHEMA;
+  }
+  const vaults = { ...INSTANCE_SCHEMA.vaults as Schema };
+  delete vaults.entrydefaults;
+  return { ...INSTANCE_SCHEMA, vaults: { ...vaults, entries: schema } };
+}
+
+function splitEnvironment(env: Record<string, string>) {
+  const instanceEnv: Record<string, string> = {};
+  const declarationNames = new Set<string>();
+  const vaultEnv: Record<string, Record<string, string>> = Object.create(null);
+  for (const [variable, raw] of Object.entries(env)) {
+    const rest = variable.slice("GLOBNOTES_".length);
+    if (
+      !variable.startsWith("GLOBNOTES_") ||
+      variable.startsWith("GLOBNOTES__") ||
+      ["GLOBNOTES_CONFIG", "GLOBNOTES_REVISION", "GLOBNOTES_METADATA_PATH"]
+        .includes(variable)
+    ) {
+      instanceEnv[variable] = raw;
+      continue;
+    }
+    const declaration = /^(.+)_(PATH|ADMIN)$/.exec(rest);
+    const leaf = /^(.+)_([A-Z0-9]+)_([A-Z0-9]+)$/.exec(rest);
+    const match = declaration ?? leaf;
+    const name = match ? decodeVaultName(match[1]) : null;
+    if (!name) {
+      instanceEnv[variable] = raw;
+      continue;
+    }
+    if (declaration) {
+      declarationNames.add(name);
+      instanceEnv[variable] = raw;
+    } else (vaultEnv[name] ??= {})[variable] = raw;
+  }
+  return { instanceEnv, declarationNames, vaultEnv };
+}
+
+function resolveVaultConfig(
+  name: string,
+  file: string | null,
+  env: Record<string, string>,
+  base: LoadResult<Tree>,
+  problems: string[],
+): LoadResult<Tree> {
+  const result = structuredClone(base);
+  const spelling = (key: string) =>
+    `GLOBNOTES_${escapeVaultName(name)}_${
+      key.replaceAll(".", "_").toUpperCase()
+    }`;
+  if (file !== null) {
+    const overlay = readLayer(file, true, problems);
+    if (overlay) {
+      result.loaded.push(file);
+      applyLayer(
+        overlay,
+        VAULT_SCHEMA,
+        result.config,
+        result.provenance,
+        file,
+        "toml",
+        problems,
+        spelling,
+      );
+    }
+  }
+  applyEnvironment(result, VAULT_SCHEMA, env, problems, spelling);
+  return result;
+}
+
+/** Standalone factory for the current single-vault adapter and future registry. */
+export function loadVaultConfig(
+  name: string,
+  file: string | null,
+  env: Record<string, string>,
+  defaultsFile = vaultDefaultsPath,
+): LoadResult<VaultConfig> {
+  if (!isVaultName(name)) throw new ConfigError(["config: invalid vault name"]);
+  const problems: string[] = [];
+  const base = loadLayers(
+    VAULT_SCHEMA,
+    defaultsFile,
+    null,
+    false,
+    problems,
+    (key) =>
+      `GLOBNOTES_${escapeVaultName(name)}_${
+        key.replaceAll(".", "_").toUpperCase()
+      }`,
+  );
+  const result = resolveVaultConfig(name, file, env, base, problems);
+  if (problems.length) throw new ConfigError(problems);
+  return freeze(result) as unknown as LoadResult<VaultConfig>;
 }

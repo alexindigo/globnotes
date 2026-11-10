@@ -42,6 +42,9 @@ export const INSTANCE_SCHEMA: Schema = {
   },
   vaults: {
     basepath: { type: "string", valid: (v) => String(v).trim().length > 0 },
+    // Shipped template only, never an operator setting or an actual declaration.
+    entrydefaults: { path: { type: "string" }, admin: { type: "string" } },
+    entries: {},
   },
   metadata: { path: { type: "string" } },
   index: {
@@ -71,7 +74,11 @@ export interface InstanceConfig {
     pathprefix: string;
     allowedhosts: string[];
   };
-  vaults: { basepath: string };
+  vaults: {
+    basepath: string;
+    entrydefaults: VaultDeclaration;
+    entries: Record<string, VaultDeclaration>;
+  };
   metadata: { path: string };
   index: { batchsize: number; batchdelay: number; scancachettl: number };
   hub: { scaninterval: number };
@@ -80,3 +87,44 @@ export interface InstanceConfig {
   log: { level: string };
   mcp: { enabled: boolean; ratelimit: number };
 }
+
+export interface VaultDeclaration {
+  path: string;
+  admin: string;
+}
+export interface VaultConfig {
+  brand: { name: string; accent: string };
+  quickaccess: {
+    hide: boolean;
+    title: string;
+    term: string;
+    sort: string;
+    limit: number;
+  };
+  plugins: { autoenable: boolean; settings: string };
+}
+export const DECLARATION_SCHEMA: Schema = {
+  path: { type: "string", valid: (v) => String(v).trim().length > 0 },
+  admin: { type: "string" },
+};
+export const VAULT_SCHEMA: Schema = {
+  brand: {
+    name: { type: "string" },
+    accent: {
+      type: "string",
+      valid: (v) => v === "" || /^#[0-9a-fA-F]{6}$/.test(String(v)),
+    },
+  },
+  quickaccess: {
+    hide: { type: "boolean" },
+    title: { type: "string" },
+    term: { type: "string" },
+    sort: {
+      type: "string",
+      valid: (v) => ["score", "title", "lastModified"].includes(String(v)),
+    },
+    limit: { type: "integer", valid: (v) => Number(v) >= 0 },
+  },
+  // Address/page/field validation remains owned by the installed plugin schemas.
+  plugins: { autoenable: { type: "boolean" }, settings: { type: "string" } },
+};

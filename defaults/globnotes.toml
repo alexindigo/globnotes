@@ -13,6 +13,12 @@ allowedhosts = []
 # Base for vault directories, not a notes root; GLOBNOTES__VAULTS_BASEPATH.
 basepath = "/data"
 
+[vaults.entrydefaults]
+# Shipped declaration template, not an env leaf. Actual entries require a path.
+path = ""
+# Optional account login reference; empty grants no configured admin. No env for the template.
+admin = ""
+
 [metadata]
 # Optional metadata parent; empty keeps in-tree state; exact GLOBNOTES_METADATA_PATH.
 path = ""

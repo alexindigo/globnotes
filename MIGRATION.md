@@ -21,7 +21,7 @@ those releases cannot move `latest` back from v3.
 | 3 | Logins | One login for the whole instance (`none`, `read_only`, `password`, `totp`), stored in `<state>/config.json` | **Accounts** belong to the instance; each person has one. Each account chooses a password or password + TOTP. Each vault grants **Admin / Edit / View / None** per account, plus an "Everybody else" level (guest, i.e. not signed in) |
 | 4 | v2 login modes | `none` / `read_only` / `password` / `totp` | Per vault: "Everybody else: Edit" = old `none`; "Everybody else: View" = old `read_only`; "Everybody else: No access" plus named accounts = old `password` / `totp` |
 | 5 | App state per vault | `<notes>/.globnotes/`, or `GLOBNOTES_INDEX_PATH` | `<vault folder>/.globnotes/`, or under `GLOBNOTES_METADATA_PATH`: `<metadata>/<vault>/` |
-| 6 | Instance state (accounts, vault list) | — | With `GLOBNOTES_METADATA_PATH`: `<metadata>/_/` (e.g. `/etc/globnotes/_/accounts`). Without it: **Open** (assumed default: `/data/.globnotes/`) |
+| 6 | Instance state (accounts, vault list) | - | With `GLOBNOTES_METADATA_PATH`: `<metadata>/_/` (e.g. `/etc/globnotes/_/accounts`). Without it: `<base>/.globnotes/` (default `/data/.globnotes/`) |
 | 7 | Configuration | Environment variables only | Layered: built-in defaults → optional TOML config file → environment variables. Unknown `GLOBNOTES_*` variables stop the server at boot with a list of problems |
 | 8 | Environment variable names | `GLOBNOTES_PATH`, `GLOBNOTES_AUTH_TYPE`, … | New names, no aliases (see "Environment variables" below) |
 | 9 | Plugins | Installed per instance; enabled and configured for the one vault | Still installed once per instance. Each vault turns them on and off and has its own plugin settings, approvals and data |
@@ -202,4 +202,4 @@ version:
 | 4 | Unraid template: new or updated |
 | 5 | Mapping of `GLOBNOTES_READ_ONLY_SETTINGS` and `GLOBNOTES_PLUGIN_SETTINGS` |
 | 6 | **Open:** how the first account and vault admin are created for v2 `none` / `read_only` installs, which have no login to import |
-| 7 | **Open:** instance-state default without `GLOBNOTES_METADATA_PATH` (assumed `/data/.globnotes/`) |
+| 7 | Instance-state default is settled: `<base>/.globnotes/` without `GLOBNOTES_METADATA_PATH` |

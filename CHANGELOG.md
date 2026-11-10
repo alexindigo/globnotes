@@ -6,6 +6,9 @@
 
 Typed TOML configuration defaults and validation, preparatory to the v3 startup cutover.
 
+Instance and vault configuration scopes, typed path/admin declarations and shared
+metadata paths (preparatory to startup cutover).
+
 The top-bar sync cloud shows file transfers and persistent connection trouble,
 with a per-connection status panel and a link to Sync settings.
 
