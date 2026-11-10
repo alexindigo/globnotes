@@ -4,13 +4,14 @@ import { TOPICS } from "../bus/index.js";
 
 const row = (values = {}) => ({ id:"home", label:"Home", pluginName:"Remote", enabled:true, status:"active", activity:null, failingSince:null, warning:false,warningAfterMs:null,reason:null, nextRetry:null, lastSync:null, ...values });
 function fixture(instances = [row()]) {
-  let now = 1_000, lifetimeListener;
+  let now = 1_000, active = true;
+  const lifetimeListeners = new Set();
   const handlers = new Map(), release = vi.fn();
   const read = vi.fn(async () => ({ instances }));
   const controller = createSyncStatus({ read, now:() => now, subscribe:(topic, fn) => { handlers.set(topic, fn); return () => handlers.delete(topic); },
-    acquireChanges:() => release, lifetime:{subscribe(fn) { lifetimeListener = fn; fn(true); return vi.fn(); }} });
+    acquireChanges:() => release, lifetime:{state:()=>({active}),subscribe(fn) { lifetimeListeners.add(fn);fn(active);return ()=>lifetimeListeners.delete(fn); }} });
   controller.setContext({ active:true, key:"admin" });
-  return { controller, read, handlers, release, time(value) { now = value; }, visibility:value => lifetimeListener(value), rows(value) { instances = value; } };
+  return { controller, read, handlers, release, time(value) { now = value; }, visibility(value) { active=value;for(const listener of [...lifetimeListeners])listener(value); }, rows(value) { instances = value; } };
 }
 const settle = async () => { for(let i=0;i<15;i++) await Promise.resolve(); };
 afterEach(() => vi.useRealTimers());
@@ -66,9 +67,38 @@ describe("sync status owner", () => {
     vi.useFakeTimers();const f=fixture([row({status:"locked",failingSince:1000,warningAfterMs:2000})]);await settle();f.visibility(false);await vi.advanceTimersByTimeAsync(5000);expect(f.read).toHaveBeenCalledTimes(1);
     f.visibility(true);await settle();f.rows([row()]);await f.controller.refresh();await vi.advanceTimersByTimeAsync(5000);expect(f.read).toHaveBeenCalledTimes(3);expect(f.controller.state.tone).toBe("idle");f.controller.dispose();
   });
+  it.each(["deadline","invalidation"])("retries a failed pending warning read after %s until authoritative warning arrives",async cause=>{
+    vi.useFakeTimers();const f=fixture([row({status:"locked",failingSince:1000,warningAfterMs:100})]);await settle();
+    f.read.mockRejectedValueOnce(Error("offline")).mockRejectedValueOnce({response:{status:503}}).mockResolvedValue({instances:[row({status:"locked",failingSince:1000,warning:true})]});
+    if(cause==="deadline")await vi.advanceTimersByTimeAsync(100);else await f.handlers.get(TOPICS.VAULT_DRIVERS)();expect(f.read).toHaveBeenCalledTimes(2);expect(f.controller.state.tone).toBe("idle");
+    await vi.advanceTimersByTimeAsync(499);expect(f.read).toHaveBeenCalledTimes(2);await vi.advanceTimersByTimeAsync(1);expect(f.read).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(999);expect(f.read).toHaveBeenCalledTimes(3);await vi.advanceTimersByTimeAsync(1);expect(f.read).toHaveBeenCalledTimes(4);
+    expect(f.controller.state.tone).toBe("danger");expect(f.controller.state.error).toBe("");await vi.advanceTimersByTimeAsync(60_000);expect(f.read).toHaveBeenCalledTimes(4);f.controller.dispose();
+  });
+  it("caps warning-read backoff at the shared thirty-second bound",async()=>{
+    vi.useFakeTimers();const f=fixture([row({status:"locked",failingSince:1000,warningAfterMs:100})]);await settle();f.read.mockRejectedValue(Error("offline"));await vi.advanceTimersByTimeAsync(100);
+    for(const delay of [500,1000,2000,4000,8000,16000,30000,30000]) {const count=f.read.mock.calls.length;await vi.advanceTimersByTimeAsync(delay-1);expect(f.read).toHaveBeenCalledTimes(count);await vi.advanceTimersByTimeAsync(1);expect(f.read).toHaveBeenCalledTimes(count+1);}
+    f.controller.dispose();
+  });
+  it.each([401,403])("does not retry rejected authority %s at the warning deadline",async status=>{
+    vi.useFakeTimers();const f=fixture([row({status:"locked",failingSince:1000,warningAfterMs:100})]);await settle();f.read.mockRejectedValue({response:{status}});await vi.advanceTimersByTimeAsync(100);await vi.advanceTimersByTimeAsync(60_000);
+    expect(f.read).toHaveBeenCalledTimes(2);expect(f.controller.state.visible).toBe(false);f.controller.dispose();
+  });
+  it.each(["hidden","disposed","context"])("cancels warning recovery when %s",async boundary=>{
+    vi.useFakeTimers();const f=fixture([row({status:"locked",failingSince:1000,warningAfterMs:100})]);await settle();f.read.mockRejectedValue(Error("offline"));await vi.advanceTimersByTimeAsync(100);
+    if(boundary==="hidden")f.visibility(false);else if(boundary==="disposed")f.controller.dispose();else f.controller.setContext({active:false,key:"other"});
+    await vi.advanceTimersByTimeAsync(60_000);expect(f.read).toHaveBeenCalledTimes(2);
+    if(boundary==="hidden") {f.read.mockResolvedValue({instances:[row({status:"locked",failingSince:1000,warning:true})]});f.visibility(true);await settle();expect(f.controller.state.tone).toBe("danger");}
+    f.controller.dispose();
+  });
+  it("a recovery invalidation preempts warning retries and resets backoff",async()=>{
+    vi.useFakeTimers();const f=fixture([row({status:"locked",failingSince:1000,warningAfterMs:100})]);await settle();f.read.mockRejectedValueOnce(Error("offline"));await vi.advanceTimersByTimeAsync(100);
+    f.rows([row()]);await f.handlers.get(TOPICS.VAULT_DRIVERS)();await vi.advanceTimersByTimeAsync(60_000);expect(f.read).toHaveBeenCalledTimes(3);expect(f.controller.state.tone).toBe("idle");
+    f.rows([row({status:"locked",failingSince:2000,warningAfterMs:100})]);await f.controller.refresh();f.read.mockRejectedValue(Error("offline"));await vi.advanceTimersByTimeAsync(100);const count=f.read.mock.calls.length;await vi.advanceTimersByTimeAsync(499);expect(f.read).toHaveBeenCalledTimes(count);await vi.advanceTimersByTimeAsync(1);expect(f.read).toHaveBeenCalledTimes(count+1);f.controller.dispose();
+  });
   it("a transient read failure preserves known connections, not unconfirmed activity",async()=>{
     vi.useFakeTimers();const f=fixture([row({activity:"receiving"})]);await settle();f.read.mockRejectedValue(Error("offline"));await f.controller.refresh();f.time(3000);await vi.advanceTimersByTimeAsync(2000);
-    expect(f.controller.state.visible).toBe(true);expect(f.controller.state.icon).toBe("tabCloud");expect(f.controller.state.error).toBe("Could not refresh sync status.");f.controller.dispose();
+    expect(f.controller.state.visible).toBe(true);expect(f.controller.state.icon).toBe("tabCloud");expect(f.controller.state.error).toBe("Could not refresh sync status.");expect(f.read).toHaveBeenCalledTimes(2);f.controller.dispose();
   });
   it("releases hidden connections and refreshes on return, fencing old replies", async () => {
     const f=fixture();await settle();f.visibility(false);expect(f.release).toHaveBeenCalledOnce();expect(f.handlers.size).toBe(0);

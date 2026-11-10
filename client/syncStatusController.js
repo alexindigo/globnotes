@@ -7,13 +7,15 @@ import { connectionLifetime } from "./connectionLifetime.js";
 import { getStoredToken } from "./tokenStorage.js";
 import { permissionEligibility, permissionSessionKey } from "./appSessionPolicy.js";
 import { driverStates, driverReason } from "./driverPresentation.js";
+import { createConflictReadRetry } from "./conflictReadRetry.js";
 
 export const SYNC_STATUS = Symbol("sync-status");
 export const SYNC_ACTIVITY_MIN_MS = 1000;
 
 /** The vault stream owns transport cadence. The server alone decides warnings;
  * its relative deadline requests one fresh status read, not a polling loop.
- * A separate local timer holds brief activity. Hidden documents release both. */
+ * Failed pending reads reuse snapshot backoff; a local timer holds brief activity.
+ * Hidden documents release all scheduled work. */
 export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
   acquireChanges = acquireVaultChanges, lifetime = connectionLifetime,
   now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout,
@@ -23,6 +25,8 @@ export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
   let generation = 0, flight = null, dirty = false, releases = [], timer = null, warningTimer = null, stopContext;
   let shownActivity = null, activityUntil = 0;
   const live = () => active && visible && !disposed;
+  const retry = createConflictReadRetry(refresh,{lifetime,setTimer,clearTimer});
+  const warningDelays = () => data.instances.filter(row => row.enabled && !row.warning && Number.isFinite(row.warningAfterMs) && row.warningAfterMs > 0).map(row => row.warningAfterMs);
   function derive() {
     clearTimer(timer);timer = null;
     const currentTime = now(), enabled = data.instances.filter(row => row.enabled);
@@ -40,6 +44,7 @@ export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
     if (live() && !actual && shownActivity) timer = setTimer(derive, Math.max(1,activityUntil - currentTime));
   }
   function retire(clear = true) {
+    retry.reset();
     generation++;flight = null;dirty = false;clearTimer(timer);timer = null;
     clearTimer(warningTimer);warningTimer = null;
     releases.splice(0).forEach(release => release());
@@ -48,6 +53,7 @@ export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
   }
   async function refresh() {
     if(!live()) return false;
+    retry.begin();
     clearTimer(warningTimer);warningTimer = null;
     if(flight) { dirty = true;return flight; }
     const own = generation;
@@ -61,7 +67,8 @@ export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
           failingLabel:Number.isFinite(row.failingSince) ? new Date(row.failingSince).toLocaleString() : "",
           retryLabel:Number.isFinite(row.nextRetry) ? `Next retry: ${new Date(now() + row.nextRetry).toLocaleTimeString()}` : "No retry scheduled" }));
         data.error = "";
-        const deadlines = data.instances.filter(row => row.enabled && !row.warning && Number.isFinite(row.warningAfterMs) && row.warningAfterMs > 0).map(row => row.warningAfterMs);
+        retry.reset();
+        const deadlines = warningDelays();
         if(deadlines.length) warningTimer = setTimer(() => {
           warningTimer = null;
           if(own === generation) void refresh();
@@ -72,6 +79,9 @@ export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
           const status = error?.response?.status;
           if(status === 401 || status === 403) data.instances = [];
           else data.instances = data.instances.map(row => ({...row,activity:null}));
+          // A failed deadline read does not settle the server's warning decision.
+          // Keep that obligation until a fresh snapshot or lifetime boundary.
+          if(warningDelays().length) retry.failed(error);
           data.error = "Could not refresh sync status.";derive();
         }
         return false;
@@ -95,5 +105,5 @@ export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
       ([active,key]) => setContext({active,key}),{immediate:true,flush:"sync"});
   }
   return { state:readonly(reactive(Object.fromEntries(Object.keys(data).map(key => [key,computed(() => data[key])])))),
-    setContext,bindContext,refresh,dispose() { stopContext?.();offLifetime();retire();disposed = true; } };
+    setContext,bindContext,refresh,dispose() { stopContext?.();offLifetime();retire();retry.dispose();disposed = true; } };
 }
