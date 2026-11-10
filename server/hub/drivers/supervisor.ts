@@ -67,6 +67,8 @@ interface Slot {
   nextFull: number;
   nextExport: number;
   nextRetry: number;
+  activity: "receiving" | "sending" | null;
+  activityUntil: number;
 }
 export interface SupervisorAdapters {
   hub: VaultHub;
@@ -115,6 +117,21 @@ export class DriverSupervisor implements DriverOwners {
   }
   #changed = (): void => {
     if (this.#closed) return;
+    for (const slot of this.#slots.values()) {
+      this.#projectActivity(slot);
+      const view = !slot.retired && (!slot.worker || slot.worker.current())
+        ? slot.session?.snapshot() ?? slot.view
+        : slot.view;
+      // An enabled replacement's temporary Off/Starting projection is not
+      // recovery. Off with a reason is a real unavailable-plugin state.
+      if (view.status !== "off" || view.reason || !slot.instance.enabled) {
+        this.peers.observeStatus(
+          slot.instance.id,
+          view.status,
+          slot.instance.enabled,
+        );
+      }
+    }
     this.#revision = this.peers.nextAttentionRevision();
     for (const listener of [...this.#listeners]) {
       try {
@@ -220,6 +237,8 @@ export class DriverSupervisor implements DriverOwners {
       nextFull: Infinity,
       nextExport: Infinity,
       nextRetry: Infinity,
+      activity: null,
+      activityUntil: 0,
     };
     this.#slots.set(instance.id, slot);
     if (instance.enabled && owner.enabled && owner.manifest?.driver) {
@@ -281,7 +300,9 @@ export class DriverSupervisor implements DriverOwners {
   #tick(): void {
     if (this.#closed) return;
     const now = this.#clock.now();
+    let activityChanged = false;
     for (let slot of this.#slots.values()) {
+      activityChanged = this.#projectActivity(slot) || activityChanged;
       if (slot.pending) continue;
       if (slot.nextRetry <= now) {
         this.#retire(slot);
@@ -290,6 +311,21 @@ export class DriverSupervisor implements DriverOwners {
       if (slot.nextFull <= now) this.#run(slot, true);
       else if (slot.nextExport <= now) this.#run(slot, false);
     }
+    if (activityChanged) this.#changed();
+  }
+  #projectActivity(slot: Slot): boolean {
+    const before = slot.activity;
+    const actual = !slot.retired && slot.instance.enabled
+      ? slot.session?.activity() ?? null
+      : null;
+    if (slot.retired || !slot.instance.enabled) slot.activity = null;
+    else if (actual) {
+      if (actual !== slot.activity) {
+        slot.activityUntil = this.#clock.now() + 1000;
+      }
+      slot.activity = actual;
+    } else if (this.#clock.now() >= slot.activityUntil) slot.activity = null;
+    return before !== slot.activity;
   }
   #run(slot: Slot, full: boolean): Promise<void> {
     if (slot.pending) {
@@ -591,6 +627,10 @@ export class DriverSupervisor implements DriverOwners {
             plugin?.driver?.secrets ?? [],
           ),
           ...stateView,
+          failingSince: instance.enabled
+            ? this.peers.failingSince(instance.id)
+            : null,
+          activity: slot && !slot.retired ? slot.activity : null,
           nextRetry: slot && Number.isFinite(slot.nextRetry)
             ? Math.max(0, slot.nextRetry - this.#clock.now())
             : null,

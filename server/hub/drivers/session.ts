@@ -125,6 +125,7 @@ export class DriverSession {
   #empty: { path: string; version: string }[] | null = null;
   #sameIdentity = false;
   #sameScope = false;
+  #transfer: "receiving" | "sending" | null = null;
 
   constructor(
     readonly instance: DriverInstance,
@@ -147,6 +148,14 @@ export class DriverSession {
   }
   snapshot(): DriverSessionView {
     return structuredClone(this.#view);
+  }
+  activity(): "receiving" | "sending" | null {
+    return this.#retired ? null : this.#transfer;
+  }
+  #moving(direction: "receiving" | "sending" | null): void {
+    if (this.#transfer === direction) return;
+    this.#transfer = direction;
+    this.adapters.changed();
   }
   retire(): void {
     this.#retired = true;
@@ -313,6 +322,8 @@ export class DriverSession {
           detail.code === "denied" ? null : failure,
         );
       }
+    } finally {
+      this.#moving(null);
     }
   }
   async #discover(): Promise<boolean> {
@@ -429,6 +440,7 @@ export class DriverSession {
         start < removals.length;
         start += DRIVER_LIMITS.unitFiles
       ) {
+        this.#moving("receiving");
         const result = await this.adapters.operations.applyDriverImport(
           peer,
           removals.slice(start, start + DRIVER_LIMITS.unitFiles),
@@ -514,6 +526,7 @@ export class DriverSession {
     // A page is a native unit unless the documented file/byte bound splits it.
     // Any unknown observation in it leaves the entire unit unmaterialized.
     if (!complete) return false;
+    if (candidates.length) this.#moving("receiving");
     let members: DriverImport[] = [], bytes = 0;
     const flush = async () => {
       if (!members.length) return;
@@ -708,6 +721,7 @@ export class DriverSession {
             planned.version,
           );
         }
+        this.#moving("sending");
         const results = await this.adapters.driver.apply(
           captured.map(({ wire }) => wire),
         );
@@ -858,7 +872,13 @@ export class DriverSession {
     assertAuthority: () => void = () => {},
   ): Promise<void> {
     const captured = structuredClone(input);
-    return this.#activity.run(() => this.#decide(captured, assertAuthority));
+    return this.#activity.run(async () => {
+      try {
+        await this.#decide(captured, assertAuthority);
+      } finally {
+        this.#moving(null);
+      }
+    });
   }
   async #decide(
     input: DriverDecision,
@@ -883,6 +903,7 @@ export class DriverSession {
     const peer = this.instance.id, hub = this.adapters.hub;
     const completed: string[] = [];
     const apply = async (members: DriverImport[]) => {
+      if (members.length) this.#moving("receiving");
       const results = await this.adapters.operations.applyDriverImport(
         peer,
         members,
@@ -959,6 +980,7 @@ export class DriverSession {
               bytes = 0;
             }
             const row = this.peers.file(peer, path)!;
+            this.#moving("receiving");
             const result = await this.adapters.driver.read({
               path,
               revision: row.revision!,

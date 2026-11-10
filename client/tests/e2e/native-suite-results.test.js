@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { concurrencyValue, runChildren, SELECTION, SERIAL_CASES } from "./legacy-native-suite.mjs";
+import { concurrencyValue, FILE_CASES, runChildren, SELECTION, selectCases, SERIAL_CASES } from "./legacy-native-suite.mjs";
 
 describe("native suite child result ownership", () => {
+  it("includes sync status in CI, filtered runs and source-owned case selection", () => {
+    expect(selectCases()).toContainEqual(["sync-status-native"]);
+    expect(selectCases("sync-status-native")).toEqual([
+      ["native-ownership-control"], ["native-actions-control"], ["sync-status-native"],
+    ]);
+    expect(FILE_CASES["client/tests/e2e/sync-status-native.mjs"]).toEqual(["sync-status-native"]);
+  });
   it("rejects a nonzero child even when output contains the old pass marker and never starts later cases", async () => {
     const execute = vi.fn(async () => ({ success: false, code: 1, stdout: "distinct body backgrounds: 2; COPY BUTTON OK" }));
     await expect(runChildren([["broken"], ["later"]], execute, { concurrency: 1 })).rejects.toThrow("exit 1");

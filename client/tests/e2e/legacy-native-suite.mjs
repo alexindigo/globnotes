@@ -11,7 +11,7 @@ export const SELECTION = [
   ["line-wrap"], ["ctrl-f-search"], ["anchor-history"], ["setup-wizard"], ["setup-totp-desktop"],
   ["autosave-timer"], ["hub-safe-saves-native"], ["hub-writers-gate-native"], ["html-safety"], ["background-connections-native"], ["reauthentication-native"],
   ["conflict-inbox-native"], ["conflict-resolution-native"], ["conflict-review-native"],
-  ["sync-settings-native"], ["sync-driver-native"],
+  ["sync-settings-native"], ["sync-driver-native"], ["sync-status-native"],
   ...["s3", "webdav"].flatMap(backend => ["none", "openssl-base64", "rclone-base64"].map(codec => ["remotely-save-native", backend, codec])),
 ];
 

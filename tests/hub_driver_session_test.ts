@@ -117,7 +117,7 @@ function sessionFixture() {
     ...instance,
     enabled: true,
   });
-  const make = (capabilities = driverCapabilities) => {
+  const make = (capabilities = driverCapabilities, changed = () => {}) => {
     const session = new DriverSession(instance, capabilities, {
       hub: f.hub,
       operations: f.operations,
@@ -125,7 +125,7 @@ function sessionFixture() {
       current: () => true,
       writable: () => f.lifecycle.writable(),
       redact: driverRedactor(["private-key"]),
-      changed() {},
+      changed,
     });
     sessions.push(session);
     return session;
@@ -149,6 +149,41 @@ function sessionFixture() {
 function disk(f: ReturnType<typeof sessionFixture>, path: string) {
   return Deno.readTextFileSync(`${f.vault}/${path}`);
 }
+
+Deno.test("driver session: only real file movement emits activity, coalesced across a multi-file cycle", async () => {
+  const f = sessionFixture();
+  let session: DriverSession;
+  const transitions: ("receiving" | "sending" | null)[] = [];
+  try {
+    session = f.make(driverCapabilities, () => {
+      const activity = session?.activity() ?? null;
+      if (transitions.at(-1) !== activity) transitions.push(activity);
+    });
+    await session.run();
+    assertEquals(transitions.filter(Boolean), []);
+    transitions.length = 0;
+    for (let i = 0; i < 20; i++) f.remote.put(`remote${i}.md`, `body ${i}`);
+    await session.run();
+    assertEquals(transitions, ["receiving", null]);
+    assertEquals(f.hub.store.files().length, 20);
+    transitions.length = 0;
+    await session.run();
+    assertEquals(transitions.filter(Boolean), []);
+    transitions.length = 0;
+    for (let i = 0; i < 20; i++) {
+      Deno.writeTextFileSync(`${f.vault}/remote${i}.md`, `edit ${i}`);
+    }
+    f.hub.scanNow();
+    await session.run(false);
+    assertEquals(transitions, ["sending", null]);
+    assertEquals(
+      new TextDecoder().decode(f.remote.files.get("remote0.md")!.bytes),
+      "edit 0",
+    );
+  } finally {
+    f.close();
+  }
+});
 
 Deno.test("driver session: grouped imports and echo-free export converge through real note operations", async () => {
   const f = sessionFixture();

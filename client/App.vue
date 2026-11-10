@@ -64,6 +64,7 @@
           :class="{ 'print:hidden': route.name == 'note' }"
           :hide-logo="!showNavBarLogo"
           @toggleQuickSwitcher="toggleQuickSwitcher"
+          @openSyncSettings="settingsModal?.openSettings('core:sync')"
         />
         <div class="min-w-0 flex-1 overflow-y-auto py-4">
           <RouterView />
@@ -103,6 +104,7 @@ import Modal from "./components/Modal.vue";
 import LoginForm from "./components/LoginForm.vue";
 import { reauthenticationRequest as reauthentication } from "./reauthentication.js";
 import { CONFLICT_INBOX, createConflictInbox } from "./conflictInbox.js";
+import { SYNC_STATUS, createSyncStatus } from "./syncStatusController.js";
 
 const globalStore = useGlobalStore();
 const dialogHost = ref(null);
@@ -130,6 +132,10 @@ provide(CONFLICT_INBOX, conflictInbox);
 conflictInbox.bindContext({ config: () => globalStore.config,
   configReady: () => session.state.configReady, routeName: () => route.name });
 onBeforeUnmount(conflictInbox.dispose);
+const syncStatus = createSyncStatus();
+provide(SYNC_STATUS,syncStatus);
+syncStatus.bindContext({config:()=>globalStore.config,configReady:()=>session.state.configReady,routeName:()=>route.name});
+onBeforeUnmount(syncStatus.dispose);
 const permissionReview = createAppPermissions({
   config: () => globalStore.config, configReady: () => session.state.configReady,
   routeName: () => route.name, setupRequested: () => globalStore.setupWizardRequested,

@@ -30,6 +30,7 @@ vi.mock("../pluginRuntime.js", async () => {
     capturePluginCatalogOwnership: vi.fn(() => ({ current: () => true })), acknowledgePluginPolicy: vi.fn(() => true) };
 });
 vi.mock("../api.js", () => ({
+  getDrivers: vi.fn(async () => ({revision:0,instances:[],plugins:[]})),
   getConflicts: vi.fn(async () => ({ revision: 0, total: 0, conflicts: [] })),
   getConfig: vi.fn(), getNote: vi.fn(async path => ({ path, content: "Seed\n" })),
   getNoteIndex: vi.fn(async () => [{ path: "NoteA" }]), getPlugins: vi.fn(async () => []),

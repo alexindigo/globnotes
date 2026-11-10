@@ -13,6 +13,38 @@ const observation = (diskPath: string, hash = "abc") => ({
   size: 3,
   mtimeMs: 1,
 });
+Deno.test("driver store: failure onset survives restart and replacement, but recovery and Off reset it", () => {
+  const root = Deno.makeTempDirSync();
+  let store = new HubStore(root);
+  try {
+    let peers = new DriverPeers(store);
+    const instance = peers.create("test", "Remote");
+    peers.observeStatus(instance.id, "failed", true);
+    const onset = peers.failingSince(instance.id);
+    assert(typeof onset === "number" && onset > 0);
+    peers.observeStatus(instance.id, "locked", true);
+    peers.observeStatus(instance.id, "starting", true);
+    assertEquals(peers.failingSince(instance.id), onset);
+    store.close();
+    store = new HubStore(root);
+    peers = new DriverPeers(store);
+    assertEquals(peers.failingSince(instance.id), onset);
+    peers.observeStatus(instance.id, "active", true);
+    assertEquals(peers.failingSince(instance.id), null);
+    peers.observeStatus(instance.id, "locked", true);
+    peers.update(instance.id, instance.revision, {
+      ...instance,
+      enabled: false,
+    });
+    assertEquals(peers.failingSince(instance.id), null);
+    peers.observeStatus(instance.id, "failed", true);
+    peers.retire(instance.id, peers.instance(instance.id)!.revision);
+    assertEquals(peers.failingSince(instance.id), null);
+  } finally {
+    store.close();
+    Deno.removeSync(root, { recursive: true });
+  }
+});
 Deno.test("driver store: v3 migration preserves conflict revisions and old batches", () => {
   const root = Deno.makeTempDirSync();
   let store = new HubStore(root);

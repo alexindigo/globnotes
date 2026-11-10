@@ -148,6 +148,50 @@ Deno.test("driver supervisor: missing and retired slots report no scheduled retr
   }
 });
 
+Deno.test("driver supervisor: durable trouble survives retries and supervisor restart, clears on recovery", async () => {
+  const f = fixture();
+  let replacement: DriverSupervisor | undefined;
+  try {
+    const instance = await f.create();
+    await f.enable(instance.id);
+    const locked = await f.one(instance.id);
+    assertEquals(locked.status, "locked");
+    assert(typeof locked.failingSince === "number");
+    await f.supervisor.sync(instance.id, {
+      revision: f.supervisor.peers.instance(instance.id)!.revision,
+    }, guard);
+    assertEquals((await f.one(instance.id)).failingSince, locked.failingSince);
+    await f.supervisor.close();
+    replacement = new DriverSupervisor({
+      hub: f.hub,
+      operations: f.operations,
+      plugins: f.manager,
+      lifecycle: f.lifecycle,
+      clock: new ObservedClock(f.scheduler),
+    });
+    await replacement.reconcile();
+    const restarted = (await replacement.view()).instances.find((row) =>
+      row.id === instance.id
+    )!;
+    assertEquals(restarted.failingSince, locked.failingSince);
+    await replacement.secret(
+      instance.id,
+      "token",
+      { revision: restarted.revision, value: "key" },
+      false,
+      guard,
+    );
+    const recovered = (await replacement.view()).instances.find((row) =>
+      row.id === instance.id
+    )!;
+    assertEquals(recovered.status, "active");
+    assertEquals(recovered.failingSince, null);
+  } finally {
+    await replacement?.close();
+    await f.close();
+  }
+});
+
 Deno.test("driver supervisor: off by default, missing keys construct no Worker, secrets restart only their instance", async () => {
   const f = await fixture(
     `const generation=crypto.randomUUID(); export function activate(ctx) {
@@ -364,6 +408,7 @@ Deno.test("driver supervisor: observed-time discovery and debounced exports are 
     const instance = await f.create();
     await f.key(instance.id);
     await f.enable(instance.id);
+    assertEquals((await f.one(instance.id)).activity, null);
     const first = f.supervisor.peers.sync(instance.id);
     Deno.writeTextFileSync(`${f.vault}/new.md`, "local");
     f.hub.scanNow();
@@ -377,6 +422,12 @@ Deno.test("driver supervisor: observed-time discovery and debounced exports are 
       "synced",
     );
     assert(f.supervisor.peers.sync(instance.id).exportSeq > first.exportSeq);
+    assertEquals((await f.one(instance.id)).activity, "sending");
+    const activityRevision = f.supervisor.revision();
+    f.scheduler.tick(2002);
+    await f.supervisor.settle();
+    assertEquals((await f.one(instance.id)).activity, null);
+    assertEquals(f.supervisor.revision(), activityRevision + 1);
     const before = f.supervisor.revision();
     f.scheduler.tick(60_002);
     await f.supervisor.settle();

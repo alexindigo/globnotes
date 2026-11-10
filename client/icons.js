@@ -2,6 +2,10 @@
 // ICON_PATHS maps a tab* name to its array of <path d> strings; each tab*
 // name is also exported as its own constant for direct import.
 export const ICON_PATHS = {
+  tabCloud: ["M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878"],
+  tabCloudUpload: ["M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7h-1", "M9 15l3 -3l3 3", "M12 12l0 9"],
+  tabCloudDownload: ["M19 18a3.5 3.5 0 0 0 0 -7h-1a5 4.5 0 0 0 -11 -2a4.6 4.4 0 0 0 -2.1 8.4", "M12 13l0 9", "M9 19l3 3l3 -3"],
+  tabCloudExclamation: ["M15 18.004h-8.343c-2.572 -.004 -4.657 -2.011 -4.657 -4.487c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.374 0 2.562 .805 3.121 1.972", "M19 16v3", "M19 22v.01"],
   tabLoader2: ["M12 3a9 9 0 1 0 9 9"],
   tabNumber0Small: ["M10 10v4a2 2 0 1 0 4 0v-4a2 2 0 1 0 -4 0"],
   tabNumber1Small: ["M11 8h1v8"],
@@ -593,6 +597,10 @@ export const tabSettings = ICON_PATHS.tabSettings;
 export const tabFilter = ICON_PATHS.tabFilter;
 export const tabClose = ICON_PATHS.tabClose;
 export const tabTrash = ICON_PATHS.tabTrash;
+export const tabCloud = ICON_PATHS.tabCloud;
+export const tabCloudUpload = ICON_PATHS.tabCloudUpload;
+export const tabCloudDownload = ICON_PATHS.tabCloudDownload;
+export const tabCloudExclamation = ICON_PATHS.tabCloudExclamation;
 export const tabSave = ICON_PATHS.tabSave;
 export const tabLoader2 = ICON_PATHS.tabLoader2;
 export const tabConsole = ICON_PATHS.tabConsole;

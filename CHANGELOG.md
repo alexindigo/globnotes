@@ -4,6 +4,9 @@
 
 ### Added
 
+The top-bar sync cloud shows file transfers and persistent connection trouble,
+with a per-connection status panel and a link to Sync settings.
+
 A per-vault hub tracks file hashes, versions and an ordered change log for
 outside programs and globnotes writes. Deleted files leave anonymous keyed-path
 tombstones; the hub retains no note content or previous versions.

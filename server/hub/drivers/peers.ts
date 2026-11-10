@@ -59,6 +59,22 @@ export class DriverPeers {
   key(name: string): string {
     return anonymousPath(this.store.secret, name);
   }
+  /** Wall-clock onset, not a scheduling deadline. Starting a replacement Worker
+   * does not prove recovery; only a healthy state or an explicit stop clears it. */
+  failingSince(peer: string): number | null {
+    const row = this.store.db.prepare("SELECT value FROM meta WHERE key=?")
+      .get(`driver_failure:${peer}`);
+    return row ? Number(row.value) : null;
+  }
+  observeStatus(peer: string, status: string, enabled: boolean): void {
+    const key = `driver_failure:${peer}`;
+    if (enabled && ["failed", "locked"].includes(status)) {
+      this.store.db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)")
+        .run(key, String(new Date().getTime()));
+    } else if (!enabled || ["active", "paused", "off"].includes(status)) {
+      this.store.db.prepare("DELETE FROM meta WHERE key=?").run(key);
+    }
+  }
   instances(): DriverInstance[] {
     return this.store.db.prepare(
       "SELECT * FROM peers WHERE plugin IS NOT NULL AND state!='retired' ORDER BY created_at,id",
@@ -124,6 +140,7 @@ export class DriverPeers {
         revision,
       );
     if (!result.changes) throw new PeerRevisionConflict();
+    if (!values.enabled) this.observeStatus(id, "off", false);
     return this.instance(id)!;
   }
   retire(id: string, revision: number): void {
@@ -132,6 +149,7 @@ export class DriverPeers {
     )
       .run(id, revision);
     if (!result.changes) throw new PeerRevisionConflict();
+    this.observeStatus(id, "off", false);
     this.reset(id);
     this.store.checkpoint();
   }

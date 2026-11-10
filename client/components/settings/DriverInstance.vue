@@ -3,7 +3,7 @@
   <article class="driver-instance" :data-driver-id="instance.id" :aria-labelledby="`driver-title-${instance.id}`">
     <header class="driver-instance__header">
       <h3 :id="`driver-title-${instance.id}`" :title="instance.label">{{ instance.label }}</h3>
-      <span class="driver-instance__state" :class="`driver-instance__state--${instance.status}`">{{ instance.stateLabel }}</span>
+      <DriverStateChip class="driver-instance__state" :status="instance.status" :label="instance.stateLabel" />
       <span v-if="instance.attentionCount" class="driver-instance__count">{{ instance.attentionCount }} need attention</span>
       <Toggle v-if="instance.canToggle" :is-on="instance.enabled" :aria-label="`Sync ${instance.label}`" @click="onToggle(instance.id)" />
     </header>
@@ -51,6 +51,7 @@ import SettingsField from '../SettingsField.vue';
 import Toggle from '../Toggle.vue';
 import SettingRow from './SettingRow.vue';
 import DriverSecretField from './DriverSecretField.vue';
+import DriverStateChip from '../DriverStateChip.vue';
 defineProps({ instance:{type:Object,required:true}, onEdit:Function, onSave:Function, onDiscard:Function, onToggle:Function, onSync:Function, onRemove:Function, onManage:Function, onEditKey:Function, onSaveKey:Function, onClearKey:Function, onDecision:Function });
 </script>
 <style scoped>
@@ -58,9 +59,6 @@ defineProps({ instance:{type:Object,required:true}, onEdit:Function, onSave:Func
 .driver-instance__header { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem 1rem; min-width:0; }
 .driver-instance__header h3 { font-weight:600; font-size:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .driver-instance__state, .driver-instance__count { white-space:nowrap; font-size:12px; }
-.driver-instance__state { border:1px solid rgb(var(--theme-border)); border-radius:.25rem; padding:.2rem .5rem; }
-.driver-instance__state--locked, .driver-instance__state--failed { color:rgb(var(--theme-danger)); }
-.driver-instance__state--active { color:rgb(var(--theme-brand)); }
 .driver-instance__plugin { font-size:13px; }
 .driver-instance__actions { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem; min-width:0; }
 .driver-instance__settings { display:grid; gap:1rem; margin-block:.5rem; min-width:0; }

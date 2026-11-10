@@ -4,14 +4,14 @@
        (The old z-20 served the sticky nav above a scrolling page — the
        scroller lives inside the page column now.) -->
   <nav
-    class="flex w-full items-start justify-between bg-theme-background pt-4 align-top"
+    class="relative flex w-full items-start justify-between bg-theme-background pt-4 align-top"
   >
     <div class="flex items-start">
       <RouterLink :to="{ name: 'home' }" v-if="!hideLogo">
         <Logo responsive></Logo>
       </RouterLink>
     </div>
-    <div class="flex grow items-start justify-end">
+    <div class="flex grow items-center justify-end">
       <!-- All Notes (browse the whole tree) -->
       <RouterLink
         :to="folderSearchTarget(undefined, {
@@ -23,6 +23,7 @@
         <CustomButton :iconPath="allNotesIcon" title="All notes" />
       </RouterLink>
       <ConflictBadge v-if="conflictInbox" :snapshot="conflictInbox.state" />
+      <SyncStatus v-if="syncStatus" :snapshot="syncStatus.state" :on-settings="openSyncSettings" />
       <!-- Search (unified jump + full-text) -->
       <CustomButton :iconPath="tabSearch" title="Search" @click="openSearch" />
       <!-- New Note -->
@@ -46,9 +47,13 @@ import { folderSearchTarget, newNoteTarget } from "../notePath.js";
 import { canCreateNote } from "../noteCreation.js";
 import ConflictBadge from "../components/ConflictBadge.vue";
 import { CONFLICT_INBOX } from "../conflictInbox.js";
+import SyncStatus from "../components/SyncStatus.vue";
+import { SYNC_STATUS } from "../syncStatusController.js";
 
 const globalStore = useGlobalStore();
 const conflictInbox = inject(CONFLICT_INBOX, null);
+const syncStatus = inject(SYNC_STATUS,null);
+const openSyncSettings = () => emit("openSyncSettings");
 
 // The All Notes badge: a live vault count rendered from the note index, with
 // the list-details glyph as fallback before the index loads (or in an empty
@@ -69,7 +74,7 @@ defineProps({
   hideLogo: Boolean,
 });
 
-const emit = defineEmits(["toggleQuickSwitcher"]);
+const emit = defineEmits(["toggleQuickSwitcher", "openSyncSettings"]);
 
 function openSearch() {
   emit("toggleQuickSwitcher");

@@ -106,6 +106,24 @@ subprocesses, FFI and system access are denied. Disable, access changes, network
 reductions, instance/key changes and shutdown fence old generations. A lost
 invocation reply does not establish that an endpoint write failed.
 
+## Top-bar sync status
+
+Anyone allowed to read the drivers API sees a cloud icon while at least one
+connection is enabled. Upload/download shapes mean files are moving, not empty
+discovery; receiving takes priority. Brief transfers remain visible for about a
+second. Normal activity uses the accent color. After two minutes of continuous
+Failed/Locked state, the icon uses the danger color, with a cloud-exclamation
+shape when idle. Recovery clears the warning immediately; Off never triggers it.
+The panel lists every connection, its state, plain reason and next retry or last
+sync, with a link to Sync settings.
+
+The drivers view includes `activity: "sending" | "receiving" | null` and
+`failingSince: number | null` (Unix milliseconds). Failure onset is vault metadata
+that survives Worker and server restarts; starting a replacement is not recovery.
+Activity start/stop transitions use the existing `drivers` invalidation on the
+vault change stream. There is no separate status polling loop; hidden tabs
+release their subscription and refresh on return.
+
 ## Observations and failures
 
 An endpoint id names the native storage relationship; epoch names its

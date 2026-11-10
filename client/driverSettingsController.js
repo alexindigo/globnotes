@@ -6,12 +6,11 @@ import { acquireVaultChanges } from "./vaultChanges.js";
 import { validateSettingsInput } from "./settingsPageState.js";
 import { visibleSettingsFields } from "./declarativeSettings.js";
 import { createUnloadConfirmation } from "./unloadGuard.js";
+import { driverStates as statuses, driverReasons as reasons, driverReason } from "./driverPresentation.js";
 
 const copy = value => JSON.parse(JSON.stringify(value));
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const conditionNotice = "This storage cannot check versions while writing; a change made there at the same moment can be overwritten.";
-const statuses = { off:"Off", starting:"Starting", active:"Active", locked:"Locked", failed:"Failed", paused:"Paused" };
-const reasons = { plugin_disabled:"Plugin is off", plugin_unavailable:"Plugin is unavailable", network_denied:"Network access needs approval", group_split:"This group was split at the resource limit" };
 
 /** One Sync workflow owns drafts, retained wires and write-only inputs. No secret
  * value enters an immutable snapshot, recovery intent, bus or browser storage. */
@@ -114,7 +113,7 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
     const attention = base.attention;
     return { ...base, label:draft.label, enabled:draft.enabled, enabledDraftLabel:Object.hasOwn(record.drafts,"enabled") ? `Your ${draft.enabled ? "On" : "Off"} choice is retained. Save settings to apply it.` : "", labelError:record.errors.label ?? "", fields, secrets, editable, missing:record.missing, changed:record.changed, schemaChanged,
       dirty:hasDraft(record), stateLabel:statuses[base.status] ?? base.status,
-      reasonLabel:reasons[base.reason] ?? base.reason ?? base.error?.message ?? base.error?.code ?? "",
+      reasonLabel:driverReason(base),
       lastSyncLabel:base.lastSync ? new Date(base.lastSync).toLocaleString() : "",
       retryLabel:base.nextRetry !== null ? `Next retry in ${Math.ceil(base.nextRetry / 1000)} seconds` : "",
       conditionNotice:Object.values(base.declaration?.capabilities?.mutations ?? {}).includes("emulated") ? conditionNotice : "",
