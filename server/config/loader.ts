@@ -480,7 +480,7 @@ function declarationSchema(
   return { ...INSTANCE_SCHEMA, vaults: { ...vaults, entries: schema } };
 }
 
-function splitEnvironment(
+export function splitEnvironment(
   env: Record<string, string>,
   problems: string[] = [],
 ) {

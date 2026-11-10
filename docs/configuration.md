@@ -67,3 +67,12 @@ operations: a concurrent external edit in that short window can still be
 overwritten. Owners serialize their own writes; only the owner parses policy
 and publishes updated state at successful replacement. Cleanup failures remain
 errors, including after replacement has already committed.
+
+The preparatory `VaultConfigStore` saves partial vault TOML through this boundary.
+App writes preserve omitted leaves and explicit empty values, and cannot replace
+env-pinned leaves (even with the same value). External edits take effect on restart.
+An external change detected by the final identity/bytes check is a conflict, not
+an implicit reload. A concurrent external edit between that check and the atomic
+rename can still be overwritten, as described above.
+Invalid TOML is retained. Plugin policy/settings writes still go to their existing
+owners, not to a second app-saved TOML copy. Branding images remain in `brand/`.

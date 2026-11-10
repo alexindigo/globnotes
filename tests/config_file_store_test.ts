@@ -3,6 +3,7 @@ import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   BoundFileStore,
   StoredConfigConflict,
+  type StoredConfigSnapshot,
 } from "../server/config/file_store.ts";
 import { StoredConfigConflict as FacadeConflict } from "../server/config.ts";
 
@@ -28,6 +29,90 @@ const formats = [
     after: '# operator\n[brand]\nname="after"\n',
   },
 ];
+
+for (const { filename, after } of formats) {
+  Deno.test(`bound file ${filename}: post-rename equal-byte replacement is not adopted as committed identity`, () =>
+    fixture((root) => {
+      const target = `${root}/deployment/${filename}`,
+        store = new BoundFileStore(target),
+        rename = Deno.renameSync;
+      let committed: StoredConfigSnapshot | undefined;
+      let writtenInode: number | null = null;
+      try {
+        Deno.renameSync = ((from, to) => {
+          writtenInode = Deno.lstatSync(from).ino;
+          rename(from, to);
+          Deno.writeTextFileSync(`${target}.external`, after);
+          rename(`${target}.external`, target);
+        }) as typeof rename;
+        store.replace(after, store.capture(), (snapshot) => {
+          committed = snapshot;
+        });
+      } finally {
+        Deno.renameSync = rename;
+      }
+      assert(committed);
+      assertEquals(committed.raw, after);
+      assertEquals(
+        committed.binding.nodes.find((node) => node.location === target)
+          ?.identity?.ino,
+        writtenInode,
+      );
+      assertThrows(
+        () => store.replace("following", committed),
+        StoredConfigConflict,
+      );
+      assertEquals(Deno.readTextFileSync(target), after);
+    }));
+
+  for (const existing of [false, true]) {
+    Deno.test(`bound file ${filename}: committed metadata needs no post-rename filesystem reads (${existing ? "linked" : "new parents"})`, () =>
+      fixture((root) => {
+        const target = existing
+            ? `${root}/deployment/${filename}`
+            : `${root}/state/new/parent/${filename}`,
+          configured = `${root}/state/${filename}`;
+        if (existing) {
+          Deno.writeTextFileSync(target, "before");
+          Deno.chmodSync(target, 0o640);
+          Deno.symlinkSync(target, configured);
+        }
+        const store = new BoundFileStore(existing ? configured : target),
+          expected = store.capture(),
+          rename = Deno.renameSync,
+          read = Deno.readTextFileSync,
+          stat = Deno.statSync,
+          lstat = Deno.lstatSync;
+        let committed: StoredConfigSnapshot | undefined;
+        const denied = () => {
+          throw new Deno.errors.PermissionDenied("post-rename read");
+        };
+        try {
+          Deno.renameSync = ((from, to) => {
+            rename(from, to);
+            Deno.readTextFileSync = denied;
+            Deno.statSync = denied;
+            Deno.lstatSync = denied;
+          }) as typeof rename;
+          store.replace(after, expected, (snapshot) => {
+            committed = snapshot;
+          });
+        } finally {
+          Deno.renameSync = rename;
+          Deno.readTextFileSync = read;
+          Deno.statSync = stat;
+          Deno.lstatSync = lstat;
+        }
+        assert(committed);
+        assert(Object.isFrozen(committed));
+        assert(Object.isFrozen(committed.binding.nodes));
+        assertEquals(committed, store.capture());
+        assertEquals(committed.raw, after);
+        store.replace("following", committed);
+        assertEquals(Deno.readTextFileSync(target), "following");
+      }));
+  }
+}
 function residue(root: string): string[] {
   return [...Deno.readDirSync(`${root}/deployment`)].map((e) => e.name).filter(
     (name) => name.startsWith(".config-"),

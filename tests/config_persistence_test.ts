@@ -2,6 +2,7 @@
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { GlobalConfig, StoredConfigConflict } from "../server/config.ts";
+import { BoundFileStore } from "../server/config/file_store.ts";
 import { bootServer } from "./helpers/boot.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 
@@ -93,6 +94,56 @@ const deploymentConfig = {
   read_only_settings: false,
   unknown: { kept: true },
 };
+
+for (const boundary of ["capture-failure", "cleanup-failure"]) {
+  Deno.test(`JSON config: post-rename ${boundary} retains publication and following saves`, async () => {
+    await persistenceFixture((_root, config) => {
+      const rename = Deno.renameSync,
+        remove = Deno.removeSync,
+        capture = BoundFileStore.prototype.capture,
+        next = { ...deploymentConfig, brand_name: "Committed" };
+      try {
+        Deno.renameSync = ((from, to) => {
+          rename(from, to);
+          if (String(to) !== config.configPath) return;
+          if (boundary === "capture-failure") {
+            BoundFileStore.prototype.capture = () => {
+              throw new Deno.errors.PermissionDenied("post-rename capture");
+            };
+          } else {
+            Deno.removeSync = ((name, options) => {
+              if (String(name).includes("/.config-")) {
+                throw new Deno.errors.PermissionDenied("post-rename cleanup");
+              }
+              remove(name, options);
+            }) as typeof remove;
+          }
+        }) as typeof rename;
+        if (boundary === "cleanup-failure") {
+          assertThrows(
+            () => config.saveStoredConfig(next),
+            Deno.errors.PermissionDenied,
+          );
+        } else config.saveStoredConfig(next);
+        assertEquals(config.storedConfig, next);
+        assertEquals(
+          JSON.parse(Deno.readTextFileSync(config.configPath)),
+          next,
+        );
+      } finally {
+        Deno.renameSync = rename;
+        Deno.removeSync = remove;
+        BoundFileStore.prototype.capture = capture;
+      }
+      config.saveStoredConfig({ ...next, brand_name: "Following" });
+      assertEquals(config.storedConfig?.brand_name, "Following");
+      assertEquals(
+        JSON.parse(Deno.readTextFileSync(config.configPath)).brand_name,
+        "Following",
+      );
+    });
+  });
+}
 
 Deno.test("review repairs: R07 chained file and configured directory links update target and deployment recovery", async () => {
   await persistenceFixture((root) => {

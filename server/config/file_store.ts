@@ -161,11 +161,12 @@ export class BoundFileStore {
     ) throw new StoredConfigConflict();
   }
 
-  /** Sync and replace the resolved target, retaining configured file/directory links. */
+  /** Sync and replace the resolved target, retaining configured file/directory links.
+   * Publish prepared bytes/binding at rename, without rereading the committed file. */
   replace(
     raw: string,
     expected = this.capture(),
-    committed?: () => void,
+    committed?: (snapshot: StoredConfigSnapshot) => void,
   ): void {
     this.assertUnchanged(expected);
     const created = new Map<string, ConfigNode>();
@@ -224,11 +225,28 @@ export class BoundFileStore {
       } finally {
         handle.close();
       }
+      // Rename preserves the prepared file's identity. Build the committed
+      // binding before effects so publication cannot fail on a later disk read.
+      const replacement = Object.freeze({
+        location: target,
+        identity: configNode(temporary).identity,
+      });
+      const snapshot: StoredConfigSnapshot = Object.freeze({
+        raw,
+        binding: Object.freeze({
+          ...prepared.binding,
+          nodes: Object.freeze(
+            prepared.binding.nodes.map((node) =>
+              node.location === target ? replacement : node
+            ),
+          ),
+        }),
+      });
       if (identity) Deno.openSync(target, { write: true }).close();
       this.assertUnchanged(prepared);
       Deno.renameSync(temporary, target);
       // Preserve the original publication point, even if later cleanup fails.
-      committed?.();
+      committed?.(snapshot);
     } catch (error) {
       failed = true;
       failure = error;
