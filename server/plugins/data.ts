@@ -497,7 +497,7 @@ export class PluginDataStore {
           if (validated[key] !== value) {
             stateError(
               "plugin_setting_pinned",
-              "the environment-pinned field cannot be changed",
+              "the deployment-pinned field cannot be changed",
             );
           }
         }
@@ -554,7 +554,7 @@ export interface PluginPolicyMetadata {
   revision: number;
   signature: string;
   effectiveAutoEnable: boolean;
-  autoEnableSource: "environment" | "vault" | "default";
+  autoEnableSource: "environment" | "toml" | "vault" | "default";
 }
 export interface PluginPolicy extends Record<string, unknown> {
   order?: string[];
@@ -599,8 +599,10 @@ export class PluginPolicyStore {
   constructor(
     stateRoot: string,
     private readonly adapters: PersistenceAdapters,
-    private readonly defaults: { autoEnable: boolean; environment?: boolean } =
-      { autoEnable: true },
+    private readonly defaults: {
+      autoEnable: boolean;
+      pin?: { value: boolean; source: "environment" | "toml" };
+    } = { autoEnable: true },
   ) {
     this.stateRoot = canonicalRoot(path.resolve(stateRoot));
   }
@@ -636,7 +638,7 @@ export class PluginPolicyStore {
     const policy = validatePolicy(value);
     return {
       policy,
-      automatic: this.defaults.environment ?? policy.autoEnable ??
+      automatic: this.defaults.pin?.value ?? policy.autoEnable ??
         this.defaults.autoEnable,
     };
   }
@@ -649,17 +651,16 @@ export class PluginPolicyStore {
         input.raw === null ? "absent-plugin-policy-v1" : `present:${input.raw}`,
       ),
     );
-    const pinned = this.defaults.environment !== undefined;
+    const pin = this.defaults.pin;
     const metadata: PluginPolicyMetadata = {
       revision: policy.revision ?? 0,
       signature: [...new Uint8Array(digest)].map((byte) =>
         byte.toString(16).padStart(2, "0")
       ).join(""),
-      effectiveAutoEnable: pinned
-        ? this.defaults.environment!
-        : policy.autoEnable ?? this.defaults.autoEnable,
-      autoEnableSource: pinned
-        ? "environment"
+      effectiveAutoEnable: pin?.value ?? policy.autoEnable ??
+        this.defaults.autoEnable,
+      autoEnableSource: pin
+        ? pin.source
         : policy.autoEnable !== undefined
         ? "vault"
         : "default",
@@ -746,10 +747,10 @@ export class PluginPolicyStore {
       stateError("invalid_plugin_policy", "autoEnable must be a boolean", 422);
     }
     return await this.write(expected, (policy, metadata) => {
-      if (metadata.autoEnableSource === "environment") {
+      if (this.defaults.pin !== undefined) {
         stateError(
           "policy_pinned",
-          "auto-enable is pinned by GLOBNOTES_AUTO_ENABLE_PLUGINS",
+          "auto-enable is pinned by deployment configuration",
         );
       }
       const enabled = new Set(policy.enabled ?? []);

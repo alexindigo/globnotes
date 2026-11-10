@@ -13,183 +13,216 @@ import { state } from "../server/state.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import settingsGet from "../server/api/endpoints/_/api/plugin-host/%23id/settings/%23page/get.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { stringify } from "@std/toml";
+import { pluginSettings } from "../server/config/consumers.ts";
+import { loadInstanceConfig } from "../server/config/loader.ts";
 
-Deno.test("backup settings: environment reaches the actual service settings consumer", async () => {
-  const fixture = await pluginFixture();
-  const previousState = { ...state };
-  // The deployment's environment (as the server receives it) carries the
-  // operator settings; the manager reads them through its configured input.
-  const env = testEnvironment({
-    GLOBNOTES_PLUGIN_SETTINGS: JSON.stringify({
-      configured: { preferences: { location: "operator-selected" } },
-    }),
-  });
-  await fixture.install("configured", {
-    runtime: { server: "service.js" },
-    capabilities: { read: [], write: [], network: false, imports: false },
-    settings: [{
-      id: "preferences",
-      label: "Preferences",
-      renderer: { kind: "declarative-v1", version: 1 },
-      fields: [{
-        key: "location",
-        label: "Location",
-        type: "folder",
-        default: "",
-      }],
-    }],
-  }, {
-    "service.js":
-      "export function activate(ctx){ctx.commands.register({id:'inspect',label:'Inspect',target:'server'},()=>ctx.settings.read());}",
-    "main.js":
-      "export function getSelectors(){return []} export async function parseNode(node,ctx){return ctx.settings.read()}",
-  });
-  const ready = Promise.withResolvers<void>();
-  const manager = createPluginManager(
-    fixture.vault,
-    undefined,
-    1,
-    fixture.statePath,
-    {
-      internalRoot: `${fixture.root}/empty-internal`,
-      persistence: { commit: (effect) => effect() },
-      env,
-    },
-  );
-  const runtime = manager.configureRuntime({
-    operational: () => true,
-    writable: () => true,
-    commit: (effect) => effect(),
-    changed: () => {
-      if (runtime.status("configured")?.status === "ready") ready.resolve();
-    },
-  });
-  const timer = setTimeout(
-    () => ready.reject(new Error("fixture did not become ready")),
-    5000,
-  );
-  try {
-    await runtime.reconcile();
-    await ready.promise;
-    const result = await runtime.invokeCommand("configured", "inspect", {}) as {
-      values: { preferences: { location: string } };
-      sourceKey: string;
-    };
-    assertEquals(
-      result.values.preferences.location,
-      "operator-selected",
-      "effective environment setting must reach the actual Worker",
-    );
-    const data = new PluginDataStore(fixture.statePath, {
-      commit: (effect) => effect(),
-      settingsSchema: (id) => manager.network.settingsSchema(id),
-      settingsContext: (id) => manager.network.settingsContext(id),
-      settingsEnvironment: manager.settingsEnvironment,
+for (const source of ["environment", "toml"] as const) {
+  Deno.test(`backup settings: ${source} reaches the actual service settings consumer`, async () => {
+    const fixture = await pluginFixture();
+    const previousState = { ...state };
+    // The deployment's environment (as the server receives it) carries the
+    // operator settings; the manager reads them through its configured input.
+    const env = testEnvironment({
+      GLOBNOTES_PLUGIN_SETTINGS: JSON.stringify({
+        configured: { preferences: { location: "operator-selected" } },
+      }),
     });
-    Object.assign(state, { plugins: manager, pluginData: data });
-    const http = await settingsGet(
-      {
-        params: { id: "configured", page: "preferences" },
-      } as unknown as PathfinderRequest,
-    );
-    assert(!(http instanceof Response));
-    assertEquals(http.values.location, "operator-selected");
-    assertEquals(http.sourceKey, result.sourceKey);
-    const permission = await manager.network.view("configured");
-    assertEquals(permission.source.key, result.sourceKey);
-    await manager.start();
-    const renderer = await manager.hosts.get("configured")!.call("parseNode", [
-      {},
-    ]) as { values: unknown; sourceKey: string };
-    assertEquals(renderer.values, result.values);
-    assertEquals(renderer.sourceKey, result.sourceKey);
-  } finally {
-    clearTimeout(timer);
-    manager.stop();
-    await runtime.close();
-    Object.assign(state, previousState);
-    console.log(JSON.stringify({ retainedEnvironmentFixture: fixture.root }));
-  }
-});
-
-Deno.test("backup settings: pins preserve exact stored fallback and siblings; unpin restores values", async () => {
-  const b = await auxiliaryFixture({
-    environment: JSON.stringify({ auxiliary: { preferences: { base: "" } } }),
-  });
-  const file = `${b.statePath}/plugin-data/auxiliary/settings.json`;
-  try {
-    await Deno.mkdir(`${b.statePath}/plugin-data/auxiliary`, {
-      recursive: true,
-    });
+    const file = `${fixture.root}/config.toml`;
     await Deno.writeTextFile(
       file,
-      JSON.stringify({
-        schemaVersion: 1,
-        revision: 1,
-        values: {
-          preferences: { base: "stored-base", count: 4, orphan: "retained" },
-          oldPage: { value: "retained" },
-        },
+      stringify({
+        plugins: { settings: env.get("GLOBNOTES_PLUGIN_SETTINGS")! },
       }),
     );
-    const current = await b.data.forPlugin(b.id).page(b.page);
-    assertEquals(current.values, { base: "", count: 4 });
-    assertEquals(current.fields.base, {
-      source: "environment",
-      readonly: true,
+    const resolved = loadInstanceConfig({
+      overlayPath: null,
+      env: {},
+      vaults: { family: { path: fixture.vault, overlayPath: file } },
     });
-    const accepted = await b.data.forPlugin(b.id).savePage(
-      b.page,
-      { base: "", count: 7 },
+    await fixture.install("configured", {
+      runtime: { server: "service.js" },
+      capabilities: { read: [], write: [], network: false, imports: false },
+      settings: [{
+        id: "preferences",
+        label: "Preferences",
+        renderer: { kind: "declarative-v1", version: 1 },
+        fields: [{
+          key: "location",
+          label: "Location",
+          type: "folder",
+          default: "",
+        }],
+      }],
+    }, {
+      "service.js":
+        "export function activate(ctx){ctx.commands.register({id:'inspect',label:'Inspect',target:'server'},()=>ctx.settings.read());}",
+      "main.js":
+        "export function getSelectors(){return []} export async function parseNode(node,ctx){return ctx.settings.read()}",
+    });
+    const ready = Promise.withResolvers<void>();
+    const manager = createPluginManager(
+      fixture.vault,
+      undefined,
       1,
-      current.sourceKey,
+      fixture.statePath,
+      {
+        internalRoot: `${fixture.root}/empty-internal`,
+        persistence: { commit: (effect) => effect() },
+        env,
+        ...(source === "toml"
+          ? {
+            settings: pluginSettings(resolved.config, resolved.vaults.family),
+          }
+          : {}),
+      },
     );
-    assertEquals(accepted.values, { base: "", count: 7 });
-    const raw = JSON.parse(await Deno.readTextFile(file));
-    assertEquals(raw.values.preferences, {
-      base: "stored-base",
-      count: 7,
-      orphan: "retained",
-    });
-    assertEquals(raw.values.oldPage, { value: "retained" });
-    await assertRejects(
-      () =>
-        b.data.forPlugin(b.id).savePage(
-          b.page,
-          { base: "replacement", count: 8 },
-          2,
-          accepted.sourceKey,
-        ),
-      PluginContractError,
-      "pinned",
-    );
-    const unpinned = new PluginDataStore(b.statePath, {
+    const runtime = manager.configureRuntime({
+      operational: () => true,
+      writable: () => true,
       commit: (effect) => effect(),
-      settingsEnvironment: new PluginSettingsEnvironment(),
+      changed: () => {
+        if (runtime.status("configured")?.status === "ready") ready.resolve();
+      },
     });
-    assertEquals((await unpinned.forPlugin(b.id).page(b.page)).values, {
-      base: "stored-base",
-      count: 7,
-    });
-    const previous = await Deno.readTextFile(file);
-    await assertRejects(
-      () =>
-        b.data.forPlugin(b.id).savePage(
-          b.page,
-          { base: "", count: 8 },
-          2,
-          current.sourceKey,
-        ),
-      PluginContractError,
-      "source changed",
+    const timer = setTimeout(
+      () => ready.reject(new Error("fixture did not become ready")),
+      5000,
     );
-    assertEquals(await Deno.readTextFile(file), previous);
-    const worker = await b.settings();
-    assertEquals(worker.values.preferences, accepted.values);
-  } finally {
-    await b.close();
-  }
-});
+    try {
+      await runtime.reconcile();
+      await ready.promise;
+      const result = await runtime.invokeCommand(
+        "configured",
+        "inspect",
+        {},
+      ) as {
+        values: { preferences: { location: string } };
+        sourceKey: string;
+      };
+      assertEquals(
+        result.values.preferences.location,
+        "operator-selected",
+        "effective environment setting must reach the actual Worker",
+      );
+      const data = new PluginDataStore(fixture.statePath, {
+        commit: (effect) => effect(),
+        settingsSchema: (id) => manager.network.settingsSchema(id),
+        settingsContext: (id) => manager.network.settingsContext(id),
+        settingsEnvironment: manager.settingsEnvironment,
+      });
+      Object.assign(state, { plugins: manager, pluginData: data });
+      const http = await settingsGet(
+        {
+          params: { id: "configured", page: "preferences" },
+        } as unknown as PathfinderRequest,
+      );
+      assert(!(http instanceof Response));
+      assertEquals(http.values.location, "operator-selected");
+      assertEquals(http.fields.location, { source, readonly: true });
+      assertEquals(http.sourceKey, result.sourceKey);
+      const permission = await manager.network.view("configured");
+      assertEquals(permission.source.key, result.sourceKey);
+      await manager.start();
+      const renderer = await manager.hosts.get("configured")!.call(
+        "parseNode",
+        [
+          {},
+        ],
+      ) as { values: unknown; sourceKey: string };
+      assertEquals(renderer.values, result.values);
+      assertEquals(renderer.sourceKey, result.sourceKey);
+    } finally {
+      clearTimeout(timer);
+      manager.stop();
+      await runtime.close();
+      Object.assign(state, previousState);
+      console.log(JSON.stringify({ retainedEnvironmentFixture: fixture.root }));
+    }
+  });
+}
+
+for (const source of ["environment", "toml"] as const) {
+  Deno.test(`backup settings: ${source} pins preserve exact stored fallback and siblings; unpin restores values`, async () => {
+    const b = await auxiliaryFixture({
+      environment: JSON.stringify({ auxiliary: { preferences: { base: "" } } }),
+      pinSource: source,
+    });
+    const file = `${b.statePath}/plugin-data/auxiliary/settings.json`;
+    try {
+      await Deno.mkdir(`${b.statePath}/plugin-data/auxiliary`, {
+        recursive: true,
+      });
+      await Deno.writeTextFile(
+        file,
+        JSON.stringify({
+          schemaVersion: 1,
+          revision: 1,
+          values: {
+            preferences: { base: "stored-base", count: 4, orphan: "retained" },
+            oldPage: { value: "retained" },
+          },
+        }),
+      );
+      const current = await b.data.forPlugin(b.id).page(b.page);
+      assertEquals(current.values, { base: "", count: 4 });
+      assertEquals(current.fields.base, {
+        source,
+        readonly: true,
+      });
+      const accepted = await b.data.forPlugin(b.id).savePage(
+        b.page,
+        { base: "", count: 7 },
+        1,
+        current.sourceKey,
+      );
+      assertEquals(accepted.values, { base: "", count: 7 });
+      const raw = JSON.parse(await Deno.readTextFile(file));
+      assertEquals(raw.values.preferences, {
+        base: "stored-base",
+        count: 7,
+        orphan: "retained",
+      });
+      assertEquals(raw.values.oldPage, { value: "retained" });
+      await assertRejects(
+        () =>
+          b.data.forPlugin(b.id).savePage(
+            b.page,
+            { base: "replacement", count: 8 },
+            2,
+            accepted.sourceKey,
+          ),
+        PluginContractError,
+        "pinned",
+      );
+      const unpinned = new PluginDataStore(b.statePath, {
+        commit: (effect) => effect(),
+        settingsEnvironment: new PluginSettingsEnvironment(),
+      });
+      assertEquals((await unpinned.forPlugin(b.id).page(b.page)).values, {
+        base: "stored-base",
+        count: 7,
+      });
+      const previous = await Deno.readTextFile(file);
+      await assertRejects(
+        () =>
+          b.data.forPlugin(b.id).savePage(
+            b.page,
+            { base: "", count: 8 },
+            2,
+            current.sourceKey,
+          ),
+        PluginContractError,
+        "source changed",
+      );
+      assertEquals(await Deno.readTextFile(file), previous);
+      const worker = await b.settings();
+      assertEquals(worker.values.preferences, accepted.values);
+    } finally {
+      await b.close();
+    }
+  });
+}
 
 Deno.test("backup settings: corrupted pinned fallbacks are visible and retained", async () => {
   const b = await auxiliaryFixture({

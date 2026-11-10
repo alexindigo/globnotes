@@ -37,6 +37,7 @@ import { admitHost, createRebindingWarner } from "./host_admission.ts";
 import { initializeLogger, logger } from "./logger.ts";
 import {
   legacyLogLevel,
+  legacyPluginSettings,
   legacyServiceSettings,
   sessionSettings,
 } from "./config/legacy.ts";
@@ -94,7 +95,7 @@ const plugins = new PluginManager(
     persistence: {
       commit: (effect) => state.lifecycle!.gate.run(effect),
     },
-    env: environment,
+    settings: legacyPluginSettings(environment),
   },
 );
 const auth = globalConfig.authType === AuthType.PASSWORD ||

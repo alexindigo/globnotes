@@ -6,6 +6,9 @@
 
 Typed TOML configuration defaults and validation, preparatory to the v3 startup cutover.
 
+Preserve saved plugin policy beneath explicit deployment pins (preparatory to
+startup cutover), with TOML/env provenance and inactive-plugin pin validation.
+
 Vault settings can persist in partial TOML with checked replacement
 (preparatory owner, not yet connected to normal startup).
 

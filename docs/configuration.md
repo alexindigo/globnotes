@@ -68,6 +68,29 @@ overwritten. Owners serialize their own writes; only the owner parses policy
 and publishes updated state at successful replacement. Cleanup failures remain
 errors, including after replacement has already committed.
 
+## Plugin deployment pins (preparatory)
+
+Plugin composition is manifest/default baseline, saved plugin owner, explicit
+vault TOML pin, then env pin. Shipped `autoenable = true` is not a pin: saved
+`plugins.json` policy wins unless an operator states the leaf. Explicit `false`
+is a pin too. Per-plugin choices, settings, revisions and approvals retain their
+existing owners; effective pins are never copied into those files.
+
+```toml
+[plugins]
+autoenable = false
+settings = '{"backups":{"preferences":{"location":"/backups"}}}'
+```
+
+For vault `family`, `GLOBNOTES_FAMILY_PLUGINS_SETTINGS` replaces that addressed
+JSON leaf (including an explicit `{}`). Installed manifests validate plugin,
+page, field and value before any Worker starts, even for inactive plugins.
+Settings provenance distinguishes `toml` from `environment` and marks only pinned
+fields read-only. Existing plugin full-page saves may include unchanged pinned
+fields; altered pins reject without changing the stored fallback. TOML/env use
+the same canonical value fingerprints and source-key/approval lifecycle.
+Normal boot still uses the temporary legacy adapter until the startup cutover.
+
 ## Service inputs
 
 Index pacing, directory-cache TTL and hub scan interval are configured in seconds;

@@ -3,8 +3,9 @@
 /** One catalog of optional contributions. Rendering is a lazy compatibility adapter. */
 import * as path from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
-import { type Environment, processEnvironment } from "../environment.ts";
-import { getEnv } from "../helpers.ts";
+import type { Environment } from "../environment.ts";
+import type { PluginSettings } from "../config/consumers.ts";
+import { legacyPluginSettings } from "../config/legacy.ts";
 import { logger } from "../logger.ts";
 import {
   PluginHost,
@@ -103,12 +104,12 @@ export interface DriverOwners {
   suspend(): void;
 }
 export interface PluginManagerOptions {
+  settings?: PluginSettings;
   settingsEnvironment?: PluginSettingsEnvironment;
   internalRoot?: string;
   autoEnable?: boolean;
   environment?: boolean;
-  /** Configuration input for env-derived defaults (render worker count,
-   * GLOBNOTES_PLUGIN_SETTINGS, GLOBNOTES_AUTO_ENABLE_PLUGINS). */
+  /** Temporary pre-cutover input; adapted centrally in config/legacy.ts. */
   env?: Environment;
   persistence?: PersistenceAdapters;
   /** Evaluated at pool start/respawn: all worker roles get write:false
@@ -146,7 +147,11 @@ export class PluginManager {
     statePath?: string,
     options: PluginManagerOptions = {},
   ) {
-    const env = options.env ?? processEnvironment;
+    const settings = options.settings ??
+      legacyPluginSettings(options.env, {
+        ...options,
+        renderWorkers: workerCount,
+      });
     this.vaultPath = vaultPath;
     this.statePath = statePath ?? path.join(vaultPath, ".globnotes");
     this.rpc = rpc;
@@ -154,14 +159,14 @@ export class PluginManager {
       vaultPath: this.vaultPath,
       statePath: this.statePath,
     });
-    this.workerCount = workerCount ??
-      Number(
-        getEnv("GLOBNOTES_RENDER_WORKERS", { castInt: true, default: 2 }, env),
-      );
+    this.workerCount = workerCount ?? settings.renderWorkers;
     this.internalRoot = options.internalRoot ?? INTERNAL_PLUGINS_DIR;
     this.options = options;
     this.settingsEnvironment = options.settingsEnvironment ??
-      new PluginSettingsEnvironment(env.get("GLOBNOTES_PLUGIN_SETTINGS"));
+      new PluginSettingsEnvironment(
+        settings.addressed.raw,
+        settings.addressed.source,
+      );
     this.networkCommit = (effect) =>
       options.persistence?.commit(effect) ??
         Promise.reject(
@@ -169,7 +174,6 @@ export class PluginManager {
             "permission persistence requires the owning host commit adapter",
           ),
         );
-    const statedDefault = getEnv("GLOBNOTES_AUTO_ENABLE_PLUGINS", {}, env);
     this.policy = new PluginPolicyStore(
       this.statePath,
       {
@@ -182,16 +186,8 @@ export class PluginManager {
           }),
       },
       {
-        autoEnable: options.autoEnable ?? true,
-        environment: options.environment ??
-          (statedDefault
-            ? getEnv(
-              "GLOBNOTES_AUTO_ENABLE_PLUGINS",
-              { castBool: true },
-              env,
-            ) ===
-              "true"
-            : undefined),
+        autoEnable: settings.autoEnable,
+        pin: settings.autoEnablePin,
       },
     );
     this.network = new PluginNetworkRequests(this.statePath, {
@@ -248,6 +244,11 @@ export class PluginManager {
     ): entry is CatalogEntry => entry !== undefined);
     const ordered = new Set(head.map((entry) => entry.id));
     this.settingsEnvironment.validateInventory([...entries.keys()]);
+    // Validate the entire installed inventory before admission filters or Worker starts.
+    // A pin cannot disappear merely because its plugin is disabled or has failed code.
+    for (const entry of entries.values()) {
+      this.settingsEnvironment.pages(entry.id, entry.manifest?.settings ?? []);
+    }
     return [
       ...head,
       ...[...entries.values()].filter((entry) => !ordered.has(entry.id)),
@@ -263,6 +264,10 @@ export class PluginManager {
         ...entry.manifest?.runtime.client ? ["runtime" as const] : [],
       ],
     }));
+  }
+  /** Startup preflight seam; no workers, approvals or saved settings are created. */
+  validateConfiguration(): void {
+    this.inventory();
   }
   private enabled(id: string): boolean {
     const { policy, automatic } = this.policy.selection();
