@@ -1,10 +1,11 @@
 // Production-assets native consumers. Every target, server, variant and artifact is owned.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { fileURLToPath } from "node:url";
 import { httpOrigin } from "./http-origin.mjs";
 import { bootServer } from "./harness-helpers.mjs";
 import { executeChild } from "./legacy-native-suite.mjs";
 
-const ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
 const kinds = ["count", "order", "location", "preimage", "pin", "recovery", "aliases", "distinct", "retarget", "cleanup"];
 const options = { artifacts: null, controls: false, case: null, negative: false }, seen = new Set();
 for (let index = 0; index < Deno.args.length; index++) {

@@ -1,11 +1,12 @@
 // Explicit caller-owned native fixtures; no home-vault reset or external server.
 import { bootServer } from "./harness-helpers.mjs";
+import { fileURLToPath } from "node:url";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { clickReady } from "./native-actions.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { closeClipboardWitness, readClipboardText } from "./native-clipboard.mjs";
 
-const ROOT = new URL("../../..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 export const CHAIN = ["readme", "rendering/code-blocks", "rendering/math", "rendering/callouts", "rendering/highlights", "rendering/mermaid", "rendering/frontmatter", "links/wiki-links", "links/embeds", "folders/dad/recipes/soup", "folders/mom/ideas", "rename-me/moving-note"];
 export const CODE = 'def greet(name):\n    print(f"Hello {name}")\n';
 export const MOVING = "# Moving note\n\n![pic](assets/pic.png)\n";

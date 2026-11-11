@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertFalse } from "@std/assert";
 import { parse, stringify } from "@std/toml";
+import { fromFileUrl } from "@std/path";
 import { assertThrows } from "@std/assert";
 import { ConfigError, loadInstanceConfig } from "../server/config/loader.ts";
 import { singleVaultBindings } from "../server/config/single_vault.ts";
 import { command, DENO } from "./helpers/process.ts";
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
 Deno.test("config launch: incomplete defaults retain aggregate diagnostics at the scope binding", async () => {
   const root = await Deno.makeTempDir({ prefix: "config-binding-defaults-" });

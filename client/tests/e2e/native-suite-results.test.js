@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { concurrencyValue, FILE_CASES, runChildren, SELECTION, selectCases, SERIAL_CASES } from "./legacy-native-suite.mjs";
 
 describe("native suite child result ownership", () => {
+  it("registers layered configuration with the existing shared controls", () => {
+    expect(selectCases("layered-config-native")).toEqual([
+      ["native-ownership-control"], ["native-actions-control"], ["layered-config-native"],
+    ]);
+    expect(FILE_CASES["client/tests/e2e/layered-config-native.mjs"]).toEqual(["layered-config-native"]);
+  });
   it("includes sync status in CI, filtered runs and source-owned case selection", () => {
     expect(selectCases()).toContainEqual(["sync-status-native"]);
     expect(selectCases("sync-status-native")).toEqual([

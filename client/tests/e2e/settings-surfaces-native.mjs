@@ -12,7 +12,8 @@ const assert=(value,message)=>{if(!value)throw Error(message);};
 const cells=[];
 for(const width of [320,360,768,1280])for(const dpr of [1,2])for(const mode of ['light','dark'])cells.push({width,height:width<640?640:900,dpr,mode,textScale:1});
 for(const mode of ['light','dark'])cells.push({width:360,height:640,dpr:1,mode,textScale:2});
-const ROOT=new URL('../../..',import.meta.url).pathname.replace(/\/$/,'');
+import { fileURLToPath } from 'node:url';
+const ROOT=fileURLToPath(new URL('../../..',import.meta.url)).replace(/\/$/,'');
 
 export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixtures=['main','protected','first-run']}) {
   await Deno.mkdir(directory);

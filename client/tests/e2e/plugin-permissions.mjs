@@ -1,5 +1,6 @@
 // VM-only native operator consent. Each fixture/context and normal parent is owned.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { fileURLToPath } from "node:url";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { awaitHealthy, awaitPluginReady, parseArguments } from "./harness-helpers.mjs";
 import { done, failed, pending, waitUntil } from "../../../tests/helpers/wait.ts";
@@ -9,7 +10,7 @@ let options;
 try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
 if (options.help) { console.log("Usage: plugin-permissions.mjs --artifacts <directory>"); Deno.exit(0); }
 if (!options.artifacts) { console.error("--artifacts is required"); Deno.exit(2); }
-const ROOT = new URL("../../..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const artifacts = options.artifacts;
 await Deno.mkdir(artifacts, { mode: 0o700 });
 const assert = (value, detail) => { if (!value) throw Error(detail); };

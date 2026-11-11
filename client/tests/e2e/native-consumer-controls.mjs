@@ -1,6 +1,7 @@
 // Deliberately wrong outputs stay inside fresh caller-owned browser fixtures.
 // The real driver predicates and real suite result path must reject each one.
 import { runCase } from "./legacy-fixture.mjs";
+import { fileURLToPath } from "node:url";
 import { cases } from "./legacy-native-cases.mjs";
 import { exercise as geometry } from "./test-quality-geometry.mjs";
 import { caseName, executeChild, runChildren, selectCases } from "./legacy-native-suite.mjs";
@@ -39,7 +40,7 @@ if (Deno.args[0] === "case") {
   for (const [name, control] of Object.entries(mutations)) {
     // A control with no driver is shared; driver controls follow their case.
     if (control.driver && !selected.has(caseName([control.driver, ...(control.args ?? [])]))) continue;
-    const result = await executeChild(["run", "--cached-only", "--frozen", "--config=deno.json", "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run", "--allow-sys", new URL(import.meta.url).pathname, "case", name], { artifacts, label: name });
+    const result = await executeChild(["run", "--cached-only", "--frozen", "--config=deno.json", "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run", "--allow-sys", fileURLToPath(import.meta.url), "case", name], { artifacts, label: name });
     let accepted = false;
     try { await runChildren([[name]], async () => result); accepted = true; }
     catch (error) { assert(!control.expected, `${name}: equivalent presentation was rejected: ${error}`); }

@@ -1,6 +1,7 @@
 import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertThrows } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { DatabaseSync } from "node:sqlite";
 import { GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
@@ -543,7 +544,7 @@ Deno.test("index erasure: a committed deletion surviving a crash retries its los
         "--allow-read",
         "--allow-write",
         "--allow-env",
-        new URL("helpers/index_rebuild_child.ts", import.meta.url).pathname,
+        fromFileUrl(new URL("helpers/index_rebuild_child.ts", import.meta.url)),
         f.vault,
         f.storage,
         "pending-erasure",
@@ -591,7 +592,9 @@ for (const boundary of ["during-stage", "before-swap", "after-swap"]) {
           "--allow-read",
           "--allow-write",
           "--allow-env",
-          new URL("helpers/index_rebuild_child.ts", import.meta.url).pathname,
+          fromFileUrl(
+            new URL("helpers/index_rebuild_child.ts", import.meta.url),
+          ),
           f.vault,
           f.storage,
           boundary,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assert, assertEquals } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { command } from "./helpers/process.ts";
 
 for (const kind of ["missing-source", "constructor"]) {
@@ -11,13 +12,15 @@ for (const kind of ["missing-source", "constructor"]) {
         "run",
         "--cached-only",
         "--frozen",
-        `--config=${new URL("../deno.json", import.meta.url).pathname}`,
+        `--config=${fromFileUrl(new URL("../deno.json", import.meta.url))}`,
         "--unstable-worker-options",
         "--allow-read",
         "--allow-write",
         "--allow-net",
         "--allow-env",
-        new URL("./helpers/render_recovery_child.ts", import.meta.url).pathname,
+        fromFileUrl(
+          new URL("./helpers/render_recovery_child.ts", import.meta.url),
+        ),
         kind,
         evidence,
       ],

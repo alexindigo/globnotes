@@ -6,13 +6,15 @@
  * worker that hangs while its host runs on time is failed at the bound.
  */
 import { assert, assertEquals } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { command } from "../helpers/process.ts";
 import { done, pending, waitUntil } from "../helpers/wait.ts";
 
 /** The product bound: twelve 250 ms heartbeat periods. */
 const SILENCE_MS = 3000;
-const CHILD = new URL("../helpers/plugin_stall_child.ts", import.meta.url)
-  .pathname;
+const CHILD = fromFileUrl(
+  new URL("../helpers/plugin_stall_child.ts", import.meta.url),
+);
 
 function child(mode: "stall" | "hang", evidence: string) {
   return command(Deno.execPath(), {
@@ -20,7 +22,7 @@ function child(mode: "stall" | "hang", evidence: string) {
       "run",
       "--cached-only",
       "--frozen",
-      `--config=${new URL("../../deno.json", import.meta.url).pathname}`,
+      `--config=${fromFileUrl(new URL("../../deno.json", import.meta.url))}`,
       "--unstable-worker-options",
       "--allow-read",
       "--allow-write",

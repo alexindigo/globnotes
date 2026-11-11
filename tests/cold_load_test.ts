@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals, assertStringIncludes } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { command, DENO } from "./helpers/process.ts";
 import { SERVER_PORT_ENV } from "./helpers/boot.ts";
 
@@ -57,7 +58,7 @@ Deno.serve({hostname:"0.0.0.0",port:Number(Deno.env.get(${portEnv}))},
       await Deno.writeTextFile(`${root}/server/main.ts`, server);
       const script = new URL("../scripts/cold-load.mjs", import.meta.url);
       const result = await command("timeout", {
-        args: ["40", DENO, "run", "-A", script.pathname, root, mode],
+        args: ["40", DENO, "run", "-A", fromFileUrl(script), root, mode],
       }).output();
       assertEquals(result.code, 1);
       const stdout = new TextDecoder().decode(result.stdout);

@@ -1,5 +1,6 @@
 // One child result per selected standalone harness; logs cannot grant success.
 import { assert, childSucceeded } from "./test-outcomes.mjs";
+import { fileURLToPath } from "node:url";
 
 export const SELECTION = [
   ["tour-chain"], ["test-vault"], ["theme"], ["surfaces"], ["code-tokens"],
@@ -8,7 +9,7 @@ export const SELECTION = [
   ["rename-options", "move"], ["rename-options", "relink"], ["rename-options", "none"],
   ["quick-switcher"], ["test-quality-geometry"],
   ["native-ownership-control"], ["native-actions-control"], ["button-icons"], ["save-preview"],
-  ["line-wrap"], ["ctrl-f-search"], ["anchor-history"], ["setup-wizard"], ["setup-totp-desktop"],
+  ["line-wrap"], ["ctrl-f-search"], ["anchor-history"], ["setup-wizard"], ["setup-totp-desktop"], ["layered-config-native"],
   ["autosave-timer"], ["hub-safe-saves-native"], ["hub-writers-gate-native"], ["html-safety"], ["background-connections-native"], ["reauthentication-native"],
   ["conflict-inbox-native"], ["conflict-resolution-native"], ["conflict-review-native"],
   ["sync-settings-native"], ["sync-driver-native"], ["sync-status-native"],
@@ -142,7 +143,7 @@ if (import.meta.main) {
     const label = caseName([name, ...args]);
     const childArtifacts = artifacts + "/" + label;
     await Deno.mkdir(childArtifacts, { mode: 0o700 });
-    return executeChild(["run", "--cached-only", "--frozen", "--config=deno.json", "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run", "--allow-sys", new URL(name + ".mjs", import.meta.url).pathname, ...args], { ...options, artifacts: childArtifacts, label });
+    return executeChild(["run", "--cached-only", "--frozen", "--config=deno.json", "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run", "--allow-sys", fileURLToPath(new URL(name + ".mjs", import.meta.url)), ...args], { ...options, artifacts: childArtifacts, label });
   }, { concurrency });
   const serial = Object.fromEntries(selection.map(caseName).filter(name => SERIAL_CASES[name]).map(name => [name, SERIAL_CASES[name]]));
   await Deno.writeTextFile(artifacts + "/suite.json", JSON.stringify({ selection, concurrency, serial, outcomes }, null, 2), { createNew: true });

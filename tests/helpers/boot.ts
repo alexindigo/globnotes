@@ -20,8 +20,10 @@ import { done, pending, waitUntil } from "./wait.ts";
 import { testEnvironment } from "./environment.ts";
 import type { StoredConfig } from "../../server/config.ts";
 
-const SERVER_MAIN = new URL("../../server/main.ts", import.meta.url).pathname;
-const REPO_ROOT = new URL("../../", import.meta.url).pathname;
+const SERVER_MAIN = path.fromFileUrl(
+  new URL("../../server/main.ts", import.meta.url),
+);
+const REPO_ROOT = path.fromFileUrl(new URL("../../", import.meta.url));
 const REPO_DIST = path.join(REPO_ROOT, "client", "dist");
 const LISTENING = /globnotes listening on http:\/\/\S*:(\d+)/;
 const SHUTDOWN_GRACE_MS = 5_000;

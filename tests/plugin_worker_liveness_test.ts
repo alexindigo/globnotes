@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertRejects } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import {
   PluginHost,
   type RpcAuthority,
@@ -564,14 +565,15 @@ for (
         "run",
         "--cached-only",
         "--frozen",
-        `--config=${new URL("../deno.json", import.meta.url).pathname}`,
+        `--config=${fromFileUrl(new URL("../deno.json", import.meta.url))}`,
         "--unstable-worker-options",
         "--allow-read",
         "--allow-write",
         "--allow-env",
         "--allow-net",
-        new URL("./helpers/plugin_worker_liveness_child.ts", import.meta.url)
-          .pathname,
+        fromFileUrl(
+          new URL("./helpers/plugin_worker_liveness_child.ts", import.meta.url),
+        ),
         kind,
         evidence,
       ],

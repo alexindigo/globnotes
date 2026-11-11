@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertRejects } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import type { RevisionedValues } from "../server/plugins/contracts.ts";
 import {
   PLUGIN_LIMITS,
@@ -124,7 +125,7 @@ Deno.test("review repairs: R18 schema evolution writes preserve removed fields a
       "run",
       "--cached-only",
       "--frozen",
-      `--config=${new URL("../deno.json", import.meta.url).pathname}`,
+      `--config=${fromFileUrl(new URL("../deno.json", import.meta.url))}`,
       "--allow-read",
       script,
     ],

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals, assertStringIncludes } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { command } from "./helpers/process.ts";
 
 // The fake API projects JSON fields like gh --jq, but makes no eligibility
@@ -178,7 +179,7 @@ for (
         args: [
           "20",
           "bash",
-          new URL("../scripts/ci-pr-proof.sh", import.meta.url).pathname,
+          fromFileUrl(new URL("../scripts/ci-pr-proof.sh", import.meta.url)),
         ],
         env: {
           PATH: `${root}/bin:${Deno.env.get("PATH")}`,

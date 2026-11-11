@@ -1,6 +1,7 @@
 // Feature-owned native case. The preload seam supplies elapsed failure time and
 // held transfer state; ordinary driver invalidations and API reads stay real.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { fileURLToPath } from "node:url";
 import { memoryRemote } from "../../../tests/helpers/memory_remote.ts";
 import { applicationServer, bindAddress, httpOrigin } from "./http-origin.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
@@ -50,7 +51,7 @@ async function geometry() {
   assert(value.labels.every(space=>space==="nowrap"),"A panel label can wrap");
 }
 try {
-  server=await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,fixtureAuth:{auth_type:"none"},GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},{...applicationServer(),denoArgs:["--import",new URL("../../../tests/helpers/sync_status_preload.ts",import.meta.url).pathname]});
+  server=await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,fixtureAuth:{auth_type:"none"},GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},{...applicationServer(),denoArgs:["--import",fileURLToPath(new URL("../../../tests/helpers/sync_status_preload.ts",import.meta.url))]});
   const catalog=await api("plugin-host");await api("plugin-host/globnotes-test-driver/enabled","PUT",{enabled:true,revision:catalog.policy.revision,signature:catalog.policy.signature});
   const permission=await api("plugin-host/globnotes-test-driver/permissions");await api("plugin-host/globnotes-test-driver/permissions","PUT",{revision:permission.revision,signature:permission.signature,requestSourceKey:permission.requestSourceKey,requestSourceRevision:permission.requestSourceRevision,allowNetwork:true,approvedNetwork:permission.requestedNetwork,approvedImports:[]});
   await api("notes","POST",{path:"Welcome",content:"# A connected vault\n\nNotes stay together across your sync connections.\n"});

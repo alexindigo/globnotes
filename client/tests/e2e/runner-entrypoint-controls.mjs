@@ -1,6 +1,7 @@
 // The actual shell entrypoint must preserve its delegated process's status.
 import { assert } from "./test-outcomes.mjs";
-const root = new URL("../../..", import.meta.url).pathname;
+import { fileURLToPath } from "node:url";
+const root = fileURLToPath(new URL("../../..", import.meta.url));
 const artifacts = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "globnotes-entrypoint-controls-" });
 await Deno.mkdir(artifacts, { recursive: true, mode: 0o700 });
 const outcomes = [];

@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { bootServer } from "./harness-helpers.mjs";
 import { ReadinessError } from "../../../tests/helpers/wait.ts";
 
@@ -21,6 +23,9 @@ for (const crash of [false, true]) {
     }));
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
     const error = await bootServer("/fixture/vault", "/fixture/state/globnotes").catch(error => error);
+    expect(launch.mock.calls[0][1].denoArgs).toEqual([
+      "--cached-only", "--frozen", `--config=${resolve(dirname(fileURLToPath(import.meta.url)), "../../../deno.json")}`,
+    ]);
     expect(error).toBeInstanceOf(ReadinessError);
     expect(error).not.toBe(cleanup);
     expect(error.label).toBe("e2e server plugins ready");

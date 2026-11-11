@@ -1,5 +1,6 @@
 // Feature-owned native access consumers; shared browser/runner helpers unchanged.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { fileURLToPath } from "node:url";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { visibleElement } from "./native-actions.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
@@ -21,7 +22,7 @@ let owned, failure;
 const assert = (value, message) => { if (!value) throw Error(message); };
 const port = Number(Deno.env.get("CDP_PORT") ?? 9334);
 const username = "access-fixture", password = "current-fixture-password";
-const ROOT = new URL("../../..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 async function bootFirstRun(vault, state, directory, prefix) {
   const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
   const child = new Deno.Command(Deno.execPath(), { args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`], cwd: ROOT, clearEnv: true,

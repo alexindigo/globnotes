@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assertEquals } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { readManifest } from "../server/plugins/manifest.ts";
 import { effectivePageValues } from "../server/plugins/settings.ts";
 
 Deno.test("shipped autosave timer: browser-only manifest validates with opt-in settings", () => {
   const manifest = readManifest(
-    new URL("../plugins/globnotes-autosave-timer", import.meta.url).pathname,
+    fromFileUrl(
+      new URL("../plugins/globnotes-autosave-timer", import.meta.url),
+    ),
   );
   assertEquals(manifest.runtime, { client: "app.js" });
   assertEquals(manifest.entry, undefined);

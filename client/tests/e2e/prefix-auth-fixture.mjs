@@ -1,5 +1,6 @@
 // Feature-owned production cwd: prefix stamping never changes donor assets.
-const ROOT = new URL("../../..", import.meta.url).pathname;
+import { fileURLToPath } from "node:url";
+const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
 import { awaitHealthy } from "./harness-helpers.mjs";

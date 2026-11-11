@@ -785,7 +785,9 @@ Deno.test("plugin persistence: relocated owner, defaults, CAS and restart read-b
         args: [
           "run",
           "--cached-only",
-          `--config=${new URL("../deno.json", import.meta.url).pathname}`,
+          `--config=${
+            path.fromFileUrl(new URL("../deno.json", import.meta.url))
+          }`,
           "--allow-read",
           "--allow-write",
           script,

@@ -5,6 +5,10 @@ import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
 import { bootServer as launchServer } from "../../../tests/helpers/boot.ts";
 import { metadataBase } from "./config-fixture.mjs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const configFile = resolve(dirname(fileURLToPath(import.meta.url)), "../../../deno.json");
 
 export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFailed = false, headers = {} } = {}) {
   const hostname = bindAddress();
@@ -13,7 +17,7 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFail
       ...env,
        GLOBNOTES_GLOBNOTES_PATH: vault,
        GLOBNOTES_METADATA_PATH: metadataBase(vault, stateDir),
-  }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${new URL("../../../deno.json", import.meta.url).pathname}`] });
+  }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${configFile}`] });
   const logs = server.output;
   let closed = false;
   async function close() {

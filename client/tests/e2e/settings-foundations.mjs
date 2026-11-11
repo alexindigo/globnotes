@@ -1,5 +1,6 @@
 // Feature-owned real Settings foundation consumers; shared native helpers stay unchanged.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { fileURLToPath } from "node:url";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { awaitHealthy, bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
@@ -30,7 +31,7 @@ const permissionPath = "/_/api/plugin-host/foundation-guard/permissions";
 // Match the existing feature-owned plugin-permissions.mjs parent-launch pattern;
 // bootServer's general default and the production runtime remain unchanged.
 async function bootWarningServer(vault, state, logsDir) {
-  const root = new URL("../../..", import.meta.url).pathname;
+  const root = fileURLToPath(new URL("../../..", import.meta.url));
   const { host, origin } = applicationServer();
   const listener = Deno.listen({ hostname: host, port: 0 });
   const port = listener.addr.port; listener.close();

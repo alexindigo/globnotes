@@ -1,5 +1,6 @@
 // Strict production-only acceptance: real native drivers and end-chain records.
 import { parseArguments } from "./harness-helpers.mjs";
+import { fileURLToPath } from "node:url";
 import { collectProductionRows } from "./generic-platform-evidence.mjs";
 
 let options;
@@ -8,7 +9,7 @@ catch (error) { console.error(error.message); Deno.exit(2); }
 if (options.help) { console.log("Usage: generic-plugin-system.mjs [--artifacts <directory>] [--help]"); Deno.exit(0); }
 const artifacts = options.artifacts ?? await Deno.makeTempDir({ prefix: "generic-production-acceptance-" });
 if (options.artifacts) await Deno.mkdir(artifacts, { mode: 0o700 });
-const ROOT = new URL("../../..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const flags = ["--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-run", "--allow-env", "--allow-sys"];
 const drivers = [["settings", "settings-ui.mjs"], ["guards", "plugin-guard-preservation.mjs"], ["prefix", "plugin-prefix-auth.mjs"], ["access", "access-settings.mjs"]];
 const results = [];
