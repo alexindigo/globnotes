@@ -91,7 +91,7 @@ export async function exercisePrimitiveOwnership({ port, directory }) {
       const settingsHover = await hoverStyle(session, '[data-branding-settings] [data-variant=cta]', directory, `${mode}-branding`);
       const branding = await settingsActionZones(session);
       await session.button('Cancel changes','[data-branding-settings]');
-      await session.poll("document.querySelector('[data-branding-settings] [data-variant=cta]')?.disabled===true");
+      await session.poll("!document.querySelector('[data-branding-settings] [data-variant=cta]')");
       const response = await fetch(`${server.baseUrl}/_/api/plugin-host/primary-probe/commands/request`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw Error(`Primary fixture request rejected: ${response.status}`);
       await response.body?.cancel();
@@ -100,8 +100,11 @@ export async function exercisePrimitiveOwnership({ port, directory }) {
       const request = await primaryStyle(session, '[data-modal-top=true] [data-variant=cta]');
       const requestHover = await hoverStyle(session, '[data-modal-top=true] [data-variant=cta]', directory, `${mode}-request`);
       const requestRows = await settingsActionZones(session);
+      const variantStyle = style => Object.fromEntries(Object.entries(style).filter(([key])=>!['fontSize','lineHeight'].includes(key)));
+      const expectedSizes = main.fontSize==='16px' && main.lineHeight==='24px' && settings.fontSize==='14px' && settings.lineHeight==='21px';
       results.push({ mode, main, settings, request, mainHover, settingsHover, requestHover, branding, requestRows,
-        equal: JSON.stringify(main) === JSON.stringify(settings) && JSON.stringify(main) === JSON.stringify(request) && JSON.stringify(mainHover) === JSON.stringify(settingsHover) && JSON.stringify(mainHover) === JSON.stringify(requestHover) });
+        expectedSizes,
+        equal: expectedSizes && JSON.stringify(variantStyle(main)) === JSON.stringify(variantStyle(settings)) && JSON.stringify(main) === JSON.stringify(request) && JSON.stringify(variantStyle(mainHover)) === JSON.stringify(variantStyle(settingsHover)) && JSON.stringify(mainHover) === JSON.stringify(requestHover) && settingsHover.fontSize===settings.fontSize && settingsHover.lineHeight===settings.lineHeight });
       await session.button('Deny', '[data-modal-top=true]');
       await session.poll("!document.querySelector('#permission-request-title')");
     }

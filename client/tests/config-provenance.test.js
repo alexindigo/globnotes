@@ -20,14 +20,18 @@ describe("configuration provenance consumers", () => {
     expect(await inventory.setAutoEnable(false)).toBe(false);
     expect(writePolicy).not.toHaveBeenCalled(); expect(inventory.hasWork()).toBe(false); inventory.dispose();
   });
-  it("disables only the pinned name and omits it from save/reset payloads", async () => {
+  it("renders only the pinned name as a value and omits it from save/reset payloads", async () => {
     let brand = { name:"Deployment", accent:"#aabbcc", files:[], fields:{ name:{source:"environment",readonly:true}, accent:{source:"toml",readonly:false} } };
     const writeBrand = vi.fn(async form => ({ ...brand, accent:form.get("accent") || null }));
     adapter = createCoreSettingsAdapters({ getBrand:()=>brand, applyBrand:fresh=>{brand=fresh;}, writable:()=>true, writeBrand, readBrand:async()=>brand });
     adapter.loadBrand();
     const wrapper = mount(BrandingSettingsPage, { props:{ snapshot:adapter.brandSnapshot() } });
-    expect(wrapper.get('#brand-name').element.disabled).toBe(true);
-    expect(wrapper.get('#brand-accent').element.disabled).toBe(false);
+    expect(wrapper.get('#brand-name').element.tagName).toBe('SPAN');
+    expect(wrapper.get('#brand-name').text()).toBe('Deployment');
+    const reasonId = wrapper.get('#brand-name').attributes('aria-describedby');
+    expect(wrapper.get(`[id="${reasonId}"]`).text()).toBe('Set by the server configuration');
+    expect(wrapper.get('#brand-accent').element.tagName).toBe('INPUT');
+    expect(wrapper.findAll('[disabled]')).toHaveLength(0);
     expect(wrapper.text()).toContain("Set by the server configuration");
     adapter.editBrand("name", "Forbidden"); expect(adapter.brandSnapshot().name).toBe("Deployment");
     adapter.editBrand("accent", "#112233"); expect(await adapter.saveBrand()).toBe(true);

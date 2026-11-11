@@ -33,7 +33,7 @@ describe("backup settings", () => {
     expect(state.snapshot(page.id).fields.basePath.readonly).toBe(true);
     state.dispose();
   });
-  it("uses a range draft with separate Enter/blur commit, and visibly disables an environment-pinned field", async () => {
+  it("uses a range draft with separate Enter/blur commit, and renders an environment-pinned value without an editor", async () => {
     const range = mount(SettingsField, { props: { field: { key: "retention", label: "Versions", type: "slider", min: 1, max: 10, step: 1 }, value: 2 } });
     await range.find('input[type="range"]').setValue("8");
     expect(range.emitted("edit")[0]).toEqual([{ key: "retention", raw: "8" }]);
@@ -43,9 +43,14 @@ describe("backup settings", () => {
     range.unmount();
     const pinned = mount(SettingsField, { props: { field: { key: "basePath", label: "Base", type: "folder" }, value: "/effective", readonly: true, provenance: { source: "environment", readonly: true } } });
     expect(pinned.text()).toContain("Set by the server configuration");
-    expect(pinned.find("input").element.readOnly).toBe(true);
-    await pinned.find("input").setValue("/attempt");
+    expect(pinned.findAll('input,button,[disabled]')).toHaveLength(0);
+    expect(pinned.get('#settings-field-basePath').element.tagName).toBe('SPAN');
+    expect(pinned.get('#settings-field-basePath').text()).toBe('/effective');
+    const reason = pinned.get('#settings-field-basePath').attributes('aria-describedby');
+    expect(pinned.get(`[id="${reason}"]`).text()).toBe('Set by the server configuration');
+    await pinned.get('#settings-field-basePath').trigger('input');
     expect(pinned.emitted("edit")).toBeUndefined();
+    expect(pinned.emitted("commit")).toBeUndefined();
     pinned.unmount();
   });
 });

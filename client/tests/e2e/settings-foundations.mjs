@@ -87,7 +87,7 @@ async function expandPermissions() {
   await session.button('Plugins','[aria-label="Settings pages"]');
   const selector='[data-plugin-inventory-id="foundation-guard"] button[aria-expanded]';
   if(await inspect(`document.querySelector('${selector}')?.getAttribute('aria-expanded')!=='true'`))await session.click(selector);
-  await session.poll("!!document.querySelector('[data-plugin-inventory-id=foundation-guard] [data-plugin-permission-panel] [role=switch]')");
+  await session.poll("!!document.querySelector('[data-plugin-inventory-id=foundation-guard] [data-plugin-permission-panel]')");
 }
 async function master() {
   await session.poll("(()=>{const el=document.querySelector('[data-plugin-inventory-id=foundation-guard] [data-plugin-permission-panel] [role=switch]');if(!el||el.disabled)return false;el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()");
@@ -266,9 +266,8 @@ try {
       await theme(`globnotes-${mode}`);
       await session.button("Branding", '[aria-label="Settings pages"]');
       await session.poll("document.querySelector('#brand-name')?.value==='Foundation seed'");
-      const clean = await actions("[data-branding-settings]", `${name}-clean`);
-       assert(clean.right.find(button => button.text === "Save branding").disabled, "Clean Branding Save is enabled");
-       assert(clean.right.find(button => button.text === "Cancel changes").disabled, "Clean Branding Cancel changes is enabled");
+      const clean = await session.read('[data-branding-settings]', "(()=>{const page=document.querySelector('[data-branding-settings]');return {actions:[...page.querySelectorAll('button')].map(button=>button.textContent.trim()),disabled:page.querySelectorAll('[disabled]').length};})()");
+      assert(!clean.actions.includes('Save branding')&&!clean.actions.includes('Cancel changes')&&clean.disabled===0, "Clean Branding renders unavailable actions");
       const inputFocus = await tabTo("#brand-name"); focusAssertion(inputFocus);
       await replace("#brand-name", `Foundation retained draft ${name}`);
       await session.poll("[...document.querySelectorAll('[data-branding-settings] button')].some(b=>b.textContent.trim()==='Save branding'&&!b.disabled)");
@@ -440,6 +439,7 @@ try {
     await theme(id);
     await session.button("Plugins", '[aria-label="Settings pages"]');
     await expandPermissions();
+    assert(await inspect("(()=>{const panel=document.querySelector('[data-plugin-inventory-id=foundation-guard] [data-plugin-permission-panel]');return !!panel.querySelector('.setting-row-control .settings-text')&&!panel.querySelector('[role=switch],[disabled]');})()"), "Read-only permissions lost their value presentation or expose dead controls");
     await enabledButton("Review request…", "[data-plugin-permission-panel]");
     await session.poll("!!document.querySelector('#permission-request-title')");
     const broad = await warningObservation("[data-permission-request-choices] .text-theme-warning", "text");

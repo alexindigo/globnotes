@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-only -->
 <template>
-  <section class="settings-page" data-settings-page>
+  <section class="settings-page settings-text" data-settings-page>
     <header>
-      <div class="settings-page-heading"><h2 data-settings-page-heading>{{ title }}</h2><slot name="action" /></div>
+      <div class="settings-page-heading"><h2 class="settings-heading" data-settings-page-heading>{{ title }}</h2><slot name="action" /></div>
       <p v-if="description" class="settings-page-description">{{ description }}</p>
     </header>
     <slot name="tabs" />

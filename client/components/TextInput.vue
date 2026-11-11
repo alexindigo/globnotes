@@ -4,7 +4,7 @@
     class="text-input focus-ring min-w-0 w-full"
     :class="{
       'min-h-11 rounded-md border border-theme-border px-3 py-2 dark:bg-theme-background-elevated': ['field','settings'].includes(variant),
-      'text-sm': variant === 'settings',
+      'settings-text': variant === 'settings',
       'max-w-sm': variant === 'settings' && type !== 'number',
       'max-w-24': variant === 'settings' && type === 'number',
       'bg-theme-background': variant === 'plain',

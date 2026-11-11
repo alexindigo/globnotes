@@ -67,8 +67,8 @@ try {
   const pluginFile = `${state}/plugin-data/layered-probe/settings.json`, pluginBytes = await Deno.readTextFile(pluginFile);
   environment = { ...environment, GLOBNOTES_GLOBNOTES_BRAND_NAME: "Environment brand", GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS: '{"layered-probe":{"preferences":{"message":"Environment plugin consumer"}}}' };
   await server.restart(); await home("Environment brand"); await branding();
-  const pin = await session.read(['#brand-name', '#brand-accent'], "(()=>{const name=document.querySelector('#brand-name');return {disabled:name.disabled,reason:(name.getAttribute('aria-describedby')??'').split(' ').map(id=>document.getElementById(id)?.textContent??'').join(' '),siblingEditable:!document.querySelector('#brand-accent').disabled};})()");
-  assert(pin.disabled && pin.reason.trim() === "Set by the server configuration" && pin.siblingEditable, "Name pin disabled the wrong scope or lacks its reason");
+  const pin = await session.read(['#brand-name', '#brand-accent'], "(()=>{const name=document.querySelector('#brand-name'),accent=document.querySelector('#brand-accent');return {valueOnly:name.tagName==='SPAN',value:name.textContent,reason:(name.getAttribute('aria-describedby')??'').split(' ').map(id=>document.getElementById(id)?.textContent??'').join(' '),siblingEditable:accent.matches('input[type=color]:not([disabled]):not([readonly])'),disabledControls:document.querySelectorAll('[data-branding-settings] [disabled]').length};})()");
+  assert(pin.valueOnly && pin.value === 'Environment brand' && pin.reason.trim() === "Set by the server configuration" && pin.siblingEditable && pin.disabledControls === 0, "Name pin is not a value row with its reason and editable sibling");
   assert((await api("config")).body.brand.fields.name.source === "environment", "Brand pin lost environment provenance");
   await session.button("Use theme colour", "[data-branding-settings]");
   await session.button("Save branding", "[data-branding-settings]");
@@ -80,8 +80,8 @@ try {
   assert(denied.status === 409, "Direct brand pin mutation succeeded"); await denied.body?.cancel();
   assert(await Deno.readTextFile(file) === bytes, "Forbidden brand edit changed disk");
   await session.click('[data-settings-nav-id="plugin:layered-probe"]');
-  const pluginPin = await session.poll("(()=>{const el=document.querySelector('#settings-field-message');if(el?.value!=='Environment plugin consumer')return false;return {value:el.value,readonly:el.readOnly,reason:(el.getAttribute('aria-describedby')??'').split(' ').map(id=>document.getElementById(id)?.textContent??'').join(' ')};})()");
-  assert(pluginPin.readonly && pluginPin.reason.trim() === "Set by the server configuration", `Plugin pin is missing from its actual settings consumer: ${JSON.stringify(pluginPin)}`);
+  const pluginPin = await session.poll("(()=>{const el=document.querySelector('#settings-field-message');if(el?.textContent!=='Environment plugin consumer')return false;return {value:el.textContent,valueOnly:el.tagName==='SPAN',reason:(el.getAttribute('aria-describedby')??'').split(' ').map(id=>document.getElementById(id)?.textContent??'').join(' ')};})()");
+  assert(pluginPin.valueOnly && pluginPin.reason.trim() === "Set by the server configuration", `Plugin pin is missing from its actual settings consumer: ${JSON.stringify(pluginPin)}`);
   const current = (await api("plugin-host/layered-probe/settings/preferences")).body;
   assert(current.fields.message.source === "environment", "Plugin pin lost environment provenance");
   const forbidden = await api("plugin-host/layered-probe/settings/preferences", "PUT", { values: { message: "forbidden plugin edit" }, revision: current.revision, sourceKey: current.sourceKey });
@@ -91,7 +91,7 @@ try {
   results.push({ name: "pin-and-editable-sibling", passed: true, pin, pluginPin, forbiddenBrandStatus: denied.status, forbiddenPluginStatus: forbidden.status, savedFallbackRetained: true });
   environment = { ...environment, GLOBNOTES_GLOBNOTES_BRAND_NAME: "" };
   await server.restart(); await home("globnotes"); await branding();
-  assert(await session.read('#brand-name', "document.querySelector('#brand-name').value==='' && document.querySelector('#brand-name').disabled"), "Empty name override did not clear the rendered consumer");
+  assert(await session.read('#brand-name', "document.querySelector('#brand-name').tagName==='SPAN' && document.querySelector('#brand-name').textContent==='globnotes' && !document.querySelector('[data-branding-settings] [disabled]')"), "Empty name override did not clear the rendered consumer to the default value row");
   assert(parse(await Deno.readTextFile(file)).brand.name === "Native persisted brand", "Empty pin erased saved name");
   results.push({ name: "explicit-empty-override", passed: true, savedNameRetained: true });
   assert(session.errors.length === 0, "Browser page exception");

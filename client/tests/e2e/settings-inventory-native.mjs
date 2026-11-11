@@ -10,7 +10,10 @@ export async function settleSettingsInventory(session, expected) {
   });
   let reviewed = false;
   try {
-    await session.poll(`(${expected}) && (!document.querySelector('[data-inventory-recovery]') || [...document.querySelectorAll('[data-inventory-recovery] button')].some(button=>button.textContent.trim()==='Check current status'&&!button.disabled))`);
+    // Unavailable mutation controls are absent during committed recovery. Wait
+    // for either the settled control or the explicit read-only review action;
+    // require the expected control state after that review, not before it.
+    await session.poll(`((${expected}) && !document.querySelector('[data-inventory-recovery]')) || (document.querySelector('[data-inventory-recovery]')?.textContent.includes('Policy saved;') && [...document.querySelectorAll('[data-inventory-recovery] button')].some(button=>button.textContent.trim()==='Check current status'&&!button.disabled))`);
     // Callers can enter immediately after native click, before its deferred
     // original PUT dispatch. Keep those requests as evidence, but start the
     // no-replay interval only once the committed/settled outcome is observed.

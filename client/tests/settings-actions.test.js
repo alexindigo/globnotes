@@ -7,12 +7,58 @@ import CustomButton from "../components/CustomButton.vue";
 import BrandingSettingsPage from "../components/BrandingSettingsPage.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import SettingsActions from "../components/SettingsActions.vue";
+import { assertSettingsHeaderGeometry } from './e2e/settings-frame-native.mjs';
 
 const wrappers = [];
+const settingsViews = import.meta.glob(['../components/*Settings*.vue','../components/settings/*.vue'], {eager:true,query:'?raw',import:'default'});
 const mounted = (...args) => { const wrapper = mount(...args); wrappers.push(wrapper); return wrapper; };
 afterEach(() => { for (const wrapper of wrappers.splice(0)) wrapper.unmount(); document.body.innerHTML = ""; });
 
 describe("shared Settings action consumers", () => {
+  it('accepts the pre-change header/close geometry and rejects enlarged text-action chrome', async () => {
+    const observation={textScale:1,closeContained:true,header:{height:53},close:{width:20,height:28,variant:'text'}};
+    const session={read:vi.fn(async()=>observation)};
+    expect(await assertSettingsHeaderGeometry(session)).toEqual({height:53,close:observation.close});
+    for(const changed of [{header:{height:69}},{close:{width:49.5,height:44,variant:'secondary'}}]){
+      session.read.mockResolvedValueOnce({...observation,...changed});
+      await expect(assertSettingsHeaderGeometry(session)).rejects.toThrow('Settings header geometry');
+    }
+  });
+  it('scales compact chrome with text size while retaining containment and default-size guards', async () => {
+    const observation={textScale:2,closeContained:true,header:{height:137},close:{width:40,height:56,variant:'text'}};
+    const session={read:vi.fn(async()=>observation)};
+    expect(await assertSettingsHeaderGeometry(session)).toEqual({height:137,close:observation.close});
+    for(const changed of [{closeContained:false},{close:{width:20,height:28,variant:'text'}}]){
+      session.read.mockResolvedValueOnce({...observation,...changed});
+      await expect(assertSettingsHeaderGeometry(session)).rejects.toThrow('Settings header geometry');
+    }
+  });
+  it('does not let labelled Settings action owners select text-only variants', () => {
+    for(const [path,source] of Object.entries(settingsViews))for(const tag of source.matchAll(/<CustomButton\b[^>]*>/g)){
+      if(/\s:?(?:label)=/.test(tag[0]))expect(tag[0],path).not.toMatch(/variant=["'][^"']*(?:danger-text|\btext\b)/);
+    }
+  });
+  it('keeps icon-only Settings controls compact rather than applying the text-action size', () => {
+    const close=settingsViews['../components/SettingsModal.vue'].match(/<CustomButton\b[^>]*aria-label="Close settings"[^>]*>/)[0];
+    expect(close).toContain('variant="text"');
+    expect(close).toContain('text-tone="normal"');
+    expect(close).not.toMatch(/\ssize=/);
+    for(const [path,source] of Object.entries(settingsViews))for(const tag of source.matchAll(/<CustomButton\b[^>]*>/g)){
+      if(/:icon-path=/.test(tag[0])&&!/\s:?(?:label)=/.test(tag[0]))expect(tag[0],path).not.toContain('size="settings"');
+    }
+  });
+  it('uses one outlined Settings size for every Branding action and keeps file status/help in its row', () => {
+    const snapshot={writable:true,name:'Brand',accent:'#123456',canSave:true,canCancel:true,canReset:true,slots:[{id:'logo',label:'Logo',help:'SVG, PNG'}],files:{logo:{}}};
+    const wrapper=mounted(BrandingSettingsPage,{props:{snapshot}});
+    for(const button of wrapper.findAllComponents(CustomButton)){
+      expect(button.props('size')).toBe('settings');
+      expect(['secondary','danger','cta']).toContain(button.props('variant'));
+      expect(button.classes()).toEqual(expect.arrayContaining(['settings-text','px-4','py-2.5','font-semibold']));
+    }
+    const row=wrapper.findAll('.setting-row').find(row=>row.text().includes('No custom logo.'));
+    expect(row.get('.setting-row-copy p').text()).toBe('SVG, PNG');
+    expect(row.get('.setting-row-control .text-theme-text-muted').text()).toBe('No custom logo.');
+  });
   it.each(["start", "end"])("composes a standalone %s action without supplying another zone or owning its callback", async zone => {
     const clicked = vi.fn();
     const wrapper = mounted(SettingsActions, { slots: { [zone]: () => h(CtaButton, { label: "Standalone action", type: "button", onClick: clicked }) } });
@@ -101,14 +147,14 @@ describe("shared Settings action consumers", () => {
     await button("Reset branding…").trigger("click"); expect(onReset).toHaveBeenCalledTimes(1);
     await button("Save branding").trigger("click"); expect(onSave).toHaveBeenCalledTimes(1);
     await wrapper.setProps({ snapshot: { ...snapshot, busy: true,canSave:false,canReset:false } });
-    expect(button("Save branding").element.disabled).toBe(true);
-    expect(button("Reset branding…").element.disabled).toBe(true);
+    expect(button("Save branding")).toBeUndefined();
+    expect(button("Reset branding…")).toBeUndefined();
     expect(wrapper.get("#brand-name").element.readOnly).toBe(false);
     await wrapper.get("#brand-name").setValue("Newer brand");
     expect(onEdit).toHaveBeenCalledWith("name", "Newer brand");
     await button("Cancel changes").trigger("click"); expect(onCancel).toHaveBeenCalledTimes(1);
     await wrapper.setProps({snapshot:{...snapshot,busy:true,canSave:false,canReset:false,canCancel:false}});
-    expect(button('Cancel changes').element.disabled).toBe(true);
-    button('Cancel changes').element.click();expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(button('Cancel changes')).toBeUndefined();
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });

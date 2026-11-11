@@ -24,7 +24,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
     }
     if(page==='Native preferences')await peer.click('[data-settings-nav-id="plugin:session-guard"]');
     else await peer.button(page, '[aria-label="Settings pages"]');
-    if (page === "Native preferences") await peer.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
+    if (page === "Native preferences") await peer.poll("document.querySelector('#settings-field-message')?.matches('input:not([readonly]):not([disabled])')");
   }
   async function editMessage(peer, value) {
     await replace(peer, "#settings-field-message", value); await peer.key("Enter", { windowsVirtualKeyCode: 13 });
@@ -134,8 +134,8 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   assert(guarded.status === 409, "Enabled guard did not consume the persisted peer setting");
   await replace(a, "#settings-field-message", "A recovery after remote disable");
   await open(b, "Plugins"); await b.click('[data-plugin-inventory-id="session-guard"] .plugin-row-actions [role=switch]');
-   await a.poll("document.querySelector('#settings-field-message')?.readOnly && document.querySelector('[data-modal-top=true]')?.textContent.includes('This page is unavailable')");
-   assert(await a.evaluate("document.querySelector('#settings-field-message')?.value==='A recovery after remote disable'"), "Remote disable lost the recovery draft");
+   await a.poll("document.querySelector('#settings-field-message')?.tagName==='SPAN' && document.querySelector('[data-modal-top=true]')?.textContent.includes('This page is unavailable')");
+   assert(await a.evaluate("document.querySelector('#settings-field-message')?.textContent==='A recovery after remote disable'"), "Remote disable lost the recovery draft");
   const disabledCommand = await api(b, "/_/api/plugin-host/session-guard/commands/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   const disabledEndpoint = await api(b, "/_/api/plugins/session-guard/ping");
   const unguarded = await patchNote(b, "/_/api/notes/NoteA", "GPS-blocked peer write");
@@ -145,7 +145,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   await b.poll("document.body.classList.contains('dark')"); assert(await b.evaluate("window.__settingsPeerThemeEvents") === beforeDisabledTheme, "Disabled managed browser subscription still fired");
   await open(b, "Keybindings"); assert(!await b.evaluate("!!document.querySelector('[data-command-binding=\"plugin:session-guard:sdk-settings\"]')"), "Disabled browser command remained registered");
   await open(b, "Plugins"); await b.click('[data-plugin-inventory-id="session-guard"] .plugin-row-actions [role=switch]');
-   await a.poll("document.querySelector('#settings-field-message')?.readOnly===false");
+   await a.poll("document.querySelector('#settings-field-message')?.matches('input:not([readonly]):not([disabled])')");
    assert(await a.evaluate("document.querySelector('#settings-field-message')?.value==='A recovery after remote disable'"), "Re-enable discarded the recovery draft");
   const enabledInventory = await settleSettingsInventory(b, "document.querySelector('[data-plugin-inventory-id=\"session-guard\"] .plugin-row-actions [role=switch]')?.getAttribute('aria-checked')==='true'");
   // Explicitly focus the recovered field before admitting its retained edit.

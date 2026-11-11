@@ -25,10 +25,12 @@ export function settingsFieldGroups(page, values) {
 }
 
 /** Control formatting and event adaptation are shared plain-module concerns. */
-export function settingsFieldPresentation(field, value, provenance) {
+export function settingsFieldPresentation(field, value, provenance, readonly = false) {
   return { short:['toggle','select','number','color'].includes(field.type),
-    pin:pinExplanation(provenance),
+    pin:pinExplanation(provenance) || (readonly ? 'Changes are unavailable for this setting.' : ''),
     text:String(value ?? ''), selected:JSON.stringify(value),
+    valueOnly:readonly,
+    display:field.type === 'toggle' ? value ? 'On' : 'Off' : field.type === 'select' ? field.options?.find(option=>JSON.stringify(option.value)===JSON.stringify(value))?.label ?? String(value ?? '') : String(value ?? ''),
     browseLabel:field.type === 'folder' ? 'Choose folder…' : field.type === 'file' ? 'Choose file…' : null };
 }
 export function createSettingsFieldIntents(props, emit) {

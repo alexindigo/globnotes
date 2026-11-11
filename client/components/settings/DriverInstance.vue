@@ -17,28 +17,28 @@
     <p v-if="instance.schemaChanged" role="status">The driver definition changed. Your original draft is retained; discard it explicitly before using the new fields.</p>
     <p v-else-if="instance.changed" role="status">These settings changed elsewhere. Your edits are retained. Review current state before saving.</p>
     <div class="driver-instance__actions">
-      <CustomButton v-if="instance.canSync" type="button" label="Sync now" variant="secondary" @click="onSync(instance.id)" />
-      <CustomButton v-if="instance.permissionsPage" type="button" label="Review plugin access" variant="text" @click="onManage(instance.plugin)" />
-      <CustomButton v-if="instance.canRemove" type="button" label="Remove" variant="danger-text" @click="onRemove(instance.id)" />
+      <CustomButton size="settings" v-if="instance.canSync" type="button" label="Sync now" variant="secondary" @click="onSync(instance.id)" />
+      <CustomButton size="settings" v-if="instance.permissionsPage" type="button" label="Review plugin access" variant="secondary" @click="onManage(instance.plugin)" />
+      <CustomButton size="settings" v-if="instance.canRemove" type="button" label="Remove" variant="danger" @click="onRemove(instance.id)" />
     </div>
     <section class="driver-instance__settings" aria-label="Instance settings">
       <template v-if="instance.editable">
-        <SettingRow :id="`driver-label-${instance.id}`" label="Label" :error="instance.labelError" v-slot="row"><TextInput :id="row.id" variant="settings" :model-value="instance.label" maxlength="128" :aria-describedby="row.describedby" :aria-invalid="row.invalid" @update:model-value="onEdit(instance.id,'label',$event)" /></SettingRow>
-        <SettingsField v-for="item in instance.fields" :key="item.field.key" :id="item.id" :field="item.field" :value="item.value" :error="item.error" @edit="onEdit(instance.id,$event.key,$event.raw)" />
+        <SettingRow :id="`driver-label-${instance.id}`" label="Label" :error="instance.labelError" form v-slot="row"><TextInput :id="row.id" variant="settings" :model-value="instance.label" maxlength="128" :aria-describedby="row.describedby" :aria-invalid="row.invalid" @update:model-value="onEdit(instance.id,'label',$event)" /></SettingRow>
+        <SettingsField v-for="item in instance.fields" :key="item.field.key" :id="item.id" :field="item.field" :value="item.value" :error="item.error" form @edit="onEdit(instance.id,$event.key,$event.raw)" />
       </template>
       <template v-else><SettingRow v-for="item in instance.fields" :key="item.field.key" :label="item.field.label" as="value" short><span class="driver-instance__value">{{ item.display }}</span></SettingRow></template>
-      <div class="driver-instance__actions"><CustomButton v-if="instance.canSave" type="button" label="Save settings" variant="cta" @click="onSave(instance.id)" /><CustomButton v-if="instance.canDiscard" type="button" label="Discard edits" variant="text" @click="onDiscard(instance.id)" /></div>
+      <div class="driver-instance__actions"><CustomButton size="settings" v-if="instance.canSave" type="button" label="Save settings" variant="cta" @click="onSave(instance.id)" /><CustomButton size="settings" v-if="instance.canDiscard" type="button" label="Discard edits" variant="secondary" @click="onDiscard(instance.id)" /></div>
     </section>
     <DriverSecretField v-for="field in instance.secrets" :key="field.key" :field="field" :editable="instance.editable" :on-edit="value=>onEditKey(instance.id,field.key,value)" :on-save="()=>onSaveKey(instance.id,field.key)" :on-clear="()=>onClearKey(instance.id,field.key)" />
     <section v-if="instance.attention?.held.length" class="driver-instance__attention" aria-label="Deleted here">
       <h4>{{ instance.attention.held.length }} files deleted here still exist on {{ instance.label }}</h4>
-      <div v-if="instance.canDecide" class="driver-instance__actions"><CustomButton type="button" label="Restore all here" variant="secondary" @click="onDecision(instance.id,'held_restore')" /><CustomButton type="button" :label="`Delete all on ${instance.label}`" variant="danger-text" @click="onDecision(instance.id,'held_delete')" /></div>
-      <ul><li v-for="item in instance.attention.held" :key="item.path"><span class="driver-instance__path" :title="item.path">{{ item.path }}</span><div v-if="instance.canDecide" class="driver-instance__actions"><CustomButton type="button" label="Restore here" variant="text" @click="onDecision(instance.id,'held_restore',[item.path])" /><CustomButton type="button" :label="`Delete on ${instance.label}`" variant="danger-text" @click="onDecision(instance.id,'held_delete',[item.path])" /></div></li></ul>
+      <div v-if="instance.canDecide" class="driver-instance__actions"><CustomButton size="settings" type="button" label="Restore all here" variant="secondary" @click="onDecision(instance.id,'held_restore')" /><CustomButton size="settings" type="button" :label="`Delete all on ${instance.label}`" variant="danger" @click="onDecision(instance.id,'held_delete')" /></div>
+      <ul><li v-for="item in instance.attention.held" :key="item.path"><span class="driver-instance__path" :title="item.path">{{ item.path }}</span><div v-if="instance.canDecide" class="driver-instance__actions"><CustomButton size="settings" type="button" label="Restore here" variant="secondary" @click="onDecision(instance.id,'held_restore',[item.path])" /><CustomButton size="settings" type="button" :label="`Delete on ${instance.label}`" variant="danger" @click="onDecision(instance.id,'held_delete',[item.path])" /></div></li></ul>
     </section>
     <section v-if="instance.attention?.remoteEmpty" class="driver-instance__attention" aria-label="Remote looks empty">
       <h4>{{ instance.label }} looks empty; nothing was deleted</h4>
       <ul><li v-for="item in instance.attention.remoteEmpty.files" :key="item.path"><span class="driver-instance__path" :title="item.path">{{ item.path }}</span></li></ul>
-      <div v-if="instance.canDecide" class="driver-instance__actions"><CustomButton type="button" :label="`Delete these ${instance.attention.remoteEmpty.files.length} files here too`" variant="danger-text" @click="onDecision(instance.id,'remote_empty_delete')" /><CustomButton type="button" label="Upload them again" variant="secondary" @click="onDecision(instance.id,'remote_empty_upload')" /></div>
+      <div v-if="instance.canDecide" class="driver-instance__actions"><CustomButton size="settings" type="button" :label="`Delete these ${instance.attention.remoteEmpty.files.length} files here too`" variant="danger" @click="onDecision(instance.id,'remote_empty_delete')" /><CustomButton size="settings" type="button" label="Upload them again" variant="secondary" @click="onDecision(instance.id,'remote_empty_upload')" /></div>
     </section>
     <section v-if="instance.attention?.issues.length" class="driver-instance__attention" aria-label="Files not synced"><h4>Files not synced</h4><ul><li v-for="(item,index) in instance.attention.issues" :key="index"><span class="driver-instance__path" :title="item.path">{{ item.path }}</span><span>{{ item.reason || item.code }}</span></li></ul></section>
     <p v-for="notice in instance.attentionNotices" :key="notice" role="status">{{ notice }}</p>

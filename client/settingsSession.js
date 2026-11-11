@@ -164,7 +164,7 @@ export function createSettingsSession({
   }
   const autoEnableView = computed(() => ({ value:catalogPolicy.value?.effectiveAutoEnable ?? true,
     canToggle:inventorySnapshot.value.canMutate && !isDeploymentSource(catalogPolicy.value?.autoEnableSource),
-    note:isDeploymentSource(catalogPolicy.value?.autoEnableSource) ? 'Set by the server configuration' : '',
+    note:isDeploymentSource(catalogPolicy.value?.autoEnableSource) ? 'Set by the server configuration' : !writable() ? 'Plugin changes are unavailable in this read-only session.' : '',
     recovery:inventorySnapshot.value.intent?.type === 'auto-enable' ? policyRecovery() : null }));
   const pluginRows = computed(() => {
     const plugins = new Map(catalogPlugins.value.map(plugin => [plugin.id, plugin]));

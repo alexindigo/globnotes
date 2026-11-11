@@ -5,12 +5,13 @@
     :disabled="disabled"
     :title="title"
     :class="[
-      ['cta','secondary','danger-primary'].includes(variant) || prominent && ['subtle','danger','success'].includes(variant) ? 'px-4 py-2.5 font-semibold' : ['text','danger-text'].includes(variant) ? 'min-h-7 px-0 py-1' : 'px-2 py-1',
+      size === 'settings' || ['cta','secondary','danger-primary'].includes(variant) || prominent && ['subtle','danger','success'].includes(variant) ? 'px-4 py-2.5 font-semibold' : ['text','danger-text'].includes(variant) ? 'min-h-7 px-0 py-1' : 'px-2 py-1',
+      { 'settings-text min-h-11': size === 'settings' },
       wrapped ? 'min-w-0 max-w-full whitespace-normal' : 'text-nowrap',
       {
         'bg-theme-background enabled:hover:bg-theme-background-elevated enabled:hover:text-theme-brand':
           variant === 'subtle',
-        'text-theme-text-muted': variant === 'subtle' && ![true,'true'].includes($attrs['aria-pressed']),
+        'text-theme-text-muted': variant === 'subtle' && ![true,'true'].includes($attrs['aria-pressed']) || variant === 'text' && textTone === 'muted',
         'rounded-none border-t-2': variant === 'subtle' && $attrs['aria-pressed'] !== undefined,
         'border-transparent': variant === 'subtle' && [false,'false'].includes($attrs['aria-pressed']),
         'border-theme-brand text-theme-brand': variant === 'subtle' && [true,'true'].includes($attrs['aria-pressed']),
@@ -22,7 +23,8 @@
           variant === 'danger-primary',
         'ring-1 ring-inset ring-[rgb(var(--theme-control-border))] text-theme-text enabled:hover:bg-theme-background-elevated':
           variant === 'secondary',
-        'border-0 bg-transparent text-theme-text-muted enabled:hover:text-theme-brand': variant === 'text',
+        'border-0 bg-transparent enabled:hover:text-theme-brand': variant === 'text',
+        'text-theme-text': variant === 'text' && textTone === 'normal',
         'border-0 bg-transparent text-theme-danger enabled:hover:underline': variant === 'danger-text',
         'border border-theme-success text-theme-success enabled:hover:bg-theme-success/10':
           variant === 'success',
@@ -55,6 +57,8 @@ const props = defineProps({
   label: String,
   title: String,
   disabled: Boolean,
+  size: { type:String, default:'inherit', validator:value=>['inherit','settings'].includes(value) },
+  textTone: { type: String, default: 'muted', validator: value => ['muted','normal'].includes(value) },
   prominent: { type: Boolean, default: false },
   wrapLabel: { type: Boolean, default: false },
   // NOTE: must not be named `style` — Vue reserves that attr and the

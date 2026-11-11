@@ -38,7 +38,7 @@ export async function exerciseSettingsPending({ session, server, directory }) {
   await session.click('[aria-label="Settings"]');
   await session.poll("!!document.querySelector('#settings-modal-title')");
   await session.click('[data-settings-nav-id="plugin:session-guard"]');
-  await session.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
+  await session.poll("document.querySelector('#settings-field-message')?.matches('input:not([readonly]):not([disabled])')");
   const initial = await read();
   await session.send("Fetch.enable", { patterns: [{ urlPattern: `*${path}`, requestStage: "Response" }] });
   gate.next = true;
@@ -50,8 +50,8 @@ export async function exerciseSettingsPending({ session, server, directory }) {
   assert(persisted.values.message === "late acknowledged setting" && persisted.revision === initial.revision + 1, "Held response has no actual persisted outcome");
   await replace("#settings-field-limit", "");
    await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Settings request outcome is unknown')");
-   const retryDisabled = "[...document.querySelectorAll('[data-modal-top=true] button')].find(button=>button.textContent.trim()==='Check current status')?.disabled===true";
-  assert(await session.evaluate(retryDisabled), "Observation deadline freed the unresolved write for retry");
+    const retryUnavailable = "![...document.querySelectorAll('[data-modal-top=true] button')].some(button=>button.textContent.trim()==='Check current status')";
+   assert(await session.evaluate(retryUnavailable), "Observation deadline freed the unresolved write for retry");
   await session.button("Appearance");
   await pollGate(() => Date.now() - gate.response.at > 11000);
    assert(await session.evaluate("!!document.querySelector('#settings-modal-title') && document.querySelector('#settings-field-limit')?.value==='' && !document.querySelector('[data-appearance-settings]') && !document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')"), "Unresolved wire allowed departure/discard or erased newer invalid input");
