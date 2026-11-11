@@ -4,6 +4,7 @@ import { enableAutoUnmount, mount } from "@vue/test-utils";
 import SyncSettingsPage from "../components/SyncSettingsPage.vue";
 import DriverInstance from "../components/settings/DriverInstance.vue";
 import DriverSecretField from "../components/settings/DriverSecretField.vue";
+import SettingRow from "../components/settings/SettingRow.vue";
 enableAutoUnmount(afterEach);
 const controller=()=>Object.fromEntries(["refresh","review","discard","startAdd","editAdd","createInstance","edit","save","toggle","syncNow","remove","editKey","saveKey","clearKey","decision"].map(name=>[name,vi.fn()]));
 const button=(wrapper,text)=>wrapper.findAll("button").find(button=>button.text()===text);
@@ -15,8 +16,16 @@ describe("Sync settings rendering",()=>{
     await wrapper.setProps({snapshot:{loaded:true,stale:true,error:"Could not load",plugins:[],instances:[]}});expect(wrapper.text()).not.toContain("No sync set up.");await button(wrapper,"Retry reading").trigger("click");expect(c.refresh).toHaveBeenCalledOnce();
   });
   it("forwards add selection and label without giving the view workflow ownership",async()=>{
-    const c=controller(),wrapper=mount(SyncSettingsPage,{props:{controller:c,snapshot:{loaded:true,plugins:[{id:"test",name:"Test remote"}],instances:[],adding:true,plugin:"test",label:"Home",canCreate:true}}});
+    const c=controller(),wrapper=mount(SyncSettingsPage,{props:{controller:c,snapshot:{loaded:true,plugins:[{id:"test",name:"Test remote"}],addFields:[{key:'plugin',label:'Sync plugin',type:'select',options:[{label:'Test remote',value:'test'}]},{key:'label',label:'Label',type:'text'}],instances:[],adding:true,plugin:"test",label:"Home",canCreate:true}}});
+    expect(wrapper.findAllComponents(SettingRow).map(row=>row.props('label'))).toEqual(['Sync plugin','Label']);
     await wrapper.get("#sync-label").setValue("New remote");expect(c.editAdd).toHaveBeenCalledWith("label","New remote");await wrapper.get("form").trigger("submit");expect(c.createInstance).toHaveBeenCalledOnce();
+  });
+  it('uses value rows for a read-only connection without recreating a summary grid',()=>{
+    const instance={id:'home',label:'Home',pluginName:'Remote',stateLabel:'Off',status:'off',editable:false,fields:[{field:{key:'url',label:'Endpoint'},display:'http://remote'}],secrets:[],attentionNotices:[]};
+    const wrapper=mount(DriverInstance,{props:{instance}});
+    expect(wrapper.find('dl').exists()).toBe(false);
+    expect(wrapper.findComponent(SettingRow).props()).toMatchObject({label:'Endpoint',as:'value',short:true});
+    expect(wrapper.get('.setting-row-control').text()).toBe('http://remote');
   });
   it("password input starts empty, uses native password semantics and forwards only explicit intents",async()=>{
     const onEdit=vi.fn(),onSave=vi.fn(),onClear=vi.fn();const field={id:"key-home-token",label:"Access token",set:true,input:"",canSave:false,canClear:true};

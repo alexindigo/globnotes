@@ -35,10 +35,11 @@ export async function assertSettingRowAlignment(session) {
 export async function assertSettingsPaneEdges(session) {
   const result = await session.read(['[data-settings-content]', '[data-settings-page]', '.setting-row'], `(()=>{
     const pane=document.querySelector('[data-settings-content]'),page=pane.querySelector('[data-settings-page]');
-    const contentRight=el=>{const box=el.getBoundingClientRect(),style=getComputedStyle(el),borderLeft=parseFloat(style.borderLeftWidth),borderRight=parseFloat(style.borderRightWidth),scrollbar=el.offsetWidth-el.clientWidth-borderLeft-borderRight;return box.right-borderRight-parseFloat(style.paddingRight)-scrollbar;};
-    return {viewport:innerWidth,paneRight:contentRight(pane),pageRight:contentRight(page),rows:[...page.querySelectorAll('.setting-row')].map(row=>({label:row.querySelector('.setting-row-label').textContent.trim(),right:row.getBoundingClientRect().right}))};
+    const content=el=>{const box=el.getBoundingClientRect(),style=getComputedStyle(el),borderLeft=parseFloat(style.borderLeftWidth),borderRight=parseFloat(style.borderRightWidth),scrollbar=el.offsetWidth-el.clientWidth-borderLeft-borderRight;return {left:box.left+borderLeft+parseFloat(style.paddingLeft),right:box.right-borderRight-parseFloat(style.paddingRight)-scrollbar};};
+    const paneBox=content(pane),pageBox=content(page);
+    return {viewport:innerWidth,paneLeft:paneBox.left,paneRight:paneBox.right,pageLeft:pageBox.left,pageRight:pageBox.right,rows:[...page.querySelectorAll('.setting-row')].filter(row=>row.getBoundingClientRect().width&&!row.closest('[inert]')).map(row=>({label:row.querySelector('.setting-row-label').textContent.trim(),left:row.getBoundingClientRect().left,right:row.getBoundingClientRect().right}))};
   })()`);
-  if(Math.abs(result.pageRight-result.paneRight)>.5||result.rows.some(row=>Math.abs(row.right-result.pageRight)>.5))throw Error(`Settings pane edges: ${JSON.stringify(result)}`);
+  if(Math.abs(result.pageLeft-result.paneLeft)>.5||Math.abs(result.pageRight-result.paneRight)>.5||result.rows.some(row=>Math.abs(row.left-result.paneLeft)>.5||Math.abs(row.right-result.paneRight)>.5))throw Error(`Settings pane edges: ${JSON.stringify(result)}`);
   return result;
 }
 

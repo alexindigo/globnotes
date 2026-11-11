@@ -34,8 +34,13 @@ export function settingsFieldPresentation(field, value, provenance) {
 export function createSettingsFieldIntents(props, emit) {
   function edit(raw) { if (!props.readonly) emit('edit', { key:props.field.key, raw }); }
   function commit() { if (!props.readonly) emit('commit', props.field.key); }
+  function enter(event) {
+    if (event.target.form) return;
+    event.preventDefault();
+    commit();
+  }
   function change(raw) { edit(raw); commit(); }
-  return { edit, commit, change,
+  return { edit, commit, change, enter,
     toggle:() => change(!props.value),
     select:raw => { let value; try { value = JSON.parse(raw); } catch { value = raw; } change(value); },
   };

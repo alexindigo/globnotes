@@ -23,10 +23,10 @@
     </div>
     <section class="driver-instance__settings" aria-label="Instance settings">
       <template v-if="instance.editable">
-        <SettingRow :id="`driver-label-${instance.id}`" label="Label" :error="instance.labelError" v-slot="row"><TextInput :id="row.id" :model-value="instance.label" maxlength="128" :aria-describedby="row.describedby" :aria-invalid="row.invalid" @update:model-value="onEdit(instance.id,'label',$event)" /></SettingRow>
+        <SettingRow :id="`driver-label-${instance.id}`" label="Label" :error="instance.labelError" v-slot="row"><TextInput :id="row.id" variant="settings" :model-value="instance.label" maxlength="128" :aria-describedby="row.describedby" :aria-invalid="row.invalid" @update:model-value="onEdit(instance.id,'label',$event)" /></SettingRow>
         <SettingsField v-for="item in instance.fields" :key="item.field.key" :id="item.id" :field="item.field" :value="item.value" :error="item.error" @edit="onEdit(instance.id,$event.key,$event.raw)" />
       </template>
-      <dl v-else class="driver-instance__values"><template v-for="item in instance.fields" :key="item.field.key"><dt :title="item.field.label">{{ item.field.label }}</dt><dd>{{ item.display }}</dd></template></dl>
+      <template v-else><SettingRow v-for="item in instance.fields" :key="item.field.key" :label="item.field.label" as="value" short><span class="driver-instance__value">{{ item.display }}</span></SettingRow></template>
       <div class="driver-instance__actions"><CustomButton v-if="instance.canSave" type="button" label="Save settings" variant="cta" @click="onSave(instance.id)" /><CustomButton v-if="instance.canDiscard" type="button" label="Discard edits" variant="text" @click="onDiscard(instance.id)" /></div>
     </section>
     <DriverSecretField v-for="field in instance.secrets" :key="field.key" :field="field" :editable="instance.editable" :on-edit="value=>onEditKey(instance.id,field.key,value)" :on-save="()=>onSaveKey(instance.id,field.key)" :on-clear="()=>onClearKey(instance.id,field.key)" />
@@ -68,7 +68,6 @@ defineProps({ instance:{type:Object,required:true}, onEdit:Function, onSave:Func
 .driver-instance__attention h4 { font-weight:500; }
 .driver-instance__attention ul { display:grid; gap:.75rem; min-width:0; }
 .driver-instance__attention li { display:grid; gap:.25rem; min-width:0; }
-.driver-instance__path, .driver-instance__values dt { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.driver-instance__values { display:grid; grid-template-columns:minmax(0,1fr); gap:.5rem; }
-.driver-instance__values dd { overflow-wrap:anywhere; }
+.driver-instance__path { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.driver-instance__value { overflow-wrap:anywhere; }
 </style>

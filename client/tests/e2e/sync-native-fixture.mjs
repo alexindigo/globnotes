@@ -1,5 +1,6 @@
 // M5-owned real HTTP provider, Worker plugin, disk and native browser input.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { DatabaseSync } from "node:sqlite";
 import { memoryRemote } from "../../../tests/helpers/memory_remote.ts";
 import { applicationServer, bindAddress, httpOrigin } from "./http-origin.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
@@ -68,10 +69,24 @@ export async function syncCase(name, run) {
       async one(){return (await api("drivers")).instances.find(row=>row.id==="home");},
       async sync(){await session.button("Sync now",".driver-instance");await f.controlsReady();},
       async active(){await session.poll("document.querySelector('.driver-instance__state')?.textContent==='Active'");},
-      async add(key=token) {
-        await session.button("Add","[data-sync-settings]");await f.fill("#sync-label","Home");await session.button("Add instance","[data-sync-settings]");
-        await session.poll("document.querySelector('.driver-instance__state')?.textContent==='Off'");await f.controlsReady();
-        await f.fill("#driver-home-baseUrl",remoteUrl);await session.button("Save settings",".driver-instance");await f.controlsReady();
+       async add(key=token) {
+         await session.button("Add","[data-sync-settings]");await f.fill("#sync-label","Home");
+         const before=writes.length;
+         await session.click('#sync-plugin');
+         assert((await api('drivers')).instances.length===0 && writes.length===before,'Label blur submitted the add form');
+         await session.click('#sync-label');
+         await session.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});
+         await session.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+         await session.poll("document.querySelector('.driver-instance__state')?.textContent==='Off'");await f.controlsReady();
+         const instances=(await api('drivers')).instances;
+         assert(instances.length===1 && instances[0].id==='home' && instances[0].label==='Home','Label Enter did not create exactly one instance');
+         const db=new DatabaseSync(`${state}/hub.sqlite`,{readOnly:true});
+         let persisted;try{persisted=db.prepare("SELECT id,label FROM peers WHERE plugin IS NOT NULL AND state!='retired'").all();}finally{db.close();}
+         assert(persisted.length===1 && persisted[0].id==='home' && persisted[0].label==='Home','Label Enter did not persist the instance');
+         const creates=writes.slice(before).filter(write=>write.method==='POST' && write.path==='/_/api/drivers');
+         assert(creates.length===1,'Label Enter did not send exactly one create request');
+         results.push({label:'native-label-enter-submit',blurDidNotSubmit:true,creates:creates.length,instances,persisted});
+         await f.fill("#driver-home-baseUrl",remoteUrl);await session.button("Save settings",".driver-instance");await f.controlsReady();
         await f.key(key);await session.click('.driver-instance__header [role="switch"]');
       },
       async absent(path){return await Deno.stat(`${vault}/${path}`).then(()=>false,error=>{if(error instanceof Deno.errors.NotFound)return true;throw error;});},

@@ -1,8 +1,30 @@
 import {syncCase,assert,until} from "./sync-native-fixture.mjs";
+import { assertSettingsPaneEdges, assertSettingRowAlignment } from './settings-frame-native.mjs';
+import { waitForAccessSummary } from './settings-access-native.mjs';
 await syncCase("sync-settings-native",async f=>{
   const s=f.session;
   f.remote.put("Welcome.md","remote welcome\n");f.remote.put("Restore.md","restore base\n");f.remote.put("Delete.md","delete base\n");
   await s.goto(f.url("/"));await f.open();await f.capture("empty");
+  // This case is selected by CI. Observe both shared lanes at the real pages,
+  // including the narrow width that previously wrapped the policy control.
+  for(const width of [1280,1600,360]){
+    await s.send('Emulation.setDeviceMetricsOverride',{width,height:1400,deviceScaleFactor:1,mobile:false});
+    for(const page of ['account','access','editor','plugins','keybindings']){
+      await s.click(`[data-settings-nav-id="core:${page}"]`);
+      await s.poll(`document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='core:${page}'`);
+      if(page==='access')await waitForAccessSummary(s);
+      if(page==='plugins')await s.poll("!!document.querySelector('.plugin-row-heading')");
+      await s.evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
+      const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>0,`${page}: no rows observed`);await assertSettingRowAlignment(s);
+      f.results.push({page,...edges});
+    }
+    await f.open();await s.button('Add','[data-sync-settings]');await s.poll("!!document.querySelector('#sync-label')");
+    const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length===2,'Sync add must use shared fields');await assertSettingRowAlignment(s);
+    const icons=await s.read('[data-settings-select]',"[...document.querySelectorAll('[data-settings-select]')].map(el=>{const c=el.querySelector('select').getBoundingClientRect(),i=el.querySelector('[data-select-icon] svg').getBoundingClientRect();return {top:i.top-c.top,bottom:c.bottom-i.bottom,right:c.right-i.right,fontSize:getComputedStyle(el.querySelector('select')).fontSize};})");
+    assert(icons.length===1&&icons.every(i=>Math.max(i.top,i.bottom,i.right)-Math.min(i.top,i.bottom,i.right)<=1&&i.fontSize==='14px'),'Expected the sync-plugin select icon with consistent gaps/font');
+    f.results.push({page:'sync-add',...edges,icons});await s.button('Cancel','[data-sync-settings]');
+  }
+  await s.send('Emulation.setDeviceMetricsOverride',{width:1280,height:1400,deviceScaleFactor:1,mobile:false});
   await f.add("wrong-token");await s.poll("document.querySelector('.driver-instance__state')?.textContent==='Locked'");
   assert(await f.absent("Welcome.md"),"Wrong key imported a file");await f.capture("locked");
   await f.fill("#driver-key-home-token",f.token);await f.capture("key-entry");await s.button("Save key",".driver-instance");await f.active();
@@ -10,6 +32,11 @@ await syncCase("sync-settings-native",async f=>{
   assert(await Deno.readTextFile(`${f.vault}/Welcome.md`)==="remote welcome\n","Active state preceded import outcome");
    assert(await s.read('.driver-instance', "document.querySelector('.driver-instance').textContent.includes('This storage cannot check versions while writing; a change made there at the same moment can be overwritten.')"),"Static emulation disclosure missing");
   await f.geometry("desktop");await f.capture("active");
+  for(const width of [1280,1600,360]){
+    await s.send('Emulation.setDeviceMetricsOverride',{width,height:1800,deviceScaleFactor:1,mobile:false});
+    const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>2,'Connection fields were not observed');await assertSettingRowAlignment(s);f.results.push({page:'sync-connection',...edges});
+  }
+  await s.send('Emulation.setDeviceMetricsOverride',{width:1280,height:1400,deviceScaleFactor:1,mobile:false});
   // Native Tab visits every rendered action, including fields/actions below the fold.
   await s.click('[aria-label="Close settings"]');await f.open();
   const expected=await s.evaluate("[...document.querySelectorAll('[role=dialog] button,[role=dialog] input,[role=dialog] select,[role=dialog] textarea')].filter(el=>el.tabIndex>=0&&!el.disabled&&el.getBoundingClientRect().width).map((el,index)=>{el.setAttribute('data-sync-focus',String(index));return String(index);})");
