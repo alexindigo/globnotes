@@ -4,6 +4,8 @@
 
 ### Added
 
+Keep configuration pins and saved settings consistent across reloads.
+
 Switch server and container startup to strict layered configuration.
 
 Typed TOML configuration defaults and validation.

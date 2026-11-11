@@ -8,7 +8,7 @@ export const SELECTION = [
   ["rename-options", "move"], ["rename-options", "relink"], ["rename-options", "none"],
   ["quick-switcher"], ["test-quality-geometry"],
   ["native-ownership-control"], ["native-actions-control"], ["button-icons"], ["save-preview"],
-  ["line-wrap"], ["ctrl-f-search"], ["anchor-history"], ["setup-wizard"], ["setup-totp-desktop"],
+  ["line-wrap"], ["ctrl-f-search"], ["anchor-history"], ["setup-wizard"], ["setup-totp-desktop"], ["layered-config-native"],
   ["autosave-timer"], ["hub-safe-saves-native"], ["hub-writers-gate-native"], ["html-safety"], ["background-connections-native"], ["reauthentication-native"],
   ["conflict-inbox-native"], ["conflict-resolution-native"], ["conflict-review-native"],
   ["sync-settings-native"], ["sync-driver-native"], ["sync-status-native"],

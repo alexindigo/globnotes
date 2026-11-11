@@ -9,6 +9,19 @@ plus the serial timing tests.
 
 ## The devcontainer
 
+Layered configuration acceptance uses the existing server/client and native owners:
+
+```sh
+GLOBNOTES_CONTAINER_ENGINE=podman .devcontainer/run.sh -- deno test --unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net tests/config_acceptance_test.ts
+GLOBNOTES_CONTAINER_ENGINE=podman .devcontainer/run.sh --browser -- bash -lc 'set -euo pipefail; deno task build:client; GLOBNOTES_E2E_CASES=layered-config-native,setup-wizard GLOBNOTES_E2E_ARTIFACTS=/artifacts/native bash client/tests/e2e/run.sh'
+```
+
+Inspect `native/suite.json`, child `.exit.json` records and the layered case's
+`consumers/result.json`. It records the actual local-domain HTTP origin and
+`isSecureContext: false`, native save/reload/restart, per-field pins, an editable
+sibling, explicit empty overrides and the plugin settings consumer. Logs or
+printed success words alone do not establish browser acceptance.
+
 | # | Part | What it is |
 |---|---|---|
 | 1 | Dev image | `.devcontainer/Dockerfile`: Deno 2.9.6 (the root `Dockerfile`'s version) and git, user `dev` (uid/gid 1000). Tagged `localhost/globnotes-dev:<first 16 hex of the Dockerfile's SHA-256>` and built only when that tag is missing |
