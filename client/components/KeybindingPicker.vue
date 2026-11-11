@@ -4,14 +4,13 @@
       v-for="layer in layers"
       :key="layer.id"
       type="button"
-      class="focus-ring px-3 py-2 text-left text-sm [--focus-ring-offset:-4px]"
+       class="focus-ring settings-text px-3 py-2 text-left text-theme-text [--focus-ring-offset:-4px]"
       :class="{
         'bg-theme-background-elevated text-theme-text':
           layer.id === selected,
-        'text-theme-text-muted hover:text-theme-brand':
+        'hover:text-theme-brand':
           layer.id !== selected,
       }"
-      :title="layer.description"
       :aria-current="layer.id === selected ? 'true' : undefined"
       @click="onSelect(layer.id)"
     >

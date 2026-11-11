@@ -83,14 +83,14 @@ async function open() {
 }
 async function launch(id, page) {
   await session.click(`${item(id)} [data-settings-page-id]`);
-  await session.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
+  await session.poll("document.querySelector('#settings-field-message')?.matches('input:not([readonly]):not([disabled])')");
   const declarations = declaredPages.get(id) ?? [];
    const tabs = await session.read('#settings-field-message', "[...document.querySelectorAll('[role=tab]')].map(el=>({id:el.dataset.settingsTabId,label:el.textContent.trim()}))");
   const expectedTabs = declarations.length >= 2 ? declarations.map(page => ({id:`plugin:${id}:${page.id}`,label:page.label})) : [];
   assert(JSON.stringify(tabs) === JSON.stringify(expectedTabs), `${id}: complete page IDs, labels and registry order not preserved in tabs`);
   const tab = `[data-settings-tab-id="plugin:${id}:${page}"]`;
   if (await inspect(`!!document.querySelector(${JSON.stringify(tab)})`)) await session.click(tab);
-  await session.poll(`!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly && document.querySelector('#settings-field-message').value===${JSON.stringify(`${page} seed`)}`);
+  await session.poll(`document.querySelector('#settings-field-message')?.matches('input:not([readonly]):not([disabled])') && document.querySelector('#settings-field-message').value===${JSON.stringify(`${page} seed`)}`);
   await invariant();
 }
 async function manifest(value, files = {}) {
@@ -221,7 +221,7 @@ try {
   await nav("Plugins"); await launch(failed.id, "failed");
   await record("failed-valid-page", { status: "failed", pageVisible: true, screenshot: await screenshot("failed-valid-page") });
   await nav("Plugins"); await session.click(pageButton(disabled.id, "disabled"));
-  await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('This page is unavailable') && document.querySelector('#settings-field-message')?.readOnly");
+  await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('This page is unavailable') && document.querySelector('#settings-field-message')?.tagName==='SPAN'");
   await invariant(); assert((await api("/_/api/plugin-host")).plugins.find(plugin => plugin.id === disabled.id).enabled === false, "Opening disabled page enabled its owner");
   await record("disabled-valid-page", { disabled: true, unavailable: true, screenshot: await screenshot("disabled-valid-page") });
   await nav("Plugins"); await session.click(`${item(multi.id)} button[aria-expanded]`);
@@ -286,10 +286,10 @@ try {
   assert(refreshResponse.ok, "Owned refresh policy operation rejected"); await refreshResponse.body?.cancel();
   const refreshedCatalog = await api("/_/api/plugin-host");
   assert(refreshedCatalog.plugins.find(plugin => plugin.id === multi.id)?.pages[0]?.id === "new", "Actual server catalog did not publish replacement definition");
-  await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('This page is unavailable') && document.querySelector('#settings-field-limit')?.value===''");
+  await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('This page is unavailable') && document.querySelector('#settings-field-limit')?.tagName==='SPAN' && document.querySelector('#settings-field-limit').textContent===''");
   assert(await inspect("[...document.querySelectorAll('[role=tab]')].some(button=>button.textContent.trim()==='One')"), "Removed dirty page lost its retained recovery navigation");
   await nav("Plugins"); await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
-  await session.button("Keep editing", '[data-modal-top=true]'); await session.poll("document.querySelector('#settings-field-limit')?.value===''");
+  await session.button("Keep editing", '[data-modal-top=true]'); await session.poll("document.querySelector('#settings-field-limit')?.tagName==='SPAN' && document.querySelector('#settings-field-limit').textContent===''");
   const recoveryShot = await screenshot("removed-page-recovery"); await invariant();
   await nav("Plugins"); await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
   await session.button("Discard", '[data-modal-top=true]'); await session.poll(`!!document.querySelector(${JSON.stringify(pageButton(multi.id, "new"))}) && !document.querySelector(${JSON.stringify(pageButton(multi.id, "one"))})`);

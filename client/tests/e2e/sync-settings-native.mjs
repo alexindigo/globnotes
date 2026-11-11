@@ -1,5 +1,5 @@
 import {syncCase,assert,until} from "./sync-native-fixture.mjs";
-import { assertSettingsPaneEdges, assertSettingRowAlignment } from './settings-frame-native.mjs';
+import { assertSettingsPaneEdges, assertSettingRowAlignment, assertSettingsUiRules, assertSettingsFormRows } from './settings-frame-native.mjs';
 import { waitForAccessSummary } from './settings-access-native.mjs';
 await syncCase("sync-settings-native",async f=>{
   const s=f.session;
@@ -9,20 +9,26 @@ await syncCase("sync-settings-native",async f=>{
   // including the narrow width that previously wrapped the policy control.
   for(const width of [1280,1600,360]){
     await s.send('Emulation.setDeviceMetricsOverride',{width,height:1400,deviceScaleFactor:1,mobile:false});
-    for(const page of ['account','access','editor','plugins','keybindings']){
+    for(const page of ['account','access','editor','plugins','keybindings','branding']){
       await s.click(`[data-settings-nav-id="core:${page}"]`);
       await s.poll(`document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='core:${page}'`);
       if(page==='access')await waitForAccessSummary(s);
       if(page==='plugins')await s.poll("!!document.querySelector('.plugin-row-heading')");
       await s.evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
-      const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>0,`${page}: no rows observed`);await assertSettingRowAlignment(s);
-      f.results.push({page,...edges});
+      const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>0,`${page}: no rows observed`);await assertSettingRowAlignment(s);await assertSettingsUiRules(s);
+      const formRows=page==='branding'?await assertSettingsFormRows(s):undefined;
+      f.results.push({page,...edges,formRows});
     }
     await f.open();await s.button('Add','[data-sync-settings]');await s.poll("!!document.querySelector('#sync-label')");
-    const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length===2,'Sync add must use shared fields');await assertSettingRowAlignment(s);
+    const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length===2,'Sync add must use shared fields');await assertSettingRowAlignment(s);await assertSettingsUiRules(s);
     const icons=await s.read('[data-settings-select]',"[...document.querySelectorAll('[data-settings-select]')].map(el=>{const c=el.querySelector('select').getBoundingClientRect(),i=el.querySelector('[data-select-icon] svg').getBoundingClientRect();return {top:i.top-c.top,bottom:c.bottom-i.bottom,right:c.right-i.right,fontSize:getComputedStyle(el.querySelector('select')).fontSize};})");
     assert(icons.length===1&&icons.every(i=>Math.max(i.top,i.bottom,i.right)-Math.min(i.top,i.bottom,i.right)<=1&&i.fontSize==='14px'),'Expected the sync-plugin select icon with consistent gaps/font');
-    f.results.push({page:'sync-add',...edges,icons});await s.button('Cancel','[data-sync-settings]');
+    const formRows=await assertSettingsFormRows(s);
+    await f.fill('#sync-label','Home');await s.poll("!!document.querySelector('form[aria-label=\"Add sync instance\"] button[type=submit]')");
+    const actions=await s.read('[data-sync-settings] form',"[...document.querySelectorAll('[data-sync-settings] form [data-settings-actions-end] button')].map(el=>({label:el.textContent.trim(),box:el.getBoundingClientRect().toJSON()}))");
+    assert(actions.length===2&&actions[0].label==='Cancel'&&actions[1].label==='Add instance'&&Math.abs(actions[0].box.top+actions[0].box.bottom-actions[1].box.top-actions[1].box.bottom)<1,'Add and Cancel do not share one action row');await assertSettingsUiRules(s);
+    await s.click('#sync-label');await s.key('a',{modifiers:2,code:'KeyA',windowsVirtualKeyCode:65});await s.key('Backspace',{windowsVirtualKeyCode:8});
+    f.results.push({page:'sync-add',...edges,icons,formRows,actions});await s.button('Cancel','[data-sync-settings]');
   }
   await s.send('Emulation.setDeviceMetricsOverride',{width:1280,height:1400,deviceScaleFactor:1,mobile:false});
   await f.add("wrong-token");await s.poll("document.querySelector('.driver-instance__state')?.textContent==='Locked'");
@@ -34,7 +40,7 @@ await syncCase("sync-settings-native",async f=>{
   await f.geometry("desktop");await f.capture("active");
   for(const width of [1280,1600,360]){
     await s.send('Emulation.setDeviceMetricsOverride',{width,height:1800,deviceScaleFactor:1,mobile:false});
-    const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>2,'Connection fields were not observed');await assertSettingRowAlignment(s);f.results.push({page:'sync-connection',...edges});
+    const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>2,'Connection fields were not observed');await assertSettingRowAlignment(s);await assertSettingsUiRules(s);const formRows=await assertSettingsFormRows(s);f.results.push({page:'sync-connection',...edges,formRows});
   }
   await s.send('Emulation.setDeviceMetricsOverride',{width:1280,height:1400,deviceScaleFactor:1,mobile:false});
   // Native Tab visits every rendered action, including fields/actions below the fold.

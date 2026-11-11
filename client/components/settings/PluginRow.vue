@@ -32,7 +32,7 @@ defineProps({ row:Object, onExpand:Function });
 const identity = createUuid(), headerId = `plugin-heading-${identity}`, regionId = `plugin-region-${identity}`;
 </script>
 <style scoped>
-.plugin-row { --plugin-row-line:1.75rem; display:grid; grid-template-columns:16px minmax(0,1fr); column-gap:0.5rem; border-top:1px solid rgb(var(--theme-border)); min-width:0; font-size:14px; }
+.plugin-row { --plugin-row-line:28px; display:grid; grid-template-columns:16px minmax(0,1fr); column-gap:0.5rem; border-top:1px solid rgb(var(--theme-border)); min-width:0; font-size:14px; }
 .plugin-row-expanded { background:rgb(var(--theme-background-elevated)); }
 .plugin-row-heading { grid-column:1 / -1; padding-block:0.75rem; }
 .plugin-row-disclosure { display:grid; grid-template-columns:16px minmax(0,1fr); align-items:start; text-align:left; gap:0.5rem; min-width:0; }

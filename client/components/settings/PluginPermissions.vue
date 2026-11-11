@@ -2,34 +2,34 @@
 <template>
   <div class="plugin-permissions" data-plugin-permission-panel>
     <template v-if="view.available">
-    <SettingRow label="Allow network" help="Off blocks network and remote imports for the plugin's server code. Approvals are kept." short>
-      <template #default="{ id, labelledby, describedby }"><Toggle :id="id" :is-on="view.allowNetwork" :disabled="!view.canChange" :aria-labelledby="labelledby" :aria-describedby="describedby" @click="onMaster(view.id)" /></template>
+    <SettingRow label="Allow network" :as="view.canChange ? 'control' : 'value'" help="Off blocks network and remote imports for the plugin's server code. Approvals are kept." short>
+      <template #default="{ id, labelledby, describedby }"><Toggle v-if="view.canChange" :id="id" :is-on="view.allowNetwork" :aria-labelledby="labelledby" :aria-describedby="describedby" @click="onMaster(view.id)" /><span v-else class="settings-text">{{ view.allowNetwork ? 'On' : 'Off' }}</span></template>
     </SettingRow>
     <SettingsSection v-for="section in [{ id:'network', label:'Network hosts', rows:view.network }, { id:'imports', label:'Remote code imports', rows:view.imports }]" :key="section.id" :title="section.label">
       <p v-if="!section.rows.length" class="permission-quiet">None requested.</p>
       <div v-for="row in section.rows" :key="row.key" class="permission-host" :data-permission-kind="section.id" :data-permission-scope="row.key">
         <div class="permission-host-line"><span>{{ row.label }}</span><span :class="row.tone === 'success' ? 'text-theme-success' : 'permission-quiet'">{{ row.status }}</span>
-          <CustomButton v-if="row.action" type="button" :label="row.action.label" :aria-label="row.actionLabel" :variant="row.action.danger ? 'danger-text' : 'text'" :disabled="!view.canChange" @click="onHost(view.id,section.id,row)" />
+          <CustomButton size="settings" v-if="row.action && view.canChange" type="button" :label="row.action.label" :aria-label="row.actionLabel" :variant="row.action.danger ? 'danger' : 'secondary'" @click="onHost(view.id,section.id,row)" />
         </div>
-        <p v-if="row.warning" class="text-theme-warning text-[13px]">{{ row.warning }}</p>
+        <p v-if="row.warning" class="text-theme-warning settings-help">{{ row.warning }}</p>
       </div>
     </SettingsSection>
     <SettingsSection v-if="view.requests.length" title="Access requests">
       <div v-for="request in view.requests" :key="request.id" class="permission-request" data-pending-permission-requests>
-        <span>{{ request.label }}</span><CustomButton type="button" label="Review request…" variant="text" wrap-label :aria-label="request.reviewLabel" :disabled="!request.canReview" @click="request.open()" />
+        <span>{{ request.label }}</span><CustomButton size="settings" v-if="request.canReview" type="button" label="Review request…" variant="secondary" wrap-label :aria-label="request.reviewLabel" @click="request.open()" />
       </div>
     </SettingsSection>
     </template>
     <div v-else class="permission-quiet" role="status">
       <p>Permission status unavailable.</p>
-      <CustomButton type="button" label="Check current status" variant="text" wrap-label :disabled="!view.canReviewStatus" @click="onReview(view.id)" />
+      <CustomButton size="settings" v-if="view.canReviewStatus" type="button" label="Check current status" variant="secondary" wrap-label @click="onReview(view.id)" />
     </div>
     <p v-if="view.pendingText" class="permission-quiet" role="status">{{ view.pendingText }}</p>
     <p v-if="view.reloadText" class="permission-quiet">{{ view.reloadText }}</p>
-    <p v-if="view.error" class="text-theme-danger text-[13px]" role="alert">{{ view.error }}</p>
+    <p v-if="view.error" class="text-theme-danger settings-help" role="alert">{{ view.error }}</p>
     <div v-if="view.recovery" class="permission-recovery">
       <p class="text-theme-warning">{{ view.recovery.text }}</p>
-      <SettingsActions><template #start><CustomButton type="button" label="Discard choice…" variant="danger-text" wrap-label :disabled="!view.recovery.canDiscard" @click="onDiscard(view.id)" /></template><CustomButton type="button" label="Check current status" variant="text" wrap-label :disabled="!view.recovery.canReview" @click="onReview(view.id)" /><CustomButton type="button" label="Retry" variant="text" wrap-label :disabled="!view.recovery.canRetry" @click="onRetry(view.id)" /></SettingsActions>
+      <SettingsActions><template #start><CustomButton size="settings" v-if="view.recovery.canDiscard" type="button" label="Discard choice…" variant="danger" wrap-label @click="onDiscard(view.id)" /></template><CustomButton size="settings" v-if="view.recovery.canReview" type="button" label="Check current status" variant="secondary" wrap-label @click="onReview(view.id)" /><CustomButton size="settings" v-if="view.recovery.canRetry" type="button" label="Retry" variant="secondary" wrap-label @click="onRetry(view.id)" /></SettingsActions>
     </div>
   </div>
 </template>

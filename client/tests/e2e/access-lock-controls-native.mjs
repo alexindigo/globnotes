@@ -36,28 +36,30 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
      assert(await session.read(scope, `(()=>{const scopes=[...document.querySelectorAll(${JSON.stringify(scope)})];if(scopes.length!==1)return false;const controls=[...scopes[0].querySelectorAll('button')].filter(button=>button.textContent.trim()===${JSON.stringify(text)});return controls.length===1 && controls.every(button=>button.disabled);})()`), `${text}: expected exactly one disabled mutation action`);
   }
   async function lockedSwitch(scope, expected) {
-     assert(await session.read(scope, `(()=>{const scopes=[...document.querySelectorAll(${JSON.stringify(scope)})];if(scopes.length!==1)return false;const controls=[...scopes[0].querySelectorAll('[role=switch]')];return controls.length===1 && controls.every(control=>control.disabled && control.getAttribute('aria-checked')===${JSON.stringify(expected === 'On' ? 'true' : 'false')});})()`), `${scope}: expected exactly one disabled policy control with the retained value`);
+     assert(await session.read(scope, `(()=>{const scopes=[...document.querySelectorAll(${JSON.stringify(scope)})];if(scopes.length!==1)return false;const values=[...scopes[0].querySelectorAll('.setting-row-control > .settings-text')];return values.length===1 && values[0].textContent.trim()===${JSON.stringify(expected)} && scopes[0].querySelectorAll('input,button,select,textarea').length===0;})()`), `${scope}: expected exactly one retained policy value and no mutation control`);
+  }
+  async function hiddenButton(text, scope, witness, count) {
+     assert(await session.read(scope, `(()=>{const scopes=[...document.querySelectorAll(${JSON.stringify(scope)})];if(scopes.length!==1)return false;const values=[...scopes[0].querySelectorAll(${JSON.stringify(witness)})],controls=[...scopes[0].querySelectorAll('input,button,select,textarea')];return values.length>0 && values.length===${count} && values.every(value=>value.textContent.trim().length>0) && controls.length===0;})()`), `${text}: expected retained value rows and hidden mutation controls`);
+  }
+  async function hiddenPluginToggle(scope) {
+     assert(await session.read(scope, `(()=>{const scopes=[...document.querySelectorAll(${JSON.stringify(scope)})];if(scopes.length!==1)return false;const row=scopes[0].closest('[data-plugin-inventory-id=access-workflow]'),names=[...row.querySelectorAll('.plugin-row-name')],actions=[...scopes[0].querySelectorAll('button')],values=[...scopes[0].querySelectorAll('.plugin-row-toggle-lane > .settings-text')];return names.length===1 && names[0].textContent.trim()==='access-workflow' && actions.length===1 && actions[0].textContent.trim()==='Open settings' && scopes[0].querySelectorAll('input,button,select,textarea').length===1 && values.length===1 && values[0].textContent.trim()==='On' && getComputedStyle(values[0]).color===getComputedStyle(row.querySelector('.plugin-row-name')).color;})()`), 'Expected the retained plugin On value and settings action, without an unavailable toggle or muted value');
   }
   async function lockedField(selector, expected) {
-    const expression = `(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)return false;const control=el.matches('input,textarea,select');return {value:control?el.value:el.textContent.trim(),blocked:control?(el.readOnly||el.disabled):el.matches('span[aria-labelledby]'),editableReadonly:control&&el.readOnly&&!el.disabled};})()`;
+    const expression = `(()=>{const fields=[...document.querySelectorAll(${JSON.stringify(selector)})];if(fields.length!==1)return false;const el=fields[0];return {value:el.textContent.trim(),blocked:el.matches('span[aria-labelledby]')};})()`;
     await session.poll(`(()=>{const field=${expression};return field && field.value===${JSON.stringify(expected)};})()`);
     const field = await session.evaluate(expression);
     assert(field.value === expected && field.blocked, `${selector}: locked value or mutation boundary changed`);
-    if (field.editableReadonly) {
-      await session.click(selector); await session.key('a', { code:'KeyA', modifiers:2, windowsVirtualKeyCode:65 }); await session.type('must not replace locked settings');
-      assert((await session.evaluate(expression)).value === expected, `${selector}: native input changed a locked value`);
-    }
   }
   await open(); await session.button("Branding");
   await lockedField('#brand-name', 'Native locked brand');
   await lockedField('#brand-accent', '#aabbcc');
-  assert(await session.read('[data-branding-settings]', "(()=>{const inputs=[...document.querySelectorAll('[data-branding-settings] input[type=file]')];return inputs.length===2 && inputs.every(input=>input.disabled);})()"), "Expected both disabled locked-branding uploads");
-  await disabledButton("Save branding", "[data-branding-settings]"); await disabledButton("Reset branding…", "[data-branding-settings]");
+  assert(await session.read('[data-branding-settings]', "(()=>{const page=document.querySelector('[data-branding-settings]'),values=[...page.querySelectorAll('.setting-row-control span.settings-help')];return page.querySelectorAll('.setting-row').length===4 && values.length===2 && values.map(value=>value.textContent.trim()).sort().join('|')==='No custom icon.|No custom logo.' && page.querySelectorAll('input[type=file]').length===0;})()"), "Expected both retained branding asset rows and hidden uploads");
+  await hiddenButton("Save branding", "[data-branding-settings]", '#brand-name,#brand-accent', 2); await hiddenButton("Reset branding…", "[data-branding-settings]", '#brand-name,#brand-accent', 2);
   await capture("locked-branding-controls");
   await session.button("Plugins");
   await session.poll("!!document.querySelector('[data-plugin-inventory-id=access-workflow]')");
   await lockedSwitch('[data-plugin-inventory] > .setting-row', 'Off');
-  await lockedSwitch('[data-plugin-inventory-id=access-workflow] .plugin-row-actions', 'On');
+  await hiddenPluginToggle('[data-plugin-inventory-id=access-workflow] .plugin-row-actions');
   await capture("locked-plugin-policy-controls");
   await session.click('[data-settings-nav-id="plugin:access-workflow"]');
   await lockedField('#settings-field-message', 'locked retained settings consumer');
@@ -67,8 +69,8 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
   await session.click('[data-plugin-inventory-id=access-workflow] button[aria-expanded]');
   await session.poll("!!document.querySelector('[data-plugin-permission-panel] [data-permission-scope=\"host:127.0.0.1:9\"]')");
   await lockedSwitch('[data-plugin-permission-panel] > .setting-row', 'Off');
-  await disabledButton("Remove", '[data-permission-scope="host:127.0.0.1:9"]');
-  await disabledButton("Approve", '[data-permission-scope="host:127.0.0.1:10"]');
+  await hiddenButton("Remove", '[data-permission-scope="host:127.0.0.1:9"]', '.permission-host-line > span', 2);
+  await hiddenButton("Approve", '[data-permission-scope="host:127.0.0.1:10"]', '.permission-host-line > span', 2);
   await capture("locked-permission-controls");
   const publication = await api(`plugin-host/${id}/commands/request`, "POST", {});
   assert(publication.status === 200 && publication.body.result.requestId, "Settings lock blocked normal Worker request publication");

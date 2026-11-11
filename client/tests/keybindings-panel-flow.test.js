@@ -50,7 +50,7 @@ describe("keybindings panel flow", () => {
     // Switch to the Custom layer (last rail row).
     const customRow = railRows.find((b) => b.textContent.trim() === "Custom");
     expect(customRow, "custom rail row").toBeTruthy();
-    expect(customRow.title).toContain("Starts as a copy of Obsidian");
+    expect(customRow.hasAttribute('title')).toBe(false);
     customRow.click();
     await flushPromises();
     expect(localStorage.getItem("globnotes-keybindings")).toBe("custom");

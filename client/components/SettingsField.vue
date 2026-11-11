@@ -1,25 +1,26 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-only -->
 <template>
-  <SettingRow :id="id || `settings-field-${field.key}`" :label="field.label" :help="field.description" :error="error" :pin="pin || presentation.pin" :short="presentation.short">
-    <template v-if="field.type === 'slider'" #value><output :for="id || `settings-field-${field.key}`">{{ value }}</output></template>
+  <SettingRow :id="id || `settings-field-${field.key}`" :label="field.label" :as="presentation.valueOnly ? 'value' : 'control'" :help="field.description" :error="error" :pin="pin || presentation.pin" :short="presentation.short" :form="form" :class="{'settings-field-form':form}">
+    <template v-if="field.type === 'slider' && !presentation.valueOnly" #value><output :for="id || `settings-field-${field.key}`">{{ value }}</output></template>
     <template #default="{ id, labelledby, describedby, invalid }">
-      <Toggle v-if="field.type === 'toggle'" :id="id" :is-on="Boolean(value)" :disabled="readonly" :aria-labelledby="labelledby" :aria-describedby="describedby" :aria-invalid="invalid" @click="toggle" />
-      <input v-else-if="field.type === 'color'" :id="id" type="color" class="focus-ring h-8 w-16" :value="value" :disabled="readonly" :aria-describedby="describedby" :aria-invalid="invalid" @input="edit($event.target.value)" @change="change($event.target.value)">
+      <span v-if="presentation.valueOnly" :id="id" :aria-labelledby="labelledby" :aria-describedby="describedby" class="settings-text" :class="{'settings-field-multiline-value':field.type==='textarea'}">{{ presentation.display }}</span>
+      <Toggle v-else-if="field.type === 'toggle'" :id="id" :is-on="Boolean(value)" :aria-labelledby="labelledby" :aria-describedby="describedby" :aria-invalid="invalid" @click="toggle" />
+      <input v-else-if="field.type === 'color'" :id="id" type="color" class="focus-ring h-8 w-16" :value="value" :aria-describedby="describedby" :aria-invalid="invalid" @input="edit($event.target.value)" @change="change($event.target.value)">
       <div v-else-if="field.type === 'select'" class="settings-field-select" data-settings-select>
-      <select :id="id" class="settings-field-input focus-ring" :value="presentation.selected" :disabled="readonly" :aria-describedby="describedby" :aria-invalid="invalid" @change="select($event.target.value)">
+      <select :id="id" class="settings-field-input settings-text focus-ring" :value="presentation.selected" :aria-describedby="describedby" :aria-invalid="invalid" @change="select($event.target.value)">
         <option v-for="option in field.options ?? []" :key="JSON.stringify(option.value)" :value="JSON.stringify(option.value)">{{ option.label }}</option>
       </select>
       <span class="settings-field-select-icon" data-select-icon aria-hidden="true"><Icon :icon="tabChevronDown" width="16" height="16" /></span>
       </div>
       <TextInput v-else-if="field.type === 'number'" :id="id" type="number" variant="settings" :model-value="value" :min="field.min" :max="field.max" :step="field.step" :readonly="readonly"
         :aria-describedby="describedby" :aria-invalid="invalid" @update:model-value="edit" @blur="commit" @keydown.enter="enter" />
-      <input v-else-if="field.type === 'slider'" :id="id" type="range" class="focus-ring w-full accent-theme-brand" :value="value" :min="field.min" :max="field.max" :step="field.step" :disabled="readonly"
+      <input v-else-if="field.type === 'slider'" :id="id" type="range" class="focus-ring w-full accent-theme-brand" :value="value" :min="field.min" :max="field.max" :step="field.step"
         :aria-describedby="describedby" :aria-invalid="invalid" @input="edit($event.target.value)" @blur="commit" @keydown.enter="enter">
-      <textarea v-else-if="field.type === 'textarea'" :id="id" class="settings-field-input focus-ring w-full" :value="value" :maxlength="field.maxLength" :readonly="readonly"
+      <textarea v-else-if="field.type === 'textarea'" :id="id" class="settings-field-input settings-text focus-ring w-full" :value="value" :maxlength="field.maxLength" :readonly="readonly"
         :aria-describedby="describedby" :aria-invalid="invalid" @input="edit($event.target.value)" @blur="commit" @keydown.ctrl.enter.prevent="commit" @keydown.meta.enter.prevent="commit" />
       <div v-else class="settings-field-text">
         <TextInput :id="id" variant="settings" :model-value="presentation.text" :maxlength="field.maxLength" :readonly="readonly" :aria-describedby="describedby" :aria-invalid="invalid" @update:model-value="edit" @blur="commit" @keydown.enter="enter" />
-        <CustomButton v-if="presentation.browseLabel && onBrowse" type="button" variant="secondary" :label="presentation.browseLabel" wrap-label :disabled="readonly" @click="onBrowse(field)" />
+        <CustomButton size="settings" v-if="!readonly && presentation.browseLabel && onBrowse" type="button" variant="secondary" :label="presentation.browseLabel" wrap-label @click="onBrowse(field)" />
       </div>
     </template>
   </SettingRow>
@@ -33,9 +34,9 @@ import SettingRow from './settings/SettingRow.vue';
 import Icon from './Icon.vue';
 import { tabChevronDown } from '../icons.js';
 import { settingsFieldPresentation, createSettingsFieldIntents } from '../declarativeSettings.js';
-const props = defineProps({ field:{ type:Object, required:true }, value:{ required:true }, id:String, error:String, readonly:Boolean, provenance:Object, pin:String, onBrowse:Function });
+const props = defineProps({ field:{ type:Object, required:true }, value:{ required:true }, id:String, error:String, readonly:Boolean, provenance:Object, pin:String, form:Boolean, onBrowse:Function });
 const emit = defineEmits(['edit','commit']);
-const presentation = computed(() => settingsFieldPresentation(props.field, props.value, props.provenance));
+const presentation = computed(() => settingsFieldPresentation(props.field, props.value, props.provenance, props.readonly));
 const { edit, commit, change, toggle, select, enter } = createSettingsFieldIntents(props, emit);
 </script>
 <style scoped>
@@ -45,4 +46,6 @@ const { edit, commit, change, toggle, select, enter } = createSettingsFieldInten
 .settings-field-select-icon { grid-area:1 / 2; display:grid; place-items:center; width:2.75rem; aspect-ratio:1; pointer-events:none; }
 .settings-field-text { display:flex; flex-wrap:wrap; align-items:stretch; gap:1rem; min-width:0; max-width:24rem; }
 .settings-field-text > input { flex:1; min-width:min(8rem,100%); }
+.settings-field-form .settings-field-select, .settings-field-form .settings-field-text { width:100%; }
+.settings-field-multiline-value { display:block; white-space:pre-wrap; overflow-wrap:anywhere; }
 </style>

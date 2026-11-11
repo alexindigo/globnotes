@@ -25,6 +25,6 @@ function navigate(event) {
 <style scoped>
 .settings-tabs { display:flex; flex-wrap:wrap; gap:0.5rem; }
 .settings-tabs-frame { display:flex; flex-direction:column; gap:1.5rem; min-width:0; }
-button { padding:0.375rem 0.75rem; font-size:14px; color:rgb(var(--theme-text-muted)); border-bottom:2px solid transparent; overflow-wrap:anywhere; min-width:0; }
+button { padding:0.375rem 0.75rem; font-size:14px; color:rgb(var(--theme-text)); border-bottom:2px solid transparent; overflow-wrap:anywhere; min-width:0; }
 button[aria-selected=true] { color:rgb(var(--theme-text)); border-color:rgb(var(--theme-brand)); }
 </style>

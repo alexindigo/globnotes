@@ -79,12 +79,12 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   assert(await inspect("document.querySelectorAll('#settings-modal-title').length===1 && document.querySelector('.cm-content')===window.__gpsEditor"), "Built-in palette Settings action lost ownership");
   await close();
   await palette("Native SDK Settings");
-  await session.poll("!!document.querySelector('#settings-modal-title') && !!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
+  await session.poll("!!document.querySelector('#settings-modal-title') && document.querySelector('#settings-field-message')?.matches('input:not([readonly]):not([disabled])')");
   assert(await inspect("document.querySelectorAll('#settings-modal-title').length===1 && document.querySelector('.cm-content')===window.__gpsEditor"), "Real SDK Settings dispatch did not reach the common retained dialog");
   await record({ name: "native-palette-sdk-settings-actions", builtInPalette: true, pluginSdkPage: "plugin:session-guard:preferences", sameEditor: true, instances: 1 });
 
   await session.click('[data-settings-nav-id="plugin:session-guard"]');
-  await session.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
+  await session.poll("document.querySelector('#settings-field-message')?.matches('input:not([readonly]):not([disabled])')");
   await replace("#settings-field-message", "native committed message");
   await session.key("Enter", { windowsVirtualKeyCode: 13 });
   await session.click("#settings-field-limit");
@@ -99,8 +99,7 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   await replace("#settings-field-limit", "");
   await session.button("Appearance");
    await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
-   const invalidSave = await session.poll("(()=>{const button=[...document.querySelectorAll('[data-modal-top=true] button')].find(b=>b.textContent.trim()==='Save');return button?{disabled:button.disabled}:false;})()");
-   assert(invalidSave.disabled, "Invalid input was allowed to save");
+    assert(await inspect("![...document.querySelectorAll('[data-modal-top=true] button')].some(button=>button.textContent.trim()==='Save')"), "Invalid input was allowed to save");
   await session.key("Escape", { windowsVirtualKeyCode: 27 });
    await session.poll("!!document.querySelector('#settings-field-limit') && !document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
    assert(await inspect("document.querySelector('#settings-field-limit')?.value === ''"), "Escape discarded invalid raw input");

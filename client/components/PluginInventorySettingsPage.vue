@@ -2,14 +2,14 @@
 <template>
   <section class="plugin-inventory flex min-w-0 flex-col gap-4" data-plugin-inventory>
     <PluginTrustNotice />
-    <SettingRow class="plugin-policy-row" label="Turn on new plugins automatically" :pin="autoEnable.note" short>
-      <template #default="{ id, labelledby }"><Toggle v-if="autoEnable.canToggle" :id="id" :aria-labelledby="labelledby" :is-on="autoEnable.value" @click="onAutoEnable" /></template>
+    <SettingRow class="plugin-policy-row" label="Turn on new plugins automatically" :as="autoEnable.canToggle ? 'control' : 'value'" :pin="autoEnable.note" short>
+      <template #default="{ id, labelledby }"><Toggle v-if="autoEnable.canToggle" :id="id" :aria-labelledby="labelledby" :is-on="autoEnable.value" @click="onAutoEnable" /><span v-else class="settings-text">{{ autoEnable.value ? 'On' : 'Off' }}</span></template>
     </SettingRow>
     <InventoryRecovery v-if="autoEnable.recovery" :recovery="autoEnable.recovery" :on-review="onPolicyReview" :on-retry="onPolicyRetry" :on-discard="onPolicyDiscard" />
     <div>
       <PluginRow v-for="row in rows" :key="row.id" :row="row" :on-expand="()=>onExpansion(row.id)">
         <template v-if="row.pages.length" #actions>
-          <CustomButton type="button" label="Open settings" variant="text" :aria-label="row.openSettingsLabel" wrap-label :data-settings-page-id="row.pages[0].id" @click="onOpenPage(row.pages[0].id)" />
+          <CustomButton size="settings" type="button" label="Open settings" variant="secondary" :aria-label="row.openSettingsLabel" wrap-label :data-settings-page-id="row.pages[0].id" @click="onOpenPage(row.pages[0].id)" />
         </template>
         <template #toggle>
           <Toggle v-if="row.canToggle" :is-on="row.enabled" :aria-label="`Enable ${row.name}`" @click="onEnabled(row.id)" />

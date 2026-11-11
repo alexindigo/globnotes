@@ -5,7 +5,7 @@ import { applicationServer, assertHttpTestUrl } from './http-origin.mjs';
 import { hashPassword } from '../../../server/helpers.ts';
 import { SignJWT } from 'jose';
 import { waitForAccessSummary } from './settings-access-native.mjs';
-import { assertSettingsActionHierarchy, assertSettingsHeaderRuleEdge, assertSettingRowAlignment, assertSettingsVisualLanes, assertSettingsPaneEdges, assertSettingsProseMeasure } from './settings-frame-native.mjs';
+import { assertSettingsActionHierarchy, assertSettingsHeaderRuleEdge, assertSettingRowAlignment, assertSettingsVisualLanes, assertSettingsPaneEdges, assertSettingsProseMeasure, assertSettingsUiRules } from './settings-frame-native.mjs';
 import { assertSettingsActionZones } from './settings-primitives-native.mjs';
 
 const assert=(value,message)=>{if(!value)throw Error(message);};
@@ -25,8 +25,9 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
   async function open(){if(await inspect("!!document.querySelector('#settings-modal-title')"))return;if(await inspect("!!document.querySelector('[title=\"Open sidebar\"]')"))await session.click('[title="Open sidebar"]');await session.click('[aria-label=Settings]');await session.poll("!!document.querySelector('#settings-modal-title')");}
   async function nav(id){await session.click(`[data-settings-nav-id="${id}"]`);await session.poll(`document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage===${JSON.stringify(id==='plugin:globnotes-backup'?'plugin:globnotes-backup:backup':id)}`);}
   async function probe(name,cell){
+    if(name==='backups')await session.poll("(()=>{const input=document.querySelector('#settings-field-basePath');return !!input&&!input.readOnly&&!!input.parentElement.querySelector('button');})()");
     await settled();await assertSettingsActionHierarchy(session);await assertSettingRowAlignment(session);await assertSettingsVisualLanes(session);
-    if(await inspect("!!document.querySelector('#settings-modal-title')"))await assertSettingsHeaderRuleEdge(session);
+    if(await inspect("!!document.querySelector('#settings-modal-title')")){await assertSettingsHeaderRuleEdge(session);await assertSettingsUiRules(session);}
      const result=await session.read('[role=dialog]', `(()=>{const dialogs=[...document.querySelectorAll('[role=dialog]')].filter(el=>el.getBoundingClientRect().width);const owners=new Set([document.documentElement,...dialogs]);for(const dialog of dialogs)for(const el of dialog.querySelectorAll('*')){const s=getComputedStyle(el);if(el.getBoundingClientRect().width&&(/auto|scroll/.test(s.overflowX)||/auto|scroll/.test(s.overflowY)))owners.add(el);}return {origin:location.origin,secure:isSecureContext,fontSize:parseFloat(getComputedStyle(document.documentElement).fontSize),owners:[...owners].map(el=>({name:el.getAttribute('aria-label')||el.getAttribute('aria-labelledby')||el.className,overflow:el.scrollWidth-el.clientWidth})),dialogRects:dialogs.map(el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};})};})()`);
     assertHttpTestUrl(result.origin);
     assert(result.secure===false,'Surface matrix origin');

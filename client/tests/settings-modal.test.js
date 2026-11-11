@@ -150,9 +150,16 @@ describe("actual retained Settings entry and inline pages", () => {
     await open("core:appearance"); expect(document.querySelector('[aria-label="Close settings"] svg path')?.getAttribute("d")).toBeTruthy();
   });
   it("read-only plugin pages remain visible but every mutation input is unavailable", async () => {
-    await open("plugin:a:p", false); expect(document.querySelector('#settings-field-message').readOnly).toBe(true);
-    expect(wrapper.findComponent(Toggle).element.disabled).toBe(true);
+    await open("plugin:a:p", false); expect(document.querySelector('#settings-field-message').tagName).toBe('SPAN');
+    expect(document.querySelector('#settings-field-message').textContent).toBe('stored');
+    expect(document.body.textContent).toContain('Changes are unavailable for this setting.');
+    expect(wrapper.find('[data-declarative-settings] [role="switch"]').exists()).toBe(false);
+    expect(document.querySelector('#settings-field-enabled').textContent).toBe('Off');
+    expect(wrapper.findAll('[disabled]')).toHaveLength(0);
     expect(putPluginSettings).not.toHaveBeenCalled();
+    await wrapper.vm.openSettings('core:plugins'); await flushPromises();
+    expect(document.querySelector('.plugin-policy-row').textContent).toContain('Plugin changes are unavailable in this read-only session.');
+    expect(document.querySelector('.plugin-policy-row label[for]')).toBeNull();
   });
   it("groups/help and host folder choices are present on the real page", async () => {
     await open("plugin:a:p"); expect(document.body.textContent).toContain("General group"); expect(document.body.textContent).toContain("Group help");
@@ -202,7 +209,8 @@ describe("actual retained Settings entry and inline pages", () => {
     getPluginSettings.mockImplementation(() => new Promise(resolve => { readNew = resolve; }));
     acknowledge({ revision: 1, values: { message: "D1 submitted", enabled: false, limit: 5, folder: "" } }); await flushPromises();
     expect(document.querySelector('#settings-field-message')).toBeNull(); expect(document.querySelector('#settings-field-d3')).not.toBeNull();
-    expect(document.querySelector('#settings-field-d3').readOnly).toBe(true);
+    expect(document.querySelector('#settings-field-d3').tagName).toBe('SPAN');
+    expect(document.body.textContent).toContain('Changes are unavailable for this setting.');
     expect(document.body.textContent).not.toContain("original draft is retained");
     readNew({ revision: 7, values: { d3: "D3 authoritative" } }); await flushPromises();
     expect(document.querySelector('#settings-field-d3').value).toBe("D3 authoritative");
@@ -361,7 +369,8 @@ describe("registry-owned inventory page launchers", () => {
     expect(launchers('disabled')).toHaveLength(1); expect(launchers('failed')).toHaveLength(1);
     launchers('disabled')[0].click(); await flushPromises();
     expect(document.body.textContent).toContain('This page is unavailable');
-    expect(document.querySelector('#settings-field-message').readOnly).toBe(true);
+    expect(document.querySelector('#settings-field-message').tagName).toBe('SPAN');
+    expect(document.body.textContent).toContain('Changes are unavailable for this setting.');
     expect(getPluginSettings).not.toHaveBeenCalled();
     await wrapper.vm.selectPage('core:plugins'); await flushPromises();
     launchers('failed')[0].click(); await flushPromises();
@@ -375,13 +384,15 @@ describe("registry-owned inventory page launchers", () => {
     await wrapper.find('#settings-field-limit').setValue('');
     pluginCatalog.value = { ...pluginCatalog.value, plugins: [{ ...pluginCatalog.value.plugins[0], pages: [{ ...page, id: 'new', label: 'New declaration' }] }] };
     await flushPromises();
-    expect(document.querySelector('#settings-field-limit').value).toBe('');
+    expect(document.querySelector('#settings-field-limit').tagName).toBe('SPAN');
+    expect(document.querySelector('#settings-field-limit').textContent).toBe('');
     expect(document.body.textContent).toContain('This page is unavailable');
     expect([...document.querySelectorAll('[role="tab"]')].map(el => el.textContent.trim())).toContain(page.label);
     const departure = wrapper.vm.selectPage('core:plugins'); await flushPromises();
     button('Keep editing', document.querySelector('[data-modal-top=true]')).click();
     expect(await departure).toBe(false); await flushPromises();
-    expect(document.querySelector('#settings-field-limit').value).toBe('');
+    expect(document.querySelector('#settings-field-limit').tagName).toBe('SPAN');
+    expect(document.querySelector('#settings-field-limit').textContent).toBe('');
     expect(document.querySelector('#settings-modal-title')).toBe(owner);
     const discard = wrapper.vm.selectPage('core:plugins'); await flushPromises();
     button('Discard', document.querySelector('[data-modal-top=true]')).click(); expect(await discard).toBe(true); await flushPromises();

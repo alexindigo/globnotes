@@ -294,12 +294,12 @@ try {
   await peer.click(".cm-content"); await peer.type("Peer retained dirty note marker\n");
   await peer.evaluate("window.__peerEditor=document.querySelector('.cm-content');true");
   await peer.click('[title="Open sidebar"]'); await peer.click('[aria-label="Settings"]'); await peer.click('[data-settings-nav-id="plugin:access-workflow"]');
-  await peer.poll("!!document.querySelector('#settings-field-limit') && !document.querySelector('#settings-field-limit').readOnly");
+  await peer.poll("(()=>{const field=document.querySelector('#settings-field-limit');return field?.matches('input[type=number]') && !field.readOnly && !field.disabled && field.value==='5';})()");
   await peer.click("#settings-field-limit"); await peer.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 }); await peer.key("Backspace", { windowsVirtualKeyCode: 8 });
    await peer.poll("document.querySelector('#settings-field-limit')?.value === ''");
   await access(); await owned.session.click("#setup-read-only-settings"); await owned.session.click("#setup-ack"); await owned.session.button("Save access settings"); await owned.session.poll("!document.querySelector('#setup-title')");
-  await peer.poll("document.querySelector('#settings-field-limit')?.readOnly || document.querySelector('#settings-field-limit')?.disabled");
-   assert(await peer.evaluate("document.querySelector('#settings-field-limit')?.value === '' && document.querySelector('.cm-content')===window.__peerEditor && document.querySelector('.cm-content')?.textContent.includes('Peer retained dirty note marker')"), "Remote lock discarded the peer's invalid setting or dirty editor");
+  await peer.poll("document.querySelector('#settings-field-limit')?.matches('span[aria-labelledby]')");
+   assert(await peer.evaluate("document.querySelector('#settings-field-limit')?.textContent === '' && document.querySelector('.cm-content')===window.__peerEditor && document.querySelector('.cm-content')?.textContent.includes('Peer retained dirty note marker')"), "Remote lock discarded the peer's invalid setting or dirty editor");
   assert((await api("plugin-host/access-workflow/settings/preferences", "PUT", { values: { message: "blocked peer", limit: 5 }, revision: 0 })).status === 403, "Peer can mutate settings after remote lock");
   const preRestartOwner = (await api("plugin-host/access-workflow/commands/report", "POST", {})).body.result.owner;
   const restart = await owned.server.restart();
@@ -307,8 +307,8 @@ try {
   assert((await api("config")).body.settingsWritable === false, "Restart lost the public settings lock");
   await peer.poll(`fetch('/_/api/plugin-host/access-workflow/commands/report',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(r=>r.json()).then(report=>report.result.owner!==${JSON.stringify(preRestartOwner)})`);
   assert(await peer.evaluate("fetch('/_/api/config').then(r=>r.json()).then(config=>config.settingsWritable===false && config.readOnlySettings===true)"), "Peer did not observe persisted policy from the restarted backend");
-  await peer.poll("document.querySelector('#settings-field-limit')?.readOnly || document.querySelector('#settings-field-limit')?.disabled");
-   assert(await peer.evaluate("document.querySelector('#settings-field-limit')?.value === '' && document.querySelector('.cm-content')===window.__peerEditor"), "Restart reconciliation replaced peer drafts/editor");
+  await peer.poll("document.querySelector('#settings-field-limit')?.matches('span[aria-labelledby]')");
+   assert(await peer.evaluate("document.querySelector('#settings-field-limit')?.textContent === '' && document.querySelector('.cm-content')===window.__peerEditor"), "Restart reconciliation replaced peer drafts/editor");
   assert((await api("notes", "POST", { path: "AfterRestart", content: "Public after restart\n" })).status === 200 && await Deno.readTextFile(`${owned.vault}/AfterRestart.md`) === "Public after restart\n", "Restart/settings lock blocked public note writes");
   assert(peer.errors.length === 0, "Peer page exception");
   await peer.close();

@@ -153,6 +153,10 @@
 }
 
 @layer components {
+    .settings-text { font-size: 14px; line-height: 21px; }
+    .settings-help { font-size: 13px; line-height: 19.5px; }
+    .settings-small { font-size: 12px; line-height: 18px; }
+    .settings-heading { font-size: 18px; line-height: 27px; }
     .focus-ring:focus-visible {
         outline: 2px solid rgb(var(--theme-text));
         outline-offset: var(--focus-ring-offset, 2px);

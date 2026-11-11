@@ -4,10 +4,10 @@
     <button :ref="el=>tiles.set('system',el)" type="button" role="radio" data-theme-id="system" :aria-checked="selected==='system'" :aria-label="snapshot.system.label" :aria-describedby="systemDescriptionId" :tabindex="focused==='system'?0:-1" class="theme-tile focus-ring" :class="{'theme-tile-selected':selected==='system'}" @focus="focused='system'" @keydown="navigate($event,'system')" @click="onSelect('system')">
       <span class="theme-tile-face theme-system-pair"><ThemeNotePreview v-for="theme in snapshot.system.pair" :key="theme.id" :theme="theme" /></span>
       <span class="theme-tile-label"><span>{{ snapshot.system.label }}</span><span v-if="selected==='system'" aria-hidden="true">✓</span></span>
-      <span :id="systemDescriptionId" class="text-[13px] text-theme-text-muted">Now showing {{ snapshot.system.nowShowing }}</span>
+      <span :id="systemDescriptionId" class="settings-help text-theme-text-muted">Now showing {{ snapshot.system.nowShowing }}</span>
     </button>
     <div v-for="(family,index) in snapshot.families" :key="family.label" role="group" class="flex min-w-0 flex-col gap-3" :aria-labelledby="`${systemDescriptionId}-family-${index}`">
-      <h3 :id="`${systemDescriptionId}-family-${index}`" class="text-sm font-semibold">{{ family.label }}</h3>
+      <h3 :id="`${systemDescriptionId}-family-${index}`" class="settings-text font-semibold">{{ family.label }}</h3>
       <div class="theme-family-grid">
         <button v-for="theme in family.themes" :key="theme.id" :ref="el=>tiles.set(theme.id,el)" type="button" role="radio" :data-theme-id="theme.id" :aria-label="theme.label" :aria-checked="selected===theme.id" :tabindex="focused===theme.id?0:-1" class="theme-tile focus-ring" :class="{'theme-tile-selected':selected===theme.id}" @focus="focused=theme.id" @keydown="navigate($event,theme.id)" @click="onSelect(theme.id)">
           <span class="theme-tile-face"><ThemeNotePreview :theme="theme" /></span><span class="theme-tile-label"><span>{{ theme.variant }}</span><span v-if="selected===theme.id" aria-hidden="true">✓</span></span>

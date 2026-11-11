@@ -168,7 +168,9 @@ if (options.controls) {
       await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
     }
     await session.click('[data-settings-nav-id="plugin:globnotes-backup"]');
-    await session.poll(`!!document.querySelector('#settings-field-retention') && document.querySelector('#settings-field-retention').value !== '' ${current.label === 'settings-lock' ? '' : "&& !document.querySelector('#settings-field-retention').disabled"}`);
+    await session.poll(current.label === 'settings-lock'
+      ? "document.querySelector('#settings-field-retention')?.matches('span[aria-labelledby]') && document.querySelector('#settings-field-basePath')?.matches('span[aria-labelledby]')"
+      : "document.querySelector('#settings-field-retention')?.matches('input[type=range]:not([disabled]):not([readonly])') && document.querySelector('#settings-field-retention').value !== ''");
     await session.evaluate("document.fonts.ready.then(()=>true)");
   }
   async function closeSettings() { await current.session.click('[aria-label="Close settings"]'); await current.session.poll("!document.querySelector('#settings-modal-title')"); }
@@ -267,7 +269,7 @@ if (options.controls) {
         const pin = { GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS: JSON.stringify({ "globnotes-backup": { backup: { basePath: root } } }) };
         await fixture(label, pin, { retention: 2, basePath: "stored" }); await Deno.mkdir(root);
         await open();
-         assert(await current.session.read(['#settings-field-basePath', '[data-modal-top=true]'], `document.querySelector('#settings-field-basePath').readOnly && document.querySelector('#settings-field-basePath').value===${JSON.stringify(root)} && document.querySelector('[data-modal-top=true]').textContent.includes('Set by the server configuration')`), "BACKUP_NATIVE_pin: effective readonly field");
+         assert(await current.session.read(['#settings-field-basePath', '#settings-field-retention'], `(()=>{const values=[...document.querySelectorAll('#settings-field-basePath')],slider=document.querySelector('#settings-field-retention');if(values.length!==1)return false;const value=values[0],reason=(value.getAttribute('aria-describedby')??'').split(' ').map(id=>document.getElementById(id)?.textContent??'').join(' ');return value.matches('span[aria-labelledby]') && value.textContent===${JSON.stringify(root)} && reason.includes('Set by the server configuration') && value.closest('.setting-row').querySelectorAll('input,button,select,textarea').length===0 && slider?.matches('input[type=range]:not([disabled]):not([readonly])');})()`), "BACKUP_NATIVE_pin: retained value row, reason and editable sibling");
         await picture("environment-pin"); await retention(3); await closeSettings();
         const raw = JSON.parse(await Deno.readTextFile(`${current.state}/plugin-data/globnotes-backup/settings.json`));
         equal(raw.values.backup.basePath, "stored", "BACKUP_NATIVE_pin: stored fallback preserved by sibling save");
@@ -276,7 +278,7 @@ if (options.controls) {
           await restart({ GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS: '{"globnotes-backup":{"backup":{"basePath":""}}}' });
           equal((await settings()).body.values.basePath, "", "BACKUP_NATIVE_pin: explicit empty override"); await save("Note", "C"); await ring(current.vault, "Note", ["B"], kind);
           await restart(); await open(); equal((await settings()).body.values.basePath, "stored", "BACKUP_NATIVE_pin: unpinned fallback restored");
-           assert(!await current.session.read('#settings-field-basePath', "document.querySelector('#settings-field-basePath').readOnly"), "BACKUP_NATIVE_pin: unpinned field writable");
+           assert(await current.session.read('#settings-field-basePath', "document.querySelector('#settings-field-basePath')?.matches('input:not([readonly]):not([disabled])')"), "BACKUP_NATIVE_pin: unpinned field writable");
           await picture("restored-fallback"); await closeSettings(); await save("Note", "D"); await ring(`${current.vault}/stored`, "Note", ["C"], kind); await ring(root, "Note", ["A"], kind);
         }
         await finish(kind, { root, persistedFallback: raw.values.backup.basePath });
@@ -346,7 +348,7 @@ if (options.controls) {
          await closeSettings(); assert(await session.evaluate("document.querySelector('.cm-content')===window.__backupEditor && document.querySelector('.cm-content')?.textContent.includes('dirty retained')"), "BACKUP_NATIVE_failure: modal close retains newer draft");
         await finish(kind, { failed, editorRetained: true, draftRetained: true, urlRetained: true });
       } else {
-         await fixture("settings-lock"); await open(); assert(await current.session.read(['#settings-field-retention', '#settings-field-basePath'], "document.querySelector('#settings-field-retention').disabled && document.querySelector('#settings-field-basePath').readOnly"), "BACKUP_NATIVE_settings-lock: settings readonly");
+         await fixture("settings-lock"); await open(); assert(await current.session.read(['#settings-field-retention', '#settings-field-basePath'], "(()=>{const values=[...document.querySelectorAll('#settings-field-retention,#settings-field-basePath')];return values.length===2 && values.every(value=>value.matches('span[aria-labelledby]') && value.closest('.setting-row').querySelectorAll('input,button,select,textarea').length===0) && document.querySelector('#settings-field-retention').textContent==='2' && document.querySelector('#settings-field-basePath').textContent==='';})()"), "BACKUP_NATIVE_settings-lock: both retained values and no mutation controls");
         const before = (await settings()).body;
         equal((await api("/_/api/plugin-host/globnotes-backup/settings/backup", "PUT", { revision: before.revision, sourceKey: before.sourceKey, values: { retention: 3, basePath: "" } })).status, 403, "BACKUP_NATIVE_settings-lock: API rejects settings mutation");
         await closeSettings(); await save("Note", "B"); await ring(current.vault, "Note", ["A"], "settings-lock"); await finish("settings-lock", { noteWritable: true, settingsWritable: false });

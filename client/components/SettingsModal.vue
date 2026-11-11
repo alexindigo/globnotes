@@ -13,24 +13,26 @@
     :keydown-handler="core.captureKey"
     :close-handler-override="requestClose"
   >
-    <div class="flex min-h-0 flex-1 flex-col">
+    <div class="settings-text flex min-h-0 flex-1 flex-col">
       <div class="flex items-center justify-between gap-2 border-b border-theme-border py-3 [padding-inline:var(--settings-inline-inset)]">
         <div class="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <h2
             id="settings-modal-title"
-            class="text-lg font-semibold text-theme-text"
+            class="settings-heading font-semibold text-theme-text"
           >Settings</h2>
           <span
             v-if="versionLabel"
             data-app-version
-            class="min-w-0 max-w-full truncate text-xs text-theme-text-muted"
+            class="min-w-0 max-w-full truncate settings-small text-theme-text-muted"
           >{{ versionLabel }}</span>
         </div>
         <CustomButton
           type="button"
           variant="text"
+          text-tone="normal"
           class="shrink-0"
           aria-label="Close settings"
+          icon-size="1.25rem"
           :icon-path="tabClose"
           @click="requestClose"
         />
@@ -39,9 +41,9 @@
         <SettingsNav :groups="groupedPages" :attention-items="attentionItems" :on-select="selectPage" />
         <div class="min-w-0 flex-1 overflow-y-auto p-4 sm:p-6" data-settings-content :data-settings-current-page="currentPageId">
           <SettingsPage v-if="currentPage?.kind === 'unsupported'" :title="pluginPageHeader.title" :description="pluginPageHeader.description">
-            <template #action><CustomButton type="button" label="Manage in Plugins" variant="text" @click="managePlugin(currentPage.owner)" /></template>
+            <template #action><CustomButton size="settings" type="button" label="Manage in Plugins" variant="secondary" @click="managePlugin(currentPage.owner)" /></template>
             <SettingsTabs :pages="pluginPageHeader.pages" :selected="currentPageId" :on-select="selectPage">
-            <p class="text-sm text-theme-danger">
+            <p class="settings-text text-theme-danger">
               This settings page uses an unsupported renderer
               ({{ currentPage.renderer?.kind }}). It cannot be displayed in
               this version of globnotes.
@@ -49,7 +51,7 @@
             </SettingsTabs>
           </SettingsPage>
           <SettingsPage v-else-if="currentPage?.kind === 'plugin-page'" :title="pluginPageHeader.title" :description="pluginPageHeader.description">
-          <template #action><CustomButton type="button" label="Manage in Plugins" variant="text" @click="managePlugin(currentPage.owner)" /></template>
+          <template #action><CustomButton size="settings" type="button" label="Manage in Plugins" variant="secondary" @click="managePlugin(currentPage.owner)" /></template>
           <SettingsTabs :pages="pluginPageHeader.pages" :selected="currentPageId" :on-select="selectPage">
           <DeclarativeSettingsPage
             :key="currentPageId"
@@ -86,42 +88,44 @@
             </SettingRow>
             <div v-else-if="currentPage.kind === 'access'" class="flex flex-col gap-4" data-access-summary>
               <SettingRow v-for="row in accessSummary.rows" :key="row.label" :label="row.label" as="value" short>
-                <span class="text-sm">{{ row.value }}</span>
+                <span class="settings-text">{{ row.value }}</span>
               </SettingRow>
               <SettingRow label="Access settings" as="value" short
                 :help="accessSummary.loading ? 'Reading current access…' : !writable ? 'Access changes are unavailable in this session. Locked settings are recovered through deployment configuration.' : undefined"
                 :error="accessSummary.error" :role="accessSummary.loading ? 'status' : undefined">
-                <CustomButton v-if="writable" type="button" variant="secondary" label="Change access…" @click="openAccess" />
+                <CustomButton size="settings" v-if="writable" type="button" variant="secondary" label="Change access…" @click="openAccess" />
               </SettingRow>
             </div>
             <SettingRow v-else-if="currentPage.kind === 'account'" :label="accountSummary.text" :title="accountSummary.text" as="value" short>
-              <CustomButton v-if="canLogout" type="button" variant="secondary" label="Log out" @click="$emit('logout')" />
+              <CustomButton size="settings" v-if="canLogout" type="button" variant="secondary" label="Log out" @click="$emit('logout')" />
             </SettingRow>
-            <p v-else class="text-sm text-theme-text-muted">This page has no options.</p>
+            <p v-else class="settings-text text-theme-text-muted">This page has no options.</p>
           </SettingsPage>
         </div>
       </div>
     </div>
   </Modal>
-  <ConfirmModal :model-value="riskVisible" action-layout="grouped" :title="riskTitle" :message="riskMessage" :confirm-button-text="riskConfirmText" :confirm-button-style="riskConfirmStyle" @update:model-value="session.setRiskVisible" @confirm="resolveRisk(true)" @cancel="resolveRisk(false)" />
+  <ConfirmModal button-size="settings" :model-value="riskVisible" action-layout="grouped" :title="riskTitle" :message="riskMessage" :confirm-button-text="riskConfirmText" :confirm-button-style="riskConfirmStyle" @update:model-value="session.setRiskVisible" @confirm="resolveRisk(true)" @cancel="resolveRisk(false)" />
   <Modal :model-value="!!pathChoice" name="settings-path-choice" anchor="dialog" scroll="content" labelledby="settings-path-title" trap-focus :close-handler-override="closePathChoice">
-    <section v-if="pathChoice" class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6"><h2 id="settings-path-title" class="text-lg font-semibold">Choose {{ pathChoice.field.type }} in this vault</h2>
+    <section v-if="pathChoice" class="settings-text flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6"><h2 id="settings-path-title" class="settings-heading font-semibold">Choose {{ pathChoice.field.type }} in this vault</h2>
       <p v-if="pathChoiceError" role="alert">{{ pathChoiceError }}</p>
-      <nav aria-label="Current folder" class="flex flex-wrap items-center gap-1"><template v-for="(crumb,index) in pathCrumbs" :key="crumb.path"><span v-if="index" aria-hidden="true">/</span><span v-if="index===pathCrumbs.length-1" aria-current="location" class="text-sm">{{ crumb.label }}</span><CustomButton v-else type="button" variant="text" :label="crumb.label" :disabled="pathLoading" @click="loadPathChoices(crumb.path)" /></template></nav>
-      <CustomButton v-if="pathChoice.root" type="button" label="Up one level" variant="text" class="self-start" :disabled="pathLoading" @click="loadPathChoices(parentPath(pathChoice.root))" />
-      <p v-if="pathLoading" role="status" class="text-[13px] text-theme-text-muted">Loading this folder…</p>
-      <p v-else-if="!pathEntries.length && !pathChoiceError" class="text-[13px] text-theme-text-muted">This folder is empty.</p>
-      <ul v-else class="flex min-w-0 flex-col divide-y divide-theme-border"><li v-for="entry in pathEntries" :key="entry.path"><button type="button" class="focus-ring flex w-full min-w-0 items-center gap-2 py-3 text-left text-sm text-theme-text" :disabled="pathLoading" @click="session.choosePathEntry(entry)"><Icon v-if="entry.directory" :icon="tabFolder" class="shrink-0" width="18" height="18" /><span>{{ entry.label }}{{ entry.directory ? '/' : '' }}</span></button></li></ul>
-      <SettingsActions class="mt-auto"><template #end><CustomButton type="button" label="Cancel" variant="secondary" @click="closePathChoice" /><CustomButton v-if="pathChoice.field.type==='folder'" type="button" label="Use this folder" variant="cta" :disabled="!pathChoice.canSelect" @click="selectPath(pathChoice.root)" /></template></SettingsActions>
+      <nav aria-label="Current folder" class="flex flex-wrap items-center gap-1"><template v-for="(crumb,index) in pathCrumbs" :key="crumb.path"><span v-if="index" aria-hidden="true">/</span><span v-if="index===pathCrumbs.length-1 || pathLoading" :aria-current="index===pathCrumbs.length-1 ? 'location' : undefined" class="settings-text">{{ crumb.label }}</span><CustomButton size="settings" v-else type="button" variant="secondary" :label="crumb.label" @click="loadPathChoices(crumb.path)" /></template></nav>
+      <CustomButton size="settings" v-if="pathChoice.root && !pathLoading" type="button" label="Up one level" variant="secondary" class="self-start" @click="loadPathChoices(parentPath(pathChoice.root))" />
+      <p v-if="pathLoading" role="status" class="settings-help text-theme-text-muted">Loading this folder…</p>
+      <p v-else-if="!pathEntries.length && !pathChoiceError" class="settings-help text-theme-text-muted">This folder is empty.</p>
+      <ul v-else class="flex min-w-0 flex-col gap-2"><li v-for="entry in pathEntries" :key="entry.path"><CustomButton size="settings" variant="secondary" type="button" class="w-full" :label="`${entry.label}${entry.directory ? '/' : ''}`" @click="session.choosePathEntry(entry)"><Icon v-if="entry.directory" :icon="tabFolder" class="shrink-0" width="18" height="18" /></CustomButton></li></ul>
+      <SettingsActions class="mt-auto"><template #end><CustomButton size="settings" type="button" label="Cancel" variant="secondary" @click="closePathChoice" /><CustomButton size="settings" v-if="pathChoice.field.type==='folder' && pathChoice.canSelect" type="button" label="Use this folder" variant="cta" @click="selectPath(pathChoice.root)" /></template></SettingsActions>
     </section>
   </Modal>
   <ConfirmModal
+    button-size="settings"
     :model-value="departureVisible"
     action-layout="grouped"
     title="Unsaved changes"
     :message="departureMessage"
     :confirm-button-text="departureConfirmText"
     :confirm-disabled="!departureCanSave"
+    hide-unavailable
     reject-button-text="Discard"
     cancel-button-text="Keep editing"
     @update:model-value="session.setDepartureVisible"

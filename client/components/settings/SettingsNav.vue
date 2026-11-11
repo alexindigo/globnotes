@@ -21,7 +21,7 @@ defineProps({ groups: Array, onSelect: Function, attentionItems:{type:Array,defa
 .settings-nav { flex-shrink:0; width:13rem; min-width:0; overflow-y:auto; padding:1rem 0; border-right:1px solid rgb(var(--theme-border)); }
 .settings-nav-group + .settings-nav-group { margin-top:1rem; }
 h3 { padding:0.25rem var(--settings-inline-inset,1rem); font-size:12px; font-weight:600; color:rgb(var(--theme-text-very-muted)); }
-button { --focus-ring-offset:-4px; display:block; width:100%; padding:0.5rem var(--settings-inline-inset,1rem); text-align:left; font-size:14px; color:rgb(var(--theme-text-muted)); overflow-wrap:anywhere; }
+button { --focus-ring-offset:-4px; display:block; width:100%; padding:0.5rem var(--settings-inline-inset,1rem); text-align:left; font-size:14px; color:rgb(var(--theme-text)); overflow-wrap:anywhere; }
 .attention-heading { color:rgb(var(--theme-text)); }
 .attention-entry, .attention-entry:hover { color:rgb(var(--theme-warning)); }
 button:hover { color:rgb(var(--theme-brand)); }
