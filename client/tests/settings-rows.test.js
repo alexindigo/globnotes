@@ -8,9 +8,28 @@ import SettingsField from '../components/SettingsField.vue';
 import SyncSettingsPage from '../components/SyncSettingsPage.vue';
 import DriverInstance from '../components/settings/DriverInstance.vue';
 import BrandingSettingsPage from '../components/BrandingSettingsPage.vue';
+import { assertSettingRowAlignment, assertSettingsFormRows } from './e2e/settings-frame-native.mjs';
 enableAutoUnmount(afterEach);
 
 describe('shared settings rows', () => {
+  it('requires short rows to align centers or reflow below the label, never overlap or escape', async () => {
+    const row={label:'Encryption',visible:true,contained:true,stacked:false,delta:0};
+    const session={read:vi.fn(async()=>[row])};
+    await expect(assertSettingRowAlignment(session)).resolves.toEqual([row]);
+    session.read.mockResolvedValueOnce([{...row,stacked:true,delta:-40}]);
+    await expect(assertSettingRowAlignment(session)).resolves.toHaveLength(1);
+    for(const invalid of [{contained:false},{delta:10}]){
+      session.read.mockResolvedValueOnce([{...row,...invalid}]);
+      await expect(assertSettingRowAlignment(session)).rejects.toThrow('centerlines/reflow');
+    }
+  });
+  it('keeps the form control width when stacked and rejects the old squeezed lane', async () => {
+    const row={label:'Encryption',width:308,right:329,lane:{width:308,right:329},stacked:true,delta:-40,inputs:[{right:329,width:308,expectedWidth:308}]};
+    const session={read:vi.fn(async()=>[row])};
+    await expect(assertSettingsFormRows(session)).resolves.toEqual([row]);
+    session.read.mockResolvedValueOnce([{...row,lane:{width:184.8,right:329}}]);
+    await expect(assertSettingsFormRows(session)).rejects.toThrow('Settings form rows');
+  });
   it('gives Sync add one form layout and one available action row', async () => {
     const snapshot={adding:true,loaded:true,plugins:[{}],instances:[],plugin:'test',label:'Home',canCreate:true,addFields:[{key:'plugin',label:'Sync plugin',type:'select',options:[{label:'Test',value:'test'}]},{key:'label',label:'Label',type:'text'}]};
     const wrapper=mount(SyncSettingsPage,{props:{snapshot,controller:{editAdd:vi.fn(),createInstance:vi.fn()},onCancelAdd:vi.fn()}});
@@ -41,6 +60,8 @@ describe('shared settings rows', () => {
     const wrapper=mount(PluginInventorySettingsPage,{props:{autoEnable:{value:true,canToggle:true},rows:[{id:'test',name:'Test plugin',enabled:true,hasServer:true,canToggle:true,pages:[],attention:[]}],onAutoEnable:vi.fn(),onEnabled:vi.fn(),onExpansion:vi.fn()}});
     expect(wrapper.findAllComponents(SettingRow)).toHaveLength(2);
     expect(wrapper.get('.plugin-row-heading.setting-row').exists()).toBe(true);
+    expect(wrapper.get('.plugin-row-heading').classes()).toContain('setting-row-truncate-label');
+    expect(wrapper.get('.plugin-policy-row').classes()).not.toContain('setting-row-truncate-label');
     expect(wrapper.findAll('[disabled]')).toHaveLength(0);
   });
   it('hides unavailable plugin and policy actions instead of disabling them', () => {
