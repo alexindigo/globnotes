@@ -1,5 +1,27 @@
 # Changelog
 
+## v2.6.1 (2026-11-10)
+
+### Fixed
+
+Markup inside a note can no longer run in the browser. Search shows titles and
+matches as text while keeping their highlights. Saved notes and previews keep
+safe HTML formatting but drop scripts and event handlers, and a configured logo
+accent color can no longer inject SVG attributes.
+
+A vault path written with `..` or repeated slashes now works the same everywhere:
+storage, indexing and file serving all use one normalized path. The first index
+of a vault counts only notes that were actually indexed as done, and reports
+failed ones separately.
+
+A busy search database is no longer reported as missing FTS5 support. Opening an
+existing index no longer takes an unneeded write lock, other SQLite errors keep
+their original message, and a failed start closes its database connection.
+
+Existing attachments whose names contain `?`, `:`, `*` or `%` can be downloaded
+and follow their notes when moved. Links rewritten by a move escape parentheses
+in file names, so the Markdown link stays intact.
+
 ## v2.6.0 (2026-11-04)
 
 ### Added
