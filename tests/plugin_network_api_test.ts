@@ -1,3 +1,4 @@
+import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assert, assertEquals } from "@std/assert";
@@ -13,7 +14,7 @@ import {
 
 /** Feature-owned normal launcher; importAuthority is an isolated positive control only. */
 async function bootNetworkServer(
-  env: Record<string, string>,
+  env: Record<string, unknown>,
   importAuthority?: string,
   privateLockPath?: string,
 ) {
@@ -56,7 +57,7 @@ function reloadSettled<V extends { reload: { state: string } }>(
 }
 
 async function apiFixture(
-  extra: Record<string, string> = {},
+  extra: Record<string, unknown> = {},
   imports: "none" | "parent-missing" | "parent-granted" = "none",
   runtimeOnly = false,
 ) {
@@ -148,10 +149,10 @@ async function apiFixture(
     JSON.stringify({ disabled: ["disabled-browser"] }),
   );
   const launchEnv = {
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_PATH_PREFIX: "",
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__SERVER_PATHPREFIX: "",
     ...extra,
   };
   const privateLockPath = imports === "parent-granted"
@@ -168,7 +169,7 @@ async function apiFixture(
     imports === "parent-granted" ? authority : undefined,
     privateLockPath,
   );
-  const prefix = extra.GLOBNOTES_PATH_PREFIX ?? "";
+  const prefix = extra.GLOBNOTES__SERVER_PATHPREFIX ?? "";
   let base = `${server.baseUrl}${prefix}`;
   const get = async (suffix: string) =>
     await fetch(`${base}/_/api/plugin-host/${suffix}`, {
@@ -207,7 +208,7 @@ async function apiFixture(
       signal: AbortSignal.timeout(3000),
     });
   const ready = async () => {
-    await catalogPluginReady(server, "networked", { prefix });
+    await catalogPluginReady(server, "networked", { prefix: String(prefix) });
   };
   return {
     fixture,
@@ -973,10 +974,12 @@ Deno.test("plugin network api: corrupted control bytes are retained and cannot b
 Deno.test("plugin network api: setup, password and read-only enforcement cover the new host routes", async () => {
   for (const mode of ["", "password", "read_only"]) {
     const b = await apiFixture({
-      GLOBNOTES_AUTH_TYPE: mode,
-      GLOBNOTES_USERNAME: "fixture-user",
-      GLOBNOTES_PASSWORD: "fixture-password",
-      GLOBNOTES_SECRET_KEY: crypto.randomUUID(),
+      fixtureAuth: {
+        auth_type: mode || undefined,
+        username: "fixture-user",
+        password_hash: fixturePasswordHash("fixture-password"),
+        secret_key: crypto.randomUUID(),
+      },
     });
     try {
       const response = await b.get("networked/permissions");
@@ -1019,7 +1022,7 @@ Deno.test("plugin network api: setup, password and read-only enforcement cover t
 });
 
 Deno.test("plugin network api: prefixed control routes preserve consent and reject mismatched paths", async () => {
-  const b = await apiFixture({ GLOBNOTES_PATH_PREFIX: "/notes" });
+  const b = await apiFixture({ GLOBNOTES__SERVER_PATHPREFIX: "/notes" });
   try {
     await b.ready();
     const view = await b.view();

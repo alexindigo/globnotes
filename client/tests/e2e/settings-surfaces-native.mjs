@@ -52,10 +52,11 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
   async function api(path,method='GET',body){const r=await fetch(`${server.baseUrl}/_/api/${path}`,{method,headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(10000)});const data=await r.json();assert(r.ok,`Matrix fixture ${path}: ${JSON.stringify(data)}`);return data;}
   async function fixture(name){
     const logs=`${directory}/${name}`;await Deno.mkdir(logs);
-    const vault=await Deno.makeTempDir({prefix:'settings-surfaces-vault-'}),state=await Deno.makeTempDir({prefix:'settings-surfaces-state-'});
+    const vault=await Deno.makeTempDir({prefix:'settings-surfaces-vault-'}),state=await metadataDirectory({prefix:'settings-surfaces-state-'});
     await Deno.writeTextFile(`${vault}/Note.md`,'# Surface matrix\n');await Deno.mkdir(`${vault}/Archive`);
     const config=name==='protected'?{auth_type:'password',username:'surface-user',password_hash:await hashPassword('surface-password'),secret_key:crypto.randomUUID()}:{auth_type:'none',brand_name:'Surface notes'};
     if(name!=='first-run')await Deno.writeTextFile(`${state}/config.json`,JSON.stringify(config));
+    if(config.brand_name)await Deno.writeTextFile(`${state}/config.toml`, `[brand]\nname=${JSON.stringify(config.brand_name)}\n`);
     if(name==='main'){
       const plugin=`${state}/plugins/surface-probe`;await Deno.mkdir(plugin,{recursive:true});
       const page=id=>({id,label:id==='one'?'One':'LongUnbroken'.repeat(12),description:'A real declared page with multiple control types.',renderer:{kind:'declarative-v1',version:1},fields:[{key:'message',label:'Message',type:'text',default:'A retained value'},{key:'limit',label:'Limit',type:'number',default:2},{key:'body',label:'Body',type:'textarea',default:'Long text'},{key:'enabled',label:'Enabled',type:'toggle',default:false}]});
@@ -64,13 +65,13 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
     }
     if(name==='first-run'){
       const {host,origin}=applicationServer(),listener=Deno.listen({hostname:host,port:0}),appPort=listener.addr.port;listener.close();
-      const child=new Deno.Command(Deno.execPath(),{args:['run','--cached-only','--frozen',`--config=${ROOT}/deno.json`,'--unstable-worker-options','--allow-read','--allow-write','--allow-net','--allow-env',`${ROOT}/server/main.ts`],cwd:ROOT,clearEnv:true,env:{PATH:Deno.env.get('PATH'),HOME:Deno.env.get('HOME'),TMPDIR:Deno.env.get('TMPDIR'),GLOBNOTES_PATH:vault,GLOBNOTES_INDEX_PATH:state,GLOBNOTES_AUTH_TYPE:'',GLOBNOTES_HOST:host,GLOBNOTES_PORT:String(appPort),GLOBNOTES_AUTO_ENABLE_PLUGINS:'false'},stdout:'piped',stderr:'piped'}).spawn();
+      const child=new Deno.Command(Deno.execPath(),{args:['run','--cached-only','--frozen',`--config=${ROOT}/deno.json`,'--unstable-worker-options','--allow-read','--allow-write','--allow-net','--allow-env',`${ROOT}/server/main.ts`],cwd:ROOT,clearEnv:true,env:{PATH:Deno.env.get('PATH'),HOME:Deno.env.get('HOME'),TMPDIR:Deno.env.get('TMPDIR'),GLOBNOTES_GLOBNOTES_PATH:vault,GLOBNOTES_METADATA_PATH:metadataBase(vault,state),GLOBNOTES__SERVER_HOST:host,GLOBNOTES__SERVER_PORT:String(appPort),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:'false'},stdout:'piped',stderr:'piped'}).spawn();
       const drains=['stdout','stderr'].map(async channel=>{const file=await Deno.open(`${logs}/server-${channel}.log`,{write:true,createNew:true});try{for await(const bytes of child[channel]){let at=0;while(at<bytes.length)at+=await file.write(bytes.subarray(at));}}finally{file.close();}});
       server={baseUrl:origin(appPort),pid:child.pid,async close(){child.kill('SIGTERM');await child.status;await Promise.all(drains);}};
       await awaitHealthy(server.baseUrl,{label:'Surface first-run health',child});
     }else{
       const jwt=name==='protected'?await new SignJWT({sub:config.username}).setProtectedHeader({alg:'HS256'}).setExpirationTime('1h').sign(new TextEncoder().encode(config.secret_key)):null;
-      server=await bootServer(vault,state,{env:{GLOBNOTES_AUTH_TYPE:'',TMPDIR:Deno.env.get('TMPDIR')},logsDir:logs,headers:jwt?{authorization:`Bearer ${jwt}`}:{}});
+      server=await bootServer(vault,state,{env:{TMPDIR:Deno.env.get('TMPDIR')},logsDir:logs,headers:jwt?{authorization:`Bearer ${jwt}`}:{}});
     }
     session=await nativeSession({port});owners.push({name,vault,state,pid:server.pid,origin:server.baseUrl,targetId:session.targetId});
   }
@@ -139,3 +140,4 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
   finally{if(session)await close();await Deno.writeTextFile(`${directory}/matrix.json`,JSON.stringify({cells:matrix,observations,owners,failure:failure?.message??null},null,2),{createNew:true});}
   return {cells:matrix.length,surfaces:observations.length,maximumOverflow:Math.max(...observations.flatMap(row=>row.owners.map(owner=>owner.overflow))),owners};
 }
+import { metadataBase, metadataDirectory } from "./config-fixture.mjs";

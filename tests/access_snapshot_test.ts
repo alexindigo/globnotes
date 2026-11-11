@@ -2,7 +2,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { accessView, updateAccess } from "../server/auth/access.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { state } from "../server/state.ts";
@@ -25,7 +25,13 @@ async function accessSnapshotFixture() {
     unrelated: { keep: true },
   };
   await Deno.writeTextFile(file, JSON.stringify(initial));
-  const config = new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: root }));
+  await Deno.writeTextFile(
+    `${root}/.globnotes/config.toml`,
+    '[brand]\nname="original"\n',
+  );
+  const config = new GlobalConfig(
+    testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: root }),
+  );
   state.config = config;
   state.auth = null;
   state.lifecycle = new PluginLifecycle(config);
@@ -89,7 +95,7 @@ Deno.test("review repairs: R05 non-string access modes reject before config memo
         assertEquals(state.lifecycle!.epoch, epoch);
         assertEquals(state.auth, null);
         assertEquals(
-          new GlobalConfig(f.config.environment).authType,
+          new GlobalConfig(f.config.resolved).authType,
           f.config.authType,
         );
       } finally {
@@ -181,7 +187,7 @@ Deno.test("review repairs: R06 real current credential confirmation cannot overw
       secret_key: "fixture-only-signing-key",
     };
     f.config.saveStoredConfig(account);
-    f.config.authType = new GlobalConfig(f.config.environment).authType;
+    f.config.authType = new GlobalConfig(f.config.resolved).authType;
     const auth = new LocalAuth(f.config);
     state.auth = auth;
     const token =
@@ -254,7 +260,7 @@ Deno.test("review repairs: R06 setup carries original config through real passwo
   try {
     const initial = { brand_name: "pending setup", unknown_setup_option: true };
     Deno.writeTextFileSync(f.file, JSON.stringify(initial));
-    state.config = new GlobalConfig(f.config.environment);
+    state.config = new GlobalConfig(f.config.resolved);
     state.lifecycle = new PluginLifecycle(state.config);
     crypto.subtle.deriveBits =
       ((...args: Parameters<typeof crypto.subtle.deriveBits>) => {

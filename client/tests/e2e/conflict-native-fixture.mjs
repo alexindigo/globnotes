@@ -9,7 +9,7 @@ export const until = (predicate, label) => waitUntil(async () => await predicate
 
 export async function conflictCase(name, run, { prefix = "", env = {} } = {}) {
   const parent = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "m3-native-" });
-  const directory = `${parent}/${name}`, vault = `${directory}/vault`, state = `${directory}/state`;
+  const directory = `${parent}/${name}`, vault = `${directory}/vault`, state = `${directory}/state/globnotes`;
   await Deno.mkdir(vault, { recursive: true });
   let server, session;
   const writes = [], results = [], peers = [];
@@ -52,7 +52,7 @@ export async function conflictCase(name, run, { prefix = "", env = {} } = {}) {
     }
   }
   try {
-    server = await bootServer({ GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_PATH_PREFIX: prefix, ...env }, applicationServer());
+    server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: `${directory}/state`, fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: prefix, ...env }, applicationServer());
     session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335), height: 1100 });
     session.page.onEvent(event => {
       if (event.method === "Network.requestWillBeSent" && /\/conflicts\/[^/]+\/resolve$/.test(event.params.request.url)) {
@@ -62,7 +62,7 @@ export async function conflictCase(name, run, { prefix = "", env = {} } = {}) {
     const f = { directory, vault, state, prefix, api, create, capture, session, writes, results,
       url: path => `${server.baseUrl}${prefix}${path}`,
       server: () => server,
-      async restart(extra = {}) { await server.close(); server = await bootServer({ GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_PATH_PREFIX: prefix, ...env, ...extra }, applicationServer()); },
+      async restart(extra = {}) { await server.close(); server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: `${directory}/state`, fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: prefix, ...env, ...extra }, applicationServer()); },
       async peer() { const peer = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) }); peers.push(peer); return peer; },
       async holdResolutionResponse(row) {
         let response;

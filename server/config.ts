@@ -1,22 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-
-/**
- * Global configuration: environment variables win over the stored
- * first-run-setup config (<vault>/.globnotes/config.json). Ported from
- * the Python server's global_config.py with identical semantics.
- */
-
+/** Resolved single-vault settings plus the temporary piece-2-owned auth record. */
 import * as path from "@std/path";
-import { type Environment, processEnvironment } from "./environment.ts";
-import { getEnv, type GetEnvOptions } from "./helpers.ts";
-import { type AllowedHost, parseAllowedHosts } from "./host_admission.ts";
-import { logger } from "./logger.ts";
-import type { InstanceConfig } from "./config/schema.ts";
-import type { VaultConfigStore } from "./config/vault.ts";
+import { parseAllowedHosts } from "./host_admission.ts";
 import {
   BoundFileStore,
   type StoredConfigSnapshot,
 } from "./config/file_store.ts";
+import type { singleVaultSettings } from "./config/single_vault.ts";
 export {
   StoredConfigConflict,
   type StoredConfigSnapshot,
@@ -28,26 +18,20 @@ export enum AuthType {
   PASSWORD = "password",
   TOTP = "totp",
 }
-
 export interface StoredConfig {
   [key: string]: unknown;
   auth_type?: string;
   username?: string;
   password_hash?: string;
   secret_key?: string;
-  /** Wizard-enrolled TOTP key (raw text, same form as GLOBNOTES_TOTP_KEY). */
   totp_key?: string;
-  brand_name?: string;
-  brand_accent?: string;
   read_only_settings?: boolean;
   access_revision?: number;
   access_update_id?: string;
 }
-
+export type ResolvedVaultSettings = ReturnType<typeof singleVaultSettings>;
 export class GlobalConfig {
   readonly notesPath: string;
-  /** State dir (index, config, brand, plugins). GLOBNOTES_INDEX_PATH IS
-   * the dir (not a parent); unset ⇒ the vault's .globnotes. */
   readonly statePath: string;
   readonly pathPrefix: string;
   storedConfig: StoredConfig | null;
@@ -59,138 +43,70 @@ export class GlobalConfig {
   readonly quickAccessSort: string;
   readonly quickAccessLimit: number;
   readonly autoEnablePlugins: boolean;
-  /** The MCP endpoint (`<prefix>/_/mcp`, docs/mcp.md); off answers 404. */
   readonly mcpEnabled: boolean;
-  /** GLOBNOTES_MCP_RATE_LIMIT: MCP tool calls per minute per client;
-   * 0 = no limit. */
   readonly mcpRateLimit: number;
-  /** GLOBNOTES_ALLOWED_HOSTS: the only Host values the server answers
-   * (server/host_admission.ts); null = any. */
-  readonly allowedHosts: AllowedHost[] | null;
-  /** White-label branding: env wins over stored config, null when unset. */
-  #brandName: string | null = null;
-  #brandAccent: string | null = null;
+  readonly allowedHosts: ReturnType<typeof parseAllowedHosts>;
   get brandName(): string | null {
-    return this.resolved
-      ? this.resolved.vault.settings.brand.name || null
-      : this.#brandName;
-  }
-  set brandName(value: string | null) {
-    this.#brandName = value;
+    return this.resolved.vault.settings.brand.name || null;
   }
   get brandAccent(): string | null {
-    return this.resolved
-      ? this.resolved.vault.settings.brand.accent || null
-      : this.#brandAccent;
+    return this.resolved.vault.settings.brand.accent || null;
   }
-  set brandAccent(value: string | null) {
-    this.#brandAccent = value;
-  }
-
-  /** Configuration input; every env-derived value of this deployment
-   * (including later reads by auth, hub and plugins) comes from here. */
-  readonly environment: Environment;
-
-  constructor(
-    environment: Environment = processEnvironment,
-    readonly resolved?: {
-      instance: InstanceConfig;
-      vault: VaultConfigStore;
-      notesPath: string;
-      statePath: string;
-    },
-  ) {
-    this.environment = environment;
-    logger.debug("Loading global config...");
-    // One absolute normalized spelling for storage, index, hub and plugins.
-    this.notesPath = resolved?.notesPath ??
-      path.resolve(this.#env("GLOBNOTES_PATH", { mandatory: true }));
-    // getEnv returns "" for unset vars — `||` treats that (and an
-    // explicitly empty value) as absent, per the env-wins rule.
-    this.statePath = resolved?.statePath ??
-      (this.#env("GLOBNOTES_INDEX_PATH") ||
-        path.join(this.notesPath, ".globnotes"));
+  constructor(readonly resolved: ResolvedVaultSettings) {
+    const { instance, vault } = resolved;
+    this.notesPath = resolved.notesPath;
+    this.statePath = resolved.statePath;
+    this.pathPrefix = instance.server.pathprefix;
     this.storedConfig = this.#loadStoredConfig();
-    this.authType = this.#loadAuthType();
+    const stored = this.storedConfig?.auth_type;
+    if (
+      stored !== undefined &&
+      !Object.values(AuthType).includes(stored as AuthType)
+    ) {
+      throw new Error(
+        "Invalid saved auth_type; original configuration retained.",
+      );
+    }
+    this.authType = stored as AuthType ?? null;
     this.setupRequired = this.authType === null;
-    this.quickAccessHide = resolved?.vault.settings.quickaccess.hide ??
-      this.#quickAccessHide();
-    this.quickAccessTitle = resolved?.vault.settings.quickaccess.title ??
-      this.#quickAccessTitle();
-    this.quickAccessTerm = resolved?.vault.settings.quickaccess.term ??
-      this.#quickAccessTerm();
-    this.quickAccessSort = resolved?.vault.settings.quickaccess.sort ??
-      this.#quickAccessSort();
-    this.quickAccessLimit = resolved?.vault.settings.quickaccess.limit ??
-      this.#quickAccessLimit();
-    this.autoEnablePlugins = resolved?.vault.settings.plugins.autoenable ??
-      (this.#env("GLOBNOTES_AUTO_ENABLE_PLUGINS", {
-        castBool: true,
-        default: true,
-      }) ===
-        "true");
-    this.mcpEnabled = resolved?.instance.mcp.enabled ??
-      (this.#env("GLOBNOTES_MCP_ENABLED", {
-        castBool: true,
-        default: true,
-      }) === "true");
-    this.mcpRateLimit = resolved?.instance.mcp.ratelimit ??
-      this.#loadMcpRateLimit();
-    this.allowedHosts = resolved
-      ? parseAllowedHosts(resolved.instance.server.allowedhosts.join(","))
-      : this.#loadAllowedHosts();
-    this.pathPrefix = resolved?.instance.server.pathprefix ??
-      this.#loadPathPrefix();
-    // getEnv returns "" for unset vars — `||` treats that (and an
-    // explicitly empty value) as absent, per the env-wins rule.
-    this.brandName = this.#env("GLOBNOTES_BRAND_NAME") ||
-      this.storedConfig?.brand_name || null;
-    this.brandAccent = this.#env("GLOBNOTES_BRAND_ACCENT") ||
-      this.storedConfig?.brand_accent || null;
+    this.quickAccessHide = vault.settings.quickaccess.hide;
+    this.quickAccessTitle = vault.settings.quickaccess.title;
+    this.quickAccessTerm = vault.settings.quickaccess.term;
+    this.quickAccessSort = vault.settings.quickaccess.sort;
+    this.quickAccessLimit = vault.settings.quickaccess.limit;
+    this.autoEnablePlugins = vault.settings.plugins.autoenable;
+    this.mcpEnabled = instance.mcp.enabled;
+    this.mcpRateLimit = instance.mcp.ratelimit;
+    this.allowedHosts = parseAllowedHosts(
+      instance.server.allowedhosts.join(","),
+    );
   }
-
-  #env(key: string, opts: GetEnvOptions = {}): string {
-    return getEnv(key, opts, this.environment);
-  }
-
   get configPath(): string {
     return path.join(this.statePath, "config.json");
   }
-
   #loadStoredConfig(): StoredConfig | null {
-    /** Load the config written by the first-run setup wizard (if any). */
     try {
       return JSON.parse(Deno.readTextFileSync(this.configPath));
     } catch {
       return null;
     }
   }
-
-  /** Public settings policy is independent of public note writability. */
   get readOnlySettings(): boolean {
-    return this.#env("GLOBNOTES_READ_ONLY_SETTINGS")
-      ? this.#env("GLOBNOTES_READ_ONLY_SETTINGS", { castBool: true }) === "true"
-      : this.storedConfig?.read_only_settings === true;
+    return this.storedConfig?.read_only_settings === true;
   }
-
   get settingsWritable(): boolean {
     return !this.setupRequired && this.authType !== AuthType.READ_ONLY &&
       !(this.authType === AuthType.NONE && this.readOnlySettings);
   }
-
   storedConfigText(): string | null {
     return this.captureStoredConfig().raw;
   }
-
   captureStoredConfig(): StoredConfigSnapshot {
     return new BoundFileStore(this.configPath).capture();
   }
-
   assertStoredConfigUnchanged(snapshot: StoredConfigSnapshot): void {
     new BoundFileStore(this.configPath).assertUnchanged(snapshot);
   }
-
-  /** Sync and replace the resolved target, retaining configured file/directory links. */
   saveStoredConfig(
     config: StoredConfig,
     expected = this.captureStoredConfig(),
@@ -202,125 +118,5 @@ export class GlobalConfig {
         this.storedConfig = config;
       },
     );
-  }
-
-  #loadAuthType(): AuthType | null {
-    const key = "GLOBNOTES_AUTH_TYPE";
-    const value = this.#env(key);
-    if (value) {
-      const authType = Object.values(AuthType).find((t) =>
-        t === value.toLowerCase()
-      );
-      if (!authType) {
-        logger.error(
-          `Invalid value '${value}' for ${key}. Must be one of: ` +
-            Object.values(AuthType).join(", ") + ".",
-        );
-        Deno.exit(1);
-      }
-      return authType;
-    }
-    // Fall back to the stored first-run setup choice (env always wins)
-    const storedAuthType = this.storedConfig?.auth_type;
-    if (storedAuthType) {
-      const authType = Object.values(AuthType).find((t) =>
-        t === storedAuthType
-      );
-      if (!authType) {
-        logger.error(
-          `Invalid auth_type '${storedAuthType}' in ${this.configPath}.`,
-        );
-        Deno.exit(1);
-      }
-      return authType;
-    }
-    // No env and no stored choice: first-run setup is required
-    return null;
-  }
-
-  #quickAccessHide(): boolean {
-    const key = "GLOBNOTES_QUICK_ACCESS_HIDE";
-    let value = this.#env(key, { castBool: true, default: false }) === "true";
-    if (!value) {
-      const deprecatedKey = "GLOBNOTES_HIDE_RECENTLY_MODIFIED";
-      const deprecated = this.#env(deprecatedKey, {
-        castBool: true,
-        default: false,
-      }) === "true";
-      if (deprecated) {
-        logger.warning(
-          `${deprecatedKey} is deprecated. Please use ${key} instead.`,
-        );
-        value = true;
-      }
-    }
-    return value;
-  }
-
-  #quickAccessTitle(): string {
-    return this.#env("GLOBNOTES_QUICK_ACCESS_TITLE", {
-      default: "RECENTLY MODIFIED",
-    });
-  }
-
-  #quickAccessTerm(): string {
-    return this.#env("GLOBNOTES_QUICK_ACCESS_TERM", { default: "*" });
-  }
-
-  #quickAccessSort(): string {
-    const key = "GLOBNOTES_QUICK_ACCESS_SORT";
-    const value = this.#env(key, { default: "lastModified" });
-    const validValues = ["score", "title", "lastModified"];
-    if (!validValues.includes(value)) {
-      logger.error(
-        `Invalid value '${value}' for ${key}. Must be one of: ` +
-          validValues.join(", ") + ".",
-      );
-      Deno.exit(1);
-    }
-    return value;
-  }
-
-  #quickAccessLimit(): number {
-    return Number(
-      this.#env("GLOBNOTES_QUICK_ACCESS_LIMIT", { castInt: true, default: 4 }),
-    );
-  }
-
-  #loadMcpRateLimit(): number {
-    const key = "GLOBNOTES_MCP_RATE_LIMIT";
-    const value = Number(this.#env(key, { castInt: true, default: 600 }));
-    if (value < 0) {
-      logger.error(
-        `Invalid value '${value}' for ${key}. Must be 0 (no limit) or more.`,
-      );
-      Deno.exit(1);
-    }
-    return value;
-  }
-
-  #loadAllowedHosts(): AllowedHost[] | null {
-    const key = "GLOBNOTES_ALLOWED_HOSTS";
-    try {
-      return parseAllowedHosts(this.#env(key));
-    } catch (error) {
-      logger.error(
-        `Invalid value for ${key}: ${(error as Error).message}. Use a ` +
-          "comma-separated list such as 'globnotes.home,192.168.1.20:8080'.",
-      );
-      Deno.exit(1);
-    }
-  }
-
-  #loadPathPrefix(): string {
-    const key = "GLOBNOTES_PATH_PREFIX";
-    const value = this.#env(key);
-    if (value && (!value.startsWith("/") || value.endsWith("/"))) {
-      logger.error(
-        `Invalid value '${value}' for ${key}. Must start with '/' and not end with '/'.`,
-      );
-      Deno.exit(1);
-    }
-    return value;
   }
 }

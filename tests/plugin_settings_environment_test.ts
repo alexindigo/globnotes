@@ -24,7 +24,7 @@ for (const source of ["environment", "toml"] as const) {
     // The deployment's environment (as the server receives it) carries the
     // operator settings; the manager reads them through its configured input.
     const env = testEnvironment({
-      GLOBNOTES_PLUGIN_SETTINGS: JSON.stringify({
+      GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS: JSON.stringify({
         configured: { preferences: { location: "operator-selected" } },
       }),
     });
@@ -32,7 +32,7 @@ for (const source of ["environment", "toml"] as const) {
     await Deno.writeTextFile(
       file,
       stringify({
-        plugins: { settings: env.get("GLOBNOTES_PLUGIN_SETTINGS")! },
+        plugins: { settings: env.get("GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS")! },
       }),
     );
     const resolved = loadInstanceConfig({

@@ -9,11 +9,12 @@ import { OperationError } from "../../server/plugins/errors.ts";
 export async function pluginFixture(options: { stateInVault?: boolean } = {}) {
   const root = await Deno.makeTempDir({ prefix: "globnotes-platform-" });
   const vault = path.join(root, "vault");
-  const statePath = options.stateInVault
+  const metadataBase = options.stateInVault
     ? path.join(vault, "State")
     : path.join(root, "relocated-state");
+  const statePath = path.join(metadataBase, "globnotes");
   await Deno.mkdir(vault);
-  await Deno.mkdir(statePath);
+  await Deno.mkdir(statePath, { recursive: true });
   async function install(
     id: string,
     manifest: Record<string, unknown>,
@@ -36,6 +37,7 @@ export async function pluginFixture(options: { stateInVault?: boolean } = {}) {
     root,
     vault,
     statePath,
+    metadataBase,
     install,
     dispose: () => Deno.remove(root, { recursive: true }),
   };

@@ -1,16 +1,17 @@
+import { testMetadata } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** In-process server state for unit-level tests (no subprocess boot). */
 
 import { gatedNotes } from "./storage.ts";
-import { GlobalConfig } from "../../server/config.ts";
+import { GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
 import { subscribeIndex } from "../../server/hub/subscribers.ts";
 import { NoteOperations } from "../../server/notes/operations.ts";
 import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
-import { testEnvironment } from "./environment.ts";
+import { testEnvironment, testServices } from "./environment.ts";
 import { fixtureApiOrigin } from "./plugin_fixture.ts";
 import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import type { PluginManager } from "../../server/plugins/manager.ts";
@@ -43,15 +44,21 @@ export function setupState(
   probes: ConstructorParameters<typeof FileSystemNotes>[1] = {},
 ): UnitState {
   const env = testEnvironment({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "none" },
   });
   const config = new GlobalConfig(env);
-  const notes = gatedNotes(new FileSystemNotes(vault, probes, env));
-  const indexer = new Fts5Indexer(vault, env);
+  const notes = gatedNotes(
+    new FileSystemNotes(vault, probes, testServices(env).notes),
+  );
+  const indexer = new Fts5Indexer(testMetadata(vault), testServices(env).index);
   const files = new FileServing(vault);
   initState(config, null, notes, indexer, files, plugins);
-  const hub = new VaultHub(vault, config.statePath, env);
+  const hub = new VaultHub(
+    vault,
+    testMetadata(config.statePath),
+    testServices(env).hub,
+  );
   subscribeIndex(hub, indexer);
   const lifecycle = new PluginLifecycle(config);
   const runtime = {

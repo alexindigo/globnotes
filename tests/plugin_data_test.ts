@@ -13,7 +13,7 @@ import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { AsyncLock, PluginLifecycle } from "../server/plugins/lifecycle.ts";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { state } from "../server/state.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { command } from "./helpers/process.ts";
@@ -213,9 +213,9 @@ Deno.test("review repairs: R02 publication failure reports persisted revision, f
   try {
     state.config = new GlobalConfig(
       testEnvironment({
-        GLOBNOTES_PATH: b.fixture.vault,
-        GLOBNOTES_INDEX_PATH: b.fixture.statePath,
-        GLOBNOTES_AUTH_TYPE: "none",
+        GLOBNOTES_GLOBNOTES_PATH: b.fixture.vault,
+        fixtureStatePath: b.fixture.statePath,
+        fixtureAuth: { auth_type: "none" },
       }),
     );
     state.auth = null;

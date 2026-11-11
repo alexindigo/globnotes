@@ -1,3 +1,4 @@
+import { testMetadata } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
@@ -147,7 +148,7 @@ Deno.test("conflict reads: shared read projection hides state, reserved paths, e
     assertEquals(listConflicts({ hub: f.hub, stateRoot: f.vault }).total, 0);
     const otherRoot = `${f.root}/other`, otherState = `${f.root}/other-state`;
     Deno.mkdirSync(otherRoot);
-    const other = new VaultHub(otherRoot, otherState);
+    const other = new VaultHub(otherRoot, testMetadata(otherState));
     try {
       assertEquals(
         listConflicts({ hub: other, stateRoot: otherState }).total,
@@ -217,9 +218,9 @@ Deno.test("conflict API: real HTTP choices reach disk, filtered inbox and ordina
   const root = Deno.makeTempDirSync({ prefix: "conflict-http-" });
   Deno.mkdirSync(`${root}/vault`);
   const server = await bootServer({
-    GLOBNOTES_PATH: `${root}/vault`,
-    GLOBNOTES_INDEX_PATH: `${root}/state`,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: `${root}/vault`,
+    GLOBNOTES_METADATA_PATH: `${root}/state`,
+    fixtureAuth: { auth_type: "none" },
   });
   try {
     const json = async (route: string, method = "GET", body?: unknown) => {

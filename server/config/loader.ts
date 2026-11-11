@@ -36,7 +36,11 @@ export interface Sources {
   env: Record<string, string>;
   vaultDefaultsPath?: string;
   /** Scope bindings supplied by the registry/composition owner, not disk discovery. */
-  vaults?: Record<string, { path: string; overlayPath?: string | null }>;
+  vaults?:
+    | Record<string, { path: string; overlayPath?: string | null }>
+    | ((
+      instance: InstanceConfig,
+    ) => Record<string, { path: string; overlayPath?: string | null }>);
 }
 export interface InstanceLoadResult extends LoadResult<InstanceConfig> {
   vaults: Record<string, LoadResult<VaultConfig>>;
@@ -365,9 +369,12 @@ export function loadInstanceConfig(
     (key) => `GLOBNOTES_<NAME>_${key.replaceAll(".", "_").toUpperCase()}`,
   );
   const vaults: Record<string, LoadResult<VaultConfig>> = {};
+  const bindings = typeof sources.vaults === "function"
+    ? sources.vaults(result.config as unknown as InstanceConfig)
+    : sources.vaults;
   const names = new Set([
     ...Object.keys(entries),
-    ...Object.keys(sources.vaults ?? {}),
+    ...Object.keys(bindings ?? {}),
     ...Object.keys(vaultEnv),
   ]);
   for (const name of names) {
@@ -378,8 +385,8 @@ export function loadInstanceConfig(
     const declared = Object.hasOwn(entries, name) && isTree(entries[name])
       ? entries[name] as Tree
       : undefined;
-    const binding = Object.hasOwn(sources.vaults ?? {}, name)
-      ? sources.vaults![name]
+    const binding = Object.hasOwn(bindings ?? {}, name)
+      ? bindings![name]
       : undefined;
     const notes = typeof declared?.path === "string" && declared.path
       ? declared.path
@@ -414,8 +421,14 @@ export function loadInstanceConfig(
   return freeze({ ...result, vaults }) as unknown as InstanceLoadResult;
 }
 let memo: InstanceLoadResult | undefined;
-export function config(): InstanceConfig {
-  return (memo ??= loadInstanceConfig({ env: snapshotEnvironment() })).config;
+export function config(sources?: Sources): InstanceConfig {
+  return (memo ??= loadInstanceConfig(
+    sources ?? { env: snapshotEnvironment() },
+  )).config;
+}
+export function configuration(): InstanceLoadResult {
+  config();
+  return memo!;
 }
 export type PartialConfig<T> = {
   [K in keyof T]?: T[K] extends object ? PartialConfig<T[K]>
@@ -501,6 +514,13 @@ function splitEnvironment(env: Record<string, string>) {
     } else (vaultEnv[name] ??= {})[variable] = raw;
   }
   return { instanceEnv, declarationNames, vaultEnv };
+}
+/** Select a previously validated scope without leaking declarations or instance leaves. */
+export function vaultEnvironment(
+  name: string,
+  env: Record<string, string>,
+): Record<string, string> {
+  return { ...splitEnvironment(env).vaultEnv[name] };
 }
 
 function resolveVaultConfig(

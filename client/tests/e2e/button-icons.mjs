@@ -257,10 +257,9 @@ function checkDiagnostics() {
 try {
   await Deno.writeTextFile(join(vault, `${title}.md`), fixture);
   server = await bootServer({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_INDEX_PATH: join(vault, ".globnotes"),
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_PATH_PREFIX: "",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__SERVER_PATHPREFIX: "",
   }, applicationServer());
   console.log(`button-icons artifacts: ${artifacts}`);
   console.log(

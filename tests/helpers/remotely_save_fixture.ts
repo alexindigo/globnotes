@@ -26,10 +26,10 @@ export async function remotelySaveServerFixture(authorities: string[]) {
   }
   await fixture.install(declaration.id, declaration, files);
   const env = {
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
   };
   let server = await bootServer(env);
   const packets: string[] = [], logs: string[] = [];

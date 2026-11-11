@@ -2,7 +2,9 @@
 const [root, label] = Deno.args;
 if (!root || !label) throw new Error("root and label required");
 const fixture = await Deno.makeTempDir({ prefix: `v22-${label}-cold-` });
-await Deno.writeTextFile(`${fixture}/ReleaseProbe.md`, "# Release Probe\n\nCached cold-load fixture.\n");
+await Deno.mkdir(`${fixture}/globnotes/.globnotes`, { recursive: true });
+await Deno.writeTextFile(`${fixture}/globnotes/.globnotes/config.json`, JSON.stringify({auth_type:"none"}));
+await Deno.writeTextFile(`${fixture}/globnotes/ReleaseProbe.md`, "# Release Probe\n\nCached cold-load fixture.\n");
 const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
 const port = listener.addr.port;
 listener.close();
@@ -14,8 +16,8 @@ const child = new Deno.Command(Deno.execPath(), {
   clearEnv: true,
   env: { PATH: Deno.env.get("PATH"), HOME: Deno.env.get("HOME"), NO_COLOR: "1",
     TMPDIR: Deno.env.get("TMPDIR"),
-    GLOBNOTES_PATH: fixture, GLOBNOTES_INDEX_PATH: `${fixture}/.globnotes`,
-    GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_HOST: "0.0.0.0", GLOBNOTES_PORT: String(port) },
+    GLOBNOTES__VAULTS_BASEPATH: fixture,
+    GLOBNOTES__SERVER_HOST: "0.0.0.0", GLOBNOTES__SERVER_PORT: String(port) },
   stdout: "piped", stderr: "piped",
 }).spawn();
 console.log(JSON.stringify({ label, root, fixture, baseUrl, hostname: "0.0.0.0", args: child.pid }));

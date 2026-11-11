@@ -8,7 +8,10 @@ import { done, pending, waitUntil } from "./helpers/wait.ts";
 async function shutdownWithLiveStream(
   options: Parameters<typeof bootServer>[1] = {},
 ) {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" }, options);
+  const server = await bootServer(
+    { fixtureAuth: { auth_type: "none" } },
+    options,
+  );
   const stream = await fetch(`${server.baseUrl}/_/api/changes`, {
     headers: { accept: "text/event-stream" },
   });
@@ -66,9 +69,9 @@ Deno.test("driver API: real HTTP CRUD and keys are write-only, revision-bound an
     "driver.js": minimalDriver,
   });
   const server = await bootServer({
-    GLOBNOTES_PATH: f.vault,
-    GLOBNOTES_INDEX_PATH: f.statePath,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: f.vault,
+    GLOBNOTES_METADATA_PATH: f.metadataBase,
+    fixtureAuth: { auth_type: "none" },
   });
   const packets: string[] = [];
   async function call(method: string, route = "", body?: unknown) {
@@ -234,10 +237,12 @@ for (const settings of ["true", "false"]) {
       "driver.js": minimalDriver,
     });
     const server = await bootServer({
-      GLOBNOTES_PATH: f.vault,
-      GLOBNOTES_INDEX_PATH: f.statePath,
-      GLOBNOTES_AUTH_TYPE: settings === "true" ? "none" : "read_only",
-      GLOBNOTES_READ_ONLY_SETTINGS: settings,
+      GLOBNOTES_GLOBNOTES_PATH: f.vault,
+      GLOBNOTES_METADATA_PATH: f.metadataBase,
+      fixtureAuth: {
+        auth_type: settings === "true" ? "none" : "read_only",
+        read_only_settings: settings === "true",
+      },
     });
     try {
       const read = await fetch(`${server.baseUrl}/_/api/drivers`);

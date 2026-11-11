@@ -14,11 +14,11 @@ import { decodeBase32, encodeBase32 } from "@std/encoding/base32";
 import QRCode from "qrcode";
 
 import { AuthType, type GlobalConfig } from "../config.ts";
-import { getEnv, timingSafeEqual, verifyPassword } from "../helpers.ts";
+import { timingSafeEqual, verifyPassword } from "../helpers.ts";
 import { logger } from "../logger.ts";
 import type { Login, Token } from "./models.ts";
 import type { SessionSettings } from "../config/consumers.ts";
-import { sessionSettings } from "../config/legacy.ts";
+import { serviceSettings } from "../config/consumers.ts";
 
 const JWT_ALGORITHM = "HS256";
 
@@ -50,70 +50,51 @@ export function checkTotpCode(code: string, unpaddedSecret: string): boolean {
 
 export class LocalAuth {
   readonly username: string;
-  /** Plaintext password from env (takes precedence over the stored hash). */
-  private readonly password: string | null;
   private readonly passwordHash: string | null;
   private readonly secretKey: string;
   private readonly sessionExpirySeconds: number;
   readonly isTotpEnabled: boolean;
-  /** True when the TOTP key came from GLOBNOTES_TOTP_KEY (not wizard). */
-  readonly totpKeyFromEnv: boolean;
   private totpSecret = "";
   private unpaddedTotpSecret = "";
   private lastUsedTotp: string | null = null;
 
   constructor(
     globalConfig: GlobalConfig,
-    settings: SessionSettings = sessionSettings(globalConfig.environment),
+    settings: SessionSettings =
+      serviceSettings(globalConfig.resolved.instance).sessions,
   ) {
-    // Credentials come from environment variables when set (env always
-    // wins), otherwise from the stored first-run setup config.
+    // Temporary piece-2 bridge: private stored credentials, never config/env pins.
     const stored = globalConfig.storedConfig ?? {};
-    this.username =
-      (getEnv("GLOBNOTES_USERNAME", {}, globalConfig.environment) ||
-        stored.username || "")
-        .toLowerCase();
-    this.password =
-      getEnv("GLOBNOTES_PASSWORD", {}, globalConfig.environment) || null;
-    this.passwordHash = this.password ? null : (stored.password_hash ?? null);
-    this.secretKey =
-      getEnv("GLOBNOTES_SECRET_KEY", {}, globalConfig.environment) ||
-      stored.secret_key || "";
+    this.username = (stored.username || "").toLowerCase();
+    this.passwordHash = stored.password_hash ?? null;
+    this.secretKey = stored.secret_key || "";
     if (
-      !this.username || !(this.password || this.passwordHash) || !this.secretKey
+      !this.username || !this.passwordHash || !this.secretKey
     ) {
       logger.error(
-        "Login credentials must be provided via environment " +
-          "variables or the first-run setup wizard.",
+        "Login credentials must be provided by the first-run setup wizard.",
       );
       Deno.exit(1);
     }
     this.sessionExpirySeconds = settings.expirySeconds;
 
-    // TOTP — key from the environment, falling back to the stored
-    // first-run setup config (wizard enrolment persists it there). Env
-    // still wins; the raw value is base32-encoded for use (same as
-    // pyotp's b32encode in the Python server).
+    // Wizard-enrolled raw key, using the existing base32 verifier.
     this.isTotpEnabled = false;
-    this.totpKeyFromEnv = false;
     if (globalConfig.authType === AuthType.TOTP) {
-      if (!this.password && !this.passwordHash) {
+      if (!this.passwordHash) {
         logger.error(
-          "TOTP auth requires a password (GLOBNOTES_PASSWORD or " +
-            "the stored first-run setup hash).",
+          "TOTP auth requires a stored password hash.",
         );
         Deno.exit(1);
       }
-      const envKey = getEnv("GLOBNOTES_TOTP_KEY", {}, globalConfig.environment);
-      const rawKey = envKey || stored.totp_key;
+      const rawKey = stored.totp_key;
       if (!rawKey) {
         logger.error(
-          "TOTP auth requires GLOBNOTES_TOTP_KEY or a wizard-enrolled key.",
+          "TOTP auth requires a wizard-enrolled key.",
         );
         Deno.exit(1);
       }
       this.isTotpEnabled = true;
-      this.totpKeyFromEnv = !!envKey;
       this.totpSecret = encodeBase32(new TextEncoder().encode(rawKey));
       // Authenticators enrol the UNPADDED form (the QR/manual key strips
       // padding) — check against the same string, stripped once here.
@@ -138,12 +119,8 @@ export class LocalAuth {
       submittedTotp = submitted.slice(-6);
       const pass = submitted.slice(0, -6);
       const codeOk = checkTotpCode(submittedTotp, this.unpaddedTotpSecret);
-      const passOk = this.password !== null
-        ? timingSafeEqual(this.password, pass)
-        : await verifyPassword(pass, this.passwordHash!);
+      const passOk = await verifyPassword(pass, this.passwordHash!);
       passwordCorrect = passOk && codeOk;
-    } else if (this.password !== null) {
-      passwordCorrect = timingSafeEqual(this.password, data.password ?? "");
     } else {
       passwordCorrect = await verifyPassword(
         data.password ?? "",

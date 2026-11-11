@@ -94,7 +94,7 @@ await conflictCase("conflict-inbox-native", async f => {
     await f.detailCount(0); await s.click('.conflicts-page > a'); await f.inboxCount(0);
     f.results.push({ pollingMetadataOnlyClosure: true, unchangedPollingReads: baseline, quietPolls: polls - firstPolls, sseBlocked: blocked });
   } finally { release(); await s.send("Fetch.disable"); }
-  await f.restart(); const readonly = await f.create("ReadOnly"); await f.restart({ GLOBNOTES_AUTH_TYPE: "read_only" });
+  await f.restart(); const readonly = await f.create("ReadOnly"); await f.restart({ fixtureAuth: { auth_type: "read_only" } });
   await s.goto(f.url(`/_/conflicts/${readonly.id}`)); await s.poll("!!document.querySelector('.conflict-comparison')");
   assert(!await s.evaluate("[...document.querySelectorAll('.conflicts-page button')].some(b=>/^(Keep |Edit a merge|Save merge)/.test(b.textContent))"), "Read-only shows mutation controls");
   f.results.push({ readOnlyComparison: true });

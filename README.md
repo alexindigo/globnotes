@@ -87,14 +87,15 @@ for environment pins, status, ownership/recovery and text/durability limits.
 
 ## Getting started
 
-For the upcoming v3 configuration interface, see [layered configuration](docs/configuration.md)
-(preparatory; not yet the normal startup path).
+This development tree uses [v3 layered configuration](docs/configuration.md).
+v3 is not released; published v2 images still use their v2 instructions. The
+current runtime serves only `globnotes` and requires an existing notes directory.
 
 ```bash
 docker run -d \
   --name globnotes \
   -p 8080:8080 \
-  -v /path/to/your/notes:/data \
+  -v /path/to/your/notes:/data/globnotes \
   alexindigo/globnotes:latest
 ```
 
@@ -111,17 +112,15 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./notes:/data
+      - ./notes:/data/globnotes
       # Optional: keep application state outside the notes tree.
       # - ./state:/state
       # Optional: mount additional sources as subdirectories
-      # - /srv/dad-notes:/data/dad
-      # - /srv/mom-notes:/data/mom
+      # - /srv/dad-notes:/data/globnotes/dad
+      # - /srv/mom-notes:/data/globnotes/mom
     environment:
       # Enable together with the ./state mount above:
-      # GLOBNOTES_INDEX_PATH: "/state"
-      # Optional. Leave unset for the first-run setup wizard.
-      # GLOBNOTES_AUTH_TYPE: "none"  # trusted home network only!
+      # GLOBNOTES_METADATA_PATH: "/state"
       TZ: "UTC"
 ```
 
@@ -136,10 +135,9 @@ exact version. See [releasing](docs/releasing.md) for the tagging details.
 
 ### Keep application state outside your notes
 
-Available since **v2.1.1**, `GLOBNOTES_INDEX_PATH` separates globnotes' application
-state from an existing notes directory. Despite its name, it selects the **whole
-state directory**, not just the search index. Without it, state lives in
-`<notes directory>/.globnotes`.
+`GLOBNOTES_METADATA_PATH` selects a metadata base. Vault state lives at
+`<metadata>/globnotes/`, and instance metadata at `<metadata>/_/`. Without it,
+vault state lives at `<notes>/.globnotes/` and instance state at `<base>/.globnotes/`.
 
 For a central Markdown repository shared with other editors, mount the existing
 notes directory directly and give globnotes a separate persistent state mount:
@@ -153,37 +151,36 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - /srv/notes:/data
+      - /srv/notes:/data/globnotes
       - /srv/appdata/globnotes:/state
     environment:
-      GLOBNOTES_PATH: "/data"
-      GLOBNOTES_INDEX_PATH: "/state"
+      GLOBNOTES_METADATA_PATH: "/state"
 ```
 
 Replace the host paths with your own directories. The left side of each mount is
 a **host path**; the right side and both environment values are **container paths**.
 In Unraid's container editor, the same setup is two path mappings (your notes to
-`/data`, application data to `/state`) and a variable named `GLOBNOTES_INDEX_PATH`
+`/data/globnotes`, application data to `/state`) and a variable named `GLOBNOTES_METADATA_PATH`
 with value `/state`. `/index` is equally valid if that is your state mount's
 container path; the directory name is not special.
 
-| Content | Host location in this example |
-|---|---|
-| Markdown notes and attachments | `/srv/notes/` |
-| Saved setup/access configuration and branding settings | `/srv/appdata/globnotes/config.json` |
-| Search index and SQLite companion files | `/srv/appdata/globnotes/index.sqlite`, `index.sqlite-wal`, `index.sqlite-shm` |
-| Custom branding files | `/srv/appdata/globnotes/brand/` |
-| Custom plugins and plugin policy | `/srv/appdata/globnotes/plugins/`, `plugins.json` |
+| # | Content | Host location in this example |
+|---|---|---|
+| 1 | Markdown notes and attachments | `/srv/notes/` |
+| 2 | Saved setup/access and vault settings | `/srv/appdata/globnotes/globnotes/config.json`, `config.toml` |
+| 3 | Search index and SQLite companion files | `/srv/appdata/globnotes/globnotes/index.sqlite`, `index.sqlite-wal`, `index.sqlite-shm` |
+| 4 | Custom branding files | `/srv/appdata/globnotes/globnotes/brand/` |
+| 5 | Custom plugins and plugin policy | `/srv/appdata/globnotes/globnotes/plugins/`, `plugins.json` |
 
-The value **is the state directory itself**: `/state` means
-`/state/config.json`, not `/state/.globnotes/config.json`. State remains grouped
+The value **is the metadata base**: `/state` means
+`/state/globnotes/config.toml`, not `/state/config.toml`. State remains grouped
 together; this setting does not provide independent directories for config and
 the database. Keep it on a persistent mount so container recreation preserves
 your settings. Environment-provided settings retain precedence over saved setup
 choices.
 
-Outside Docker, set `GLOBNOTES_PATH` to the actual notes directory and
-`GLOBNOTES_INDEX_PATH` to the actual application-state directory. There is no
+Outside Docker, set `GLOBNOTES_GLOBNOTES_PATH` to the actual notes directory and
+`GLOBNOTES_METADATA_PATH` to the actual metadata base. There is no
 container-path translation in a native deployment.
 
 The application user needs access to both directories and write permission for
@@ -193,25 +190,25 @@ selected state directory; it does not change ownership of the notes tree. Use
 
 #### Moving an existing installation
 
-Changing `GLOBNOTES_INDEX_PATH` **does not move existing state automatically**.
+Changing `GLOBNOTES_METADATA_PATH` **does not move existing state automatically**.
 Preserve the existing state rather than treating `.globnotes` as disposable cache:
 it contains saved access configuration and other persistent application data.
 
 | Step | Action |
 |---|---|
 | 1 | Stop globnotes before transferring state, so SQLite and configuration files are not changing during the copy. Back up the existing `.globnotes` directory. |
-| 2 | Copy its **entire contents**, including hidden files and any SQLite companion files, into an empty destination such as `/srv/appdata/globnotes/`. Do not merge state from different installations or add another `.globnotes` nesting level. |
-| 3 | Add the state mount, set `GLOBNOTES_INDEX_PATH` to its container path, and ensure the application user can access the destination. Restart globnotes. |
+| 2 | For a v3 metadata relocation, copy its **entire contents**, including hidden files and SQLite companions, into an empty per-vault destination such as `/srv/appdata/globnotes/globnotes/`. Do not merge installations. v2 importing is separate future work, not a boot conversion. |
+| 3 | Add the state mount, set `GLOBNOTES_METADATA_PATH` to its container base path, and ensure the application user can access the destination. Restart globnotes. |
 | 4 | Confirm that the existing access configuration, branding, plugins, notes and search are present. Retain the original backup; remove the old vault-local state only after confirming the migration. |
 
 Pointing at an empty state directory without copying the old configuration may
-start the first-run setup wizard again. Startup logs a relocation hint when it
-finds a legacy vault-local `config.json`, but does not perform the transfer.
+start the first-run setup wizard again. Startup never issues relocation hints,
+converts old JSON, deletes legacy index files or performs the transfer.
 Treat the state directory and its backups as sensitive: configuration can contain
 authentication and signing material.
 
 **Note backups are separate from core application state.** On versions with the
-Versioned note backups plugin, `GLOBNOTES_INDEX_PATH` does not relocate its backup
+Versioned note backups plugin, `GLOBNOTES_METADATA_PATH` does not relocate its backup
 files. The plugin defaults to backups beside notes and keeps recovery bookkeeping
 in `<vault>/.globnotes-backup/`. Settings → Backups can select a separate backup
 destination, but relocating core state alone does not move every plugin-created
@@ -220,9 +217,9 @@ file out of the vault.
 ### Shared vaults and symbolic links
 
 To expose an existing central notes directory in Docker, bind-mount that directory
-directly as `/data`, as above. To expose several directories under one notes root,
-use separate mounts such as `/srv/dad-notes:/data/dad` and
-`/srv/mom-notes:/data/mom`. These are folders in one served tree, not separate
+directly as `/data/globnotes`, as above. To expose several directories under one notes root,
+use separate mounts such as `/srv/dad-notes:/data/globnotes/dad` and
+`/srv/mom-notes:/data/globnotes/mom`. These are folders in one served tree, not separate
 instances with independent access settings.
 
 A symlink **inside** a mounted directory is resolved in the container's filesystem.
@@ -252,37 +249,48 @@ configuration files, credentials or tokens.
 
 The only reserved top-level segment is `_` — don't name a vault folder that. Everything else is yours.
 
-`GLOBNOTES_PATH_PREFIX` is respected for multi-instance deployments (e.g. one instance at `/dad/` and another at `/mom/` behind one host) — note pages, files, API and assets all live under the prefix, and relative links keep working.
+`GLOBNOTES__SERVER_PATHPREFIX` is respected for multi-instance deployments: note
+pages, files, API and assets live under the prefix; relative links keep working.
 
 ## Configuration
 
-| Variable | Default | Description |
-|---|---|---|
-| `GLOBNOTES_PATH` | `/data` (in container) | Root directory of the notes tree. **Required** outside docker. |
-| `GLOBNOTES_INDEX_PATH` | `<vault>/.globnotes` | Whole application state dir (search index, saved setup config, branding, plugins). The value IS the directory, not a parent. See [separate state and migration](#keep-application-state-outside-your-notes); existing state is never auto-copied. Note-backup placement is separate. |
-| `PUID` / `PGID` | vault owner | User the app runs as (container). Defaults to the notes vault's owner (so an Unraid `nobody:users` share needs zero configuration); set explicit ids to override. **globnotes never `chown`s your vault** — it only re-owns the state dir at boot (by design; failure-tolerant on root-squashed mounts). |
-| `GLOBNOTES_INDEX_BATCH_SIZE` | `200` | Notes indexed per commit batch during the initial background sync. Lower it on very constrained hosts. |
-| `GLOBNOTES_INDEX_BATCH_DELAY` | `0.1` | Seconds to sleep between index batches (CPU throttle). `0` disables. |
-| `GLOBNOTES_SCAN_CACHE_TTL` | `15` | Seconds the vault file listing is cached (large vaults: raise it). |
-| `GLOBNOTES_AUTO_ENABLE_PLUGINS` | `true` | Auto-enable default for new plugins. An explicit environment value pins that default; vault per-plugin enable/disable choices retain precedence. |
-| `GLOBNOTES_RENDER_WORKERS` | `2` | Sandboxed Deno Workers per plugin for rendering (heartbeats + auto-respawn). |
-| `GLOBNOTES_AUTH_TYPE` | *(unset → first-run wizard)* | `none`, `read_only`, `password` or `totp`. Env always wins over the wizard's stored choice. The wizard can also enrol `totp` itself (password mode → authenticator toggle): it mints a key, shows the QR, and requires a valid code before finishing. |
-| `GLOBNOTES_READ_ONLY_SETTINGS` | Stored choice, otherwise `false` | In public (`none`) mode, lock server-owned settings independently of note editing. An explicit `true` or `false` overrides the saved choice. |
-| `GLOBNOTES_USERNAME` / `GLOBNOTES_PASSWORD` | — | Login credentials (for `password`/`totp`). If unset, taken from the wizard's stored config. |
-| `GLOBNOTES_SECRET_KEY` | — | JWT signing key. If unset, taken from the wizard's stored config. |
-| `GLOBNOTES_TOTP_KEY` | — | TOTP secret (for `totp`). If unset, taken from the wizard's stored config; the boot-log QR is printed only for env-provided keys. |
-| `GLOBNOTES_SESSION_EXPIRY_DAYS` | `30` | Login session length. |
-| `GLOBNOTES_MCP_ENABLED` | `true` | Serve the MCP endpoint `<prefix>/_/mcp` for AI agents ([docs/mcp.md](docs/mcp.md)). `false` turns it off (`404`). |
-| `GLOBNOTES_MCP_RATE_LIMIT` | `600` | MCP tool calls per minute per client (the account with authentication, else the address); over it, `429` with `Retry-After`. `0` turns the limit off ([docs/mcp.md](docs/mcp.md)). |
-| `GLOBNOTES_ALLOWED_HOSTS` | *(unset: any host)* | Comma-separated host names or IP addresses the server is reached by, each optionally with a port, e.g. `globnotes.home,192.168.1.20:8080`. When set, every route answers a request for any other `Host` with `421 Misdirected Request`, which stops DNS rebinding ([docs/mcp.md](docs/mcp.md#security)). An entry without a port accepts any port. |
-| `GLOBNOTES_HOST` / `GLOBNOTES_PORT` | `0.0.0.0` / `8080` | Listen address (container). |
-| `GLOBNOTES_PATH_PREFIX` | — | Serve under a sub-path, e.g. `/mom` (multi-instance reverse proxies). |
-| `GLOBNOTES_QUICK_ACCESS_*` | — | `HIDE`, `TITLE`, `TERM`, `SORT`, `LIMIT` for the home page quick-access section. |
-| `GLOBNOTES_BRAND_NAME` / `GLOBNOTES_BRAND_ACCENT` | — | White-label branding (see [Branding](#branding)). Env wins over the Branding dialog's stored values. |
+Shipped defaults, optional partial TOML, then env leaf overrides. Unknown names
+and invalid types stop startup before service effects. See the complete commented
+[`defaults/globnotes.toml`](defaults/globnotes.toml),
+[`defaults/vault.toml`](defaults/vault.toml) and [configuration guide](docs/configuration.md).
+
+| # | Variable | Default | Description |
+|---|---|---|---|
+| 1 | `GLOBNOTES__VAULTS_BASEPATH` | `/data` | Base folder; conventional notes at `<base>/globnotes` |
+| 2 | `GLOBNOTES_GLOBNOTES_PATH` | conventional path | Explicit existing notes directory |
+| 3 | `GLOBNOTES_METADATA_PATH` | empty | External metadata base, not the vault directory |
+| 4 | `GLOBNOTES__SERVER_HOST`, `GLOBNOTES__SERVER_PORT` | `0.0.0.0`, `8080` | Bind address/port |
+| 5 | `GLOBNOTES__SERVER_PATHPREFIX` | empty | Segment-exact URL prefix |
+| 6 | `GLOBNOTES__SERVER_ALLOWEDHOSTS` | empty list | Comma-separated hosts, optional ports; other hosts get 421 |
+| 7 | `GLOBNOTES__INDEX_BATCHSIZE`, `GLOBNOTES__INDEX_BATCHDELAY`, `GLOBNOTES__INDEX_SCANCACHETTL` | `200`, `0.1`, `15` | Batch count, delay and listing-cache seconds |
+| 8 | `GLOBNOTES__HUB_SCANINTERVAL` | `60` | Periodic reconciliation seconds |
+| 9 | `GLOBNOTES__PLUGINS_RENDERWORKERS` | `2` | Render workers per vault |
+| 10 | `GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE` | `true` baseline | Explicit TOML/env pins override saved policy; defaults do not |
+| 11 | `GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS` | `{}` | Addressed plugin JSON, validated by installed schemas |
+| 12 | `GLOBNOTES__SESSIONS_EXPIRYDAYS` | `30` | Session lifetime days |
+| 13 | `GLOBNOTES__MCP_ENABLED`, `GLOBNOTES__MCP_RATELIMIT` | `true`, `600` | Endpoint switch and tool calls/minute; 0 disables limiting |
+| 14 | `GLOBNOTES__LOG_LEVEL` | `INFO` | Validated log level; `LOGLEVEL` is ignored |
+| 15 | `GLOBNOTES_GLOBNOTES_QUICKACCESS_*` | shipped vault defaults | `HIDE`, `TITLE`, `TERM`, `SORT`, `LIMIT` |
+| 16 | `GLOBNOTES_GLOBNOTES_BRAND_NAME`, `GLOBNOTES_GLOBNOTES_BRAND_ACCENT` | empty | Per-field branding pins, including explicit empty values |
+| 17 | `GLOBNOTES_CONFIG` | `config/globnotes.toml` | Alternate instance TOML; explicitly missing files fail |
+| 18 | `PUID`, `PGID`, `EXEC_TOOL` | launcher behavior | Retained launcher inputs, never app leaves; notes are not recursively chowned |
+
+Old auth/credential/signing/read-only-settings env inputs are removed without
+aliases. Setup/access retain their guarded private records during this local
+transition; instance accounts, Admin permissions, registry and v2 import are
+separate future pieces. See [MIGRATION.md](MIGRATION.md).
 
 ### Home network deployment
 
-`GLOBNOTES_AUTH_TYPE=none` turns globnotes into a home-wide knowledge source: anyone (and any *agent*) on the network can read and write. `read_only` is the middle ground — open browsing, no writes ("family wiki; editing happens in Obsidian"). Either way, everything in the tree becomes reachable, so keep it to networks you trust. A warning is logged at startup when auth is off. Set `GLOBNOTES_ALLOWED_HOSTS` to the server's names too, so a web page elsewhere can't reach it through a visitor's browser by DNS rebinding; with `none` or `read_only` and the setting unset, globnotes warns about that at startup, or when setup or the access settings switch to such a mode.
+Public setup makes notes readable and writable to everyone on the network.
+Read-only setup allows browsing without writes. Keep these modes on trusted
+networks; configure `GLOBNOTES__SERVER_ALLOWEDHOSTS` to prevent DNS rebinding.
+The server warns when public/read-only access has no host restriction.
 
 ### Access settings
 
@@ -302,12 +310,10 @@ and remains selectable before saving. Existing public deployments without the
 option retain writable settings. Read-only note access still denies note writes.
 
 Locked public settings cannot unlock themselves through the UI, API or legacy
-setup/reset URL. Recover through deployment configuration: set
-`GLOBNOTES_READ_ONLY_SETTINGS=false` and restart the deployment, or edit
-`read_only_settings` in the state directory's `config.json` and restart. Environment
-values retain precedence. Public/read-only modes provide no management-only
-login. Environment-pinned credentials/signing keys must be changed through their
-deployment configuration when they prevent a requested effective transition.
+setup/reset URL. For this transitional local record, recover by editing
+`read_only_settings` in the metadata directory's private `config.json` and
+restarting. Public/read-only modes provide no management-only login. This bridge
+is not the final v3 identity or import format.
 
 ## Agent access
 
@@ -380,7 +386,9 @@ Keyboard shortcuts are a **switchable layer** — **Settings → Keybindings** s
 
 ## Branding
 
-Make an instance yours without touching code: **Settings → Branding** sets the brand **name**, an **accent color**, and uploads a **logo / icon** (SVG, PNG, JPG, WebP, GIF or ICO). Everything lives in the state dir — name and accent in `config.json`, files in `brand/` — so branding travels with the vault like everything else (unless the state dir is relocated with `GLOBNOTES_INDEX_PATH`, in which case it travels with that).
+**Settings -> Branding** sets the name, accent and logo/icon. Name and accent
+live in vault `config.toml`; image files live in `brand/` beside it. Metadata
+relocation uses `GLOBNOTES_METADATA_PATH`, including the per-vault directory.
 
 - The accent recolors the Globnotes Light/Dark themes; themes with a brand color of their own keep it.
 - **Save branding** applies your choices; **Cancel changes** discards only Branding drafts and keeps Settings open. **Reset branding…** asks before clearing the vault's stored branding.
@@ -388,8 +396,8 @@ Make an instance yours without touching code: **Settings → Branding** sets the
 - A custom `icon.svg` doubles as the browser-tab favicon; drop dedicated favicon files to go further.
 
 Favicon files are file-drop only — no dialog fields. Drop them into
-`<state directory>/brand/`: `<vault>/.globnotes/brand/` by default, or `/state/brand/`
-inside the container when `GLOBNOTES_INDEX_PATH=/state`.
+`<state directory>/brand/`: `<vault>/.globnotes/brand/` by default, or
+`/state/globnotes/brand/` when `GLOBNOTES_METADATA_PATH=/state`.
 
 | File | Replaces |
 |---|---|
@@ -399,7 +407,8 @@ inside the container when `GLOBNOTES_INDEX_PATH=/state`.
 | `safari-pinned-tab.svg` | Safari pinned tab |
 | `site.webmanifest` | the PWA manifest (generated from the brand config when absent) |
 
-`GLOBNOTES_BRAND_NAME` / `GLOBNOTES_BRAND_ACCENT` (`#rrggbb`) are the env equivalents; env always wins over the dialog.
+`GLOBNOTES_GLOBNOTES_BRAND_NAME` / `GLOBNOTES_GLOBNOTES_BRAND_ACCENT` (`#rrggbb`)
+pin individual fields. An unpinned sibling and images remain editable.
 
 ## Deferred / future work
 

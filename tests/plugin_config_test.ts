@@ -238,6 +238,7 @@ Deno.test("plugin config: instance render count reaches real replicas; explicit 
         settings,
         persistence,
         env: {
+          values: {},
           get() {
             throw new Error("typed settings must not consult env");
           },
@@ -257,7 +258,7 @@ Deno.test("plugin config: instance render count reaches real replicas; explicit 
   await fixture.dispose();
 });
 
-Deno.test("plugin config: legacy explicit worker scheduling does not consult a displaced environment count", async () => {
+Deno.test("plugin config: explicit worker scheduling does not consult a displaced environment count", async () => {
   const fixture = await pluginFixture();
   const manager = createPluginManager(
     fixture.vault,
@@ -266,8 +267,9 @@ Deno.test("plugin config: legacy explicit worker scheduling does not consult a d
     fixture.statePath,
     {
       env: {
+        values: {},
         get(key) {
-          if (key === "GLOBNOTES_RENDER_WORKERS") {
+          if (key === "GLOBNOTES__PLUGINS_RENDERWORKERS") {
             throw new Error("explicit override owns scheduling");
           }
           return undefined;

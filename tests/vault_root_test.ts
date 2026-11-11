@@ -1,7 +1,8 @@
+import { testMetadata } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals } from "@std/assert";
 import * as path from "@std/path";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { VaultHub } from "../server/hub/hub.ts";
 import { testEnvironment } from "./helpers/environment.ts";
@@ -23,7 +24,7 @@ Deno.test("vault root: configured spellings share one absolute normalized path",
     ) {
       await t.step(spelling, async (t) => {
         const config = new GlobalConfig(
-          testEnvironment({ GLOBNOTES_PATH: spelling }),
+          testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: spelling }),
         );
         await t.step(
           "config owns normalization",
@@ -37,8 +38,8 @@ Deno.test("vault root: configured spellings share one absolute normalized path",
         await t.step("hub inventories the same coordinates", () => {
           const hub = new VaultHub(
             config.notesPath,
-            config.statePath,
-            testEnvironment(),
+            testMetadata(config.statePath),
+            undefined,
           );
           try {
             assertEquals(hub.scanNow().files, 2);
@@ -69,9 +70,9 @@ Deno.test("vault root: dot-dot spelling preserves initial search and hub-project
     await Deno.writeTextFile(`${vault}/readme.md`, "rootneedle");
     await Deno.writeTextFile(`${vault}/sub/child.md`, "rootneedle");
     const server = await bootServer({
-      GLOBNOTES_PATH: `${vault}/sub/../`,
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_HUB_SCAN_INTERVAL: "0.1",
+      GLOBNOTES_GLOBNOTES_PATH: `${vault}/sub/../`,
+      fixtureAuth: { auth_type: "none" },
+      GLOBNOTES__HUB_SCANINTERVAL: "0.1",
     });
     try {
       const status = await waitUntil(async (signal) => {

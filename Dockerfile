@@ -29,15 +29,11 @@ FROM denoland/deno:alpine-2.9.6
 ARG BUILD_DIR
 
 ENV EXEC_TOOL=su-exec
-ENV GLOBNOTES_HOST=0.0.0.0
-ENV GLOBNOTES_PORT=8080
 
 ENV APP_PATH=/app
-ENV GLOBNOTES_PATH=/data
 ENV DENO_DIR=/deno-dir
 
 RUN mkdir -p ${APP_PATH}
-RUN mkdir -p ${GLOBNOTES_PATH}
 
 RUN apk update && apk add --no-cache \
     su-exec \
@@ -53,7 +49,7 @@ COPY plugins ./plugins
 
 # Vendor every runtime dependency (npm + jsr) into the image so the
 # container never fetches at runtime (deno runs with --cached-only).
-RUN deno install && deno cache server/main.ts && chmod -R a+rX ${APP_PATH} ${DENO_DIR}
+RUN deno install && deno cache server/main.ts server/config/cli.ts && chmod -R a+rX ${APP_PATH} ${DENO_DIR}
 
 COPY --from=build ${BUILD_DIR}/client/dist ./client/dist
 
@@ -68,7 +64,7 @@ ARG GLOBNOTES_REVISION=
 ENV GLOBNOTES_REVISION=$GLOBNOTES_REVISION
 
 VOLUME /data
-EXPOSE ${GLOBNOTES_PORT}/tcp
+EXPOSE 8080/tcp
 HEALTHCHECK --interval=60s --timeout=10s CMD /healthcheck.sh
 
 ENTRYPOINT [ "/entrypoint.sh" ]

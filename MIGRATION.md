@@ -80,7 +80,7 @@ journaling) beside the existing server keys in the configured state directory.
 They are write-only in the UI/API, scoped to an instance, and removed when that
 instance is removed. When state is inside the vault, the Sync page explains that
 outside tools copying the whole folder copy keys too. Keep state outside those
-copies with the existing `GLOBNOTES_INDEX_PATH`. Key entry works over ordinary
+copies with `GLOBNOTES_METADATA_PATH`. Key entry works over ordinary
 local-domain HTTP; deployments outside a trusted LAN can protect the link with
 a TLS reverse proxy such as Caddy or Nginx Proxy Manager.
 
@@ -164,23 +164,37 @@ and "Contract version".
 
 ## Environment variables
 
-**Open:** the final v3 names come from the layered-configuration design. An
-earlier v3 prototype used the pattern below. It is a starting point, not a
-decision:
+The layered-configuration startup now uses these names without aliases.
+`N` is the upper-case vault name with every underscore doubled (`my_notes` ->
+`MY__NOTES`). The current runtime serves only `globnotes`; identity and registry
+work and the explicit v2 import tool remain separate future pieces. Do not point
+this intermediate stack at a v2 install expecting an automatic conversion.
 
-| # | v2 | Earlier prototype (reference) |
+| # | v2 | v3 |
 |---|---|---|
 | 1 | `GLOBNOTES_HOST` / `GLOBNOTES_PORT` | `GLOBNOTES__SERVER_HOST` / `GLOBNOTES__SERVER_PORT` |
 | 2 | `GLOBNOTES_PATH_PREFIX` | `GLOBNOTES__SERVER_PATHPREFIX` |
 | 3 | `GLOBNOTES_PATH` | base folder `GLOBNOTES__VAULTS_BASEPATH`; a vault elsewhere `GLOBNOTES_<VAULT>_PATH` |
-| 4 | `GLOBNOTES_INDEX_PATH` | `GLOBNOTES_METADATA_PATH` (decided for v3; the prototype used `GLOBNOTES__METADATA_BASEPATH`) |
-| 5 | `GLOBNOTES_AUTH_TYPE`, `_USERNAME`, `_PASSWORD`, `_SECRET_KEY`, `_TOTP_KEY`, `_SESSION_EXPIRY_DAYS` | Replaced by instance accounts and per-vault access. **Open:** how an operator declares accounts or a vault's admin in config (decided: a vault declared in config names its admin in the same config; without one, the vault has no admin) |
-| 6 | `GLOBNOTES_READ_ONLY_SETTINGS` | **Open** (per-vault access levels may replace it) |
-| 7 | `GLOBNOTES_BRAND_*`, `GLOBNOTES_QUICK_ACCESS_*` | Per vault, e.g. `GLOBNOTES_<VAULT>_BRAND_NAME` |
+| 4 | `GLOBNOTES_INDEX_PATH` | `GLOBNOTES_METADATA_PATH` selects a base: vault state `<base>/<name>/`, instance state `<base>/_/`. No prototype metadata aliases or per-vault `_INDEX` |
+| 5 | `GLOBNOTES_AUTH_TYPE`, `GLOBNOTES_USERNAME`, `GLOBNOTES_PASSWORD`, `GLOBNOTES_SECRET_KEY`, `GLOBNOTES_TOTP_KEY` | Removed, no env replacements. The current local bridge retains guarded setup/access records; future instance accounts and vault ACLs own the final model |
+| 6 | `GLOBNOTES_READ_ONLY_SETTINGS` | Removed. The current saved access lock remains until the identity piece supplies Admin capabilities |
+| 7 | `GLOBNOTES_BRAND_*`, `GLOBNOTES_QUICK_ACCESS_*` | `GLOBNOTES_N_BRAND_NAME`, `_BRAND_ACCENT`, `_QUICKACCESS_HIDE`, `_TITLE`, `_TERM`, `_SORT`, `_LIMIT` |
 | 8 | `GLOBNOTES_AUTO_ENABLE_PLUGINS` | Per vault, e.g. `GLOBNOTES_<VAULT>_PLUGINS_AUTOENABLE` |
 | 9 | `GLOBNOTES_INDEX_BATCH_SIZE`, `_INDEX_BATCH_DELAY`, `_SCAN_CACHE_TTL`, `_RENDER_WORKERS` | `GLOBNOTES__INDEX_BATCHSIZE`, `__INDEX_BATCHDELAY`, `__INDEX_SCANCACHETTL`, `__PLUGINS_RENDERWORKERS` |
-| 10 | `GLOBNOTES_PLUGIN_SETTINGS` | **Open** |
+| 10 | `GLOBNOTES_PLUGIN_SETTINGS` | `GLOBNOTES_N_PLUGINS_SETTINGS`, retained addressed JSON, not TOML plugin tables |
 | 11 | `PUID` / `PGID` | Unchanged |
+| 12 | `GLOBNOTES_SESSION_EXPIRY_DAYS` | `GLOBNOTES__SESSIONS_EXPIRYDAYS` |
+| 13 | `GLOBNOTES_MCP_ENABLED` / `GLOBNOTES_MCP_RATE_LIMIT` | `GLOBNOTES__MCP_ENABLED` / `GLOBNOTES__MCP_RATELIMIT` |
+| 14 | `GLOBNOTES_ALLOWED_HOSTS` | `GLOBNOTES__SERVER_ALLOWEDHOSTS` (comma-separated env, TOML string list) |
+| 15 | `GLOBNOTES_HUB_SCAN_INTERVAL` | `GLOBNOTES__HUB_SCANINTERVAL`, seconds |
+| 16 | `LOGLEVEL` | Ignored; use `GLOBNOTES__LOG_LEVEL` |
+
+The default base is `/data`, not the notes root. For this intermediate single-vault
+runtime mount existing notes at `/data/globnotes`, or explicitly declare
+`GLOBNOTES_GLOBNOTES_PATH`. A differently named or multi-vault runtime awaits the
+registry piece. Startup neither creates/adopts notes nor moves state, converts
+JSON or removes legacy Whoosh files. Optional TOML and every new env leaf are
+documented in [configuration](docs/configuration.md) and the shipped defaults.
 
 ## Unraid
 
@@ -198,8 +212,8 @@ version:
 |---|---|
 | 1 | Migration tool details (decided: a one-time tool that copies v2 data into v3 and also restores v2 backups; nothing is reset): its name, arguments and exact steps |
 | 2 | The exact list of v2 settings and data that carry over, and where each lands in v3 |
-| 3 | Final environment variable names |
+| 3 | Identity and multi-vault registry implementation |
 | 4 | Unraid template: new or updated |
-| 5 | Mapping of `GLOBNOTES_READ_ONLY_SETTINGS` and `GLOBNOTES_PLUGIN_SETTINGS` |
+| 5 | Final identity/ACL replacement of the transitional saved access lock |
 | 6 | **Open:** how the first account and vault admin are created for v2 `none` / `read_only` installs, which have no login to import |
 | 7 | Instance-state default is settled: `<base>/.globnotes/` without `GLOBNOTES_METADATA_PATH` |

@@ -9,6 +9,7 @@ import { authenticatorCode, unusedWindowCode } from "../../../tests/helpers/totp
 import { SignJWT } from "jose";
 import { createSettingsRestartFixture } from "./settings-restart-fixture.mjs";
 import { exerciseLockedControls } from "./access-lock-controls-native.mjs";
+import { metadataBase, metadataDirectory } from "./config-fixture.mjs";
 
 let options;
 try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -24,7 +25,7 @@ const ROOT = new URL("../../..", import.meta.url).pathname;
 async function bootFirstRun(vault, state, directory, prefix) {
   const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
   const child = new Deno.Command(Deno.execPath(), { args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`], cwd: ROOT, clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_AUTO_ENABLE_PLUGINS: "false", GLOBNOTES_PATH_PREFIX: prefix, GLOBNOTES_HOST: hostname, GLOBNOTES_PORT: String(port) }, stdout: "piped", stderr: "piped" }).spawn();
+    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: metadataBase(vault,state), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false", GLOBNOTES__SERVER_PATHPREFIX: prefix, GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) }, stdout: "piped", stderr: "piped" }).spawn();
   await Deno.writeTextFile(`${directory}/startup-ownership.json`, JSON.stringify({ pid: child.pid, vault, state, prefix, port, cwd: ROOT }), { createNew: true });
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${directory}/server-${name}.log`, { write: true, createNew: true });
@@ -37,13 +38,14 @@ async function bootFirstRun(vault, state, directory, prefix) {
 async function fixture(label, protectedMode) {
   assert(fixtures.every(item => item.closed), "Previous successful fixture not closed");
   const directory = `${artifacts}/${label}`; await Deno.mkdir(directory);
-  const vault = await Deno.makeTempDir({ prefix: `access-native-${label}-vault-` }), state = await Deno.makeTempDir({ prefix: `access-native-${label}-state-` });
+  const vault = await Deno.makeTempDir({ prefix: `access-native-${label}-vault-` }), state = await metadataDirectory({ prefix: `access-native-${label}-state-` });
   await Deno.writeTextFile(`${vault}/Seed.md`, label === "locked-controls" ? "Seed content.\n\n```text\nfirst code line\nsecond code line\n```\n" : "Seed content.\n");
   const secret = crypto.randomUUID();
   const setup = protectedMode === "setup", totp = protectedMode === "totp", protectedAccount = !setup && !!protectedMode;
   const prefix = label.includes("prefixed") ? "/notes" : "";
   const config = protectedAccount ? { auth_type: totp ? "totp" : "password", ...(totp ? { totp_key: crypto.randomUUID() } : {}), username, password_hash: await hashPassword(password), secret_key: secret, brand_name: "Native retained brand", unrelated_fixture: { kept: true } } : label === "locked-controls" ? { auth_type: "none", brand_name: "Native locked brand", brand_accent: "#aabbcc", unrelated_fixture: { kept: true } } : { auth_type: "none" };
   if (!setup) await Deno.writeTextFile(`${state}/config.json`, JSON.stringify(config));
+  if (config.brand_name) await Deno.writeTextFile(`${state}/config.toml`, `[brand]\nname=${JSON.stringify(config.brand_name)}\naccent=${JSON.stringify(config.brand_accent ?? "")}\n`);
   if (["public-lock", "peer-policy", "locked-controls"].includes(label)) {
     await Deno.mkdir(`${state}/plugins/access-workflow`, { recursive: true });
     await Deno.writeTextFile(`${state}/plugins/access-workflow/manifest.json`, JSON.stringify({ id: "access-workflow", ...(label === "locked-controls" ? { capabilities: { network: ["127.0.0.1:9", "127.0.0.1:10"], imports: false } } : {}), runtime: { server: "service.js" }, hooks: ["on-save"], settings: [{ id: "preferences", label: "Access workflow settings", renderer: { kind: "declarative-v1", version: 1 }, fields: [{ key: "message", label: "Message", type: "text", default: "default consumer" }, { key: "limit", label: "Limit", type: "number", default: 5, min: 1, max: 10 }] }] }));
@@ -51,10 +53,10 @@ async function fixture(label, protectedMode) {
     await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["access-workflow"], autoEnable: false }));
   }
   const token = protectedAccount ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  let server = setup ? await bootFirstRun(vault, state, directory, prefix) : await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_AUTH_TYPE: label === "pinned-credentials" ? "password" : "", GLOBNOTES_AUTO_ENABLE_PLUGINS: label === "locked-controls" ? "" : "false", GLOBNOTES_PATH_PREFIX: prefix, ...(label === "pinned-credentials" ? { GLOBNOTES_USERNAME: username, GLOBNOTES_PASSWORD: password, GLOBNOTES_SECRET_KEY: secret } : {}) }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  let server = setup ? await bootFirstRun(vault, state, directory, prefix) : await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), ...(label === "locked-controls" ? {} : { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }), GLOBNOTES__SERVER_PATHPREFIX: prefix }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
   if (label === "peer-policy") server = createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
     const logsDir = `${directory}/backend-${count}`; await Deno.mkdir(logsDir);
-    return bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_AUTO_ENABLE_PLUGINS: "false" }, logsDir });
+    return bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }, logsDir });
   } });
   const session = await nativeSession({ port });
   owned = { label, directory, vault, state, server, session, prefix, closed: false, initial: config };
@@ -417,14 +419,14 @@ try {
   await owned.session.click('[aria-label="Settings"]'); await owned.session.button("Appearance"); await owned.session.click('[data-theme-id="globnotes-light"]');
   await owned.session.poll("!document.body.classList.contains('dark')"); await owned.session.click('[aria-label="Close settings"]'); await owned.session.poll("!document.querySelector('#settings-modal-title')");
   await access({ pinnedMode: true });
-   assert(await owned.session.read(['#setup-username', '#setup-password', '#setup-totp'], "document.querySelectorAll('input[name=access-mode]').length===3 && [...document.querySelectorAll('input[name=access-mode]')].every(input=>input.disabled) && ['setup-username','setup-password','setup-totp'].every(id=>document.getElementById(id).disabled)"), "Pinned Access mutation fields remain available");
+   assert(await owned.session.read(['#setup-username', '#setup-password', '#setup-totp'], "document.querySelectorAll('input[name=access-mode]').length===3 && [...document.querySelectorAll('input[name=access-mode]')].every(input=>!input.disabled) && ['setup-username','setup-password','setup-totp'].every(id=>!document.getElementById(id).disabled)"), "Stored credentials incorrectly retain retired env pins");
   await fill("#access-current-password", "wrong-current-proof"); await owned.session.button("Save access settings");
   await owned.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('confirmation failed')");
   await screenshot("pinned-current-proof-error-wide-light");
   assert(await saved() === pinnedBytes && (await api("auth-check", "GET", undefined, pinnedToken)).status === 200, "Wrong pinned confirmation changed config or session");
   const pinnedView = (await api("access", "GET", undefined, pinnedToken)).body;
-  assert(pinnedView.pinned.mode && pinnedView.pinned.username && pinnedView.pinned.password && pinnedView.pinned.sessions, "Effective pin projection missing");
-  assert((await api("access", "PUT", { mode: "password", password: "ineffective-pinned-override", currentPassword: password, revision: pinnedView.revision, signature: pinnedView.signature }, pinnedToken)).status === 409, "Direct pinned override pretended to succeed");
+  assert(!pinnedView.pinned.mode && !pinnedView.pinned.username && !pinnedView.pinned.password && !pinnedView.pinned.sessions, "Retired credential pins remain effective");
+  assert((await api("access", "PUT", { mode: "password", password: "rejected-without-proof", currentPassword: "wrong-current-proof", revision: pinnedView.revision, signature: pinnedView.signature }, pinnedToken)).status === 401, "Direct mutation without current proof succeeded");
   await owned.session.click('[aria-label="Dismiss setup"]'); await owned.session.poll("!document.querySelector('#setup-title')");
   await owned.session.click('[aria-label="Settings"]'); await owned.session.button("Appearance"); await owned.session.click('[data-theme-id="globnotes-dark"]');
   await owned.session.poll("document.body.classList.contains('dark')"); await owned.session.click('[aria-label="Close settings"]'); await owned.session.poll("!document.querySelector('#settings-modal-title')");
@@ -437,7 +439,7 @@ try {
   assert(pinnedGeometry.contained && pinnedGeometry.scrollWidth - pinnedGeometry.clientWidth <= 1 && pinnedGeometry.alert.x >= pinnedGeometry.rect.x - 0.5 && pinnedGeometry.alert.right <= pinnedGeometry.rect.right + 0.5, "Pinned error feedback escaped horizontally");
    assert(await owned.session.evaluate("document.querySelector('.cm-content')===window.__accessEditor && document.querySelector('.cm-content')?.textContent.includes('Pinned confirmation retained editor marker')"), "Pinned error discarded the retained editor");
   assert(await saved() === pinnedBytes && (await api("auth-check", "GET", undefined, pinnedToken)).status === 200, "Pinned error/override changed account authority");
-  await finishCase("native pinned Access controls and real fresh-proof errors retain account/editor authority", { effectiveFieldsPinned: true, invalidCurrentProofRetainedConfigAndSession: true, directPinnedOverrideRejected: true, sameEditor: true, pinnedErrorGeometry: pinnedGeometry });
+  await finishCase("native stored Access controls and fresh-proof errors retain account/editor authority", { retiredFieldsUnpinned: true, invalidCurrentProofRetainedConfigAndSession: true, directUnconfirmedWriteRejected: true, sameEditor: true, pinnedErrorGeometry: pinnedGeometry });
   console.log("ACCESS NATIVE CHECKPOINT OK (remaining access matrix still required)");
 } catch (error) { failure = error; console.error(`FAIL: ${error.stack ?? error}`); }
 finally {

@@ -108,7 +108,7 @@ if (options.controls) {
     Deno.Command = class extends NativeCommand {
       constructor(command, options) {
         super(command, options);
-        if (options?.args?.some(argument => argument.replace(/\/+/g, "/") === `${ROOT}/server/main.ts`)) admitted.resolve({ baseUrl: httpOrigin(options.env.GLOBNOTES_PORT), vault: options.env.GLOBNOTES_PATH });
+        if (options?.args?.some(argument => argument.replace(/\/+/g, "/") === `${ROOT}/server/main.ts`)) admitted.resolve({ baseUrl: httpOrigin(options.env.GLOBNOTES__SERVER_PORT), vault: options.env.GLOBNOTES_GLOBNOTES_PATH });
       }
     };
     const boot = bootServer(current.vault, current.state, { env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory });
@@ -263,7 +263,7 @@ if (options.controls) {
         await finish(kind, { root, observed });
       } else if (kind === "pin") {
         const label = "pin", root = `${artifacts}/${label}/external`;
-        const pin = { GLOBNOTES_PLUGIN_SETTINGS: JSON.stringify({ "globnotes-backup": { backup: { basePath: root } } }) };
+        const pin = { GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS: JSON.stringify({ "globnotes-backup": { backup: { basePath: root } } }) };
         await fixture(label, pin, { retention: 2, basePath: "stored" }); await Deno.mkdir(root);
         await open();
          assert(await current.session.read(['#settings-field-basePath', '[data-modal-top=true]'], `document.querySelector('#settings-field-basePath').readOnly && document.querySelector('#settings-field-basePath').value===${JSON.stringify(root)} && document.querySelector('[data-modal-top=true]').textContent.includes('Set by the server configuration')`), "BACKUP_NATIVE_pin: effective readonly field");
@@ -272,7 +272,7 @@ if (options.controls) {
         equal(raw.values.backup.basePath, "stored", "BACKUP_NATIVE_pin: stored fallback preserved by sibling save");
         await save("Note", "B"); await ring(root, "Note", ["A"], kind);
         if (!options.case) {
-          await restart({ GLOBNOTES_PLUGIN_SETTINGS: '{"globnotes-backup":{"backup":{"basePath":""}}}' });
+          await restart({ GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS: '{"globnotes-backup":{"backup":{"basePath":""}}}' });
           equal((await settings()).body.values.basePath, "", "BACKUP_NATIVE_pin: explicit empty override"); await save("Note", "C"); await ring(current.vault, "Note", ["B"], kind);
           await restart(); await open(); equal((await settings()).body.values.basePath, "stored", "BACKUP_NATIVE_pin: unpinned fallback restored");
            assert(!await current.session.read('#settings-field-basePath', "document.querySelector('#settings-field-basePath').readOnly"), "BACKUP_NATIVE_pin: unpinned field writable");

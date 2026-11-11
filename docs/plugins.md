@@ -12,7 +12,7 @@ trusted same-origin code. Plugins can extend rendering, editing and app workflow
 └── main.js
 ```
 
-(With `GLOBNOTES_INDEX_PATH` set, the state dir replaces `<vault>/.globnotes`
+(With `GLOBNOTES_METADATA_PATH` set, `<metadata>/<vault name>` replaces `<vault>/.globnotes`
 in every path below.)
 
 Two roots are scanned (internal first, vault overrides by ID):
@@ -113,7 +113,7 @@ Async RPC to the host (values are structured-cloned):
 | `ctx.readNote(path)` | `Note` (`{ path, content, lastModified }`)             |
 | `ctx.listPaths()`    | `string[]` of all note paths                           |
 | `ctx.readFile(path)` | `{ mediaType, body: Uint8Array }`                      |
-| `ctx.pathPrefix()`   | the configured `GLOBNOTES_PATH_PREFIX` (`""` if unset) |
+| `ctx.pathPrefix()`   | the configured `GLOBNOTES__SERVER_PATHPREFIX` (`""` if unset) |
 
 ## Ordering, enablement and the generic platform
 
@@ -127,7 +127,7 @@ Production startup switches to this vocabulary in the later cutover step.
 `<state dir>/plugins.json` is vault policy: `order`, `disabled`, `enabled`,
 `autoEnable` and `revision`. Explicit disabled wins over explicit enabled,
 which wins over the auto-enable default (a stated
-`GLOBNOTES_AUTO_ENABLE_PLUGINS` pins that default and is shown as such in
+`GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE` pins that default and is shown as such in
 Settings). The host Settings modal (gear, bottom-right) owns
 inventory/enablement for every browser of the vault; legacy per-browser
 switches in localStorage remain old preferences only and are never promoted
@@ -222,7 +222,7 @@ instance removes its keys and retires its id, leaving vault and endpoint files.
 
 Providers with emulated conditions disclose the simultaneous-write race in the
 instance panel. If state is inside the vault, Sync names the key-store location:
-outside tools copying the entire folder copy keys too. Use `GLOBNOTES_INDEX_PATH`
+outside tools copying the entire folder copy keys too. Use `GLOBNOTES_METADATA_PATH`
 to keep state outside such copies. For connections outside a trusted LAN, protect
 the page's link with a TLS reverse proxy such as Caddy or Nginx Proxy Manager.
 

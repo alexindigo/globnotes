@@ -18,10 +18,10 @@ Deno.test("prefix: segment boundaries, retained queries and protected plugin rou
         `export default (req) => ({ name: req.params.name, query: req.query });`,
     });
     const server = await bootServer({
-      GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.statePath,
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_PATH_PREFIX: "/notes",
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      fixtureAuth: { auth_type: "none" },
+      GLOBNOTES__SERVER_PATHPREFIX: "/notes",
     });
     try {
       // Exact prefix: app answers; queries survive the wrapper.

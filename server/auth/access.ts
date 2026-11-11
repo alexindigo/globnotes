@@ -9,7 +9,7 @@ import {
   type StoredConfig,
   StoredConfigConflict,
 } from "../config.ts";
-import { getEnv, hashPassword } from "../helpers.ts";
+import { hashPassword } from "../helpers.ts";
 import { state } from "../state.ts";
 import { checkTotpCode, LocalAuth, totpSecretFromRawKey } from "./local.ts";
 import { settingsWriteGuard } from "./middleware.ts";
@@ -34,21 +34,6 @@ async function contentSignature(raw: string | null): Promise<string> {
   return [...new Uint8Array(bytes)].map((byte) =>
     byte.toString(16).padStart(2, "0")
   ).join("");
-}
-const pinKeys = {
-  mode: "GLOBNOTES_AUTH_TYPE",
-  username: "GLOBNOTES_USERNAME",
-  password: "GLOBNOTES_PASSWORD",
-  totp: "GLOBNOTES_TOTP_KEY",
-  readOnlySettings: "GLOBNOTES_READ_ONLY_SETTINGS",
-  sessions: "GLOBNOTES_SECRET_KEY",
-};
-function pins(config: GlobalConfig) {
-  return Object.fromEntries(
-    Object.entries(pinKeys).map((
-      [key, name],
-    ) => [key, getEnv(name, {}, config.environment)]),
-  ) as Record<keyof typeof pinKeys, string>;
 }
 function assertPersistence(
   config: GlobalConfig,
@@ -75,7 +60,7 @@ async function captureAccessSnapshot() {
   const config = state.config, auth = state.auth, lifecycle = state.lifecycle;
   const epoch = lifecycle?.epoch, stored = JSON.stringify(config.storedConfig);
   const authType = config.authType, setupRequired = config.setupRequired;
-  const capturedPins = pins(config), readOnlySettings = config.readOnlySettings;
+  const readOnlySettings = config.readOnlySettings;
   const settingsWritable = config.settingsWritable,
     savedRevision = revision(config);
   const persistence = config.captureStoredConfig(), raw = persistence.raw;
@@ -107,7 +92,6 @@ async function captureAccessSnapshot() {
       config.setupRequired !== setupRequired ||
       JSON.stringify(config.storedConfig) !== stored ||
       revision(config) !== savedRevision ||
-      JSON.stringify(pins(config)) !== JSON.stringify(capturedPins) ||
       config.readOnlySettings !== readOnlySettings ||
       config.settingsWritable !== settingsWritable
     ) conflict("Access settings changed while this request was pending.");
@@ -125,12 +109,12 @@ async function captureAccessSnapshot() {
     signature,
     lastUpdateId: config.storedConfig?.access_update_id ?? null,
     pinned: {
-      mode: !!capturedPins.mode,
-      username: !!capturedPins.username,
-      password: !!capturedPins.password,
-      totp: !!capturedPins.totp,
-      readOnlySettings: !!capturedPins.readOnlySettings,
-      sessions: !!capturedPins.sessions,
+      mode: false,
+      username: false,
+      password: false,
+      totp: false,
+      readOnlySettings: false,
+      sessions: false,
     },
   };
   return { view, base, persistence, config, auth, assertCurrent };
@@ -256,28 +240,6 @@ export async function updateAccess(
       : data.mode === "none"
       ? true
       : before.readOnlySettings);
-  if (before.pinned.mode && mode !== config.authType) {
-    conflict("Access mode is pinned by GLOBNOTES_AUTH_TYPE.");
-  }
-  if (before.pinned.username && username !== before.username) {
-    conflict("Username is pinned by GLOBNOTES_USERNAME.");
-  }
-  if (before.pinned.password && password !== undefined) {
-    conflict("Password is pinned by GLOBNOTES_PASSWORD.");
-  }
-  if (
-    before.pinned.totp &&
-    (enabled !== before.totpEnabled || newKey !== undefined) && protectedMode
-  ) conflict("Authenticator is pinned by GLOBNOTES_TOTP_KEY.");
-  if (
-    before.pinned.readOnlySettings &&
-    readOnlySettings !== before.readOnlySettings
-  ) conflict("Read-only settings is pinned by GLOBNOTES_READ_ONLY_SETTINGS.");
-  if (securityChanged && before.pinned.sessions) {
-    conflict(
-      "Session signing key is pinned by GLOBNOTES_SECRET_KEY; change credentials in deployment configuration.",
-    );
-  }
   const newHash = password !== undefined
     ? await hashPassword(password)
     : undefined;

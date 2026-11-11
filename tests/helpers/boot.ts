@@ -17,6 +17,8 @@ import { copy, existsSync } from "@std/fs";
 import * as path from "@std/path";
 import { command, DENO } from "./process.ts";
 import { done, pending, waitUntil } from "./wait.ts";
+import { testEnvironment } from "./environment.ts";
+import type { StoredConfig } from "../../server/config.ts";
 
 const SERVER_MAIN = new URL("../../server/main.ts", import.meta.url).pathname;
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
@@ -24,11 +26,11 @@ const REPO_DIST = path.join(REPO_ROOT, "client", "dist");
 const LISTENING = /globnotes listening on http:\/\/\S*:(\d+)/;
 const SHUTDOWN_GRACE_MS = 5_000;
 /** Port protocol shared with subprocess fixtures that emulate the server. */
-export const SERVER_PORT_ENV = "GLOBNOTES_PORT";
+export const SERVER_PORT_ENV = "GLOBNOTES__SERVER_PORT";
 
 /** Auto-created vault dirs, swept at test-process unload so a test that
  * forgets to clean up still leaves no /tmp/globnotes-test-vault-*
- * leftovers. Vaults passed in via GLOBNOTES_PATH are caller-owned and
+ * leftovers. Vaults passed in via GLOBNOTES_GLOBNOTES_PATH are caller-owned and
  * never tracked (restart-style tests reuse them across close()s). */
 const trackedVaults = new Set<string>();
 globalThis.addEventListener?.("unload", () => {
@@ -79,7 +81,7 @@ function insideCheckout(dir: string): boolean {
 /** Server tests listen on loopback. Browser tests pass the local test domain's
  * address as `host` and its browser-facing `origin` (client/tests/e2e/http-origin.mjs). */
 export async function bootServer(
-  env: Record<string, string>,
+  inputs: Record<string, unknown>,
   opts: {
     /** Caller-owned app directory (e.g. a fixture client/dist). Default: a
      * scratch dir owned by this server. Never inside the checkout. */
@@ -90,11 +92,30 @@ export async function bootServer(
     denoArgs?: string[];
   } = {},
 ): Promise<TestServer> {
+  const fixture = testEnvironment(inputs), env = fixture.values;
   const hostname = opts.host ?? "127.0.0.1";
-  const ownsVault = !env.GLOBNOTES_PATH;
-  const vault = env.GLOBNOTES_PATH ??
+  const ownsVault = !env.GLOBNOTES_GLOBNOTES_PATH;
+  const vault = env.GLOBNOTES_GLOBNOTES_PATH ??
     (await Deno.makeTempDir({ prefix: "globnotes-test-vault-" }));
   if (ownsVault) trackedVaults.add(vault);
+  const metadata = env.GLOBNOTES_METADATA_PATH
+    ? path.resolve(env.GLOBNOTES_METADATA_PATH, "globnotes")
+    : path.join(vault, ".globnotes");
+  if (fixture.fixtureAuth) {
+    await Deno.mkdir(metadata, { recursive: true });
+    let saved: StoredConfig = {};
+    try {
+      saved = JSON.parse(
+        await Deno.readTextFile(path.join(metadata, "config.json")),
+      );
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    await Deno.writeTextFile(
+      path.join(metadata, "config.json"),
+      JSON.stringify({ ...saved, ...fixture.fixtureAuth }),
+    );
+  }
   if (opts.cwd !== undefined && insideCheckout(opts.cwd)) {
     throw new Error(
       `test servers must not run in the checkout (cwd ${opts.cwd}): the ` +
@@ -119,9 +140,9 @@ export async function bootServer(
     cwd: opts.cwd ?? ownedCwd!,
     env: {
       ...env,
-      GLOBNOTES_PATH: vault,
+      GLOBNOTES_GLOBNOTES_PATH: vault,
       [SERVER_PORT_ENV]: "0",
-      GLOBNOTES_HOST: hostname,
+      GLOBNOTES__SERVER_HOST: hostname,
     },
     stdout: "piped",
     stderr: "piped",
@@ -162,7 +183,7 @@ export async function bootServer(
   };
 
   // With a path prefix the router only answers under it.
-  const prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
+  const prefix = env.GLOBNOTES__SERVER_PATHPREFIX ?? "";
   let port: number | null = null;
   try {
     await waitUntil(async (signal) => {

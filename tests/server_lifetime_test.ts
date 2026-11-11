@@ -22,7 +22,7 @@ Deno.addSignalListener('SIGTERM',()=>{
   ${ignoreTerm ? "" : "Deno.exit(0);"}
 });
 console.error('OWNED_SERVER_DIAGNOSTIC');
-Deno.serve({hostname:Deno.env.get('GLOBNOTES_HOST'),port:Number(Deno.env.get(${
+Deno.serve({hostname:Deno.env.get('GLOBNOTES__SERVER_HOST'),port:Number(Deno.env.get(${
       JSON.stringify(SERVER_PORT_ENV)
     })),onListen({hostname,port}){
   console.log('globnotes listening on http://'+hostname+':'+port);
@@ -38,7 +38,7 @@ await new Promise(()=>{});
   );
   let server: TestServer;
   try {
-    server = await bootServer({ GLOBNOTES_PATH: `${root}/vault` }, {
+    server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: `${root}/vault` }, {
       denoArgs: ["--preload", preload],
     });
   } catch (error) {

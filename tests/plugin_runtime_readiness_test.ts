@@ -1,3 +1,4 @@
+import { testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
@@ -8,7 +9,7 @@ import {
   until,
   WorkerDeliveryGate,
 } from "./helpers/worker_liveness.ts";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { FileServing } from "../server/files/file_serving.ts";
@@ -228,9 +229,9 @@ for (const boundary of ["operation", "per-plugin"] as const) {
         `export function activate(ctx){ctx.hooks.on('pre-create',()=>{});}`,
     });
     const env = testEnvironment({
-      GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.statePath,
-      GLOBNOTES_AUTH_TYPE: "none",
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      fixtureStatePath: fixture.statePath,
+      fixtureAuth: { auth_type: "none" },
     });
     const config = new GlobalConfig(env);
     const lifecycle = new PluginLifecycle(config);
@@ -281,7 +282,11 @@ for (const boundary of ["operation", "per-plugin"] as const) {
         const guarded = boundary === "operation"
           ? runtime.guard("pre-create", {}, processClock.now() + 100)
           : new NoteOperations({
-            notes: new FileSystemNotes(fixture.vault, {}, env),
+            notes: new FileSystemNotes(
+              fixture.vault,
+              {},
+              testServices(env).notes,
+            ),
             files: new FileServing(fixture.vault),
             indexer: null,
             runtime: () => runtime,

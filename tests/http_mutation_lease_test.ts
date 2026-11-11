@@ -1,3 +1,5 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
+import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** Real handlers/storage/index consumers with test-local await barriers.
@@ -7,7 +9,7 @@ import { currentBase, gatedNotes } from "./helpers/storage.ts";
 import { assert, assertEquals } from "@std/assert";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { SignJWT } from "jose";
-import { AuthType, GlobalConfig } from "../server/config.ts";
+import { AuthType, GlobalConfig } from "./helpers/config.ts";
 import { LocalAuth } from "../server/auth/local.ts";
 import { enforceAuth } from "../server/auth/middleware.ts";
 import { FileServing } from "../server/files/file_serving.ts";
@@ -88,20 +90,27 @@ async function fixture() {
   await Deno.mkdir(storage);
   const previousState = { ...state };
   const env = testEnvironment({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_INDEX_PATH: storage,
-    GLOBNOTES_USERNAME: "lease-fixture",
-    GLOBNOTES_PASSWORD: "fixture-only-password",
-    GLOBNOTES_SCAN_CACHE_TTL: "0",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureStatePath: storage,
+    fixtureAuth: {
+      username: "lease-fixture",
+      password_hash: fixturePasswordHash("fixture-only-password"),
+    },
+    GLOBNOTES__INDEX_SCANCACHETTL: "0",
   });
   Deno.writeTextFileSync(
     `${storage}/config.json`,
     JSON.stringify({ auth_type: "none", secret_key: "fixture-only-secret-A" }),
   );
   const config = new GlobalConfig(env);
-  const notes = gatedNotes(new FileSystemNotes(vault, {}, env)),
+  const notes = gatedNotes(
+      new FileSystemNotes(vault, {}, testServices(env).notes),
+    ),
     files = new FileServing(vault);
-  const indexer = new Fts5Indexer(storage, env);
+  const indexer = new Fts5Indexer(
+    testMetadata(storage),
+    testServices(env).index,
+  );
   const manager = createPluginManager(vault, undefined, 1, storage, {
     internalRoot: `${root}/internal`,
     env,
@@ -795,7 +804,7 @@ Deno.test("HTTP lease controls: verified admission completion binds auth config 
         await bounded(hold.reached);
         if (replacement === "auth") state.auth = new LocalAuth(f.config);
         else if (replacement === "config") {
-          state.config = new GlobalConfig(f.config.environment);
+          state.config = new GlobalConfig(f.config.resolved);
         } else state.lifecycle = new PluginLifecycle(f.config);
         hold.release();
         const observed = await bounded(pending);

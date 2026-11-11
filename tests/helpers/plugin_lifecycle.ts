@@ -1,7 +1,8 @@
+import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import * as path from "@std/path";
-import { GlobalConfig } from "../../server/config.ts";
+import { GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
 import {
@@ -139,21 +140,28 @@ export async function bundle(opts: {
       }, { "service.js": RECORDER_SERVICE });
     }
     const env = testEnvironment({
-      GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.statePath,
-      GLOBNOTES_AUTH_TYPE: "none",
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      fixtureStatePath: fixture.statePath,
+      fixtureAuth: { auth_type: "none" },
       // External writes bypass the storage layer; scans must see them
       // immediately rather than through the 15s scan-cache TTL.
-      GLOBNOTES_SCAN_CACHE_TTL: opts.scanCacheTtl ?? "0",
+      GLOBNOTES__INDEX_SCANCACHETTL: opts.scanCacheTtl ?? "0",
     });
     const config = new GlobalConfig(env);
-    const notes = new FileSystemNotes(fixture.vault, opts.probes ?? {}, env);
-    const indexer = new Fts5Indexer(fixture.statePath, env);
+    const notes = new FileSystemNotes(
+      fixture.vault,
+      opts.probes ?? {},
+      testServices(env).notes,
+    );
+    const indexer = new Fts5Indexer(
+      testMetadata(fixture.statePath),
+      testServices(env).index,
+    );
     const files = new FileServing(fixture.vault);
     const hub = hubToClose = new VaultHub(
       fixture.vault,
-      fixture.statePath,
-      env,
+      testMetadata(fixture.statePath),
+      testServices(env).hub,
     );
     hub.scanNow(); // Initial inventory precedes subscriber admission, as at boot.
     subscribeIndex(hub, indexer);

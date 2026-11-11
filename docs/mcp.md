@@ -12,13 +12,13 @@ already grant there.
 
 | # | Item | Value |
 |---|---|---|
-| 1 | URL | `<origin><prefix>/_/mcp`, e.g. `http://globnotes.home/_/mcp`, or `http://nas.home/mom/_/mcp` with `GLOBNOTES_PATH_PREFIX=/mom` |
+| 1 | URL | `<origin><prefix>/_/mcp`, e.g. `http://globnotes.home/_/mcp`, or `http://nas.home/mom/_/mcp` with `GLOBNOTES__SERVER_PATHPREFIX=/mom` |
 | 2 | Transport | Streamable HTTP, stateless: every JSON-RPC message is one `POST`, answered with one JSON body. No sessions and no server-sent event streams. The server sends no change notifications, so `subscriptions/listen` answers `404` (method not found) |
 | 3 | Protocol revisions | 2026-07-28 and the 2025 revisions (`initialize` handshake), from the same endpoint |
 | 4 | `GET`, `DELETE` | `405 Method Not Allowed`, `Allow: POST` |
-| 5 | Switch | `GLOBNOTES_MCP_ENABLED=false` turns it off; the URL then answers `404`. On by default |
+| 5 | Switch | `GLOBNOTES__MCP_ENABLED=false` turns it off; the URL then answers `404`. On by default |
 | 6 | Plain HTTP | Works over plain HTTP on a local domain (no HTTPS needed, see [Security](#security)) |
-| 7 | Rate limit | `GLOBNOTES_MCP_RATE_LIMIT` tool calls per minute per client, default `600`; `0` turns it off. Over the limit, a request with tool calls gets `429 Too Many Requests` with `Retry-After` (seconds). The client is the logged-in account when authentication is on (all its tokens share one budget), otherwise the connection's address (forwarded headers are ignored). Other requests, such as `tools/list`, don't count |
+| 7 | Rate limit | `GLOBNOTES__MCP_RATELIMIT` tool calls per minute per client, default `600`; `0` turns it off. Over the limit, tool calls get `429` with `Retry-After` seconds. The client is the account when authenticated, otherwise the connection address; forwarded headers are ignored. Other requests do not count |
 
 It's built on the official TypeScript SDK (`@modelcontextprotocol/server`).
 
@@ -31,7 +31,7 @@ rename notes; a read-only instance offers only the read tools.
 
 The MCP endpoint accepts the same credentials as the REST API.
 
-| # | `GLOBNOTES_AUTH_TYPE` | What MCP clients send |
+| # | Saved access mode (setup/access, not env) | What MCP clients send |
 |---|---|---|
 | 1 | `none` | Nothing. Anyone who can reach the server can read and write |
 | 2 | `read_only` | Nothing. Only the read tools are offered ([Read-only mode](#read-only-mode)) |
@@ -50,7 +50,7 @@ curl -s -X POST http://globnotes.home/_/api/token \
 Keep the `access_token` value, e.g. in `GLOBNOTES_TOKEN`.
 
 **Token lifetime.** The token is the web app's session token. It expires with the session,
-after `GLOBNOTES_SESSION_EXPIRY_DAYS` (30 days by default), and it stops working earlier when
+after `GLOBNOTES__SESSIONS_EXPIRYDAYS` (30 days by default), and it stops working earlier when
 the password or 2FA settings change. An expired token makes every MCP request fail with
 `401`; get a new one and update the client's configuration. globnotes has no separate API
 tokens or MCP OAuth.
@@ -338,7 +338,7 @@ Notes:
 ## Read-only mode
 
 MCP sends every call as `POST`, so globnotes doesn't use the HTTP method to decide what is
-a write. With `GLOBNOTES_AUTH_TYPE=read_only`:
+a write. With read-only access selected through setup/access:
 
 - `tools/list` lists only the four read tools;
 - a client that calls a write tool anyway gets the tool error "This globnotes instance is
@@ -357,7 +357,7 @@ search index is updated before the tool answers.
 Search and tag listing read the index, which follows the hub's change log. A note changed
 by an outside program appears in search results once the hub has noticed the change: its
 filesystem watcher reacts after a 300 ms pause in changes, and a periodic full scan (every
-`GLOBNOTES_HUB_SCAN_INTERVAL` seconds, default 60) catches anything the watcher misses.
+`GLOBNOTES__HUB_SCANINTERVAL` seconds, default 60) catches anything the watcher misses.
 `globnotes_get_note` and `globnotes_list_folder` read the vault folder directly (the
 folder listing takes display titles from the index).
 
@@ -402,8 +402,8 @@ agent's edit doesn't overwrite it either.
   desktop apps) are unaffected.
 - **DNS rebinding.** The `Origin` check alone does not stop DNS rebinding, where a hostile
   page makes its own name resolve to your globnotes server, so that its `Origin` and `Host`
-  match. Set `GLOBNOTES_ALLOWED_HOSTS` to the names your server is reached by, e.g.
-  `GLOBNOTES_ALLOWED_HOSTS=globnotes.home,192.168.1.20`: every route (the web app, the REST
+  match. Set `GLOBNOTES__SERVER_ALLOWEDHOSTS` to the names your server is reached by, e.g.
+  `GLOBNOTES__SERVER_ALLOWEDHOSTS=globnotes.home,192.168.1.20`: every route (the web app, the REST
   API, vault files and MCP) then answers any other `Host` with `421 Misdirected Request`,
   and a rebinding page, which sends its own name, gets nothing. Entries are host names or
   IP addresses, comma-separated; an entry without a port accepts any port, and one with a
@@ -418,5 +418,5 @@ agent's edit doesn't overwrite it either.
 - **Tokens in configuration files.** Client configurations hold the token in plain text.
   Prefer environment variables where the client supports them, and treat the file like a
   password.
-- **Turning it off.** `GLOBNOTES_MCP_ENABLED=false` removes the endpoint without affecting
+- **Turning it off.** `GLOBNOTES__MCP_ENABLED=false` removes the endpoint without affecting
   the web app or the REST API.

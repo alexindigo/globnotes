@@ -181,8 +181,8 @@ Deno.test("mcp evaluation: every answer is derived with the real tools", async (
   const vault = await fixtureVaultCopy();
   // read_only: the evaluation is answerable without any write tool.
   const server = await bootOnTestDomain({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "read_only",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "read_only" },
   });
   try {
     const client = await connectMcp(server);

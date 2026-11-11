@@ -1,3 +1,4 @@
+import { testMetadata } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
@@ -171,7 +172,7 @@ Deno.test("conflicts: outside renames follow both members; deletion closes only 
     f.hub.scanNow();
     assertEquals(f.hub.conflict("one")?.path, null);
     assertEquals(f.hub.conflict("two")?.state, "open");
-    const reopened = new VaultHub(f.vault, f.config.statePath);
+    const reopened = new VaultHub(f.vault, testMetadata(f.config.statePath));
     try {
       reopened.scanNow();
       assertEquals(reopened.conflict("one")?.state, "resolved");

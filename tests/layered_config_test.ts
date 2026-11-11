@@ -61,7 +61,7 @@ Deno.test("layered config: defaults then partial TOML then env, including false 
     const result = loadInstanceConfig({
       overlayPath: file,
       env: {
-        GLOBNOTES__SERVER_PORT: "0",
+        [SERVER_PORT_ENV]: "0",
         GLOBNOTES__SERVER_PATHPREFIX: "",
         GLOBNOTES__SERVER_ALLOWEDHOSTS: "",
         GLOBNOTES__MCP_ENABLED: "false",
@@ -81,7 +81,7 @@ Deno.test("layered config: defaults then partial TOML then env, including false 
     assertEquals(result.provenance["server.host"].layer, "toml");
     assertEquals(
       result.provenance["server.port"].source,
-      "GLOBNOTES__SERVER_PORT",
+      SERVER_PORT_ENV,
     );
     assertEquals(result.loaded, [defaultsPath, file]);
   }));
@@ -139,13 +139,13 @@ Deno.test("layered config: missing defaults fail even when TOML and env supply t
         loadInstanceConfig({
           defaultsPath: missing,
           overlayPath: overlay,
-          env: { GLOBNOTES__SERVER_PORT: "1234" },
+          env: { [SERVER_PORT_ENV]: "1234" },
         }),
       ConfigError,
     );
     assertStringIncludes(
       error.message,
-      "server.port (GLOBNOTES__SERVER_PORT): missing default leaf",
+      `server.port (${SERVER_PORT_ENV}): missing default leaf`,
     );
   }));
 
@@ -161,7 +161,7 @@ Deno.test("layered config: aggregate shape type range and unknown errors without
         loadInstanceConfig({
           overlayPath: file,
           env: {
-            GLOBNOTES__SERVER_PORT: "65536",
+            [SERVER_PORT_ENV]: "65536",
             GLOBNOTES__MCP_ENABLED: "yes",
             GLOBNOTES__INDEX_BATCHDELAY: "NaN",
             GLOBNOTES__SERVER: secret,
@@ -175,7 +175,7 @@ Deno.test("layered config: aggregate shape type range and unknown errors without
         "server",
         "extra",
         "index.batchsize",
-        "GLOBNOTES__SERVER_PORT",
+        SERVER_PORT_ENV,
         "GLOBNOTES__MCP_ENABLED",
         "GLOBNOTES__INDEX_BATCHDELAY",
         "GLOBNOTES__SERVER",
@@ -242,7 +242,7 @@ Deno.test("layered config: metadata special spelling and build envelope only", (
     const name of [
       "GLOBNOTES__METADATA_PATH",
       "GLOBNOTES__METADATA_BASEPATH",
-      SERVER_PORT_ENV,
+      "GLOBNOTES_PORT",
       "GLOBNOTES_TEST_HOST",
       "GLOBNOTES_READ_ONLY_SETTINGS",
       "GLOBNOTES_PLUGIN_SETTINGS",

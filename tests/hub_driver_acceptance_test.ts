@@ -451,7 +451,7 @@ Deno.test("driver acceptance: read-only server restart pauses persisted instance
     assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "initial");
     await f.configure(id, { enabled: true });
     assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "off edit");
-    await f.restart({ GLOBNOTES_AUTH_TYPE: "read_only" });
+    await f.restart({ fixtureAuth: { auth_type: "read_only" } });
     assertEquals((await f.one(id)).status, "paused");
     remote.put("note.md", "paused edit");
     assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "off edit");

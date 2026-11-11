@@ -4,18 +4,19 @@
 
 ### Added
 
-Typed TOML configuration defaults and validation, preparatory to the v3 startup cutover.
+Switch server and container startup to strict layered configuration.
+
+Typed TOML configuration defaults and validation.
 
 Explain pinned settings without exposing deployment paths or secret values.
 
-Preserve saved plugin policy beneath explicit deployment pins (preparatory to
-startup cutover), with TOML/env provenance and inactive-plugin pin validation.
+Preserve saved plugin policy beneath explicit deployment pins, with TOML/env
+provenance and inactive-plugin pin validation.
 
-Vault settings can persist in partial TOML with external-edit protection
-(preparatory owner, not yet connected to normal startup).
+Persist vault settings in partial TOML with external-edit protection.
 
 Instance and vault configuration scopes, typed path/admin declarations and shared
-metadata paths (preparatory to startup cutover).
+metadata paths.
 
 The top-bar sync cloud shows file transfers and persistent connection trouble,
 with a per-connection status panel and a link to Sync settings.

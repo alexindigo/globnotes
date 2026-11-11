@@ -3,6 +3,7 @@ import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { awaitHealthy, awaitPluginReady, parseArguments } from "./harness-helpers.mjs";
 import { done, failed, pending, waitUntil } from "../../../tests/helpers/wait.ts";
+import { metadataBase } from "./config-fixture.mjs";
 
 let options;
 try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -28,8 +29,8 @@ async function launch(fixture) {
   const args = ["run", "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env",
     ...(fixture.importParent ? [`--allow-import=jsr.io:443,${fixture.authority}`, `--lock=${fixture.privateLock}`] : []), `${ROOT}/server/main.ts`];
   const child = new Deno.Command(Deno.execPath(), { args, cwd: ROOT, stdout: "piped", stderr: "piped", clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_HOST: hostname, GLOBNOTES_PORT: String(port) } }).spawn();
+    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_METADATA_PATH: metadataBase(fixture.vault, fixture.state), GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) } }).spawn();
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${fixture.directory}/server-${fixture.launchCount}-${name}.log`, { createNew: true, write: true });
     try { for await (const bytes of child[name]) { let at = 0; while (at < bytes.length) at += await file.write(bytes.subarray(at)); } } finally { file.close(); }
@@ -44,8 +45,8 @@ async function launch(fixture) {
 
 async function fixture(name, { importParent = false, gateSaves = false, guardSaves = false } = {}) {
   const directory = `${artifacts}/${name}`; await Deno.mkdir(directory);
-  const root = await Deno.makeTempDir({ prefix: "permissions-native-" }), vault = `${root}/vault`, state = `${root}/state`;
-  await Deno.mkdir(vault); await Deno.mkdir(state); await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
+  const root = await Deno.makeTempDir({ prefix: "permissions-native-" }), vault = `${root}/vault`, state = `${root}/state/globnotes`;
+  await Deno.mkdir(vault); await Deno.mkdir(state, { recursive: true }); await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
   await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: "none" }));
   let traffic = 0, moduleTraffic = 0, extraTraffic = 0, guardEntered = false;
   const guardRelease = Promise.withResolvers();

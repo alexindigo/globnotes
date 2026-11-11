@@ -1,22 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
- * WS1 (issue #5): GLOBNOTES_INDEX_PATH relocates the state dir (index,
- * config, brand, plugins) away from the vault; unset keeps the legacy
- * <vault>/.globnotes layout byte-identical.
+ * External metadata selects <base>/globnotes; unset retains in-tree metadata.
  */
 
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { bootServer } from "./helpers/boot.ts";
-import { done, pending, waitUntil } from "./helpers/wait.ts";
 
-Deno.test("state dir: GLOBNOTES_INDEX_PATH relocates state", async (t) => {
+Deno.test("state dir: GLOBNOTES_METADATA_PATH selects per-vault metadata", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "gn-vault-" });
-  const stateDir = await Deno.makeTempDir({ prefix: "gn-state-" });
+  const metadataBase = await Deno.makeTempDir({ prefix: "gn-state-" });
+  const stateDir = path.join(metadataBase, "globnotes");
   const server = await bootServer({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_INDEX_PATH: stateDir,
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    GLOBNOTES_METADATA_PATH: metadataBase,
   });
   try {
     await t.step("setup config lands in the state dir", async () => {
@@ -92,15 +90,14 @@ Deno.test("state dir: GLOBNOTES_INDEX_PATH relocates state", async (t) => {
   } finally {
     await server.close();
     Deno.removeSync(vault, { recursive: true });
-    Deno.removeSync(stateDir, { recursive: true });
+    Deno.removeSync(metadataBase, { recursive: true });
   }
 });
 
-Deno.test("state dir: legacy vault config warns loudly at boot", async () => {
+Deno.test("state dir: external metadata neither converts nor warns about in-tree records", async () => {
   const vault = await Deno.makeTempDir({ prefix: "gn-legacy-vault-" });
   const stateDir = await Deno.makeTempDir({ prefix: "gn-legacy-state-" });
-  // Legacy layout: the vault holds .globnotes/config.json; the state dir
-  // is empty and GLOBNOTES_INDEX_PATH points at it.
+  // Existing in-tree records remain untouched when an operator selects another base.
   const legacyDir = path.join(vault, ".globnotes");
   Deno.mkdirSync(legacyDir, { recursive: true });
   Deno.writeTextFileSync(
@@ -109,23 +106,31 @@ Deno.test("state dir: legacy vault config warns loudly at boot", async () => {
   );
 
   const server = await bootServer({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_INDEX_PATH: stateDir,
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    GLOBNOTES_METADATA_PATH: stateDir,
   });
   try {
-    // The warning is logged during boot; wait for it on the server's stderr.
-    await waitUntil(() => {
-      const { stderr } = server.logs();
-      return stderr.includes("GLOBNOTES_INDEX_PATH is set")
-        ? done()
-        : pending({ stderr });
-    }, { label: "boot warning on the server's stderr", children: [server] });
     const seen = server.logs().stderr;
-    assert(
-      seen.includes("GLOBNOTES_INDEX_PATH is set"),
-      `boot warning missing; stderr was:\n${seen}`,
+    assertEquals(seen.includes("GLOBNOTES_INDEX_PATH"), false);
+    assertEquals(seen.includes("mv "), false);
+    assertEquals(
+      Deno.readTextFileSync(path.join(legacyDir, "config.json")),
+      JSON.stringify({ auth_type: "none" }),
     );
-    assert(seen.includes("mv "), "warning includes the mv command");
+    assertEquals([...Deno.readDirSync(legacyDir)].map((e) => e.name), [
+      "config.json",
+    ]);
+    assertEquals(
+      (await fetch(`${server.baseUrl}/_/api/config`).then((r) => r.json()))
+        .setupRequired,
+      true,
+    );
+    assertEquals(
+      [...Deno.readDirSync(path.join(stateDir, "globnotes"))].some((e) =>
+        e.name === "config.toml" || e.name === "config.json"
+      ),
+      false,
+    );
   } finally {
     await server.close();
     Deno.removeSync(vault, { recursive: true });
@@ -135,7 +140,7 @@ Deno.test("state dir: legacy vault config warns loudly at boot", async () => {
 
 Deno.test("state dir: unset var keeps the legacy vault layout", async () => {
   const vault = await Deno.makeTempDir({ prefix: "gn-legacy-default-" });
-  const server = await bootServer({ GLOBNOTES_PATH: vault });
+  const server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault });
   try {
     const res = await fetch(`${server.baseUrl}/_/api/setup`, {
       method: "POST",

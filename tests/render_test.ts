@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -9,7 +10,7 @@
 import { gatedNotes } from "./helpers/storage.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import * as path from "@std/path";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import type { PluginManager } from "../server/plugins/manager.ts";
@@ -22,15 +23,15 @@ import { testEnvironment } from "./helpers/environment.ts";
 
 function setupState(vault: string, plugins: PluginManager | null): void {
   const env = testEnvironment({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "none" },
   });
   const config = new GlobalConfig(env);
   initState(
     config,
     null,
-    gatedNotes(new FileSystemNotes(vault, {}, env)),
-    new Fts5Indexer(vault, env),
+    gatedNotes(new FileSystemNotes(vault, {}, testServices(env).notes)),
+    new Fts5Indexer(testMetadata(vault), testServices(env).index),
     new FileServing(vault),
     plugins,
   );
@@ -288,9 +289,9 @@ Deno.test("render: endpoint end-to-end", async () => {
   let server;
   try {
     server = await bootServer({
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_RENDER_WORKERS: "1",
+      fixtureAuth: { auth_type: "none" },
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      GLOBNOTES__PLUGINS_RENDERWORKERS: "1",
     });
     const create = await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",

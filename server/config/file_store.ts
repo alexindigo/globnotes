@@ -161,12 +161,8 @@ export class BoundFileStore {
     ) throw new StoredConfigConflict();
   }
 
-  /** Sync and replace the resolved target, retaining configured file/directory links. */
-  replace(
-    raw: string,
-    expected = this.capture(),
-    committed?: () => void,
-  ): void {
+  /** The only metadata-parent creator. No file bytes are written or recaptured. */
+  prepareParents(expected = this.capture()): StoredConfigSnapshot {
     this.assertUnchanged(expected);
     const created = new Map<string, ConfigNode>();
     for (const node of expected.binding.nodes) {
@@ -193,6 +189,16 @@ export class BoundFileStore {
       }),
     });
     this.assertUnchanged(prepared);
+    return prepared;
+  }
+
+  /** Sync and replace the resolved target, retaining configured file/directory links. */
+  replace(
+    raw: string,
+    expected = this.capture(),
+    committed?: () => void,
+  ): void {
+    const prepared = this.prepareParents(expected);
     const target = expected.binding.target;
     const identity = expected.binding.nodes.find((node) =>
       node.location === target

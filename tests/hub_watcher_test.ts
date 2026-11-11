@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals } from "@std/assert";
 import { VaultHub } from "../server/hub/hub.ts";
@@ -10,10 +11,10 @@ function fixture(stateDirectory = ".globnotes") {
   Deno.mkdirSync(vault);
   const hub = new VaultHub(
     vault,
-    `${vault}/${stateDirectory}`,
-    testEnvironment({
-      GLOBNOTES_HUB_SCAN_INTERVAL: "3600",
-    }),
+    testMetadata(`${vault}/${stateDirectory}`),
+    testServices(testEnvironment({
+      GLOBNOTES__HUB_SCANINTERVAL: "3600",
+    })).hub,
   );
   const original = Deno.watchFs;
   const watches: {

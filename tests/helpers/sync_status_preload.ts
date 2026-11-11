@@ -12,7 +12,9 @@ interface Seam {
 function seam(): Seam {
   try {
     return JSON.parse(Deno.readTextFileSync(
-      `${Deno.env.get("GLOBNOTES_PATH")}/.globnotes/sync-status-test.json`,
+      `${
+        Deno.env.get("GLOBNOTES_GLOBNOTES_PATH")
+      }/.globnotes/sync-status-test.json`,
     ));
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return {};

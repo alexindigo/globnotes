@@ -50,7 +50,7 @@ async function geometry() {
   assert(value.labels.every(space=>space==="nowrap"),"A panel label can wrap");
 }
 try {
-  server=await bootServer({GLOBNOTES_PATH:vault,GLOBNOTES_INDEX_PATH:state,GLOBNOTES_AUTH_TYPE:"none",GLOBNOTES_AUTO_ENABLE_PLUGINS:"false"},{...applicationServer(),denoArgs:["--import",new URL("../../../tests/helpers/sync_status_preload.ts",import.meta.url).pathname]});
+  server=await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,fixtureAuth:{auth_type:"none"},GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},{...applicationServer(),denoArgs:["--import",new URL("../../../tests/helpers/sync_status_preload.ts",import.meta.url).pathname]});
   const catalog=await api("plugin-host");await api("plugin-host/globnotes-test-driver/enabled","PUT",{enabled:true,revision:catalog.policy.revision,signature:catalog.policy.signature});
   const permission=await api("plugin-host/globnotes-test-driver/permissions");await api("plugin-host/globnotes-test-driver/permissions","PUT",{revision:permission.revision,signature:permission.signature,requestSourceKey:permission.requestSourceKey,requestSourceRevision:permission.requestSourceRevision,allowNetwork:true,approvedNetwork:permission.requestedNetwork,approvedImports:[]});
   await api("notes","POST",{path:"Welcome",content:"# A connected vault\n\nNotes stay together across your sync connections.\n"});

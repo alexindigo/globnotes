@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
@@ -15,12 +16,20 @@ Deno.test("index initialization: an existing WAL index opens while another conne
     },
   };
   try {
-    new Fts5Indexer(dir, testEnvironment({}), adapters);
+    new Fts5Indexer(
+      testMetadata(dir),
+      testServices(testEnvironment({})).index,
+      adapters,
+    );
     const writer = new DatabaseSync(`${dir}/index.sqlite`);
     opened.push(writer);
     writer.exec("BEGIN IMMEDIATE");
     try {
-      const reader = new Fts5Indexer(dir, testEnvironment({}), adapters);
+      const reader = new Fts5Indexer(
+        testMetadata(dir),
+        testServices(testEnvironment({})).index,
+        adapters,
+      );
       assertEquals(reader.search("needle"), []);
     } finally {
       writer.exec("ROLLBACK");
@@ -49,20 +58,24 @@ Deno.test("index initialization: only a missing fts5 module is diagnosed as unav
       const cause = new Error(message);
       try {
         const error = assertThrows(() =>
-          new Fts5Indexer(dir, testEnvironment({}), {
-            openDatabase(filename: string) {
-              db = new DatabaseSync(filename);
-              const exec = db.exec.bind(db);
-              db.exec = (sql: string) => {
-                if (
-                  sql.includes("CREATE VIRTUAL TABLE") &&
-                  sql.includes("notes_fts")
-                ) throw cause;
-                return exec(sql);
-              };
-              return db;
+          new Fts5Indexer(
+            testMetadata(dir),
+            testServices(testEnvironment({})).index,
+            {
+              openDatabase(filename: string) {
+                db = new DatabaseSync(filename);
+                const exec = db.exec.bind(db);
+                db.exec = (sql: string) => {
+                  if (
+                    sql.includes("CREATE VIRTUAL TABLE") &&
+                    sql.includes("notes_fts")
+                  ) throw cause;
+                  return exec(sql);
+                };
+                return db;
+              },
             },
-          })
+          )
         );
         assert(error instanceof Error);
         if (message.startsWith("no such module")) {

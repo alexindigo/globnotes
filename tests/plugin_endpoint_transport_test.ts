@@ -458,10 +458,10 @@ async function endpointFixture(prefix = "", invalid?: "grammar" | "shape") {
     "endpoints/get.js": "export default()=>({alive:true})",
   });
   const server = await bootServer({
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_PATH_PREFIX: prefix,
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__SERVER_PATHPREFIX: prefix,
   });
   const base = `${server.baseUrl}${prefix}`;
   type Entry = { id: string; status: string; diagnostics: unknown[] };

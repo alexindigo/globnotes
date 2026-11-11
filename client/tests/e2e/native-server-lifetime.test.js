@@ -20,7 +20,7 @@ for (const crash of [false, true]) {
       return new Response(JSON.stringify({ plugins: [{ id: "broken", enabled: true, runtime: { server: "service.js" }, status: "failed" }] }));
     }));
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
-    const error = await bootServer("/fixture/vault", "/fixture/state").catch(error => error);
+    const error = await bootServer("/fixture/vault", "/fixture/state/globnotes").catch(error => error);
     expect(error).toBeInstanceOf(ReadinessError);
     expect(error).not.toBe(cleanup);
     expect(error.label).toBe("e2e server plugins ready");

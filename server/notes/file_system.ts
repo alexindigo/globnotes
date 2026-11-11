@@ -8,7 +8,8 @@
  */
 
 import type { NotesSettings } from "../config/consumers.ts";
-import { type LegacyInput, notesSettings } from "../config/legacy.ts";
+import { serviceSettings } from "../config/consumers.ts";
+import { config } from "../config/loader.ts";
 import type { FileRef, Note, NoteCreate, NoteUpdate } from "./models.ts";
 import {
   InvalidPathError,
@@ -139,13 +140,13 @@ export class FileSystemNotes {
   constructor(
     storagePath: string,
     probes: StorageProbes = {},
-    settings?: LegacyInput<NotesSettings>,
+    settings: NotesSettings = serviceSettings(config()).notes,
     effects: VaultEffects = new VaultEffects(storagePath),
   ) {
     this.storagePath = storagePath;
     this.effects = effects;
     this.probes = probes;
-    this.#scanCacheTtl = notesSettings(settings).scanCacheTtlMs;
+    this.#scanCacheTtl = settings.scanCacheTtlMs;
   }
 
   private readonly probes: StorageProbes;

@@ -13,7 +13,6 @@ import { VaultConfigStore } from "../server/config/vault.ts";
 import configGet from "../server/api/endpoints/_/api/config/get.ts";
 import brandPost from "../server/api/endpoints/_/api/brand/post.ts";
 import { state } from "../server/state.ts";
-import { testEnvironment } from "./helpers/environment.ts";
 import { restoreState } from "./helpers/state.ts";
 
 async function fixture(
@@ -31,10 +30,11 @@ async function fixture(
       `${root}/state/config.toml`,
       '[brand]\nname="saved name"\naccent="#aabbcc"\n[plugins]\nsettings=\'{"secret-plugin":{"page":{"secret":"DO-NOT-EXPOSE"}}}\'\n',
     );
-    const config = new GlobalConfig(testEnvironment({}), {
+    const config = new GlobalConfig({
       instance: loadInstanceConfig({ overlayPath: null, env: {} }).config,
       notesPath: root,
       statePath: `${root}/state`,
+      instancePath: `${root}/instance`,
       vault: new VaultConfigStore("globnotes", `${root}/state/config.toml`, {
         env: { GLOBNOTES_GLOBNOTES_BRAND_NAME: "Pinned name" },
       }),

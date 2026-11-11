@@ -1,6 +1,7 @@
+import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { testEnvironment } from "./environment.ts";
-import { AuthType, GlobalConfig } from "../../server/config.ts";
+import { AuthType, GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import { NoteOperations } from "../../server/notes/operations.ts";
@@ -44,15 +45,15 @@ export async function pluginOperationsFixture(options: {
   const id = options.id;
   const dir = await fixture.install(id, options.manifest, options.files);
   const env = testEnvironment({
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    fixtureStatePath: fixture.statePath,
+    fixtureAuth: { auth_type: "none" },
   });
   const config = new GlobalConfig(env);
   config.authType = AuthType.NONE;
   const previousState = { ...state };
   const lifecycle = new PluginLifecycle(config),
-    notes = new FileSystemNotes(fixture.vault, {}, env),
+    notes = new FileSystemNotes(fixture.vault, {}, testServices(env).notes),
     fileServing = new FileServing(fixture.vault);
   const manager = createPluginManager(
     fixture.vault,
@@ -68,7 +69,11 @@ export async function pluginOperationsFixture(options: {
   );
   let runtimeToClose: ReturnType<typeof manager.configureRuntime> | undefined;
   try {
-    const hub = new VaultHub(fixture.vault, fixture.statePath, env);
+    const hub = new VaultHub(
+      fixture.vault,
+      testMetadata(fixture.statePath),
+      testServices(env).hub,
+    );
     hub.scanNow();
     const gate = new HubGate({ hub, versioning: () => runtime });
     initState(config, null, notes, null, fileServing, manager, hub);

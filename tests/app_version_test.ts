@@ -129,7 +129,7 @@ Deno.test("formats the display version", () => {
 
 Deno.test("/_/api/config returns the version and full revision", async () => {
   const server = await bootServer({
-    GLOBNOTES_AUTH_TYPE: "none",
+    fixtureAuth: { auth_type: "none" },
     GLOBNOTES_REVISION: REVISION,
   });
   try {
@@ -144,7 +144,7 @@ Deno.test("/_/api/config returns the version and full revision", async () => {
 
 Deno.test("/_/api/config returns a null revision when none is supplied", async () => {
   const server = await bootServer({
-    GLOBNOTES_AUTH_TYPE: "none",
+    fixtureAuth: { auth_type: "none" },
     GLOBNOTES_REVISION: "",
   });
   try {
@@ -162,8 +162,8 @@ Deno.test("startup logs the version before the listening line", async () => {
   // bootServer returns once the server reported its listening line (and is
   // healthy); the version line must already precede it on stdout.
   const server = await bootServer({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "none" },
     GLOBNOTES_REVISION: "",
   });
   const output = server.logs().stdout;

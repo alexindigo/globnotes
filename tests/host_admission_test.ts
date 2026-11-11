@@ -1,7 +1,8 @@
+import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
- * Host admission, GLOBNOTES_ALLOWED_HOSTS (plans/mcp-interop §1 rows 6-7):
+ * Host admission, GLOBNOTES__SERVER_ALLOWEDHOSTS (plans/mcp-interop §1 rows 6-7):
  * when set, every route answers a request whose Host is not listed with
  * 421, before routing; unset, every host is answered. Requests go over a
  * raw socket so each can carry the Host header a browser under DNS
@@ -18,13 +19,13 @@ import {
   parseAllowedHosts,
   rebindingWarning,
 } from "../server/host_admission.ts";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { bootServer, type TestServer } from "./helpers/boot.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 
-Deno.test("host admission: parsing GLOBNOTES_ALLOWED_HOSTS", () => {
+Deno.test("host admission: parsing GLOBNOTES__SERVER_ALLOWEDHOSTS", () => {
   assertEquals(parseAllowedHosts(""), null);
   assertEquals(parseAllowedHosts(" , "), null);
   assertEquals(
@@ -154,7 +155,7 @@ Deno.test("host admission: unset admits every request; set refuses with 421", as
   assertEquals(refused.status, 421);
   const { detail } = await refused.json();
   assert(detail.includes("'evil.example'"), detail);
-  assert(detail.includes("GLOBNOTES_ALLOWED_HOSTS"), detail);
+  assert(detail.includes("GLOBNOTES__SERVER_ALLOWEDHOSTS"), detail);
 });
 
 Deno.test("host admission: the rebinding warning", () => {
@@ -165,7 +166,7 @@ Deno.test("host admission: the rebinding warning", () => {
   });
   const none = rebindingWarning(open("none"))!;
   assert(none.includes("DNS rebinding"), none);
-  assert(none.includes("GLOBNOTES_ALLOWED_HOSTS"), none);
+  assert(none.includes("GLOBNOTES__SERVER_ALLOWEDHOSTS"), none);
   assert(none.includes("change them"), none);
   const readOnly = rebindingWarning(open("read_only"))!;
   assert(readOnly.includes("read_only mode") && !readOnly.includes("change"));
@@ -205,8 +206,7 @@ Deno.test("host admission: one warning per transition into exposure (PR #28 revi
 
 Deno.test("host admission: access-policy changes notify their listeners", () => {
   const config = new GlobalConfig(testEnvironment({
-    GLOBNOTES_PATH: "/nonexistent-vault",
-    GLOBNOTES_AUTH_TYPE: "none",
+    fixtureAuth: { auth_type: "none" },
   }));
   const lifecycle = new PluginLifecycle(config);
   let calls = 0;
@@ -287,7 +287,7 @@ async function everyRoute(server: TestServer, host: string, prefix = "") {
     statuses[name] = response.status;
     if (response.status === 421) {
       assert(
-        response.body.includes("GLOBNOTES_ALLOWED_HOSTS"),
+        response.body.includes("GLOBNOTES__SERVER_ALLOWEDHOSTS"),
         `${name}: ${response.body}`,
       );
     }
@@ -304,8 +304,8 @@ const ALLOWED = "127.0.0.1,globnotes.home,[::1]:8443";
 
 Deno.test("host admission: an unlisted host gets 421 on every route", async () => {
   const server = await bootServer({
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_ALLOWED_HOSTS: ALLOWED,
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__SERVER_ALLOWEDHOSTS: ALLOWED,
   });
   try {
     await seed(server);
@@ -336,7 +336,7 @@ Deno.test("host admission: an unlisted host gets 421 on every route", async () =
 });
 
 Deno.test("host admission: unset, every host is answered and open modes warn", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await seed(server);
     const statuses = await everyRoute(server, "evil.example");
@@ -355,18 +355,20 @@ Deno.test("host admission: unset, every host is answered and open modes warn", a
   // the allow-list or a login silences the warning.
   for (
     const [env, warns] of [
-      [{ GLOBNOTES_AUTH_TYPE: "read_only" }, true],
+      [{ fixtureAuth: { auth_type: "read_only" } }, true],
       [{
-        GLOBNOTES_AUTH_TYPE: "read_only",
-        GLOBNOTES_ALLOWED_HOSTS: "127.0.0.1",
+        fixtureAuth: { auth_type: "read_only" },
+        GLOBNOTES__SERVER_ALLOWEDHOSTS: "127.0.0.1",
       }, false],
       [{
-        GLOBNOTES_AUTH_TYPE: "password",
-        GLOBNOTES_USERNAME: "agent",
-        GLOBNOTES_PASSWORD: "correct horse",
-        GLOBNOTES_SECRET_KEY: "host-admission-test-secret",
+        fixtureAuth: {
+          auth_type: "password",
+          username: "agent",
+          password_hash: fixturePasswordHash("correct horse"),
+          secret_key: "host-admission-test-secret",
+        },
       }, false],
-    ] as [Record<string, string>, boolean][]
+    ] as [Record<string, unknown>, boolean][]
   ) {
     const other = await bootServer(env);
     try {
@@ -384,9 +386,9 @@ Deno.test("host admission: unset, every host is answered and open modes warn", a
 
 Deno.test("host admission: applies before the path prefix", async () => {
   const server = await bootServer({
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_ALLOWED_HOSTS: ALLOWED,
-    GLOBNOTES_PATH_PREFIX: "/mom",
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__SERVER_ALLOWEDHOSTS: ALLOWED,
+    GLOBNOTES__SERVER_PATHPREFIX: "/mom",
   });
   try {
     await seed(server);
@@ -407,7 +409,7 @@ Deno.test("host admission: applies before the path prefix", async () => {
 
 Deno.test("host admission: setup and access changes into exposure warn at runtime (PR #28 review)", async () => {
   // Started with setup pending: no warning yet.
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "" });
+  const server = await bootServer({});
   const warnings = () =>
     (server.output.stdout + server.output.stderr).split("DNS rebinding")
       .length - 1;
@@ -453,13 +455,13 @@ Deno.test("host admission: setup and access changes into exposure warn at runtim
 Deno.test("host admission: an invalid setting stops startup", async () => {
   const error = await assertRejects(() =>
     bootServer({
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_ALLOWED_HOSTS: "globnotes.home,http://bad",
+      fixtureAuth: { auth_type: "none" },
+      GLOBNOTES__SERVER_ALLOWEDHOSTS: "globnotes.home,http://bad",
     })
   );
   assert(
     (error as Error).message.includes(
-      "Invalid value for GLOBNOTES_ALLOWED_HOSTS",
+      "server.allowedhosts (GLOBNOTES__SERVER_ALLOWEDHOSTS)",
     ),
     (error as Error).message,
   );

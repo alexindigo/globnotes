@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** The hub write gate (docs/hub.md "Write gate"): vault effects need a gate
@@ -29,7 +30,11 @@ function vaultWithHub() {
   const root = Deno.makeTempDirSync();
   const vault = `${root}/vault`, statePath = `${root}/state`;
   Deno.mkdirSync(vault);
-  const hub = new VaultHub(vault, statePath, testEnvironment({}));
+  const hub = new VaultHub(
+    vault,
+    testMetadata(statePath),
+    testServices(testEnvironment({})).hub,
+  );
   hub.scanNow();
   return {
     root,
@@ -203,7 +208,11 @@ Deno.test("hub gate: a note's version is its raw-byte hash, equal to the hub's",
     Deno.writeFileSync(`${v.vault}/bom.md`, bom);
     Deno.writeFileSync(`${v.vault}/bad.md`, invalid);
     v.hub.scanNow();
-    const notes = new FileSystemNotes(v.vault, {}, testEnvironment({}));
+    const notes = new FileSystemNotes(
+      v.vault,
+      {},
+      testServices(testEnvironment({})).notes,
+    );
     for (const [name, bytes] of [["bom", bom], ["bad", invalid]] as const) {
       const note = notes.get(name);
       assertEquals(

@@ -1,7 +1,8 @@
+import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
- * The MCP tool-call rate limit, GLOBNOTES_MCP_RATE_LIMIT (plans/mcp-interop
+ * The MCP tool-call rate limit, GLOBNOTES__MCP_RATELIMIT (plans/mcp-interop
  * §1 row 8): calls per minute per client, 429 with Retry-After over it, 0
  * disables it; the client is the authenticated subject, else the peer
  * address; the bookkeeping is bounded. The limiter is a plain module with an
@@ -9,8 +10,8 @@
  * real server shows the configuration and the route's peer address.
  */
 
-import { assert, assertEquals } from "@std/assert";
-import { GlobalConfig } from "../server/config.ts";
+import { assert, assertEquals, assertThrows } from "@std/assert";
+import { GlobalConfig } from "./helpers/config.ts";
 import { createMcpEndpoint } from "../server/mcp/endpoint.ts";
 import { createRateLimiter } from "../server/mcp/rate_limit.ts";
 import type { McpVault } from "../server/mcp/vault.ts";
@@ -298,13 +299,13 @@ async function statuses(base: string, count: number, token?: string) {
   return seen;
 }
 
-Deno.test("rate limit: a real server, GLOBNOTES_MCP_RATE_LIMIT and two addresses", async () => {
+Deno.test("rate limit: a real server, GLOBNOTES__MCP_RATELIMIT and two addresses", async () => {
   // Listening on every address: loopback and the test domain's address are
   // two peers.
   const testHost = Deno.env.get("GLOBNOTES_TEST_HOST");
   const server = await bootServer({
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_MCP_RATE_LIMIT: "3",
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__MCP_RATELIMIT: "3",
   }, { host: "0.0.0.0" });
   try {
     const loopback = `http://127.0.0.1:${server.port}`;
@@ -327,11 +328,13 @@ Deno.test("rate limit: a real server, GLOBNOTES_MCP_RATE_LIMIT and two addresses
 
 Deno.test("rate limit: a real server, two tokens share the account's budget", async () => {
   const server = await bootServer({
-    GLOBNOTES_AUTH_TYPE: "password",
-    GLOBNOTES_USERNAME: "agent",
-    GLOBNOTES_PASSWORD: "correct horse",
-    GLOBNOTES_SECRET_KEY: "mcp-rate-limit-test-secret",
-    GLOBNOTES_MCP_RATE_LIMIT: "3",
+    fixtureAuth: {
+      auth_type: "password",
+      username: "agent",
+      password_hash: fixturePasswordHash("correct horse"),
+      secret_key: "mcp-rate-limit-test-secret",
+    },
+    GLOBNOTES__MCP_RATELIMIT: "3",
   });
   const token = async () => {
     const login = await fetch(`${server.baseUrl}/_/api/token`, {
@@ -356,10 +359,10 @@ Deno.test("rate limit: a real server, two tokens share the account's budget", as
   }
 });
 
-Deno.test("rate limit: GLOBNOTES_MCP_RATE_LIMIT=0 disables it", async () => {
+Deno.test("rate limit: GLOBNOTES__MCP_RATELIMIT=0 disables it", async () => {
   const server: TestServer = await bootServer({
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_MCP_RATE_LIMIT: "0",
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__MCP_RATELIMIT: "0",
   });
   try {
     const seen = await statuses(server.baseUrl, 30);
@@ -374,12 +377,12 @@ Deno.test("rate limit: the setting defaults to 600 per minute", async () => {
   try {
     const config = (value?: string) =>
       new GlobalConfig(testEnvironment({
-        GLOBNOTES_PATH: vault,
-        GLOBNOTES_AUTH_TYPE: "none",
-        GLOBNOTES_MCP_RATE_LIMIT: value,
+        GLOBNOTES_GLOBNOTES_PATH: vault,
+        fixtureAuth: { auth_type: "none" },
+        GLOBNOTES__MCP_RATELIMIT: value,
       })).mcpRateLimit;
     assertEquals(config(), 600);
-    assertEquals(config(""), 600);
+    assertThrows(() => config(""), Error, "mcp.ratelimit");
     assertEquals(config("0"), 0);
     assertEquals(config("120"), 120);
   } finally {

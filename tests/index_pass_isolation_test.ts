@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -44,8 +45,8 @@ Deno.test("index sync: initial progress counts committed notes separately from f
     await Deno.writeTextFile(`${vault}/b.md`, "bravo");
     setupState(vault);
     const indexer = new Fts5Indexer(
-      vault,
-      testEnvironment({}),
+      testMetadata(vault),
+      testServices(testEnvironment({})).index,
       failingFor("a.md"),
     );
     Object.assign(logger, {
@@ -102,8 +103,8 @@ Deno.test("index sync: a changed note that can't be read doesn't abort the pass"
     // indexer whose reads of a.md fail.
     setupState(vault);
     const restarted = new Fts5Indexer(
-      vault,
-      testEnvironment({}),
+      testMetadata(vault),
+      testServices(testEnvironment({})).index,
       failingFor("a.md"),
     );
     const facts: OperationFact[] = [];

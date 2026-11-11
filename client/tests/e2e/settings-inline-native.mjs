@@ -61,14 +61,14 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   await replace("#brand-name", "Native inline brand");
   await session.button("Save branding", "[data-branding-settings]");
   await session.poll("fetch('/_/api/config').then(r=>r.json()).then(c=>c.brand.name==='Native inline brand')");
-  const config = JSON.parse(await Deno.readTextFile(`${state}/config.json`));
-  assert(config.brand_name === "Native inline brand", "Inline branding did not reach persisted config");
+  const config = parseToml(await Deno.readTextFile(`${state}/config.toml`));
+  assert(config.brand.name === "Native inline brand", "Inline branding did not reach persisted config");
   await session.button("Reset branding…", "[data-branding-settings]");
    await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Reset branding?')");
   await session.key("Escape", { windowsVirtualKeyCode: 27 });
    await session.poll("!!document.querySelector('#brand-name') && !document.querySelector('[data-modal-top=true]')?.textContent.includes('Reset branding?')");
    assert(await inspect("document.querySelector('#brand-name')?.value === 'Native inline brand'"), "Cancelling reset erased Branding");
-  await record({ name: "inline-branding-disk-and-cancel", persisted: config.brand_name });
+  await record({ name: "inline-branding-disk-and-cancel", persisted: config.brand.name });
 
   await session.button("Keybindings");
   await session.poll("!!document.querySelector('[data-command-binding=\"plugin:session-guard:sdk-settings\"]')");
@@ -129,3 +129,4 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
   await record({ name: "native-palette-settings-consumer", rendered: "native committed message", sdkSettingsRead: true, sameEditor: true });
   return evidence;
 }
+import { parse as parseToml } from "@std/toml";

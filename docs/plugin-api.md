@@ -194,7 +194,7 @@ Key entry uses the page's connection, including ordinary local-domain HTTP. Off 
 trusted LAN, use a TLS reverse proxy such as Caddy or Nginx Proxy Manager to protect
 the link. When state is inside the vault, `notice` names its canonical path:
 outside tools copying the whole folder copy keys too. Keep state outside those
-copies with the existing `GLOBNOTES_INDEX_PATH` setting.
+copies with `GLOBNOTES_METADATA_PATH` (vault state is `<metadata>/<name>/`).
 
 ## Acknowledged log facts (changes API 1)
 
@@ -610,7 +610,7 @@ remain v3 work.
 
 ## Effective settings and auxiliary filesystem
 
-`GLOBNOTES_PLUGIN_SETTINGS` is a bounded host-only JSON overlay addressed by plugin
+`GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS` is a bounded host-only JSON overlay addressed by plugin
 ID → page ID → field key, parsed once per host lifetime. Environment fields win
 leaf-wise over stored fields/defaults; explicit empty strings remain present.
 Invalid/unknown addressed values fail visibly without logging values or repairing

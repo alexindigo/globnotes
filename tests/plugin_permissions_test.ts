@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** Permission boundary tests: service raw filesystem denial, mediated grant
@@ -6,7 +7,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
@@ -30,14 +31,21 @@ async function serviceBundle(opts: {
   const fixture = await pluginFixture({ stateInVault: opts.stateInVault });
   await fixture.install("svc", opts.manifest, { "service.js": opts.service });
   const env = {
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: opts.authType ?? "none",
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    fixtureAuth: { auth_type: opts.authType ?? "none" },
   };
   const environment = testEnvironment(env);
   const config = new GlobalConfig(environment);
-  const notes = new FileSystemNotes(fixture.vault, {}, environment);
-  const indexer = new Fts5Indexer(fixture.statePath, environment);
+  const notes = new FileSystemNotes(
+    fixture.vault,
+    {},
+    testServices(environment).notes,
+  );
+  const indexer = new Fts5Indexer(
+    testMetadata(fixture.statePath),
+    testServices(environment).index,
+  );
   const files = new FileServing(fixture.vault);
   const manager = createPluginManager(
     fixture.vault,
@@ -183,9 +191,13 @@ for (const stateInVault of [false, true]) {
       if (stateInVault) {
         Deno.symlinkSync(note, `${b.fixture.vault}/Alias-state.md`);
       }
+      const stateDirectory = path.relative(
+        b.fixture.vault,
+        b.fixture.statePath,
+      );
       b.indexer.reindexNote("Public");
       if (stateInVault) {
-        b.indexer.reindexNote("State/Host");
+        b.indexer.reindexNote(`${stateDirectory}/Host`);
         b.indexer.reindexNote("Alias-state");
       }
       await b.fixture.install("renderer", {
@@ -214,12 +226,13 @@ for (const stateInVault of [false, true]) {
       const alien = `${b.fixture.root}/alien-state`;
       Deno.mkdirSync(alien);
       state.config = new GlobalConfig(
-        testEnvironment({ ...b.env, GLOBNOTES_INDEX_PATH: alien }),
+        testEnvironment({ ...b.env, fixtureStatePath: alien }),
       );
-      const stateDirectory = stateInVault ? "State" : "../relocated-state";
       if (stateInVault) {
         assert(
-          new TextDecoder().decode(state.files.get("State/config.json").body)
+          new TextDecoder().decode(
+            state.files.get(`${stateDirectory}/config.json`).body,
+          )
             .includes("PRIVATE CONFIG"),
         );
       }

@@ -253,16 +253,6 @@ const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
     reason: "the client build's index.html (client/dist), not a vault",
   },
   {
-    file: "server/hub/store.ts",
-    line: "Deno.mkdirSync(statePath, { recursive: true });",
-    reason: "creates the state directory for hub.sqlite",
-  },
-  {
-    file: "server/main.ts",
-    line: "Deno.removeSync(`${globDir}/${entry.name}`);",
-    reason: "removes Whoosh index leftovers from the state directory",
-  },
-  {
     file: "server/plugins/data.ts",
     line: "await Deno.mkdir(path.dirname(file), { recursive: true });",
     reason: "plugin settings and private data in the state directory",
@@ -311,11 +301,6 @@ const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
     file: "server/plugins/network_store.ts",
     line: "await Deno.remove(temporary);",
     reason: "network approvals in <state>/plugin-network",
-  },
-  {
-    file: "server/search/fts5.ts",
-    line: "Deno.mkdirSync(stateDir, { recursive: true });",
-    reason: "creates the state directory for the search index",
   },
   {
     file: "server/search/fts5.ts",
@@ -365,7 +350,7 @@ const RULES: Rule[] = [
   {
     id: "single-port-owner",
     scopes: ["tests"],
-    pattern: /GLOBNOTES_PORT\b/,
+    pattern: /GLOBNOTES__SERVER_PORT\b/,
     owners: ["tests/helpers/boot.ts"],
     why:
       "only the server launcher (tests/helpers/boot.ts) sets a server's port",

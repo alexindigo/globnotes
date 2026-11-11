@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -11,7 +12,7 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import * as path from "@std/path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { folderPage } from "../server/notes/folder_level.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
@@ -90,20 +91,24 @@ async function indexedVault(
   const vault = await Deno.makeTempDir({ prefix: "globnotes-paging-" });
   await write(vault);
   const env = testEnvironment({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_INDEX_BATCH_DELAY: "0",
-    GLOBNOTES_INDEX_BATCH_SIZE: "2000",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__INDEX_BATCHDELAY: "0",
+    GLOBNOTES__INDEX_BATCHSIZE: "2000",
   });
   const rows: RowLog = new Map();
   const params: ParamPeak = { peak: 0 };
-  const indexer = new Fts5Indexer(path.join(vault, ".globnotes"), env, {
-    openDatabase: (file) => countingDatabase(file, rows, params),
-  });
+  const indexer = new Fts5Indexer(
+    testMetadata(path.join(vault, ".globnotes")),
+    testServices(env).index,
+    {
+      openDatabase: (file) => countingDatabase(file, rows, params),
+    },
+  );
   initState(
     new GlobalConfig(env),
     null,
-    new FileSystemNotes(vault, {}, env),
+    new FileSystemNotes(vault, {}, testServices(env).notes),
     indexer,
     new FileServing(vault),
     null,

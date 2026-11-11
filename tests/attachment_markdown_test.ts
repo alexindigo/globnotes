@@ -3,7 +3,7 @@ import { assertEquals } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 
 Deno.test("attachment Markdown: rewritten destinations render and resolve after repeated moves and relinks", async (t) => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   // Explicit URL fixtures also catch accidental double decoding of literal %29.
   const files = [
     ["a(1).png", "a%281%29.png"],

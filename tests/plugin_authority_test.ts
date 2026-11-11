@@ -1,9 +1,10 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { currentBase } from "./helpers/storage.ts";
 import { versionOf } from "../server/hub/merge.ts";
 import type { Base } from "../server/hub/gate.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { VaultHub } from "../server/hub/hub.ts";
 import { subscribeIndex } from "../server/hub/subscribers.ts";
@@ -96,14 +97,17 @@ async function bundle(
   const fixture = await pluginFixture();
   const retirement = Promise.withResolvers<void>();
   const env = testEnvironment({
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    fixtureStatePath: fixture.statePath,
+    fixtureAuth: { auth_type: "none" },
   });
   const config = new GlobalConfig(env),
-    notes = new FileSystemNotes(fixture.vault, probes, env),
+    notes = new FileSystemNotes(fixture.vault, probes, testServices(env).notes),
     files = new FileServing(fixture.vault),
-    indexer = new Fts5Indexer(fixture.statePath, env),
+    indexer = new Fts5Indexer(
+      testMetadata(fixture.statePath),
+      testServices(env).index,
+    ),
     lifecycle = new PluginLifecycle(config);
   const sources: RuntimeSource[] = [], facts: OperationFact[] = [];
   const rpc = servicePluginRpc({
@@ -144,7 +148,11 @@ async function bundle(
     network,
   }, { disposalMs: 20, ...fixtureOptions.runtimeLimits });
   initState(config, null, notes, indexer, files, null as never);
-  const hub = new VaultHub(fixture.vault, fixture.statePath, env);
+  const hub = new VaultHub(
+    fixture.vault,
+    testMetadata(fixture.statePath),
+    testServices(env).hub,
+  );
   subscribeIndex(hub, indexer);
   state.hub = hub;
   const operations = new NoteOperations({
@@ -1151,7 +1159,7 @@ Deno.test("plugin authority: independent narrow observers receive only authorize
 /** Background-fixture server: the shared launcher (helpers/boot.ts) owns its
  * clean environment, self-chosen port and lifetime; this fixture adds the
  * launch record. No permission repair. */
-async function launchBackgroundFixture(env: Record<string, string>) {
+async function launchBackgroundFixture(env: Record<string, unknown>) {
   const server = await bootServer(env);
   console.log(JSON.stringify({
     fixtureLaunch: {
@@ -1318,9 +1326,9 @@ Deno.test("plugin authority: real Worker HTTP timer without file hooks persists 
     );
     await approveFixtureNetwork(operator.network, "timer");
     server = await launchBackgroundFixture({
-      GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.statePath,
-      GLOBNOTES_AUTH_TYPE: "none",
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      fixtureAuth: { auth_type: "none" },
     });
     await waitBackgroundAdmission(server, () => fetchObserved);
     const invoke = async () => {
@@ -2248,7 +2256,7 @@ Deno.test("plugin authority: sibling and relocated reserved writes deny while a 
     );
     await assertRejects(() =>
       b.runtime.invokeCommand("broad-writer", "note", {
-        path: "../relocated-state/escape",
+        path: "../relocated-state/globnotes/escape",
         content: "forbidden reserved note",
       })
     );
