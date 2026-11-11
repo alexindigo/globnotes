@@ -41,3 +41,17 @@ immediately receives Admin; removing the declaration removes only that overlay,
 not saved grants. Creator/adopter ACL preparation is provided for the later
 registry workflow, which owns consent and durable publication. No registry or
 automatic first-account ownership is created by these repositories.
+
+The preparatory authority factory resolves a request principal once, then checks
+its live credential revision/expiry and the concrete vault's ACL/bundle at each
+final effect or disclosure. Explicit operation requirements, not HTTP methods,
+distinguish View reads, Edit note/file writes and Admin vault administration.
+Instance account management and create-vault eligibility need no selected vault.
+
+The new middleware adapter is injected, not enabled at ordinary startup yet.
+Its write lease fits the existing NoteOperations final-effect contract and its
+settings guard fits the TOML/CAS writer. Read adapters recheck delayed values and
+stream enqueue boundaries; actual HTTP/SSE and plugin propagation are later steps.
+Revocation denies pending work, never rolls back an already committed effect or
+deletes a browser's unsaved text. Unrelated account/vault revisions do not retire
+another lease.

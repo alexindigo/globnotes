@@ -12,6 +12,87 @@ import { HttpError } from "@pathfinder/pathfinder";
 import { state } from "../state.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
 import { OperationError } from "../plugins/errors.ts";
+import {
+  type AuthorityVault,
+  InstanceAuthority,
+  type InstanceOperation,
+  type VaultOperation,
+} from "./authority.ts";
+import {
+  AuthenticationError,
+  type InstanceSessions,
+  type Principal,
+} from "./sessions.ts";
+
+/** Preparatory v3 adapter. The old exported production functions below stay
+ * active until cutover; tests/next composition inject concrete instance owners. */
+export function createInstanceAuth(adapters: {
+  sessions: InstanceSessions;
+  vault(request: Request): AuthorityVault | null;
+  cookieName: string;
+}) {
+  const requests = new WeakMap<Request, Promise<Principal>>();
+  const invalid = () =>
+    new HttpError(401, "Invalid authentication credentials.", {
+      "WWW-Authenticate": "Bearer",
+    });
+  const token = (request: Request): string | null => {
+    const header = request.headers.get("authorization");
+    if (header !== null) {
+      if (!/^Bearer \S+$/i.test(header)) throw invalid();
+      return header.slice(7);
+    }
+    const cookies = (request.headers.get("cookie") ?? "").split(";").map((
+      part,
+    ) => part.trim());
+    const values = cookies.filter((part) =>
+      part.startsWith(adapters.cookieName + "=")
+    );
+    if (values.length > 1) throw invalid();
+    return values.length
+      ? values[0].slice(adapters.cookieName.length + 1)
+      : null;
+  };
+  const principal = async (request: Request): Promise<Principal> => {
+    let pending = requests.get(request);
+    if (!pending) {
+      pending = Promise.resolve().then(() =>
+        adapters.sessions.resolve(token(request))
+      );
+      requests.set(request, pending);
+    }
+    try {
+      const value = await pending;
+      if (value.kind === "account") adapters.sessions.assertCurrent(value);
+      return value;
+    } catch (error) {
+      if (error instanceof AuthenticationError) throw invalid();
+      throw error;
+    }
+  };
+  const evaluator = (request: Request) =>
+    new InstanceAuthority(adapters.sessions, () => adapters.vault(request));
+  const lease = async (request: Request, operation: VaultOperation) =>
+    evaluator(request).lease(await principal(request), operation);
+  return Object.freeze({
+    principal,
+    lease,
+    noteMutationLease: (request: Request) => lease(request, "editNotes"),
+    readLease: (request: Request) => lease(request, "readVault"),
+    async settingsWriteGuard(request: Request): Promise<() => void> {
+      return (await lease(request, "manageVault")).assertCurrent;
+    },
+    async instanceGuard(
+      request: Request,
+      operation: InstanceOperation,
+    ): Promise<() => void> {
+      return evaluator(request).instanceGuard(
+        await principal(request),
+        operation,
+      );
+    },
+  });
+}
 
 function tokenFromRequest(req: Request): string | null {
   const authorization = req.headers.get("authorization");
