@@ -225,6 +225,7 @@ export class AccountRepository {
     >,
     updateId: string,
     guard: () => void = () => {},
+    confirmedTotpStep?: number,
   ): Account {
     const expected = this.capture(), account = this.byId(id);
     if (
@@ -237,13 +238,20 @@ export class AccountRepository {
     if (!account || account.credentialRevision !== credentialRevision) {
       throw new StoredConfigConflict();
     }
+    if (
+      confirmedTotpStep !== undefined && changes.totpKey === account.totpKey &&
+      account.lastTotpStep !== null && confirmedTotpStep < account.lastTotpStep
+    ) {
+      throw new StoredConfigConflict();
+    }
     const next = validateAccount({
       ...account,
       ...changes,
-      lastTotpStep:
+      lastTotpStep: confirmedTotpStep ?? (
         changes.totpKey !== undefined && changes.totpKey !== account.totpKey
           ? null
-          : account.lastTotpStep,
+          : account.lastTotpStep
+      ),
       credentialRevision: account.credentialRevision + 1,
       credentialUpdateId: updateId,
     });

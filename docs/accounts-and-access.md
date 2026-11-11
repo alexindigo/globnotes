@@ -55,3 +55,12 @@ stream enqueue boundaries; actual HTTP/SSE and plugin propagation are later step
 Revocation denies pending work, never rolls back an already committed effect or
 deletes a browser's unsaved text. Unrelated account/vault revisions do not retire
 another lease.
+
+The preparatory own-account workflow accepts no target-account field. Password
+and authenticator changes require fresh current credentials, account-local CAS
+and a new update ID. Confirmed enrollment consumes its matched step at commit;
+minting a QR alone changes nothing. Cancellation before commit retains credentials.
+A successful change revokes the submitter's old JWT too. Lost replies are reviewed
+with fresh current credentials and the account's update identity, never with a
+revoked-token exception or an automatic repeat password change. No handlers are
+published on the active route tree yet.
