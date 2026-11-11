@@ -85,16 +85,18 @@
               <Toggle :id="row.id" :aria-labelledby="row.labelledby" :aria-describedby="row.describedby" :is-on="core.debugEnabled.value" @click="session.toggleDebug" />
             </SettingRow>
             <div v-else-if="currentPage.kind === 'access'" class="flex flex-col gap-4" data-access-summary>
-              <p v-if="accessSummary.loading" role="status" class="text-[13px] text-theme-text-muted">Reading current access…</p>
-              <p v-if="accessSummary.error" role="alert" class="text-[13px] text-theme-danger">{{ accessSummary.error }}</p>
-              <dl class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-4 text-sm"><template v-for="row in accessSummary.rows" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl>
-              <CustomButton v-if="writable" type="button" variant="secondary" label="Change access…" class="self-start" @click="openAccess" />
-               <p v-else class="text-sm text-theme-text-muted">Access changes are unavailable in this session. Locked settings are recovered through deployment configuration.</p>
+              <SettingRow v-for="row in accessSummary.rows" :key="row.label" :label="row.label" as="value" short>
+                <span class="text-sm">{{ row.value }}</span>
+              </SettingRow>
+              <SettingRow label="Access settings" as="value" short
+                :help="accessSummary.loading ? 'Reading current access…' : !writable ? 'Access changes are unavailable in this session. Locked settings are recovered through deployment configuration.' : undefined"
+                :error="accessSummary.error" :role="accessSummary.loading ? 'status' : undefined">
+                <CustomButton v-if="writable" type="button" variant="secondary" label="Change access…" @click="openAccess" />
+              </SettingRow>
             </div>
-            <div v-else-if="currentPage.kind === 'account'" class="flex flex-col gap-2">
-              <p class="text-sm text-theme-text">{{ accountSummary.text }}</p>
-              <CustomButton v-if="canLogout" type="button" variant="secondary" label="Log out" class="self-start" @click="$emit('logout')" />
-            </div>
+            <SettingRow v-else-if="currentPage.kind === 'account'" :label="accountSummary.text" :title="accountSummary.text" as="value" short>
+              <CustomButton v-if="canLogout" type="button" variant="secondary" label="Log out" @click="$emit('logout')" />
+            </SettingRow>
             <p v-else class="text-sm text-theme-text-muted">This page has no options.</p>
           </SettingsPage>
         </div>
