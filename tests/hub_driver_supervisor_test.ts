@@ -1,6 +1,8 @@
+import { serviceSettings } from "../server/config/consumers.ts";
+import { testMetadata } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { AuthType } from "../server/config.ts";
+import { AuthType } from "./helpers/config.ts";
 import { driverControl } from "../server/hub/drivers/api.ts";
 import { VaultHub } from "../server/hub/hub.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
@@ -652,7 +654,11 @@ Deno.test("driver supervisor: state-in-vault notice names the actual canonical k
   const f = fixture();
   const statePath = `${f.vault}/State`;
   Deno.mkdirSync(statePath);
-  const hub = new VaultHub(f.vault, statePath, f.config.environment);
+  const hub = new VaultHub(
+    f.vault,
+    testMetadata(statePath),
+    serviceSettings(f.config.resolved.instance).hub,
+  );
   const supervisor = new DriverSupervisor({
     hub,
     operations: f.operations,

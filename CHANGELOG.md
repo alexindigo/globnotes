@@ -4,18 +4,19 @@
 
 ### Added
 
-Typed TOML configuration defaults and validation, preparatory to the v3 startup cutover.
+Switch server and container startup to strict layered configuration.
+
+Typed TOML configuration defaults and validation.
 
 Explain pinned settings without exposing deployment paths or secret values.
 
-Preserve saved plugin policy beneath explicit deployment pins (preparatory to
-startup cutover), with TOML/env provenance and inactive-plugin pin validation.
+Preserve saved plugin policy beneath explicit deployment pins, with TOML/env
+provenance and inactive-plugin pin validation.
 
-Vault settings can persist in partial TOML with checked replacement
-(preparatory owner, not yet connected to normal startup).
+Persist vault settings in partial TOML with checked replacement.
 
 Instance and vault configuration scopes, typed path/admin declarations and shared
-metadata paths (preparatory to startup cutover).
+metadata paths.
 
 The top-bar sync cloud shows file transfers and persistent connection trouble,
 with a per-connection status panel and a link to Sync settings.
@@ -49,11 +50,11 @@ read, check them under the note lock, and refuse to overwrite a note changed sin
 Every result's text also carries the whole result as JSON, for clients that read
 only text. A note too large for one response is read in parts (`offset`, `length`,
 `has_more`). It works over plain HTTP and is on by default;
-`GLOBNOTES_MCP_ENABLED=false` turns it off. Tool calls are limited to
-`GLOBNOTES_MCP_RATE_LIMIT` per minute per client (default 600, `0` for no limit);
+`GLOBNOTES__MCP_ENABLED=false` turns it off. Tool calls are limited to
+`GLOBNOTES__MCP_RATELIMIT` per minute per client (default 600, `0` for no limit);
 over it, clients get `429` with `Retry-After`. See `docs/mcp.md` for client setup.
 
-`GLOBNOTES_ALLOWED_HOSTS` lists the host names the server answers. When set, a
+`GLOBNOTES__SERVER_ALLOWEDHOSTS` lists the host names the server answers. When set, a
 request for any other host gets `421 Misdirected Request` on every route (web app,
 API, files and MCP), which stops DNS rebinding. Without a login (`none` or
 `read_only`) and without the setting, globnotes logs a warning at startup, or when

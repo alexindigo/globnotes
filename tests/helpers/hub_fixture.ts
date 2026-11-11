@@ -1,5 +1,6 @@
+import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
-import { GlobalConfig } from "../../server/config.ts";
+import { GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
 import type { ChangeEntry } from "../../server/hub/types.ts";
@@ -30,16 +31,25 @@ export function hubOperationsFixture(
     Deno.symlinkSync(realVault, vault);
   }
   const env = testEnvironment({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_INDEX_PATH: `${root}/state`,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureStatePath: `${root}/state`,
+    fixtureAuth: { auth_type: "none" },
   });
   const config = new GlobalConfig(env),
-    notes = new FileSystemNotes(config.notesPath, probes, env);
+    notes = new FileSystemNotes(
+      config.notesPath,
+      probes,
+      testServices(env).notes,
+    );
   const files = new FileServing(config.notesPath),
-    hub = new VaultHub(config.notesPath, config.statePath, env, {
-      changeLimit: options.changeLimit,
-    });
+    hub = new VaultHub(
+      config.notesPath,
+      testMetadata(config.statePath),
+      testServices(env).hub,
+      {
+        changeLimit: options.changeLimit,
+      },
+    );
   initState(config, null, notes, null, files, null, hub);
   const lifecycle = new PluginLifecycle(config);
   state.lifecycle = lifecycle;

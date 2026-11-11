@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals } from "@std/assert";
 import { AuxiliaryFilesystem } from "../../server/plugins/auxiliary_fs.ts";
@@ -114,7 +115,11 @@ export async function auxiliaryFixture(options: {
         runtime.settingsChanged(id, page, revision),
     });
     const hub = options.hub
-      ? new VaultHub(fixture.vault, fixture.statePath, testEnvironment({}))
+      ? new VaultHub(
+        fixture.vault,
+        testMetadata(fixture.statePath),
+        testServices(testEnvironment({})).hub,
+      )
       : undefined;
     const filesystem = new AuxiliaryFilesystem({
       gate: hub ? new HubGate({ hub }) : undefined,

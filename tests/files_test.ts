@@ -31,7 +31,11 @@ async function bootWithApp(
 ): Promise<TestServer & { appDir: string }> {
   const { appDir, vault } = await makeApp();
   const server = await bootServer(
-    { GLOBNOTES_AUTH_TYPE: "none", ...env, GLOBNOTES_PATH: vault },
+    {
+      fixtureAuth: { auth_type: "none" },
+      ...env,
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+    },
     { cwd: appDir },
   );
   return { ...server, appDir };
@@ -344,7 +348,7 @@ Deno.test("files: catch-all routing", async (t) => {
 Deno.test("files: catch-all requires auth for vault files", async () => {
   const { appDir, vault } = await makeApp();
   const server = await bootServer(
-    { GLOBNOTES_PATH: vault },
+    { GLOBNOTES_GLOBNOTES_PATH: vault },
     { cwd: appDir },
   );
   try {

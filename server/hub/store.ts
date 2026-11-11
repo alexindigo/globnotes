@@ -55,7 +55,9 @@ export class HubStore {
     ) {
       throw new TypeError("changeLimit must be a positive integer");
     }
-    Deno.mkdirSync(statePath, { recursive: true });
+    if (!Deno.statSync(statePath).isDirectory) {
+      throw new Error("Hub metadata parent is not prepared");
+    }
     this.db = new DatabaseSync(path.join(statePath, "hub.sqlite"));
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);

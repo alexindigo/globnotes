@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "../helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -46,7 +47,10 @@ Deno.test("index sync: a restart over 3,000 indexed notes stays within its budge
 
     // A restart: a new indexer on the same index, nothing changed on disk.
     // With no new notes the sync runs to completion synchronously.
-    const restarted = new Fts5Indexer(vault, testEnvironment({}));
+    const restarted = new Fts5Indexer(
+      testMetadata(vault),
+      testServices(testEnvironment({})).index,
+    );
     const started = performance.now();
     restarted.startBackgroundSync();
     const elapsed = performance.now() - started;

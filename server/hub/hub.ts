@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import * as path from "@std/path";
 import type { HubSettings } from "../config/consumers.ts";
-import { hubSettings, type LegacyInput } from "../config/legacy.ts";
+import { serviceSettings } from "../config/consumers.ts";
+import { config } from "../config/loader.ts";
 import { logger } from "../logger.ts";
 import type { StorageEffect } from "./effects.ts";
 import { pathKey, within } from "./paths.ts";
@@ -45,12 +46,15 @@ export class VaultHub {
   constructor(
     notesPath: string,
     statePath: string,
-    settings?: LegacyInput<HubSettings>,
+    settings: HubSettings = serviceSettings(config()).hub,
     options: { changeLimit?: number } = {},
   ) {
     this.#configuredRoot = path.resolve(notesPath);
     this.root = Deno.realPathSync(notesPath);
-    this.#intervalMs = hubSettings(settings).scanIntervalMs;
+    this.#intervalMs = settings.scanIntervalMs;
+    if (!(this.#intervalMs > 0) || !Number.isFinite(this.#intervalMs)) {
+      throw new Error("Hub scanIntervalMs must be positive and finite");
+    }
     this.store = new HubStore(statePath, options);
     this.#stateRoot = Deno.realPathSync(statePath);
     this.#scanner = new HubScanner(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { hashPassword } from "../server/helpers.ts";
 import { bootServer, type TestServer } from "./helpers/boot.ts";
 import { writeFailureReport } from "./helpers/failure_report.ts";
@@ -57,7 +57,7 @@ Deno.test("access: settings lock projection separates public notes from settings
       `${vault}/.globnotes/config.json`,
       JSON.stringify({ auth_type: "none", read_only_settings: true }),
     );
-    const env = testEnvironment({ GLOBNOTES_PATH: vault });
+    const env = testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: vault });
     const config = new GlobalConfig(env);
     assertEquals(config.authType, "none");
     assertEquals(config.setupRequired, false);
@@ -65,8 +65,8 @@ Deno.test("access: settings lock projection separates public notes from settings
     assertEquals(
       new GlobalConfig(
         testEnvironment({
-          GLOBNOTES_PATH: vault,
-          GLOBNOTES_READ_ONLY_SETTINGS: "false",
+          GLOBNOTES_GLOBNOTES_PATH: vault,
+          fixtureAuth: { read_only_settings: false },
         }),
       ).settingsWritable,
       true,
@@ -98,14 +98,8 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
   await Deno.writeTextFile(file, JSON.stringify(original));
   await Deno.writeTextFile(`${vault}/Seed.md`, "Seed content.\n");
   let server = await bootServer({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "",
-    GLOBNOTES_USERNAME: "",
-    GLOBNOTES_PASSWORD: "",
-    GLOBNOTES_SECRET_KEY: "",
-    GLOBNOTES_TOTP_KEY: "",
-    GLOBNOTES_READ_ONLY_SETTINGS: "",
-    GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
   }, { cwd: vault });
   const call = async (
     route: string,
@@ -356,10 +350,8 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
     );
     await server.close();
     server = await bootServer({
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_AUTH_TYPE: "",
-      GLOBNOTES_READ_ONLY_SETTINGS: "",
-      GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
     }, { cwd: vault });
     await t.step(
       "restart sees the persisted settings lock and retained unrelated config",
@@ -378,28 +370,18 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
     );
     await server.close();
     server = await bootServer({
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_AUTH_TYPE: "",
-      GLOBNOTES_READ_ONLY_SETTINGS: "false",
-      GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      fixtureAuth: { read_only_settings: false },
+      GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
     }, { cwd: vault });
     await t.step(
-      "deployment false overrides the saved lock and restores real settings persistence",
+      "explicit private-record recovery restores writable settings without an env pin",
       async () => {
         const projected = (await call("config")).body;
         assertEquals(projected.settingsWritable, true);
         assertEquals(projected.readOnlySettings, false);
         const access = (await call("access")).body;
-        assertEquals(access.pinned.readOnlySettings, true);
-        assertEquals(
-          (await call("access", "PUT", {
-            mode: "none",
-            readOnlySettings: true,
-            revision: access.revision,
-            signature: access.signature,
-          })).status,
-          409,
-        );
+        assertEquals(access.pinned.readOnlySettings, false);
         const catalog = (await call("plugin-host")).body;
         const id = catalog.plugins[0].id;
         assertEquals(
@@ -416,6 +398,15 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
           ).disabled.includes(id),
         );
         assertEquals(
+          (await call("access", "PUT", {
+            mode: "none",
+            readOnlySettings: true,
+            revision: access.revision,
+            signature: access.signature,
+          })).status,
+          200,
+        );
+        assertEquals(
           JSON.parse(await Deno.readTextFile(file)).read_only_settings,
           true,
         );
@@ -427,7 +418,7 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
   }
 });
 
-Deno.test("access: pinned signing authority cannot pretend to revoke sessions with an ineffective stored override", async (t) => {
+Deno.test("access: retired signing env is rejected; stored authority rotates and revokes old sessions", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "access-signing-pin-" });
   await Deno.mkdir(`${vault}/.globnotes`);
   const file = `${vault}/.globnotes/config.json`;
@@ -440,12 +431,20 @@ Deno.test("access: pinned signing authority cannot pretend to revoke sessions wi
       secret_key: crypto.randomUUID(),
     }),
   );
+  const original = await Deno.readTextFile(file);
+  await assertRejects(
+    () =>
+      bootServer({
+        GLOBNOTES_GLOBNOTES_PATH: vault,
+        GLOBNOTES_SECRET_KEY: "fixture-retired-signing-key",
+      }),
+    Error,
+    "GLOBNOTES_SECRET_KEY",
+  );
+  assertEquals(await Deno.readTextFile(file), original);
   const server = await bootServer({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "",
-    GLOBNOTES_SECRET_KEY: "fixture-pinned-signing-key",
-    GLOBNOTES_READ_ONLY_SETTINGS: "",
-    GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
   }, { cwd: vault });
   try {
     const login = await fetch(`${server.baseUrl}/_/api/token`, {
@@ -473,13 +472,15 @@ Deno.test("access: pinned signing authority cannot pretend to revoke sessions wi
         signature: view.signature,
       }),
     });
-    assertEquals(result.status, 409);
+    assertEquals(result.status, 200);
     await result.body?.cancel();
-    assertEquals(await Deno.readTextFile(file), before);
+    const after = JSON.parse(await Deno.readTextFile(file));
+    assert(after.secret_key !== JSON.parse(before).secret_key);
+    assert(after.password_hash !== JSON.parse(before).password_hash);
     const check = await fetch(`${server.baseUrl}/_/api/auth-check`, {
       headers,
     });
-    assertEquals(check.status, 200);
+    assertEquals(check.status, 401);
     await check.body?.cancel();
     await server.close();
   } catch (error) {
@@ -491,11 +492,9 @@ Deno.test("access: initial public default and explicit locked choice survive pre
   for (const lock of [false, true]) {
     const vault = await Deno.makeTempDir({ prefix: "access-public-setup-" });
     const env = {
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_AUTH_TYPE: "",
-      GLOBNOTES_PATH_PREFIX: "/notes",
-      GLOBNOTES_READ_ONLY_SETTINGS: "",
-      GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      GLOBNOTES__SERVER_PATHPREFIX: "/notes",
+      GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
     };
     const server = await bootServer(env, { cwd: vault });
     try {
@@ -534,7 +533,9 @@ Deno.test("access: admitted settings writes recheck at commit without blocking p
       `${vault}/.globnotes/config.json`,
       JSON.stringify({ auth_type: "none" }),
     );
-    const config = new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: vault })),
+    const config = new GlobalConfig(
+        testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: vault }),
+      ),
       lifecycle = new PluginLifecycle(config);
     state.config = config;
     state.auth = null;
@@ -640,10 +641,8 @@ Deno.test("access: external same-revision bytes cannot be overwritten and restar
   await Deno.writeTextFile(file, JSON.stringify(initial));
   await Deno.writeTextFile(`${vault}/Seed.md`, "External CAS note consumer\n");
   const env = {
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "",
-    GLOBNOTES_READ_ONLY_SETTINGS: "",
-    GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
   };
   let server = await bootServer(env, { cwd: vault });
   const call = async (route: string, method = "GET", data?: unknown) => {
@@ -751,10 +750,8 @@ Deno.test("access: competing same-CAS requests have one durable receipt and cann
   );
   await Deno.writeTextFile(`${vault}/Seed.md`, "Competing CAS note consumer\n");
   const server = await bootServer({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "",
-    GLOBNOTES_READ_ONLY_SETTINGS: "",
-    GLOBNOTES_AUTO_ENABLE_PLUGINS: "false",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
   }, { cwd: vault });
   try {
     const view = await fetch(`${server.baseUrl}/_/api/access`, {

@@ -26,7 +26,7 @@ async function setup(label, { password = false, create = false } = {}) {
   const directory = `${artifacts}/${label}`;
   await Deno.mkdir(directory);
   const vault = await Deno.makeTempDir({ prefix: `fifo-${label}-vault-` });
-  const state = await Deno.makeTempDir({ prefix: `fifo-${label}-state-` });
+  const state = await metadataDirectory({ prefix: `fifo-${label}-state-` });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
   const secret = crypto.randomUUID();
   await Deno.writeTextFile(`${state}/config.json`, JSON.stringify(password
@@ -36,7 +36,7 @@ async function setup(label, { password = false, create = false } = {}) {
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/manifest.json`, JSON.stringify({ id: "fifo-guard", runtime: { server: "service.js" }, hooks: ["pre-save"] }));
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => (fact.proposed?.content ?? '').includes('FIFO-GUARD') ? {cancel:true,reason:'FIFO guard protection'} : {cancel:false}); }");
   const token = password ? await new SignJWT({ sub: "fifo-user" }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  const server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
   const controller = new AbortController();
   const records = [];
   let active = 0, maxActive = 0;
@@ -234,3 +234,4 @@ finally {
 }
 if (failure) throw failure;
 import { waitForAccessSummary } from './settings-access-native.mjs';
+import { metadataDirectory } from "./config-fixture.mjs";

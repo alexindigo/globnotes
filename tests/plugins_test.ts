@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -9,7 +10,7 @@
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import * as path from "@std/path";
-import { AuthType, GlobalConfig } from "../server/config.ts";
+import { AuthType, GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import {
@@ -340,8 +341,8 @@ Deno.test("plugins: server boots with a plugin in the vault", async () => {
       `export function getSelectors() { return []; }`,
     );
     const server = await bootServer({
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_PATH: vault,
+      fixtureAuth: { auth_type: "none" },
+      GLOBNOTES_GLOBNOTES_PATH: vault,
     });
     try {
       const res = await fetch(`${server.baseUrl}/_/api/health`);
@@ -433,8 +434,8 @@ Deno.test("plugins: client module endpoint serves fresh from disk", async () => 
     writePlugin(vault, "plainplug", "");
 
     const server = await bootServer({
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_PATH: vault,
+      fixtureAuth: { auth_type: "none" },
+      GLOBNOTES_GLOBNOTES_PATH: vault,
     });
     try {
       const url = `${server.baseUrl}/_/plugins/dualplug/client.js`;
@@ -481,8 +482,8 @@ Deno.test("plugins: app.js endpoint serves the browser runtime entry for enabled
     writePlugin(vault, "noapp", "");
 
     const server = await bootServer({
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_PATH: vault,
+      fixtureAuth: { auth_type: "none" },
+      GLOBNOTES_GLOBNOTES_PATH: vault,
     });
     try {
       const res = await fetch(
@@ -515,15 +516,18 @@ Deno.test("plugins: pluginRpc resolves against real state", async () => {
   const vault = await Deno.makeTempDir();
   try {
     const env = testEnvironment({
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_AUTH_TYPE: "none",
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      fixtureAuth: { auth_type: "none" },
     });
     Deno.writeTextFileSync(path.join(vault, "hello.md"), "hi there");
     Deno.writeTextFileSync(path.join(vault, "data.bin"), "bytes");
 
     const config = new GlobalConfig(env);
-    const notes = new FileSystemNotes(vault, {}, env);
-    const indexer = new Fts5Indexer(vault, env);
+    const notes = new FileSystemNotes(vault, {}, testServices(env).notes);
+    const indexer = new Fts5Indexer(
+      testMetadata(vault),
+      testServices(env).index,
+    );
     const files = new FileServing(vault);
     initState(config, null, notes, indexer, files);
 

@@ -11,7 +11,7 @@ const encodedPath = (p: string) =>
   p.split("/").map(encodeURIComponent).join("/");
 
 Deno.test("attachment names: existing special names download through API and vault routes", async (t) => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     for (const name of NAMES) {
       await Deno.writeFile(`${server.vault}/${name}`, bytes);
@@ -37,7 +37,7 @@ Deno.test("attachment names: existing special names download through API and vau
 });
 
 Deno.test("attachment names: raw and encoded references survive base-aware note moves and relinks", async (t) => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     for (const encoding of ["raw", "encoded"]) {
       for (const strategy of ["move", "relink"]) {

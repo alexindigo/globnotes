@@ -1,3 +1,4 @@
+import { testMetadata } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
@@ -198,7 +199,7 @@ Deno.test("hub facts: pre-effect reconciliation publishes the real outside creat
 
 Deno.test("hub projections: a vanished first entry does not drop later index values, facts or sync", () => {
   const f = hubOperationsFixture();
-  const indexer = new Fts5Indexer(f.config.statePath);
+  const indexer = new Fts5Indexer(testMetadata(f.config.statePath));
   const facts: OperationFact[] = [], syncs: OperationFact[] = [];
   f.hub.subscribe(() => Deno.removeSync(`${f.vault}/a-gone.md`));
   subscribeIndex(f.hub, indexer);

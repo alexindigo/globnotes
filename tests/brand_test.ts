@@ -7,7 +7,7 @@
  * 403. Boots real server subprocesses against temp vaults.
  */
 
-import { assert, assertEquals } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { bootServer } from "./helpers/boot.ts";
 
@@ -55,9 +55,9 @@ async function scratchAppDir(): Promise<
 }
 
 Deno.test("brand: POST round-trip", async (t) => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
-    await t.step("sets name and accent, persists to config.json", async () => {
+    await t.step("sets name and accent, persists to config.toml", async () => {
       const res = await postBrand(server.baseUrl, {
         name: "Acme Notes",
         accent: "#ff6600",
@@ -67,14 +67,25 @@ Deno.test("brand: POST round-trip", async (t) => {
         name: "Acme Notes",
         accent: "#ff6600",
         files: [],
+        fields: {
+          name: { readonly: false, source: "toml" },
+          accent: { readonly: false, source: "toml" },
+        },
       });
-      const stored = JSON.parse(
+      const stored = parseToml(
         await Deno.readTextFile(
-          path.join(server.vault, ".globnotes", "config.json"),
+          path.join(server.vault, ".globnotes", "config.toml"),
         ),
       );
-      assertEquals(stored.brand_name, "Acme Notes");
-      assertEquals(stored.brand_accent, "#ff6600");
+      assertEquals(stored.brand, { name: "Acme Notes", accent: "#ff6600" });
+      assertEquals(
+        JSON.parse(
+          await Deno.readTextFile(
+            path.join(server.vault, ".globnotes", "config.json"),
+          ),
+        ),
+        { auth_type: "none" },
+      );
     });
 
     await t.step("config endpoint reports the brand block", async () => {
@@ -83,6 +94,10 @@ Deno.test("brand: POST round-trip", async (t) => {
         name: "Acme Notes",
         accent: "#ff6600",
         files: [],
+        fields: {
+          name: { readonly: false, source: "toml" },
+          accent: { readonly: false, source: "toml" },
+        },
       });
     });
 
@@ -157,18 +172,25 @@ Deno.test("brand: POST round-trip", async (t) => {
     });
 
     await t.step(
-      "empty strings clear name and accent in config.json",
+      "empty strings clear name and accent in config.toml",
       async () => {
         const res = await postBrand(server.baseUrl, { name: "", accent: "" });
         assertEquals(res.status, 200);
-        assertEquals(await res.json(), { name: null, accent: null, files: [] });
-        const stored = JSON.parse(
+        assertEquals(await res.json(), {
+          name: null,
+          accent: null,
+          files: [],
+          fields: {
+            name: { readonly: false, source: "toml" },
+            accent: { readonly: false, source: "toml" },
+          },
+        });
+        const stored = parseToml(
           await Deno.readTextFile(
-            path.join(server.vault, ".globnotes", "config.json"),
+            path.join(server.vault, ".globnotes", "config.toml"),
           ),
         );
-        assert(!("brand_name" in stored));
-        assert(!("brand_accent" in stored));
+        assertEquals(stored.brand, { name: "", accent: "" });
       },
     );
   } finally {
@@ -177,7 +199,7 @@ Deno.test("brand: POST round-trip", async (t) => {
 });
 
 Deno.test("brand: file serving guards", async (t) => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     const brandDir = path.join(server.vault, ".globnotes", "brand");
     await Deno.mkdir(brandDir, { recursive: true });
@@ -201,7 +223,7 @@ Deno.test("brand: file serving guards", async (t) => {
 
 Deno.test("brand: generated web manifest", async (t) => {
   await t.step("defaults without branding", async () => {
-    const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+    const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
     try {
       const res = await fetch(`${server.baseUrl}/_/brand/site.webmanifest`);
       assertEquals(res.status, 200);
@@ -226,9 +248,9 @@ Deno.test("brand: generated web manifest", async (t) => {
     const { appDir, cleanup: cleanupApp } = await scratchAppDir();
     const server = await bootServer(
       {
-        GLOBNOTES_AUTH_TYPE: "none",
-        GLOBNOTES_BRAND_NAME: "Test Brand",
-        GLOBNOTES_BRAND_ACCENT: "#ff6600",
+        fixtureAuth: { auth_type: "none" },
+        GLOBNOTES_GLOBNOTES_BRAND_NAME: "Test Brand",
+        GLOBNOTES_GLOBNOTES_BRAND_ACCENT: "#ff6600",
       },
       { cwd: appDir },
     );
@@ -252,7 +274,7 @@ Deno.test("brand: generated web manifest", async (t) => {
   });
 
   await t.step("custom manifest file is served as-is", async () => {
-    const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+    const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
     try {
       const brandDir = path.join(server.vault, ".globnotes", "brand");
       await Deno.mkdir(brandDir, { recursive: true });
@@ -272,7 +294,10 @@ Deno.test("brand: generated web manifest", async (t) => {
     // build's asset URLs via rewriteIndexHtml.
     const { appDir, cleanup } = await scratchAppDir();
     const server = await bootServer(
-      { GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_PATH_PREFIX: "/notes" },
+      {
+        fixtureAuth: { auth_type: "none" },
+        GLOBNOTES__SERVER_PATHPREFIX: "/notes",
+      },
       { cwd: appDir },
     );
     try {
@@ -288,7 +313,7 @@ Deno.test("brand: generated web manifest", async (t) => {
 });
 
 Deno.test("brand: read-only auth forbids mutation", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "read_only" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "read_only" } });
   try {
     const res = await postBrand(server.baseUrl, { name: "Nope" });
     assertEquals(res.status, 403);
@@ -299,3 +324,4 @@ Deno.test("brand: read-only auth forbids mutation", async () => {
     await server.close();
   }
 });
+import { parse as parseToml } from "@std/toml";

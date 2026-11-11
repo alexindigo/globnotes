@@ -47,10 +47,10 @@ function testDomain(): { host: string; address: string } {
 
 /** A server on `http://$GLOBNOTES_TEST_HOST:<port>`, never loopback. */
 export function bootOnTestDomain(
-  env: Record<string, string>,
+  env: Record<string, unknown>,
 ): Promise<TestServer> {
   const { host, address } = testDomain();
-  return bootServer({ GLOBNOTES_PATH_PREFIX: "", ...env }, {
+  return bootServer({ GLOBNOTES__SERVER_PATHPREFIX: "", ...env }, {
     host: address,
     origin: (port) => `http://${host}:${port}`,
   });

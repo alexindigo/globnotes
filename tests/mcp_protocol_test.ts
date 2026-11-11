@@ -1,3 +1,4 @@
+import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -94,7 +95,7 @@ const initialize = (version: string) =>
   });
 
 Deno.test("mcp protocol: malformed, unsupported and unusual requests", async () => {
-  const server = await boot({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await boot({ fixtureAuth: { auth_type: "none" } });
   try {
     for (const body of ["{", ""]) {
       const reply = await send(server, body);
@@ -221,7 +222,7 @@ Deno.test("mcp protocol: malformed, unsupported and unusual requests", async () 
 });
 
 Deno.test("mcp protocol: 50 concurrent tool calls", async () => {
-  const server = await boot({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await boot({ fixtureAuth: { auth_type: "none" } });
   try {
     const replies = await Promise.all(
       Array.from(
@@ -272,10 +273,12 @@ Deno.test("mcp protocol: 50 concurrent tool calls", async () => {
 Deno.test("mcp protocol: a token that expires between calls", async () => {
   const secret = "mcp-protocol-test-secret";
   const server = await boot({
-    GLOBNOTES_AUTH_TYPE: "password",
-    GLOBNOTES_USERNAME: "agent",
-    GLOBNOTES_PASSWORD: "correct horse",
-    GLOBNOTES_SECRET_KEY: secret,
+    fixtureAuth: {
+      auth_type: "password",
+      username: "agent",
+      password_hash: fixturePasswordHash("correct horse"),
+      secret_key: secret,
+    },
   });
   try {
     // The server's own token format, with a two-second lifetime.
@@ -299,7 +302,7 @@ Deno.test("mcp protocol: a token that expires between calls", async () => {
 
 Deno.test("mcp protocol: storage failures don't show server paths", async () => {
   const outside = await Deno.makeTempDir({ prefix: "globnotes-mcp-outside-" });
-  const server = await boot({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await boot({ fixtureAuth: { auth_type: "none" } });
   try {
     const vault = server.vault;
     await Deno.mkdir(path.join(vault, "Folder.md"));
@@ -351,8 +354,8 @@ Deno.test("mcp protocol: storage failures don't show server paths", async () => 
 
 Deno.test("mcp protocol: the endpoint lives under the path prefix", async () => {
   const server = await boot({
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_PATH_PREFIX: "/mom",
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__SERVER_PATHPREFIX: "/mom",
   });
   try {
     const post = (url: string) =>
@@ -390,8 +393,8 @@ Deno.test("mcp protocol: a 1,000-note folder and 3,000 tags page within the budg
     `# Tagged\n\n${tags.map((t) => `#${t}`).join(" ")}\n`,
   );
   const server = await boot({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "none" },
   });
   try {
     await waitUntil(async () => {

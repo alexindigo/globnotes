@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "../helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -11,7 +12,7 @@
 
 import { assert } from "@std/assert";
 import * as path from "@std/path";
-import { GlobalConfig } from "../../server/config.ts";
+import { GlobalConfig } from "../helpers/config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import type { SearchQuery } from "../../server/notes/models.ts";
@@ -43,16 +44,19 @@ Deno.test("search paging: a page at offset 9,980 costs what the first does", asy
       );
     }
     const env = testEnvironment({
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_INDEX_BATCH_DELAY: "0",
-      GLOBNOTES_INDEX_BATCH_SIZE: "2000",
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      fixtureAuth: { auth_type: "none" },
+      GLOBNOTES__INDEX_BATCHDELAY: "0",
+      GLOBNOTES__INDEX_BATCHSIZE: "2000",
     });
-    const indexer = new Fts5Indexer(path.join(vault, ".globnotes"), env);
+    const indexer = new Fts5Indexer(
+      testMetadata(path.join(vault, ".globnotes")),
+      testServices(env).index,
+    );
     initState(
       new GlobalConfig(env),
       null,
-      new FileSystemNotes(vault, {}, env),
+      new FileSystemNotes(vault, {}, testServices(env).notes),
       indexer,
       new FileServing(vault),
       null,

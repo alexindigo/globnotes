@@ -1,26 +1,19 @@
 services:
   globnotes:
-    image: ghcr.io/alexindigo/globnotes:latest
+    build: .
+    image: globnotes:v3-dev
     container_name: globnotes
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
-      - ./notes:/data
-      # Optional: keep the state dir (index, config, branding, plugins)
-      # out of the notes tree — e.g. so backups see only markdown:
-      # - ./state:/state
-      # Optional: mount additional sources as subdirectories
-      # - /srv/dad-notes:/data/dad
-      # - /srv/mom-notes:/data/mom
+      # Create the notes directory explicitly before starting.
+      - ./notes:/data/globnotes
+      # Optional instance overlay, separate from the shipped defaults:
+      # - ./globnotes.toml:/app/config/globnotes.toml:ro
+      # Optional metadata relocation:
+      # - ./metadata:/metadata
     environment:
-      # Optional. Pairs with the ./state mount above:
-      # GLOBNOTES_INDEX_PATH: "/state"
-      # Optional. Leave unset for the first-run setup wizard, or choose
-      # explicitly:
-      # GLOBNOTES_AUTH_TYPE: "none"  # trusted home network only!
-      # GLOBNOTES_AUTH_TYPE: "password"
-      # GLOBNOTES_USERNAME: "admin"
-      # GLOBNOTES_PASSWORD: "change-me"
-      # GLOBNOTES_SECRET_KEY: "change-me-to-a-long-random-string"
+      # GLOBNOTES_METADATA_PATH: "/metadata"
+      # GLOBNOTES__SERVER_ALLOWEDHOSTS: "globnotes.home"
       TZ: "UTC"

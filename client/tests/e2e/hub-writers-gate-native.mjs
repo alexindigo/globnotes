@@ -32,8 +32,8 @@ async function confirmDelete() {
 }
 try {
   await shellWrite("Doomed", "loaded text\n");
-  server = await bootServer({ GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: `${directory}/state`,
-    GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_PATH_PREFIX: "" }, applicationServer());
+  server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: `${directory}/state`,
+    fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   let held = null;
   session.page.onEvent(event => {

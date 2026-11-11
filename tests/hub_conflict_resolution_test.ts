@@ -1,3 +1,4 @@
+import { testMetadata } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals } from "@std/assert";
 import { readConflict } from "../server/hub/conflicts.ts";
@@ -8,7 +9,7 @@ import {
   type PluginRuntime,
 } from "../server/plugins/runtime.ts";
 import type { HookName, OperationFact } from "../server/plugins/contracts.ts";
-import { AuthType } from "../server/config.ts";
+import { AuthType } from "./helpers/config.ts";
 import { HubGate } from "../server/hub/gate.ts";
 import { versionOf } from "../server/hub/merge.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
@@ -422,7 +423,7 @@ Deno.test("conflict resolution: partial failures journal actual effects, retain 
 
 Deno.test("conflict resolution: actual changes reach cache/index/facts and asynchronous displacement consumers", async () => {
   const f = hubOperationsFixture();
-  const index = new Fts5Indexer(f.config.statePath);
+  const index = new Fts5Indexer(testMetadata(f.config.statePath));
   const dispose = subscribeIndex(f.hub, index);
   try {
     const reviewed = pair(f),
@@ -687,7 +688,10 @@ Deno.test("conflict resolution: known hidden/state/symlink/foreign ids cannot au
       assertEquals(f.hub.conflict(id)!.state, "open");
     }
     Deno.mkdirSync(`${f.root}/other`);
-    const other = new VaultHub(`${f.root}/other`, `${f.root}/other-state`);
+    const other = new VaultHub(
+      `${f.root}/other`,
+      testMetadata(`${f.root}/other-state`),
+    );
     try {
       const ops = new NoteOperations({
         notes: f.notes,

@@ -98,7 +98,7 @@ async function stream(token) {
 async function fixture(prefix, mode) {
   const label = `${prefix ? "notes" : "empty"}-${mode}`, directory = `${artifacts}/${label}`;
   await Deno.mkdir(directory);
-  const vault = await Deno.makeTempDir({ prefix: `gps08-${label}-vault-` }), state = await Deno.makeTempDir({ prefix: `gps08-${label}-state-` });
+  const vault = await Deno.makeTempDir({ prefix: `gps08-${label}-vault-` }), state = await metadataDirectory({ prefix: `gps08-${label}-state-` });
   const secret = crypto.randomUUID();
   await Deno.writeTextFile(`${vault}/Seed.md`, seed);
   if (mode !== "setup") await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: mode, ...(mode === "password" ? { username, password_hash: await hashPassword(password), secret_key: secret } : {}) }));
@@ -268,3 +268,4 @@ try {
 } finally { await closeCurrent(); }
 await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, failedFixtureClosedAfterCapture: !!failure && current?.closed }, null, 2), { createNew: true });
 if (failure) throw failure;
+import { metadataDirectory } from "./config-fixture.mjs";

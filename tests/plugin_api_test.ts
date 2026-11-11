@@ -11,7 +11,7 @@ import { ENDPOINT_PLUGIN } from "./helpers/endpoint_plugin.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import eventsHandler from "../server/api/endpoints/_/api/plugin-host/events/get.ts";
 import { state } from "../server/state.ts";
-import { AuthType } from "../server/config.ts";
+import { AuthType } from "./helpers/config.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import { catalogPluginReady } from "./helpers/plugin_ready.ts";
 import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
@@ -20,10 +20,10 @@ async function pluginApiServer(opts: Record<string, string> = {}) {
   const fixture = await pluginFixture();
   await fixture.install("ep", ENDPOINT_PLUGIN.manifest, ENDPOINT_PLUGIN.files);
   const server = await bootServer({
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_PATH_PREFIX: "",
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__SERVER_PATHPREFIX: "",
     ...opts,
   });
   // Wait until the service runtime reports ready through the catalog.
@@ -326,10 +326,9 @@ Deno.test("plugin api: invalidation stream delivers changes and closes on policy
   const fixture = await pluginFixture();
   await fixture.install("ep", ENDPOINT_PLUGIN.manifest, ENDPOINT_PLUGIN.files);
   const server = await bootServer({
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: "",
-    GLOBNOTES_PATH_PREFIX: "",
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    GLOBNOTES__SERVER_PATHPREFIX: "",
   });
   try {
     const setup = await fetch(`${server.baseUrl}/_/api/setup`, {

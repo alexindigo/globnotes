@@ -7,8 +7,6 @@
  */
 
 import * as path from "@std/path";
-import { type Environment, processEnvironment } from "./environment.ts";
-import { logger } from "./logger.ts";
 
 export function camelCase(snakeCaseStr: string): string {
   /** Return the given snake_case string in camelCase. */
@@ -260,46 +258,4 @@ export function rewriteIndexHtml(
     html = html.replace(/<title>[^<]*<\/title>/, `<title>${escaped}</title>`);
   }
   Deno.writeTextFileSync(htmlFile, html);
-}
-
-export interface GetEnvOptions {
-  mandatory?: boolean;
-  default?: string | number | boolean;
-  castInt?: boolean;
-  castBool?: boolean;
-}
-
-/** Get an environment variable from `env` (the process environment by
- * default). Exits the process when mandatory and unset, matching the Python
- * server's get_env contract. */
-export function getEnv(
-  key: string,
-  opts: GetEnvOptions = {},
-  env: Environment = processEnvironment,
-): string {
-  const raw = env.get(key);
-  if (raw === undefined || raw === "") {
-    if (opts.mandatory) {
-      logger.error(`Environment variable ${key} must be set.`);
-      Deno.exit(1);
-    }
-    if (opts.default !== undefined) return String(opts.default);
-    return "";
-  }
-  if (opts.castInt) {
-    const value = parseInt(raw, 10);
-    if (!Number.isFinite(value)) {
-      logger.error(`Invalid value '${raw}' for ${key}.`);
-      Deno.exit(1);
-    }
-    return String(value);
-  }
-  if (opts.castBool) {
-    const lowered = raw.toLowerCase();
-    if (lowered === "true") return "true";
-    if (lowered === "false") return "false";
-    logger.error(`Invalid value '${raw}' for ${key}.`);
-    Deno.exit(1);
-  }
-  return raw;
 }

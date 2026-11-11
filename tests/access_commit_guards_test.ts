@@ -2,7 +2,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { state } from "../server/state.ts";
 import { settingsWriteGuard } from "../server/auth/middleware.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
@@ -40,7 +40,13 @@ async function settingsFixture(
         unrelated_guard_fixture: { retained: true },
       }),
     );
-    const config = new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: vault })),
+    await Deno.writeTextFile(
+      `${vault}/.globnotes/config.toml`,
+      '[brand]\nname="Original guarded brand"\naccent="#aabbcc"\n',
+    );
+    const config = new GlobalConfig(
+        testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: vault }),
+      ),
       lifecycle = new PluginLifecycle(config);
     state.config = config;
     state.auth = null;

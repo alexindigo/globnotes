@@ -17,7 +17,7 @@ function api(
 }
 
 Deno.test("storage: CRUD lifecycle", async (t) => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await t.step("create and get note", async () => {
       const created = await api(server, "/_/api/notes", {
@@ -137,7 +137,7 @@ Deno.test("storage: CRUD lifecycle", async (t) => {
 });
 
 Deno.test("storage: note index and tree", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await api(server, "/_/api/notes", {
       method: "POST",
@@ -201,7 +201,7 @@ Deno.test("storage: note index and tree", async () => {
 });
 
 Deno.test("storage: rename preview", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await Deno.writeTextFile(`${server.vault}/pic.png`, "img");
     await Deno.writeTextFile(`${server.vault}/other.png`, "img");
@@ -228,7 +228,7 @@ Deno.test("storage: rename preview", async () => {
 });
 
 Deno.test("title: resolution order", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     const create = (path: string, content: string) =>
       api(server, "/_/api/notes", {

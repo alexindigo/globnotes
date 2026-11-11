@@ -12,9 +12,10 @@ export const MOVING = "# Moving note\n\n![pic](assets/pic.png)\n";
 
 export async function createFixture(name, directory, { empty = false } = {}) {
   await Deno.mkdir(directory, { mode: 0o700 });
-  const vault = directory + "/vault", state = directory + "/state";
-  await Deno.mkdir(vault); await Deno.mkdir(state);
+  const vault = directory + "/vault", state = directory + "/state/globnotes";
+  await Deno.mkdir(vault); await Deno.mkdir(state, { recursive: true });
   await Deno.writeTextFile(state + "/config.json", JSON.stringify({ auth_type: "none", brand_name: "Native Test Notes" }), { createNew: true });
+  await Deno.writeTextFile(state + "/config.toml", '[brand]\nname="Native Test Notes"\n', { createNew: true });
   const image = await Deno.readFile(ROOT + "/client/assets/apple-touch-icon.png");
   const special = {
     "rendering/code-blocks": `# code-blocks\n\n\`\`\`python\n${CODE}\`\`\`\n`,

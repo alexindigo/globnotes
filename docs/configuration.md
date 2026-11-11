@@ -1,8 +1,7 @@
-# Layered configuration (v3 preparation)
+# Layered configuration
 
-The typed loader is preparatory: normal server startup still uses the existing
-configuration until the coordinated v3 cutover. Do not apply these names to a
-released v2 installation.
+Server, launcher and healthcheck use this strict boundary. These are v3 names;
+do not apply them to a released v2 installation. No old-name aliases exist.
 
 The shipped, commented `defaults/globnotes.toml` is complete. An optional partial
 `config/globnotes.toml` overrides individual leaves, then environment variables
@@ -59,7 +58,7 @@ validation before workers start. Credentials and ACLs are not vault TOML leaves.
 ## Persistence boundary
 
 `BoundFileStore` provides checked replacement for both JSON callers and the
-upcoming vault TOML owner. File/directory symlinks retain their identities.
+vault TOML owner. File/directory symlinks retain their identities.
 Writes check target access, preserve ownership/mode and sync a sibling temporary
 file. Bound-file identity and bytes are rechecked immediately before an atomic
 rename; a detected change causes a conflict. The check and rename are separate
@@ -68,7 +67,7 @@ overwritten. Owners serialize their own writes; only the owner parses policy
 and publishes updated state at successful replacement. Cleanup failures remain
 errors, including after replacement has already committed.
 
-## Plugin deployment pins (preparatory)
+## Plugin deployment pins
 
 Plugin composition is manifest/default baseline, saved plugin owner, explicit
 vault TOML pin, then env pin. Shipped `autoenable = true` is not a pin: saved
@@ -89,7 +88,6 @@ Settings provenance distinguishes `toml` from `environment` and marks only pinne
 fields read-only. Existing plugin full-page saves may include unchanged pinned
 fields; altered pins reject without changing the stored fallback. TOML/env use
 the same canonical value fingerprints and source-key/approval lifecycle.
-Normal boot still uses the temporary legacy adapter until the startup cutover.
 
 ## Service inputs
 
@@ -98,17 +96,15 @@ flags, never deployment paths, raw files or addressed plugin values. Explicit
 unsupported `vault` targets reject rather than selecting another vault. Branding
 pins disable only the named field; siblings and images retain their normal
 workflow. Reset omits pinned leaves and explains what it can clear. The resolved
-facade is preparatory until the startup cutover; authentication remains separate.
+facade keeps authentication separate.
 
 Index pacing, directory-cache TTL and hub scan interval are configured in seconds;
 the configuration boundary converts them once to milliseconds for their consumers.
 Session days become JWT expiry seconds at that boundary. Render workers remain per
 vault, so total worker count grows with vault count. Services receive snapshots,
-not live environment lookups. The temporary pre-cutover `config/legacy.ts` adapter
-preserves existing startup and test inputs until step 8 removes old names.
-Runtime images include the shipped defaults required by this preparatory adapter.
+not live environment lookups. Runtime images include the shipped defaults.
 
-The preparatory `VaultConfigStore` saves partial vault TOML through this boundary.
+`VaultConfigStore` saves partial vault TOML through this boundary.
 App writes preserve omitted leaves and explicit empty values, and cannot replace
 env-pinned leaves (even with the same value). External edits take effect on restart.
 An external change detected by the final identity/bytes check is a conflict, not
@@ -116,3 +112,27 @@ an implicit reload. A concurrent external edit between that check and the atomic
 rename can still be overwritten, as described above.
 Invalid TOML is retained. Plugin policy/settings writes still go to their existing
 owners, not to a second app-saved TOML copy. Branding images remain in `brand/`.
+
+## Current single-vault startup
+
+This phase serves only the vault named `globnotes`, declared with
+`GLOBNOTES_GLOBNOTES_PATH` or `[vaults.entries.globnotes]`, otherwise at
+`<vaults.basepath>/globnotes` (default `/data/globnotes`). The notes folder must
+already exist. Other names or multiple declarations require the future registry
+piece and fail explicitly; they are not silently reduced to the first vault.
+
+Version, all configuration scopes and installed plugin pins validate before
+metadata parents are prepared by the bound-file owner and services start.
+The launcher uses that same owner, never recursively chowns mounted notes, and
+retains PUID/PGID/non-root handling. Health uses the same nonsecret shell projection
+for address, port, prefix and allowed Host header. It does not write configuration
+or export resolved values as environment overrides.
+
+Startup never converts `config.json` to TOML, relocates metadata, deletes old index
+files or logs relocation commands. Operator relocation is separate from the future
+v2 import tool. Setup/access still use the guarded private JSON record as a local
+transition bridge; this is not the final v3 import format or an Admin/ACL system.
+Auth mode, credentials, signing keys and read-only-settings environment inputs are
+retired without replacements. Use setup/access for those existing workflows.
+`LOGLEVEL` is ignored; use `GLOBNOTES__LOG_LEVEL`. See [MIGRATION](../MIGRATION.md)
+for the full old-to-new inventory.

@@ -246,6 +246,8 @@ try {
   procs.push(py);
 
   // Deno server from the worktree
+  mkdirSync(join(vaultDeno, ".globnotes"), { recursive: true });
+  writeFileSync(join(vaultDeno, ".globnotes", "config.json"), JSON.stringify({ auth_type: "none" }));
   const deno = spawn(
     "deno",
     [
@@ -257,10 +259,9 @@ try {
       cwd: ROOT,
       env: {
         ...process.env,
-        GLOBNOTES_AUTH_TYPE: "none",
-        GLOBNOTES_PATH: vaultDeno,
-        GLOBNOTES_PORT: String(DENO_PORT),
-        GLOBNOTES_HOST: "127.0.0.1",
+        GLOBNOTES_GLOBNOTES_PATH: vaultDeno,
+        GLOBNOTES__SERVER_PORT: String(DENO_PORT),
+        GLOBNOTES__SERVER_HOST: "127.0.0.1",
         NO_COLOR: "1",
       },
       stdio: "ignore",

@@ -73,6 +73,11 @@ export class VaultConfigStore {
     if (expected !== this.#snapshot) throw new StoredConfigConflict();
     this.#file.assertUnchanged(expected.persistence);
   }
+  prepareParents(): void {
+    const before = this.#snapshot;
+    const persistence = this.#file.prepareParents(before.persistence);
+    this.#snapshot = freeze({ ...before, persistence });
+  }
 
   #spelling = (key: string) =>
     `GLOBNOTES_${escapeVaultName(this.name)}_${

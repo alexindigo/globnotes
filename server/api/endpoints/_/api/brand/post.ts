@@ -185,8 +185,6 @@ export default async function (request: PathfinderRequest) {
           config.resolved!.vault.save({ brand }, vaultSnapshot, guard);
         }
       } else saveBrandConfig(config, snapshot, base, changes, deletions);
-      if (name !== null) config.brandName = String(name) || null;
-      if (accent !== null) config.brandAccent = String(accent) || null;
       logger.info("Instance branding updated.");
     }
     return brandBlock(config);

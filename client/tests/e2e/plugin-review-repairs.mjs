@@ -90,7 +90,7 @@ function gateResponse(method, path) {
 async function release(gate) { gate.released = true; gate.release.resolve(); }
 async function fixture(label, { protectedAccount = false, browser = false } = {}) {
   assert(fixtures.every(value => value.closed), "Previous successful fixture not closed");
-  const directory = `${artifacts}/${label}`, vault = `${directory}/vault`, state = `${directory}/state`, pluginDir = `${state}/plugins/review`;
+  const directory = `${artifacts}/${label}`, vault = `${directory}/vault`, state = `${directory}/state/globnotes`, pluginDir = `${state}/plugins/review`;
   await Deno.mkdir(vault, { recursive: true }); await Deno.mkdir(pluginDir, { recursive: true });
   await Deno.writeTextFile(`${vault}/Seed.md`, "Review seed.\n");
   const config = protectedAccount ? { auth_type: "password", username, password_hash: await hashPassword(password), secret_key: crypto.randomUUID(), unrelated_fixture: { retained: true } } : { auth_type: "none" };
@@ -111,7 +111,7 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
     const token = await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(config.secret_key));
     headers = { authorization: `Bearer ${token}` };
   }
-  current.server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_AUTO_ENABLE_PLUGINS: "" }, logsDir: directory, headers });
+  current.server = await bootServer(vault, state, { logsDir: directory, headers });
   const owner = current;
   current.proxy = Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, async request => {
     const url = new URL(request.url);

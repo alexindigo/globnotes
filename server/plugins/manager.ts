@@ -3,9 +3,9 @@
 /** One catalog of optional contributions. Rendering is a lazy compatibility adapter. */
 import * as path from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
-import type { Environment } from "../environment.ts";
 import type { PluginSettings } from "../config/consumers.ts";
-import { legacyPluginSettings } from "../config/legacy.ts";
+import { pluginSettings } from "../config/consumers.ts";
+import { config, loadVaultConfig } from "../config/loader.ts";
 import { logger } from "../logger.ts";
 import {
   PluginHost,
@@ -107,10 +107,6 @@ export interface PluginManagerOptions {
   settings?: PluginSettings;
   settingsEnvironment?: PluginSettingsEnvironment;
   internalRoot?: string;
-  autoEnable?: boolean;
-  environment?: boolean;
-  /** Temporary pre-cutover input; adapted centrally in config/legacy.ts. */
-  env?: Environment;
   persistence?: PersistenceAdapters;
   /** Evaluated at pool start/respawn: all worker roles get write:false
    * while setup is pending or the vault is read-only. */
@@ -148,10 +144,7 @@ export class PluginManager {
     options: PluginManagerOptions = {},
   ) {
     const settings = options.settings ??
-      legacyPluginSettings(options.env, {
-        ...options,
-        renderWorkers: workerCount,
-      });
+      pluginSettings(config(), loadVaultConfig("globnotes", null, {}));
     this.vaultPath = vaultPath;
     this.statePath = statePath ?? path.join(vaultPath, ".globnotes");
     this.rpc = rpc;

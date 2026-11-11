@@ -7,13 +7,12 @@
  * (server/api/endpoints/), an app-wide auth middleware (_/00-auth.ts),
  * a root crossing-rest catch-all for vault files and note pages, and a
  * package-owned /_status ops face. A thin wrapper first applies host
- * admission (GLOBNOTES_ALLOWED_HOSTS, server/host_admission.ts) to every
+ * admission (GLOBNOTES__SERVER_ALLOWEDHOSTS, server/host_admission.ts) to every
  * request, then re-homes the configured path prefix onto each Request
  * before the app sees it.
  */
 
 import { pathfinder } from "@pathfinder/pathfinder";
-import * as path from "@std/path";
 import { LocalAuth } from "./auth/local.ts";
 import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
@@ -32,39 +31,40 @@ import { PluginLifecycle } from "./plugins/lifecycle.ts";
 import { PluginManager } from "./plugins/manager.ts";
 import { servicePluginRpc } from "./plugins/rpc.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
-import { getEnv, rewriteIndexHtml } from "./helpers.ts";
+import { rewriteIndexHtml } from "./helpers.ts";
 import { admitHost, createRebindingWarner } from "./host_admission.ts";
 import { initializeLogger, logger } from "./logger.ts";
+import { config, configuration } from "./config/loader.ts";
 import {
-  legacyLogLevel,
-  legacyPluginSettings,
-  legacyServiceSettings,
-  sessionSettings,
-} from "./config/legacy.ts";
+  singleVaultBindings,
+  singleVaultSettings,
+} from "./config/single_vault.ts";
+import { pluginSettings, serviceSettings } from "./config/consumers.ts";
+import { snapshotEnvironment } from "./environment.ts";
 import { createMcpEndpoint } from "./mcp/endpoint.ts";
 import { createRateLimiter } from "./mcp/rate_limit.ts";
 import { initState, state } from "./state.ts";
 import { Fts5Indexer } from "./search/fts5.ts";
-import { readAppVersion } from "./version.ts";
+import { type AppVersion, readAppVersion } from "./version.ts";
 import { formatVersion } from "../shared/version.ts";
-
-function fileExists(p: string): boolean {
-  try {
-    return Deno.statSync(p).isFile;
-  } catch {
-    return false;
-  }
-}
 
 // Release identity first: a missing or invalid VERSION/GLOBNOTES_REVISION
 // stops startup before anything else is touched.
-const appVersion = readAppVersion();
-initializeLogger(legacyLogLevel());
-logger.info(`globnotes ${formatVersion(appVersion)}`);
-
-const globalConfig = new GlobalConfig();
-const environment = globalConfig.environment;
-const services = legacyServiceSettings(environment);
+const environment = snapshotEnvironment();
+let appVersion: AppVersion,
+  globalConfig: GlobalConfig,
+  services: ReturnType<typeof serviceSettings>;
+try {
+  appVersion = readAppVersion({ env: { get: (key) => environment[key] } });
+  const instance = config({ env: environment, vaults: singleVaultBindings });
+  globalConfig = new GlobalConfig(
+    singleVaultSettings(configuration(), environment),
+  );
+  services = serviceSettings(instance);
+} catch (error) {
+  console.error((error as Error).message);
+  Deno.exit(1);
+}
 // One effects owner for the vault; vault effects run only inside the gate.
 const effects = new VaultEffects(globalConfig.notesPath);
 const notes = new FileSystemNotes(
@@ -73,15 +73,6 @@ const notes = new FileSystemNotes(
   services.notes,
   effects,
 );
-const indexer = new Fts5Indexer(globalConfig.statePath, services.index);
-const fileServing = new FileServing(globalConfig.notesPath, effects);
-const hub = new VaultHub(
-  globalConfig.notesPath,
-  globalConfig.statePath,
-  services.hub,
-);
-// Versioning plugins are offered displaced bytes before every gate write.
-const gate = new HubGate({ hub, versioning: () => plugins.runtime });
 const plugins = new PluginManager(
   globalConfig.notesPath,
   undefined,
@@ -95,13 +86,33 @@ const plugins = new PluginManager(
     persistence: {
       commit: (effect) => state.lifecycle!.gate.run(effect),
     },
-    settings: legacyPluginSettings(environment),
+    settings: pluginSettings(
+      globalConfig.resolved.instance,
+      globalConfig.resolved.vault.capture().resolved,
+    ),
   },
 );
+try {
+  plugins.validateConfiguration();
+} catch (error) {
+  console.error((error as Error).message);
+  Deno.exit(1);
+}
+initializeLogger(globalConfig.resolved.instance.log.level);
+logger.info(`globnotes ${formatVersion(appVersion)}`);
 const auth = globalConfig.authType === AuthType.PASSWORD ||
     globalConfig.authType === AuthType.TOTP
-  ? new LocalAuth(globalConfig, sessionSettings(environment))
+  ? new LocalAuth(globalConfig, services.sessions)
   : null;
+globalConfig.resolved.vault.prepareParents();
+const indexer = new Fts5Indexer(globalConfig.statePath, services.index);
+const fileServing = new FileServing(globalConfig.notesPath, effects);
+const hub = new VaultHub(
+  globalConfig.notesPath,
+  globalConfig.statePath,
+  services.hub,
+);
+const gate = new HubGate({ hub, versioning: () => plugins.runtime });
 initState(globalConfig, auth, notes, indexer, fileServing, plugins, hub);
 
 // Guarded-operation bundle: lifecycle (epochs/gates) → operations facade →
@@ -228,38 +239,6 @@ try {
   logger.debug("client/dist/index.html not present; skipping rewrite.");
 }
 
-// One-time Whoosh → FTS5 migration: old segment files serve no purpose.
-const globDir = globalConfig.statePath;
-try {
-  for (const entry of Deno.readDirSync(globDir)) {
-    if (
-      entry.isFile &&
-      (entry.name.endsWith(".seg") || entry.name.endsWith(".toc") ||
-        entry.name === "WRITELOCK")
-    ) {
-      Deno.removeSync(`${globDir}/${entry.name}`);
-    }
-  }
-} catch {
-  // .globnotes doesn't exist yet — first boot
-}
-
-// Relocated state dir but a legacy vault: warn loudly with the exact
-// move; never auto-copy (partial cross-filesystem copies of credentials
-// are the failure mode).
-if (
-  getEnv("GLOBNOTES_INDEX_PATH", {}, environment) &&
-  !fileExists(path.join(globalConfig.statePath, "config.json")) &&
-  fileExists(path.join(globalConfig.notesPath, ".globnotes", "config.json"))
-) {
-  logger.warning(
-    "GLOBNOTES_INDEX_PATH is set but the state dir has no config.json — " +
-      "the vault still holds it. Move the existing state with:\n" +
-      `  mv ${path.join(globalConfig.notesPath, ".globnotes")}/* ` +
-      `${globalConfig.statePath}/`,
-  );
-}
-
 if (globalConfig.setupRequired) {
   logger.info("First-run setup required. Open the web UI to complete setup.");
 } else if (globalConfig.authType === AuthType.NONE) {
@@ -270,23 +249,14 @@ if (globalConfig.setupRequired) {
 }
 // DNS-rebinding exposure (server/host_admission.ts): checked now and after
 // every access-policy change, so a first-run setup or an access-settings
-// change to none/read_only without GLOBNOTES_ALLOWED_HOSTS warns too.
+// change to none/read_only without GLOBNOTES__SERVER_ALLOWEDHOSTS warns too.
 const rebindingWarner = createRebindingWarner((message) =>
   logger.warning(message)
 );
 rebindingWarner.update(state.config);
 lifecycle.onPolicyChange(() => rebindingWarner.update(state.config));
-if (auth?.isTotpEnabled && auth.totpKeyFromEnv) {
-  // Env-configured keys enrol via this log line — their only channel.
-  // Wizard-enrolled keys were already recorded in the UI; printing them
-  // here would leave key material in the logs for no reason.
-  await auth.displayTotpEnrolment();
-}
-
-const hostname = getEnv("GLOBNOTES_HOST", { default: "0.0.0.0" }, environment);
-const port = Number(
-  getEnv("GLOBNOTES_PORT", { castInt: true, default: 8080 }, environment),
-);
+const hostname = globalConfig.resolved.instance.server.host;
+const port = globalConfig.resolved.instance.server.port;
 const prefix = globalConfig.pathPrefix;
 
 const app = await pathfinder({
@@ -330,7 +300,7 @@ Deno.addSignalListener("SIGTERM", () => {
 Deno.addSignalListener("SIGINT", () => {
   shutdown().catch(() => Deno.exit(1));
 });
-// The bound port: equal to GLOBNOTES_PORT, or the OS-assigned one when that
+// The bound port: equal to server.port, or the OS-assigned one when that
 // is 0 (test launchers read it from this line).
 const boundPort = (httpServer.addr as Deno.NetAddr).port;
 logger.info(

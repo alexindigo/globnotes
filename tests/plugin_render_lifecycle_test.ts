@@ -10,7 +10,7 @@ import { fixturePage } from "./helpers/plugin_fixture.ts";
 import { renderMarkdown } from "../server/render/pipeline.ts";
 import { state } from "../server/state.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import {
   bounded as livenessBounded,
   until,
@@ -59,9 +59,9 @@ async function fixtureBundle(
     lifecycle: state.lifecycle,
   };
   const env = testEnvironment({
-    GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_INDEX_PATH: fixture.statePath,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    fixtureStatePath: fixture.statePath,
+    fixtureAuth: { auth_type: "none" },
   });
   state.config = new GlobalConfig(env);
   state.auth = null;

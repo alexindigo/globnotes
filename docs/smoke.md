@@ -13,7 +13,7 @@ printf '# Quick\n\n==highlighted== #taggy\n' > /tmp/globnotes-fixture/dad/quickn
 
 ## First-run wizard (no auth env vars)
 
-- [ ] Start container without `GLOBNOTES_AUTH_TYPE` → UI shows the setup wizard; API calls return 503.
+- [ ] Start with an existing notes mount and no private setup record: UI shows setup; data APIs return 503.
 - [ ] "Create password" → login prompt appears; logging in works.
 - [ ] (Fresh dir) "Read-only" → notes browse/search fine; edit/delete/upload return 403 immediately and after restart.
 - [ ] Restart container → no wizard; login still works.
@@ -49,6 +49,6 @@ printf '# Quick\n\n==highlighted== #taggy\n' > /tmp/globnotes-fixture/dad/quickn
 
 ## Path prefix
 
-- [ ] With `GLOBNOTES_PATH_PREFIX=/mom`: notes at `/mom/dad/...`, files at `/mom/dad/assets/...`, API at `/mom/_/api/...`, assets at `/mom/_/assets/...`.
+- [ ] With `GLOBNOTES__SERVER_PATHPREFIX=/mom`: notes at `/mom/dad/...`, files at `/mom/dad/assets/...`, API at `/mom/_/api/...`, assets at `/mom/_/assets/...`.
 - [ ] Relative image links render under the prefix.
 - [ ] The container healthcheck passes with the prefix set.

@@ -4,15 +4,15 @@
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
 import { bootServer as launchServer } from "../../../tests/helpers/boot.ts";
+import { metadataBase } from "./config-fixture.mjs";
 
 export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFailed = false, headers = {} } = {}) {
   const hostname = bindAddress();
   // Reuse the owner of port-0 binding, private build/cwd and clean child env.
   const server = await launchServer({
       ...env,
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_INDEX_PATH: stateDir,
-      GLOBNOTES_AUTH_TYPE: env.GLOBNOTES_AUTH_TYPE ?? "none",
+       GLOBNOTES_GLOBNOTES_PATH: vault,
+       GLOBNOTES_METADATA_PATH: metadataBase(vault, stateDir),
   }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${new URL("../../../deno.json", import.meta.url).pathname}`] });
   const logs = server.output;
   let closed = false;
@@ -27,7 +27,7 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFail
     }
   }
   const baseUrl = server.baseUrl;
-  const prefix = env.GLOBNOTES_PATH_PREFIX ?? "";
+   const prefix = env.GLOBNOTES__SERVER_PATHPREFIX ?? "";
   const children = [{ pid: server.pid, status: server.status, logs: server.logs }];
   try {
     // Wait for plugin runtime readiness through the catalog.

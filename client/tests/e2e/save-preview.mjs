@@ -90,8 +90,8 @@ try {
     }
   }
   server = await bootServer({
-    GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: `${vault}/.globnotes`,
-    GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_PATH_PREFIX: "",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: "",
   }, applicationServer());
   await ownPage();
   console.log(JSON.stringify({ source: import.meta.url, vault, artifacts,

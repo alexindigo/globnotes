@@ -19,14 +19,14 @@ async function setup(name, { view = false, readonly = false, create = false } = 
   const directory = `${artifacts}/${name}`;
   await Deno.mkdir(directory);
   const vault = await Deno.makeTempDir({ prefix: "owner-guards-vault-" });
-  const state = await Deno.makeTempDir({ prefix: "owner-guards-state-" });
+  const state = await metadataDirectory({ prefix: "owner-guards-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
   await Deno.writeTextFile(`${vault}/Other.md`, "Other content.\n");
   await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: readonly ? "read_only" : "none" }));
   await Deno.mkdir(`${state}/plugins/owner-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/owner-guard/manifest.json`, JSON.stringify({ id: "owner-guard", runtime: { server: "service.js" }, hooks: ["pre-save"] }));
   await Deno.writeTextFile(`${state}/plugins/owner-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => fact.proposed.content.includes('OWNER-GUARD') ? {cancel:true,reason:'Owned guard rejection'} : {cancel:false}); }");
-  const server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "" }, logsDir: directory });
+  const server = await bootServer(vault, state, { logsDir: directory });
   const controller = new AbortController();
   const records = [], reads = [];
   let active = 0, maxActive = 0;
@@ -201,3 +201,4 @@ finally {
   }
 }
 if (failure) throw failure;
+import { metadataDirectory } from "./config-fixture.mjs";

@@ -1,3 +1,4 @@
+import { fixturePasswordHash } from "../helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -35,13 +36,15 @@ for (const invalidate of [false, true]) {
     const durable = await token(Math.floor(Date.now() / 1000) + 120);
     const headers = { authorization: `Bearer ${durable}` };
     const server = await bootServer({
-      GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.statePath,
-      GLOBNOTES_AUTH_TYPE: "password",
-      GLOBNOTES_USERNAME: "stream-fixture",
-      GLOBNOTES_PASSWORD: "fixture-password",
-      GLOBNOTES_SECRET_KEY: secret,
-      GLOBNOTES_PATH_PREFIX: "",
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      fixtureAuth: {
+        auth_type: "password",
+        username: "stream-fixture",
+        password_hash: fixturePasswordHash("fixture-password"),
+        secret_key: secret,
+      },
+      GLOBNOTES__SERVER_PATHPREFIX: "",
     });
     const controller = new AbortController();
     let drained: Promise<void> | undefined;

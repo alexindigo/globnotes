@@ -60,13 +60,13 @@ async function hoverStyle(session, selector, directory, label) {
 export async function exercisePrimitiveOwnership({ port, directory }) {
   await Deno.mkdir(directory);
   const vault = await Deno.makeTempDir({ prefix: 'settings-primary-vault-' });
-  const state = await Deno.makeTempDir({ prefix: 'settings-primary-state-' });
+  const state = await metadataDirectory({ prefix: 'settings-primary-state-' });
   await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: 'none' }));
   const plugin = `${state}/plugins/primary-probe`;
   await Deno.mkdir(plugin, { recursive: true });
   await Deno.writeTextFile(`${plugin}/manifest.json`, JSON.stringify({ id: 'primary-probe', name: 'Primary probe', runtime: { server: 'service.js' }, capabilities: { network: true } }));
   await Deno.writeTextFile(`${plugin}/service.js`, "let n=0;export function activate(ctx){ctx.commands.register({id:'request',label:'Request',target:'server'},()=>ctx.permissions.requestAccess({kind:'network',hosts:['primary-'+(++n)+'.example:443'],reason:'Shared primary and decision-zone consumer'}));}");
-  const server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: '', TMPDIR: Deno.env.get('TMPDIR') }, logsDir: directory });
+  const server = await bootServer(vault, state, { env: { TMPDIR: Deno.env.get('TMPDIR') }, logsDir: directory });
   const session = await nativeSession({ port });
   const results = [];
   let failure;
@@ -125,3 +125,4 @@ export async function exercisePrimitiveOwnership({ port, directory }) {
   }
   return { results, targetClosed: true, serverClosed: true };
 }
+import { metadataDirectory } from "./config-fixture.mjs";

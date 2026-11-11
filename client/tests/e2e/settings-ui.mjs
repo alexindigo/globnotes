@@ -31,7 +31,7 @@ const password = "fixture-old-secret";
 async function fixture(kind, label) {
   assert(fixtures.every(owned => owned.closed), "Previous successful fixture still owns live resources");
   vault = await Deno.makeTempDir({ prefix: `settings-ui-${label}-vault-` });
-  state = await Deno.makeTempDir({ prefix: `settings-ui-${label}-state-` });
+  state = await metadataDirectory({ prefix: `settings-ui-${label}-state-` });
   await Deno.writeTextFile(`${vault}/NoteA.md`, label === "menu-parity" ? "Seed content.\n\n```text\nfirst code line\nsecond code line\n```\n" : label.startsWith("editor-") ? "---\nstatus: seed\ntags: [native]\n---\n\nSeed editor content.\n" : "Seed content.\n");
   const secret = crypto.randomUUID();
   const config = kind === "password"
@@ -65,10 +65,10 @@ async function fixture(kind, label) {
   const token = kind === "password" ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
   const directory = `${artifacts}/${label}`;
   await Deno.mkdir(directory);
-  server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
   if (label === "cross-browser") server = createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
     const logsDir=`${directory}/backend-${count}`;await Deno.mkdir(logsDir);
-    return bootServer(vault,state,{env:{GLOBNOTES_AUTH_TYPE:"",TMPDIR:Deno.env.get('TMPDIR')},logsDir,headers:{authorization:`Bearer ${token}`}});
+    return bootServer(vault,state,{env:{TMPDIR:Deno.env.get('TMPDIR')},logsDir,headers:{authorization:`Bearer ${token}`}});
   } });
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
   const owned = { label, directory, vault, state, server, session, closed: false };
@@ -256,3 +256,4 @@ finally {
 }
 if (failure) throw failure;
 import { waitForAccessSummary } from './settings-access-native.mjs';
+import { metadataDirectory } from "./config-fixture.mjs";

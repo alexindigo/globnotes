@@ -1,3 +1,4 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** Guarded-operation lifecycle tests: rejection precedes mutation, actual
@@ -9,7 +10,7 @@
 import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
@@ -518,15 +519,22 @@ Deno.test("lifecycle: initial indexing is inventory plus on-sync, not fake creat
       capabilities: { read: ["vault"], write: ["vault"] },
     }, { "service.js": RECORDER_SERVICE });
     const env = testEnvironment({
-      GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.statePath,
-      GLOBNOTES_AUTH_TYPE: "none",
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      fixtureStatePath: fixture.statePath,
+      fixtureAuth: { auth_type: "none" },
     });
     let manager: PluginManager | null = null;
     try {
       const config = new GlobalConfig(env);
-      const notes = new FileSystemNotes(fixture.vault, {}, env);
-      const indexer = new Fts5Indexer(fixture.statePath, env);
+      const notes = new FileSystemNotes(
+        fixture.vault,
+        {},
+        testServices(env).notes,
+      );
+      const indexer = new Fts5Indexer(
+        testMetadata(fixture.statePath),
+        testServices(env).index,
+      );
       const files = new FileServing(fixture.vault);
       manager = createPluginManager(
         fixture.vault,
@@ -734,10 +742,10 @@ Deno.test("lifecycle: wire envelope over HTTP carries structured codes; rewrite 
       }`,
     });
     const server = await bootServer({
-      GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.statePath,
-      GLOBNOTES_AUTH_TYPE: "none",
-      GLOBNOTES_PATH_PREFIX: "",
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      fixtureAuth: { auth_type: "none" },
+      GLOBNOTES__SERVER_PATHPREFIX: "",
     });
     try {
       // Guard runtime must be up before the operation — wait via catalog-free retry.

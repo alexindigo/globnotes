@@ -1,3 +1,4 @@
+import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -95,7 +96,9 @@ Deno.test("auth: read_only flow", async (t) => {
   }
 
   await t.step("read_only persists across restart", async () => {
-    const restarted = await bootServer({ GLOBNOTES_PATH: server.vault });
+    const restarted = await bootServer({
+      GLOBNOTES_GLOBNOTES_PATH: server.vault,
+    });
     try {
       const res = await fetch(`${restarted.baseUrl}/_/api/setup`);
       assertEquals((await res.json()).setupRequired, false);
@@ -226,7 +229,9 @@ Deno.test("auth: password flow", async (t) => {
   }
 
   await t.step("setup persists across restart", async () => {
-    const restarted = await bootServer({ GLOBNOTES_PATH: server.vault });
+    const restarted = await bootServer({
+      GLOBNOTES_GLOBNOTES_PATH: server.vault,
+    });
     try {
       const res = await fetch(`${restarted.baseUrl}/_/api/setup`);
       assertEquals((await res.json()).setupRequired, false);
@@ -260,7 +265,7 @@ Deno.test("auth: password flow requires credentials", async () => {
   }
 });
 
-Deno.test("auth: env credentials win over stored config", async () => {
+Deno.test("auth: explicitly seeded private credentials replace the fixture's public record", async () => {
   const vault = await Deno.makeTempDir();
   try {
     await Deno.mkdir(`${vault}/.globnotes`, { recursive: true });
@@ -269,11 +274,13 @@ Deno.test("auth: env credentials win over stored config", async () => {
       JSON.stringify({ auth_type: "none" }),
     );
     const server = await bootServer({
-      GLOBNOTES_PATH: vault,
-      GLOBNOTES_AUTH_TYPE: "password",
-      GLOBNOTES_USERNAME: "bob",
-      GLOBNOTES_PASSWORD: "hunter2",
-      GLOBNOTES_SECRET_KEY: "testsecret",
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      fixtureAuth: {
+        auth_type: "password",
+        username: "bob",
+        password_hash: fixturePasswordHash("hunter2"),
+        secret_key: "testsecret",
+      },
     });
     try {
       const setup = await fetch(`${server.baseUrl}/_/api/setup`);
@@ -461,9 +468,11 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
   }
 
   await t.step(
-    "stored key survives restart — as if env-configured",
+    "stored key survives restart without credential environment inputs",
     async () => {
-      const restarted = await bootServer({ GLOBNOTES_PATH: server.vault });
+      const restarted = await bootServer({
+        GLOBNOTES_GLOBNOTES_PATH: server.vault,
+      });
       try {
         const res = await fetch(`${restarted.baseUrl}/_/api/config`);
         assertEquals((await res.json()).authType, "totp");

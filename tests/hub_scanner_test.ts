@@ -1,13 +1,21 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals } from "@std/assert";
 import { VaultHub } from "../server/hub/hub.ts";
 import type { ChangeEntry } from "../server/hub/types.ts";
-import { type Environment, testEnvironment } from "./helpers/environment.ts";
+import {
+  type FixtureEnvironment,
+  testEnvironment,
+} from "./helpers/environment.ts";
 
-function fixture(env: Environment = testEnvironment()) {
+function fixture(env: FixtureEnvironment = testEnvironment()) {
   const root = Deno.makeTempDirSync();
   Deno.mkdirSync(`${root}/vault`);
-  const hub = new VaultHub(`${root}/vault`, `${root}/vault/.globnotes`, env);
+  const hub = new VaultHub(
+    `${root}/vault`,
+    testMetadata(`${root}/vault/.globnotes`),
+    testServices(env).hub,
+  );
   const batches: ChangeEntry[][] = [];
   hub.subscribe((entries) => batches.push(entries));
   return {
@@ -192,15 +200,18 @@ Deno.test("hub scanner: periodic fallback survives unavailable watcher and reads
   const watch = Deno.watchFs;
   // A live (mutable) environment: the later change proves the hub read the
   // interval once, at construction.
-  const values = new Map([["GLOBNOTES_HUB_SCAN_INTERVAL", "0.05"]]);
-  const f = fixture({ get: (key) => values.get(key) });
+  const values = new Map([["GLOBNOTES__HUB_SCANINTERVAL", "0.05"]]);
+  const f = fixture({
+    values: Object.fromEntries(values),
+    get: (key) => values.get(key),
+  });
   try {
     Deno.watchFs = () => {
       throw new Error("watcher unavailable fixture");
     };
     f.hub.start();
     Deno.watchFs = watch;
-    values.set("GLOBNOTES_HUB_SCAN_INTERVAL", "60");
+    values.set("GLOBNOTES__HUB_SCANINTERVAL", "60");
     Deno.writeTextFileSync(`${f.vault}/periodic.md`, "periodic");
     const deadline = Date.now() + 1500;
     while (!f.hub.fileState("periodic.md") && Date.now() < deadline) {

@@ -67,7 +67,8 @@ await conflictCase("conflict-review-native", async f => {
     assert(await Deno.readTextFile(`${f.vault}/${partial.path}`) === "partial response retained\n" && await f.absent(partial.copyPath), "Partial-response fixture did not retain actual effects");
     f.results.push({ injectedPartialResponseAfterActualEffects: true, draftRetained: true, noReplay: true });
   } finally { await partialResponse.dispose(); }
-  await f.restart({ GLOBNOTES_AUTH_TYPE: "password", GLOBNOTES_USERNAME: "m3-fixture", GLOBNOTES_PASSWORD: "m3-fixture-password", GLOBNOTES_SECRET_KEY: "m3-native-fixture-only-secret-key" });
+  const { fixturePasswordHash } = await import("../../../tests/helpers/config.ts");
+  await f.restart({ fixtureAuth: { auth_type: "password", username: "m3-fixture", password_hash: fixturePasswordHash("m3-fixture-password"), secret_key: "m3-native-fixture-only-secret-key" } });
   await s.goto(f.url("/_/conflicts")); await f.login("m3-fixture", "m3-fixture-password");
   const guarded = await f.create("Departure");
   await s.goto(f.url("/_/conflicts")); await f.inboxCount(1); await s.click(".conflicts-page__row"); await s.button("Edit a merge"); await f.fill("departure draft\n");

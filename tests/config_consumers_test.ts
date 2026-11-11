@@ -1,14 +1,12 @@
+import { testMetadata } from "./helpers/environment.ts";
+import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { decodeJwt } from "jose";
 import { LocalAuth } from "../server/auth/local.ts";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { serviceSettings } from "../server/config/consumers.ts";
 import { loadInstanceConfig } from "../server/config/loader.ts";
-import {
-  legacyServiceSettings,
-  sessionSettings,
-} from "../server/config/legacy.ts";
 import { VaultHub } from "../server/hub/hub.ts";
 import { initializeLogger, logger } from "../server/logger.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
@@ -90,7 +88,7 @@ Deno.test("config consumers: typed batch size and fractional pacing reach the FT
     fixture = setupState(root);
     const paced: number[] = [];
     const index = new Fts5Indexer(
-      `${root}/typed-index`,
+      testMetadata(`${root}/typed-index`),
       configured({
         GLOBNOTES__INDEX_BATCHSIZE: "2",
         GLOBNOTES__INDEX_BATCHDELAY: "0.125",
@@ -130,7 +128,7 @@ Deno.test("config consumers: typed scan interval reaches the hub's actual timer"
     };
     hub = new VaultHub(
       root,
-      `${root}/.globnotes`,
+      testMetadata(`${root}/.globnotes`),
       configured({ GLOBNOTES__HUB_SCANINTERVAL: "1.25" }).hub,
     );
     hub.start();
@@ -146,12 +144,14 @@ Deno.test("config consumers: session expiry reaches the signed JWT, independent 
   const root = Deno.makeTempDirSync({ prefix: "config-consumer-auth-" });
   try {
     const config = new GlobalConfig(testEnvironment({
-      GLOBNOTES_PATH: root,
-      GLOBNOTES_AUTH_TYPE: "password",
-      GLOBNOTES_USERNAME: "owner",
-      GLOBNOTES_PASSWORD: "fixture password",
-      GLOBNOTES_SECRET_KEY: "fixture signing material",
-      GLOBNOTES_SESSION_EXPIRY_DAYS: "10",
+      GLOBNOTES_GLOBNOTES_PATH: root,
+      fixtureAuth: {
+        auth_type: "password",
+        username: "owner",
+        password_hash: fixturePasswordHash("fixture password"),
+        secret_key: "fixture signing material",
+      },
+      GLOBNOTES__SESSIONS_EXPIRYDAYS: "10",
     }));
     const auth = new LocalAuth(
       config,
@@ -175,22 +175,19 @@ Deno.test("config consumers: session expiry reaches the signed JWT, independent 
 });
 
 Deno.test("config consumers: temporary compatibility adapter retains old injected input behavior", () => {
-  const settings = legacyServiceSettings(testEnvironment({
-    GLOBNOTES_SCAN_CACHE_TTL: "0.5",
-    GLOBNOTES_INDEX_BATCH_SIZE: "7",
-    GLOBNOTES_INDEX_BATCH_DELAY: "0.25",
-    GLOBNOTES_HUB_SCAN_INTERVAL: "1.5",
-    GLOBNOTES_SESSION_EXPIRY_DAYS: "3",
-  }));
+  const settings = configured({
+    GLOBNOTES__INDEX_SCANCACHETTL: "0.5",
+    GLOBNOTES__INDEX_BATCHSIZE: "7",
+    GLOBNOTES__INDEX_BATCHDELAY: "0.25",
+    GLOBNOTES__HUB_SCANINTERVAL: "1.5",
+    GLOBNOTES__SESSIONS_EXPIRYDAYS: "3",
+  });
   assertEquals(settings, {
     notes: { scanCacheTtlMs: 500 },
     index: { batchSize: 7, batchDelayMs: 250 },
     hub: { scanIntervalMs: 1500 },
+    sessions: { expirySeconds: 259200 },
   });
-  assertEquals(
-    sessionSettings(testEnvironment({ GLOBNOTES_SESSION_EXPIRY_DAYS: "3" })),
-    { expirySeconds: 259200 },
-  );
   assert(Object.isFrozen(settings.notes));
   assert(
     Deno.readTextFileSync(new URL("../Dockerfile", import.meta.url)).includes(

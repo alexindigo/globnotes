@@ -4,7 +4,8 @@ import { DatabaseSync } from "node:sqlite";
 import { createUuid } from "../../shared/uuid.ts";
 import * as path from "@std/path";
 import type { IndexSettings } from "../config/consumers.ts";
-import { indexSettings, type LegacyInput } from "../config/legacy.ts";
+import { serviceSettings } from "../config/consumers.ts";
+import { config } from "../config/loader.ts";
 import type { Indexer } from "@server/state.ts";
 import { isReadableNotePath } from "@server/helpers.ts";
 import { logger } from "@server/logger.ts";
@@ -78,14 +79,16 @@ export class Fts5Indexer implements Indexer {
 
   constructor(
     stateDir: string,
-    settings?: LegacyInput<IndexSettings>,
+    settings: IndexSettings = serviceSettings(config()).index,
     adapters: Partial<IndexerAdapters> = {},
   ) {
-    this.#settings = indexSettings(settings);
+    this.#settings = settings;
     this.#adapters = { ...fileAdapters, ...adapters };
     // The arg IS the state dir (index.sqlite's home) — no join; the
     // caller resolves GLOBNOTES_INDEX_PATH vs <vault>/.globnotes.
-    Deno.mkdirSync(stateDir, { recursive: true });
+    if (!Deno.statSync(stateDir).isDirectory) {
+      throw new Error("Index metadata parent is not prepared");
+    }
     this.#indexPath = path.join(stateDir, "index.sqlite");
     this.#db = this.#adapters.openDatabase(this.#indexPath);
     try {

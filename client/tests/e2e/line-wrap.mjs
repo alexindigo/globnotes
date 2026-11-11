@@ -40,7 +40,7 @@ function check(name, cond, detail = "") {
 }
 
 const server = await bootServer({
-  GLOBNOTES_PATH: vault, GLOBNOTES_AUTH_TYPE: "none", GLOBNOTES_PATH_PREFIX: "",
+  GLOBNOTES_GLOBNOTES_PATH: vault, fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: "",
 }, applicationServer());
 const browser = await launchBrowser({ port: CDP_PORT });
 try {

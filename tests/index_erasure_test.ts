@@ -1,7 +1,8 @@
+import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
@@ -22,34 +23,38 @@ function fixture() {
   Deno.mkdirSync(vault);
   Deno.mkdirSync(storage);
   const env = testEnvironment({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_INDEX_PATH: storage,
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_INDEX_BATCH_DELAY: "0",
-    GLOBNOTES_INDEX_BATCH_SIZE: "2",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureStatePath: storage,
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__INDEX_BATCHDELAY: "0",
+    GLOBNOTES__INDEX_BATCHSIZE: "2",
   });
   const opened: DatabaseSync[] = [];
   const make = (failRead?: string, beforeOpen?: (filename: string) => void) => {
-    const index = new Fts5Indexer(storage, env, {
-      openDatabase(filename) {
-        beforeOpen?.(filename);
-        const db = new DatabaseSync(filename);
-        opened.push(db);
-        return db;
+    const index = new Fts5Indexer(
+      testMetadata(storage),
+      testServices(env).index,
+      {
+        openDatabase(filename) {
+          beforeOpen?.(filename);
+          const db = new DatabaseSync(filename);
+          opened.push(db);
+          return db;
+        },
+        readText(filename) {
+          if (filename.endsWith(`/${failRead}`)) {
+            throw new Deno.errors.PermissionDenied(
+              "injected rebuild acquisition failure",
+            );
+          }
+          return Deno.readTextFileSync(filename);
+        },
       },
-      readText(filename) {
-        if (filename.endsWith(`/${failRead}`)) {
-          throw new Deno.errors.PermissionDenied(
-            "injected rebuild acquisition failure",
-          );
-        }
-        return Deno.readTextFileSync(filename);
-      },
-    });
+    );
     initState(
       new GlobalConfig(env),
       null,
-      new FileSystemNotes(vault, {}, env),
+      new FileSystemNotes(vault, {}, testServices(env).notes),
       index,
       new FileServing(vault),
       null,
@@ -229,17 +234,21 @@ Deno.test("index erasure: failed rebuild never publishes a partial new index and
 Deno.test("index erasure: the actual hub projection batches rename-away and deleted-note erasure into one checkpoint", () => {
   const f = hubOperationsFixture();
   let db!: DatabaseSync, checkpoints = 0;
-  const index = new Fts5Indexer(f.config.statePath, testEnvironment({}), {
-    openDatabase(filename) {
-      db = new DatabaseSync(filename);
-      const prepare = db.prepare.bind(db);
-      db.prepare = ((sql: string) => {
-        if (sql === "PRAGMA wal_checkpoint(TRUNCATE)") checkpoints++;
-        return prepare(sql);
-      }) as typeof db.prepare;
-      return db;
+  const index = new Fts5Indexer(
+    testMetadata(f.config.statePath),
+    testServices(testEnvironment({})).index,
+    {
+      openDatabase(filename) {
+        db = new DatabaseSync(filename);
+        const prepare = db.prepare.bind(db);
+        db.prepare = ((sql: string) => {
+          if (sql === "PRAGMA wal_checkpoint(TRUNCATE)") checkpoints++;
+          return prepare(sql);
+        }) as typeof db.prepare;
+        return db;
+      },
     },
-  });
+  );
   subscribeIndex(f.hub, index);
   try {
     Deno.writeTextFileSync(

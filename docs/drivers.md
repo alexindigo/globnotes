@@ -346,7 +346,7 @@ Key entry and ordinary workflows work on local-domain plain HTTP, without a
 browser secure context. Off a trusted LAN, use a TLS reverse proxy such as Caddy
 or Nginx Proxy Manager to protect the link. When state lives inside the vault,
 the instance view names its path and explains that outside whole-folder copies
-include keys. Keep state outside such copies using `GLOBNOTES_INDEX_PATH`.
+include keys. Keep state outside such copies using `GLOBNOTES_METADATA_PATH`.
 
 The shipped [Remotely Save driver](../plugins/globnotes-remotely-save/README.md)
 is a production storage-SDK example: S3-compatible/WebDAV transports, bounded

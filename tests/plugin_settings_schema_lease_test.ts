@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import {
   type JsonValues,
   PluginContractError,
@@ -55,9 +55,9 @@ async function bundle() {
   };
   const config = new GlobalConfig(
       testEnvironment({
-        GLOBNOTES_PATH: fixture.vault,
-        GLOBNOTES_INDEX_PATH: fixture.statePath,
-        GLOBNOTES_AUTH_TYPE: "none",
+        GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+        fixtureStatePath: fixture.statePath,
+        fixtureAuth: { auth_type: "none" },
       }),
     ),
     lifecycle = new PluginLifecycle(config);

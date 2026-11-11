@@ -5,7 +5,7 @@ import {
   StoredConfigConflict,
   type StoredConfigSnapshot,
 } from "../server/config/file_store.ts";
-import { StoredConfigConflict as FacadeConflict } from "../server/config.ts";
+import { StoredConfigConflict as FacadeConflict } from "./helpers/config.ts";
 
 function fixture(run: (root: string) => void): void {
   const root = Deno.makeTempDirSync({ prefix: "bound-config-" });

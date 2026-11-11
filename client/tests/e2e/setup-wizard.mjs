@@ -129,9 +129,9 @@ try {
   await Deno.writeTextFile(join(vaultB, "FixtureB.md"), "# Fixture B\n\nbravo\n");
 
   // No auth env anywhere — the wizard must fire on every server.
-  servers.push(await bootServer({ GLOBNOTES_PATH: vaultA }, applicationServer()));
-  servers.push(await bootServer({ GLOBNOTES_PATH: vaultB }, applicationServer()));
-  servers.push(await bootServer({ GLOBNOTES_PATH: vaultC }, applicationServer()));
+  servers.push(await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vaultA }, applicationServer()));
+  servers.push(await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vaultB }, applicationServer()));
+  servers.push(await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vaultC }, applicationServer()));
   const [A, B, C] = servers;
   for (const s of servers) {
     const setup = await (await fetch(`${s.baseUrl}/_/api/setup`)).json();

@@ -3,6 +3,7 @@ const ROOT = new URL("../../..", import.meta.url).pathname;
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
 import { awaitHealthy } from "./harness-helpers.mjs";
+import { metadataBase } from "./config-fixture.mjs";
 const assert = (value, message) => { if (!value) throw Error(message); };
 const hash = async bytes => [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
 
@@ -36,7 +37,7 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`],
     cwd, clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_PATH_PREFIX: prefix, GLOBNOTES_AUTO_ENABLE_PLUGINS: "false", GLOBNOTES_HOST: hostname, GLOBNOTES_PORT: String(port) },
+    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR: Deno.env.get("TMPDIR"), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: metadataBase(vault, state), GLOBNOTES__SERVER_PATHPREFIX: prefix, GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false", GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) },
     stdout: "piped", stderr: "piped",
   }).spawn();
   const baseUrl = httpOrigin(port), logs = { stdout: "", stderr: "" };

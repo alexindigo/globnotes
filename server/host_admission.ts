@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
- * Host admission (GLOBNOTES_ALLOWED_HOSTS): the one check, at the server's
+ * Host admission (GLOBNOTES__SERVER_ALLOWEDHOSTS): the one check, at the server's
  * entry point before any routing, that a request names this server. When
  * the operator lists the host names (or IP addresses) the deployment is
  * reached by, a request whose Host header is not one of them is answered
@@ -94,7 +94,7 @@ export function parseAuthority(text: string): AllowedHost | null {
   return { host: canonical, port };
 }
 
-/** GLOBNOTES_ALLOWED_HOSTS: comma-separated authorities; "" (unset) = no
+/** Env authorities are comma-separated; "" (unset) = no
  * admission check. Throws AllowedHostsError naming a bad entry. */
 export function parseAllowedHosts(value: string): AllowedHost[] | null {
   const entries = value.split(",").map((entry) => entry.trim())
@@ -148,12 +148,12 @@ export function rebindingExposure(access: AccessExposure): string | null {
 export function rebindingWarning(access: AccessExposure): string | null {
   const mode = rebindingExposure(access);
   if (mode === null) return null;
-  return `No login is needed (${mode} mode) and GLOBNOTES_ALLOWED_HOSTS is ` +
+  return `No login is needed (${mode} mode) and GLOBNOTES__SERVER_ALLOWEDHOSTS is ` +
     "unset: a web page on another site can use DNS rebinding (making its " +
     "own name resolve to this server) to read notes" +
     (mode === "none" ? " and change them" : "") +
     " through the browser of anyone on this network. Set " +
-    "GLOBNOTES_ALLOWED_HOSTS to the names this server is reached by, e.g. " +
+    "GLOBNOTES__SERVER_ALLOWEDHOSTS to the names this server is reached by, e.g. " +
     "'globnotes.home', so it answers no other host.";
 }
 
@@ -190,6 +190,6 @@ export function admitHost(
   return Response.json({
     detail: `Misdirected Request: this globnotes server does not answer ` +
       `for the host '${host}'. Use one of the names in its ` +
-      "GLOBNOTES_ALLOWED_HOSTS setting.",
+      "GLOBNOTES__SERVER_ALLOWEDHOSTS setting.",
   }, { status: 421 });
 }

@@ -1,7 +1,8 @@
+import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 // A deliberate process exit leaves SQLite's actual crash/recovery files intact.
 import { DatabaseSync } from "node:sqlite";
-import { GlobalConfig } from "../../server/config.ts";
+import { GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import { Fts5Indexer } from "../../server/search/fts5.ts";
@@ -10,13 +11,13 @@ import { testEnvironment } from "./environment.ts";
 
 const [vault, storage, boundary] = Deno.args;
 const env = testEnvironment({
-  GLOBNOTES_PATH: vault,
-  GLOBNOTES_INDEX_PATH: storage,
-  GLOBNOTES_AUTH_TYPE: "none",
-  GLOBNOTES_INDEX_BATCH_DELAY: "0",
+  GLOBNOTES_GLOBNOTES_PATH: vault,
+  fixtureStatePath: storage,
+  fixtureAuth: { auth_type: "none" },
+  GLOBNOTES__INDEX_BATCHDELAY: "0",
 });
 let canonicalOpens = 0;
-const index = new Fts5Indexer(storage, env, {
+const index = new Fts5Indexer(testMetadata(storage), testServices(env).index, {
   openDatabase(filename) {
     if (filename === `${storage}/index.sqlite`) {
       canonicalOpens++;
@@ -37,7 +38,7 @@ const index = new Fts5Indexer(storage, env, {
 initState(
   new GlobalConfig(env),
   null,
-  new FileSystemNotes(vault, {}, env),
+  new FileSystemNotes(vault, {}, testServices(env).notes),
   index,
   new FileServing(vault),
   null,

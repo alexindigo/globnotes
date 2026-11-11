@@ -1,3 +1,4 @@
+import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -220,8 +221,8 @@ async function exists(file: string): Promise<boolean> {
 Deno.test("mcp endpoint: none mode, both protocol eras, every tool", async () => {
   const vault = await vaultCopy();
   const server = await boot({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "none",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "none" },
   });
   try {
     for (const modern of [false, true]) {
@@ -247,7 +248,7 @@ Deno.test("mcp endpoint: none mode, both protocol eras, every tool", async () =>
 });
 
 Deno.test("mcp endpoint: a single long token stays within the response limit", async () => {
-  const server = await boot({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await boot({ fixtureAuth: { auth_type: "none" } });
   try {
     const client = await connect(server);
     try {
@@ -286,7 +287,7 @@ Deno.test("mcp endpoint: a single long token stays within the response limit", a
 });
 
 Deno.test("mcp endpoint: a long title and a long tag stay within the response limit", async () => {
-  const server = await boot({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await boot({ fixtureAuth: { auth_type: "none" } });
   try {
     const client = await connect(server);
     try {
@@ -346,7 +347,7 @@ Deno.test("mcp endpoint: a long title and a long tag stay within the response li
 });
 
 Deno.test("mcp endpoint: transport rules (405, Origin, Allow)", async () => {
-  const server = await boot({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await boot({ fixtureAuth: { auth_type: "none" } });
   try {
     for (const method of ["GET", "DELETE"]) {
       const res = await fetch(`${server.baseUrl}/_/mcp`, { method });
@@ -367,10 +368,12 @@ Deno.test("mcp endpoint: transport rules (405, Origin, Allow)", async () => {
 
 Deno.test("mcp endpoint: password mode needs the API token", async () => {
   const server = await boot({
-    GLOBNOTES_AUTH_TYPE: "password",
-    GLOBNOTES_USERNAME: "agent",
-    GLOBNOTES_PASSWORD: "correct horse",
-    GLOBNOTES_SECRET_KEY: "mcp-endpoint-test-secret",
+    fixtureAuth: {
+      auth_type: "password",
+      username: "agent",
+      password_hash: fixturePasswordHash("correct horse"),
+      secret_key: "mcp-endpoint-test-secret",
+    },
   });
   try {
     const anonymous = await post(server);
@@ -425,8 +428,8 @@ Deno.test("mcp endpoint: password mode needs the API token", async () => {
 Deno.test("mcp endpoint: read_only lists the read tools and refuses writes", async () => {
   const vault = await vaultCopy();
   const server = await boot({
-    GLOBNOTES_PATH: vault,
-    GLOBNOTES_AUTH_TYPE: "read_only",
+    GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "read_only" },
   });
   try {
     for (const modern of [false, true]) {
@@ -464,10 +467,10 @@ Deno.test("mcp endpoint: read_only lists the read tools and refuses writes", asy
   }
 });
 
-Deno.test("mcp endpoint: GLOBNOTES_MCP_ENABLED=false answers 404", async () => {
+Deno.test("mcp endpoint: GLOBNOTES__MCP_ENABLED=false answers 404", async () => {
   const server = await boot({
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_MCP_ENABLED: "false",
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES__MCP_ENABLED: "false",
   });
   try {
     const res = await post(server);
@@ -496,9 +499,9 @@ Deno.test("mcp endpoint: a plugin pre-save guard cancels an MCP write", async ()
     });
     await Deno.writeTextFile(path.join(fixture.vault, "doc.md"), "# Doc\n");
     const server = await boot({
-      GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.statePath,
-      GLOBNOTES_AUTH_TYPE: "none",
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      fixtureAuth: { auth_type: "none" },
     });
     try {
       await catalogPluginReady(server, "guard");
@@ -560,9 +563,9 @@ Deno.test("mcp endpoint: plugin guards cancel MCP creates, renames and deletes",
     );
     await Deno.writeTextFile(path.join(fixture.vault, "doc.md"), "# doc\n");
     const server = await boot({
-      GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_INDEX_PATH: fixture.statePath,
-      GLOBNOTES_AUTH_TYPE: "none",
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      fixtureAuth: { auth_type: "none" },
     });
     try {
       await catalogPluginReady(server, "guard");

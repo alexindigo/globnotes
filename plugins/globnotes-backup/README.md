@@ -42,7 +42,7 @@ The selected root's parent must already exist unless separately granted.
 Operators can pin non-secret settings at startup:
 
 ```sh
-GLOBNOTES_PLUGIN_SETTINGS='{"globnotes-backup":{"backup":{"basePath":"/srv/backups"}}}'
+GLOBNOTES_GLOBNOTES_PLUGINS_SETTINGS='{"globnotes-backup":{"backup":{"basePath":"/srv/backups"}}}'
 ```
 
 Environment fields override stored fields/defaults and are visibly readonly.

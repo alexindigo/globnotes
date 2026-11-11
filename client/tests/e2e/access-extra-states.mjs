@@ -28,11 +28,11 @@ async function fill(selector, value) {
 }
 async function fixture(label, protectedMode = false, narrow = false) {
   const directory = `${artifacts}/${label}`; await Deno.mkdir(directory);
-  const vault = await Deno.makeTempDir({ prefix: `access-extra-${label}-vault-` }), state = await Deno.makeTempDir({ prefix: `access-extra-${label}-state-` });
+  const vault = await Deno.makeTempDir({ prefix: `access-extra-${label}-vault-` }), state = await metadataDirectory({ prefix: `access-extra-${label}-state-` });
   const secret = crypto.randomUUID(); await Deno.writeTextFile(`${vault}/Seed.md`, "Extra-state seed.\n");
   await Deno.writeTextFile(`${state}/config.json`, JSON.stringify(protectedMode ? { auth_type: "password", username, password_hash: await hashPassword(password), secret_key: secret } : { auth_type: "none" }));
   const token = protectedMode ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  const server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_AUTO_ENABLE_PLUGINS: "false" }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335), width: narrow ? 360 : 1280, height: narrow ? 640 : 900, dpr: narrow ? 2 : 1 });
   current = { label, directory, vault, state, server, session, token, narrow, protectedMode, writes: [], closed: false };
   await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({ label, vault, state, serverPid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }), { createNew: true });
@@ -171,3 +171,4 @@ try {
 await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, failedFixtureClosedAfterCapture: !!failure && current?.closed }), { createNew: true });
 if (failure) throw failure;
 import { waitForAccessSummary } from './settings-access-native.mjs';
+import { metadataDirectory } from "./config-fixture.mjs";

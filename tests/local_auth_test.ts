@@ -1,32 +1,34 @@
+import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
-/** Unit tests for LocalAuth: JWT lifecycle, TOTP single-use, expiry.
- * Env vars are read at construction time, so each test sets its own. */
+/** LocalAuth fixtures own private credentials and resolved session settings. */
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { SignJWT } from "jose";
 import { LocalAuth, totpSecretFromRawKey } from "../server/auth/local.ts";
-import { GlobalConfig } from "../server/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { authenticatorCode, settledTotpNow } from "./helpers/totp.ts";
 
 async function makeConfig(
-  env: Record<string, string>,
+  env: Record<string, unknown>,
 ): Promise<GlobalConfig> {
   const vault = await Deno.makeTempDir();
-  const saved: Record<string, string> = { GLOBNOTES_PATH: vault };
+  const saved: Record<string, unknown> = { GLOBNOTES_GLOBNOTES_PATH: vault };
   for (const [k, v] of Object.entries(env)) saved[k] = v;
   return new GlobalConfig(testEnvironment(saved));
 }
 
 function authFor(
   config: GlobalConfig,
-  env: Record<string, string>,
+  env: Record<string, unknown>,
 ): LocalAuth {
-  // LocalAuth reads its credentials from the config's own environment.
+  // LocalAuth consumes the explicitly seeded private record.
   assertEquals(
-    Object.entries(env).every(([k, v]) => config.environment.get(k) === v),
+    Object.entries(env.fixtureAuth as Record<string, unknown>).every(([k, v]) =>
+      config.storedConfig?.[k] === v
+    ),
     true,
   );
   return new LocalAuth(config);
@@ -34,10 +36,12 @@ function authFor(
 
 Deno.test("LocalAuth: login and token round-trip", async () => {
   const env = {
-    GLOBNOTES_AUTH_TYPE: "password",
-    GLOBNOTES_USERNAME: "alice",
-    GLOBNOTES_PASSWORD: "secret",
-    GLOBNOTES_SECRET_KEY: "testsecret",
+    fixtureAuth: {
+      auth_type: "password",
+      username: "alice",
+      password_hash: fixturePasswordHash("secret"),
+      secret_key: "testsecret",
+    },
   };
   const auth = authFor(await makeConfig(env), env);
   const token = await auth.login({ username: "ALICE", password: "secret" });
@@ -51,10 +55,12 @@ Deno.test("LocalAuth: login and token round-trip", async () => {
 
 Deno.test("LocalAuth: token for a different username is rejected", async () => {
   const env = {
-    GLOBNOTES_AUTH_TYPE: "password",
-    GLOBNOTES_USERNAME: "alice",
-    GLOBNOTES_PASSWORD: "secret",
-    GLOBNOTES_SECRET_KEY: "testsecret",
+    fixtureAuth: {
+      auth_type: "password",
+      username: "alice",
+      password_hash: fixturePasswordHash("secret"),
+      secret_key: "testsecret",
+    },
   };
   const config = await makeConfig(env);
   const auth = authFor(config, env);
@@ -64,8 +70,8 @@ Deno.test("LocalAuth: token for a different username is rejected", async () => {
     new GlobalConfig(
       testEnvironment({
         ...env,
-        GLOBNOTES_PATH: config.notesPath,
-        GLOBNOTES_USERNAME: "mallory",
+        GLOBNOTES_GLOBNOTES_PATH: config.notesPath,
+        fixtureAuth: { username: "mallory" },
       }),
     ),
   );
@@ -76,11 +82,13 @@ Deno.test("LocalAuth: token for a different username is rejected", async () => {
 
 Deno.test("LocalAuth: session expiry lands in the token", async () => {
   const env = {
-    GLOBNOTES_AUTH_TYPE: "password",
-    GLOBNOTES_USERNAME: "alice",
-    GLOBNOTES_PASSWORD: "secret",
-    GLOBNOTES_SECRET_KEY: "testsecret",
-    GLOBNOTES_SESSION_EXPIRY_DAYS: "7",
+    fixtureAuth: {
+      auth_type: "password",
+      username: "alice",
+      password_hash: fixturePasswordHash("secret"),
+      secret_key: "testsecret",
+    },
+    GLOBNOTES__SESSIONS_EXPIRYDAYS: "7",
   };
   const auth = authFor(await makeConfig(env), env);
   const token = await auth.login({ username: "alice", password: "secret" });
@@ -95,10 +103,12 @@ Deno.test("LocalAuth: session expiry lands in the token", async () => {
 
 Deno.test("LocalAuth: expiry metadata shares verification and preserves no-expiry tokens", async () => {
   const env = {
-    GLOBNOTES_AUTH_TYPE: "password",
-    GLOBNOTES_USERNAME: "alice",
-    GLOBNOTES_PASSWORD: "secret",
-    GLOBNOTES_SECRET_KEY: "testsecret",
+    fixtureAuth: {
+      auth_type: "password",
+      username: "alice",
+      password_hash: fixturePasswordHash("secret"),
+      secret_key: "testsecret",
+    },
   };
   const auth = authFor(await makeConfig(env), env);
   const expiry = Math.floor(Date.now() / 1000) + 60;
@@ -135,11 +145,13 @@ Deno.test("LocalAuth: expiry metadata shares verification and preserves no-expir
 Deno.test("LocalAuth: TOTP login and single-use enforcement", async () => {
   const totpKey = "my-totp-key";
   const env = {
-    GLOBNOTES_AUTH_TYPE: "totp",
-    GLOBNOTES_USERNAME: "alice",
-    GLOBNOTES_PASSWORD: "secret",
-    GLOBNOTES_SECRET_KEY: "testsecret",
-    GLOBNOTES_TOTP_KEY: totpKey,
+    fixtureAuth: {
+      auth_type: "totp",
+      username: "alice",
+      password_hash: fixturePasswordHash("secret"),
+      secret_key: "testsecret",
+      totp_key: totpKey,
+    },
   };
   const auth = authFor(await makeConfig(env), env);
   assert(auth.isTotpEnabled);
@@ -194,7 +206,9 @@ Deno.test("LocalAuth: stored-hash login (setup wizard path)", async () => {
       secret_key: "storedsecret",
     }),
   );
-  const config = new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: vault }));
+  const config = new GlobalConfig(
+    testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: vault }),
+  );
   const auth = new LocalAuth(config);
   const token = await auth.login({ username: "Carol", password: "hunter2" });
   await auth.validateToken(token.access_token);
@@ -223,10 +237,10 @@ Deno.test("LocalAuth: wizard-enrolled TOTP (stored key + password hash)", async 
     }),
   );
   const auth = new LocalAuth(
-    new GlobalConfig(testEnvironment({ GLOBNOTES_PATH: vault })),
+    new GlobalConfig(testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: vault })),
   );
   assert(auth.isTotpEnabled);
-  assert(!auth.totpKeyFromEnv);
+  assert(!("totpKeyFromEnv" in auth));
 
   const secret = totpSecretFromRawKey(totpKey);
   const stepMs = 30_000;

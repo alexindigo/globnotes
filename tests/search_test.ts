@@ -25,7 +25,7 @@ function api(
 }
 
 Deno.test("search: title and content matches", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
@@ -60,7 +60,7 @@ Deno.test("search: title and content matches", async () => {
 });
 
 Deno.test("search: * matches everything", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
@@ -95,7 +95,7 @@ Deno.test("search: * matches everything", async () => {
 });
 
 Deno.test("search: tags", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
@@ -117,7 +117,7 @@ Deno.test("search: tags", async () => {
 });
 
 Deno.test("search: nested=false and folder filter", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
@@ -164,7 +164,7 @@ Deno.test("search: nested=false and folder filter", async () => {
 });
 
 Deno.test("search: non-integer limit returns 422, not a 500", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await awaitIndexReady(server.baseUrl);
     const res = await api(server, "/_/api/search?term=*&limit=NaN");
@@ -175,7 +175,7 @@ Deno.test("search: non-integer limit returns 422, not a 500", async () => {
 });
 
 Deno.test("search: invalid folder path returns 400", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await awaitIndexReady(server.baseUrl);
     const res = await api(server, "/_/api/search?term=*&folder=_");
@@ -191,7 +191,7 @@ Deno.test("search: invalid folder path returns 400", async () => {
 });
 
 Deno.test("search: explicit sort orders", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
@@ -280,7 +280,7 @@ Deno.test("search: explicit sort orders", async () => {
 });
 
 Deno.test("search: terms with syntax chars (slashes, colons)", async () => {
-  const server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" });
+  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
   try {
     await fetch(`${server.baseUrl}/_/api/notes`, {
       method: "POST",
@@ -343,8 +343,8 @@ Deno.test("search: odd-titled files are indexed (Python parity)", async () => {
     "question title needle",
   );
   const server = await bootServer({
-    GLOBNOTES_AUTH_TYPE: "none",
-    GLOBNOTES_PATH: vault,
+    fixtureAuth: { auth_type: "none" },
+    GLOBNOTES_GLOBNOTES_PATH: vault,
   });
   try {
     await api(server, "/_/api/notes", {

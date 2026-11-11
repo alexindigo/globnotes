@@ -4,6 +4,8 @@ import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { awaitHealthy, bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
+import { metadataBase, metadataDirectory } from "./config-fixture.mjs";
+import { parse as parseToml } from "@std/toml";
 
 let options;
 try { options = parseArguments(Deno.args); }
@@ -34,7 +36,7 @@ async function bootWarningServer(vault, state, logsDir) {
   const port = listener.addr.port; listener.close();
   const args = ["run", "--cached-only", "--frozen", `--config=${root}/deno.json`, "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env", "--allow-import=jsr.io:443", `${root}/server/main.ts`];
   const child = new Deno.Command(Deno.execPath(), { args, cwd: root, clearEnv: true, stdout: "piped", stderr: "piped", env: {
-    PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_PATH: vault, GLOBNOTES_INDEX_PATH: state, GLOBNOTES_AUTH_TYPE: "", GLOBNOTES_HOST: host, GLOBNOTES_PORT: String(port),
+    PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: metadataBase(vault, state), GLOBNOTES__SERVER_HOST: host, GLOBNOTES__SERVER_PORT: String(port),
   } }).spawn();
   const drains = ["stdout", "stderr"].map(async channel => {
     const file = await Deno.open(`${logsDir}/server-${channel}.log`, { write: true, createNew: true });
@@ -204,9 +206,10 @@ async function warningObservation(selector, kind) {
 }
 try {
   vault = await Deno.makeTempDir({ prefix: "settings-foundations-vault-" });
-  state = await Deno.makeTempDir({ prefix: "settings-foundations-state-" });
+  state = await metadataDirectory({ prefix: "settings-foundations-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
   await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: "none", brand_name: "Foundation seed" }));
+  await Deno.writeTextFile(`${state}/config.toml`, '[brand]\nname="Foundation seed"\n');
   await Deno.mkdir(`${state}/plugins/foundation-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/manifest.json`, JSON.stringify({
     id: "foundation-guard", name: "Foundation warning consumer", runtime: { server: "service.js", client: "browser.js" }, hooks: ["pre-save"],
@@ -334,14 +337,14 @@ try {
   assert(heldBrand.responseStatusCode === 200, "Held Branding write failed upstream");
   await replace("#brand-name", "Foundation newer B");
    assert(await session.read('#brand-name', "!document.querySelector('#brand-name').readOnly && !document.querySelector('#brand-name').disabled"), "Pending Branding disabled newer draft editing");
-  const persisted = JSON.parse(await Deno.readTextFile(`${state}/config.json`));
-  assert(persisted.brand_name === "Foundation persisted A", "Held Branding response did not persist captured A");
+  const persisted = parseToml(await Deno.readTextFile(`${state}/config.toml`));
+  assert(persisted.brand.name === "Foundation persisted A", "Held Branding response did not persist captured A");
   await session.send("Fetch.continueRequest", { requestId: heldBrand.requestId }); held.delete(heldBrand.requestId);
    await session.poll("document.querySelector('#brand-name')?.value==='Foundation newer B' && !document.querySelector('[data-branding-settings] [role=status]')");
   await session.send("Fetch.disable");
   await invariant();
   assert(writes.length === 1 && writes[0].path === brandPath, "Branding newer-draft flow repeated a mutation");
-  await record("branding-pending-newer-draft", { capturedPersisted: persisted.brand_name, newerVisible: "Foundation newer B", writes, screenshot: await screenshot("branding-pending-newer-draft") });
+  await record("branding-pending-newer-draft", { capturedPersisted: persisted.brand.name, newerVisible: "Foundation newer B", writes, screenshot: await screenshot("branding-pending-newer-draft") });
   await session.button("Appearance", '[aria-label="Settings pages"]');
    await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
   await session.button("Discard", '[data-modal-top="true"]');
@@ -357,15 +360,15 @@ try {
   assert(writes.length === 1, "Reset sent a write before explicit confirmation");
   await session.button("Reset branding", '[data-modal-top="true"]');
   await session.poll("document.querySelector('#brand-name')?.value==='' && !document.querySelector('[data-branding-settings] [role=status]')");
-  const resetConfig = JSON.parse(await Deno.readTextFile(`${state}/config.json`));
+  const resetConfig = parseToml(await Deno.readTextFile(`${state}/config.toml`));
   const resetApi = await fetch(`${server.baseUrl}/_/api/config`, { signal: AbortSignal.timeout(5000) }).then(response => response.json());
-  assert(!resetConfig.brand_name && !resetConfig.brand_accent && !resetApi.brand.name && !resetApi.brand.accent && !resetApi.brand.files.length, "Reset did not clear persisted/API branding");
+  assert(!resetConfig.brand?.name && !resetConfig.brand?.accent && !resetApi.brand.name && !resetApi.brand.accent && !resetApi.brand.files.length, "Reset did not clear persisted/API branding");
   await close(); await open();
   await session.button("Branding", '[aria-label="Settings pages"]');
   await session.poll("document.querySelector('#brand-name')?.value===''");
   assert(writes.length === 2 && writes.every(write => write.path === brandPath), "Reset duplicated or misdirected its write");
   await invariant();
-  await record("branding-reset-confirmed", { resetConfig: { name: resetConfig.brand_name, accent: resetConfig.brand_accent }, apiBrand: resetApi.brand, reopenedName: "", writes: [...writes], screenshot: await screenshot("branding-reset-confirmed") });
+  await record("branding-reset-confirmed", { resetConfig: { name: resetConfig.brand?.name, accent: resetConfig.brand?.accent }, apiBrand: resetApi.brand, reopenedName: "", writes: [...writes], screenshot: await screenshot("branding-reset-confirmed") });
 
   // Real import approval under the unchanged parent cannot confer remote imports.
   await session.button("Plugins", '[aria-label="Settings pages"]');
@@ -415,13 +418,13 @@ try {
   // Separate actual public settings-lock fixture: no fake config/controller transition.
   const readonlyArtifacts = `${artifacts}/readonly-request`; await Deno.mkdir(readonlyArtifacts);
   vault = await Deno.makeTempDir({ prefix: "settings-foundations-readonly-vault-" });
-  state = await Deno.makeTempDir({ prefix: "settings-foundations-readonly-state-" });
+  state = await metadataDirectory({ prefix: "settings-foundations-readonly-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
   await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: "none", read_only_settings: true }));
   await Deno.mkdir(`${state}/plugins/foundation-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/manifest.json`, JSON.stringify({ id: "foundation-guard", name: "Foundation request warning", runtime: { server: "service.js" }, capabilities: { network: true, imports: false } }));
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/service.js`, "export async function activate(ctx){await ctx.permissions.requestAccess({kind:'network',hosts:true,reason:'Foundation read-only broad-access warning consumer'});}");
-  server = await bootServer(vault, state, { env: { GLOBNOTES_AUTH_TYPE: "", TMPDIR:Deno.env.get('TMPDIR') }, logsDir: readonlyArtifacts });
+  server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: readonlyArtifacts });
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   await Deno.writeTextFile(`${readonlyArtifacts}/ownership.json`, JSON.stringify({ vault, state, serverPid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
   const readonlyWrites = [];

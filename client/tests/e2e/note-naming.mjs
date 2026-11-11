@@ -20,7 +20,7 @@ let server = null;
 let browser = null;
 let failure;
 try {
-  server = await bootServer({ GLOBNOTES_AUTH_TYPE: "none" }, applicationServer());
+  server = await bootServer({ fixtureAuth: { auth_type: "none" } }, applicationServer());
   browser = await launchBrowser({ port: CDP_PORT });
   const page = await connect({ port: CDP_PORT, binding: browser });
 
