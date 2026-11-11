@@ -19,4 +19,5 @@ defineProps({ field:{type:Object,required:true}, editable:Boolean, onEdit:Functi
 .driver-secret__heading, .driver-secret__actions { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; }
 .driver-secret label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:500; min-width:0; }
 .driver-secret__heading span, .driver-secret p { font-size:13px; }
+.driver-secret p { max-width:65ch; }
 </style>

@@ -32,6 +32,22 @@ export async function assertSettingRowAlignment(session) {
   return rows;
 }
 
+export async function assertSettingsPaneEdges(session) {
+  const result = await session.read(['[data-settings-content]', '[data-settings-page]', '.setting-row'], `(()=>{
+    const pane=document.querySelector('[data-settings-content]'),page=pane.querySelector('[data-settings-page]');
+    const contentRight=el=>{const box=el.getBoundingClientRect(),style=getComputedStyle(el),borderLeft=parseFloat(style.borderLeftWidth),borderRight=parseFloat(style.borderRightWidth),scrollbar=el.offsetWidth-el.clientWidth-borderLeft-borderRight;return box.right-borderRight-parseFloat(style.paddingRight)-scrollbar;};
+    return {viewport:innerWidth,paneRight:contentRight(pane),pageRight:contentRight(page),rows:[...page.querySelectorAll('.setting-row')].map(row=>({label:row.querySelector('.setting-row-label').textContent.trim(),right:row.getBoundingClientRect().right}))};
+  })()`);
+  if(Math.abs(result.pageRight-result.paneRight)>.5||result.rows.some(row=>Math.abs(row.right-result.pageRight)>.5))throw Error(`Settings pane edges: ${JSON.stringify(result)}`);
+  return result;
+}
+
+export async function assertSettingsProseMeasure(session) {
+  const result=await session.read('[role=dialog]', "[...document.querySelectorAll('.setting-row p > span,[data-keybindings-settings] > div > p,[data-sync-settings] > p,.driver-instance > p,.driver-secret p,.settings-page-description,.settings-section-intro p')].filter(el=>el.getBoundingClientRect().width&&!el.closest('[inert]')).map(el=>({text:el.textContent,width:el.getBoundingClientRect().width,maxWidth:getComputedStyle(el).maxWidth}))");
+  if(result.some(p=>p.maxWidth==='none'||p.width>parseFloat(p.maxWidth)+.5))throw Error(`Settings prose measure: ${JSON.stringify(result)}`);
+  return result;
+}
+
 export async function assertSettingRowErrors(session) {
    const errors=await session.read('[role=dialog]', "(()=>{const expected=getComputedStyle(document.documentElement).getPropertyValue('--theme-danger').trim().split(' ').filter(Boolean).map(Number);return [...document.querySelectorAll('.setting-row [role=alert]')].filter(el=>!el.closest('[inert]')&&!!el.getBoundingClientRect().width).map(el=>({text:el.textContent,actual:getComputedStyle(el).color.match(/[0-9.]+/g).slice(0,3).map(Number),expected}));})()");
   if(errors.some(row=>JSON.stringify(row.actual)!==JSON.stringify(row.expected)))throw Error(`Validation error ink: ${JSON.stringify(errors)}`);

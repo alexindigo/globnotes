@@ -2,8 +2,8 @@
 <template>
   <div class="flex min-h-0 flex-col gap-4" data-keybindings-settings>
     <div class="flex flex-col gap-2"><KeybindingPicker :layers="layers" :selected="snapshot.id" :on-select="onLayer" />
-    <p class="text-[13px] text-theme-text-muted">{{ snapshot.description }}</p>
-    <p v-if="snapshot.custom" class="text-[13px] text-theme-text-muted">Click a binding to remap it (press Escape to cancel). Changes are stored in this browser.</p></div>
+    <p class="max-w-[65ch] text-[13px] text-theme-text-muted">{{ snapshot.description }}</p>
+    <p v-if="snapshot.custom" class="max-w-[65ch] text-[13px] text-theme-text-muted">Click a binding to remap it (press Escape to cancel). Changes are stored in this browser.</p></div>
     <div class="min-w-0 flex-1">
       <section v-for="group in snapshot.groups" :key="group.name" class="mb-8">
         <h3 class="mb-3 text-sm font-semibold text-theme-text">{{ group.name }}</h3>
