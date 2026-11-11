@@ -26,6 +26,7 @@ defineProps({ snapshot:{type:Object,required:true}, controller:{type:Object,requ
 </script>
 <style scoped>
 .sync-settings { display:flex; flex-direction:column; gap:1rem; min-width:0; }
+.sync-settings p { max-width:65ch; }
 .sync-settings__notice { font-size:13px; overflow-wrap:anywhere; }
 .sync-settings__add { display:grid; gap:.5rem; min-width:0; }
 .sync-settings__add label { white-space:nowrap; font-size:14px; }

@@ -132,6 +132,9 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Settings pages fill the content pane, keeping row controls aligned to its padding
+instead of an invisible narrower column.
+
 Account and Access settings use the shared setting rows for consistent labels,
 summaries and actions.
 

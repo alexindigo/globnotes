@@ -13,7 +13,7 @@
 defineProps({ title: String, description: String });
 </script>
 <style scoped>
-.settings-page { width:100%; max-width:42rem; min-width:0; display:flex; flex-direction:column; gap:1.5rem; color:rgb(var(--theme-text)); overflow-wrap:anywhere; }
+.settings-page { width:100%; min-width:0; display:flex; flex-direction:column; gap:1.5rem; color:rgb(var(--theme-text)); overflow-wrap:anywhere; }
 .settings-page-heading { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:0.5rem 1rem; }
 h2 { font-size:18px; font-weight:600; }
 .settings-page-description { margin-top:0.5rem; font-size:14px; color:rgb(var(--theme-text-muted)); max-width:65ch; }

@@ -5,7 +5,7 @@ import { applicationServer, assertHttpTestUrl } from './http-origin.mjs';
 import { hashPassword } from '../../../server/helpers.ts';
 import { SignJWT } from 'jose';
 import { waitForAccessSummary } from './settings-access-native.mjs';
-import { assertSettingsActionHierarchy, assertSettingsHeaderRuleEdge, assertSettingRowAlignment, assertSettingsVisualLanes } from './settings-frame-native.mjs';
+import { assertSettingsActionHierarchy, assertSettingsHeaderRuleEdge, assertSettingRowAlignment, assertSettingsVisualLanes, assertSettingsPaneEdges, assertSettingsProseMeasure } from './settings-frame-native.mjs';
 import { assertSettingsActionZones } from './settings-primitives-native.mjs';
 
 const assert=(value,message)=>{if(!value)throw Error(message);};
@@ -30,6 +30,8 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
     assertHttpTestUrl(result.origin);
     assert(result.secure===false,'Surface matrix origin');
     assert(result.fontSize===16*cell.textScale,`Text scaling not applied: ${JSON.stringify(result)}`);
+    if(['account','signed-in-account','access','editor'].includes(name))result.paneEdges=await assertSettingsPaneEdges(session);
+    result.prose=await assertSettingsProseMeasure(session);
      if(result.owners.some(row=>row.overflow>1))result.overflowElements=await inspect("(()=>{const dialog=document.querySelector('[data-modal-top=true] [role=dialog]');if(!dialog)return [];const edge=dialog.getBoundingClientRect().right;return [...dialog.querySelectorAll('*')].filter(el=>el.getBoundingClientRect().width&&el.getBoundingClientRect().right>edge+.5).map(el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return {tag:el.tagName,id:el.id,classes:el.getAttribute('class'),width:r.width,right:r.right,parentWidth:el.parentElement.getBoundingClientRect().width,minWidth:s.minWidth,display:s.display,visibility:s.visibility,inactive:!!el.closest('[inert],[aria-hidden=true]')};}).slice(0,40);})()");
     assert(result.owners.every(row=>row.overflow<=1),`${name} ${JSON.stringify(cell)} scroll-owner overflow: ${JSON.stringify(result)}`);
     assert(result.dialogRects.every(r=>r.left>=0&&r.right<=cell.width+.5&&r.top>=0&&r.bottom<=cell.height+.5),`${name}: dialog outside viewport ${JSON.stringify({cell,result})}`);

@@ -56,6 +56,7 @@ defineProps({ instance:{type:Object,required:true}, onEdit:Function, onSave:Func
 </script>
 <style scoped>
 .driver-instance { display:grid; gap:.75rem; min-width:0; border-top:1px solid rgb(var(--theme-border)); padding-block:1.25rem; font-size:14px; }
+.driver-instance p { max-width:65ch; }
 .driver-instance__header { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem 1rem; min-width:0; }
 .driver-instance__header h3 { font-weight:600; font-size:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .driver-instance__state, .driver-instance__count { white-space:nowrap; font-size:12px; }

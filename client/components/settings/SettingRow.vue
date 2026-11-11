@@ -3,9 +3,9 @@
   <div class="setting-row" :class="{ 'setting-row-short': short }">
     <div class="setting-row-copy">
       <div class="setting-row-label"><component :is="as==='value'?'span':'label'" :id="labelId" :for="as==='value'?undefined:controlId">{{ label }}</component><slot name="value" /></div>
-      <p v-if="help" :id="helpId">{{ help }}</p>
-      <p v-if="pin" :id="pinId" role="note">{{ pin }}</p>
-      <p v-if="error" :id="errorId" role="alert" class="text-theme-danger">{{ error }}</p>
+      <p v-if="help" :id="helpId"><span>{{ help }}</span></p>
+      <p v-if="pin" :id="pinId" role="note"><span>{{ pin }}</span></p>
+      <p v-if="error" :id="errorId" role="alert" class="text-theme-danger"><span>{{ error }}</span></p>
     </div>
     <div class="setting-row-control"><slot :id="controlId" :labelledby="labelId" :describedby="describedby" :invalid="error ? true : undefined" /></div>
   </div>
@@ -25,6 +25,7 @@ const describedby = computed(() => [props.help && helpId, props.pin && pinId, pr
 .setting-row-label { display:flex; align-items:baseline; justify-content:space-between; gap:1rem; font-size:14px; }
 .setting-row-label > :first-child { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 p { margin-top:0.25rem; font-size:13px; max-width:65ch; }
+p > span { display:block; max-width:65ch; }
 .setting-row-control { min-width:0; }
 .setting-row-short { flex-direction:row; flex-wrap:wrap; align-items:center; column-gap:1rem; }
 .setting-row-short .setting-row-copy { display:contents; }
