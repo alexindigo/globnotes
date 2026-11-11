@@ -8,9 +8,7 @@
  */
 
 import { jwtVerify, SignJWT } from "jose";
-import { totp } from "otplib";
-import { hotpCreateHmacKey, KeyEncodings } from "otplib/core.js";
-import { decodeBase32, encodeBase32 } from "@std/encoding/base32";
+import { encodeBase32 } from "@std/encoding/base32";
 import QRCode from "qrcode";
 
 import { AuthType, type GlobalConfig } from "../config.ts";
@@ -22,31 +20,8 @@ import { serviceSettings } from "../config/consumers.ts";
 
 const JWT_ALGORITHM = "HS256";
 
-/** Raw key (the env-var / storedConfig form) → unpadded base32 secret —
- * the string an authenticator enrols. Single derivation path so the login
- * check and the wizard enrolment can never drift apart. */
-export function totpSecretFromRawKey(rawKey: string): string {
-  return encodeBase32(new TextEncoder().encode(rawKey)).replace(/=+$/, "");
-}
-
-/** Authenticators decode the QR's base32 secret before computing HMAC.
- * Keep those bytes intact, including short env keys, and accept +/-1 step. */
-export function checkTotpCode(code: string, unpaddedSecret: string): boolean {
-  const verifier = totp.clone();
-  verifier.options = {
-    encoding: KeyEncodings.HEX,
-    window: 1,
-    // TOTP's default repeats short keys; HMAC must use the enrolled bytes.
-    createHmacKey: hotpCreateHmacKey,
-  };
-  const padded = unpaddedSecret.padEnd(
-    Math.ceil(unpaddedSecret.length / 8) * 8,
-    "=",
-  );
-  const key = [...decodeBase32(padded)]
-    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return verifier.check(code, key);
-}
+import { checkTotpCode } from "./credentials.ts";
+export { checkTotpCode, totpSecretFromRawKey } from "./credentials.ts";
 
 export class LocalAuth {
   readonly username: string;

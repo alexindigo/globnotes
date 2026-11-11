@@ -16,3 +16,16 @@ commit, which rechecks the captured state. A server or offline operator command
 holds `identity.lock` exclusively and nonblockingly; the lock inode is never
 removed or replaced on release. Filesystem errors retain original state, not an
 empty replacement. These owners do not import or modify v2 auth JSON.
+
+The preparatory session owner stores a single instance signing key in
+`sessions.json`. HS256 JWTs contain account ID, credential/signing revisions and
+expiry, never vault grants. The configured session lifetime is injected from
+layered configuration. Password or authenticator changes revoke all of that
+account's old tokens; merely consuming a TOTP step does not revoke sessions.
+Temporary-password sessions retain a required-change flag for the authority
+evaluator; logout clears a browser's token, not another copy of that JWT.
+
+Login accepts separate password and TOTP fields. Authenticator keys retain their
+original bytes and +/-1-step window. The matched step is committed before a
+successful proof returns, so concurrent and post-restart replay fail. Enrollment
+and password hashing share current primitives with the still-active auth bridge.
