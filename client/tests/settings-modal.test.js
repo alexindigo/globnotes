@@ -6,13 +6,14 @@ import SettingsModal from "../components/SettingsModal.vue";
 import NavBar from "../partials/NavBar.vue";
 import { pluginCatalog } from "../pluginRuntime.js";
 import { useGlobalStore } from "../globalStore.js";
-import { getPluginSettings, putPluginSettings, postBrand, getTree, putPluginEnabled, putPluginPolicy, getPluginPermissions, putPluginPermissions } from "../api.js";
+import { getPluginSettings, putPluginSettings, postBrand, getTree, putPluginEnabled, putPluginPolicy, getPluginPermissions, putPluginPermissions, getAccessSettings } from "../api.js";
 import { hasUnsavedWork, resolveParticipants } from "../sessionActions.js";
 import { registerPluginCommand, removeCommandOwner } from "../commands.js";
 import { viewLineNumbers, saveViewLineNumbers } from "../pluginSettings.js";
 import { currentLayerId, setLayer } from "../keybindings/store.js";
 import { debugEnabled } from "../debug.js";
 import Toggle from "../components/Toggle.vue";
+import SettingRow from "../components/settings/SettingRow.vue";
 
 vi.mock("primevue/usetoast", () => ({ useToast: () => ({ add: vi.fn() }) }));
 vi.mock("../pluginRuntime.js", async () => { const { ref } = await import("vue"); const pluginCatalog = ref(null); return { pluginCatalog,
@@ -20,7 +21,7 @@ vi.mock("../pluginRuntime.js", async () => { const { ref } = await import("vue")
   capturePluginCatalogOwnership: vi.fn(() => ({ current: () => true })), acknowledgePluginPolicy: vi.fn(() => true) }; });
 vi.mock("../api.js", async importOriginal => ({ ...await importOriginal(), getPluginHostCatalog: vi.fn(), getPluginSettings: vi.fn(), putPluginSettings: vi.fn(), putPluginEnabled: vi.fn(), putPluginPolicy: vi.fn(),
   getPluginPermissions: vi.fn(), putPluginPermissions: vi.fn(), getPluginPermissionRequests: vi.fn(async () => []), decidePluginPermissionRequest: vi.fn(),
-  invokePluginCommand: vi.fn(), getConfig: vi.fn(), postBrand: vi.fn(), getTree: vi.fn(async () => ({folders:[],notes:[]})), getNotes: vi.fn(async () => []) }));
+  invokePluginCommand: vi.fn(), getConfig: vi.fn(), getAccessSettings: vi.fn(), postBrand: vi.fn(), getTree: vi.fn(async () => ({folders:[],notes:[]})), getNotes: vi.fn(async () => []) }));
 
 let wrapper;
 const originalCreateUrl=URL.createObjectURL, originalRevokeUrl=URL.revokeObjectURL;
@@ -40,6 +41,7 @@ beforeEach(() => {
   putPluginSettings.mockImplementation(async (id, p, values, revision) => ({ values, revision: revision + 1 }));
   postBrand.mockResolvedValue({ name: null, accent: null, files: [] }); saveViewLineNumbers(false); debugEnabled.value = false; setLayer("obsidian");
   getTree.mockResolvedValue({folders:[],notes:[]});
+  getAccessSettings.mockResolvedValue({ mode: 'none', settingsWritable: true });
 });
 afterEach(() => { wrapper?.unmount(); wrapper = null; pluginCatalog.value = null; removeCommandOwner("settings-fixture"); URL.createObjectURL=originalCreateUrl;URL.revokeObjectURL=originalRevokeUrl;vi.clearAllMocks(); });
 async function open(id, writable = true) {
@@ -48,6 +50,57 @@ async function open(id, writable = true) {
 }
 
 describe("actual retained Settings entry and inline pages", () => {
+  it('uses the shared account row for the signed-in summary and logout intent', async () => {
+    useGlobalStore().config.authType = 'password';
+    getAccessSettings.mockResolvedValue({ mode: 'password', username: 'alice', settingsWritable: true });
+    await open('core:account');
+    const row = wrapper.findComponent(SettingRow);
+    expect(row.props()).toMatchObject({ label: 'Signed in as alice', short: true, as: 'value' });
+    expect(row.attributes('title')).toBe('Signed in as alice');
+    expect(row.find('.setting-row-copy p').exists()).toBe(false);
+    expect(button('Log out').closest('.setting-row-control')).not.toBeNull();
+    button('Log out').click(); await flushPromises();
+    expect(wrapper.emitted('logout')).toEqual([[]]);
+  });
+  it('keeps the no-account summary in a shared row without a logout action', async () => {
+    await open('core:account');
+    expect(wrapper.findComponent(SettingRow).props('label')).toBe('This session has no account.');
+    expect(button('Log out')).toBeUndefined();
+  });
+  it('uses the same account label for loading and fallback summaries', async () => {
+    useGlobalStore().config.authType = 'password';
+    let resolve;
+    getAccessSettings.mockReturnValue(new Promise(yes => { resolve = yes; }));
+    wrapper = mount(SettingsModal, { attachTo: document.body, props: { modelValue: true, writable: true }, global: { directives: { focus: { mounted: el => el.focus() } } } });
+    const opening = wrapper.vm.openSettings('core:account'); await flushPromises();
+    expect(wrapper.findComponent(SettingRow).props('label')).toBe('Reading current account…');
+    resolve({ mode: 'password', settingsWritable: true }); await opening; await flushPromises();
+    expect(wrapper.findComponent(SettingRow).props('label')).toBe('This session is signed in.');
+    expect(wrapper.findComponent(SettingRow).find('.setting-row-copy p').exists()).toBe(false);
+  });
+  it('uses shared access summary rows and keeps the change intent in its row control', async () => {
+    await open('core:access');
+    const rows = wrapper.findAllComponents(SettingRow);
+    expect(rows.map(row => row.props('label'))).toEqual(['Access mode', 'Sign-in', 'Settings lock', 'Access settings']);
+    expect(rows.slice(0, 3).map(row => row.find('.setting-row-control').text())).toEqual(['Open access', 'Not required', 'Unlocked']);
+    expect(rows.every(row => row.props('as') === 'value' && row.props('short'))).toBe(true);
+    expect(button('Change access…').closest('.setting-row-control')).not.toBeNull();
+    button('Change access…').click(); await flushPromises();
+    expect(wrapper.emitted('open-access')).toEqual([[]]);
+  });
+  it('keeps access loading, errors and unavailable help in the shared row without disabled actions', async () => {
+    let reject;
+    getAccessSettings.mockReturnValue(new Promise((_, no) => { reject = no; }));
+    wrapper = mount(SettingsModal, { attachTo: document.body, props: { modelValue: true, writable: false }, global: { directives: { focus: { mounted: el => el.focus() } } } });
+    const opening = wrapper.vm.openSettings('core:access'); await flushPromises();
+    expect(document.querySelector('[data-access-summary] [role=status]')?.textContent).toContain('Reading current access…');
+    reject(Error('Access read failed')); await opening; await flushPromises();
+    const row = wrapper.findComponent(SettingRow);
+    expect(row.find('[role=alert]').text()).toContain('Access read failed');
+    expect(row.props('help')).toBe('Access changes are unavailable in this session. Locked settings are recovered through deployment configuration.');
+    expect(button('Change access…')).toBeUndefined();
+    expect(document.querySelector('[data-access-summary] [disabled]')).toBeNull();
+  });
   it('Cancel changes explicitly discards Branding while keeping Settings open without writes', async () => {
     await open('core:branding'); const title=document.querySelector('#settings-modal-title');
     await wrapper.find('#brand-name').setValue('discard this branding');

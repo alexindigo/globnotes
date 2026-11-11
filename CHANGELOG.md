@@ -132,6 +132,9 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Account and Access settings use the shared setting rows for consistent labels,
+summaries and actions.
+
 Hub watches skip top-level dot folders to preserve SQLite locks; periodic scans still observe their content except the state directory.
 
 Remotely Save discovery reuses generation-local name and strong-validator body
