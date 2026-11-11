@@ -17,6 +17,7 @@ await syncCase("sync-settings-native",async f=>{
       await s.evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
       const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>0,`${page}: no rows observed`);await assertSettingRowAlignment(s);await assertSettingsUiRules(s);
       const formRows=page==='branding'?await assertSettingsFormRows(s):undefined;
+      if(page==='branding')assert(formRows?.length===4&&formRows.every(row=>row.stacked===(width===360)),'Expected all four Branding form rows, paired on desktop and reflowed at 360px');
       f.results.push({page,...edges,formRows});
     }
     await f.open();await s.button('Add','[data-sync-settings]');await s.poll("!!document.querySelector('#sync-label')");
@@ -24,6 +25,7 @@ await syncCase("sync-settings-native",async f=>{
     const icons=await s.read('[data-settings-select]',"[...document.querySelectorAll('[data-settings-select]')].map(el=>{const c=el.querySelector('select').getBoundingClientRect(),i=el.querySelector('[data-select-icon] svg').getBoundingClientRect();return {top:i.top-c.top,bottom:c.bottom-i.bottom,right:c.right-i.right,fontSize:getComputedStyle(el.querySelector('select')).fontSize};})");
     assert(icons.length===1&&icons.every(i=>Math.max(i.top,i.bottom,i.right)-Math.min(i.top,i.bottom,i.right)<=1&&i.fontSize==='14px'),'Expected the sync-plugin select icon with consistent gaps/font');
     const formRows=await assertSettingsFormRows(s);
+    assert(formRows.length===2&&formRows.every(row=>row.stacked===(width===360)),'Expected both sync-add rows, paired on desktop and reflowed at 360px');
     await f.fill('#sync-label','Home');await s.poll("!!document.querySelector('form[aria-label=\"Add sync instance\"] button[type=submit]')");
     const actions=await s.read('[data-sync-settings] form',"[...document.querySelectorAll('[data-sync-settings] form [data-settings-actions-end] button')].map(el=>({label:el.textContent.trim(),box:el.getBoundingClientRect().toJSON()}))");
     assert(actions.length===2&&actions[0].label==='Cancel'&&actions[1].label==='Add instance'&&Math.abs(actions[0].box.top+actions[0].box.bottom-actions[1].box.top-actions[1].box.bottom)<1,'Add and Cancel do not share one action row');await assertSettingsUiRules(s);
@@ -40,7 +42,7 @@ await syncCase("sync-settings-native",async f=>{
   await f.geometry("desktop");await f.capture("active");
   for(const width of [1280,1600,360]){
     await s.send('Emulation.setDeviceMetricsOverride',{width,height:1800,deviceScaleFactor:1,mobile:false});
-    const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>2,'Connection fields were not observed');await assertSettingRowAlignment(s);await assertSettingsUiRules(s);const formRows=await assertSettingsFormRows(s);f.results.push({page:'sync-connection',...edges,formRows});
+    const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>2,'Connection fields were not observed');await assertSettingRowAlignment(s);await assertSettingsUiRules(s);const formRows=await assertSettingsFormRows(s);assert(formRows.length===7&&formRows.every(row=>row.stacked===(width===360)),'Expected the label, five driver fields and one secret row, paired on desktop and reflowed at 360px');f.results.push({page:'sync-connection',...edges,formRows});
   }
   await s.send('Emulation.setDeviceMetricsOverride',{width:1280,height:1400,deviceScaleFactor:1,mobile:false});
   // Native Tab visits every rendered action, including fields/actions below the fold.

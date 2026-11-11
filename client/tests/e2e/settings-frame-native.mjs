@@ -40,8 +40,8 @@ export async function assertSettingsActionHierarchy(session) {
 }
 
 export async function assertSettingRowAlignment(session) {
-   const rows=await session.read('[role=dialog]', "[...document.querySelectorAll('.setting-row-short')].filter(row=>!row.closest('[inert]')).map(row=>{const label=row.querySelector('.setting-row-label'),control=row.querySelector('.setting-row-control'),a=label.getBoundingClientRect(),b=control.getBoundingClientRect();return {label:label.textContent.trim(),visible:!!a.width&&!!b.width,delta:(a.top+a.bottom-b.top-b.bottom)/2};}).filter(row=>row.visible)");
-  if(rows.some(row=>Math.abs(row.delta)>0.5))throw Error(`Setting row centerlines: ${JSON.stringify(rows)}`);
+   const rows=await session.read('[role=dialog]', "[...document.querySelectorAll('.setting-row-short')].filter(row=>!row.closest('[inert]')).map(row=>{const label=row.querySelector('.setting-row-label'),control=row.querySelector('.setting-row-control'),a=label.getBoundingClientRect(),b=control.getBoundingClientRect(),r=row.getBoundingClientRect();return {label:label.textContent.trim(),visible:!!a.width&&!!b.width,stacked:b.top>=a.bottom,contained:b.left>=r.left-.5&&b.right<=r.right+.5,delta:(a.top+a.bottom-b.top-b.bottom)/2};}).filter(row=>row.visible)");
+  if(rows.some(row=>!row.contained||!row.stacked&&Math.abs(row.delta)>0.5))throw Error(`Setting row centerlines/reflow: ${JSON.stringify(rows)}`);
   return rows;
 }
 
@@ -50,10 +50,10 @@ export async function assertSettingsFormRows(session) {
     return [...document.querySelectorAll('[data-settings-content] .setting-row-form')].map(row=>{
       const label=row.querySelector('.setting-row-label').getBoundingClientRect(),lane=row.querySelector('.setting-row-control').getBoundingClientRect(),box=row.getBoundingClientRect();
       const inputs=[...row.querySelectorAll('input:not([type=color]):not([type=hidden]),select,textarea')].filter(el=>el.type!=='range'&&el.getBoundingClientRect().width>0).map(el=>{const r=el.getBoundingClientRect();return {id:el.id,left:r.left,right:r.right,width:r.width,expectedWidth:Math.min(lane.width,el.type==='number'?96:384)};});
-      return {label:row.querySelector('.setting-row-label').textContent.trim(),width:box.width,lane:lane.toJSON(),delta:(label.top+label.bottom-lane.top-lane.bottom)/2,inputs};
+      return {label:row.querySelector('.setting-row-label').textContent.trim(),width:box.width,right:box.right,lane:lane.toJSON(),stacked:lane.top>=label.bottom,delta:(label.top+label.bottom-lane.top-lane.bottom)/2,inputs};
     });
   })()`);
-  if(!rows.length||rows.some(row=>Math.abs(row.delta)>.5||Math.abs(row.lane.width-Math.min(384,row.width*.6))>.5||row.inputs.some(input=>Math.abs(input.right-row.lane.right)>.5||Math.abs(input.width-input.expectedWidth)>.5)))throw Error(`Settings form rows: ${JSON.stringify(rows)}`);
+  if(!rows.length||rows.some(row=>!row.stacked&&Math.abs(row.delta)>.5||Math.abs(row.lane.right-row.right)>.5||Math.abs(row.lane.width-Math.min(384,row.width))>.5||row.inputs.some(input=>Math.abs(input.right-row.lane.right)>.5||Math.abs(input.width-input.expectedWidth)>.5)))throw Error(`Settings form rows: ${JSON.stringify(rows)}`);
   return rows;
 }
 

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-only -->
 <template>
   <article class="plugin-row" :class="{ 'plugin-row-expanded': row.expanded }" :data-plugin-inventory-id="row.id">
-    <SettingRow class="plugin-row-heading" as="value" short>
+    <SettingRow class="plugin-row-heading" as="value" short truncate-label>
       <template #label>
       <component :is="row.hasServer ? 'button' : 'div'" :type="row.hasServer ? 'button' : undefined" class="plugin-row-disclosure" :class="{ 'focus-ring':row.hasServer }" :id="headerId"
         :aria-expanded="row.hasServer ? row.expanded : undefined" :aria-controls="row.hasServer ? regionId : undefined" :onClick="row.hasServer ? onExpand : undefined">
