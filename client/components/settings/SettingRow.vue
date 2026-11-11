@@ -2,7 +2,7 @@
 <template>
   <div class="setting-row" :class="{ 'setting-row-short': short }">
     <div class="setting-row-copy">
-      <div class="setting-row-label"><component :is="as==='value'?'span':'label'" :id="labelId" :for="as==='value'?undefined:controlId">{{ label }}</component><slot name="value" /></div>
+      <div class="setting-row-label"><slot name="label" :id="labelId"><component :is="as==='value'?'span':'label'" :id="labelId" :for="as==='value'?undefined:controlId" :title="label">{{ label }}</component></slot><slot name="value" /></div>
       <p v-if="help" :id="helpId"><span>{{ help }}</span></p>
       <p v-if="pin" :id="pinId" role="note"><span>{{ pin }}</span></p>
       <p v-if="error" :id="errorId" role="alert" class="text-theme-danger"><span>{{ error }}</span></p>
@@ -27,10 +27,10 @@ const describedby = computed(() => [props.help && helpId, props.pin && pinId, pr
 p { margin-top:0.25rem; font-size:13px; max-width:65ch; }
 p > span { display:block; max-width:65ch; }
 .setting-row-control { min-width:0; }
-.setting-row-short { flex-direction:row; flex-wrap:wrap; align-items:center; column-gap:1rem; }
+.setting-row-short { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,max-content); align-items:center; column-gap:1rem; }
 .setting-row-short .setting-row-copy { display:contents; }
-.setting-row-short .setting-row-label { flex:1 1 auto; min-width:0; }
+.setting-row-short .setting-row-label { min-width:0; }
 .setting-row-short .setting-row-control { display:flex; align-items:center; max-width:100%; }
-.setting-row-short .setting-row-copy > p { flex-basis:100%; order:1; max-width:none; }
+.setting-row-short .setting-row-copy > p { grid-column:1 / -1; order:1; max-width:none; }
 p:not([role="alert"]) { color:rgb(var(--theme-text-muted)); }
 </style>

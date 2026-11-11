@@ -125,6 +125,7 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
     };
   }
   const state = readonly(reactive({ ...Object.fromEntries(Object.keys(data).filter(key => key !== "records").map(key => [key, computed(() => data[key])])),
+    addFields:computed(() => [{key:'plugin',label:'Sync plugin',type:'select',options:data.plugins.map(plugin=>({label:plugin.name,value:plugin.id}))},{key:'label',label:'Label',type:'text',maxLength:128}]),
     instances:computed(() => [...data.records.values()].map(snapshotRecord)),
     canAdd:computed(() => canMutate() && !!data.plugins.length), canCreate:computed(() => canMutate() && data.adding && !!data.label.trim() && data.plugins.some(plugin => plugin.id === data.plugin)),
     canReview:computed(() => !data.busy && !data.reviewing && (!!operation.value || [...data.records.values()].some(record => record.changed))),

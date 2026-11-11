@@ -30,7 +30,7 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
     assertHttpTestUrl(result.origin);
     assert(result.secure===false,'Surface matrix origin');
     assert(result.fontSize===16*cell.textScale,`Text scaling not applied: ${JSON.stringify(result)}`);
-    if(['account','signed-in-account','access','editor'].includes(name))result.paneEdges=await assertSettingsPaneEdges(session);
+    if(['account','signed-in-account','access','editor','keybindings','plugins-collapsed','plugins-expanded','plugins-expanded-request'].includes(name))result.paneEdges=await assertSettingsPaneEdges(session);
     result.prose=await assertSettingsProseMeasure(session);
      if(result.owners.some(row=>row.overflow>1))result.overflowElements=await inspect("(()=>{const dialog=document.querySelector('[data-modal-top=true] [role=dialog]');if(!dialog)return [];const edge=dialog.getBoundingClientRect().right;return [...dialog.querySelectorAll('*')].filter(el=>el.getBoundingClientRect().width&&el.getBoundingClientRect().right>edge+.5).map(el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return {tag:el.tagName,id:el.id,classes:el.getAttribute('class'),width:r.width,right:r.right,parentWidth:el.parentElement.getBoundingClientRect().width,minWidth:s.minWidth,display:s.display,visibility:s.visibility,inactive:!!el.closest('[inert],[aria-hidden=true]')};}).slice(0,40);})()");
     assert(result.owners.every(row=>row.overflow<=1),`${name} ${JSON.stringify(cell)} scroll-owner overflow: ${JSON.stringify(result)}`);

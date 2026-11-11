@@ -28,6 +28,12 @@ function fixture(options = {}) {
 const loaded = async options => { const f=fixture(options);f.controller.activate();await flushPromises();return f; };
 const row = f => f.controller.state.instances[0];
 describe("Sync workflow ownership", () => {
+  it('projects add-form choice descriptors without moving derivation into the view',async()=>{
+    const f=await loaded();
+    expect(f.controller.state.addFields).toEqual([{key:'plugin',label:'Sync plugin',type:'select',options:[{label:'Test remote',value:'test'}]},{key:'label',label:'Label',type:'text',maxLength:128}]);
+    expect(f.controller.startAdd()).toBe(true);f.controller.editAdd('label','Home two');
+    expect(f.controller.state.label).toBe('Home two');
+  });
   it("projects shipped backend/auth/encryption visibility from drafts without erasing hidden settings or keys", async () => {
     const f=fixture(), definition=copy(remotelySave.driver), base=f.view.instances[0];
     base.declaration=definition;

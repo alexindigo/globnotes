@@ -3,7 +3,7 @@
   <section class="plugin-inventory flex min-w-0 flex-col gap-4" data-plugin-inventory>
     <PluginTrustNotice />
     <SettingRow class="plugin-policy-row" label="Turn on new plugins automatically" :pin="autoEnable.note" short>
-      <template #default="{ id, labelledby }"><Toggle :id="id" :aria-labelledby="labelledby" :is-on="autoEnable.value" :disabled="!autoEnable.canToggle" @click="onAutoEnable" /></template>
+      <template #default="{ id, labelledby }"><Toggle v-if="autoEnable.canToggle" :id="id" :aria-labelledby="labelledby" :is-on="autoEnable.value" @click="onAutoEnable" /></template>
     </SettingRow>
     <InventoryRecovery v-if="autoEnable.recovery" :recovery="autoEnable.recovery" :on-review="onPolicyReview" :on-retry="onPolicyRetry" :on-discard="onPolicyDiscard" />
     <div>
@@ -12,7 +12,7 @@
           <CustomButton type="button" label="Open settings" variant="text" :aria-label="row.openSettingsLabel" wrap-label :data-settings-page-id="row.pages[0].id" @click="onOpenPage(row.pages[0].id)" />
         </template>
         <template #toggle>
-          <Toggle :is-on="row.enabled" :aria-label="`Enable ${row.name}`" :disabled="!row.canToggle" @click="onEnabled(row.id)" />
+          <Toggle v-if="row.canToggle" :is-on="row.enabled" :aria-label="`Enable ${row.name}`" @click="onEnabled(row.id)" />
         </template>
         <PluginPermissions :view="row.permission" :on-master="onMaster" :on-host="onHost" :on-review="onReview" :on-retry="onRetry" :on-discard="onDiscard" />
         <template #recovery><InventoryRecovery v-if="row.recovery" :recovery="row.recovery" :on-review="onPolicyReview" :on-retry="onPolicyRetry" :on-discard="onPolicyDiscard" /></template>
@@ -33,7 +33,3 @@ defineProps({ rows:{type:Array,default:()=>[]}, autoEnable:{type:Object,default:
   onPolicyReview:Function, onPolicyRetry:Function, onPolicyDiscard:Function,
   onMaster:Function, onHost:Function, onReview:Function, onRetry:Function, onDiscard:Function });
 </script>
-<style scoped>
-.plugin-inventory { --plugin-inline-inset:0.5rem; }
-.plugin-policy-row { margin-inline:var(--plugin-inline-inset); }
-</style>

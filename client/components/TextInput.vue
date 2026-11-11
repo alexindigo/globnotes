@@ -3,7 +3,10 @@
     :type="type"
     class="text-input focus-ring min-w-0 w-full"
     :class="{
-      'min-h-11 rounded-md border border-theme-border px-3 py-2 dark:bg-theme-background-elevated': variant === 'field',
+      'min-h-11 rounded-md border border-theme-border px-3 py-2 dark:bg-theme-background-elevated': ['field','settings'].includes(variant),
+      'text-sm': variant === 'settings',
+      'max-w-sm': variant === 'settings' && type !== 'number',
+      'max-w-24': variant === 'settings' && type === 'number',
       'bg-theme-background': variant === 'plain',
       'bg-theme-background text-sm text-theme-text-muted': variant === 'plain-muted',
       'rounded-md border border-theme-border bg-theme-background px-4 py-3 text-theme-text': variant === 'search',
@@ -21,7 +24,7 @@ import { ref } from "vue";
 defineProps({
   // Opt-in input type (default text) — e.g. password fields in setup.
   type: { type: String, default: "text" },
-  variant: { type: String, default: 'field', validator: value => ['field','plain','plain-muted','search','compact'].includes(value) },
+  variant: { type: String, default: 'field', validator: value => ['field','settings','plain','plain-muted','search','compact'].includes(value) },
 });
 const model = defineModel();
 const input = ref();

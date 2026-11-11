@@ -3,7 +3,7 @@
   <section class="flex min-w-0 flex-col gap-8" data-branding-settings>
     <p v-if="!snapshot.writable" class="text-[13px] text-theme-text-muted">Read-only session: branding changes are unavailable.</p>
     <div class="flex flex-col gap-4">
-      <SettingRow id="brand-name" label="Name" :pin="snapshot.namePin" v-slot="row"><TextInput :id="row.id" :aria-describedby="row.describedby" :model-value="snapshot.name" :readonly="!snapshot.writable || snapshot.nameReadonly" :disabled="snapshot.nameReadonly" placeholder="globnotes" @update:model-value="value=>onEdit('name',value)" /></SettingRow>
+      <SettingRow id="brand-name" label="Name" :pin="snapshot.namePin" v-slot="row"><TextInput :id="row.id" variant="settings" :aria-describedby="row.describedby" :model-value="snapshot.name" :readonly="!snapshot.writable || snapshot.nameReadonly" :disabled="snapshot.nameReadonly" placeholder="globnotes" @update:model-value="value=>onEdit('name',value)" /></SettingRow>
       <SettingRow id="brand-accent" label="Accent colour" :pin="snapshot.accentPin" short>
         <template #default="row"><div class="flex flex-wrap items-center justify-end gap-4">
           <input :id="row.id" :aria-describedby="row.describedby" type="color" class="focus-ring h-9 w-14 rounded border border-theme-border" :value="snapshot.accent" :disabled="!snapshot.writable || snapshot.accentReadonly" :class="{'opacity-40':snapshot.accentCleared}" @input="onEdit('accent',$event.target.value)">

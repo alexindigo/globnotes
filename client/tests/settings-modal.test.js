@@ -250,10 +250,14 @@ describe("review repairs: R13 real inventory policy wires participate in protect
   it("enablement and auto-enable reserve the same policy CAS before sending", async () => {
     const wire = deferred(); putPluginEnabled.mockReturnValue(wire.promise); putPluginPolicy.mockResolvedValue({ policy: { revision: 1, signature: "other" } });
     try {
-      await open("core:plugins"); inventoryButton().click(); await flushPromises();
+      await open("core:plugins");
       const switches = [...document.querySelectorAll('[data-plugin-inventory] button')];
       const automatic = switches.find(button => document.getElementById(button.getAttribute('aria-labelledby'))?.textContent === "Turn on new plugins automatically");
-      expect(automatic).toBeTruthy(); automatic.click();
+      expect(automatic).toBeTruthy();
+      inventoryButton().click(); await flushPromises();
+      expect(document.body.contains(automatic)).toBe(false);
+      // Even a retained pre-render intent must not bypass the reserved policy CAS.
+      automatic.click();
       await flushPromises();
       expect(putPluginPolicy).not.toHaveBeenCalled();
       expect(putPluginEnabled).toHaveBeenCalledTimes(1);
