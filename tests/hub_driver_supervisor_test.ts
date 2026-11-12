@@ -404,6 +404,74 @@ Deno.test("driver supervisor: CRUD CAS, strict fields, declaration validation, s
   }
 });
 
+Deno.test("driver supervisor: sync waits for coalesced discovery and attention after an in-flight export", async () => {
+  const remote = memoryRemote();
+  remote.put("A.md", "base");
+  const source = Deno.readTextFileSync(
+    new URL(
+      "fixtures/plugins/globnotes-test-driver/driver.js",
+      import.meta.url,
+    ),
+  ).replace(
+    "ctx.instance.settings;",
+    `{baseUrl:${
+      JSON.stringify(remote.baseUrl)
+    },prefix:'',exclude:'',forbiddenCharacters:''};`,
+  );
+  const f = fixture(source, [remote.authority]);
+  const entered = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>();
+  let syncing: Promise<unknown>[] = [];
+  try {
+    await f.approve();
+    const instance = await f.create();
+    await f.key(instance.id, remote.token);
+    await f.enable(instance.id);
+    Deno.removeSync(`${f.vault}/A.md`);
+    f.hub.scanNow();
+    remote.put("A.md", "edited while offline");
+    remote.faults.push({
+      method: "DELETE",
+      path: "/object",
+      key: "A.md",
+      before: async () => {
+        entered.resolve();
+        await release.promise;
+      },
+    });
+    const listings = remote.requests.filter(({ path }) =>
+      path === "/list"
+    ).length;
+    f.scheduler.tick(1001);
+    await entered.promise;
+    syncing = Array.from({ length: 3 }, () =>
+      f.supervisor.sync(instance.id, {
+        revision: f.supervisor.peers.instance(instance.id)!.revision,
+      }, guard));
+    release.resolve();
+    await Promise.all(syncing);
+    const row = await f.one(instance.id);
+    assertEquals(row.attention.held, [{ path: "A.md" }]);
+    assertEquals(
+      remote.requests.filter(({ path }) => path === "/list").length,
+      listings + 1,
+      "concurrent full requests share one follow-up discovery",
+    );
+    await f.supervisor.decide(instance.id, {
+      instanceRevision: row.revision,
+      attentionRevision: row.attention.revision,
+      action: "held_delete",
+    }, guard);
+    assertEquals(remote.objects.size, 0);
+    assertEquals(f.hub.fileState("A.md"), null);
+  } finally {
+    release.resolve();
+    await Promise.allSettled(syncing);
+    await f.close();
+    await remote.close();
+  }
+});
+
 Deno.test("driver supervisor: observed-time discovery and debounced exports are independent of wall-clock waits", async () => {
   const f = await fixture();
   try {

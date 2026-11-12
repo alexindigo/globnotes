@@ -138,6 +138,9 @@ instead of an invisible narrower column.
 Account and Access settings use the shared setting rows for consistent labels,
 summaries and actions.
 
+Sync now waits for discovery queued behind an active cycle, so the next explicit
+held-file decision does not fail against attention that sync had not published.
+
 Hub watches skip top-level dot folders to preserve SQLite locks; periodic scans still observe their content except the state directory.
 
 Remotely Save discovery reuses generation-local name and strong-validator body

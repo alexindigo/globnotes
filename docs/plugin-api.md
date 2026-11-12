@@ -147,6 +147,11 @@ retry advice. The public `nextRetry` is the remaining observed milliseconds, not
 a wall-clock deadline. Off, starting, active, locked, failed and read-only paused
 are separate states. Reads alone do not start an instance or advance its revision.
 
+Sync now waits for its full discovery and resulting attention publication. If a
+cycle is already running, concurrent requests share a follow-up full cycle and
+resolve only after it publishes. This does not reserve attention against later
+endpoint changes; a decision still revalidates its reviewed native observations.
+
 Driver owners participate in PluginManager's policy, permission reduction,
 settings-source recovery and explicit code replacement paths. Disable, instance
 reconfiguration, key changes, access-policy epochs and shutdown synchronously

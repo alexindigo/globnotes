@@ -2,7 +2,12 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
-import { driverDeclaration, minimalDriver } from "./helpers/driver_fixture.ts";
+import {
+  driverDeclaration,
+  minimalDriver,
+  storageServerFixture,
+} from "./helpers/driver_fixture.ts";
+import { memoryRemote } from "./helpers/memory_remote.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 async function shutdownWithLiveStream(
@@ -227,6 +232,44 @@ Deno.test("driver API: real HTTP CRUD and keys are write-only, revision-bound an
   } finally {
     await server.close();
     await f.dispose();
+  }
+});
+
+Deno.test("driver API: changed held observations still reject the reviewed decision with 409", async () => {
+  const remote = memoryRemote();
+  remote.put("A.md", "base");
+  const f = await storageServerFixture([remote.authority]);
+  try {
+    const id = await f.add(remote.baseUrl, remote.token);
+    const note = await f.call("notes/A");
+    remote.put("A.md", "first held edit");
+    await f.call(`notes/A?base_version=${note.version}`, "DELETE");
+    const reviewed = await f.sync(id);
+    assertEquals(reviewed.attention.held, [{ path: "A.md" }]);
+    remote.put("A.md", "changed after review");
+    const response = await fetch(
+      `${f.server().baseUrl}/_/api/drivers/${id}/decisions`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          instanceRevision: reviewed.revision,
+          attentionRevision: reviewed.attention.revision,
+          action: "held_delete",
+        }),
+      },
+    );
+    const result = await response.json();
+    assertEquals(response.status, 409);
+    assertEquals(result.code, "driver_stale");
+    const current = await f.one(id);
+    assertEquals(current.attention.held, reviewed.attention.held);
+    assert(current.attention.revision > reviewed.attention.revision);
+    assertEquals(remote.text("A.md"), "changed after review");
+    assertEquals([...Deno.readDirSync(f.vault)], []);
+  } finally {
+    await f.close();
+    await remote.close();
   }
 });
 

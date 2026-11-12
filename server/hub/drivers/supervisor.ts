@@ -56,6 +56,7 @@ interface Slot {
   worker?: DriverWorker;
   session?: DriverSession;
   pending?: Promise<void>;
+  fullRequested: boolean;
   view: DriverSessionView | {
     status: "off";
     reason: string | null;
@@ -221,6 +222,7 @@ export class DriverSupervisor implements DriverOwners {
       epoch: owner.epoch,
       access: this.adapters.lifecycle.epoch,
       retired: false,
+      fullRequested: false,
       source: previous?.source,
       // Automatic retries cannot acquire an expansion whose SDK receipt has
       // not settled. Only an admitted permission replacement changes this ceiling.
@@ -327,51 +329,63 @@ export class DriverSupervisor implements DriverOwners {
     } else if (this.#clock.now() >= slot.activityUntil) slot.activity = null;
     return before !== slot.activity;
   }
+  /** A shared completion covers every full request admitted during pending work,
+   * including startup and export-only cycles, not just the cycle already running. */
   #run(slot: Slot, full: boolean): Promise<void> {
     if (slot.pending) {
-      if (full) slot.nextFull = this.#clock.now();
+      if (full) slot.fullRequested = true;
       return slot.pending;
     }
     if (!this.#current(slot)) return Promise.resolve();
-    if (full) slot.nextFull = Infinity;
-    slot.nextExport = slot.nextRetry = Infinity;
-    const work = this.#cycle(slot, full).catch(() => {
-      slot.worker?.stop();
-      if (this.#current(slot)) {
-        slot.view = this.#state("failed", "driver_start_failed");
+    slot.fullRequested = full;
+    const work = (async () => {
+      try {
+        do {
+          const discover = slot.fullRequested;
+          slot.fullRequested = false;
+          if (discover) slot.nextFull = Infinity;
+          slot.nextExport = slot.nextRetry = Infinity;
+          await this.#cycle(slot, discover).catch(() => {
+            slot.worker?.stop();
+            if (this.#current(slot)) {
+              slot.view = this.#state("failed", "driver_start_failed");
+            }
+          });
+          if (!this.#current(slot)) return;
+          const view = slot.worker && !slot.worker.current()
+            ? slot.view
+            : slot.session?.snapshot() ?? slot.view;
+          slot.view = view;
+          if (view.status === "failed") {
+            slot.nextRetry = this.#clock.now() +
+              Math.max(
+                Math.min(5000 * 2 ** slot.attempts++, 300_000),
+                view.error?.retryAfterMs ?? 0,
+              );
+          } else if (view.status === "active") {
+            slot.attempts = 0;
+            slot.nextFull = Math.min(slot.nextFull, this.#clock.now() + 60_000);
+            const retry = this.peers.files(slot.instance.id).filter((row) =>
+              ["pending", "uncertain", "delete-pending"].includes(row.state)
+            );
+            if (retry.length) {
+              slot.nextFull = Math.min(
+                slot.nextFull,
+                Math.max(
+                  this.#clock.now() + 1000,
+                  Math.min(...retry.map((row) => row.nextAt)),
+                ),
+              );
+            }
+          }
+          this.#changed();
+        } while (slot.fullRequested);
+      } finally {
+        // Release ownership in the drain itself: a later promise finalizer would
+        // leave a gap in which a new full request could join completed work.
+        slot.pending = undefined;
       }
-    }).then(() => {
-      if (!this.#current(slot)) return;
-      const view = slot.worker && !slot.worker.current()
-        ? slot.view
-        : slot.session?.snapshot() ?? slot.view;
-      slot.view = view;
-      if (view.status === "failed") {
-        slot.nextRetry = this.#clock.now() +
-          Math.max(
-            Math.min(5000 * 2 ** slot.attempts++, 300_000),
-            view.error?.retryAfterMs ?? 0,
-          );
-      } else if (view.status === "active") {
-        slot.attempts = 0;
-        slot.nextFull = Math.min(slot.nextFull, this.#clock.now() + 60_000);
-        const retry = this.peers.files(slot.instance.id).filter((row) =>
-          ["pending", "uncertain", "delete-pending"].includes(row.state)
-        );
-        if (retry.length) {
-          slot.nextFull = Math.min(
-            slot.nextFull,
-            Math.max(
-              this.#clock.now() + 1000,
-              Math.min(...retry.map((row) => row.nextAt)),
-            ),
-          );
-        }
-      }
-      this.#changed();
-    }).finally(() => {
-      if (slot.pending === work) slot.pending = undefined;
-    });
+    })();
     slot.pending = work;
     return work;
   }
