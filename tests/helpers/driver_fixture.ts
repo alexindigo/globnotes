@@ -48,7 +48,10 @@ export async function driverFixture(
 
 /** Installs only the test-owned fixture plugin; uses actual server controls and
  * network consent, never a preapproved production policy or direct Worker RPC. */
-export async function storageServerFixture(authorities: string[]) {
+export async function storageServerFixture(
+  authorities: string[],
+  options: { observedTime?: number } = {},
+) {
   const fixture = await pluginFixture();
   const root = new URL(
     "../fixtures/plugins/globnotes-test-driver/",
@@ -67,7 +70,35 @@ export async function storageServerFixture(authorities: string[]) {
     fixtureAuth: { auth_type: "none" },
     GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
   };
-  let server = await bootServer(env);
+  // Control only this owned subprocess's observed-time seam. No process env,
+  // product route or production clock implementation is changed by the fixture.
+  let observedTime = options.observedTime ?? 0;
+  const clockFile = `${fixture.root}/observed-time.json`;
+  const preload = `${fixture.root}/observed-time.mjs`;
+  const clock = options.observedTime === undefined ? null : {
+    now: () => observedTime,
+    advance(milliseconds: number) {
+      observedTime += milliseconds;
+      const next = `${clockFile}.next`;
+      Deno.writeTextFileSync(next, JSON.stringify(observedTime));
+      Deno.renameSync(next, clockFile);
+    },
+  };
+  if (clock) {
+    Deno.writeTextFileSync(clockFile, JSON.stringify(observedTime));
+    Deno.writeTextFileSync(
+      preload,
+      `import { processClock } from ${
+        JSON.stringify(
+          new URL("../../server/observed_time.ts", import.meta.url).href,
+        )
+      };\nprocessClock.now = () => JSON.parse(Deno.readTextFileSync(${
+        JSON.stringify(clockFile)
+      }));\n`,
+    );
+  }
+  const serverOptions = clock ? { denoArgs: ["--preload", preload] } : {};
+  let server = await bootServer(env, serverOptions);
   const packets: string[] = [];
   async function call(route: string, method = "GET", body?: unknown) {
     const response = await fetch(`${server.baseUrl}/_/api/${route}`, {
@@ -137,6 +168,7 @@ export async function storageServerFixture(authorities: string[]) {
   await approve();
   return {
     ...fixture,
+    clock,
     call,
     packets,
     view,
@@ -169,7 +201,7 @@ export async function storageServerFixture(authorities: string[]) {
     },
     async restart(overrides: Record<string, unknown> = {}) {
       await server.close();
-      server = await bootServer({ ...env, ...overrides });
+      server = await bootServer({ ...env, ...overrides }, serverOptions);
     },
     async close() {
       await server.close();

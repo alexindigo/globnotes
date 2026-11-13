@@ -472,8 +472,12 @@ Deno.test("driver acceptance: read-only server restart pauses persisted instance
 Deno.test("driver acceptance: discovery rate-limit advice reaches instance retry state without losing its cursor or files", async () => {
   const remote = memoryRemote();
   remote.put("note.md", "retained");
-  const f = await storageServerFixture([remote.authority]);
+  const f = await storageServerFixture([remote.authority], {
+    observedTime: 50000,
+  });
   try {
+    const clock = f.clock;
+    assert(clock);
     const id = await f.add(remote.baseUrl, remote.token);
     const cursor = metadata(f.statePath, "SELECT cursor FROM peer_sync");
     remote.faults.push({ path: "/list", status: 429, retryAfterMs: 23000 });
@@ -483,7 +487,14 @@ Deno.test("driver acceptance: discovery rate-limit advice reaches instance retry
     assertEquals(metadata(f.statePath, "SELECT cursor FROM peer_sync"), cursor);
     assertEquals(row.error.code, "rate_limited");
     assertEquals(row.error.retryAfterMs, 23000);
-    assert(row.nextRetry > 22000);
+    const scheduledRetry = clock.now() + 23000;
+    assertEquals(clock.now() + row.nextRetry, scheduledRetry);
+    clock.advance(1500);
+    const later = await f.one(id);
+    assertEquals(later.nextRetry, 21500);
+    assertEquals(clock.now() + later.nextRetry, scheduledRetry);
+    assertEquals(metadata(f.statePath, "SELECT cursor FROM peer_sync"), cursor);
+    assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "retained");
   } finally {
     await f.close();
     await remote.close();
@@ -493,10 +504,15 @@ Deno.test("driver acceptance: discovery rate-limit advice reaches instance retry
 Deno.test("driver acceptance: GET retry advice survives Worker transport; denied writes lock and stop subsequent packets", async () => {
   const remote = memoryRemote();
   remote.put("base.md", "base");
-  const f = await storageServerFixture([remote.authority]);
+  const f = await storageServerFixture([remote.authority], {
+    observedTime: 50000,
+  });
   try {
+    const clock = f.clock;
+    assert(clock);
     const id = await f.add(remote.baseUrl, remote.token);
     remote.put("base.md", "new remote bytes");
+    const cursor = metadata(f.statePath, "SELECT cursor FROM peer_sync");
     remote.faults.push({
       path: "/object",
       key: "base.md",
@@ -507,7 +523,13 @@ Deno.test("driver acceptance: GET retry advice survives Worker transport; denied
     const failed = await f.sync(id);
     assertEquals(failed.error.code, "rate_limited");
     assertEquals(failed.error.retryAfterMs, 27000);
-    assert(failed.nextRetry > 26000);
+    const scheduledRetry = clock.now() + 27000;
+    assertEquals(clock.now() + failed.nextRetry, scheduledRetry);
+    clock.advance(1500);
+    const later = await f.one(id);
+    assertEquals(later.nextRetry, 25500);
+    assertEquals(clock.now() + later.nextRetry, scheduledRetry);
+    assertEquals(metadata(f.statePath, "SELECT cursor FROM peer_sync"), cursor);
     assertEquals(Deno.readTextFileSync(`${f.vault}/base.md`), "base");
     await f.sync(id);
     const count = writes(remote).length;
