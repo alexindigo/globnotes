@@ -6,6 +6,7 @@ import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { PluginDataStore } from "../server/plugins/data.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
+import { processClock } from "../server/observed_time.ts";
 import {
   PluginGuardError,
   PluginRuntime,
@@ -14,10 +15,40 @@ import {
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
 import { pluginSettled } from "./helpers/plugin_ready.ts";
 import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
+import { bounded } from "./helpers/worker_liveness.ts";
 
-/** DIAG_R09_FINAL_CAS is test-only; restore the exact Deno.stat function in
- * finally. Observe original authority check → async CAS → actual worker
- * deadline/crash → final bytes, rather than a not-yet-existing helper. */
+/** Capture only the synchronously admitted call's existing deadline. Worker I/O,
+ * heartbeats and every other process-clock deadline retain their real owners. */
+function controlledInvocation(invoke: () => Promise<unknown>, budget: number) {
+  const originalDeadline = processClock.deadline;
+  let expire: (() => void) | undefined, cancelled = false;
+  processClock.deadline = (milliseconds, callback) => {
+    assertEquals(milliseconds, budget);
+    assertEquals(expire, undefined);
+    expire = callback;
+    return () => {
+      cancelled = true;
+    };
+  };
+  try {
+    const result = invoke().catch((error) => error);
+    assert(expire, "invocation must synchronously arm its owned deadline");
+    const deadline = expire;
+    return {
+      result,
+      expire() {
+        assert(!cancelled, "only a live invocation can expire");
+        deadline();
+      },
+      cancelled: () => cancelled,
+    };
+  } finally {
+    processClock.deadline = originalDeadline;
+  }
+}
+
+/** Observe the persistence boundary before allowing the owned deadline to fire.
+ * The synchronous final primitive instead completes before an explicit crash. */
 Deno.test("review repairs: R09 private data cannot commit after real worker retirement at final persistence", async () => {
   const fixture = await pluginFixture();
   const target = `${fixture.statePath}/plugin-data/final-authority/data.json`;
@@ -75,16 +106,24 @@ Deno.test("review repairs: R09 private data cannot commit after real worker reti
       }
       return current;
     }) as typeof Deno.stat;
-    writing = runtime.invokeCommand(manifest.id, "write", {}).catch((error) =>
-      error
+    const invocation = controlledInvocation(
+      () => runtime.invokeCommand(manifest.id, "write", {}),
+      100,
     );
-    const boundary = await Promise.race([
-      reached.promise.then(() => "async-final-cas" as const),
-      writing.then(() => "settled-before-retirement" as const),
-    ]);
+    writing = invocation.result;
+    const boundary = await bounded(
+      Promise.race([
+        reached.promise.then(() => "async-final-cas" as const),
+        writing.then(() => "settled-before-retirement" as const),
+      ]),
+      "R09 final persistence or successful command settlement",
+    );
     if (boundary === "async-final-cas") {
-      const expired = await writing;
+      assertEquals(invocation.cancelled(), false);
+      invocation.expire();
+      const expired = await bounded(writing, "R09 real deadline retirement");
       assert(expired instanceof Error);
+      assertEquals(invocation.cancelled(), true);
       assertEquals(runtime.status(manifest.id)?.status, "failed");
       assertEquals(Deno.readTextFileSync(target), before);
       hold.resolve();
@@ -105,14 +144,19 @@ Deno.test("review repairs: R09 private data cannot commit after real worker reti
       // is any retirement window; do not relabel that committed effect.
       const result = await writing;
       assert(!(result instanceof Error));
+      assertEquals(invocation.cancelled(), true);
       assertEquals((await store.load()).revision, 2);
       assertEquals(
         (await store.load()).values.preserved,
         "must not persist after retirement",
       );
-      await runtime.invokeCommand(manifest.id, "crash", {}).catch(() =>
-        undefined
+      const crashing = controlledInvocation(
+        () => runtime.invokeCommand(manifest.id, "crash", {}),
+        100,
       );
+      const crashed = await bounded(crashing.result, "R09 actual Worker crash");
+      assert(crashed instanceof Error);
+      assertEquals(crashing.cancelled(), true);
       assertEquals(runtime.status(manifest.id)?.status, "failed");
       assertEquals((await store.load()).revision, 2);
       console.log(
@@ -132,9 +176,9 @@ Deno.test("review repairs: R09 private data cannot commit after real worker reti
   } finally {
     hold.resolve();
     Deno.stat = originalStat;
+    await runtime.close();
     if (writing) await writing;
     if (effect) await effect.catch(() => undefined);
-    await runtime.close();
     console.log(JSON.stringify({ retainedR09Fixture: fixture.root }));
   }
 });
@@ -190,14 +234,21 @@ Deno.test("review repairs: R09 final preparation followed by real deadline or cr
         await runtime.reconcile();
         await pluginSettled(runtime, manifest.id, "ready");
         assertEquals(runtime.status(manifest.id)?.status, "ready");
-        writing = runtime.invokeCommand(manifest.id, "write", {}).catch((
-          error,
-        ) => error);
-        await prepared.promise;
+        const invocation = controlledInvocation(
+          () => runtime.invokeCommand(manifest.id, "write", {}),
+          100,
+        );
+        writing = invocation.result;
+        await bounded(prepared.promise, "R09 final preparation reached");
+        assertEquals(invocation.cancelled(), false);
         if (ending === "crash") {
           await runtime.guard("pre-save", {}).catch(() => undefined);
-        }
-        assert(await writing instanceof Error);
+        } else invocation.expire();
+        assert(
+          await bounded(writing, "R09 prepared Worker retirement") instanceof
+            Error,
+        );
+        assertEquals(invocation.cancelled(), true);
         assertEquals(runtime.status(manifest.id)?.status, "failed");
         release.resolve();
         await completed.promise;
@@ -229,8 +280,8 @@ Deno.test("review repairs: R09 final preparation followed by real deadline or cr
         );
       } finally {
         release.resolve();
-        if (writing) await writing;
         await runtime.close();
+        if (writing) await writing;
         console.log(
           JSON.stringify({ retainedPreparedR09Fixture: fixture.root }),
         );
