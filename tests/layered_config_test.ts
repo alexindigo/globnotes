@@ -304,16 +304,15 @@ Deno.test("layered config: strict numeric boolean list and TOML types", () =>
     }
   }));
 
-Deno.test("layered config: metadata special spelling and build envelope only", () => {
-  assertEquals(envName("metadata.path"), "GLOBNOTES_METADATA_PATH");
+Deno.test("layered config: metadata uses the instance prefix and build envelope stays separate", () => {
+  assertEquals(envName("metadata.path"), "GLOBNOTES__METADATA_PATH");
   assertEquals(
-    load({ GLOBNOTES_METADATA_PATH: "/etc/globnotes", GLOBNOTES_REVISION: "" })
+    load({ GLOBNOTES__METADATA_PATH: "/etc/globnotes", GLOBNOTES_REVISION: "" })
       .config.metadata.path,
     "/etc/globnotes",
   );
   for (
     const name of [
-      "GLOBNOTES__METADATA_PATH",
       "GLOBNOTES__METADATA_BASEPATH",
       "GLOBNOTES_PORT",
       "GLOBNOTES_TEST_HOST",

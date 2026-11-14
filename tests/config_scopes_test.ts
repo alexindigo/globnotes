@@ -56,55 +56,9 @@ Deno.test("config scopes: TOML and env declarations merge by name and leaf witho
     assert(Object.isFrozen(result.config.vaults.entries));
   }));
 
-Deno.test("config scopes: metadata is reserved in TOML declarations", () =>
+Deno.test("config scopes: instance metadata env is isolated from vault declarations", () =>
   fixture((root) => {
-    const file = `${root}/instance.toml`;
-    Deno.writeTextFileSync(
-      file,
-      `[vaults.entries.metadata]\npath="${root}/notes"\n`,
-    );
-    const error = assertThrows(
-      () => loadInstanceConfig({ overlayPath: file, env: {} }),
-      ConfigError,
-    );
-    assertStringIncludes(error.message, "metadata");
-    assertStringIncludes(error.message, "reserved vault name");
-  }));
-
-Deno.test("config scopes: reserved metadata names are rejected in env, bindings and standalone scopes", () =>
-  fixture((root) => {
-    for (
-      const env of [{ GLOBNOTES_METADATA_ADMIN: "alex" }, {
-        GLOBNOTES_METADATA_BRAND_NAME: "Brand",
-      }] as Record<string, string>[]
-    ) {
-      const error = assertThrows(
-        () => loadInstanceConfig({ overlayPath: null, env }),
-        ConfigError,
-      );
-      assertStringIncludes(error.message, "metadata");
-      assertStringIncludes(error.message, "reserved vault name");
-    }
-    const bound = assertThrows(
-      () =>
-        loadInstanceConfig({
-          overlayPath: null,
-          env: {},
-          vaults: { metadata: { path: root } },
-        }),
-      ConfigError,
-    );
-    assertStringIncludes(bound.message, "metadata");
-    const standalone = assertThrows(
-      () => loadVaultConfig("metadata", null, {}),
-      ConfigError,
-    );
-    assertStringIncludes(standalone.message, "metadata");
-  }));
-
-Deno.test("config scopes: exact metadata env is instance-only and coexists with another vault", () =>
-  fixture((root) => {
-    const env = { GLOBNOTES_METADATA_PATH: `${root}/state` };
+    const env = { GLOBNOTES__METADATA_PATH: `${root}/state` };
     const alone = loadInstanceConfig({ overlayPath: null, env });
     assertEquals(alone.config.metadata.path, `${root}/state`);
     assertEquals(alone.config.vaults.entries, {});
@@ -195,7 +149,7 @@ Deno.test("config scopes: validate every declared overlay including inactive sco
         loadInstanceConfig({
           overlayPath: null,
           env: {
-            GLOBNOTES_METADATA_PATH: `${root}/metadata`,
+            GLOBNOTES__METADATA_PATH: `${root}/metadata`,
             GLOBNOTES_FIRST_PATH: `${root}/first`,
             GLOBNOTES_INACTIVE_PATH: `${root}/inactive`,
           },

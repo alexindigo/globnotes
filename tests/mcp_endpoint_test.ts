@@ -500,7 +500,7 @@ Deno.test("mcp endpoint: a plugin pre-save guard cancels an MCP write", async ()
     await Deno.writeTextFile(path.join(fixture.vault, "doc.md"), "# Doc\n");
     const server = await boot({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      GLOBNOTES__METADATA_PATH: fixture.metadataBase,
       fixtureAuth: { auth_type: "none" },
     });
     try {
@@ -564,7 +564,7 @@ Deno.test("mcp endpoint: plugin guards cancel MCP creates, renames and deletes",
     await Deno.writeTextFile(path.join(fixture.vault, "doc.md"), "# doc\n");
     const server = await boot({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      GLOBNOTES__METADATA_PATH: fixture.metadataBase,
       fixtureAuth: { auth_type: "none" },
     });
     try {

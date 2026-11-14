@@ -100,8 +100,8 @@ export async function bootServer(
   const vault = env.GLOBNOTES_GLOBNOTES_PATH ??
     (await Deno.makeTempDir({ prefix: "globnotes-test-vault-" }));
   if (ownsVault) trackedVaults.add(vault);
-  const metadata = env.GLOBNOTES_METADATA_PATH
-    ? path.resolve(env.GLOBNOTES_METADATA_PATH, "globnotes")
+  const metadata = env.GLOBNOTES__METADATA_PATH
+    ? path.resolve(env.GLOBNOTES__METADATA_PATH, "globnotes")
     : path.join(vault, ".globnotes");
   if (fixture.fixtureAuth) {
     await Deno.mkdir(metadata, { recursive: true });

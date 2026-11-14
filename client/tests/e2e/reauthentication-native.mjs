@@ -57,7 +57,7 @@ async function capture(name) {
   }
 }
 try {
-  server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: directory + "/state", GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
+  server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: directory + "/state", GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   session.page.onEvent(event => {
     if (event.method === "Network.requestWillBeSent" && event.params.request.method === "PATCH") writes.push({ id: event.params.requestId, body: JSON.parse(event.params.request.postData) });

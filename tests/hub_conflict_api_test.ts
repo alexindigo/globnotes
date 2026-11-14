@@ -219,7 +219,7 @@ Deno.test("conflict API: real HTTP choices reach disk, filtered inbox and ordina
   Deno.mkdirSync(`${root}/vault`);
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: `${root}/vault`,
-    GLOBNOTES_METADATA_PATH: `${root}/state`,
+    GLOBNOTES__METADATA_PATH: `${root}/state`,
     fixtureAuth: { auth_type: "none" },
   });
   try {

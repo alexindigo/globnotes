@@ -31,7 +31,7 @@ async function launch(fixture) {
     ...(fixture.importParent ? [`--allow-import=jsr.io:443,${fixture.authority}`, `--lock=${fixture.privateLock}`] : []), `${ROOT}/server/main.ts`];
   const child = new Deno.Command(Deno.execPath(), { args, cwd: ROOT, stdout: "piped", stderr: "piped", clearEnv: true,
     env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_METADATA_PATH: metadataBase(fixture.vault, fixture.state), GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) } }).spawn();
+      GLOBNOTES__METADATA_PATH: metadataBase(fixture.vault, fixture.state), GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) } }).spawn();
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${fixture.directory}/server-${fixture.launchCount}-${name}.log`, { createNew: true, write: true });
     try { for await (const bytes of child[name]) { let at = 0; while (at < bytes.length) at += await file.write(bytes.subarray(at)); } } finally { file.close(); }

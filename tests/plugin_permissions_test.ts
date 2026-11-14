@@ -32,7 +32,7 @@ async function serviceBundle(opts: {
   await fixture.install("svc", opts.manifest, { "service.js": opts.service });
   const env = {
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    GLOBNOTES__METADATA_PATH: fixture.metadataBase,
     fixtureAuth: { auth_type: opts.authType ?? "none" },
   };
   const environment = testEnvironment(env);

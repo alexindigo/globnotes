@@ -38,7 +38,7 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`],
     cwd, clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR: Deno.env.get("TMPDIR"), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: metadataBase(vault, state), GLOBNOTES__SERVER_PATHPREFIX: prefix, GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false", GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) },
+    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR: Deno.env.get("TMPDIR"), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: metadataBase(vault, state), GLOBNOTES__SERVER_PATHPREFIX: prefix, GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false", GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) },
     stdout: "piped", stderr: "piped",
   }).spawn();
   const baseUrl = httpOrigin(port), logs = { stdout: "", stderr: "" };

@@ -44,7 +44,7 @@ async function prefixFirst(mode, text) {
 try {
   await shellWrite("Viewing", "initial viewing text\n");
   for (const mode of ["Source", "WYSIWYG", "Preview"]) await shellWrite(`M2-${mode}`, base);
-  server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: `${directory}/state`,
+  server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: `${directory}/state`,
     fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   session.page.onEvent(event => {

@@ -76,9 +76,7 @@ export function envName(key: string): string {
       declaration[2].toUpperCase()
     }`;
   }
-  return key === "metadata.path"
-    ? "GLOBNOTES_METADATA_PATH"
-    : `GLOBNOTES__${key.replaceAll(".", "_").toUpperCase()}`;
+  return `GLOBNOTES__${key.replaceAll(".", "_").toUpperCase()}`;
 }
 export function leaves(schema: Schema, prefix = ""): [string, Leaf][] {
   return Object.entries(schema).flatMap(([key, node]) => {
@@ -505,7 +503,7 @@ export function splitEnvironment(
     if (
       !variable.startsWith("GLOBNOTES_") ||
       variable.startsWith("GLOBNOTES__") ||
-      ["GLOBNOTES_CONFIG", "GLOBNOTES_REVISION", "GLOBNOTES_METADATA_PATH"]
+      ["GLOBNOTES_CONFIG", "GLOBNOTES_REVISION"]
         .includes(variable)
     ) {
       instanceEnv[variable] = raw;

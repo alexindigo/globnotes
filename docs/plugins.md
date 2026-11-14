@@ -12,7 +12,7 @@ trusted same-origin code. Plugins can extend rendering, editing and app workflow
 └── main.js
 ```
 
-(With `GLOBNOTES_METADATA_PATH` set, `<metadata>/<vault name>` replaces `<vault>/.globnotes`
+(With `GLOBNOTES__METADATA_PATH` set, `<metadata>/<vault name>` replaces `<vault>/.globnotes`
 in every path below.)
 
 Two roots are scanned (internal first, vault overrides by ID):
@@ -222,7 +222,7 @@ instance removes its keys and retires its id, leaving vault and endpoint files.
 
 Providers with emulated conditions disclose the simultaneous-write race in the
 instance panel. If state is inside the vault, Sync names the key-store location:
-outside tools copying the entire folder copy keys too. Use `GLOBNOTES_METADATA_PATH`
+outside tools copying the entire folder copy keys too. Use `GLOBNOTES__METADATA_PATH`
 to keep state outside such copies. For connections outside a trusted LAN, protect
 the page's link with a TLS reverse proxy such as Caddy or Nginx Proxy Manager.
 

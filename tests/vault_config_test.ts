@@ -28,7 +28,7 @@ Deno.test("vault config: full deployment environment is scoped once for independ
   fixture((root, file) => {
     const env = {
       GLOBNOTES__SERVER_HOST: "globnotes.test",
-      GLOBNOTES_METADATA_PATH: `${root}/metadata`,
+      GLOBNOTES__METADATA_PATH: `${root}/metadata`,
       GLOBNOTES_FAMILY_PATH: `${root}/family`,
       GLOBNOTES_FAMILY_ADMIN: "Family admin",
       GLOBNOTES_FAMILY_BRAND_NAME: "Family pin",

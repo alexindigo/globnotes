@@ -121,7 +121,19 @@ Deno.test("config launch: real CLI emits only allowlisted safely quoted values a
     );
     assertFalse(projection.includes("GLOBNOTES_"));
   }));
-Deno.test("config launch: actual health script consumes TOML port prefix IPv6 wildcard and Host header", () =>
+Deno.test("config launch: CLI projects the instance-prefixed metadata override", () =>
+  fixture(async (root, env) => {
+    const metadata = `${root}/env-metadata`;
+    const result = await cli({ ...env, GLOBNOTES__METADATA_PATH: metadata });
+    assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+    const projection = new TextDecoder().decode(result.stdout);
+    assert(
+      projection.includes(`LAUNCH_VAULT_METADATA='${metadata}/globnotes'`),
+    );
+    assert(projection.includes(`LAUNCH_INSTANCE_METADATA='${metadata}/_'`));
+    assertFalse(await Deno.stat(metadata).then(() => true).catch(() => false));
+  }));
+Deno.test("config launch: actual health script consumes instance-prefixed metadata and TOML port prefix IPv6 wildcard and Host header", () =>
   fixture(async (root, env) => {
     await Deno.mkdir(`${root}/bin`);
     await Deno.writeTextFile(
@@ -134,6 +146,7 @@ Deno.test("config launch: actual health script consumes TOML port prefix IPv6 wi
       args: ["healthcheck.sh"],
       env: {
         ...env,
+        GLOBNOTES__METADATA_PATH: `${root}/env-metadata`,
         PATH: `${root}/bin:${Deno.env.get("PATH")}`,
         FIXTURE_REQUEST: `${root}/request.txt`,
       },
@@ -197,7 +210,7 @@ Deno.test("config launch: recursive metadata ownership cannot include the mounte
       stderr: "piped",
       env: {
         GLOBNOTES_GLOBNOTES_PATH: notes,
-        GLOBNOTES_METADATA_PATH: `${root}/metadata`,
+        GLOBNOTES__METADATA_PATH: `${root}/metadata`,
         PATH: `${root}/bin:${Deno.env.get("PATH")}`,
         PUID: "1000",
         PGID: "1000",

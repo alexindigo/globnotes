@@ -1327,7 +1327,7 @@ Deno.test("plugin authority: real Worker HTTP timer without file hooks persists 
     await approveFixtureNetwork(operator.network, "timer");
     server = await launchBackgroundFixture({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      GLOBNOTES__METADATA_PATH: fixture.metadataBase,
       fixtureAuth: { auth_type: "none" },
     });
     await waitBackgroundAdmission(server, () => fetchObserved);

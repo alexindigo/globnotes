@@ -26,7 +26,7 @@ const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 async function bootFirstRun(vault, state, directory, prefix) {
   const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
   const child = new Deno.Command(Deno.execPath(), { args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`], cwd: ROOT, clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: metadataBase(vault,state), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false", GLOBNOTES__SERVER_PATHPREFIX: prefix, GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) }, stdout: "piped", stderr: "piped" }).spawn();
+    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: metadataBase(vault,state), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false", GLOBNOTES__SERVER_PATHPREFIX: prefix, GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) }, stdout: "piped", stderr: "piped" }).spawn();
   await Deno.writeTextFile(`${directory}/startup-ownership.json`, JSON.stringify({ pid: child.pid, vault, state, prefix, port, cwd: ROOT }), { createNew: true });
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${directory}/server-${name}.log`, { write: true, createNew: true });

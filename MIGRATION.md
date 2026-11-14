@@ -20,8 +20,8 @@ those releases cannot move `latest` back from v3.
 | 2 | Addresses | Notes at `/<path>` | If the only vault is named `globnotes`, v2 note URLs stay at `/<note path>`, with no picker. Otherwise, notes are at `/<vault>/<note path>` |
 | 3 | Logins | One login for the whole instance (`none`, `read_only`, `password`, `totp`), stored in `<state>/config.json` | **Accounts** belong to the instance; each person has one. Each account chooses a password or password + TOTP. Each vault grants **Admin / Edit / View / None** per account, plus an "Everybody else" level (guest, i.e. not signed in) |
 | 4 | v2 login modes | `none` / `read_only` / `password` / `totp` | Per vault: "Everybody else: Edit" = old `none`; "Everybody else: View" = old `read_only`; "Everybody else: No access" plus named accounts = old `password` / `totp` |
-| 5 | App state per vault | `<notes>/.globnotes/`, or `GLOBNOTES_INDEX_PATH` | `<vault folder>/.globnotes/`, or under `GLOBNOTES_METADATA_PATH`: `<metadata>/<vault>/` |
-| 6 | Instance state (accounts, vault list) | - | With `GLOBNOTES_METADATA_PATH`: `<metadata>/_/` (e.g. `/etc/globnotes/_/accounts`). Without it: `<base>/.globnotes/` (default `/data/.globnotes/`) |
+| 5 | App state per vault | `<notes>/.globnotes/`, or `GLOBNOTES_INDEX_PATH` | `<vault folder>/.globnotes/`, or under `GLOBNOTES__METADATA_PATH`: `<metadata>/<vault>/` |
+| 6 | Instance state (accounts, vault list) | - | With `GLOBNOTES__METADATA_PATH`: `<metadata>/_/` (e.g. `/etc/globnotes/_/accounts`). Without it: `<base>/.globnotes/` (default `/data/.globnotes/`) |
 | 7 | Configuration | Environment variables only | Layered: built-in defaults → optional TOML config file → environment variables. Unknown `GLOBNOTES_*` variables stop the server at boot with a list of problems |
 | 8 | Environment variable names | `GLOBNOTES_PATH`, `GLOBNOTES_AUTH_TYPE`, … | New names, no aliases (see "Environment variables" below) |
 | 9 | Plugins | Installed per instance; enabled and configured for the one vault | Still installed once per instance. Each vault turns them on and off and has its own plugin settings, approvals and data |
@@ -80,7 +80,7 @@ journaling) beside the existing server keys in the configured state directory.
 They are write-only in the UI/API, scoped to an instance, and removed when that
 instance is removed. When state is inside the vault, the Sync page explains that
 outside tools copying the whole folder copy keys too. Keep state outside those
-copies with `GLOBNOTES_METADATA_PATH`. Key entry works over ordinary
+copies with `GLOBNOTES__METADATA_PATH`. Key entry works over ordinary
 local-domain HTTP; deployments outside a trusted LAN can protect the link with
 a TLS reverse proxy such as Caddy or Nginx Proxy Manager.
 
@@ -133,7 +133,7 @@ and "Contract version".
 3. **Replace the environment variables** with their v3 names (table below). Remove
    any you don't need; v3 refuses to start on unknown `GLOBNOTES_*` names.
 4. **If you kept app state outside your notes** (`GLOBNOTES_INDEX_PATH`), move it
-   to the v3 layout yourself: `<metadata>/<vault>/` under `GLOBNOTES_METADATA_PATH`.
+   to the v3 layout yourself: `<metadata>/<vault>/` under `GLOBNOTES__METADATA_PATH`.
    v3 doesn't detect or move old state. Relocating state is the operator's choice
    and responsibility.
 5. **Import your v2 data with the migration tool.** Upgrading doesn't reset
@@ -175,7 +175,7 @@ this intermediate stack at a v2 install expecting an automatic conversion.
 | 1 | `GLOBNOTES_HOST` / `GLOBNOTES_PORT` | `GLOBNOTES__SERVER_HOST` / `GLOBNOTES__SERVER_PORT` |
 | 2 | `GLOBNOTES_PATH_PREFIX` | `GLOBNOTES__SERVER_PATHPREFIX` |
 | 3 | `GLOBNOTES_PATH` | base folder `GLOBNOTES__VAULTS_BASEPATH`; a vault elsewhere `GLOBNOTES_<VAULT>_PATH` |
-| 4 | `GLOBNOTES_INDEX_PATH` | `GLOBNOTES_METADATA_PATH` selects a base: vault state `<base>/<name>/`, instance state `<base>/_/`. No prototype metadata aliases or per-vault `_INDEX` |
+| 4 | `GLOBNOTES_INDEX_PATH` | `GLOBNOTES__METADATA_PATH` selects a base: vault state `<base>/<name>/`, instance state `<base>/_/`. No prototype metadata aliases or per-vault `_INDEX` |
 | 5 | `GLOBNOTES_AUTH_TYPE`, `GLOBNOTES_USERNAME`, `GLOBNOTES_PASSWORD`, `GLOBNOTES_SECRET_KEY`, `GLOBNOTES_TOTP_KEY` | Removed, no env replacements. The current local bridge retains guarded setup/access records; future instance accounts and vault ACLs own the final model |
 | 6 | `GLOBNOTES_READ_ONLY_SETTINGS` | Removed. The current saved access lock remains until the identity piece supplies Admin capabilities |
 | 7 | `GLOBNOTES_BRAND_*`, `GLOBNOTES_QUICK_ACCESS_*` | `GLOBNOTES_N_BRAND_NAME`, `_BRAND_ACCENT`, `_QUICKACCESS_HIDE`, `_TITLE`, `_TERM`, `_SORT`, `_LIMIT` |
@@ -201,7 +201,7 @@ documented in [configuration](docs/configuration.md) and the shipped defaults.
 The Community Applications template (`alexindigo/unraid-templates`) needs a v3
 version:
 - the notes path becomes a vault folder under `/data`;
-- "App data" maps to `GLOBNOTES_METADATA_PATH`;
+- "App data" maps to `GLOBNOTES__METADATA_PATH`;
 - the new variable names.
 
 **Open:** a separate v3 template, or the same template with a version note.
@@ -216,4 +216,4 @@ version:
 | 4 | Unraid template: new or updated |
 | 5 | Final identity/ACL replacement of the transitional saved access lock |
 | 6 | **Open:** how the first account and vault admin are created for v2 `none` / `read_only` installs, which have no login to import |
-| 7 | Instance-state default is settled: `<base>/.globnotes/` without `GLOBNOTES_METADATA_PATH` |
+| 7 | Instance-state default is settled: `<base>/.globnotes/` without `GLOBNOTES__METADATA_PATH` |

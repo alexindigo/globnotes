@@ -21,7 +21,7 @@ async function pluginApiServer(opts: Record<string, string> = {}) {
   await fixture.install("ep", ENDPOINT_PLUGIN.manifest, ENDPOINT_PLUGIN.files);
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    GLOBNOTES__METADATA_PATH: fixture.metadataBase,
     fixtureAuth: { auth_type: "none" },
     GLOBNOTES__SERVER_PATHPREFIX: "",
     ...opts,
@@ -327,7 +327,7 @@ Deno.test("plugin api: invalidation stream delivers changes and closes on policy
   await fixture.install("ep", ENDPOINT_PLUGIN.manifest, ENDPOINT_PLUGIN.files);
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    GLOBNOTES__METADATA_PATH: fixture.metadataBase,
     GLOBNOTES__SERVER_PATHPREFIX: "",
   });
   try {

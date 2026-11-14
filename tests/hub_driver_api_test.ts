@@ -70,7 +70,7 @@ Deno.test("driver API: real HTTP CRUD and keys are write-only, revision-bound an
   });
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: f.vault,
-    GLOBNOTES_METADATA_PATH: f.metadataBase,
+    GLOBNOTES__METADATA_PATH: f.metadataBase,
     fixtureAuth: { auth_type: "none" },
   });
   const packets: string[] = [];
@@ -238,7 +238,7 @@ for (const settings of ["true", "false"]) {
     });
     const server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: f.vault,
-      GLOBNOTES_METADATA_PATH: f.metadataBase,
+      GLOBNOTES__METADATA_PATH: f.metadataBase,
       fixtureAuth: {
         auth_type: settings === "true" ? "none" : "read_only",
         read_only_settings: settings === "true",

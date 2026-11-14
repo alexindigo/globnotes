@@ -34,7 +34,7 @@ Deno.test("config paths: default and relocated instance and vault metadata", () 
   assertThrows(() => vaultMetadataPath("/srv/family", "/metadata", "_"));
 });
 
-Deno.test("config paths: escaped underscores round trip; metadata namespace is reserved", () => {
+Deno.test("config paths: escaped underscores round trip; only the instance slug is reserved", () => {
   for (
     const name of [
       "family",
@@ -44,6 +44,7 @@ Deno.test("config paths: escaped underscores round trip; metadata namespace is r
       "brand",
       "server",
       "constructor",
+      "metadata",
     ]
   ) {
     assertEquals(isVaultName(name), true);
@@ -51,12 +52,11 @@ Deno.test("config paths: escaped underscores round trip; metadata namespace is r
   }
   assertEquals(escapeVaultName("my_notes"), "MY__NOTES");
   assertEquals(escapeVaultName("weird__vault"), "WEIRD____VAULT");
-  for (const name of ["_", "metadata", "", "Bad", "../other", "a-b", "1name"]) {
+  for (const name of ["_", "", "Bad", "../other", "a-b", "1name"]) {
     assertEquals(isVaultName(name), false);
   }
   for (
     const encoded of [
-      "METADATA",
       "MY_NOTES",
       "MY___NOTES",
       "my__notes",
@@ -66,10 +66,9 @@ Deno.test("config paths: escaped underscores round trip; metadata namespace is r
   ) {
     assertEquals(decodeVaultName(encoded), null);
   }
-  assertThrows(() => escapeVaultName("metadata"), Error, "metadata");
-  assertThrows(
-    () => vaultMetadataPath("/notes", "/state", "metadata"),
-    Error,
-    "metadata",
+  assertEquals(escapeVaultName("metadata"), "METADATA");
+  assertEquals(
+    vaultMetadataPath("/notes", "/state", "metadata"),
+    "/state/metadata",
   );
 });

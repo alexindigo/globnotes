@@ -550,7 +550,7 @@ Removal retires the peer and deletes its key rows, not files on either side.
 
 When state is inside the vault, Settings -> Sync names its path and explains that
 outside whole-folder copies include keys. Keep state outside such copies with
-`GLOBNOTES_METADATA_PATH`. Ordinary local-domain HTTP supports key entry; off a trusted
+`GLOBNOTES__METADATA_PATH`. Ordinary local-domain HTTP supports key entry; off a trusted
 LAN a TLS reverse proxy such as Caddy or Nginx Proxy Manager protects that link.
 See [drivers.md](drivers.md) for the lifecycle, storage SDK and native-history
 limits, and [plugins.md](plugins.md#sync-plugins-and-instances) for the UI workflow.

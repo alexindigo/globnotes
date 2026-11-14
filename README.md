@@ -124,7 +124,7 @@ services:
       # - /srv/mom-notes:/data/globnotes/mom
     environment:
       # Enable together with the ./state mount above:
-      # GLOBNOTES_METADATA_PATH: "/state"
+      # GLOBNOTES__METADATA_PATH: "/state"
       TZ: "UTC"
 ```
 
@@ -142,7 +142,7 @@ v2 release updates `2` and `v2` without moving `latest` back. See
 
 ### v3: keep application state outside your notes
 
-`GLOBNOTES_METADATA_PATH` selects a metadata base. Vault state lives at
+`GLOBNOTES__METADATA_PATH` selects a metadata base. Vault state lives at
 `<metadata>/globnotes/`, and instance metadata at `<metadata>/_/`. Without it,
 vault state lives at `<notes>/.globnotes/` and instance state at `<base>/.globnotes/`.
 
@@ -162,13 +162,13 @@ services:
       - /srv/notes:/data/globnotes
       - /srv/appdata/globnotes:/state
     environment:
-      GLOBNOTES_METADATA_PATH: "/state"
+      GLOBNOTES__METADATA_PATH: "/state"
 ```
 
 Replace the host paths with your own directories. The left side of each mount is
 a **host path**; the right side and both environment values are **container paths**.
 In Unraid's container editor, the same setup is two path mappings (your notes to
-`/data/globnotes`, application data to `/state`) and a variable named `GLOBNOTES_METADATA_PATH`
+`/data/globnotes`, application data to `/state`) and a variable named `GLOBNOTES__METADATA_PATH`
 with value `/state`. `/index` is equally valid if that is your state mount's
 container path; the directory name is not special.
 
@@ -188,7 +188,7 @@ your settings. Environment-provided settings retain precedence over saved setup
 choices.
 
 Outside Docker, set `GLOBNOTES_GLOBNOTES_PATH` to the actual notes directory and
-`GLOBNOTES_METADATA_PATH` to the actual metadata base. There is no
+`GLOBNOTES__METADATA_PATH` to the actual metadata base. There is no
 container-path translation in a native deployment.
 
 The application user needs access to both directories and write permission for
@@ -198,7 +198,7 @@ selected state directory; it does not change ownership of the notes tree. Use
 
 #### Moving an existing installation
 
-Changing `GLOBNOTES_METADATA_PATH` **does not move existing state automatically**.
+Changing `GLOBNOTES__METADATA_PATH` **does not move existing state automatically**.
 Preserve the existing state rather than treating `.globnotes` as disposable cache:
 it contains saved access configuration and other persistent application data.
 
@@ -206,7 +206,7 @@ it contains saved access configuration and other persistent application data.
 |---|---|
 | 1 | Stop globnotes before transferring state, so SQLite and configuration files are not changing during the copy. Back up the existing `.globnotes` directory. |
 | 2 | For a v3 metadata relocation, copy its **entire contents**, including hidden files and SQLite companions, into an empty per-vault destination such as `/srv/appdata/globnotes/globnotes/`. Do not merge installations. v2 importing is separate future work, not a boot conversion. |
-| 3 | Add the state mount, set `GLOBNOTES_METADATA_PATH` to its container base path, and ensure the application user can access the destination. Restart globnotes. |
+| 3 | Add the state mount, set `GLOBNOTES__METADATA_PATH` to its container base path, and ensure the application user can access the destination. Restart globnotes. |
 | 4 | Confirm that the existing access configuration, branding, plugins, notes and search are present. Retain the original backup; remove the old vault-local state only after confirming the migration. |
 
 Pointing at an empty state directory without copying the old configuration may
@@ -216,7 +216,7 @@ Treat the state directory and its backups as sensitive: configuration can contai
 authentication and signing material.
 
 **Note backups are separate from core application state.** On versions with the
-Versioned note backups plugin, `GLOBNOTES_METADATA_PATH` does not relocate its backup
+Versioned note backups plugin, `GLOBNOTES__METADATA_PATH` does not relocate its backup
 files. The plugin defaults to backups beside notes and keeps recovery bookkeeping
 in `<vault>/.globnotes-backup/`. Settings → Backups can select a separate backup
 destination, but relocating core state alone does not move every plugin-created
@@ -271,7 +271,7 @@ and invalid types stop startup before service effects. See the complete commente
 |---|---|---|---|
 | 1 | `GLOBNOTES__VAULTS_BASEPATH` | `/data` | Base folder; conventional notes at `<base>/globnotes` |
 | 2 | `GLOBNOTES_GLOBNOTES_PATH` | conventional path | Explicit existing notes directory |
-| 3 | `GLOBNOTES_METADATA_PATH` | empty | External metadata base, not the vault directory |
+| 3 | `GLOBNOTES__METADATA_PATH` | empty | External metadata base, not the vault directory |
 | 4 | `GLOBNOTES__SERVER_HOST`, `GLOBNOTES__SERVER_PORT` | `0.0.0.0`, `8080` | Bind address/port |
 | 5 | `GLOBNOTES__SERVER_PATHPREFIX` | empty | Segment-exact URL prefix |
 | 6 | `GLOBNOTES__SERVER_ALLOWEDHOSTS` | empty list | Comma-separated hosts, optional ports; other hosts get 421 |
@@ -396,7 +396,7 @@ Keyboard shortcuts are a **switchable layer** — **Settings → Keybindings** s
 
 **Settings -> Branding** sets the name, accent and logo/icon. Name and accent
 live in vault `config.toml`; image files live in `brand/` beside it. Metadata
-relocation uses `GLOBNOTES_METADATA_PATH`, including the per-vault directory.
+relocation uses `GLOBNOTES__METADATA_PATH`, including the per-vault directory.
 
 - The accent recolors the Globnotes Light/Dark themes; themes with a brand color of their own keep it.
 - **Save branding** applies your choices; **Cancel changes** discards only Branding drafts and keeps Settings open. **Reset branding…** asks before clearing the vault's stored branding.
@@ -405,7 +405,7 @@ relocation uses `GLOBNOTES_METADATA_PATH`, including the per-vault directory.
 
 Favicon files are file-drop only — no dialog fields. Drop them into
 `<state directory>/brand/`: `<vault>/.globnotes/brand/` by default, or
-`/state/globnotes/brand/` when `GLOBNOTES_METADATA_PATH=/state`.
+`/state/globnotes/brand/` when `GLOBNOTES__METADATA_PATH=/state`.
 
 | File | Replaces |
 |---|---|

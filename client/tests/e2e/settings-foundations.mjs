@@ -37,7 +37,7 @@ async function bootWarningServer(vault, state, logsDir) {
   const port = listener.addr.port; listener.close();
   const args = ["run", "--cached-only", "--frozen", `--config=${root}/deno.json`, "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env", "--allow-import=jsr.io:443", `${root}/server/main.ts`];
   const child = new Deno.Command(Deno.execPath(), { args, cwd: root, clearEnv: true, stdout: "piped", stderr: "piped", env: {
-    PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES_METADATA_PATH: metadataBase(vault, state), GLOBNOTES__SERVER_HOST: host, GLOBNOTES__SERVER_PORT: String(port),
+    PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: metadataBase(vault, state), GLOBNOTES__SERVER_HOST: host, GLOBNOTES__SERVER_PORT: String(port),
   } }).spawn();
   const drains = ["stdout", "stderr"].map(async channel => {
     const file = await Deno.open(`${logsDir}/server-${channel}.log`, { write: true, createNew: true });

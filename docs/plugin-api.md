@@ -194,7 +194,7 @@ Key entry uses the page's connection, including ordinary local-domain HTTP. Off 
 trusted LAN, use a TLS reverse proxy such as Caddy or Nginx Proxy Manager to protect
 the link. When state is inside the vault, `notice` names its canonical path:
 outside tools copying the whole folder copy keys too. Keep state outside those
-copies with `GLOBNOTES_METADATA_PATH` (vault state is `<metadata>/<name>/`).
+copies with `GLOBNOTES__METADATA_PATH` (vault state is `<metadata>/<name>/`).
 
 ## Acknowledged log facts (changes API 1)
 

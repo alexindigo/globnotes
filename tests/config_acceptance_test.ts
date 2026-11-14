@@ -29,7 +29,7 @@ Deno.test("config acceptance: shell and server retain original provenance; saves
     );
     const env = {
       GLOBNOTES_GLOBNOTES_PATH: notes,
-      GLOBNOTES_METADATA_PATH: metadata,
+      GLOBNOTES__METADATA_PATH: metadata,
       GLOBNOTES__SERVER_PATHPREFIX: "/notes",
       GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
     };
@@ -164,7 +164,7 @@ Deno.test("config acceptance: actual startup aggregates errors and missing defau
       ],
       env: {
         GLOBNOTES_GLOBNOTES_PATH: notes,
-        GLOBNOTES_METADATA_PATH: metadata,
+        GLOBNOTES__METADATA_PATH: metadata,
         GLOBNOTES__LOG_LEVEL: "INFO",
         [SERVER_PORT_ENV]: secret,
         GLOBNOTES_GLOBNOTES_QUICKACCESS_LIMIT: "-1",

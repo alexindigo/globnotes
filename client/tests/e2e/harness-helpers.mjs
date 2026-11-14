@@ -16,7 +16,7 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFail
   const server = await launchServer({
       ...env,
        GLOBNOTES_GLOBNOTES_PATH: vault,
-       GLOBNOTES_METADATA_PATH: metadataBase(vault, stateDir),
+       GLOBNOTES__METADATA_PATH: metadataBase(vault, stateDir),
   }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${configFile}`] });
   const logs = server.output;
   let closed = false;

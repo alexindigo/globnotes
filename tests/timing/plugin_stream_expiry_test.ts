@@ -37,7 +37,7 @@ for (const invalidate of [false, true]) {
     const headers = { authorization: `Bearer ${durable}` };
     const server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+      GLOBNOTES__METADATA_PATH: fixture.metadataBase,
       fixtureAuth: {
         auth_type: "password",
         username: "stream-fixture",

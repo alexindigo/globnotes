@@ -20,7 +20,7 @@ path = ""
 admin = ""
 
 [metadata]
-# Optional metadata parent; empty keeps in-tree state; exact GLOBNOTES_METADATA_PATH.
+# Optional metadata parent; empty keeps in-tree state; GLOBNOTES__METADATA_PATH.
 path = ""
 
 [index]

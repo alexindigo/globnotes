@@ -10,7 +10,7 @@ and the conventional overlay are relative to the application root, not the
 working directory. Mount only `config/`, never over `defaults/`.
 
 Instance variables have an empty vault namespace: `GLOBNOTES__SERVER_PORT` sets
-`server.port`. `GLOBNOTES_METADATA_PATH` is the exact exception for `metadata.path`.
+`server.port`; `GLOBNOTES__METADATA_PATH` sets `metadata.path` by the same rule.
 `GLOBNOTES_REVISION` remains a build input, not an operator TOML setting.
 
 Unknown keys/variables, wrong types, invalid ranges and missing shipped leaves
@@ -26,9 +26,12 @@ The defaults file documents each leaf's units and environment spelling.
 `defaults/vault.toml` is a separate complete baseline. A vault reads partial saved
 `<vault metadata>/config.toml`, then its env leaves. `my_notes` becomes `MY__NOTES`:
 every underscore in the name doubles. For example,
-`GLOBNOTES_MY__NOTES_QUICKACCESS_LIMIT=8`. Names match `[a-z][a-z0-9_]*`; `_` and
-`metadata` are reserved. `metadata` would collide with the exact instance variable
-`GLOBNOTES_METADATA_PATH`; other schema section names such as `brand` remain valid.
+`GLOBNOTES_MY__NOTES_QUICKACCESS_LIMIT=8`. Names match `[a-z][a-z0-9_]*`; only `_`
+is reserved for instance state. Schema section names such as `metadata` and
+`brand` remain valid vault names: `GLOBNOTES_METADATA_PATH` declares the notes
+path of a vault named `metadata`, never the instance metadata path. It is not an
+alias for `GLOBNOTES__METADATA_PATH`. The current single-vault runtime rejects
+unsupported declarations instead of treating old instance spellings as aliases.
 
 Declare an external path and optional admin login together:
 
@@ -44,7 +47,7 @@ no configured administrator; this loader does not create accounts or grants.
 The shipped `vaults.entrydefaults` is a template, not an operator setting.
 
 Without relocation, instance data is `<base>/.globnotes/` and each vault's data
-is `<notes>/.globnotes/`. With `GLOBNOTES_METADATA_PATH=/etc/globnotes`, instance
+is `<notes>/.globnotes/`. With `GLOBNOTES__METADATA_PATH=/etc/globnotes`, instance
 data is `/etc/globnotes/_/` and vault data `/etc/globnotes/<name>/`. There is no
 per-vault `_INDEX` alias. The loader calculates paths and validates all supplied
 scopes, never discovers folders, creates vaults or moves state. The future registry

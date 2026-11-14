@@ -8,13 +8,13 @@ import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { bootServer } from "./helpers/boot.ts";
 
-Deno.test("state dir: GLOBNOTES_METADATA_PATH selects per-vault metadata", async (t) => {
+Deno.test("state dir: GLOBNOTES__METADATA_PATH selects per-vault metadata", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "gn-vault-" });
   const metadataBase = await Deno.makeTempDir({ prefix: "gn-state-" });
   const stateDir = path.join(metadataBase, "globnotes");
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    GLOBNOTES_METADATA_PATH: metadataBase,
+    GLOBNOTES__METADATA_PATH: metadataBase,
   });
   try {
     await t.step("setup config lands in the state dir", async () => {
@@ -107,7 +107,7 @@ Deno.test("state dir: external metadata neither converts nor warns about in-tree
 
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    GLOBNOTES_METADATA_PATH: stateDir,
+    GLOBNOTES__METADATA_PATH: stateDir,
   });
   try {
     const seen = server.logs().stderr;

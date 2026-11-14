@@ -63,7 +63,7 @@ export async function storageServerFixture(authorities: string[]) {
   });
   const env = {
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    GLOBNOTES__METADATA_PATH: fixture.metadataBase,
     fixtureAuth: { auth_type: "none" },
     GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
   };

@@ -150,7 +150,7 @@ async function apiFixture(
   );
   const launchEnv = {
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES_METADATA_PATH: fixture.metadataBase,
+    GLOBNOTES__METADATA_PATH: fixture.metadataBase,
     fixtureAuth: { auth_type: "none" },
     GLOBNOTES__SERVER_PATHPREFIX: "",
     ...extra,

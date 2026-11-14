@@ -423,7 +423,7 @@ Deno.test("review repairs: R05 R07 real Access HTTP writes keep config link and 
     const ino = Deno.lstatSync(link).ino;
     const env = {
       GLOBNOTES_GLOBNOTES_PATH: `${root}/vault`,
-      GLOBNOTES_METADATA_PATH: root,
+      GLOBNOTES__METADATA_PATH: root,
       GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
     };
     let server = await bootServer(env, { cwd: root });

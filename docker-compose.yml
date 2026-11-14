@@ -14,6 +14,6 @@ services:
       # Optional metadata relocation:
       # - ./metadata:/metadata
     environment:
-      # GLOBNOTES_METADATA_PATH: "/metadata"
+      # GLOBNOTES__METADATA_PATH: "/metadata"
       # GLOBNOTES__SERVER_ALLOWEDHOSTS: "globnotes.home"
       TZ: "UTC"

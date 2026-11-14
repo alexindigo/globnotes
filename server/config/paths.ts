@@ -23,7 +23,7 @@ export function vaultConfigPath(
   return join(vaultMetadataPath(notes, metadata, name), "config.toml");
 }
 export const isVaultName = (name: string): boolean =>
-  /^[a-z][a-z0-9_]*$/.test(name) && name !== "_" && name !== "metadata";
+  /^[a-z][a-z0-9_]*$/.test(name) && name !== "_";
 export function escapeVaultName(name: string): string {
   if (!isVaultName(name)) {
     throw new Error(`Invalid or reserved vault name: ${name}`);
