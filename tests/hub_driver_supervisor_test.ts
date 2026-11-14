@@ -420,7 +420,11 @@ Deno.test("driver supervisor: sync waits for coalesced discovery and attention a
   );
   const f = fixture(source, [remote.authority]);
   const entered = Promise.withResolvers<void>(),
-    release = Promise.withResolvers<void>();
+    release = Promise.withResolvers<void>(),
+    discoveryEntered = Promise.withResolvers<void>(),
+    releaseDiscovery = Promise.withResolvers<void>();
+  const settled: number[] = [];
+  let discoveryBlocked = false;
   let syncing: Promise<unknown>[] = [];
   try {
     await f.approve();
@@ -444,11 +448,40 @@ Deno.test("driver supervisor: sync waits for coalesced discovery and attention a
     ).length;
     f.scheduler.tick(1001);
     await entered.promise;
-    syncing = Array.from({ length: 3 }, () =>
+    syncing = Array.from({ length: 3 }, (_, index) =>
       f.supervisor.sync(instance.id, {
         revision: f.supervisor.peers.instance(instance.id)!.revision,
-      }, guard));
+      }, guard).finally(() =>
+        settled.push(index)
+      ));
+    remote.faults.push({
+      method: "GET",
+      path: "/list",
+      before: async () => {
+        discoveryBlocked = true;
+        discoveryEntered.resolve();
+        await releaseDiscovery.promise;
+      },
+    });
     release.resolve();
+    // Pre-fix sync can return without starting discovery at all. Reject that
+    // boundary too, rather than waiting forever for its missing request.
+    await Promise.race([
+      discoveryEntered.promise,
+      ...syncing.map(async (sync) => {
+        await sync;
+        assert(
+          discoveryBlocked,
+          "sync settled before follow-up discovery entered",
+        );
+      }),
+    ]);
+    assertEquals(
+      settled,
+      [],
+      "sync promises must stay pending while follow-up discovery is blocked",
+    );
+    releaseDiscovery.resolve();
     await Promise.all(syncing);
     const row = await f.one(instance.id);
     assertEquals(row.attention.held, [{ path: "A.md" }]);
@@ -466,6 +499,7 @@ Deno.test("driver supervisor: sync waits for coalesced discovery and attention a
     assertEquals(f.hub.fileState("A.md"), null);
   } finally {
     release.resolve();
+    releaseDiscovery.resolve();
     await Promise.allSettled(syncing);
     await f.close();
     await remote.close();
