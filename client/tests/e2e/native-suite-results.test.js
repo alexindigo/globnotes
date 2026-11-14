@@ -8,6 +8,14 @@ describe("native suite child result ownership", () => {
     ]);
     expect(FILE_CASES["client/tests/e2e/layered-config-native.mjs"]).toEqual(["layered-config-native"]);
   });
+  it("keeps the full prefix/auth consumer matrix in CI and filtered native runs", () => {
+    expect(selectCases()).toContainEqual(["plugin-prefix-auth"]);
+    expect(selectCases("plugin-prefix-auth")).toEqual([
+      ["native-ownership-control"], ["native-actions-control"], ["plugin-prefix-auth"],
+    ]);
+    expect(FILE_CASES["client/tests/e2e/plugin-prefix-auth.mjs"]).toEqual(["plugin-prefix-auth"]);
+    expect(FILE_CASES["client/tests/e2e/prefix-auth-fixture.mjs"]).toEqual(["plugin-prefix-auth"]);
+  });
   it("includes sync status in CI, filtered runs and source-owned case selection", () => {
     expect(selectCases()).toContainEqual(["sync-status-native"]);
     expect(selectCases("sync-status-native")).toEqual([

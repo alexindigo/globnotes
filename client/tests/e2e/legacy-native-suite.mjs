@@ -12,7 +12,7 @@ export const SELECTION = [
   ["line-wrap"], ["ctrl-f-search"], ["anchor-history"], ["setup-wizard"], ["setup-totp-desktop"], ["layered-config-native"],
   ["autosave-timer"], ["hub-safe-saves-native"], ["hub-writers-gate-native"], ["html-safety"], ["background-connections-native"], ["reauthentication-native"],
   ["conflict-inbox-native"], ["conflict-resolution-native"], ["conflict-review-native"],
-  ["sync-settings-native"], ["sync-driver-native"], ["sync-status-native"],
+  ["sync-settings-native"], ["sync-driver-native"], ["sync-status-native"], ["plugin-prefix-auth"],
   ...["s3", "webdav"].flatMap(backend => ["none", "openssl-base64", "rclone-base64"].map(codec => ["remotely-save-native", backend, codec])),
 ];
 
@@ -61,6 +61,7 @@ export const SHARED_CASE_FILES = [
 
 export const FILE_CASES = Object.fromEntries([
   ...SHARED_CASE_FILES.map(file => [file, SELECTION.map(caseName)]),
+  ["client/tests/e2e/prefix-auth-fixture.mjs", ["plugin-prefix-auth"]],
   ...[...new Set(SELECTION.map(([name]) => name))].map(name => [
     `client/tests/e2e/${name}.mjs`,
     SELECTION.filter(([driver]) => driver === name).map(caseName),
