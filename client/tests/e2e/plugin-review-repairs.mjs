@@ -3,14 +3,17 @@
 // never replace a controller, a response, the registry or its ownership logic.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
-import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { bootServer } from "./harness-helpers.mjs";
+import { REVIEW_REPAIR_CASES, parseReviewRepairArguments } from "./review-repair-cases.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
 import { authenticatorCode } from "../../../tests/helpers/totp.ts";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 
-const options = parseArguments(Deno.args);
-if (options.help) { console.log("Usage: plugin-review-repairs.mjs --artifacts <directory>"); Deno.exit(0); }
+const options = parseReviewRepairArguments(Deno.args);
+if (options.help) { console.log("Usage: plugin-review-repairs.mjs --artifacts <directory> [--variant <fixture>]"); Deno.exit(0); }
+const selectedCases = REVIEW_REPAIR_CASES.filter(item => !options.variant || item.label === options.variant);
+const selected = label => selectedCases.some(item => item.label === label);
 if (!options.artifacts) throw Error("--artifacts is required");
 const artifacts = options.artifacts;
 await Deno.mkdir(artifacts, { mode: 0o700 });
@@ -171,6 +174,7 @@ async function finish() {
 }
 
 try {
+  if (selected("inventory-handoff")) {
   await fixture("inventory-handoff", { protectedAccount: true });
   await settings(current.session);
   const token = await current.session.evaluate("sessionStorage.getItem('token')"), gate = gateResponse("PUT", "/_/api/plugin-host/review/enabled");
@@ -187,7 +191,9 @@ try {
   const policy = JSON.parse(await Deno.readTextFile(`${current.state}/plugins.json`));
   assert(policy.disabled.includes("review") && current.requests.filter(row => row.method === "PUT" && row.path.endsWith("/enabled")).length === 1, "Inventory policy was replayed or not stored");
   await outcome("inventory handoff", { policy, upstreamStatus: gate.response.status, oneWrite: true, protectedSessionRetained: true, lateHandoffNotResumed: true }); await finish();
+  }
 
+  if (selected("access-conflict")) {
   await fixture("access-conflict", { protectedAccount: true });
   await access(current.session); await fill(current.session, "#setup-password", "review-fixture-new-password");
   const bundles = [];
@@ -224,7 +230,9 @@ try {
   // login consumer returns Home. Navigate to the fixture note for its viewer.
   await current.session.goto(`${current.entryBase}/Seed`); await current.session.poll("!!document.querySelector('.toast-viewer')");
   removeBundle(); await outcome("Access conflict recovery", { conflictedBytesRetained: true, reviewedRevision: 1, finalRevision: stored.access_revision, retainedBundle: true, separateSaves: 2, oldSessionStatus: 401, confirmedLoginStatus: 200 }); await finish();
+  }
 
+  if (selected("browser-ownership")) {
   await fixture("browser-ownership", { browser: true });
   await current.session.poll("!!document.querySelector('[data-review-owner=seed]')");
   await settings(current.session, "core:keybindings"); await current.session.button("Obsidian"); await closeSettings(current.session);
@@ -264,7 +272,9 @@ try {
   assert(await current.session.evaluate(`document.querySelector('[data-review-owner=B]')?.dataset.nonce===${JSON.stringify(nonce)} && ${autoIcon}===${JSON.stringify(offIcon)}`), "Reverse reply regressed current policy/browser owner");
   await capture("reversed-catalogue-current");
   await outcome("reversed catalogue", { heldRevision: JSON.parse(reversed.response.body).policy.revision, latestRevision: newest.policy.revision, effectiveAutoEnable: false, nonceRetained: nonce }); await finish();
+  }
 
+  if (selected("descriptor-settlement")) {
   await fixture("descriptor-settlement"); await settings(current.session, "plugin:review");
   await current.session.poll("document.querySelector('#settings-field-message')?.readOnly===false");
   const settingsGate = gateResponse("PUT", "/_/api/plugin-host/review/settings/preferences");
@@ -284,7 +294,9 @@ try {
   assert(JSON.stringify(storedSettings).includes("D3 explicit consumer"), "New schema has no actual disk consumer");
   assert(storedSettings.values.preferences.message === "D1 actual proposal", "New-schema save discarded the removed D1 field's stored data");
   await capture("descriptor-d3-authoritative"); await outcome("descriptor ACK/adoption", { latestDefinition: "d3", oldACKNotUsedAsNewData: true, authoritativeDefaultLoaded: true, explicitNewValue: "D3 explicit consumer", removedD1ValueRetained: true, storedSettings }); await finish();
+  }
 
+  if (selected("postponed-prompt")) {
   await fixture("postponed-prompt"); await settings(current.session, "core:access");
   const permissionGate = gateResponse("GET", "/_/api/plugin-host/review/permissions");
   assert((await api("plugin-host/review/commands/request", "POST", {})).status === 200, "Actual server request not admitted");
@@ -306,10 +318,11 @@ try {
   assert(pending.pendingRequests.length === 1 && !pending.approvedNetwork.length && !pending.allowNetwork && current.requests.filter(row => row.method === "POST" && row.path.includes("/decision")).length === 0, "Postponement deferred/denied/granted server state");
   assert(current.requests.filter(row => row.method === "GET" && row.path.endsWith("/permissions")).length >= 2, "Prompt reused cached failed/superseded admission");
   await capture("prompt-fresh-focus-owner"); await outcome("postponed prompt", { requestId: pending.pendingRequests[0].id, noDecisionWrites: true, noApproval: true, wizardFocusRetained: true, freshAcceptedLoad: true }); await finish();
+  }
 
-  assert(outcomes.length === 7 && outcomes.every(row => row.passed), "Incomplete native repair groups");
+  assert(outcomes.length === selectedCases.reduce((sum, item) => sum + item.groups, 0) && outcomes.every(row => row.passed), "Incomplete native repair groups");
   await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ complete: true, outcomes, retainedRoots: fixtures.map(value => value.directory) }, null, 2), { createNew: true });
-  console.log("PLUGIN REVIEW REPAIRS OK (7 repair groups)");
+  console.log(`PLUGIN REVIEW REPAIRS OK (${outcomes.length} repair groups)`);
 } catch (error) {
   await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ failure: error.stack, outcomes, current: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server?.pid, entryBase: current.entryBase,
     sessions: current.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })), unresolvedGates: current.gates.filter(gate => !gate.released).map(gate => ({ method: gate.method, path: gate.path, response: gate.response })) } }, null, 2), { createNew: true });

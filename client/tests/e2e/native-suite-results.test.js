@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { caseName, CASE_DURATION_MS, concurrencyValue, FILE_CASES, nativeChildArguments, NATIVE_HELPERS, NATIVE_SHARDS, parseShardArguments, partitionCases, runChildren, SELECTION, selectCases, selectShard, SERIAL_CASES, validateNativeInventory } from "./legacy-native-suite.mjs";
 import { PREFIX_AUTH_CASES, parsePrefixAuthArguments, prefixAuthSelection } from "./prefix-auth-cases.mjs";
+import { REVIEW_REPAIR_CASES, parseReviewRepairArguments, reviewRepairSelection } from "./review-repair-cases.mjs";
 
 describe("native suite child result ownership", () => {
   it("registers layered configuration with the existing shared controls", () => {
@@ -104,6 +105,21 @@ describe("native suite child result ownership", () => {
       ["native-ownership-control"], ["native-actions-control"], ["sync-status-native"],
     ]);
     expect(FILE_CASES["client/tests/e2e/sync-status-native.mjs"]).toEqual(["sync-status-native"]);
+  });
+  it("schedules every independent review fixture while preserving all seven repair groups", () => {
+    expect(selectCases("plugin-review-repairs")).toEqual([
+      ["native-ownership-control"], ["native-actions-control"], ...reviewRepairSelection(),
+    ]);
+    for (const file of ["plugin-review-repairs.mjs", "review-repair-cases.mjs"]) {
+      expect(FILE_CASES[`client/tests/e2e/${file}`]).toEqual(reviewRepairSelection().map(caseName));
+    }
+    const leaves = reviewRepairSelection().map(([name,...args]) => parseReviewRepairArguments(nativeChildArguments(name,args,"/owned")));
+    expect(leaves.map(item => item.variant)).toEqual(REVIEW_REPAIR_CASES.map(item => item.label));
+    expect(leaves.every(item => item.artifacts === "/owned/consumers")).toBe(true);
+    expect(REVIEW_REPAIR_CASES.reduce((sum,item) => sum+item.groups,0)).toBe(7);
+    expect(parseReviewRepairArguments([]).variant).toBeUndefined();
+    expect(() => parseReviewRepairArguments(["--variant","absent"])).toThrow();
+    expect(FILE_CASES["client/tests/e2e/native-matrix-cases.mjs"]).toEqual(SELECTION.map(caseName));
   });
   it("rejects a nonzero child even when output contains the old pass marker and never starts later cases", async () => {
     const execute = vi.fn(async () => ({ success: false, code: 1, stdout: "distinct body backgrounds: 2; COPY BUTTON OK" }));

@@ -82,6 +82,13 @@ Filtering `plugin-prefix-auth` or changing its fixture selects all eight leaves.
 Direct CLI runs without `--variant` still run the complete eight-fixture matrix,
 including the generic production aggregate's acceptance evidence.
 
+The review-repair driver follows the same leaf admission: five independent
+fixtures retain all seven repair groups, including the three coupled browser
+ownership groups in their one fixture. Direct CLI runs still execute the full
+matrix. Both drivers share matrix argument/selection admission, and every leaf
+keeps the unchanged 120-second bound. Review leaf duration inputs are estimates
+from the observed partial one-CPU matrix run, not successful CI measurements.
+
 The exhaustive native selection includes the result, native-consumer,
 entrypoint and unit-consumer controls, so CI does not invoke those again as
 separate gates. `--checks` runs the remaining non-native gates. Local `--all`

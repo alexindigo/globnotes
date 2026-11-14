@@ -2,6 +2,7 @@
 import { assert, childSucceeded } from "./test-outcomes.mjs";
 import { fileURLToPath } from "node:url";
 import { PREFIX_AUTH_CASES, prefixAuthSelection } from "./prefix-auth-cases.mjs";
+import { REVIEW_REPAIR_CASES, reviewRepairSelection } from "./review-repair-cases.mjs";
 
 export const SELECTION = [
   ["tour-chain"], ["test-vault"], ["theme"], ["surfaces"], ["code-tokens"],
@@ -18,7 +19,7 @@ export const SELECTION = [
   ["access-extra-states"], ["access-settings"],
   ["backup-plugin"], ["backup-plugin", "--case", "order"], ["backup-plugin", "--case", "preimage"], ["backup-plugin", "--controls"],
   ["generic-plugin-system"], ["note-naming"], ["note-save-fifo"], ["note-save-owner-guards"],
-  ["plugin-guard-preservation"], ["plugin-permissions"], ["plugin-review-repairs"],
+  ["plugin-guard-preservation"], ["plugin-permissions"], ...reviewRepairSelection(),
   ["settings-design"], ["settings-foundations"], ["settings-ui"],
   ["native-consumer-controls"], ["native-result-controls"], ["runner-entrypoint-controls"], ["unit-consumer-controls"],
 ];
@@ -41,12 +42,14 @@ export const NATIVE_HELPERS = {
   "legacy-native-suite.mjs": "suite orchestrator, not a recursive child",
   "native-actions.mjs": "native input adapter",
   "native-case-finalization.mjs": "case finalization helper",
+  "native-matrix-cases.mjs": "shared matrix argument and leaf selection owner",
   "native-cdp-session.mjs": "owned browser session adapter",
   "native-clipboard.mjs": "owned clipboard adapter",
   "native-color-picker.mjs": "native picker adapter",
   "prefix-auth-fixture.mjs": "prefix/auth production fixture",
   "prefix-auth-cases.mjs": "prefix/auth fixture identities and CLI admission",
   "remotely-save-fixture.mjs": "interoperability fixture",
+  "review-repair-cases.mjs": "review repair fixture identities and CLI admission",
   "settings-access-native.mjs": "Access summary helper",
   "settings-appearance-native.mjs": "Appearance scenario helper",
   "settings-cross-browser-native.mjs": "cross-browser Settings scenarios",
@@ -84,9 +87,11 @@ const ARTIFACT_ARGUMENT_CASES = new Set([
   "note-save-fifo", "note-save-owner-guards", "plugin-guard-preservation", "plugin-permissions",
   "plugin-review-repairs", "settings-design", "settings-foundations", "settings-ui",
 ]);
-export const nativeChildArguments = (name, args, artifacts) => name === "plugin-prefix-auth" && !args.length
-  ? ["--variant", PREFIX_AUTH_CASES[0].label]
-  : ARTIFACT_ARGUMENT_CASES.has(name) ? [...args, "--artifacts", artifacts + "/consumers"] : args;
+const MATRIX_CASES = { "plugin-prefix-auth": PREFIX_AUTH_CASES, "plugin-review-repairs": REVIEW_REPAIR_CASES };
+export function nativeChildArguments(name, args, artifacts) {
+  const selected = !args.length && MATRIX_CASES[name] ? ["--variant", MATRIX_CASES[name][0].label] : args;
+  return ARTIFACT_ARGUMENT_CASES.has(name) ? [...selected, "--artifacts", artifacts + "/consumers"] : selected;
+}
 
 // Argument variants are distinct cases (rename-options-move/relink/none).
 export const caseName = selection => selection.join("-");
@@ -164,7 +169,13 @@ export const CASE_DURATION_MS = {
   "note-save-owner-guards": 73578,
   "plugin-guard-preservation": 20577,
   "plugin-permissions": 102656,
-  "plugin-review-repairs": 134858,
+  // Review fixtures observed making progress before the matrix's 120s kill;
+  // split-cost estimates retain startup/closure headroom, not a wider deadline.
+  "plugin-review-repairs": 30000,
+  "plugin-review-repairs---variant-access-conflict": 35000,
+  "plugin-review-repairs---variant-browser-ownership": 40000,
+  "plugin-review-repairs---variant-descriptor-settlement": 25000,
+  "plugin-review-repairs---variant-postponed-prompt": 15000,
   "settings-design": 692720,
   "settings-foundations": 216603,
   "settings-ui": 278825,
@@ -235,7 +246,7 @@ export function selectCases(filter) {
   const known = new Set(SELECTION.map(caseName));
   for (const name of requested) assert(known.has(name), `Unknown native case: ${name}`);
   const selected = SELECTION.filter(selection => requested.has(caseName(selection)) ||
-    requested.has("plugin-prefix-auth") && selection[0] === "plugin-prefix-auth" || SHARED_CONTROL_CASES.includes(caseName(selection)));
+    MATRIX_CASES[selection[0]] && requested.has(selection[0]) || SHARED_CONTROL_CASES.includes(caseName(selection)));
   assert(selected.length > 0, "No required native cases selected");
   return selected;
 }
@@ -247,6 +258,7 @@ export const SHARED_CASE_FILES = [
   "legacy-fixture.mjs", "fixtures.mjs", "config-fixture.mjs", "harness-helpers.mjs", "harness-arguments.mjs", "http-origin.mjs",
   "cdp.mjs", "native-cdp-session.mjs", "native-actions.mjs",
   "native-case-finalization.mjs",
+  "native-matrix-cases.mjs",
   "native-clipboard.mjs", "test-outcomes.mjs", "native-consumer-controls.mjs",
   "native-result-controls.mjs", "unit-consumer-controls.mjs",
   "runner-entrypoint-controls.mjs",
@@ -255,6 +267,7 @@ export const SHARED_CASE_FILES = [
 export const FILE_CASES = Object.fromEntries([
   ...SHARED_CASE_FILES.map(file => [file, SELECTION.map(caseName)]),
   ...["prefix-auth-fixture.mjs", "prefix-auth-cases.mjs"].map(file => [`client/tests/e2e/${file}`, prefixAuthSelection().map(caseName)]),
+  ["client/tests/e2e/review-repair-cases.mjs", reviewRepairSelection().map(caseName)],
   ...[...new Set(SELECTION.map(([name]) => name))].map(name => [
     `client/tests/e2e/${name}.mjs`,
     SELECTION.filter(([driver]) => driver === name).map(caseName),
