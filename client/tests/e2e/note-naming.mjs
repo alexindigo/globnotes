@@ -60,7 +60,7 @@ try {
     return true;
   })()`);
   await page.send("Input.insertText", { text: "more text\n" });
-  await page.waitForTimeout(600);
+  await page.poll(`document.querySelector(".cm-content, .ProseMirror")?.textContent.includes("more text")`);
    const held = await page.read('input[placeholder=Title]',
     `document.querySelector("input[placeholder=Title]").value`,
   );
@@ -76,10 +76,13 @@ try {
   assert(onDisk.includes("Hello World"), "the file saved with the held name");
   console.log("ok: save lands the file as My Note.md");
 
-  const sidebarText = await page.evaluate(
-    `document.querySelector("aside")?.textContent ?? ""`,
-  );
-  assert(sidebarText.includes("My Note"), "sidebar shows the filename");
+  // Save navigation and disk publication do not join the independent tree GET.
+  // Observe the consumer itself, not a delay or a different owner's completion.
+  await page.poll(`(() => {
+    const link = [...document.querySelectorAll('aside a[href]')].find(link => decodeURIComponent(new URL(link.href).pathname) === '/My Note');
+    return link?.textContent.trim() === 'My Note';
+  })()`);
+  console.log("ok: sidebar shows the filename");
 
   console.log("NOTE-NAMING OK");
 } catch (error) {
