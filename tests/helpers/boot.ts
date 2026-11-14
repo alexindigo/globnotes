@@ -65,8 +65,9 @@ export interface TestServer {
 }
 
 /** A scratch working directory for one server. When the checkout has a
- * client build, the server gets a private copy of it to serve and stamp. */
-async function scratchCwd(): Promise<string> {
+ * client build, the server gets a private copy of it to serve and stamp.
+ * Raw native launchers use this same owner and remove it after child exit. */
+export async function createServerWorkingDirectory(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "globnotes-test-cwd-" });
   if (existsSync(REPO_DIST)) {
     await copy(REPO_DIST, path.join(dir, "client", "dist"));
@@ -124,7 +125,9 @@ export async function bootServer(
         "server rewrites the cwd-relative client/dist/index.html at boot",
     );
   }
-  const ownedCwd = opts.cwd === undefined ? await scratchCwd() : null;
+  const ownedCwd = opts.cwd === undefined
+    ? await createServerWorkingDirectory()
+    : null;
   const args = [
     "run",
     "--unstable-worker-options",

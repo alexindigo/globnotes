@@ -5,6 +5,7 @@ import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { awaitHealthy, awaitPluginReady, parseArguments } from "./harness-helpers.mjs";
 import { done, failed, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { metadataBase } from "./config-fixture.mjs";
+import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
 
 let options;
 try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -26,10 +27,11 @@ async function operatorSession() {
 }
 
 async function launch(fixture) {
+  const cwd = await createServerWorkingDirectory();
   const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
-  const args = ["run", "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env",
+  const args = ["run", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env",
     ...(fixture.importParent ? [`--allow-import=jsr.io:443,${fixture.authority}`, `--lock=${fixture.privateLock}`] : []), `${ROOT}/server/main.ts`];
-  const child = new Deno.Command(Deno.execPath(), { args, cwd: ROOT, stdout: "piped", stderr: "piped", clearEnv: true,
+  const child = new Deno.Command(Deno.execPath(), { args, cwd, stdout: "piped", stderr: "piped", clearEnv: true,
     env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: metadataBase(fixture.vault, fixture.state), GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) } }).spawn();
   const drains = ["stdout", "stderr"].map(async name => {
@@ -38,10 +40,10 @@ async function launch(fixture) {
   });
   fixture.launchCount++;
   const base = httpOrigin(port);
-  await Deno.writeTextFile(`${fixture.directory}/parent-${fixture.launchCount}.json`, JSON.stringify({ pid: child.pid, args, cwd: ROOT, isolatedImportParent: fixture.importParent }, null, 2));
+  await Deno.writeTextFile(`${fixture.directory}/parent-${fixture.launchCount}.json`, JSON.stringify({ pid: child.pid, args, cwd, isolatedImportParent: fixture.importParent }, null, 2));
   await awaitHealthy(base, { label: "Owned permission server health", child, intervalMs: 50 });
   await awaitPluginReady(base, "networked", { label: "Owned permission activation", child, intervalMs: 30 });
-  return { child, base, args, async close() { child.kill("SIGTERM"); await child.status; await Promise.all(drains); } };
+  return { child, base, args, async close() { try { child.kill("SIGTERM"); await child.status; await Promise.all(drains); } finally { await Deno.remove(cwd, { recursive: true }); } } };
 }
 
 async function fixture(name, { importParent = false, gateSaves = false, guardSaves = false } = {}) {

@@ -11,6 +11,7 @@ import { SignJWT } from "jose";
 import { createSettingsRestartFixture } from "./settings-restart-fixture.mjs";
 import { exerciseLockedControls } from "./access-lock-controls-native.mjs";
 import { metadataBase, metadataDirectory } from "./config-fixture.mjs";
+import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
 
 let options;
 try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -24,17 +25,18 @@ const port = Number(Deno.env.get("CDP_PORT") ?? 9334);
 const username = "access-fixture", password = "current-fixture-password";
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 async function bootFirstRun(vault, state, directory, prefix) {
+  const cwd = await createServerWorkingDirectory();
   const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
-  const child = new Deno.Command(Deno.execPath(), { args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`], cwd: ROOT, clearEnv: true,
+  const child = new Deno.Command(Deno.execPath(), { args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`], cwd, clearEnv: true,
     env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: metadataBase(vault,state), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false", GLOBNOTES__SERVER_PATHPREFIX: prefix, GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) }, stdout: "piped", stderr: "piped" }).spawn();
-  await Deno.writeTextFile(`${directory}/startup-ownership.json`, JSON.stringify({ pid: child.pid, vault, state, prefix, port, cwd: ROOT }), { createNew: true });
+  await Deno.writeTextFile(`${directory}/startup-ownership.json`, JSON.stringify({ pid: child.pid, vault, state, prefix, port, cwd }), { createNew: true });
   const drains = ["stdout", "stderr"].map(async name => {
     const file = await Deno.open(`${directory}/server-${name}.log`, { write: true, createNew: true });
     try { for await (const chunk of child[name]) { let offset = 0; while (offset < chunk.length) offset += await file.write(chunk.subarray(offset)); } } finally { file.close(); }
   });
   const baseUrl = httpOrigin(port);
   await awaitHealthy(`${baseUrl}${prefix}`, { label: `First-run server startup (retained PID ${child.pid})`, child });
-  return { baseUrl, pid: child.pid, async close() { child.kill("SIGTERM"); await child.status; await Promise.all(drains); } };
+  return { baseUrl, pid: child.pid, async close() { try { child.kill("SIGTERM"); await child.status; await Promise.all(drains); } finally { await Deno.remove(cwd, { recursive: true }); } } };
 }
 async function fixture(label, protectedMode) {
   assert(fixtures.every(item => item.closed), "Previous successful fixture not closed");

@@ -1,5 +1,6 @@
 // Feature-owned complete Settings surface matrix. Ordinary HTTP; no test hooks in views.
 import { nativeSession } from './native-cdp-session.mjs';
+import { createServerWorkingDirectory } from '../../../tests/helpers/boot.ts';
 import { awaitHealthy, bootServer } from './harness-helpers.mjs';
 import { applicationServer, assertHttpTestUrl } from './http-origin.mjs';
 import { hashPassword } from '../../../server/helpers.ts';
@@ -68,16 +69,17 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
       await Deno.writeTextFile(`${plugin}/service.js`,"let sequence=0;export function activate(ctx){ctx.commands.register({id:'request',label:'Surface request',target:'server'},()=>ctx.permissions.requestAccess({kind:'network',hosts:['surface-'+(++sequence)+'.example:443'],reason:'Surface matrix request'}));}");
     }
     if(name==='first-run'){
+      const cwd=await createServerWorkingDirectory();
       const {host,origin}=applicationServer(),listener=Deno.listen({hostname:host,port:0}),appPort=listener.addr.port;listener.close();
-      const child=new Deno.Command(Deno.execPath(),{args:['run','--cached-only','--frozen',`--config=${ROOT}/deno.json`,'--unstable-worker-options','--allow-read','--allow-write','--allow-net','--allow-env',`${ROOT}/server/main.ts`],cwd:ROOT,clearEnv:true,env:{PATH:Deno.env.get('PATH'),HOME:Deno.env.get('HOME'),TMPDIR:Deno.env.get('TMPDIR'),GLOBNOTES_GLOBNOTES_PATH:vault,GLOBNOTES__METADATA_PATH:metadataBase(vault,state),GLOBNOTES__SERVER_HOST:host,GLOBNOTES__SERVER_PORT:String(appPort),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:'false'},stdout:'piped',stderr:'piped'}).spawn();
+      const child=new Deno.Command(Deno.execPath(),{args:['run','--cached-only','--frozen',`--config=${ROOT}/deno.json`,'--unstable-worker-options','--allow-read','--allow-write','--allow-net','--allow-env',`${ROOT}/server/main.ts`],cwd,clearEnv:true,env:{PATH:Deno.env.get('PATH'),HOME:Deno.env.get('HOME'),TMPDIR:Deno.env.get('TMPDIR'),GLOBNOTES_GLOBNOTES_PATH:vault,GLOBNOTES__METADATA_PATH:metadataBase(vault,state),GLOBNOTES__SERVER_HOST:host,GLOBNOTES__SERVER_PORT:String(appPort),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:'false'},stdout:'piped',stderr:'piped'}).spawn();
       const drains=['stdout','stderr'].map(async channel=>{const file=await Deno.open(`${logs}/server-${channel}.log`,{write:true,createNew:true});try{for await(const bytes of child[channel]){let at=0;while(at<bytes.length)at+=await file.write(bytes.subarray(at));}}finally{file.close();}});
-      server={baseUrl:origin(appPort),pid:child.pid,async close(){child.kill('SIGTERM');await child.status;await Promise.all(drains);}};
+      server={baseUrl:origin(appPort),pid:child.pid,cwd,async close(){try{child.kill('SIGTERM');await child.status;await Promise.all(drains);}finally{await Deno.remove(cwd,{recursive:true});}}};
       await awaitHealthy(server.baseUrl,{label:'Surface first-run health',child});
     }else{
       const jwt=name==='protected'?await new SignJWT({sub:config.username}).setProtectedHeader({alg:'HS256'}).setExpirationTime('1h').sign(new TextEncoder().encode(config.secret_key)):null;
       server=await bootServer(vault,state,{env:{TMPDIR:Deno.env.get('TMPDIR')},logsDir:logs,headers:jwt?{authorization:`Bearer ${jwt}`}:{}});
     }
-    session=await nativeSession({port});owners.push({name,vault,state,pid:server.pid,origin:server.baseUrl,targetId:session.targetId});
+    session=await nativeSession({port});owners.push({name,vault,state,pid:server.pid,cwd:server.cwd,origin:server.baseUrl,targetId:session.targetId});
   }
   async function visit(cell,name){
     await session.send('Emulation.setDeviceMetricsOverride',{width:cell.width,height:cell.height,deviceScaleFactor:cell.dpr,mobile:false});

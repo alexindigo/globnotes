@@ -2,10 +2,49 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   bootServer,
+  createServerWorkingDirectory,
   SERVER_PORT_ENV,
   type TestServer,
 } from "./helpers/boot.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
+
+Deno.test("server working directories isolate prefix stamping from sibling and donor assets", async () => {
+  const donor = new URL("../client/dist/index.html", import.meta.url);
+  let original: string | null = null;
+  try {
+    original = await Deno.readTextFile(donor);
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  const first = await createServerWorkingDirectory();
+  const second = await createServerWorkingDirectory();
+  try {
+    assertEquals(first === second, false);
+    assertEquals(first.startsWith(Deno.cwd() + "/"), false);
+    assertEquals(second.startsWith(Deno.cwd() + "/"), false);
+    await Deno.mkdir(`${first}/client/dist`, { recursive: true });
+    await Deno.writeTextFile(
+      `${first}/client/dist/index.html`,
+      "prefixed /notes assets",
+    );
+    if (original !== null) {
+      assertEquals(
+        await Deno.readTextFile(`${second}/client/dist/index.html`),
+        original,
+      );
+      assertEquals(await Deno.readTextFile(donor), original);
+    } else {
+      await assertRejects(
+        () => Deno.stat(`${second}/client/dist/index.html`),
+        Deno.errors.NotFound,
+      );
+      await assertRejects(() => Deno.stat(donor), Deno.errors.NotFound);
+    }
+  } finally {
+    await Deno.remove(first, { recursive: true });
+    await Deno.remove(second, { recursive: true });
+  }
+});
 
 /** Existing preload seam runs a real owned HTTP fixture before main. Its open
  * listener keeps the unresolved preload alive; product startup never executes. */
