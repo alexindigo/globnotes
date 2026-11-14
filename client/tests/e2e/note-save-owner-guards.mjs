@@ -171,6 +171,14 @@ try {
 
   for (const kind of ["edit", "paste"]) {
     await setup(`wysiwyg-immediate-${kind}`); await current.session.button("WYSIWYG", ".content-column"); await current.session.poll("!!document.querySelector('.ProseMirror[contenteditable=true] > p')");
+    // A clean Save is deliberately a no-op. Establish an actual acknowledged
+    // edit before measuring the next transaction's synchronous protection.
+    await save();
+    assert(current.records.length === 0 && (await readBack()).disk === "Seed content.\n", "Clean WYSIWYG Save sent a mutation or changed disk bytes");
+    await current.session.click(".ProseMirror");
+    await current.session.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 });
+    await current.session.type(`Owner baseline ${kind}`);
+    await current.session.poll(`document.querySelector('.ProseMirror > p')?.textContent===${JSON.stringify(`Owner baseline ${kind}`)}`);
     await save(); const baseline = await request(0); await release(0); await current.session.poll("!document.querySelector('.content-column .animate-spin') && window.onbeforeunload === null");
     // OWNER_OBSERVE: passive native-property observation in this fresh page.
     // Delegate every assignment; record committed DOM inside the actual setter,
@@ -185,11 +193,11 @@ try {
     } else await current.session.type(marker);
     await current.session.poll("window.__ownerChanges.length > 0");
     const immediate = await current.session.evaluate("window.__ownerChanges");
-    const timing = await current.session.evaluate("({elapsed:window.__ownerChanges[0].time-window.__ownerInputTime,draft:sessionStorage.getItem('NoteA')})");
+    const timing = await current.session.evaluate("({elapsed:window.__ownerChanges[0].time-window.__ownerInputTime,draft:sessionStorage.getItem('globnotes:draft:NoteA')})");
     assert(immediate.length === 1 && immediate[0].committedText.includes(marker) && immediate[0].unload === "function" && timing.elapsed < 250 && timing.draft === null, "First committed edit did not protect the consumer before debounce");
     await save(); await request(1); assert(current.records[1].body.newContent.includes(marker), "Save did not capture immediate committed bytes"); await release(1); await current.session.poll("!document.querySelector('.content-column .animate-spin') && window.onbeforeunload === null");
     const saved = await readBack(); assert(saved.disk === current.records[1].body.newContent, "Immediate buffer differs from saved API/disk bytes");
-    await finish({ baseline: baseline.body.newContent, immediate, timing, saved, input: kind === "edit" ? "One native key character transaction" : "Native CDP Input.insertText browser insertion/paste path", observation: "Native unload setter delegates and records committed text synchronously; snapshot-inside-change is separately proved in real Milkdown component tests" });
+    await finish({ baseline: baseline.body.newContent, cleanSaveNoMutation: true, immediate, timing, saved, input: kind === "edit" ? "One native key character transaction" : "Native CDP Input.insertText browser insertion/paste path", observation: "Native unload setter delegates and records committed text synchronously; snapshot-inside-change is separately proved in real Milkdown component tests" });
   }
   console.log("NOTE SAVE OWNER GUARDS OK");
 } catch (error) { failure = error; console.error(`FAIL: ${error.message}`); }
