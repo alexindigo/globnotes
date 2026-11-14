@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  evidence:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -18,6 +18,8 @@ jobs:
       actions: read
     env:
       GLOBNOTES_CONTAINER_ENGINE: podman
+    outputs:
+      run-tests: ${{ steps.proof.outputs.run-tests }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,34 +33,23 @@ jobs:
             printf 'run-tests=true\n' >> "$GITHUB_OUTPUT"
             printf 'Running tests: PR evidence lookup failed or exceeded its bound.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Prepare harness control diff
-        if: steps.proof.outputs.run-tests != 'false'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/globnotes/all/logs"
-          changes="$RUNNER_TEMP/globnotes/all/logs/ci-changes.z"
-          # Missing history, a new ref or a failed diff leaves no selection input:
-          # select-checks.ts then runs every control (also always for v2 tags).
-          if [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
-            if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-              git diff --name-status -M -z "$BASE_SHA...$HEAD_SHA" > "$changes" || rm -f "$changes"
-            else
-              git diff --name-status -M -z "$BASE_SHA" "$HEAD_SHA" > "$changes" || rm -f "$changes"
-            fi
-          fi
+
+  checks:
+    needs: evidence
+    if: needs.evidence.outputs.run-tests != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GLOBNOTES_CONTAINER_ENGINE: podman
+    steps:
+      - uses: actions/checkout@v7
       # Everything runs in the devcontainer (docs/testing.md), as the commit check does.
-      - name: "All gates, with the browser suite"
-        if: steps.proof.outputs.run-tests != 'false'
+      - name: "Non-native gates"
         run: >-
-          .devcontainer/run.sh --browser
+          .devcontainer/run.sh
           --run-dir "$RUNNER_TEMP/globnotes/all"
-          -- env GLOBNOTES_E2E_CONCURRENCY=2 bash scripts/gates.sh --all --browser
-          --ci-changes /run-logs/ci-changes.z --ci-ref "$GITHUB_REF"
+          -- bash scripts/gates.sh --checks
       - name: "Timing tests, serially"
-        if: steps.proof.outputs.run-tests != 'false'
         run: >-
           .devcontainer/run.sh
           --run-dir "$RUNNER_TEMP/globnotes/timing"
@@ -67,11 +58,64 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: test-failure-diagnostics
+          name: checks-failure-diagnostics
           path: |
             ${{ runner.temp }}/globnotes/*/logs/
             ${{ runner.temp }}/globnotes/*/artifacts/**/*.json
             ${{ runner.temp }}/globnotes/*/artifacts/**/failure.png
+
+  native:
+    needs: evidence
+    if: needs.evidence.outputs.run-tests != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1/2, 2/2]
+    env:
+      GLOBNOTES_CONTAINER_ENGINE: podman
+    steps:
+      - uses: actions/checkout@v7
+      - name: Native shard
+        run: >-
+          .devcontainer/run.sh --browser
+          --run-dir "$RUNNER_TEMP/globnotes/native"
+          -- env GLOBNOTES_E2E_CONCURRENCY=2 bash scripts/gates.sh --native
+          --shard '${{ matrix.shard }}'
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ strategy.job-index }}-failure-diagnostics
+          path: |
+            ${{ runner.temp }}/globnotes/*/logs/
+            ${{ runner.temp }}/globnotes/*/artifacts/**/*.json
+            ${{ runner.temp }}/globnotes/*/artifacts/**/failure.png
+
+  # Preserve the required check and the exact-SHA PR-proof job name. A skipped
+  # shard is acceptable only when the evidence job explicitly reuses proof.
+  test:
+    needs: [evidence, checks, native]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Require complete test evidence
+        env:
+          EVIDENCE_RESULT: ${{ needs.evidence.result }}
+          RUN_TESTS: ${{ needs.evidence.outputs.run-tests }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          test "$EVIDENCE_RESULT" = success
+          if test "$RUN_TESTS" = false; then
+            test "$CHECKS_RESULT" = skipped
+            test "$NATIVE_RESULT" = skipped
+          else
+            test "$CHECKS_RESULT" = success
+            test "$NATIVE_RESULT" = success
+          fi
 
   docker-build:
     runs-on: ubuntu-latest

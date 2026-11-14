@@ -1,4 +1,13 @@
 // Feature-owned acceptance projection from actual native consumer records.
+export function accessMenuConsumers(outcomes, credentials) {
+  return outcomes.some(row => row.name.includes("confirmed-login") && row.passed) &&
+    outcomes.some(row => row.name === "native stored Access controls and fresh-proof errors retain account/editor authority" && row.passed) &&
+    credentials.retiredFieldsUnpinned === true &&
+    credentials.invalidCurrentProofRetainedConfigAndSession === true &&
+    credentials.directUnconfirmedWriteRejected === true &&
+    credentials.sameEditor === true && credentials.pageErrors?.length === 0;
+}
+
 export async function collectProductionRows(read) {
   const require = (condition, message) => { if (!condition) throw Error(message); };
   const item = (rows, name) => { const found = rows.find(row => row.name === name); require(found, `Missing consumer: ${name}`); return found; };
@@ -15,8 +24,9 @@ export async function collectProductionRows(read) {
   const access = await read("access/diagnostics.json");
   require(!access.failure && access.outcomes.length >= 15 && access.outcomes.every(row => row.passed), "Native Access/TOTP matrix incomplete");
   require(menu.renderedLineNumberGutter && menu.debugDisabledPersisted && menu.existingParticipationRetained && menu.floatingMenuAbsent && menu.nativeSearchSort === "Last Modified" && theme.theme === "globnotes-dark" && brand.persisted === "Native inline brand", "Menu parity lacks real effects");
-  require(access.outcomes.some(row => row.name.includes("confirmed-login")) && access.outcomes.some(row => row.name.includes("pinned Access")), "Menu auth/TOTP consumers absent");
-  record(2, "GPS-02 MENU PARITY OK", { menu, brand, theme, accessOutcomes: access.outcomes });
+  const credentials = await read("access/pinned-credentials/consumers.json");
+  require(accessMenuConsumers(access.outcomes, credentials), "Menu auth/TOTP consumers absent");
+  record(2, "GPS-02 MENU PARITY OK", { menu, brand, theme, accessOutcomes: access.outcomes, credentials });
   const peers = await read("settings/cross-browser/consumers.json");
   const persistence = item(peers, "native-settings-persistence-command-and-hook-matrix");
   const stages = ["native-text-enter", "native-text-blur", "settings-reopen", "fresh-document-reload", "native-toggle", "backend-restart"];

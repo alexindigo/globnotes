@@ -15,16 +15,19 @@ artifacts=/artifacts
 mkdir -p "$logs" "$artifacts"
 
 usage() {
-    printf 'usage: gates.sh --plan STAGED FILES | --select SELECTION [--serial] | --all [--browser] [--serial] | --timing\n' >&2
+    printf 'usage: gates.sh --plan STAGED FILES | --select SELECTION [--serial] | --all [--browser] [--serial] | --checks | --native [--shard 1/2|2/2] | --timing\n' >&2
     exit 2
 }
-mode="" browser=false serial=false staged="" files="" selection="" ci_changes="" ci_ref=""
+mode="" browser=false serial=false staged="" files="" selection="" ci_changes="" ci_ref="" shard=""
 while (($#)); do
     case "$1" in
         --plan) mode=plan; staged="${2:?}"; files="${3:?}"; shift 3 ;;
         --select) mode=select; selection="${2:?}"; shift 2 ;;
         --all) mode=all; shift ;;
+        --checks) mode=checks; shift ;;
         --timing) mode=timing; shift ;;
+        --native) mode=native; shift ;;
+        --shard) shard="${2:?}"; shift 2 ;;
         --browser) browser=true; shift ;;
         --serial) serial=true; shift ;;
         --ci-changes) ci_changes="${2:?}"; shift 2 ;;
@@ -33,6 +36,10 @@ while (($#)); do
     esac
 done
 [[ -n "$mode" ]] || usage
+[[ -z "$shard" || "$mode" == native ]] || usage
+[[ -z "$shard" || "$shard" == 1/2 || "$shard" == 2/2 ]] || usage
+native_args=()
+[[ -z "$shard" ]] || native_args=(--shard "$shard")
 
 test_flags=(--unstable-worker-options --allow-read --allow-write --allow-env --allow-run --allow-net)
 script_flags=(--cached-only --frozen --config=deno.json --allow-read --allow-write --allow-env --allow-run)
@@ -175,7 +182,7 @@ build_gates() {
 }
 browser_gate() {
     case "$1" in
-        native) gate native env DENO=deno GLOBNOTES_E2E_ARTIFACTS="$artifacts/native" sh client/tests/e2e/run.sh ;;
+        native) gate native env DENO=deno GLOBNOTES_E2E_ARTIFACTS="$artifacts/native" sh client/tests/e2e/run.sh "${native_args[@]}" ;;
         native-results) gate native-results env GLOBNOTES_E2E_ARTIFACTS="$artifacts/native-results" \
             deno run "${script_flags[@]}" --allow-net --allow-sys client/tests/e2e/native-result-controls.mjs ;;
         native-controls) gate native-controls env GLOBNOTES_E2E_ARTIFACTS="$artifacts/native-controls" \
@@ -271,7 +278,7 @@ case "$mode" in
             gate client env VITEST_MAX_WORKERS=4 deno task --eval "vitest related --run --passWithNoTests$quoted"
         fi
         ;;
-    all)
+    all|checks)
         unset GLOBNOTES_E2E_CASES
         if "$browser"; then gate browser-ready cdp_ready; fi
         contracts=()
@@ -283,13 +290,23 @@ case "$mode" in
         gate client env VITEST_MAX_WORKERS=4 deno task test:client
         build_gates
         select_controls
-        if control_selected unit-controls; then unit_controls; fi
+        # The exhaustive native selection owns unit-consumer-controls in CI.
+        # Local --all retains its existing independent control gate.
+        if [[ "$mode" != checks ]] && control_selected unit-controls; then unit_controls; fi
         if "$browser"; then
             browser_gate native
             for name in native-results native-controls entrypoint-results; do
                 if control_selected "$name"; then browser_gate "$name"; fi
             done
         fi
+        ;;
+    native)
+        unset GLOBNOTES_E2E_CASES
+        gate browser-ready cdp_ready
+        gate install deno install
+        # Each isolated native job needs its own assets, not the other gates.
+        gate build deno task build:client
+        browser_gate native
         ;;
     timing)
         gate install deno install

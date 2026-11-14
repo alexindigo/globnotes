@@ -3,6 +3,52 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { command } from "./helpers/process.ts";
 
+Deno.test("CI layout: two native shards, one checks job and proof-compatible final test", async () => {
+  const workflow = await Deno.readTextFile(
+    new URL("../.github/workflows/ci.yml", import.meta.url),
+  );
+  const job = (name: string) =>
+    workflow.split(`\n  ${name}:\n`)[1]?.split(/\n {2}[a-z-]+:\n/)[0] ?? "";
+  const native = job("native"), checks = job("checks"), test = job("test");
+  assertStringIncludes(native, "shard: [1/2, 2/2]");
+  assertStringIncludes(native, "fail-fast: false");
+  assertStringIncludes(native, "GLOBNOTES_E2E_CONCURRENCY=2");
+  assertStringIncludes(native, "--native");
+  assertStringIncludes(native, "--shard '${{ matrix.shard }}'");
+  assertEquals(native.includes("--checks"), false);
+  assertEquals(checks.includes("matrix:"), false);
+  assertStringIncludes(checks, "--checks");
+  assertStringIncludes(checks, "--timing");
+  assertEquals(checks.includes("--browser"), false);
+  assertStringIncludes(test, "needs: [evidence, checks, native]");
+  assertStringIncludes(test, "if: always()");
+  const body = test.split("        run: |\n")[1].split("\n").map((line) =>
+    line.slice(10)
+  ).join("\n");
+  for (
+    const [evidence, reuse, checks, native, expected] of [
+      ["success", "true", "success", "success", 0],
+      ["success", "false", "skipped", "skipped", 0],
+      ["failure", "false", "skipped", "skipped", 1],
+      ["success", "true", "success", "failure", 1],
+      ["success", "true", "success", "cancelled", 1],
+      ["success", "true", "skipped", "success", 1],
+      ["success", "false", "success", "skipped", 1],
+    ] as const
+  ) {
+    const result = await command("bash", {
+      args: ["-euc", body],
+      env: {
+        EVIDENCE_RESULT: evidence,
+        RUN_TESTS: reuse,
+        CHECKS_RESULT: checks,
+        NATIVE_RESULT: native,
+      },
+    }).output();
+    assertEquals(result.code, expected);
+  }
+});
+
 // The fake API projects JSON fields like gh --jq, but makes no eligibility
 // decisions. The real shell script owns branch, SHA, ancestry and job checks.
 const fakeGh =
