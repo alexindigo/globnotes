@@ -2,6 +2,89 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { command } from "./helpers/process.ts";
 
+for (const mode of ["checks", "native"]) {
+  Deno.test(`gates: ${mode} keeps CI workloads separate and forwards its shard`, async () => {
+    const root = await Deno.makeTempDir({ prefix: "gate-shard-" });
+    try {
+      for (
+        const path of [
+          "bin",
+          "logs",
+          "server/api/endpoints",
+          "client/tests/e2e",
+        ]
+      ) {
+        await Deno.mkdir(`${root}/${path}`, { recursive: true });
+      }
+      await Deno.writeTextFile(`${root}/bin/deno`, "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
+      await Deno.writeTextFile(
+        `${root}/client/tests/e2e/run.sh`,
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$GATE_FIXTURE/argv"\ntest -z "${GLOBNOTES_E2E_CASES:-}"\n',
+      );
+      const script = (await Deno.readTextFile(
+        new URL("../scripts/gates.sh", import.meta.url),
+      ))
+        .replace("cd /workspace", 'cd "$GATE_FIXTURE"')
+        .replace("logs=/run-logs", 'logs="$GATE_FIXTURE/logs"')
+        .replace(
+          "artifacts=/artifacts",
+          'artifacts="$GATE_FIXTURE/artifacts"',
+        );
+      await Deno.writeTextFile(`${root}/gates.sh`, script);
+      const result = await command("bash", {
+        args: [
+          `${root}/gates.sh`,
+          `--${mode}`,
+          ...(mode === "native" ? ["--shard", "2/2"] : []),
+        ],
+        env: {
+          PATH: `${root}/bin:${Deno.env.get("PATH")}`,
+          GATE_FIXTURE: root,
+          GLOBNOTES_TEST_HOST: "globnotes.test",
+          GLOBNOTES_E2E_CASES: "must-be-cleared",
+        },
+      }).output();
+      assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+      const gates = (await Deno.readTextFile(`${root}/logs/timings.jsonl`))
+        .trim().split("\n").map((line) => JSON.parse(line).gate);
+      assertEquals(
+        gates,
+        mode === "native" ? ["browser-ready", "install", "build", "native"] : [
+          "install",
+          "lint",
+          "check",
+          "format",
+          "worker",
+          "handlers",
+          "shell",
+          "e2e-modules",
+          "server",
+          "client",
+          "build",
+          "cold-load",
+        ],
+      );
+      if (mode === "native") {
+        assertEquals(await Deno.readTextFile(`${root}/argv`), "--shard\n2/2\n");
+      }
+      const invalid = await command("bash", {
+        args: [
+          `${root}/gates.sh`,
+          `--${mode}`,
+          "--shard",
+          mode === "native" ? "3/2" : "1/2",
+        ],
+        env: { GATE_FIXTURE: root, GLOBNOTES_TEST_HOST: "globnotes.test" },
+      }).output();
+      assertEquals(invalid.code, 2);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+}
+
 // The fake command is the selector/process boundary, not an alternative gate.
 const deno = `#!/usr/bin/env bash
 set -euo pipefail

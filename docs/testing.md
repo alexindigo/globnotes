@@ -53,6 +53,36 @@ Host `/tmp` is refused as a workspace. Examples:
 
 ## The gates: `scripts/gates.sh`
 
+CI runs `--checks` and `--timing` once, alongside a two-entry native matrix:
+`--native --shard 1/2` and `--native --shard 2/2`. Each native job builds its own
+assets and runs only its partition at concurrency 2. The existing 1800-second
+gate bound and 90-minute job limits are unchanged. The final `test` job requires
+both native jobs and the checks job to succeed, or verifies their explicit
+skip when the existing exact-SHA PR-proof lookup reuses a successful run.
+The proof lookup runs once before those jobs; failure falls back to testing.
+
+`legacy-native-suite.mjs` owns the complete case/argument selection, explicit
+helper inventory and partition. Its recorded `CASE_DURATION_MS` values come
+from the complete concurrency-2 run of tree
+`1fb54e69d6566a622a27baf1698bb78f1245ea36` on Ark: artifact-directory creation
+through exit-record creation, rounded to milliseconds. Longest weighted cases
+are assigned first to the lighter shard, ties by original order then shard 1.
+Exclusive cases count twice because they occupy both CI slots. Execution keeps
+the original order within each partition and retains exclusive admission.
+Tests require exact-once coverage of every variant, including shared controls.
+Exit records now also retain measured `durationMs` for future rebalancing.
+
+The exhaustive native selection includes the result, native-consumer,
+entrypoint and unit-consumer controls, so CI does not invoke those again as
+separate gates. `--checks` runs the remaining non-native gates. Local `--all`
+and `--all --browser` retain their existing behavior; running the native runner
+without `--shard` still selects everything (default local concurrency 3).
+
+```sh
+.devcontainer/run.sh --browser -- env GLOBNOTES_E2E_CONCURRENCY=2 bash scripts/gates.sh --native --shard 1/2
+.devcontainer/run.sh --browser -- env GLOBNOTES_E2E_CONCURRENCY=2 bash scripts/gates.sh --native --shard 2/2
+```
+
 One gate list serves the hook and full runs. Each gate logs to
 `/run-logs/<gate>.log` and appends its exit status and seconds to
 `/run-logs/timings.jsonl`; the first failing gate stops the run.

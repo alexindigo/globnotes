@@ -7,6 +7,7 @@ import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
 import { authenticatorCode } from "../../../tests/helpers/totp.ts";
+import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 
 const options = parseArguments(Deno.args);
 if (options.help) { console.log("Usage: plugin-review-repairs.mjs --artifacts <directory>"); Deno.exit(0); }
@@ -47,13 +48,13 @@ async function fill(session, selector, value) {
   else await session.key("Backspace", { code: "Backspace", windowsVirtualKeyCode: 8 });
   await session.poll(`document.querySelector(${JSON.stringify(selector)})?.value===${JSON.stringify(value)}`);
 }
-async function settings(session, page = "Plugins") {
+async function settings(session, page = "core:plugins") {
   if (!await session.evaluate("!!document.querySelector('[aria-label=Settings]')?.getBoundingClientRect().width")) await session.click('[title="Open sidebar"]');
   await session.click('[aria-label="Settings"]');
-  await session.button(page, '[aria-label="Settings pages"]');
+  await session.click(`[data-settings-nav-id="${page}"]`);
   await session.poll("!!document.querySelector('#settings-modal-title')");
 }
- async function access(session) { await settings(session, "Access"); await session.button("Change access mode"); await session.poll("!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-password')?.disabled===false"); }
+ async function access(session) { await settings(session, "core:access"); await session.button("Change access\u2026"); await session.poll("!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-password')?.disabled===false"); }
 async function closeSettings(session) { await session.click('[aria-label="Close settings"]'); await session.poll("!document.querySelector('#settings-modal-title')"); }
 async function api(path, method = "GET", body, session) {
   const token = session ? await session.evaluate("sessionStorage.getItem('token')||localStorage.getItem('token')") : null;
@@ -64,23 +65,16 @@ async function api(path, method = "GET", body, session) {
 const catalog = async session => { const result = await api("plugin-host", "GET", undefined, session); assert(result.status === 200, "Actual catalogue read rejected"); return result.body; };
 async function finishPeerPolicy(expected, unavailable) {
   const peer = current.peer;
-  await peer.poll(`(${expected}) && ((${unavailable})===false || [...document.querySelectorAll('[data-inventory-recovery] button')].some(button=>button.textContent.trim()==='Review current policy'&&!button.disabled))`);
-  if (await peer.evaluate(unavailable)) {
-    // A real SSE publication can supersede the PUT's follow-up read. The
-    // committed choice requires a separate explicit Review, never another PUT.
-    const writes = current.peerPolicyWrites;
-    await peer.button("Review current policy", '[data-inventory-recovery]');
-    await peer.poll("!document.querySelector('[data-inventory-recovery]')");
-    assert(current.peerPolicyWrites === writes, "Explicit committed-policy Review replayed a policy write");
-  }
+  await settleSettingsInventory(peer, expected);
   await peer.poll(`(${expected}) && (${unavailable})===false`);
 }
+const enabledSwitch = '[data-plugin-inventory-id="review"] .plugin-row-toggle-lane [role=switch]';
 async function togglePeer(enabled) {
   const peer = current.peer;
   if (!await peer.evaluate("!!document.querySelector('#settings-modal-title')")) await settings(peer);
-  await peer.poll(`document.querySelector('[data-plugin-inventory-id=review] button')?.textContent.trim()===${JSON.stringify(enabled ? "Disabled" : "Enabled")} && !document.querySelector('[data-plugin-inventory-id=review] button').disabled`);
-  await peer.click('[data-plugin-inventory-id="review"] button');
-  await finishPeerPolicy(`document.querySelector('[data-plugin-inventory-id=review] button')?.textContent.trim()===${JSON.stringify(enabled ? "Enabled" : "Disabled")}`, "document.querySelector('[data-plugin-inventory-id=review] button')?.disabled");
+  await peer.poll(`document.querySelector('${enabledSwitch}')?.getAttribute('aria-checked')===${JSON.stringify(String(!enabled))} && !document.querySelector('${enabledSwitch}').disabled`);
+  await peer.click(enabledSwitch);
+  await finishPeerPolicy(`document.querySelector('${enabledSwitch}')?.getAttribute('aria-checked')===${JSON.stringify(String(enabled))}`, `document.querySelector('${enabledSwitch}')?.disabled`);
 }
 function gateResponse(method, path) {
   assert(!current.nextGate, "Overlapping fixture transport admission");
@@ -180,15 +174,15 @@ try {
   await fixture("inventory-handoff", { protectedAccount: true });
   await settings(current.session);
   const token = await current.session.evaluate("sessionStorage.getItem('token')"), gate = gateResponse("PUT", "/_/api/plugin-host/review/enabled");
-  await current.session.click('[data-plugin-inventory-id="review"] button'); await until(() => gate.response, "Inventory PUT not reached");
+  await current.session.click(enabledSwitch); await until(() => gate.response, "Inventory PUT not reached");
   assert(gate.response.status === 200 && !(await catalog(current.session)).plugins.find(plugin => plugin.id === "review").enabled, "Held inventory PUT did not persist upstream");
   await current.session.click('[aria-label="Close settings"]');
-  await current.session.poll("document.querySelector('[data-plugin-inventory] [role=alert]')?.textContent.includes('unknown')");
+  await current.session.poll("document.querySelector('[data-inventory-recovery]')?.textContent.includes('unknown')");
   await current.session.button("Access", '[aria-label="Settings pages"]'); await delay(5200);
   await current.session.button("Account", '[aria-label="Settings pages"]'); await delay(5200);
   assert(await current.session.evaluate(`!!document.querySelector('[data-plugin-inventory]') && !document.querySelector('#setup-title') && sessionStorage.getItem('token')===${JSON.stringify(token)}`), "Unresolved policy admitted a page/session handoff");
   await capture("inventory-unknown-retained"); await release(gate);
-  await current.session.poll("!document.querySelector('[data-plugin-inventory] [role=alert]') && !document.querySelector('[data-inventory-recovery]')");
+  await settleSettingsInventory(current.session, `document.querySelector('${enabledSwitch}')?.getAttribute('aria-checked')==='false'`);
   assert(await current.session.evaluate(`!!document.querySelector('[data-plugin-inventory]') && sessionStorage.getItem('token')===${JSON.stringify(token)}`), "Late ACK resumed an aborted close/page transition");
   const policy = JSON.parse(await Deno.readTextFile(`${current.state}/plugins.json`));
   assert(policy.disabled.includes("review") && current.requests.filter(row => row.method === "PUT" && row.path.endsWith("/enabled")).length === 1, "Inventory policy was replayed or not stored");
@@ -233,7 +227,7 @@ try {
 
   await fixture("browser-ownership", { browser: true });
   await current.session.poll("!!document.querySelector('[data-review-owner=seed]')");
-  await settings(current.session, "Keybindings"); await current.session.button("Obsidian"); await closeSettings(current.session);
+  await settings(current.session, "core:keybindings"); await current.session.button("Obsidian"); await closeSettings(current.session);
   await togglePeer(false); await current.session.poll("!document.querySelector('[data-review-owner=seed]')");
   await browserCode("A"); await togglePeer(true); await until(() => current.browserHolds.length === 1, "Old browser activation did not enter module barrier");
   await togglePeer(false); await current.session.poll("!document.querySelector('[data-review-owner=A]')");
@@ -256,12 +250,13 @@ try {
   await outcome("retired registration", { deniedCreates: Number(actual.audit.denied), ghostDeliveries: 0, savedNoteObservedByB: true });
 
   const reversed = gateResponse("GET", "/_/api/plugin-host");
-  const autoIcon = "[...document.querySelectorAll('[data-plugin-inventory] button')].find(button=>button.textContent.trim()==='Auto-enable new plugins')?.querySelector('path')?.getAttribute('d')";
-  const autoDisabled = "[...document.querySelectorAll('[data-plugin-inventory] button')].find(button=>button.textContent.trim()==='Auto-enable new plugins')?.disabled";
-  const offIcon = await current.peer.evaluate(autoIcon); assert(offIcon, "Rendered auto-enable icon missing");
-  await current.peer.button("Auto-enable new plugins", '[data-plugin-inventory]'); await until(() => reversed.response, "Old catalogue response not held");
+  const autoSwitch = '.plugin-policy-row [role=switch]';
+  const autoIcon = `document.querySelector('${autoSwitch}')?.getAttribute('aria-checked')`;
+  const autoDisabled = `document.querySelector('${autoSwitch}')?.disabled`;
+  const offIcon = await current.peer.evaluate(autoIcon); assert(offIcon === "false", "Rendered auto-enable switch did not start off");
+  await current.peer.click(autoSwitch); await until(() => reversed.response, "Old catalogue response not held");
   await finishPeerPolicy(`${autoIcon}!==${JSON.stringify(offIcon)}`, autoDisabled);
-  await current.peer.button("Auto-enable new plugins", '[data-plugin-inventory]');
+  await current.peer.click(autoSwitch);
   await finishPeerPolicy(`${autoIcon}===${JSON.stringify(offIcon)}`, autoDisabled);
   const newest = await catalog();
   await settings(current.session); await current.session.poll(`${autoIcon}===${JSON.stringify(offIcon)}`);
@@ -270,8 +265,8 @@ try {
   await capture("reversed-catalogue-current");
   await outcome("reversed catalogue", { heldRevision: JSON.parse(reversed.response.body).policy.revision, latestRevision: newest.policy.revision, effectiveAutoEnable: false, nonceRetained: nonce }); await finish();
 
-  await fixture("descriptor-settlement"); await settings(current.session, "Repair preferences");
-  await current.session.poll("!!document.querySelector('#settings-field-message') && !document.querySelector('#settings-field-message').readOnly");
+  await fixture("descriptor-settlement"); await settings(current.session, "plugin:review");
+  await current.session.poll("document.querySelector('#settings-field-message')?.readOnly===false");
   const settingsGate = gateResponse("PUT", "/_/api/plugin-host/review/settings/preferences");
   await fill(current.session, "#settings-field-message", "D1 actual proposal"); await current.session.key("Enter", { code: "Enter", windowsVirtualKeyCode: 13 }); await until(() => settingsGate.response, "Settings PUT not held");
   assert(settingsGate.response.status === 200, "D1 did not actually persist");
@@ -282,7 +277,7 @@ try {
     await until(async () => (await catalog()).plugins.find(plugin => plugin.id === "review").pages[0].fields[0].key === key, "Latest declared schema not installed");
   }
   assert(await current.session.evaluate("document.querySelector('#settings-field-message')?.value==='D1 actual proposal'"), "Definition replacement discarded D1 owner before settlement");
-  await release(settingsGate); await current.session.poll("document.querySelector('#settings-field-d3')?.value==='d3-default' && !document.querySelector('#settings-field-d3').readOnly && !document.querySelector('#settings-field-message')");
+  await release(settingsGate); await current.session.poll("document.querySelector('#settings-field-d3')?.value==='d3-default' && document.querySelector('#settings-field-d3').readOnly===false && !document.querySelector('#settings-field-message')");
   await fill(current.session, "#settings-field-d3", "D3 explicit consumer"); await current.session.key("Enter", { code: "Enter", windowsVirtualKeyCode: 13 });
   await until(async () => (await api("plugin-host/review/settings/preferences")).body.values.d3 === "D3 explicit consumer", "New-schema explicit commit did not persist");
   const storedSettings = JSON.parse(await Deno.readTextFile(`${current.state}/plugin-data/review/settings.json`));
@@ -290,11 +285,11 @@ try {
   assert(storedSettings.values.preferences.message === "D1 actual proposal", "New-schema save discarded the removed D1 field's stored data");
   await capture("descriptor-d3-authoritative"); await outcome("descriptor ACK/adoption", { latestDefinition: "d3", oldACKNotUsedAsNewData: true, authoritativeDefaultLoaded: true, explicitNewValue: "D3 explicit consumer", removedD1ValueRetained: true, storedSettings }); await finish();
 
-  await fixture("postponed-prompt"); await settings(current.session, "Access");
+  await fixture("postponed-prompt"); await settings(current.session, "core:access");
   const permissionGate = gateResponse("GET", "/_/api/plugin-host/review/permissions");
   assert((await api("plugin-host/review/commands/request", "POST", {})).status === 200, "Actual server request not admitted");
   await until(() => permissionGate.response, "Automatic permission load not reached");
-  await current.session.button("Change access mode");
+  await current.session.button("Change access\u2026");
   // Complete the wizard's own Access GET and mounted initial-focus admission
   // before measuring whether the separately held permission reply moves it.
    await current.session.poll("!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-password')?.disabled===false && document.activeElement?.id==='setup-mode-password' && document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]')?.contains(document.activeElement)");

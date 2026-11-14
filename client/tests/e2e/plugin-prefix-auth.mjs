@@ -9,9 +9,9 @@ import { SignJWT } from "jose";
 let options;
 try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
 if (options.help) { console.log("Usage: plugin-prefix-auth.mjs --artifacts <directory>"); Deno.exit(0); }
-if (!options.artifacts) { console.error("--artifacts is required"); Deno.exit(2); }
-const artifacts = options.artifacts;
-await Deno.mkdir(artifacts, { mode: 0o700 });
+const artifacts = options.artifacts ?? Deno.env.get("GLOBNOTES_E2E_ARTIFACTS");
+if (!artifacts) { console.error("--artifacts or GLOBNOTES_E2E_ARTIFACTS is required"); Deno.exit(2); }
+await Deno.mkdir(artifacts, { recursive: true, mode: 0o700 });
 const assert = (value, message) => { if (!value) throw Error(message); };
 const username = "gps08-fixture", password = "gps08-original-password", nextPassword = "gps08-replacement-password";
 const seed = "GPS08 seed.\n", outcomes = [];
@@ -36,7 +36,7 @@ async function fill(session, selector, value) {
   const inspect = () => session.evaluate(`(()=>{const input=document.querySelector(${JSON.stringify(selector)});return input&&{value:input.value,readOnly:input.readOnly,disabled:input.disabled,focused:document.activeElement===input,documentFocused:document.hasFocus(),inert:!!input.closest('[inert]'),rect:input.getBoundingClientRect().toJSON()};})()`);
   const fieldDiagnostic = selector === "#settings-field-message";
   const before = fieldDiagnostic ? await inspect() : null;
-  await session.poll(`(()=>{const input=document.querySelector(${JSON.stringify(selector)});return input&&!input.readOnly&&!input.disabled&&!input.closest('[inert]')&&input.getBoundingClientRect().width>0;})()`);
+  await session.poll(`(()=>{const input=document.querySelector(${JSON.stringify(selector)});return input&&input.readOnly===false&&input.disabled===false&&!input.closest('[inert]')&&input.getBoundingClientRect().width>0;})()`);
   const ready = fieldDiagnostic ? await inspect() : null;
   await session.click(selector);
   await session.poll(`document.activeElement===document.querySelector(${JSON.stringify(selector)}) && !document.activeElement.disabled && !document.activeElement.readOnly`);
@@ -173,14 +173,14 @@ async function configured() {
     for (const [route, method, body] of [["/_/api/plugin-host/gps08/settings/preferences", "PUT", { revision: 0, values: { message: "denied" } }], ["/_/api/plugin-host/gps08/commands/consume", "POST", {}], ["/_/api/notes/Seed", "PATCH", { newContent: "denied" }]]) assert((await api(route, method, body)).status === 403, "Read-only mutation escaped admission");
     assert((await api("/_/api/plugins/gps08/counts")).body.commands === 0 && await Deno.readTextFile(`${vault}/Seed.md`) === seed, "Read-only rejection changed Worker/note");
     assert(await privateBytes() === null, "Read-only rejected command persisted private data");
-    await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.button("GPS08 preferences");
-    await session.poll("document.querySelector('#settings-field-message')?.readOnly===true");
+    await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.click('[data-settings-nav-id="plugin:gps08"]');
+    await session.poll("(()=>{const value=document.querySelector('#settings-field-message');return value?.matches('span')&&value.textContent==='GPS08 default'&&!value.closest('.setting-row').querySelector('input,textarea,select,button');})()");
     await session.click('[aria-label="Close settings"]'); await session.click('[title="Close sidebar"]');
      await palette(session); await session.poll("document.querySelector('[data-gps08-consumer]')?.textContent==='GPS08 default'");
     return { readonlyAdmissions: 3, readonlyBrowserSdkConsumer: true, queries: queried.body.query };
   }
   const message = `GPS08 saved ${current.label}`;
-  await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.button("GPS08 preferences");
+  await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.click('[data-settings-nav-id="plugin:gps08"]');
   await fill(session, "#settings-field-message", message);
   await session.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r", unmodifiedText: "\r" });
   await session.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });

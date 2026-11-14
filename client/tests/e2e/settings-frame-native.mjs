@@ -40,8 +40,9 @@ export async function assertSettingsActionHierarchy(session) {
 }
 
 export async function assertSettingRowAlignment(session) {
-   const rows=await session.read('[role=dialog]', "[...document.querySelectorAll('.setting-row-short')].filter(row=>!row.closest('[inert]')).map(row=>{const label=row.querySelector('.setting-row-label'),control=row.querySelector('.setting-row-control'),a=label.getBoundingClientRect(),b=control.getBoundingClientRect(),r=row.getBoundingClientRect();return {label:label.textContent.trim(),visible:!!a.width&&!!b.width,stacked:b.top>=a.bottom,contained:b.left>=r.left-.5&&b.right<=r.right+.5,delta:(a.top+a.bottom-b.top-b.bottom)/2};}).filter(row=>row.visible)");
+   const rows=await session.read('[role=dialog]', "[...document.querySelectorAll('.setting-row-short')].filter(row=>!row.closest('[inert]')).map(row=>{const label=row.querySelector('.setting-row-label'),control=row.querySelector('.setting-row-control'),a=label.getBoundingClientRect(),b=control.getBoundingClientRect(),r=row.getBoundingClientRect(),s=getComputedStyle(row);return {label:label.textContent.trim(),visible:!!a.width&&!!b.width,stacked:b.top>=a.bottom,contained:b.left>=r.left-.5&&b.right<=r.right+.5,delta:(a.top+a.bottom-b.top-b.bottom)/2,inline:Math.min(a.bottom,b.bottom)>Math.max(a.top,b.top),inlineGap:b.left-a.right,rowGap:b.top-a.bottom,expectedColumnGap:parseFloat(s.columnGap)||0,expectedRowGap:parseFloat(s.rowGap)||0,endDelta:r.right-b.right,overflow:Math.max(a.right-r.right,b.right-r.right,r.left-a.left,r.left-b.left)};}).filter(row=>row.visible)");
   if(rows.some(row=>!row.contained||!row.stacked&&Math.abs(row.delta)>0.5))throw Error(`Setting row centerlines/reflow: ${JSON.stringify(rows)}`);
+  assertSettingRowMeasurements(rows);
   return rows;
 }
 
@@ -87,6 +88,15 @@ export async function assertSettingsProseMeasure(session) {
   const result=await session.read('[role=dialog]', "[...document.querySelectorAll('.setting-row p > span,[data-keybindings-settings] > div > p,[data-sync-settings] > p,.driver-instance > p,.driver-secret p,.settings-page-description,.settings-section-intro p')].filter(el=>el.getBoundingClientRect().width&&!el.closest('[inert]')).map(el=>({text:el.textContent,width:el.getBoundingClientRect().width,maxWidth:getComputedStyle(el).maxWidth}))");
   if(result.some(p=>p.maxWidth==='none'||p.width>parseFloat(p.maxWidth)+.5))throw Error(`Settings prose measure: ${JSON.stringify(result)}`);
   return result;
+}
+
+export function assertSettingRowMeasurements(rows) {
+  // Short controls share a centerline when beside their label. Flex reflow
+  // instead puts them at the end of the next line with the declared row gap.
+  const invalid = rows.filter(row => row.overflow > .5 || (row.inline
+    ? Math.abs(row.delta) > .5 || Math.abs(row.inlineGap-row.expectedColumnGap) > .5
+    : Math.abs(row.endDelta) > .5 || Math.abs(row.rowGap-row.expectedRowGap) > .5));
+  if (invalid.length) throw Error(`Setting row alignment/reflow: ${JSON.stringify(invalid)}`);
 }
 
 export async function assertSettingRowErrors(session) {
