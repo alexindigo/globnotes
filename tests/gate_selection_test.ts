@@ -37,7 +37,7 @@ for (const mode of ["checks", "native"]) {
         args: [
           `${root}/gates.sh`,
           `--${mode}`,
-          ...(mode === "native" ? ["--shard", "2/2"] : []),
+          ...(mode === "native" ? ["--shard", "3/3"] : []),
         ],
         env: {
           PATH: `${root}/bin:${Deno.env.get("PATH")}`,
@@ -67,14 +67,14 @@ for (const mode of ["checks", "native"]) {
         ],
       );
       if (mode === "native") {
-        assertEquals(await Deno.readTextFile(`${root}/argv`), "--shard\n2/2\n");
+        assertEquals(await Deno.readTextFile(`${root}/argv`), "--shard\n3/3\n");
       }
       const invalid = await command("bash", {
         args: [
           `${root}/gates.sh`,
           `--${mode}`,
           "--shard",
-          mode === "native" ? "3/2" : "1/2",
+          mode === "native" ? "4/3" : "1/3",
         ],
         env: { GATE_FIXTURE: root, GLOBNOTES_TEST_HOST: "globnotes.test" },
       }).output();

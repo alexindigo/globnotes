@@ -15,7 +15,7 @@ artifacts=/artifacts
 mkdir -p "$logs" "$artifacts"
 
 usage() {
-    printf 'usage: gates.sh --plan STAGED FILES | --select SELECTION [--serial] | --all [--browser] [--serial] | --checks | --native [--shard 1/2|2/2] | --timing\n' >&2
+    printf 'usage: gates.sh --plan STAGED FILES | --select SELECTION [--serial] | --all [--browser] [--serial] | --checks | --native [--shard 1/3|2/3|3/3] | --timing\n' >&2
     exit 2
 }
 mode="" browser=false serial=false staged="" files="" selection="" ci_changes="" ci_ref="" shard=""
@@ -37,7 +37,7 @@ while (($#)); do
 done
 [[ -n "$mode" ]] || usage
 [[ -z "$shard" || "$mode" == native ]] || usage
-[[ -z "$shard" || "$shard" == 1/2 || "$shard" == 2/2 ]] || usage
+[[ -z "$shard" || "$shard" == 1/3 || "$shard" == 2/3 || "$shard" == 3/3 ]] || usage
 native_args=()
 [[ -z "$shard" ]] || native_args=(--shard "$shard")
 

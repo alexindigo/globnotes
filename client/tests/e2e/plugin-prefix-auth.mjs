@@ -1,14 +1,14 @@
 // GPS08: native production consumers and actual HTTP auth/stream boundaries.
 import { nativeSession } from "./native-cdp-session.mjs";
-import { parseArguments } from "./harness-helpers.mjs";
+import { PREFIX_AUTH_CASES, parsePrefixAuthArguments } from "./prefix-auth-cases.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { bootPrefixAuthFixture } from "./prefix-auth-fixture.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { SignJWT } from "jose";
 
 let options;
-try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
-if (options.help) { console.log("Usage: plugin-prefix-auth.mjs --artifacts <directory>"); Deno.exit(0); }
+try { options = parsePrefixAuthArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
+if (options.help) { console.log("Usage: plugin-prefix-auth.mjs --artifacts <directory> [--variant <fixture>]"); Deno.exit(0); }
 const artifacts = options.artifacts ?? Deno.env.get("GLOBNOTES_E2E_ARTIFACTS");
 if (!artifacts) { console.error("--artifacts or GLOBNOTES_E2E_ARTIFACTS is required"); Deno.exit(2); }
 await Deno.mkdir(artifacts, { recursive: true, mode: 0o700 });
@@ -239,7 +239,8 @@ async function configured() {
   return { actualRuntimeSdk: true, actualEditorSdkIdentity: true, nativeSettings: settings.body, nativeCommand: command.body.result, queryPairs: queried.body.query, exactApiDiskContent: disk, privateHookConsumer: data, independentAuthenticatedPeers: mode === "password" ? 2 : 0 };
 }
 try {
-  for (const prefix of ["", "/notes"]) for (const mode of ["password", "none", "read_only", "setup"]) {
+  const cases = PREFIX_AUTH_CASES.filter(item => !options.variant || item.label === options.variant);
+  for (const { prefix, mode } of cases) {
     await fixture(prefix, mode);
     let consumers;
     if (mode === "setup") {
@@ -258,7 +259,7 @@ try {
     await Deno.writeTextFile(`${current.directory}/consumers.json`, JSON.stringify({ label: current.label, prefix, mode, ...consumers, responses: current.responses, pageErrors: current.sessions.flatMap(session => session.errors), events: current.sessions.flatMap(session => session.events) }, null, 2), { createNew: true });
     await closeCurrent(); outcomes.push({ name: current.label, passed: true }); console.log(`ok: GPS08 ${current.label} actual consumers`);
   }
-  assert(outcomes.length === 8, "Missing required prefix/auth case"); console.log("GPS-08 PREFIX AUTH OK");
+  assert(outcomes.length === cases.length, "Missing required prefix/auth case"); console.log("GPS-08 PREFIX AUTH OK");
 } catch (error) {
   failure = error; console.error(`FAIL: ${error.message}`);
   if (current?.session) {

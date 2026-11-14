@@ -1,6 +1,7 @@
 // One child result per selected standalone harness; logs cannot grant success.
 import { assert, childSucceeded } from "./test-outcomes.mjs";
 import { fileURLToPath } from "node:url";
+import { PREFIX_AUTH_CASES, prefixAuthSelection } from "./prefix-auth-cases.mjs";
 
 export const SELECTION = [
   ["tour-chain"], ["test-vault"], ["theme"], ["surfaces"], ["code-tokens"],
@@ -12,7 +13,7 @@ export const SELECTION = [
   ["line-wrap"], ["ctrl-f-search"], ["anchor-history"], ["setup-wizard"], ["setup-totp-desktop"], ["layered-config-native"],
   ["autosave-timer"], ["hub-safe-saves-native"], ["hub-writers-gate-native"], ["html-safety"], ["background-connections-native"], ["reauthentication-native"],
   ["conflict-inbox-native"], ["conflict-inbox-native", "narrow-status"], ["conflict-resolution-native"], ["conflict-review-native"],
-  ["sync-settings-native"], ["sync-driver-native"], ["sync-status-native"], ["plugin-prefix-auth"],
+  ["sync-settings-native"], ["sync-driver-native"], ["sync-status-native"], ...prefixAuthSelection(),
   ...["s3", "webdav"].flatMap(backend => ["none", "openssl-base64", "rclone-base64"].map(codec => ["remotely-save-native", backend, codec])),
   ["access-extra-states"], ["access-settings"],
   ["backup-plugin"], ["backup-plugin", "--case", "order"], ["backup-plugin", "--case", "preimage"], ["backup-plugin", "--controls"],
@@ -44,6 +45,7 @@ export const NATIVE_HELPERS = {
   "native-clipboard.mjs": "owned clipboard adapter",
   "native-color-picker.mjs": "native picker adapter",
   "prefix-auth-fixture.mjs": "prefix/auth production fixture",
+  "prefix-auth-cases.mjs": "prefix/auth fixture identities and CLI admission",
   "remotely-save-fixture.mjs": "interoperability fixture",
   "settings-access-native.mjs": "Access summary helper",
   "settings-appearance-native.mjs": "Appearance scenario helper",
@@ -82,86 +84,94 @@ const ARTIFACT_ARGUMENT_CASES = new Set([
   "note-save-fifo", "note-save-owner-guards", "plugin-guard-preservation", "plugin-permissions",
   "plugin-review-repairs", "settings-design", "settings-foundations", "settings-ui",
 ]);
-export const nativeChildArguments = (name, args, artifacts) => ARTIFACT_ARGUMENT_CASES.has(name)
-  ? [...args, "--artifacts", artifacts + "/consumers"] : args;
+export const nativeChildArguments = (name, args, artifacts) => name === "plugin-prefix-auth" && !args.length
+  ? ["--variant", PREFIX_AUTH_CASES[0].label]
+  : ARTIFACT_ARGUMENT_CASES.has(name) ? [...args, "--artifacts", artifacts + "/consumers"] : args;
 
 // Argument variants are distinct cases (rename-options-move/relink/none).
 export const caseName = selection => selection.join("-");
 
-// Milliseconds recovered from the complete 67-case run, staged tree
-// 1fb54e69d6566a622a27baf1698bb78f1245ea36, at concurrency 2 on Ark.
-// Each value is child artifact directory birth time -> exit.json birth time
-// (filesystem nanosecond timestamps, rounded to ms), including runner overhead.
+// CI run 43620052763: successful child exit.json durationMs, rounded up.
+// Cases not admitted before failure retain the previous measured duration x1.5
+// (the observed whole-shard CI slowdown), not a fabricated CI measurement.
+// Prefix leaves use CI fixture wire spans +3s startup/closure estimate; the
+// unfinished notes read_only/setup leaves use their empty-prefix counterparts.
 export const CASE_DURATION_MS = {
-  // Added by main's config cutover; isolated native measurement on 5068758.
-  "layered-config-native": 13122,
-  "tour-chain": 19573,
-  "test-vault": 16101,
-  "theme": 15642,
-  "surfaces": 5790,
-  "code-tokens": 6526,
-  "copy-button": 3187,
-  "editor-modes": 4831,
-  "wikilink-rename": 6093,
-  "rename-twice": 8536,
-  "client-driven-links": 5091,
-  "edit-mode-url": 25436,
-  "recent-files": 4161,
-  "sidebar-refresh": 2706,
-  "rename-options-move": 5281,
-  "rename-options-relink": 4918,
-  "rename-options-none": 4997,
-  "quick-switcher": 4488,
-  "test-quality-geometry": 26244,
-  "native-ownership-control": 4121,
-  "native-actions-control": 2134,
-  "button-icons": 29374,
-  "save-preview": 34116,
-  "line-wrap": 5036,
-  "ctrl-f-search": 8268,
-  "anchor-history": 22570,
-  "setup-wizard": 20672,
-  "setup-totp-desktop": 24993,
-  "autosave-timer": 131456,
-  "hub-safe-saves-native": 14094,
-  "hub-writers-gate-native": 4174,
-  "html-safety": 5551,
-  "background-connections-native": 15069,
-  "reauthentication-native": 11845,
-  "conflict-inbox-native": 17587,
-  "conflict-inbox-native-narrow-status": 17542,
-  "conflict-resolution-native": 14162,
-  "conflict-review-native": 87878,
-  "sync-settings-native": 25974,
-  "sync-driver-native": 15040,
-  "sync-status-native": 10901,
-  "plugin-prefix-auth": 66483,
-  "remotely-save-native-s3-none": 21554,
-  "remotely-save-native-s3-openssl-base64": 27082,
-  "remotely-save-native-s3-rclone-base64": 28810,
-  "remotely-save-native-webdav-none": 25647,
-  "remotely-save-native-webdav-openssl-base64": 24461,
-  "remotely-save-native-webdav-rclone-base64": 31566,
-  "access-extra-states": 37114,
-  "access-settings": 155696,
-  "backup-plugin": 427354,
-  "backup-plugin---case-order": 15153,
-  "backup-plugin---case-preimage": 14726,
-  "backup-plugin---controls": 249848,
-  "generic-plugin-system": 439169,
-  "note-naming": 3011,
-  "note-save-fifo": 57981,
-  "note-save-owner-guards": 49052,
-  "plugin-guard-preservation": 13718,
-  "plugin-permissions": 68437,
-  "plugin-review-repairs": 89905,
-  "settings-design": 461813,
-  "settings-foundations": 144402,
-  "settings-ui": 185883,
-  "native-consumer-controls": 199994,
-  "native-result-controls": 2127,
-  "runner-entrypoint-controls": 31,
-  "unit-consumer-controls": 2902,
+  "layered-config-native": 25113,
+  "tour-chain": 45776,
+  "test-vault": 43354,
+  "theme": 45026,
+  "surfaces": 17777,
+  "code-tokens": 15577,
+  "copy-button": 7444,
+  "editor-modes": 8052,
+  "wikilink-rename": 12008,
+  "rename-twice": 16531,
+  "client-driven-links": 9064,
+  "edit-mode-url": 69504,
+  "recent-files": 9950,
+  "sidebar-refresh": 7426,
+  "rename-options-move": 11105,
+  "rename-options-relink": 10905,
+  "rename-options-none": 9437,
+  "quick-switcher": 9888,
+  "test-quality-geometry": 55024,
+  "native-ownership-control": 10901,
+  "native-actions-control": 2675,
+  "button-icons": 68577,
+  "save-preview": 71876,
+  "line-wrap": 9820,
+  "ctrl-f-search": 14711,
+  "anchor-history": 68015,
+  "setup-wizard": 40500,
+  "setup-totp-desktop": 28763,
+  "autosave-timer": 188110,
+  "hub-safe-saves-native": 24899,
+  "hub-writers-gate-native": 6688,
+  "html-safety": 10104,
+  "background-connections-native": 18381,
+  "reauthentication-native": 21334,
+  "conflict-inbox-native": 25671,
+  "conflict-inbox-native-narrow-status": 31802,
+  "conflict-resolution-native": 30002,
+  "conflict-review-native": 102466,
+  "sync-settings-native": 74928,
+  "sync-driver-native": 27029,
+  "sync-status-native": 23508,
+  "plugin-prefix-auth": 35059,
+  "plugin-prefix-auth---variant-empty-none": 15181,
+  "plugin-prefix-auth---variant-empty-read-only": 11649,
+  "plugin-prefix-auth---variant-empty-setup": 3354,
+  "plugin-prefix-auth---variant-notes-password": 36296,
+  "plugin-prefix-auth---variant-notes-none": 15743,
+  "plugin-prefix-auth---variant-notes-read-only": 11649,
+  "plugin-prefix-auth---variant-notes-setup": 3354,
+  "remotely-save-native-s3-none": 35608,
+  "remotely-save-native-s3-openssl-base64": 60223,
+  "remotely-save-native-s3-rclone-base64": 45627,
+  "remotely-save-native-webdav-none": 41443,
+  "remotely-save-native-webdav-openssl-base64": 42892,
+  "remotely-save-native-webdav-rclone-base64": 59450,
+  "access-extra-states": 55671,
+  "access-settings": 233544,
+  "backup-plugin": 796464,
+  "backup-plugin---case-order": 22730,
+  "backup-plugin---case-preimage": 22089,
+  "backup-plugin---controls": 555967,
+  "generic-plugin-system": 594245,
+  "note-naming": 4517,
+  "note-save-fifo": 86972,
+  "note-save-owner-guards": 73578,
+  "plugin-guard-preservation": 20577,
+  "plugin-permissions": 102656,
+  "plugin-review-repairs": 134858,
+  "settings-design": 692720,
+  "settings-foundations": 216603,
+  "settings-ui": 278825,
+  "native-consumer-controls": 299991,
+  "native-result-controls": 3191,
+  "runner-entrypoint-controls": 47,
+  "unit-consumer-controls": 4353,
 };
 
 // Exclusive cases drain the pool before admission and run alone. Contexts do
@@ -176,14 +186,16 @@ export const SERIAL_CASES = {
   "native-consumer-controls": "negative copy consumers read and restore the browser-global clipboard",
 };
 
+export const NATIVE_SHARDS = ["1/3", "2/3", "3/3"];
+
 export function parseShardArguments(args) {
   if (!args.length) return undefined;
-  assert(args.length === 2 && args[0] === "--shard" && ["1/2", "2/2"].includes(args[1]), "Usage: native suite [--shard 1/2|2/2]");
+  assert(args.length === 2 && args[0] === "--shard" && NATIVE_SHARDS.includes(args[1]), "Usage: native suite [--shard 1/3|2/3|3/3]");
   return args[1];
 }
 
 export function partitionCases(selection = SELECTION) {
-  const loads = [0, 0], assignment = new Map();
+  const loads = NATIVE_SHARDS.map(() => 0), assignment = new Map();
   const weight = item => {
     const name = caseName(item), duration = CASE_DURATION_MS[name];
     assert(Number.isFinite(duration) && duration > 0, `Missing measured native duration: ${name}`);
@@ -193,18 +205,20 @@ export function partitionCases(selection = SELECTION) {
   const ordered = selection.map((item, index) => ({ item, index, weight: weight(item) }))
     .sort((a, b) => b.weight - a.weight || a.index - b.index);
   for (const { item, weight: cost } of ordered) {
-    const shard = loads[0] <= loads[1] ? 0 : 1;
+    const shard = loads.reduce((best, load, index) => load < loads[best] ? index : best, 0);
     assignment.set(caseName(item), shard); loads[shard] += cost;
   }
-  // Keep the original suite order and its exclusive-case admission semantics.
-  return loads.map((_, shard) => selection.filter(item => assignment.get(caseName(item)) === shard));
+  // Group exclusive work so it cannot strand one parallel slot at each barrier.
+  // Longest-first parallel admission avoids a large last child after the pool drains.
+  return loads.map((_, shard) => selection.filter(item => assignment.get(caseName(item)) === shard)
+    .sort((a, b) => Number(!!SERIAL_CASES[caseName(b)]) - Number(!!SERIAL_CASES[caseName(a)]) || weight(b) - weight(a)));
 }
 
 export function selectShard(selection, shard) {
   if (shard === undefined) return selection;
   parseShardArguments(["--shard", shard]);
-  const admitted = new Set(partitionCases()[Number(shard[0]) - 1].map(caseName));
-  return selection.filter(item => admitted.has(caseName(item)));
+  const admitted = new Set(selection.map(caseName));
+  return partitionCases()[Number(shard[0]) - 1].filter(item => admitted.has(caseName(item)));
 }
 
 export function concurrencyValue(value = "3") {
@@ -220,7 +234,8 @@ export function selectCases(filter) {
   assert(!requested.has(""), "No required native cases selected: empty case name");
   const known = new Set(SELECTION.map(caseName));
   for (const name of requested) assert(known.has(name), `Unknown native case: ${name}`);
-  const selected = SELECTION.filter(selection => requested.has(caseName(selection)) || SHARED_CONTROL_CASES.includes(caseName(selection)));
+  const selected = SELECTION.filter(selection => requested.has(caseName(selection)) ||
+    requested.has("plugin-prefix-auth") && selection[0] === "plugin-prefix-auth" || SHARED_CONTROL_CASES.includes(caseName(selection)));
   assert(selected.length > 0, "No required native cases selected");
   return selected;
 }
@@ -239,7 +254,7 @@ export const SHARED_CASE_FILES = [
 
 export const FILE_CASES = Object.fromEntries([
   ...SHARED_CASE_FILES.map(file => [file, SELECTION.map(caseName)]),
-  ["client/tests/e2e/prefix-auth-fixture.mjs", ["plugin-prefix-auth"]],
+  ...["prefix-auth-fixture.mjs", "prefix-auth-cases.mjs"].map(file => [`client/tests/e2e/${file}`, prefixAuthSelection().map(caseName)]),
   ...[...new Set(SELECTION.map(([name]) => name))].map(name => [
     `client/tests/e2e/${name}.mjs`,
     SELECTION.filter(([driver]) => driver === name).map(caseName),

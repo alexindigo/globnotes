@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
-import { caseName, CASE_DURATION_MS, concurrencyValue, FILE_CASES, nativeChildArguments, NATIVE_HELPERS, parseShardArguments, partitionCases, runChildren, SELECTION, selectCases, selectShard, SERIAL_CASES, validateNativeInventory } from "./legacy-native-suite.mjs";
+import { caseName, CASE_DURATION_MS, concurrencyValue, FILE_CASES, nativeChildArguments, NATIVE_HELPERS, NATIVE_SHARDS, parseShardArguments, partitionCases, runChildren, SELECTION, selectCases, selectShard, SERIAL_CASES, validateNativeInventory } from "./legacy-native-suite.mjs";
+import { PREFIX_AUTH_CASES, parsePrefixAuthArguments, prefixAuthSelection } from "./prefix-auth-cases.mjs";
 
 describe("native suite child result ownership", () => {
   it("registers layered configuration with the existing shared controls", () => {
@@ -22,23 +23,28 @@ describe("native suite child result ownership", () => {
     // Greedy longest-first balances indivisible measured cases, not a fixed
     // sub-second gap tied to the previous inventory's duration snapshot.
     const largestCost = Math.max(...SELECTION.map(item => CASE_DURATION_MS[caseName(item)] * (SERIAL_CASES[caseName(item)] ? 2 : 1)));
-    expect(Math.abs(loads[0] - loads[1])).toBeLessThanOrEqual(largestCost);
+    expect(Math.max(...loads) - Math.min(...loads)).toBeLessThanOrEqual(largestCost);
     expect(partitionCases([["settings-design"], ["generic-plugin-system"], ["backup-plugin"], ["native-consumer-controls"]])).toEqual([
-      [["settings-design"], ["native-consumer-controls"]],
-      [["generic-plugin-system"], ["backup-plugin"]],
+      [["backup-plugin"]],
+      [["settings-design"]],
+      [["native-consumer-controls"], ["generic-plugin-system"]],
     ]);
-    expect(selectShard(selectCases(), "1/2")).toEqual(shards[0]);
-    expect(selectShard(selectCases(), "2/2")).toEqual(shards[1]);
+    for (const shard of shards) {
+      const parallel = shard.filter(item => !SERIAL_CASES[caseName(item)]);
+      expect(shard.slice(shard.length - parallel.length)).toEqual(parallel);
+      expect(parallel.map(item => CASE_DURATION_MS[caseName(item)])).toEqual(parallel.map(item => CASE_DURATION_MS[caseName(item)]).toSorted((a,b) => b-a));
+    }
+    expect(shards).toHaveLength(3);
+    for (const [index, shard] of NATIVE_SHARDS.entries()) expect(selectShard(selectCases(), shard)).toEqual(shards[index]);
     expect(selectShard(selectCases())).toBe(SELECTION);
-    expect(selectShard(selectCases("plugin-prefix-auth"), "1/2").concat(selectShard(selectCases("plugin-prefix-auth"), "2/2")).map(caseName).toSorted())
+    expect(NATIVE_SHARDS.flatMap(shard => selectShard(selectCases("plugin-prefix-auth"), shard)).map(caseName).toSorted())
       .toEqual(selectCases("plugin-prefix-auth").map(caseName).toSorted());
     expect(() => partitionCases([["unmeasured"]])).toThrow("Missing measured");
   });
   it("rejects invalid shard arguments instead of silently running a partial suite", () => {
     expect(parseShardArguments([])).toBeUndefined();
-    expect(parseShardArguments(["--shard", "1/2"])).toBe("1/2");
-    expect(parseShardArguments(["--shard", "2/2"])).toBe("2/2");
-    for (const args of [["--shard"], ["--shard", "0/2"], ["--shard", "1/3"], ["--shard", "3/2"], ["--unknown", "1/2"], ["--shard", "1/2", "extra"]]) {
+    for (const shard of NATIVE_SHARDS) expect(parseShardArguments(["--shard", shard])).toBe(shard);
+    for (const args of [["--shard"], ["--shard", "0/3"], ["--shard", "1/2"], ["--shard", "4/3"], ["--unknown", "1/3"], ["--shard", "1/3", "extra"]]) {
       expect(() => parseShardArguments(args)).toThrow("Usage");
     }
   });
@@ -78,10 +84,19 @@ describe("native suite child result ownership", () => {
   it("keeps the full prefix/auth consumer matrix in CI and filtered native runs", () => {
     expect(selectCases()).toContainEqual(["plugin-prefix-auth"]);
     expect(selectCases("plugin-prefix-auth")).toEqual([
-      ["native-ownership-control"], ["native-actions-control"], ["plugin-prefix-auth"],
+      ["native-ownership-control"], ["native-actions-control"], ...prefixAuthSelection(),
     ]);
-    expect(FILE_CASES["client/tests/e2e/plugin-prefix-auth.mjs"]).toEqual(["plugin-prefix-auth"]);
-    expect(FILE_CASES["client/tests/e2e/prefix-auth-fixture.mjs"]).toEqual(["plugin-prefix-auth"]);
+    for (const file of ["plugin-prefix-auth.mjs", "prefix-auth-fixture.mjs", "prefix-auth-cases.mjs"]) {
+      expect(FILE_CASES[`client/tests/e2e/${file}`]).toEqual(prefixAuthSelection().map(caseName));
+    }
+    const selected = prefixAuthSelection().map(([name,...args]) => parsePrefixAuthArguments(nativeChildArguments(name,args,"/owned")));
+    expect(prefixAuthSelection().every(item => /^[a-z0-9-]+$/.test(caseName(item)))).toBe(true);
+    expect(selected.map(item => item.variant)).toEqual(PREFIX_AUTH_CASES.map(item => item.label));
+    expect(parsePrefixAuthArguments([]).variant).toBeUndefined(); // Direct aggregate still owns all eight.
+    for (const args of [["--variant"], ["--variant","absent"], ["--variant","empty-none","--variant","notes-none"]]) {
+      expect(() => parsePrefixAuthArguments(args)).toThrow();
+    }
+    expect(parsePrefixAuthArguments(["--variant","notes-none","--artifacts","/owned"])).toMatchObject({variant:"notes-none",artifacts:"/owned"});
   });
   it("includes sync status in CI, filtered runs and source-owned case selection", () => {
     expect(selectCases()).toContainEqual(["sync-status-native"]);

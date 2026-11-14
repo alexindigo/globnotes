@@ -1,6 +1,7 @@
 // The actual shell entrypoint must preserve its delegated process's status.
 import { assert } from "./test-outcomes.mjs";
 import { fileURLToPath } from "node:url";
+import { NATIVE_SHARDS } from "./legacy-native-suite.mjs";
 const root = fileURLToPath(new URL("../../..", import.meta.url));
 const artifacts = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "globnotes-entrypoint-controls-" });
 await Deno.mkdir(artifacts, { recursive: true, mode: 0o700 });
@@ -14,7 +15,7 @@ for (const [label, code, message] of [["misleading-success", 1, "ALL THEMES OK; 
   assert(result.code === code, `${label}: shell entrypoint changed the child's actual status`);
   outcomes.push({ label, expected: code, observed: result.code });
 }
-for (const shard of ["1/2", "2/2"]) {
+for (const shard of NATIVE_SHARDS) {
   const label = "shard-" + shard[0], executable = artifacts + "/" + label + ".sh";
   // Check the real shell's argv boundary, not a reconstructed invocation.
   await Deno.writeTextFile(executable, `#!/bin/sh\nfor arg do previous="$last"; last="$arg"; done\ntest "$previous" = --shard && test "$last" = '${shard}'\n`, { createNew: true, mode: 0o700 });

@@ -3,14 +3,14 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { command } from "./helpers/process.ts";
 
-Deno.test("CI layout: two native shards, one checks job and proof-compatible final test", async () => {
+Deno.test("CI layout: three native shards, one checks job and proof-compatible final test", async () => {
   const workflow = await Deno.readTextFile(
     new URL("../.github/workflows/ci.yml", import.meta.url),
   );
   const job = (name: string) =>
     workflow.split(`\n  ${name}:\n`)[1]?.split(/\n {2}[a-z-]+:\n/)[0] ?? "";
   const native = job("native"), checks = job("checks"), test = job("test");
-  assertStringIncludes(native, "shard: [1/2, 2/2]");
+  assertStringIncludes(native, "shard: [1/3, 2/3, 3/3]");
   assertStringIncludes(native, "fail-fast: false");
   assertStringIncludes(native, "GLOBNOTES_E2E_CONCURRENCY=2");
   assertStringIncludes(native, "--native");
