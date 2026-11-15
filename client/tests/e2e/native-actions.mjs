@@ -11,6 +11,12 @@ export function visibleElement(el) {
   }
   return true;
 }
+// A loading/read-only value can retain the control's ID without being an input.
+// Its absent disabled property must not grant admission to a keyboard action.
+export function editableControl(el) {
+  return !!el?.isConnected && el.matches('input:not([type="hidden"]),textarea,select') &&
+    !el.matches(':disabled') && !el.readOnly && !el.closest('[inert]');
+}
 export async function clickReady(session, selector, { text } = {}) {
   const locate = text === undefined
     ? `document.querySelector(${JSON.stringify(selector)})`

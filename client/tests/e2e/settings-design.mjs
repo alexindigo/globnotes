@@ -1,5 +1,6 @@
 // Feature-owned inventory/navigation consumers over the actual native application.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { editableControl } from "./native-actions.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
@@ -206,7 +207,7 @@ try {
   assert(backupButtons.includes("Open settings"), `inventory-pages contract: missing shipped Backups launcher; actual buttons ${JSON.stringify(backupButtons)}`);
   for (const [id, pages] of [[backup.id, backup.pages], [multi.id, multi.settings], [coreNamed.id, coreNamed.settings], [disabled.id, disabled.settings], [failed.id, failed.settings], [zero.id, []]]) await inventoryPages(id, pages);
   await session.click(pageButton(backup.id, "backup"));
-  await session.poll("!!document.querySelector('#settings-field-retention') && !!document.querySelector('#settings-field-basePath') && !document.querySelector('#settings-field-retention').disabled");
+  await session.poll(`(${editableControl.toString()})(document.querySelector('#settings-field-retention')) && document.querySelector('#settings-field-retention').type==='range' && !!document.querySelector('#settings-field-basePath')`);
    assert(await session.read('[data-modal-top=true]', "document.querySelector('[data-modal-top=true]').textContent.includes('Retained versions') && document.querySelector('[data-modal-top=true]').textContent.includes('Backup base path')"), "Inventory Backups did not open shipped fields");
   await invariant(); assert(writes.length === 0, "Backups navigation issued a mutation");
   const initialBackup = await api("/_/api/plugin-host/globnotes-backup/settings/backup");
