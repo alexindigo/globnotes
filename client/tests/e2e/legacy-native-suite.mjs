@@ -1,8 +1,9 @@
 // One child result per selected standalone harness; logs cannot grant success.
 import { assert, childSucceeded } from "./test-outcomes.mjs";
 import { fileURLToPath } from "node:url";
-import { PREFIX_AUTH_CASES, prefixAuthSelection } from "./prefix-auth-cases.mjs";
-import { REVIEW_REPAIR_CASES, reviewRepairSelection } from "./review-repair-cases.mjs";
+import { prefixAuthSelection } from "./prefix-auth-cases.mjs";
+import { reviewRepairSelection } from "./review-repair-cases.mjs";
+import { MATRIX_CASES, nativeMatrixSelection } from "./native-fixture-cases.mjs";
 
 export const SELECTION = [
   ["tour-chain"], ["test-vault"], ["theme"], ["surfaces"], ["code-tokens"],
@@ -16,11 +17,11 @@ export const SELECTION = [
   ["conflict-inbox-native"], ["conflict-inbox-native", "narrow-status"], ["conflict-resolution-native"], ["conflict-review-native"],
   ["sync-settings-native"], ["sync-driver-native"], ["sync-status-native"], ...prefixAuthSelection(),
   ...["s3", "webdav"].flatMap(backend => ["none", "openssl-base64", "rclone-base64"].map(codec => ["remotely-save-native", backend, codec])),
-  ["access-extra-states"], ["access-settings"],
-  ["backup-plugin"], ["backup-plugin", "--case", "order"], ["backup-plugin", "--case", "preimage"], ["backup-plugin", "--controls"],
+  ["access-extra-states"], ...nativeMatrixSelection("access-settings"),
+  ...nativeMatrixSelection("backup-plugin"), ["backup-plugin", "--case", "order"], ["backup-plugin", "--case", "preimage"], ["backup-plugin", "--controls"],
   ["generic-plugin-system"], ["note-naming"], ["note-save-fifo"], ["note-save-owner-guards"],
-  ["plugin-guard-preservation"], ["plugin-permissions"], ...reviewRepairSelection(),
-  ["settings-design"], ["settings-foundations"], ["settings-ui"],
+  ["plugin-guard-preservation"], ...nativeMatrixSelection("plugin-permissions"), ...reviewRepairSelection(),
+  ["settings-design"], ["settings-foundations"], ...nativeMatrixSelection("settings-ui"),
   ["native-consumer-controls"], ["native-result-controls"], ["runner-entrypoint-controls"], ["unit-consumer-controls"],
 ];
 
@@ -43,6 +44,7 @@ export const NATIVE_HELPERS = {
   "native-actions.mjs": "native input adapter",
   "native-case-finalization.mjs": "case finalization helper",
   "native-matrix-cases.mjs": "shared matrix argument and leaf selection owner",
+  "native-fixture-cases.mjs": "canonical consumer-fixture inventory",
   "native-cdp-session.mjs": "owned browser session adapter",
   "native-clipboard.mjs": "owned clipboard adapter",
   "native-color-picker.mjs": "native picker adapter",
@@ -87,7 +89,6 @@ const ARTIFACT_ARGUMENT_CASES = new Set([
   "note-save-fifo", "note-save-owner-guards", "plugin-guard-preservation", "plugin-permissions",
   "plugin-review-repairs", "settings-design", "settings-foundations", "settings-ui",
 ]);
-const MATRIX_CASES = { "plugin-prefix-auth": PREFIX_AUTH_CASES, "plugin-review-repairs": REVIEW_REPAIR_CASES };
 export function nativeChildArguments(name, args, artifacts) {
   const selected = !args.length && MATRIX_CASES[name] ? ["--variant", MATRIX_CASES[name][0].label] : args;
   return ARTIFACT_ARGUMENT_CASES.has(name) ? [...selected, "--artifacts", artifacts + "/consumers"] : selected;
@@ -158,17 +159,57 @@ export const CASE_DURATION_MS = {
   "remotely-save-native-webdav-openssl-base64": 42892,
   "remotely-save-native-webdav-rclone-base64": 59450,
   "access-extra-states": 55671,
-  "access-settings": 233544,
-  "backup-plugin": 796464,
+  // New leaf observations use one-CPU ownership->closure intervals plus 3s
+  // startup/module overhead. Permissions remain explicitly estimated after
+  // the old aggregate timed out; the numerical child bounds are unchanged.
+  "access-settings": 6622,
+  "access-settings---variant-totp-in-place": 12635,
+  "access-settings---variant-public-lock": 13125,
+  "access-settings---variant-protected-public-cancel": 9381,
+  "access-settings---variant-protected-public-save": 9278,
+  "access-settings---variant-current-totp-password": 11011,
+  "access-settings---variant-lost-password-receipt": 16462,
+  "access-settings---variant-replace-authenticator": 11743,
+  "access-settings---variant-peer-policy": 22426,
+  "access-settings---variant-initial-public-explicit-lock-prefixed": 6031,
+  "access-settings---variant-protected-public-explicit-unlocked": 12658,
+  "access-settings---variant-protected-enrolment-geometry": 35493,
+  "access-settings---variant-protected-current-totp-geometry": 42660,
+  "access-settings---variant-locked-controls": 26368,
+  "access-settings---variant-pinned-credentials": 13896,
+  // One-CPU retained count spans +6s fixture overhead; remaining fixture
+  // observations/estimates retain every original production consumer.
+  "backup-plugin": 27949,
+  "backup-plugin---variant-count-2": 28087,
+  "backup-plugin---variant-count-3": 36576,
+  "backup-plugin---variant-count-4": 36735,
+  "backup-plugin---variant-count-5": 48362,
+  "backup-plugin---variant-count-6": 73061,
+  "backup-plugin---variant-count-7": 103442,
+  "backup-plugin---variant-count-8": 135318,
+  "backup-plugin---variant-count-9": 157432,
+  "backup-plugin---variant-count-10": 157089,
+  "backup-plugin---variant-aliases": 55000,
+  "backup-plugin---variant-location": 41000,
+  "backup-plugin---variant-pin": 46000,
+  "backup-plugin---variant-recovery": 23000,
+  "backup-plugin---variant-cleanup": 25000,
+  "backup-plugin---variant-distinct": 20000,
+  "backup-plugin---variant-retarget": 25000,
+  "backup-plugin---variant-failure": 35000,
+  "backup-plugin---variant-settings-lock": 15000,
   "backup-plugin---case-order": 22730,
   "backup-plugin---case-preimage": 22089,
   "backup-plugin---controls": 555967,
-  "generic-plugin-system": 594245,
+  // CI aggregate 594245ms plus estimated extra per-leaf process startup.
+  "generic-plugin-system": 650000,
   "note-naming": 4517,
   "note-save-fifo": 86972,
   "note-save-owner-guards": 73578,
   "plugin-guard-preservation": 20577,
-  "plugin-permissions": 102656,
+  "plugin-permissions": 90000,
+  "plugin-permissions---variant-isolated-import-parent": 35000,
+  "plugin-permissions---variant-dirty-work": 65000,
   // Review fixtures observed making progress before the matrix's 120s kill;
   // split-cost estimates retain startup/closure headroom, not a wider deadline.
   "plugin-review-repairs": 30000,
@@ -178,7 +219,22 @@ export const CASE_DURATION_MS = {
   "plugin-review-repairs---variant-postponed-prompt": 15000,
   "settings-design": 692720,
   "settings-foundations": 216603,
-  "settings-ui": 278825,
+  "settings-ui": 34139,
+  "settings-ui---variant-cross-browser": 90478,
+  "settings-ui---variant-pending-recovery": 24073,
+  "settings-ui---variant-menu-parity": 26289,
+  "settings-ui---variant-editor-source": 26728,
+  "settings-ui---variant-editor-wysiwyg": 25685,
+  "settings-ui---variant-geometry": 21999,
+  "settings-ui---variant-open-dismiss": 9612,
+  "settings-ui---variant-wizard-cancel": 9438,
+  "settings-ui---variant-wizard-discard": 9251,
+  "settings-ui---variant-wizard-save": 9686,
+  "settings-ui---variant-wizard-blocked-save": 9369,
+  "settings-ui---variant-logout-cancel": 8672,
+  "settings-ui---variant-logout-discard": 7742,
+  "settings-ui---variant-logout-save": 8601,
+  "settings-ui---variant-logout-blocked-save": 8526,
   "native-consumer-controls": 299991,
   "native-result-controls": 3191,
   "runner-entrypoint-controls": 47,
@@ -259,6 +315,7 @@ export const SHARED_CASE_FILES = [
   "cdp.mjs", "native-cdp-session.mjs", "native-actions.mjs",
   "native-case-finalization.mjs",
   "native-matrix-cases.mjs",
+  "native-fixture-cases.mjs",
   "native-clipboard.mjs", "test-outcomes.mjs", "native-consumer-controls.mjs",
   "native-result-controls.mjs", "unit-consumer-controls.mjs",
   "runner-entrypoint-controls.mjs",

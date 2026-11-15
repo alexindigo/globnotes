@@ -4,10 +4,11 @@ import { fileURLToPath } from "node:url";
 import { httpOrigin } from "./http-origin.mjs";
 import { bootServer } from "./harness-helpers.mjs";
 import { executeChild } from "./legacy-native-suite.mjs";
+import { BACKUP_CASES } from "./native-fixture-cases.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
 const kinds = ["count", "order", "location", "preimage", "pin", "recovery", "aliases", "distinct", "retarget", "cleanup"];
-const options = { artifacts: null, controls: false, case: null, negative: false }, seen = new Set();
+const options = { artifacts: null, controls: false, case: null, negative: false, variant: null }, seen = new Set();
 for (let index = 0; index < Deno.args.length; index++) {
   const flag = Deno.args[index];
   if (seen.has(flag)) throw new Error(`Duplicate argument: ${flag}`);
@@ -16,9 +17,12 @@ for (let index = 0; index < Deno.args.length; index++) {
   else if (flag === "--controls") options.controls = true;
   else if (flag === "--case") options.case = Deno.args[++index];
   else if (flag === "--negative") options.negative = true;
+  else if (flag === "--variant") options.variant = Deno.args[++index];
   else throw new Error(`Unknown argument: ${flag}`);
 }
 if (!options.artifacts?.startsWith("/") || options.controls && options.case || options.case && ![...kinds, "failure", "settings-lock"].includes(options.case) || options.negative && !options.case) throw new Error("A fresh absolute artifact directory and valid mode are required");
+const variant = options.variant && BACKUP_CASES.find(item => item.label === options.variant);
+if (seen.has("--variant") && (!variant || options.controls || options.case || options.negative)) throw Error("--variant requires one known independent backup fixture");
 await Deno.mkdir(options.artifacts, { mode: 0o700 });
 const artifacts = options.artifacts, assert = (value, message) => { if (!value) throw new Error(message); };
 const equal = (actual, expected, message) => assert(JSON.stringify(actual) === JSON.stringify(expected), `${message}; actual=${JSON.stringify(actual)} expected=${JSON.stringify(expected)}`);
@@ -222,13 +226,13 @@ if (options.controls) {
     await current.session.evaluate("document.fonts.ready.then(()=>true)");
   }
   try {
-    const selected = options.case ? [options.case] : ["count", "aliases", "location", "pin", "recovery", "cleanup", "distinct", "retarget", "failure", "settings-lock"];
+    const selected = variant ? [variant.kind] : options.case ? [options.case] : ["count", "aliases", "location", "pin", "recovery", "cleanup", "distinct", "retarget", "failure", "settings-lock"];
     for (const kind of selected) {
       if (["count", "order", "preimage"].includes(kind)) {
         await fixture(kind); await open();
         equal((await settings()).body.values.retention, 2, `BACKUP_NATIVE_${kind}: default2`);
         const rows = [];
-        for (const count of options.case ? [2] : Array.from({ length: 10 }, (_, index) => index + 1)) {
+        for (const count of variant ? [variant.count] : options.case ? [2] : Array.from({ length: 10 }, (_, index) => index + 1)) {
           await retention(count); await closeSettings(); await open();
            equal(Number(await current.session.read('#settings-field-retention', "document.querySelector('#settings-field-retention').value")), count, `BACKUP_NATIVE_${kind}: reopened slider`);
           if (count === 2) await picture("retention-slider");

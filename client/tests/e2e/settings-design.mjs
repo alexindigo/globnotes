@@ -21,6 +21,7 @@ const artifacts = options.artifacts ?? await Deno.makeTempDir({ prefix: "setting
 if (options.artifacts) await Deno.mkdir(artifacts, { mode: 0o700 });
 const assert = (condition, message) => { if (!condition) throw Error(message); };
 const outcomes = [], writes = [], held = new Set();
+const settingsReads = new Map();
 const declaredPages = new Map();
 const longLabel = "Unbroken".repeat(12);
 const declaration = (id, label) => ({ id, label, renderer: { kind: "declarative-v1", version: 1 }, fields: [
@@ -163,6 +164,14 @@ try {
   session = await nativeSession({ port:cdpPort });
   await Deno.writeTextFile(`${artifacts}/ownership.json`, JSON.stringify({ vault, state, pid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
   stopObserver = session.page.onEvent(event => {
+    const { requestId, request, response } = event.params;
+    if (event.method === "Network.requestWillBeSent" && request.method === "GET" && /\/_\/api\/plugin-host\/[^/]+\/settings\//.test(request.url)) {
+      settingsReads.set(requestId, { requestId, url: request.url, started: performance.now() });
+    }
+    const read = settingsReads.get(requestId);
+    if (read && event.method === "Network.responseReceived") Object.assign(read, { status: response.status, responseMs: performance.now() - read.started, timing: response.timing });
+    if (read && event.method === "Network.loadingFinished") read.completedMs = performance.now() - read.started;
+    if (read && event.method === "Network.loadingFailed") Object.assign(read, { failedMs: performance.now() - read.started, error: event.params.errorText });
     if (event.method === "Network.requestWillBeSent" && !["GET", "HEAD"].includes(event.params.request.method)) writes.push({ path: new URL(event.params.request.url).pathname, method: event.params.request.method, body: event.params.request.postData });
     if (event.method !== "Fetch.requestPaused") return;
     const paused = event.params;
@@ -352,7 +361,7 @@ finally {
         for (const requestId of held) { await session.send("Fetch.continueRequest", { requestId }); held.delete(requestId); }
         await session.send("Fetch.disable"); stopObserver?.();
       }
-      await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, page, writes, pageErrors: session?.errors, events: session?.events, heldRequests: [...held], wireError }, null, 2), { createNew: true });
+      await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, page, writes, settingsReads: [...settingsReads.values()], pageErrors: session?.errors, events: session?.events, heldRequests: [...held], wireError }, null, 2), { createNew: true });
     },
     cleanup: [closeFixture],
   });

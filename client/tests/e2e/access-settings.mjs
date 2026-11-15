@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { visibleElement } from "./native-actions.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
-import { awaitHealthy, bootServer, parseArguments } from "./harness-helpers.mjs";
+import { awaitHealthy, bootServer } from "./harness-helpers.mjs";
+import { ACCESS_SETTINGS_CASES, parseFixtureArguments } from "./native-fixture-cases.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { authenticatorCode, unusedWindowCode } from "../../../tests/helpers/totp.ts";
 import { SignJWT } from "jose";
@@ -14,10 +15,12 @@ import { metadataBase, metadataDirectory } from "./config-fixture.mjs";
 import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
 
 let options;
-try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
+try { options = parseFixtureArguments("access-settings", Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
 if (options.help) { console.log("Usage: access-settings.mjs [--artifacts <directory>] [--help]"); Deno.exit(0); }
 const artifacts = options.artifacts ?? await Deno.makeTempDir({ prefix: "access-settings-native-" });
-if (options.artifacts) await Deno.mkdir(artifacts, { mode: 0o700 });
+if (options.artifacts) await Deno.mkdir(artifacts, { mode: 0o700, recursive: !!options.variant });
+const selectedCases = ACCESS_SETTINGS_CASES.filter(item => !options.variant || item.label === options.variant);
+const selected = label => selectedCases.some(item => item.label === label);
 const outcomes = [], fixtures = [];
 let owned, failure;
 const assert = (value, message) => { if (!value) throw Error(message); };
@@ -124,6 +127,7 @@ async function finishCase(name, consumers) {
   outcomes.push({ name, passed: true }); console.log(`ok: ${name}`);
 }
 try {
+  if (selected("initial-public-prefixed")) {
   await fixture("initial-public-prefixed", "setup");
   await owned.session.click("#setup-mode-read_only"); await owned.session.click("#setup-mode-password"); await owned.session.click("#setup-mode-none");
    assert(await owned.session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='false'"), "First-run radio exploration incorrectly selected migration locking");
@@ -133,7 +137,9 @@ try {
   assert((await api("notes", "POST", { path: "Initial", content: "Initial public consumer\n" })).status === 200, "First-run public note creation denied");
   assert(await Deno.readTextFile(`${owned.vault}/Initial.md`) === "Initial public consumer\n", "Initial public write did not reach disk");
   await finishCase("native prefixed first-run public default and note consumer", { initialDefaultOff: true, prefix: "/notes", publicWritePersisted: true });
+  }
 
+  if (selected("totp-in-place")) {
   await fixture("totp-in-place", true);
   const session = owned.session;
   await edit("Native enrolment cancellation marker");
@@ -175,7 +181,9 @@ try {
   assert((await api("auth-check", "GET", undefined, freshToken)).status === 200, "Confirmed authenticator cannot sign in");
   dispose();
   await finishCase("native enrolment cancellation/invalid-code/confirmed-login consumer", { originalHashRetained: true, unrelatedConfigRetained: true, invalidCodeRetainedSession: true, oldSessionRevokedAfterConfirmation: true, confirmedLoginAccepted: true });
+  }
 
+  if (selected("public-lock")) {
   await fixture("public-lock", false);
   const seeded = await api("plugin-host/access-workflow/settings/preferences", "PUT", { values: { message: "retained settings consumer" }, revision: 0 });
   assert(seeded.status === 200, "Public unlocked settings seed rejected");
@@ -203,8 +211,10 @@ try {
   await owned.session.button("Appearance"); await owned.session.click('[data-theme-id="globnotes-light"]');
   await owned.session.poll("localStorage.getItem('globnotes-theme')==='globnotes-light' && !document.body.classList.contains('dark')");
   await finishCase("native public lock keeps note editing and local preferences while denying controls", { publicNoteSavePersisted: true, sameEditor: true, settingsApisDenied: 9, accessUnlockUnavailable: true, localThemeAvailable: true, sameWorkflowOwner: true, privateWorkflowConsumerPersisted: true });
+  }
 
   for (const decision of ["Cancel", "Save"]) {
+    if (!selected(`protected-public-${decision.toLowerCase()}`)) continue;
     await fixture(`protected-public-${decision.toLowerCase()}`, true);
     await edit(`Native migration ${decision} marker`);
     const before = await saved(), token = await owned.session.evaluate("sessionStorage.getItem('token')");
@@ -226,6 +236,7 @@ try {
     await finishCase(`native protected-to-public ${decision.toLowerCase()} handoff`, { migrationDefaultOn: true, decision, noteAndPolicyConsumers: true });
   }
 
+  if (selected("current-totp-password")) {
   await fixture("current-totp-password", "totp");
   const { totpSecretFromRawKey } = await import("../../../server/auth/local.ts");
   const currentSecret = totpSecretFromRawKey(owned.initial.totp_key);
@@ -244,7 +255,9 @@ try {
   await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, await owned.session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Changed password/current authenticator cannot log in");
   await finishCase("native fresh-current-2FA rejection and password-change login", { wrongCurrentCodePreservedSession: true, passwordChangeRevokedOldSession: true, currentAuthenticatorRetained: true, newPasswordLoginAccepted: true });
+  }
 
+  if (selected("lost-password-receipt")) {
   await fixture("lost-password-receipt", true);
   await access(); await fill("#setup-password", "recovered-native-password"); await fill("#access-current-password", password);
   let paused = null, writes = 0;
@@ -267,7 +280,10 @@ try {
   await fill("#username", username); await fill("#password", "recovered-native-password"); await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, await owned.session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Recovered password cannot sign in");
   stop(); await finishCase("native lost-password-receipt durable read-back without replay", { actualPersistedRevision: 1, unresolvedDismissalBlocked: true, writes: 1, explicitReadBackRecovered: true, intendedPasswordLoginAccepted: true });
+  }
 
+  if (selected("replace-authenticator")) {
+  const { totpSecretFromRawKey } = await import("../../../server/auth/local.ts");
   await fixture("replace-authenticator", "totp");
   const replacementToken = await owned.session.evaluate("sessionStorage.getItem('token')"), replacementBefore = await saved();
   const originalSecret = totpSecretFromRawKey(owned.initial.totp_key), replacementRequests = [];
@@ -287,7 +303,9 @@ try {
   await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await unusedWindowCode(replacement.secret, [newConfirmation]));
   await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   disposeReplacement(); await finishCase("native current/new authenticator proofs and replacement login", { activeKeyUnchangedDuringEnrolment: true, passwordHashRetained: true, confirmedNewKeyPersisted: true, spentNewCodeRejected: true, replacementLoginAccepted: true });
+  }
 
+  if (selected("peer-policy")) {
   await fixture("peer-policy", false);
   const peer = await nativeSession({ port }); owned.peer = peer;
   await Deno.writeTextFile(`${owned.directory}/peer-ownership.json`, JSON.stringify({ targetId: peer.targetId, browserContextId: peer.browserContextId, serverPid: owned.server.pid, baseUrl: owned.server.baseUrl }), { createNew: true });
@@ -315,7 +333,9 @@ try {
   assert(peer.errors.length === 0, "Peer page exception");
   await peer.close();
   await finishCase("native independent peer and restart settings-policy/draft consumers", { independentContexts: true, peerInvalidDraftRetained: true, samePeerEditor: true, settingsApisDenied: true, restartLockPersisted: true, publicWriteAfterRestartPersisted: true });
+  }
 
+  if (selected("initial-public-explicit-lock-prefixed")) {
   await fixture("initial-public-explicit-lock-prefixed", "setup");
   await owned.session.click("#setup-mode-none");
    assert(await owned.session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='false'"), "Explicit first-run choice did not start unlocked");
@@ -326,7 +346,9 @@ try {
   assert((await api("notes", "POST", { path: "ExplicitLocked", content: "Explicit initial lock public note consumer\n" })).status === 200, "Explicit initial lock denied public note creation");
   assert(await Deno.readTextFile(`${owned.vault}/ExplicitLocked.md`) === "Explicit initial lock public note consumer\n", "Explicit initial lock note did not reach disk");
   await finishCase("native explicit first-run locking still permits prefixed public note writes", { explicitInitialLockPersisted: true, prefix: "/notes", selfUnlockDenied: true, publicNoteConsumerPersisted: true });
+  }
 
+  if (selected("protected-public-explicit-unlocked")) {
   await fixture("protected-public-explicit-unlocked", true);
   await access(); await owned.session.click("#setup-mode-none");
    assert(await owned.session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')==='true'"), "Explicit migration did not start from locked default");
@@ -343,6 +365,7 @@ try {
   assert(JSON.parse(await Deno.readTextFile(`${owned.state}/plugins.json`)).disabled.includes(selectedPlugin), "Explicit unlocked settings write did not reach policy disk");
   assert((await api("notes", "POST", { path: "ExplicitOpen", content: "Explicit migration public note consumer\n" })).status === 200 && await Deno.readTextFile(`${owned.vault}/ExplicitOpen.md`) === "Explicit migration public note consumer\n", "Explicit unlocked migration did not retain actual public note writes");
   await finishCase("native explicit migration unlock survives radios and reaches settings/note consumers", { migrationChoiceRetained: true, explicitUnlockedPolicyPersisted: true, unrelatedConfigRetained: true, realSettingsMutationPersisted: true, publicNoteConsumerPersisted: true, managementLoginAbsent: true });
+  }
 
   const exerciseProtectedGeometry = async kind => {
   const currentAuthenticator = kind === "totp";
@@ -407,11 +430,14 @@ try {
   }
   await finishCase(currentAuthenticator ? "native current/new authenticator replacement viewport/DPR/theme proof geometry" : "native protected enrolment viewport/DPR/theme and current-proof geometry", { geometryFrames, currentAuthenticator, originalConfigRetained: true, originalSessionRetained: true, sameEditor: true });
   };
-  await exerciseProtectedGeometry(true);
-  await exerciseProtectedGeometry("totp");
+  if (selected("protected-enrolment-geometry")) await exerciseProtectedGeometry(true);
+  if (selected("protected-current-totp-geometry")) await exerciseProtectedGeometry("totp");
+  if (selected("locked-controls")) {
   await fixture("locked-controls", false);
   const lockedControls = await exerciseLockedControls({ session: owned.session, api, baseUrl: owned.server.baseUrl, state: owned.state, vault: owned.vault, openAccess: access, closeSidebar, capture: screenshot });
   await finishCase("native locked real settings controls and local preferences with public hook consumers", lockedControls);
+  }
+  if (selected("pinned-credentials")) {
   await fixture("pinned-credentials", true);
   await edit("Pinned confirmation retained editor marker");
   await owned.session.button("Save", ".content-column");
@@ -443,6 +469,8 @@ try {
    assert(await owned.session.evaluate("document.querySelector('.cm-content')===window.__accessEditor && document.querySelector('.cm-content')?.textContent.includes('Pinned confirmation retained editor marker')"), "Pinned error discarded the retained editor");
   assert(await saved() === pinnedBytes && (await api("auth-check", "GET", undefined, pinnedToken)).status === 200, "Pinned error/override changed account authority");
   await finishCase("native stored Access controls and fresh-proof errors retain account/editor authority", { retiredFieldsUnpinned: true, invalidCurrentProofRetainedConfigAndSession: true, directUnconfirmedWriteRejected: true, sameEditor: true, pinnedErrorGeometry: pinnedGeometry });
+  }
+  assert(outcomes.length === selectedCases.length, "Incomplete Access fixture selection");
   console.log("ACCESS NATIVE CHECKPOINT OK (remaining access matrix still required)");
 } catch (error) { failure = error; console.error(`FAIL: ${error.stack ?? error}`); }
 finally {

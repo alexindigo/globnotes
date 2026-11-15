@@ -89,6 +89,30 @@ matrix. Both drivers share matrix argument/selection admission, and every leaf
 keeps the unchanged 120-second bound. Review leaf duration inputs are estimates
 from the observed partial one-CPU matrix run, not successful CI measurements.
 
+Settings UI (16 fixtures), Access (15 fixtures) and permissions (three coupled
+leaves, eight outcome groups) use the canonical fixture inventory in
+`native-fixture-cases.mjs`. Filtering a base driver selects all its leaves;
+direct CLI execution without `--variant` still runs its complete matrix.
+Permissions keeps normal-parent flows together and retains dirty-note plus
+guard-interruption as one FIFO proof. The isolated-import leaf verifies its
+actual import consumers even though it has no numbered outcome marker.
+
+The generic production aggregate executes the same Settings, prefix and
+Access leaves. Its 300000ms child and 900000ms overall bounds are unchanged.
+Each leaf retains distinct logs and diagnostics before the aggregate combines
+their complete outcome projection at the original reader path. Fixture paths
+and create-new ownership evidence are unchanged. Native selection totals 128
+cases, with an exact-once union across the three duration-balanced shards.
+New Settings/Access weights use observed one-CPU fixture intervals plus startup
+overhead; permissions and generic startup overhead remain labeled estimates.
+
+Backup's full production selection also uses independent retention values
+1..10 and its nine other fixtures. Each restart/interruption/retarget sequence
+remains coupled, while order/preimage and all healthy/broken controls remain
+unchanged. Direct backup CLI execution still runs the complete original matrix;
+the native suite schedules its shared registry leaves under the unchanged 900s
+backup bound instead of accumulating them behind one deadline.
+
 The exhaustive native selection includes the result, native-consumer,
 entrypoint and unit-consumer controls, so CI does not invoke those again as
 separate gates. `--checks` runs the remaining non-native gates. Local `--all`

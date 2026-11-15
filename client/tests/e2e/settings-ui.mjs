@@ -1,7 +1,8 @@
 // Corrective native UI probes; expanded at each documented checkpoint.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
-import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { bootServer } from "./harness-helpers.mjs";
+import { SETTINGS_UI_CASES, parseFixtureArguments } from "./native-fixture-cases.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
 import { SignJWT } from "jose";
 import { exerciseInlineSettings } from "./settings-inline-native.mjs";
@@ -13,14 +14,16 @@ import { exerciseSettingsMenu } from "./settings-menu-native.mjs";
 import { exerciseSettingsEditor } from "./settings-editor-native.mjs";
 
 let options;
-try { options = parseArguments(Deno.args); }
+try { options = parseFixtureArguments("settings-ui", Deno.args); }
 catch (error) { console.error(error.message); Deno.exit(2); }
 if (options.help) {
-  console.log("Usage: settings-ui.mjs [--artifacts <directory>] [--help]");
+  console.log("Usage: settings-ui.mjs [--artifacts <directory>] [--variant <fixture>] [--help]");
   Deno.exit(0);
 }
 const artifacts = options.artifacts ?? await Deno.makeTempDir({ prefix: "settings-ui-artifacts-" });
-if (options.artifacts) await Deno.mkdir(artifacts, { mode: 0o700 });
+if (options.artifacts) await Deno.mkdir(artifacts, { mode: 0o700, recursive: !!options.variant });
+const selectedCases = SETTINGS_UI_CASES.filter(item => !options.variant || item.label === options.variant);
+const selected = label => selectedCases.some(item => item.label === label);
 let vault, state;
 let server, session, failure;
 const outcomes = [];
@@ -131,37 +134,49 @@ async function record(name) {
   console.log(`ok: ${name}`);
 }
 try {
+  if (selected("inline-core")) {
   await fixture("none", "inline-core");
   await edit("GPS inline dirty marker");
   const inlineOutcomes = await exerciseInlineSettings({ session, server, vault, state, directory: fixtures.at(-1).directory });
   await Deno.writeTextFile(`${artifacts}/inline-core/consumers.json`, JSON.stringify(inlineOutcomes, null, 2), { createNew: true });
   await record("inline-core-native-consumers");
+  }
+  if (selected("cross-browser")) {
   await fixture("password", "cross-browser");
   await edit("GPS cross-browser dirty marker");
   const peers = await exerciseSettingsCrossBrowser({ session, server, directory: fixtures.at(-1).directory, username, password, vault, state });
   await Deno.writeTextFile(`${artifacts}/cross-browser/consumers.json`, JSON.stringify(peers, null, 2), { createNew: true });
   await record("independent-browser-settings-recovery-and-contributions");
+  }
+  if (selected("pending-recovery")) {
   await fixture("none", "pending-recovery");
   await edit("GPS pending dirty marker");
   const pending = await exerciseSettingsPending({ session, server, directory: fixtures.at(-1).directory });
   await Deno.writeTextFile(`${artifacts}/pending-recovery/consumers.json`, JSON.stringify(pending, null, 2), { createNew: true });
   await record("native-pending-wire-and-lost-acknowledgement-recovery");
+  }
+  if (selected("menu-parity")) {
   await fixture("none", "menu-parity");
   const menu = await exerciseSettingsMenu({ session, server, state });
   await Deno.writeTextFile(`${artifacts}/menu-parity/consumers.json`, JSON.stringify(menu, null, 2), { createNew: true });
   await record("native-editor-debug-policy-and-search-sort-menu-consumers");
+  }
   for (const mode of ["Source", "WYSIWYG"]) {
     const label = `editor-${mode.toLowerCase()}`;
+    if (!selected(label)) continue;
     await fixture("none", label);
     const editor = await exerciseSettingsEditor({ session, server, vault, mode });
     await Deno.writeTextFile(`${artifacts}/${label}/consumers.json`, JSON.stringify(editor, null, 2), { createNew: true });
     await record(`native-${mode.toLowerCase()}-buffer-properties-and-participation`);
   }
+  if (selected("geometry")) {
   await fixture("none", "geometry");
   await edit("GPS geometry dirty marker");
   const geometry = await exerciseSettingsGeometry({ session, directory: fixtures.at(-1).directory });
   await Deno.writeTextFile(`${artifacts}/geometry/consumers.json`, JSON.stringify(geometry, null, 2), { createNew: true });
   await record("settings-viewport-dpr-theme-native-geometry");
+  }
+  if (selected("open-dismiss")) {
   await fixture("none", "open-dismiss");
   await edit("GPS immediate dirty marker");
   await settings("Access");
@@ -173,8 +188,10 @@ try {
   await session.poll("!document.querySelector('#setup-title')");
   assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Dismissing optional wizard replaced the editor");
   await record("optional-wizard-open-dismiss");
+  }
   for (const choice of ["Cancel", "Discard", "Save", "Blocked Save"]) {
     const label = `wizard-${choice.toLowerCase().replaceAll(" ", "-")}`;
+    if (!selected(label)) continue;
     await fixture("password", label);
     const blocked = choice === "Blocked Save";
     const marker = blocked ? "GPS-blocked wizard" : `GPS ${label}`;
@@ -208,6 +225,7 @@ try {
   }
   for (const choice of ["Cancel", "Discard", "Save", "Blocked Save"]) {
     const label = `logout-${choice.toLowerCase().replaceAll(" ", "-")}`;
+    if (!selected(label)) continue;
     await fixture("password", label);
     const blocked = choice === "Blocked Save";
     const marker = blocked ? "GPS-blocked logout" : `GPS ${label}`;
@@ -230,7 +248,8 @@ try {
     }
     await record(label);
   }
-  console.log("GPS-11 SESSION HANDOFF OK (nine native cases)");
+  assert(outcomes.length === selectedCases.length, "Incomplete Settings fixture selection");
+  console.log("GPS-11 SESSION HANDOFF OK (selected native cases)");
   console.log("SETTINGS SESSION PROBE OK (remaining matrix not yet run)");
 } catch (error) { failure = error; console.error(`FAIL: ${error.message}`); }
 finally {

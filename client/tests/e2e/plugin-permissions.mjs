@@ -2,18 +2,22 @@
 import { nativeSession } from "./native-cdp-session.mjs";
 import { fileURLToPath } from "node:url";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
-import { awaitHealthy, awaitPluginReady, parseArguments } from "./harness-helpers.mjs";
+import { awaitHealthy, awaitPluginReady } from "./harness-helpers.mjs";
+import { PERMISSION_CASES, parseFixtureArguments } from "./native-fixture-cases.mjs";
 import { done, failed, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { metadataBase } from "./config-fixture.mjs";
 import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
 
 let options;
-try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
+try { options = parseFixtureArguments("plugin-permissions", Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
 if (options.help) { console.log("Usage: plugin-permissions.mjs --artifacts <directory>"); Deno.exit(0); }
 if (!options.artifacts) { console.error("--artifacts is required"); Deno.exit(2); }
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const artifacts = options.artifacts;
-await Deno.mkdir(artifacts, { mode: 0o700 });
+await Deno.mkdir(artifacts, { mode: 0o700, recursive: !!options.variant });
+const selectedCases = PERMISSION_CASES.filter(item => !options.variant || item.label === options.variant);
+const selected = label => selectedCases.some(item => item.label === label);
+const completedFixtures = [];
 const assert = (value, detail) => { if (!value) throw Error(detail); };
 const outcomes = [];
 let current;
@@ -189,6 +193,7 @@ async function finish() {
 }
 
 try {
+  if (selected("normal-parent")) {
   await fixture("normal-parent");
   await current.session.poll("!!document.querySelector('#permission-request-title')");
   assert(current.traffic() === 0 && current.moduleTraffic() === 0, "request admission performed unapproved traffic");
@@ -257,6 +262,9 @@ try {
    assert(await current.session.read('[data-plugin-trust-notice]', "!!document.querySelector('[data-plugin-inventory-id=networked] .plugin-row-browser') && document.querySelector('[data-plugin-trust-notice]').textContent.includes('Browser/editor plugin code')"), "master off hid browser trust metadata");
   await outcome("PERMISSIONS-08 BROWSER TRUST OK", { masterOff: true, badgeVisible: true });
   await finish();
+  completedFixtures.push("normal-parent");
+  }
+  if (selected("isolated-import-parent")) {
   await fixture("isolated-import-parent", { importParent: true }); await dismissPrompt(); await review();
   await current.session.button("Approve", rowSelector("imports")); await committed(value => value.approvedImports.length === 1, "isolated import approval"); await master();
   const imported = await invoke("networked", "import"); assert(imported.status === 200 && imported.body.result.value === "approved remote code" && imported.body.result.imports === "granted" && imported.body.result.net !== "granted", "native isolated import consent did not reach module consumer independently");
@@ -264,6 +272,9 @@ try {
   await Deno.writeTextFile(`${current.directory}/import-consumer.json`, JSON.stringify({ imported: imported.body.result, moduleTraffic: current.moduleTraffic(), rawTraffic: current.traffic(), parentArgs: current.server.args }, null, 2));
   await capture("approved-import");
   await finish();
+  completedFixtures.push("isolated-import-parent");
+  }
+  if (selected("dirty-work")) {
   await fixture("dirty-note-settings", { gateSaves: true }); await dismissPrompt();
   await current.session.button("Edit", ".content-column"); await current.session.button("Source", ".content-column");
   const typeNote = async text => {
@@ -344,9 +355,11 @@ try {
     assert(await current.session.evaluate("document.querySelector('.cm-content')===window.__guardEditor && location.href===window.__guardUrl && document.querySelector('.cm-content')?.textContent.includes('GUARD-PERMISSION-D') && typeof window.onbeforeunload==='function' && document.querySelector('[data-note-save-status]')?.textContent.includes('1 held saves')"), "guard interruption lost protected work or reported saved success");
    await capture("guard-rejection-retained");
    await outcome("PERMISSIONS-07 DIRTY WORK OK", { ...dirtyWork, guardInterruption: { status: rejectedSave.backendStatus, persisted: untouched.body.content, submitted: rejectedSave.body.newContent, heldB: true, protectedLiveD: true, sameEditorAndUrl: true } });
-   await finish();
-  assert(outcomes.length === 8 && outcomes.every(row => row.passed), "permission matrix incomplete");
-  await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, complete: true }, null, 2));
+    await finish();
+    completedFixtures.push("dirty-work");
+  }
+  assert(outcomes.length === selectedCases.reduce((sum,item) => sum+item.groups,0) && outcomes.every(row => row.passed) && completedFixtures.length === selectedCases.length, "permission matrix incomplete");
+  await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, completedFixtures, complete: true }, null, 2));
   console.log("PLUGIN PERMISSIONS UI OK");
 } catch (error) {
    const metadata = current && { name: current.name, serverPid: current.server.child.pid, baseUrl: current.server.base, entryBase: current.entryBase, root: current.root, vault: current.vault, state: current.state,

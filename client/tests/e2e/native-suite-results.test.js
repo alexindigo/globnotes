@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { caseName, CASE_DURATION_MS, concurrencyValue, FILE_CASES, nativeChildArguments, NATIVE_HELPERS, NATIVE_SHARDS, parseShardArguments, partitionCases, runChildren, SELECTION, selectCases, selectShard, SERIAL_CASES, validateNativeInventory } from "./legacy-native-suite.mjs";
 import { PREFIX_AUTH_CASES, parsePrefixAuthArguments, prefixAuthSelection } from "./prefix-auth-cases.mjs";
 import { REVIEW_REPAIR_CASES, parseReviewRepairArguments, reviewRepairSelection } from "./review-repair-cases.mjs";
+import { MATRIX_CASES, nativeMatrixSelection, parseFixtureArguments } from "./native-fixture-cases.mjs";
 
 describe("native suite child result ownership", () => {
   it("registers layered configuration with the existing shared controls", () => {
@@ -25,11 +26,8 @@ describe("native suite child result ownership", () => {
     // sub-second gap tied to the previous inventory's duration snapshot.
     const largestCost = Math.max(...SELECTION.map(item => CASE_DURATION_MS[caseName(item)] * (SERIAL_CASES[caseName(item)] ? 2 : 1)));
     expect(Math.max(...loads) - Math.min(...loads)).toBeLessThanOrEqual(largestCost);
-    expect(partitionCases([["settings-design"], ["generic-plugin-system"], ["backup-plugin"], ["native-consumer-controls"]])).toEqual([
-      [["backup-plugin"]],
-      [["settings-design"]],
-      [["native-consumer-controls"], ["generic-plugin-system"]],
-    ]);
+    const mixed = [["settings-design"], ["generic-plugin-system"], ["backup-plugin"], ["native-consumer-controls"]];
+    expect(partitionCases(mixed).flat().map(caseName).toSorted()).toEqual(mixed.map(caseName).toSorted());
     for (const shard of shards) {
       const parallel = shard.filter(item => !SERIAL_CASES[caseName(item)]);
       expect(shard.slice(shard.length - parallel.length)).toEqual(parallel);
@@ -48,6 +46,28 @@ describe("native suite child result ownership", () => {
     for (const args of [["--shard"], ["--shard", "0/3"], ["--shard", "1/2"], ["--shard", "4/3"], ["--unknown", "1/3"], ["--shard", "1/3", "extra"]]) {
       expect(() => parseShardArguments(args)).toThrow("Usage");
     }
+  });
+  it("uses the canonical complete fixture inventory for native scheduling and CLI admission", () => {
+    expect(SELECTION).toHaveLength(128);
+    for (const [driver, cases] of Object.entries(MATRIX_CASES)) {
+      const selection = nativeMatrixSelection(driver);
+      expect(selection[0]).toEqual([driver]);
+      const extra = driver === "backup-plugin" ? [[driver,"--case","order"],[driver,"--case","preimage"],[driver,"--controls"]] : [];
+      expect(selectCases(driver)).toEqual([["native-ownership-control"], ["native-actions-control"], ...selection, ...extra]);
+      expect(FILE_CASES[`client/tests/e2e/${driver}.mjs`]).toEqual([...selection, ...extra].map(caseName));
+      expect(selection.map(([name,...args]) => parseFixtureArguments(name, nativeChildArguments(name,args,"/owned")).variant)).toEqual(cases.map(item => item.label));
+      expect(parseFixtureArguments(driver, []).variant).toBeUndefined();
+      expect(() => parseFixtureArguments(driver, ["--variant", "absent"])).toThrow();
+    }
+    expect(MATRIX_CASES["settings-ui"]).toHaveLength(16);
+    expect(MATRIX_CASES["access-settings"]).toHaveLength(15);
+    expect(MATRIX_CASES["plugin-permissions"]).toEqual([
+      { label: "normal-parent", groups: 7 }, { label: "isolated-import-parent", groups: 0 }, { label: "dirty-work", groups: 1 },
+    ]);
+    expect(FILE_CASES["client/tests/e2e/native-fixture-cases.mjs"]).toEqual(SELECTION.map(caseName));
+    const generic = readFileSync(directory + "/generic-plugin-system.mjs", "utf8");
+    expect(generic).toContain("collectFixtureReports");
+    expect(generic).toContain("300000");
   });
   it("selects every actual native entrypoint and explicitly classifies only helpers/fixtures", () => {
     expect(() => validateNativeInventory(inventory)).not.toThrow();
@@ -73,7 +93,7 @@ describe("native suite child result ownership", () => {
     expect(nativeChildArguments("settings-design", [], "/owned/design")).toEqual(["--artifacts", "/owned/design/consumers"]);
     expect(nativeChildArguments("theme", [], "/owned/theme")).toEqual([]);
     expect(FILE_CASES["client/tests/e2e/backup-plugin.mjs"]).toEqual([
-      "backup-plugin", "backup-plugin---case-order", "backup-plugin---case-preimage", "backup-plugin---controls",
+      ...nativeMatrixSelection("backup-plugin").map(caseName), "backup-plugin---case-order", "backup-plugin---case-preimage", "backup-plugin---controls",
     ]);
     expect(FILE_CASES["client/tests/e2e/conflict-inbox-native.mjs"]).toEqual(["conflict-inbox-native", "conflict-inbox-native-narrow-status"]);
     expect(FILE_CASES["client/tests/e2e/rename-options.mjs"]).toEqual(["rename-options-move", "rename-options-relink", "rename-options-none"]);
