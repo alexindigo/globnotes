@@ -894,6 +894,21 @@ replacement can safely reject an in-flight action; that is not saved success.
 
 ## Guarantees and limits
 
+Installed inventory and source identity have one host owner shared by catalogue,
+settings, permissions, service, render and driver consumers. Complete discovery
+refreshes at outer read/reconciliation boundaries; nested lookups use that owner's
+entries or fresh per-ID source leases. A real selection/content/topology change
+invalidates the source revision; unchanged refreshes and policy-only changes do
+not reparse manifests. A malformed vault override stays the failed selected
+source, never silently exposing a built-in underneath it.
+
+Cached descriptors and revisions are not authority. Final source checks still
+inspect actual selected paths and installed bytes synchronously after awaits and
+inside effect/disclosure boundaries. External source edits cannot authorize a
+stale schema write or Worker reply merely because no watcher event has arrived.
+Changed server code still needs explicit source replacement; inventory refresh
+does not hot-reload live generations or change the activation/liveness budgets.
+
 Server Worker readiness requires two independent host-owned prerequisites:
 completed initialization and an accepted heartbeat from the current generation.
 Initialization includes service activation/endpoint/required-guard validation, or

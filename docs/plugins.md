@@ -145,6 +145,17 @@ cleanup. Explicit re-enable rediscovers installed server code and can create
 fresh owners even when the manifest version is unchanged; unrelated plugins keep
 their owners. Render pools stay lazy until rendering is first requested.
 
+The host owns one installed inventory for both roots. Discovery refreshes at
+catalogue, module/style and owner-reconciliation boundaries. Unchanged installed
+sources reuse their parsed descriptors; policy order and enablement do not change
+installed-source revisions. Invalid vault overrides remain visible failures, not
+fallbacks to an older built-in. Addressed settings pins are validated against the
+whole installed roster, including disabled and failed plugins.
+
+Source leases still check current selected paths, bytes and symlink topology at
+effect/disclosure boundaries, even before watcher delivery. These checks do not
+rebuild the entire roster through each nested lookup or trust only mtimes.
+
 This is not an automatic on-disk hot-reload system. Ordinary rendering/index
 sync retains unchanged owners. Installed-code mismatch is exposed as
 `source-reload-required` by the owning permissions status, and old-code runtime

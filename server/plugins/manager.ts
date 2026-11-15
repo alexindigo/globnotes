@@ -13,19 +13,13 @@ import {
   type RpcAuthority,
   type RpcHandler,
 } from "./host.ts";
-import {
-  discoverPluginDirs,
-  pluginCodePath,
-  type PluginManifest,
-  readManifest,
-} from "./manifest.ts";
+import { pluginCodePath, type PluginManifest } from "./manifest.ts";
+import { type InstalledPlugin, InstalledPluginInventory } from "./inventory.ts";
 import { renderPluginRpc } from "./rpc.ts";
 import { PluginRuntime, type RuntimeAdapters } from "./runtime.ts";
 import { CHANGES_API_VERSION } from "./change_contract.ts";
 import type { OperationFact, PluginLimits } from "./contracts.ts";
 import {
-  HOOK_NAMES,
-  type HookName,
   PLUGIN_CONTRACT_VERSION,
   PluginContractError,
   type PluginDiagnostic,
@@ -59,13 +53,6 @@ const INTERNAL_PLUGINS_DIR = path.resolve(
   path.dirname(path.fromFileUrl(import.meta.url)),
   "../../plugins",
 );
-interface CatalogEntry {
-  id: string;
-  dir: string;
-  manifest?: PluginManifest;
-  diagnostic?: PluginDiagnostic;
-  hooks?: HookName[];
-}
 interface RenderOwner {
   id: string;
   epoch: number;
@@ -117,6 +104,7 @@ export class PluginManager {
   readonly policy: PluginPolicyStore;
   readonly network: PluginNetworkRequests;
   readonly settingsEnvironment: PluginSettingsEnvironment;
+  readonly installed: InstalledPluginInventory;
   private readonly vaultPath: string;
   private readonly statePath: string;
   private readonly workerCount: number;
@@ -160,6 +148,20 @@ export class PluginManager {
         settings.addressed.raw,
         settings.addressed.source,
       );
+    this.installed = new InstalledPluginInventory(
+      [this.internalRoot, path.join(this.statePath, "plugins")],
+      (entries) => {
+        this.settingsEnvironment.validateInventory(
+          entries.map((entry) => entry.id),
+        );
+        for (const entry of entries) {
+          this.settingsEnvironment.pages(
+            entry.id,
+            entry.manifest?.settings ?? [],
+          );
+        }
+      },
+    );
     this.networkCommit = (effect) =>
       options.persistence?.commit(effect) ??
         Promise.reject(
@@ -187,6 +189,11 @@ export class PluginManager {
       settingsEnvironment: this.settingsEnvironment,
       commit: (effect) => this.networkCommit(effect),
       plugins: () => this.networkPlugins(),
+      plugin: (id) => {
+        const entry = this.installed.current(id);
+        return entry ? this.networkPlugin(entry) : undefined;
+      },
+      installedSource: (id) => this.installed.lease(id),
       changed: () => this.networkChanged(),
       revokeReduced: (id, effective) => this.revokeReduced(id, effective),
       reload: (id, policy) => this.reloadPermissions(id, policy),
@@ -210,45 +217,24 @@ export class PluginManager {
   /** Invalid overrides remain visible failures; they never select an older implementation. */
   private inventory(
     policy: PluginPolicy = this.policy.selection().policy,
-  ): CatalogEntry[] {
-    const entries = new Map<string, CatalogEntry>();
-    for (
-      const root of [this.internalRoot, path.join(this.statePath, "plugins")]
-    ) {
-      for (const dir of discoverPluginDirs(root)) {
-        const id = path.basename(dir);
-        try {
-          entries.set(id, { id, dir, manifest: readManifest(dir) });
-        } catch (error) {
-          const detail = error instanceof Error
-            ? error.message
-            : "invalid plugin manifest";
-          entries.set(id, {
-            id,
-            dir,
-            diagnostic: { code: "plugin_manifest_invalid", detail },
-            hooks: this.declaredHooks(dir),
-          });
-        }
-      }
-    }
+  ): readonly InstalledPlugin[] {
+    const entries = new Map(
+      this.installed.refresh().map((entry) => [entry.id, entry]),
+    );
     const head = (policy.order ?? []).map((id) => entries.get(id)).filter((
       entry,
-    ): entry is CatalogEntry => entry !== undefined);
+    ): entry is InstalledPlugin => entry !== undefined);
     const ordered = new Set(head.map((entry) => entry.id));
-    this.settingsEnvironment.validateInventory([...entries.keys()]);
-    // Validate the entire installed inventory before admission filters or Worker starts.
-    // A pin cannot disappear merely because its plugin is disabled or has failed code.
-    for (const entry of entries.values()) {
-      this.settingsEnvironment.pages(entry.id, entry.manifest?.settings ?? []);
-    }
     return [
       ...head,
       ...[...entries.values()].filter((entry) => !ordered.has(entry.id)),
     ];
   }
   private networkPlugins(): NetworkPlugin[] {
-    return this.inventory().map((entry) => ({
+    return this.inventory().map((entry) => this.networkPlugin(entry));
+  }
+  private networkPlugin(entry: InstalledPlugin): NetworkPlugin {
+    return {
       id: entry.id,
       dir: entry.dir,
       manifest: entry.manifest,
@@ -256,7 +242,7 @@ export class PluginManager {
         ...entry.manifest?.hasClient ? ["editor" as const] : [],
         ...entry.manifest?.runtime.client ? ["runtime" as const] : [],
       ],
-    }));
+    };
   }
   /** Startup preflight seam; no workers, approvals or saved settings are created. */
   validateConfiguration(): void {
@@ -264,7 +250,7 @@ export class PluginManager {
   }
   private enabled(id: string): boolean {
     const { policy, automatic } = this.policy.selection();
-    return this.inventory(policy).some((entry) => entry.id === id) &&
+    return !!this.installed.current(id) &&
       policyEnables(policy, id, automatic);
   }
   private epoch(id: string): number {
@@ -315,23 +301,6 @@ export class PluginManager {
           this.track(this.serviceRuntime.retireOwner(id, false));
         }
       }
-    }
-  }
-
-  private declaredHooks(dir: string): HookName[] {
-    try {
-      const raw = JSON.parse(
-        Deno.readTextFileSync(pluginCodePath(dir, "manifest.json")),
-      );
-      return Array.isArray(raw?.hooks)
-        ? [
-          ...new Set(raw.hooks.filter((hook: unknown): hook is HookName =>
-            typeof hook === "string" && HOOK_NAMES.includes(hook as HookName)
-          )),
-        ] as HookName[]
-        : [];
-    } catch {
-      return [];
     }
   }
 
@@ -549,7 +518,7 @@ export class PluginManager {
     return {
       epoch: this.epoch(id),
       enabled: this.enabled(id),
-      manifest: this.inventory().find((entry) => entry.id === id)?.manifest,
+      manifest: this.installed.current(id)?.manifest,
     };
   }
   private orderedManifests(): PluginManifest[] {

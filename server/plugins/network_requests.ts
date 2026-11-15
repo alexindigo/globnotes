@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** Vault-owned request/approval service. HTTP and Worker facades share one projection. */
-import * as path from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { PluginContractError, record, type SettingsPage } from "./contracts.ts";
 import {
@@ -15,7 +14,8 @@ import {
   type SettingsCommitChange,
 } from "./data.ts";
 import type { RpcAuthority } from "./host.ts";
-import { pluginCodePath, type PluginManifest } from "./manifest.ts";
+import type { PluginManifest } from "./manifest.ts";
+import type { InstalledPluginLease } from "./inventory.ts";
 import {
   type AccessAdmission,
   type BlockedReason,
@@ -66,6 +66,8 @@ export interface SettingsOwnerRecovery {
 }
 export interface NetworkAdapters extends PersistenceAdapters {
   plugins(): NetworkPlugin[];
+  plugin?(id: string): NetworkPlugin | undefined;
+  installedSource?(id: string): InstalledPluginLease;
   changed(): void;
   /** Synchronous reduction fencing, then asynchronous replacement of this ID only. */
   revokeReduced(id: string, effective: PermissionDeclaration): void;
@@ -101,46 +103,8 @@ export function settingsSourceKey(
   );
 }
 /** Actual installed contents, not manifest.version; no plugin module is executed. */
-export async function installedCodeFingerprint(dir: string): Promise<string> {
-  const root = Deno.realPathSync(dir),
-    rows: { path: string; hash: string; target?: string }[] = [];
-  const visited = new Set<string>();
-  async function visit(relative = "") {
-    const directory = relative ? pluginCodePath(root, relative) : root;
-    if (visited.has(directory)) {
-      throw new PluginContractError(
-        409,
-        "permission_source_invalid",
-        "plugin code contains a directory cycle",
-      );
-    }
-    visited.add(directory);
-    for (
-      const entry of [...Deno.readDirSync(directory)].sort((a, b) =>
-        a.name.localeCompare(b.name)
-      )
-    ) {
-      const name = relative ? `${relative}/${entry.name}` : entry.name;
-      const file = pluginCodePath(root, name), info = Deno.statSync(file);
-      if (info.isDirectory) await visit(name);
-      else if (info.isFile) {
-        rows.push({
-          path: name,
-          hash: await digest(await Deno.readFile(file)),
-          ...(entry.isSymlink
-            ? { target: Deno.readLinkSync(path.join(root, name)) }
-            : {}),
-        });
-      } else {throw new PluginContractError(
-          409,
-          "permission_source_invalid",
-          "plugin code contains an unsupported entry",
-        );}
-    }
-    visited.delete(directory);
-  }
-  await visit();
-  return await digest(new TextEncoder().encode(JSON.stringify(rows)));
+export function installedCodeFingerprint(dir: string): Promise<string> {
+  return Promise.resolve().then(() => installedSettingsFingerprint(dir));
 }
 function staticRequests(plugin: NetworkPlugin): PermissionDeclaration {
   const capabilities = plugin.manifest?.capabilities;
@@ -218,7 +182,9 @@ export class PluginNetworkRequests {
     });
   }
   private plugin(id: string) {
-    return this.adapters.plugins().find((plugin) => plugin.id === id);
+    return this.adapters.plugin
+      ? this.adapters.plugin(id)
+      : this.adapters.plugins().find((plugin) => plugin.id === id);
   }
   /** Host-only source-owned schema provider for every persistence consumer. */
   settingsSchema(id: string): SettingsPage[] {
@@ -233,7 +199,8 @@ export class PluginNetworkRequests {
     return plugin.manifest.settings;
   }
   settingsContext(id: string): SettingsContext {
-    const selected = this.plugin(id);
+    const lease = this.adapters.installedSource?.(id);
+    const selected = lease?.entry ?? this.plugin(id);
     if (!selected?.manifest) {
       throw new PluginContractError(
         409,
@@ -241,7 +208,8 @@ export class PluginNetworkRequests {
         "plugin settings source unavailable",
       );
     }
-    const fingerprint = installedSettingsFingerprint(selected.dir);
+    const fingerprint = lease?.entry.fingerprint ??
+      installedSettingsFingerprint(selected.dir);
     const override = this.adapters.settingsEnvironment?.fingerprint(id);
     this.adapters.settingsEnvironment?.pages(id, selected.manifest.settings);
     return {
@@ -249,10 +217,12 @@ export class PluginNetworkRequests {
       key: (revision) =>
         effectiveSourceKey(id, fingerprint, revision, override),
       assertCurrent: () => {
-        const current = this.plugin(id);
+        lease?.assertCurrent();
+        const current = lease ? selected : this.plugin(id);
         if (
           !current?.manifest || current.dir !== selected.dir ||
-          installedSettingsFingerprint(current.dir) !== fingerprint ||
+          (!lease &&
+            installedSettingsFingerprint(current.dir) !== fingerprint) ||
           this.adapters.settingsEnvironment?.fingerprint(id) !== override
         ) {
           throw new PluginContractError(

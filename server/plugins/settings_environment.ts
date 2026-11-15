@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 /** Immutable host-only configuration; no Worker environment/permission lookup. */
-import { createHash } from "node:crypto";
-import * as path from "@std/path";
 import {
   type JsonValues,
   jsonValues,
@@ -11,7 +9,11 @@ import {
   type SettingsPage,
 } from "./contracts.ts";
 import { projectPageValues, validateFieldValue } from "./settings.ts";
-import { pluginCodePath } from "./manifest.ts";
+import { sourceDigest } from "./installed_source.ts";
+export {
+  installedSettingsFingerprint,
+  sourceDigest,
+} from "./installed_source.ts";
 
 export interface SettingProvenance {
   source: "environment" | "toml" | "vault" | "default";
@@ -22,8 +24,6 @@ export interface SettingsContext {
   key(revision: number): string;
   assertCurrent(): void;
 }
-export const sourceDigest = (value: string | Uint8Array): string =>
-  createHash("sha256").update(value).digest("hex");
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === "object") {
@@ -125,48 +125,4 @@ export class PluginSettingsEnvironment {
     }
     return { values: { ...fallback, ...pins }, fields };
   }
-}
-/** Identical byte/topology digest to the asynchronous installed-code producer;
- * synchronous comparison permits a final effect/disclosure fence without await. */
-export function installedSettingsFingerprint(dir: string): string {
-  const root = Deno.realPathSync(dir),
-    rows: { path: string; hash: string; target?: string }[] = [],
-    visited = new Set<string>();
-  function visit(relative = "") {
-    const directory = relative ? pluginCodePath(root, relative) : root;
-    if (visited.has(directory)) {
-      throw new PluginContractError(
-        409,
-        "permission_source_invalid",
-        "plugin code contains a directory cycle",
-      );
-    }
-    visited.add(directory);
-    for (
-      const entry of [...Deno.readDirSync(directory)].sort((a, b) =>
-        a.name.localeCompare(b.name)
-      )
-    ) {
-      const name = relative ? `${relative}/${entry.name}` : entry.name,
-        file = pluginCodePath(root, name),
-        info = Deno.statSync(file);
-      if (info.isDirectory) visit(name);
-      else if (info.isFile) {
-        rows.push({
-          path: name,
-          hash: sourceDigest(Deno.readFileSync(file)),
-          ...(entry.isSymlink
-            ? { target: Deno.readLinkSync(path.join(root, name)) }
-            : {}),
-        });
-      } else {throw new PluginContractError(
-          409,
-          "permission_source_invalid",
-          "plugin code contains an unsupported entry",
-        );}
-    }
-    visited.delete(directory);
-  }
-  visit();
-  return sourceDigest(JSON.stringify(rows));
 }

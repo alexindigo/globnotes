@@ -121,6 +121,7 @@ export function driverSettingsPage(
 function driverDeclaration(
   value: unknown,
   dir: string,
+  source?: ManifestSource,
 ): DriverDeclaration | undefined {
   if (value === undefined) return undefined;
   const raw = record(value, "driver");
@@ -137,7 +138,7 @@ function driverDeclaration(
     throw new Error("unsupported driver API version");
   }
   const entry = basename(raw.entry, "driver.entry");
-  entryExists(dir, entry, true);
+  entryExists(dir, entry, true, source);
   const settings = validateSettingsPages([
     driverSettingsPage(
       (raw.settings === undefined ? [] : raw.settings) as SettingsPage[
@@ -223,7 +224,19 @@ function basename(value: unknown, label: string): string {
   }
   return name;
 }
-function entryExists(dir: string, name: string, required: boolean): boolean {
+function entryExists(
+  dir: string,
+  name: string,
+  required: boolean,
+  source?: ManifestSource,
+): boolean {
+  if (source) {
+    if (source.files.has(name)) return true;
+    if (required || source.directories.has(name)) {
+      throw new Error(`entry '${name}' not found or not a file in ${dir}`);
+    }
+    return false;
+  }
   try {
     const file = pluginCodePath(dir, name);
     if (!Deno.statSync(file).isFile) {
@@ -246,11 +259,28 @@ function metadata(
   return text(raw[key], key);
 }
 
-export function readManifest(dir: string): PluginManifest {
-  const manifestPath = pluginCodePath(dir, "manifest.json");
+export interface ManifestSource {
+  manifestText?: string;
+  files: ReadonlySet<string>;
+  directories: ReadonlySet<string>;
+}
+export function readManifest(
+  dir: string,
+  source?: ManifestSource,
+): PluginManifest {
+  const manifestPath = source
+    ? path.join(dir, "manifest.json")
+    : pluginCodePath(dir, "manifest.json");
   let raw: Record<string, unknown>;
   try {
-    raw = record(JSON.parse(Deno.readTextFileSync(manifestPath)), "manifest");
+    raw = record(
+      JSON.parse(
+        source
+          ? source.manifestText ?? ""
+          : Deno.readTextFileSync(manifestPath),
+      ),
+      "manifest",
+    );
   } catch (error) {
     throw new Error(
       `cannot read manifest at ${manifestPath}: ${
@@ -269,7 +299,7 @@ export function readManifest(dir: string): PluginManifest {
     raw.entry === undefined ? "main.js" : raw.entry,
     "entry",
   );
-  const entry = entryExists(dir, renderName, raw.entry !== undefined)
+  const entry = entryExists(dir, renderName, raw.entry !== undefined, source)
     ? renderName
     : undefined;
   const client = raw.client === undefined ? {} : record(raw.client, "client");
@@ -280,7 +310,12 @@ export function readManifest(dir: string): PluginManifest {
     client.entry === undefined ? "client.js" : client.entry,
     "client entry",
   );
-  const hasClient = entryExists(dir, clientEntry, client.entry !== undefined);
+  const hasClient = entryExists(
+    dir,
+    clientEntry,
+    client.entry !== undefined,
+    source,
+  );
   const runtimeInput = raw.runtime === undefined
     ? {}
     : record(raw.runtime, "runtime");
@@ -293,7 +328,7 @@ export function readManifest(dir: string): PluginManifest {
   for (const role of ["server", "client"] as const) {
     if (runtimeInput[role] !== undefined) {
       const name = basename(runtimeInput[role], `runtime.${role}`);
-      entryExists(dir, name, true);
+      entryExists(dir, name, true, source);
       runtime[role] = name;
     }
   }
@@ -327,7 +362,7 @@ export function readManifest(dir: string): PluginManifest {
     ) throw new Error("changes requires apiVersion 1 and runtime.server");
     changes = { apiVersion: 1 };
   }
-  const driver = driverDeclaration(raw.driver, dir);
+  const driver = driverDeclaration(raw.driver, dir, source);
   const caps = raw.capabilities === undefined
     ? {}
     : record(raw.capabilities, "capabilities");
@@ -380,15 +415,20 @@ export function readManifest(dir: string): PluginManifest {
     };
   }
   let hasEndpoints = false;
-  try {
-    const endpointDir = pluginCodePath(dir, "endpoints");
-    if (!Deno.statSync(endpointDir).isDirectory) {
+  if (source) {
+    if (source.files.has("endpoints")) {
       throw new Error("endpoints must be a directory");
     }
-    hasEndpoints = true;
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
-  }
+    hasEndpoints = source.directories.has("endpoints");
+  } else {try {
+      const endpointDir = pluginCodePath(dir, "endpoints");
+      if (!Deno.statSync(endpointDir).isDirectory) {
+        throw new Error("endpoints must be a directory");
+      }
+      hasEndpoints = true;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }}
   if (
     !entry && !hasClient && !runtime.server && !runtime.client &&
     !settings.length && !hasEndpoints && !driver
