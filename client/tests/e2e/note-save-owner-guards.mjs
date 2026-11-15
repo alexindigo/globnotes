@@ -1,6 +1,6 @@
 // Feature-owned, VM-only consumer proof. Each case owns a fresh browser context.
 import { nativeSession } from "./native-cdp-session.mjs";
-import { bindAddress, httpOrigin } from "./http-origin.mjs";
+import { createNoteResponseGate } from "./native-response-gate.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 
@@ -27,42 +27,10 @@ async function setup(name, { view = false, readonly = false, create = false } = 
   await Deno.writeTextFile(`${state}/plugins/owner-guard/manifest.json`, JSON.stringify({ id: "owner-guard", runtime: { server: "service.js" }, hooks: ["pre-save"] }));
   await Deno.writeTextFile(`${state}/plugins/owner-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => fact.proposed.content.includes('OWNER-GUARD') ? {cancel:true,reason:'Owned guard rejection'} : {cancel:false}); }");
   const server = await bootServer(vault, state, { logsDir: directory });
-  const controller = new AbortController();
-  const records = [], reads = [];
-  let active = 0, maxActive = 0;
-  const proxy = Deno.serve({ hostname: bindAddress(), port: 0, signal: controller.signal, onListen() {} }, async request => {
-    const url = new URL(request.url);
-    const mutation = ["POST", "PATCH", "DELETE"].includes(request.method) && /^\/_\/api\/notes(?:\/|$)/.test(url.pathname);
-    if (request.method === "GET" && /^\/_\/api\/notes\//.test(url.pathname)) reads.push(url.pathname);
-    const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
-    let record;
-    if (mutation) {
-      active++; maxActive = Math.max(active, maxActive);
-      let release;
-      const released = new Promise(resolve => { release = resolve; });
-      record = { method: request.method, path: url.pathname, body: body?.byteLength ? JSON.parse(new TextDecoder().decode(body)) : null, release, released, fault: false };
-      records.push(record);
-    }
-    try {
-      const headers = new Headers(request.headers); headers.delete("host"); headers.delete("content-length");
-      const response = await fetch(`${server.baseUrl}${url.pathname}${url.search}`, { method: request.method, headers, body, redirect: "manual", signal: AbortSignal.timeout(5000) });
-      if (!record) return new Response(response.body, { status: response.status, headers: response.headers });
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      record.backendStatus = response.status;
-      record.backendResult = bytes.length ? JSON.parse(new TextDecoder().decode(bytes)) : null;
-      let timer;
-      try { await Promise.race([released(record), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Owned response deadline")), 30000); })]); }
-      finally { clearTimeout(timer); }
-      return record.fault ? Response.json({ detail: "Controlled lost acknowledgement" }, { status: 502 }) : new Response(bytes.length ? bytes : null, { status: response.status, headers: response.headers });
-    } catch (error) {
-      if (record) record.error = error.message;
-      return Response.json({ detail: "Owned proxy transport failure" }, { status: 502 });
-    } finally { if (record) active--; }
-  });
-  function released(record) { return record.released; }
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
-  current = { name, directory, vault, state, server, proxy, controller, records, reads, session, maxActive: () => maxActive };
-  await session.goto(`${httpOrigin(proxy.addr.port)}/${create ? "_/new?path=First" : "NoteA"}`);
+  const gate = await createNoteResponseGate(session);
+  current = { name, directory, vault, state, server, gate, records: gate.records, reads: gate.reads, session, maxActive: gate.maxActive };
+  await session.goto(`${server.baseUrl}/${create ? "_/new?path=First" : "NoteA"}`);
   await session.poll(create ? "!!document.querySelector('.cm-content')" : "!!document.querySelector('.toast-viewer')");
   if (!view && !create) { await session.button("Edit", ".content-column"); await session.button("Source", ".content-column"); }
   return current;
@@ -75,7 +43,7 @@ async function text(value) {
 }
 const save = () => current.session.button("Save", ".content-column");
 async function request(index) { await wait(() => current.records[index]?.backendStatus !== undefined); return current.records[index]; }
-async function release(index, fault = false) { const record = await request(index); record.fault = fault; record.release(); }
+async function release(index, fault = false) { const record = await request(index); record.fault = fault; await record.release(); }
 async function observe() {
   return current.session.evaluate("({url:location.pathname+location.search+location.hash,buffer:document.querySelector('.cm-content,.ProseMirror')?.textContent,unload:typeof window.onbeforeunload,dirty:[...document.querySelectorAll('.content-column button')].find(el=>el.textContent.trim()==='Save')?.querySelector('svg')?.classList.contains('text-theme-brand'),status:document.querySelector('[data-note-save-status]')?.textContent})");
 }
@@ -108,7 +76,7 @@ async function finish(evidence = {}) {
   await Deno.writeFile(`${resource.directory}/outcome.png`, Uint8Array.from(atob(data), char => char.charCodeAt(0)));
   await Deno.writeTextFile(`${resource.directory}/consumer.json`, JSON.stringify({ page, evidence, reads: resource.reads, maxActive: resource.maxActive(), records: resource.records.map(({ release, released, ...record }) => record), errors: resource.session.errors, events: resource.session.events, targetId: resource.session.targetId, browserContextId: resource.session.browserContextId }, null, 2));
   outcomes.push({ name: resource.name, passed: true }); console.log(`ok: ${resource.name}`);
-  await resource.session.close(); resource.controller.abort(); await resource.proxy.finished; await resource.server.close(); resource.closed = true;
+  await resource.gate.close(); await resource.session.close(); await resource.server.close(); resource.closed = true;
 }
 
 try {

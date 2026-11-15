@@ -65,6 +65,9 @@ describe("native suite child result ownership", () => {
       { label: "normal-parent", groups: 7 }, { label: "isolated-import-parent", groups: 0 }, { label: "dirty-work", groups: 1 },
     ]);
     expect(FILE_CASES["client/tests/e2e/native-fixture-cases.mjs"]).toEqual(SELECTION.map(caseName));
+    expect(FILE_CASES["client/tests/e2e/native-response-gate.mjs"]).toEqual([
+      ...nativeMatrixSelection("plugin-permissions").map(caseName), "note-save-fifo", "note-save-owner-guards",
+    ]);
     const generic = readFileSync(directory + "/generic-plugin-system.mjs", "utf8");
     expect(generic).toContain("collectFixtureReports");
     expect(generic).toContain("300000");

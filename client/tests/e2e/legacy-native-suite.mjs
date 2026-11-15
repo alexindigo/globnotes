@@ -43,6 +43,7 @@ export const NATIVE_HELPERS = {
   "legacy-native-suite.mjs": "suite orchestrator, not a recursive child",
   "native-actions.mjs": "native input adapter",
   "native-case-finalization.mjs": "case finalization helper",
+  "native-response-gate.mjs": "owned native note response barriers",
   "native-matrix-cases.mjs": "shared matrix argument and leaf selection owner",
   "native-fixture-cases.mjs": "canonical consumer-fixture inventory",
   "native-cdp-session.mjs": "owned browser session adapter",
@@ -322,6 +323,7 @@ export const SHARED_CASE_FILES = [
 ].map(file => "client/tests/e2e/" + file);
 
 export const FILE_CASES = Object.fromEntries([
+  ["client/tests/e2e/native-response-gate.mjs", [...nativeMatrixSelection("plugin-permissions"), ["note-save-fifo"], ["note-save-owner-guards"]].map(caseName)],
   ...SHARED_CASE_FILES.map(file => [file, SELECTION.map(caseName)]),
   ...["prefix-auth-fixture.mjs", "prefix-auth-cases.mjs"].map(file => [`client/tests/e2e/${file}`, prefixAuthSelection().map(caseName)]),
   ["client/tests/e2e/review-repair-cases.mjs", reviewRepairSelection().map(caseName)],

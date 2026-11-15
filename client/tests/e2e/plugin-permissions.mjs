@@ -1,5 +1,6 @@
 // VM-only native operator consent. Each fixture/context and normal parent is owned.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { createNoteResponseGate } from "./native-response-gate.mjs";
 import { fileURLToPath } from "node:url";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { awaitHealthy, awaitPluginReady } from "./harness-helpers.mjs";
@@ -96,27 +97,14 @@ async function fixture(name, { importParent = false, gateSaves = false, guardSav
   if (importParent) await Deno.copyFile(`${ROOT}/deno.lock`, value.privateLock);
   current = value; value.server = await launch(value);
   value.noteWrites = [];
-  if (gateSaves) {
-    value.proxy = Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, async request => {
-      const url = new URL(request.url), mutation = ["POST", "PATCH"].includes(request.method) && /^\/_\/api\/notes(?:\/|$)/.test(url.pathname);
-      const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
-      const headers = new Headers(request.headers); headers.delete("host"); headers.delete("content-length");
-      const response = await fetch(`${value.server.base}${url.pathname}${url.search}`, { method: request.method, headers, body, redirect: "manual", signal: AbortSignal.timeout(5000) });
-      if (!mutation) return new Response(response.body, { status: response.status, headers: response.headers });
-      const bytes = await response.arrayBuffer(), held = Promise.withResolvers();
-      value.noteWrites.push({ body: JSON.parse(new TextDecoder().decode(body)), backendStatus: response.status, released: held.promise, release: held.resolve });
-      let timer;
-      try { await Promise.race([held.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error("Owned dirty-note response deadline")), 30000); })]); }
-      catch (error) {
-        await Deno.writeTextFile(`${directory}/response-gate-deadline.json`, JSON.stringify({ detail: error.message, observedAt: Date.now(), completedWrites: value.noteWrites.length }, null, 2));
-        // Deadline is observation, not permission to release/discard protected work.
-        await held.promise;
-      } finally { clearTimeout(timer); }
-      return new Response(bytes, { status: response.status, headers: response.headers });
-    });
-  }
-  value.entryBase = value.proxy ? httpOrigin(value.proxy.addr.port) : value.server.base;
+  value.entryBase = value.server.base;
   value.session = await operatorSession(); value.sessions.push(value.session);
+  if (gateSaves) {
+    value.noteGate = await createNoteResponseGate(value.session, { methods: ["POST", "PATCH"], onDeadline: async () => {
+      await Deno.writeTextFile(`${directory}/response-gate-deadline.json`, JSON.stringify({ detail: "Owned dirty-note response deadline", observedAt: Date.now(), completedWrites: value.noteWrites.length }, null, 2));
+    } });
+    value.noteWrites = value.noteGate.responses;
+  }
   await value.session.goto(`${value.entryBase}/NoteA`);
   await value.session.poll("!!document.querySelector('.toast-viewer')");
   return value;
@@ -187,8 +175,8 @@ async function promptFocus(session = current.session) {
 }
 async function outcome(marker, detail) { outcomes.push({ marker, detail, passed: true }); console.log(marker); await Deno.writeTextFile(`${artifacts}/outcomes.json`, JSON.stringify(outcomes, null, 2)); }
 async function finish() {
+  await current.noteGate?.close();
   for (const session of current.sessions) { assert(!session.errors.length, "unexpected page exception"); await session.close(); }
-  if (current.proxy) await current.proxy.shutdown();
   await current.server.close(); await current.receiver.shutdown(); await current.extraReceiver.shutdown(); current.closed = true;
 }
 
@@ -283,7 +271,7 @@ try {
     await current.session.poll(`document.querySelector('.cm-content')?.textContent.includes(${JSON.stringify(text)})`);
   };
   const write = async index => {
-    return waitUntil(() => current.noteWrites[index] ? done(current.noteWrites[index]) : pending({ index, writes: current.noteWrites.length }), { label: "real dirty-note write reached", intervalMs: 20 });
+    return waitUntil(() => current.noteGate?.error ? failed(String(current.noteGate.error)) : current.noteWrites[index] ? done(current.noteWrites[index]) : pending({ index, writes: current.noteWrites.length }), { label: "real dirty-note write reached", intervalMs: 20 });
   };
   await typeNote("PERMISSION-A"); await current.session.button("Save", ".content-column"); await write(0);
   await typeNote("PERMISSION-B"); await current.session.button("Save", ".content-column"); await typeNote("PERMISSION-D");
@@ -319,7 +307,7 @@ try {
   assert(await current.session.evaluate("document.querySelector('input[type=number]')?.value === '' && document.body.textContent.includes('Enter a number')"), "permission reload erased invalid settings draft");
   assert(await current.session.evaluate("!document.querySelector('[data-settings-attention]')"),'Resolved request remained in Needs attention');
   await capture("dirty-settings-retained");
-  current.noteWrites[0].release(); await write(1); current.noteWrites[1].release();
+  await current.noteWrites[0].release(); await write(1); await current.noteWrites[1].release();
   await current.session.poll("!document.querySelector('.content-column .animate-spin')");
   const actual = await json("notes/NoteA"), disk = await Deno.readTextFile(`${current.vault}/NoteA.md`);
   assert(actual.status === 200 && disk === actual.body.content && disk.includes("PERMISSION-B") && !disk.includes("PERMISSION-D"), "A/B FIFO did not reach API/disk B exactly");
@@ -343,7 +331,7 @@ try {
    await review(); await master();
    const rejectedSave = await write(0);
    assert(rejectedSave.backendStatus === 503, "permission revocation did not reject the old required guard");
-   rejectedSave.release(); current.releaseGuard();
+    await rejectedSave.release(); current.releaseGuard();
    await current.session.poll("document.querySelector('[data-note-save-status]')?.textContent.includes('Saving paused') && !document.querySelector('.content-column .animate-spin')");
    await closeReview(); await current.session.key("Escape", { code: "Escape", windowsVirtualKeyCode: 27 });
    await current.session.poll("!document.querySelector('#settings-modal-title')");

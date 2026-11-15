@@ -1,6 +1,6 @@
 // VM-only native input + a guest-owned response gate around the real server.
 import { nativeSession } from "./native-cdp-session.mjs";
-import { bindAddress, httpOrigin } from "./http-origin.mjs";
+import { createNoteResponseGate } from "./native-response-gate.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
@@ -37,41 +37,10 @@ async function setup(label, { password = false, create = false } = {}) {
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => (fact.proposed?.content ?? '').includes('FIFO-GUARD') ? {cancel:true,reason:'FIFO guard protection'} : {cancel:false}); }");
   const token = password ? await new SignJWT({ sub: "fifo-user" }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
   const server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
-  const controller = new AbortController();
-  const records = [];
-  let active = 0, maxActive = 0;
-  const proxy = Deno.serve({ hostname: bindAddress(), port: 0, signal: controller.signal, onListen() {} }, async request => {
-    const url = new URL(request.url);
-    const mutation = ["POST", "PATCH"].includes(request.method) && /^\/_\/api\/notes(?:\/|$)/.test(url.pathname);
-    const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
-    let record;
-    if (mutation) {
-      active++; maxActive = Math.max(active, maxActive);
-      let release;
-      const released = new Promise(resolve => { release = resolve; });
-      record = { id: records.length + 1, method: request.method, path: url.pathname, body: JSON.parse(new TextDecoder().decode(body)), release, released, fault: false };
-      records.push(record);
-    }
-    try {
-      const headers = new Headers(request.headers); headers.delete("host"); headers.delete("content-length");
-      const response = await fetch(`${server.baseUrl}${url.pathname}${url.search}`, { method: request.method, headers, body, redirect: "manual", signal: AbortSignal.timeout(5000) });
-      if (!record) return new Response(response.body, { status: response.status, headers: response.headers });
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      record.backendStatus = response.status;
-      record.backendResult = JSON.parse(new TextDecoder().decode(bytes));
-      let timer;
-      try { await Promise.race([record.released, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Owned response gate deadline")), 30000); })]); }
-      finally { clearTimeout(timer); }
-      if (record.fault) return Response.json({ detail: "Controlled lost acknowledgement after the real server result" }, { status: 502 });
-      return new Response(bytes, { status: response.status, headers: response.headers });
-    } catch (error) {
-      if (record) record.error = error.message;
-      return Response.json({ detail: "Owned test proxy transport failure" }, { status: 502 });
-    } finally { if (record) active--; }
-  });
-  const baseUrl = httpOrigin(proxy.addr.port);
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
-  current = { label, directory, vault, state, server, proxy, controller, records, session, baseUrl, maxActive: () => maxActive };
+  const gate = await createNoteResponseGate(session, { methods: ["POST", "PATCH"] });
+  const baseUrl = server.baseUrl;
+  current = { label, directory, vault, state, server, gate, records: gate.records, session, baseUrl, maxActive: gate.maxActive };
   owned.push(current);
   await session.goto(`${baseUrl}/${create ? "_/new" : "NoteA"}`);
   if (password) {
@@ -123,7 +92,7 @@ async function text(value, mode = "Source") {
 }
 async function save() { await current.session.button("Save", ".content-column"); }
 async function request(index) { await wait(() => current.records[index]?.backendStatus !== undefined); return current.records[index]; }
-async function release(index, fault = false) { const item = await request(index); item.fault = fault; item.release(); }
+async function release(index, fault = false) { const item = await request(index); item.fault = fault; await item.release(); }
 const editableText = () => current.session.evaluate("document.querySelector('.cm-content,.ProseMirror,.preview-buffer')?.textContent");
 const paused = () => current.session.poll("document.querySelector('[data-note-save-status]')?.textContent.toLowerCase().includes('paused')");
 async function snapshot(name) {
@@ -139,7 +108,7 @@ async function finishCase() {
   await snapshot("outcome");
   await Deno.writeTextFile(`${resource.directory}/requests.json`, JSON.stringify({ maxActive: resource.maxActive(), records: resource.records.map(({ release, released, ...record }) => record), errors: resource.session.errors, events: resource.session.events, targetId: resource.session.targetId, browserContextId: resource.session.browserContextId }, null, 2));
   outcomes.push({ name: resource.label, passed: true }); console.log(`ok: ${resource.label}`);
-  await resource.session.close(); resource.controller.abort(); await resource.proxy.finished; await resource.server.close();
+  await resource.gate.close(); await resource.session.close(); await resource.server.close();
   resource.closed = true;
 }
 
