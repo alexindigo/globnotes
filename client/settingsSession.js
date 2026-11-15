@@ -195,7 +195,7 @@ export function createSettingsSession({
   });
 
   async function refreshCatalog() {
-    return await refreshRuntimeCatalog();
+    return await refreshRuntimeCatalog({ joinLatest: true });
   }
   async function togglePlugin(plugin, enabled) {
     return await inventory.setEnabled(plugin.id, enabled, catalogPolicy.value);

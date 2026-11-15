@@ -38,6 +38,7 @@ export function createPluginRuntime({
   const generations = new Map();
   let started = false, requested = false, documentActive = lifetime.state().active;
   let epoch = 0, readTicket = 0, publicationSerial = 0, policyFloor = 0;
+  let latestRead = null;
   let sessionKey = "default", activeCredential;
   let closeEvents = null, reconnectTimer = null, eventController = null;
 
@@ -119,7 +120,7 @@ export function createPluginRuntime({
   }
 
   /** The sole catalogue publisher; callers receive explicit read ownership. */
-  async function refresh() {
+  async function readCatalogue() {
     if (!started || !documentActive) return { status: "inactive" };
     const scope = { ...capture(), ticket: ++readTicket };
     const currentRead = () => active(scope) && scope.ticket === readTicket;
@@ -140,6 +141,24 @@ export function createPluginRuntime({
     await reconcile(accepted, published);
     if (!publicationCurrent(published)) return { status: "superseded" };
     return { status: "accepted", catalog: readonly(accepted), serial: published.serial };
+  }
+
+  // Explicit current-view consumers may join a newer read that an event or
+  // another caller already dispatched. This never starts a follow-up request,
+  // and a replacement credential/document cannot lend its accepted receipt.
+  async function joinCurrentRead(pending, scope) {
+    for (;;) {
+      const receipt = await pending;
+      if (!active(scope)) return ["error", "inactive"].includes(receipt.status) ? receipt : { status: "superseded" };
+      if (pending === latestRead) return receipt;
+      if (!latestRead) return { status: "superseded" };
+      pending = latestRead;
+    }
+  }
+  function refresh(options) {
+    const scope = capture(), result = readCatalogue();
+    latestRead = result;
+    return options?.joinLatest === true ? joinCurrentRead(result, scope) : result;
   }
 
   function captureOwnership() {
@@ -183,6 +202,7 @@ export function createPluginRuntime({
 
   function halt() {
     started = false; epoch++; readTicket++; publicationSerial++; policyFloor = 0;
+    latestRead = null;
     clearTimer(reconnectTimer);
     eventController?.abort(); eventController = null;
     closeEvents?.(); closeEvents = null;
@@ -218,6 +238,6 @@ export const pluginCatalog = runtime.catalog;
 export const browserGenerations = runtime.browserGenerations;
 export const startPluginRuntime = session => runtime.start(session);
 export const stopPluginRuntime = () => runtime.stop();
-export const refreshPluginRuntimeCatalog = () => runtime.refresh();
+export const refreshPluginRuntimeCatalog = options => runtime.refresh(options);
 export const capturePluginCatalogOwnership = () => runtime.captureOwnership();
 export const acknowledgePluginPolicy = (policy, owner) => runtime.acknowledgePolicy(policy, owner);
