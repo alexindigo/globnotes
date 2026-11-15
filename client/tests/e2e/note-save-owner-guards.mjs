@@ -1,6 +1,7 @@
 // Feature-owned, VM-only consumer proof. Each case owns a fresh browser context.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { createNoteResponseGate } from "./native-response-gate.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 
@@ -27,9 +28,10 @@ async function setup(name, { view = false, readonly = false, create = false } = 
   await Deno.writeTextFile(`${state}/plugins/owner-guard/manifest.json`, JSON.stringify({ id: "owner-guard", runtime: { server: "service.js" }, hooks: ["pre-save"] }));
   await Deno.writeTextFile(`${state}/plugins/owner-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => fact.proposed.content.includes('OWNER-GUARD') ? {cancel:true,reason:'Owned guard rejection'} : {cancel:false}); }");
   const server = await bootServer(vault, state, { logsDir: directory });
-  const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
+  current = { name, directory, vault, state, server, records: [], reads: [] };
+  const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) }); current.session = session;
   const gate = await createNoteResponseGate(session);
-  current = { name, directory, vault, state, server, gate, records: gate.records, reads: gate.reads, session, maxActive: gate.maxActive };
+  Object.assign(current, { gate, records: gate.records, reads: gate.reads, maxActive: gate.maxActive });
   await session.goto(`${server.baseUrl}/${create ? "_/new?path=First" : "NoteA"}`);
   await session.poll(create ? "!!document.querySelector('.cm-content')" : "!!document.querySelector('.toast-viewer')");
   if (!view && !create) { await session.button("Edit", ".content-column"); await session.button("Source", ".content-column"); }
@@ -170,11 +172,17 @@ try {
   console.log("NOTE SAVE OWNER GUARDS OK");
 } catch (error) { failure = error; console.error(`FAIL: ${error.message}`); }
 finally {
-  await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, failure: failure?.message, current: current && { name: current.name, targetId: current.session.targetId, browserContextId: current.session.browserContextId, serverPid: current.server.pid, vault: current.vault, state: current.state } }, null, 2));
-  if (failure) {
-    console.error(`Retained owner-guards failure: ${artifacts}/summary.json; release file ${artifacts}/release-failure`);
-    for (;;) { try { await Deno.stat(`${artifacts}/release-failure`); break; } catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; } await new Promise(resolve => setTimeout(resolve, 250)); }
-  }
+  const resource = current;
+  await finalizeNativeCase({ error: failure, report: async () => {
+    await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, failure: failure?.message, current: resource && { name: resource.name, targetId: resource.session?.targetId, browserContextId: resource.session?.browserContextId, serverPid: resource.server.pid, baseUrl: resource.server.baseUrl, vault: resource.vault, state: resource.state }, requests: resource?.records.map(({ release, released, ...record }) => record) }, null, 2));
+    if (failure && resource?.session && !resource.closed) {
+      await Deno.writeTextFile(`${resource.directory}/failure.json`, JSON.stringify(await observe(), null, 2));
+      const { data } = await resource.session.send("Page.captureScreenshot", { format: "png" });
+      await Deno.writeFile(`${resource.directory}/failure.png`, Uint8Array.from(atob(data), char => char.charCodeAt(0)));
+    }
+  }, cleanup: !resource || resource.closed ? [] : [
+    () => resource.gate?.close(), () => resource.session?.close(), () => resource.server.close(), () => { resource.closed = true; },
+  ] });
 }
 if (failure) throw failure;
 import { metadataDirectory } from "./config-fixture.mjs";

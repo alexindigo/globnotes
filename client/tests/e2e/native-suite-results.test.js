@@ -80,6 +80,13 @@ describe("native suite child result ownership", () => {
       if (file !== "legacy-native-suite.mjs") expect(source, file).not.toMatch(/Deno\.args|import\.meta\.main/);
     }
   });
+  it("uses the shared finalizer instead of retaining live failed mutation consumers indefinitely", () => {
+    for (const file of ["plugin-permissions.mjs", "note-save-fifo.mjs", "note-save-owner-guards.mjs"]) {
+      const source = readFileSync(directory + "/" + file, "utf8");
+      expect(source, file).toContain("finalizeNativeCase");
+      expect(source, file).not.toMatch(/for\s*\(\s*;\s*;\s*\)|release-failure/);
+    }
+  });
   it("rejects any omitted existing case, new unclassified case, missing file or duplicate selection", () => {
     for (const [name] of SELECTION) {
       expect(() => validateNativeInventory(inventory, SELECTION.filter(([driver]) => driver !== name))).toThrow("outside CI selection");

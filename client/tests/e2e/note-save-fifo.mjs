@@ -1,6 +1,7 @@
 // VM-only native input + a guest-owned response gate around the real server.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { createNoteResponseGate } from "./native-response-gate.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
@@ -37,11 +38,12 @@ async function setup(label, { password = false, create = false } = {}) {
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => (fact.proposed?.content ?? '').includes('FIFO-GUARD') ? {cancel:true,reason:'FIFO guard protection'} : {cancel:false}); }");
   const token = password ? await new SignJWT({ sub: "fifo-user" }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
   const server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
-  const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
+  current = { label, directory, vault, state, server, records: [], baseUrl: server.baseUrl };
+  owned.push(current);
+  const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) }); current.session = session;
   const gate = await createNoteResponseGate(session, { methods: ["POST", "PATCH"] });
   const baseUrl = server.baseUrl;
-  current = { label, directory, vault, state, server, gate, records: gate.records, session, baseUrl, maxActive: gate.maxActive };
-  owned.push(current);
+  Object.assign(current, { gate, records: gate.records, baseUrl, maxActive: gate.maxActive });
   await session.goto(`${baseUrl}/${create ? "_/new" : "NoteA"}`);
   if (password) {
     await session.poll("!!document.querySelector('#username')");
@@ -98,9 +100,9 @@ const paused = () => current.session.poll("document.querySelector('[data-note-sa
 async function snapshot(name) {
   const { session, directory } = current;
   const page = await session.evaluate("({url:location.href,body:document.body.innerText,active:document.activeElement?.tagName,buttons:[...document.querySelectorAll('.content-column button')].map(el=>({text:el.textContent.trim(),disabled:el.disabled,busy:el.getAttribute('aria-busy'),rect:el.getBoundingClientRect().toJSON()}))})");
+  await Deno.writeTextFile(`${directory}/${name}.json`, JSON.stringify(page, null, 2));
   const { data } = await session.send("Page.captureScreenshot", { format: "png" });
   await Deno.writeFile(`${directory}/${name}.png`, Uint8Array.from(atob(data), char => char.charCodeAt(0)));
-  await Deno.writeTextFile(`${directory}/${name}.json`, JSON.stringify(page, null, 2));
 }
 async function finishCase() {
   const resource = current;
@@ -190,16 +192,12 @@ try {
   console.log("NOTE SAVE FIFO OK");
 } catch (error) { failure = error; console.error(`FAIL: ${error.message}`); }
 finally {
-  await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, failure: failure?.message, current: current && { name: current.label, targetId: current.session.targetId, browserContextId: current.session.browserContextId, baseUrl: current.baseUrl, serverPid: current.server.pid, vault: current.vault, state: current.state } }, null, 2));
-  if (failure) {
-    if (current && !current.closed) await snapshot("failure").catch(error => console.error(error.message));
-    console.error(`Retained FIFO failure: ${artifacts}/summary.json; release file ${artifacts}/release-failure`);
-    for (;;) {
-      try { await Deno.stat(`${artifacts}/release-failure`); break; }
-      catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; }
-      await new Promise(resolve => setTimeout(resolve, 250));
-    }
-  }
+  await finalizeNativeCase({ error: failure, report: async () => {
+    await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, failure: failure?.message, current: current && { name: current.label, targetId: current.session?.targetId, browserContextId: current.session?.browserContextId, baseUrl: current.baseUrl, serverPid: current.server.pid, vault: current.vault, state: current.state }, requests: current?.records.map(({ release, released, ...record }) => record) }, null, 2));
+    if (failure && current?.session && !current.closed) await snapshot("failure");
+  }, cleanup: owned.filter(resource => !resource.closed).flatMap(resource => [
+    () => resource.gate?.close(), () => resource.session?.close(), () => resource.server.close(), () => { resource.closed = true; },
+  ]) });
 }
 if (failure) throw failure;
 import { waitForAccessSummary } from './settings-access-native.mjs';

@@ -1,6 +1,7 @@
 // VM-only native operator consent. Each fixture/context and normal parent is owned.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { createNoteResponseGate } from "./native-response-gate.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { fileURLToPath } from "node:url";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { awaitHealthy, awaitPluginReady } from "./harness-helpers.mjs";
@@ -21,7 +22,7 @@ const selected = label => selectedCases.some(item => item.label === label);
 const completedFixtures = [];
 const assert = (value, detail) => { if (!value) throw Error(detail); };
 const outcomes = [];
-let current;
+let current, failure;
 
 async function operatorSession() {
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
@@ -46,9 +47,17 @@ async function launch(fixture) {
   fixture.launchCount++;
   const base = httpOrigin(port);
   await Deno.writeTextFile(`${fixture.directory}/parent-${fixture.launchCount}.json`, JSON.stringify({ pid: child.pid, args, cwd, isolatedImportParent: fixture.importParent }, null, 2));
+  let exited = false, closed = false;
+  const status = child.status.then(result => { exited = true; return result; });
+  const owner = { child, base, args, async close() {
+    if (closed) return; closed = true;
+    try { if (!exited) child.kill("SIGTERM"); await status; await Promise.all(drains); }
+    finally { await Deno.remove(cwd, { recursive: true }); }
+  } };
+  fixture.server = owner;
   await awaitHealthy(base, { label: "Owned permission server health", child, intervalMs: 50 });
   await awaitPluginReady(base, "networked", { label: "Owned permission activation", child, intervalMs: 30 });
-  return { child, base, args, async close() { try { child.kill("SIGTERM"); await child.status; await Promise.all(drains); } finally { await Deno.remove(cwd, { recursive: true }); } } };
+  return owner;
 }
 
 async function fixture(name, { importParent = false, gateSaves = false, guardSaves = false } = {}) {
@@ -349,10 +358,22 @@ try {
   assert(outcomes.length === selectedCases.reduce((sum,item) => sum+item.groups,0) && outcomes.every(row => row.passed) && completedFixtures.length === selectedCases.length, "permission matrix incomplete");
   await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, completedFixtures, complete: true }, null, 2));
   console.log("PLUGIN PERMISSIONS UI OK");
-} catch (error) {
-   const metadata = current && { name: current.name, serverPid: current.server.child.pid, baseUrl: current.server.base, entryBase: current.entryBase, root: current.root, vault: current.vault, state: current.state,
-    targetId: current.session.targetId, browserContextId: current.session.browserContextId, closed: !!current.closed };
-  await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, failure: error.stack, current: metadata }, null, 2));
-  console.error(`Retained permissions failure: ${error.message}; ${artifacts}/summary.json`);
-  for (;;) await new Promise(resolve => setTimeout(resolve, 1000));
+} catch (error) { failure = error; }
+finally {
+  const owner = current;
+  await finalizeNativeCase({ error: failure, report: async () => {
+    if (!failure) return;
+    const metadata = owner && { name: owner.name, serverPid: owner.server?.child.pid, baseUrl: owner.server?.base, entryBase: owner.entryBase, root: owner.root, vault: owner.vault, state: owner.state,
+      targetId: owner.session?.targetId, browserContextId: owner.session?.browserContextId, closed: !!owner.closed };
+    const requests = owner?.noteGate?.records.map(({ release, released, ...record }) => record);
+    await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, failure: failure.stack, current: metadata, requests, completedFixtures }, null, 2));
+    console.error(`Retained permissions failure: ${failure.message}; ${artifacts}/summary.json`);
+    if (owner?.session) await capture("failure", owner.session);
+  }, cleanup: !owner || owner.closed ? [] : [
+    () => owner.noteGate?.close(), ...owner.sessions.map(session => () => session.close()),
+    () => owner.server?.close(), () => owner.releaseGuard(),
+    () => owner.receiver.shutdown(), () => owner.extraReceiver.shutdown(),
+    async () => { owner.closed = true; await Deno.writeTextFile(`${owner.directory}/closure.json`, JSON.stringify({ closedAfterEvidence: true, failure: !!failure })); },
+  ] });
 }
+if (failure) throw failure;
