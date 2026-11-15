@@ -33,7 +33,7 @@ export class BackupQueue {
       const config = await this.#configuration();
       const workspace = await this.#workspace(config, false);
       if (workspace) await this.#recover(workspace, config);
-    }).catch(() => { /* Keep status available; subsequent genuine capture failures reach host diagnostics. */ });
+    });
   }
   /** Best-effort post-commit bytes from the legacy versioning hook. Staging,
    * publication, rotation and cleanup all run outside the note operation. */

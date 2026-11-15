@@ -410,6 +410,7 @@ export class PluginManager {
                 ...permissionDiagnostic ? [permissionDiagnostic] : [],
               ],
               degraded: runtime?.degraded ?? false,
+              jobs: runtime?.jobs ?? [],
               deliveryFailures: runtime?.deliveryFailures ?? 0,
               commands:
                 this.serviceRuntime?.commands().filter((command) =>

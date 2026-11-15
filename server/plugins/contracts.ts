@@ -182,10 +182,13 @@ export interface HandlerRegistration {
     | "versioning"
     | "changes"
     | "metadata-watch"
+    | "job"
     | "driver";
   id: string;
   query?: MetadataQuery;
-  definition?: CommandDefinition | EndpointDescriptor;
+  definition?: CommandDefinition | EndpointDescriptor | { id: string } | {
+    after: string[];
+  };
 }
 export const HTTP_METHODS = [
   "GET",

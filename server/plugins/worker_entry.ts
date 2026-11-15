@@ -37,6 +37,7 @@ import type {
   Source,
 } from "./network_contracts.ts";
 import { metadataPath, metadataQuery } from "../metadata/contracts.ts";
+import { jobDeclaration, jobDependencies } from "./service_jobs.ts";
 import {
   type Driver,
   DRIVER_METHODS,
@@ -110,9 +111,14 @@ export interface PluginCtx {
     ): Promise<unknown>;
   };
   fs: AuxiliaryFs;
+  jobs: {
+    afterActivation(definition: { id: string }, handler: Handler): Disposer;
+  };
   /** Legacy backup: best-effort displaced bytes delivered after commit.
    * The write never waits for this handler. */
-  versioning: { onOffer(handler: Handler): Disposer };
+  versioning: {
+    onOffer(handler: Handler, options?: { after?: string[] }): Disposer;
+  };
   changes: { subscribe(handler: Handler): Disposer };
   metadata: {
     get(path: string): Promise<unknown>;
@@ -132,6 +138,7 @@ let role: "render" | "service" | "driver" = "render";
 let driverCtx: DriverCtx | undefined;
 let plugin: PluginModule | null = null;
 let stopping = false;
+let activating = false;
 let sequence = 0;
 let declaredHooks = new Set<HookName>();
 let permissionsSource: Source | undefined;
@@ -319,9 +326,27 @@ const ctx: PluginCtx = {
     },
   },
   snapshot: {},
+  jobs: {
+    afterActivation: (definition, handler) => {
+      if (role !== "service" || !activating) {
+        throw new Error("jobs require service activation");
+      }
+      const declared = jobDeclaration(definition);
+      return register(
+        { kind: "job", id: declared.id, definition: declared },
+        handler,
+      );
+    },
+  },
   versioning: {
-    onOffer: (handler) =>
-      register({ kind: "versioning", id: "versioning" }, handler),
+    onOffer: (handler, options) =>
+      register({
+        kind: "versioning",
+        id: "versioning",
+        ...(options === undefined
+          ? {}
+          : { definition: { after: jobDependencies(options) } }),
+      }, handler),
   },
   changes: {
     subscribe: (handler) =>
@@ -648,7 +673,12 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
           typeof plugin?.activate !== "function"
         ) throw new Error("server runtime entry requires activate(ctx)");
         if (role === "service") {
-          await plugin?.activate?.(ctx);
+          activating = true;
+          try {
+            await plugin?.activate?.(ctx);
+          } finally {
+            activating = false;
+          }
           if (message.endpointsUrl) {
             await discoverEndpoints(message.endpointsUrl);
           }

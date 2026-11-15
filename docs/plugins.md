@@ -190,6 +190,28 @@ discoverable for disabled plugins and valid declarations whose runtime failed;
 the existing host-owned availability and draft-recovery controls still apply.
 Settings-less plugins have no invented settings action.
 
+## Service startup work
+
+Keep `activate(ctx)` to registration, not bulk recovery. Register service-only
+work with `ctx.jobs.afterActivation({ id: "recover" }, handler)` during activation.
+The returned function is an owned disposer, not a Promise. The host starts each
+job once after activation/heartbeat and source checks, then publishes ready
+without waiting for its result. Runtime/catalogue `jobs` exposes pending/running/
+succeeded/failed/cancelled state; readiness is not completed durable work.
+
+Versioners may use `ctx.versioning.onOffer(handler, { after: ["recover"] })` to
+order captures after job settlement. Offers still consume the existing bounded
+FIFO and deadline while waiting; saves never wait. Recoverable failure releases
+ordering but remains visible. The handler must recover any journal before new
+effects. Active timeout retires the owner and revokes old queued work. Jobs use
+ordinary 30-second service invocation deadlines including waits, own-generation
+authority, no viewer credentials, and existing final source/effect checks.
+
+See `plugin-api.md` for the executable example and disposer/dependency contract.
+This additive contract-2 hook is not a scheduler, automatic retry, persistent job
+history, arbitrary dependency graph or exactly-once effect guarantee. Managed
+timers are not a replacement for it. Backup is its first consumer.
+
 ## Sync plugins and instances
 
 A plugin may declare a `driver` contribution ([driver author guide](drivers.md)).

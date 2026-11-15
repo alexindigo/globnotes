@@ -24,6 +24,7 @@ import type { DisplacementOffer, Versioning } from "../hub/versioning.ts";
 import { readGrantCovers } from "./lifecycle.ts";
 import { PluginHost, type RpcAuthority, type WorkLane } from "./host.ts";
 import { processClock } from "../observed_time.ts";
+import type { ServiceJobs } from "./service_jobs.ts";
 import type { PluginManifest } from "./manifest.ts";
 import type {
   NetworkPolicy,
@@ -101,6 +102,7 @@ interface RuntimeEntry {
   recoveryAdmission?: NetworkPolicy;
   changes?: LogFollower;
   metadata?: MetadataWatches;
+  jobs?: ServiceJobs;
 }
 export interface GuardLease {
   pluginId: string;
@@ -288,6 +290,7 @@ export class PluginRuntime implements Versioning {
       this.adapters.ownerEpoch?.(manifest.id) === epoch &&
       this.adapters.ownerEnabled?.(manifest.id) !== false;
     let candidate: PluginHost | null = null;
+    const reportedJobFailures = new Set<string>();
     entry.starting = (async () => {
       let policy = await this.adapters.network?.policy(manifest.id);
       if (!currentActivation()) return;
@@ -471,6 +474,19 @@ export class PluginRuntime implements Versioning {
           effective: policy?.effective,
           source: policy?.source,
           registrationChanged: () => {
+            if (entry.host === host && currentActivation()) {
+              for (const job of host.serviceJobs.snapshot) {
+                if (job.state !== "failed" || reportedJobFailures.has(job.id)) {
+                  continue;
+                }
+                reportedJobFailures.add(job.id);
+                this.diagnostic(
+                  entry,
+                  job.code ?? "plugin_job_failed",
+                  "post-activation service work failed; effects may already have committed",
+                );
+              }
+            }
             entry.metadata?.sync();
             this.changed();
           },
@@ -492,6 +508,7 @@ export class PluginRuntime implements Versioning {
       );
       candidate = host;
       entry.host = host;
+      entry.jobs = host.serviceJobs;
       entry.sourceToken = policy?.source;
       await host.start();
       if (entry.host !== host || !currentActivation()) {
@@ -529,6 +546,7 @@ export class PluginRuntime implements Versioning {
           "service Worker became unavailable before ready publication",
         );
       }
+      host.admitServiceJobs();
       entry.status = "ready";
       entry.recoveryAdmission = undefined;
       if (this.adapters.metadata) {
@@ -748,7 +766,9 @@ export class PluginRuntime implements Versioning {
       status: entry.status,
       generation: entry.host?.generation ?? null,
       delegated: entry.host?.delegated ?? null,
-      degraded: entry.deliveryFailures > 0,
+      jobs: entry.jobs?.snapshot ?? [],
+      degraded: entry.deliveryFailures > 0 ||
+        entry.jobs?.snapshot.some((job) => job.state === "failed") === true,
       deliveryFailures: entry.deliveryFailures,
       diagnostics: structuredClone(entry.diagnostics),
       ...(entry.source.manifest?.changes

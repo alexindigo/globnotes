@@ -609,9 +609,65 @@ unresolved input echo. Explicit legacy raw filesystem permissions remain separat
 
 Context IDs and built-in async-local correlation are not cryptographic call-stack
 attestation inside a shared JavaScript Worker. The host's manifest, vault/policy,
-generation and guarded-commit checks remain the authority boundary. This v2
-contract adds no public background-task/run facility; that and broader file APIs
-remain v3 work.
+generation and guarded-commit checks remain the authority boundary.
+
+## Post-activation service jobs (contract 2)
+
+Services can register once-per-generation startup work during `activate(ctx)`:
+
+```js
+export function activate(ctx) {
+  ctx.jobs.afterActivation({ id: "inspect-state" }, async () => {
+    // Ordinary mediated reads under this service's grants, never a viewer's.
+    await ctx.fs.stat(".");
+  });
+  ctx.versioning.onOffer(async offer => {
+    // Runs only after inspect-state settles. Saves never await this handler.
+    await ctx.fs.stat(".");
+  }, { after: ["inspect-state"] });
+}
+```
+
+`afterActivation({ id }, handler)` returns the usual owned, idempotent disposer,
+not a completion Promise. Only service activation may declare jobs. Stable job
+IDs must be unique; unknown/duplicate dependency IDs and unsupported options are
+rejected before readiness. Disposing before sealing removes the declaration;
+remaining references fail activation. Disposing a required job after sealing
+retires its generation. Render and driver entries cannot register jobs.
+
+After activation and first-heartbeat qualification, the runtime validates current
+source/delegation and admits all jobs before publishing ready. Admission is once
+per generation, not on catalogue reads. Ready means activation/liveness, not
+completed recovery. Jobs share the ordinary service invocation FIFO and its
+30-second observed-time deadline, including queue wait. Heartbeats do not reset
+that deadline or the unchanged 10-second activation budget.
+
+`versioning.onOffer(handler, { after: [jobId] })` is the only dependency consumer
+in this slice. Offers enter the existing bounded versioning FIFO immediately;
+waiting consumes their normal deadline and queue capacity. A blocked head cannot
+be overtaken. Pre-hooks and unrelated plugins remain independent. `after` means
+settlement, not permanent success: recoverable rejection retains a failed record
+and releases ordering, allowing later genuine captures to retry journal recovery.
+There is no automatic job retry. Active timeout fails the Worker and revokes
+contexts; old queued offers are never redirected to a replacement.
+
+Runtime/catalogue `jobs` contains `{ id, state, code? }`, with state `pending`,
+`running`, `succeeded`, `failed` or `cancelled`. Failures use value-free
+`plugin_job_failed` or `plugin_job_deadline` codes, existing diagnostics and
+degraded status; recoverable rejection does not mislabel a live Worker as an
+activation failure. Records survive failure retirement until intentional
+replacement, including a timeout's failed terminal state. They are not persisted
+history. Disable, replacement, permission reduction and shutdown revoke the
+owning generation; late RPC effects/disclosures cannot use retired authority.
+Cancellation never implies rollback of an effect already committed.
+
+Job RPCs use the service's own generation, installed source, grants and current
+operational/write policy, never request/viewer credentials. Final synchronous
+source/effect/disclosure checks still apply after waits. Managed timers remain
+separate generation-background callbacks: they do not provide this admission,
+ordering or invocation deadline. This hook is the first narrow slice of durable
+jobs/schedules, not durable scheduling, arbitrary task dependencies, exactly-once
+effects, a public start endpoint or a general background-run facility.
 
 ## Effective settings and auxiliary filesystem
 

@@ -34,6 +34,11 @@ import {
   type ReleaseOutcome,
 } from "./execution_context.ts";
 import { compileEndpointTable } from "./endpoint_table.ts";
+import {
+  jobDeclaration,
+  registrationDependencies,
+  ServiceJobs,
+} from "./service_jobs.ts";
 import { METADATA_LIMITS, metadataQuery } from "../metadata/contracts.ts";
 import {
   DRIVER_METHODS,
@@ -80,6 +85,8 @@ export interface InvocationOptions {
   lane?: "versioning";
   /** Host-only synchronous disclosure at actual dispatch, after FIFO waits. */
   prepareArgs?(): unknown[];
+  /** Host-owned startup work, never supplied by a Worker or viewer. */
+  serviceJob?: string;
 }
 export type RpcHandler = (
   method: string,
@@ -185,6 +192,7 @@ interface Slot {
 
 /** One authoritative service/driver slot or a render pool. No call replay. */
 export class PluginHost {
+  readonly serviceJobs: ServiceJobs;
   readonly role: "render" | "service" | "driver";
   private readonly registry = new Map<string, HandlerRegistration>();
   get registrations(): ReadonlyMap<string, HandlerRegistration> {
@@ -276,6 +284,9 @@ export class PluginHost {
       ? new ObservedClock(options.liveness)
       : processClock;
     this.limits = { ...PLUGIN_LIMITS, ...options.limits };
+    this.serviceJobs = new ServiceJobs(() =>
+      this.options.registrationChanged?.()
+    );
     if (this.role === "render" && !manifest.entry) {
       throw new Error("render host requires a rendering entry");
     }
@@ -524,6 +535,7 @@ export class PluginHost {
           slot.exports = new Set(data.exports);
           if (this.role === "service") {
             try {
+              this.serviceJobs.seal(this.registry);
               compileEndpointTable(
                 [...this.registry].filter(([, entry]) =>
                   entry.kind === "endpoint"
@@ -618,6 +630,15 @@ export class PluginHost {
               typeof data.handlerId !== "string" || data.handlerId.length > 128
             ) throw new Error("invalid handler identity");
             this.validateRegistration(data.registration);
+            if (
+              data.registration.kind === "job" &&
+              slot.initialization !== "pending"
+            ) throw new Error("job registration is sealed");
+            if (
+              data.registration.kind === "versioning" &&
+              registrationDependencies(data.registration).length &&
+              slot.initialization !== "pending"
+            ) throw new Error("job dependencies are sealed");
             this.registry.set(
               data.handlerId,
               structuredClone(data.registration),
@@ -633,16 +654,27 @@ export class PluginHost {
         }
         if (data.type === "unregister") {
           const removed = this.registrations.get(data.handlerId);
+          const requiredJob = removed?.kind === "job" &&
+            slot.initialization !== "pending" &&
+            this.serviceJobs.required(removed.id);
           this.registry.delete(data.handlerId);
+          if (removed?.kind === "job" && !requiredJob && !this.stopping) {
+            this.serviceJobs.remove(removed.id);
+            this.cancelServiceWork(removed.id);
+            this.pump();
+          }
           this.options.registrationChanged?.();
           if (
             !this.stopping &&
-            (removed?.kind === "driver" || removed?.kind === "changes" ||
+            (requiredJob || removed?.kind === "driver" ||
+              removed?.kind === "changes" ||
               removed?.kind === "hook" && removed.id.startsWith("pre-"))
           ) {
             this.fail(
               slot,
-              removed?.kind === "changes"
+              requiredJob
+                ? "required job registration disposed"
+                : removed?.kind === "changes"
                 ? "required changes registration disposed"
                 : removed?.kind === "driver"
                 ? "required driver registration disposed"
@@ -899,7 +931,15 @@ export class PluginHost {
       }
       return;
     }
-    if (registration.kind === "hook") {
+    if (registration.kind === "job") {
+      const declared = jobDeclaration(registration.definition);
+      if (
+        declared.id !== registration.id ||
+        [...this.registry.values()].some((entry) =>
+          entry.kind === "job" && entry.id === declared.id
+        )
+      ) throw new Error("duplicate or invalid job identity");
+    } else if (registration.kind === "hook") {
       if (!this.manifest.hooks.includes(registration.id as never)) {
         throw new Error("hook is not declared by this plugin");
       }
@@ -967,6 +1007,7 @@ export class PluginHost {
         [...this.registry.values()].some((r) => r.kind === "changes")
       ) throw new Error("invalid or duplicate changes subscription");
     } else if (registration.kind === "versioning") {
+      registrationDependencies(registration);
       if (!this.manifest.versioning) {
         throw new Error("versioning is not declared by this plugin");
       }
@@ -992,6 +1033,47 @@ export class PluginHost {
       );
     }
     return this.enqueue("call", fn, args, false, this.limits.serviceCallMs);
+  }
+  /** Runtime calls once after source/delegation validation, before publishing ready. */
+  admitServiceJobs(): void {
+    if (this.role !== "service" || !this.available) {
+      throw new Error("service job owner unavailable");
+    }
+    const declarations = this.serviceJobs.admit();
+    for (const [id, handler] of declarations) {
+      this.invoke(handler, [], false, this.limits.serviceCallMs, {
+        generation: this.generation!,
+        serviceJob: id,
+      }).catch(() => {
+        this.serviceJobs.transition(id, "failed", "plugin_job_failed");
+        this.pump();
+      });
+    }
+  }
+  /** Remove retired startup invocations from the existing FIFO, not just status.
+   * Closing their contexts fences late RPCs even if the Worker is draining. */
+  private cancelServiceWork(id?: string): number {
+    const matches = (job: Job) =>
+      job.invocation?.serviceJob !== undefined &&
+      (id === undefined || job.invocation.serviceJob === id);
+    const cancel = (job: Job) => {
+      job.timer();
+      job.reject(new WorkTerminatedError("service job cancelled"));
+    };
+    const cancelled = this.queue.filter(matches);
+    let count = cancelled.length;
+    this.queue = this.queue.filter((job) => !matches(job));
+    for (const job of cancelled) cancel(job);
+    for (const slot of this.slots) {
+      const job = slot.active;
+      if (!job || !matches(job)) continue;
+      job.context?.close({ status: "aborted" });
+      if (job.context) slot.contexts.delete(job.context.reference.id);
+      slot.active = null;
+      cancel(job);
+      count++;
+    }
+    return count;
   }
   invoke(
     handlerId: string,
@@ -1119,14 +1201,35 @@ export class PluginHost {
         pre,
         target,
         invocation,
-        resolve,
-        reject,
+        resolve: (value) => {
+          if (invocation?.serviceJob) {
+            this.serviceJobs.transition(invocation.serviceJob, "succeeded");
+          }
+          resolve(value);
+        },
+        reject: (error) => {
+          if (invocation?.serviceJob) {
+            this.serviceJobs.transition(
+              invocation.serviceJob,
+              "failed",
+              "plugin_job_failed",
+            );
+          }
+          reject(error);
+        },
         timer: this.clock.deadline(timeout, () => {
+          if (invocation?.serviceJob) {
+            this.serviceJobs.transition(
+              invocation.serviceJob,
+              "failed",
+              "plugin_job_deadline",
+            );
+          }
           const pending = pendingQueue();
           const queued = pending.indexOf(job);
           if (queued >= 0) {
             pending.splice(queued, 1);
-            reject(
+            job.reject(
               new WorkTerminatedError(
                 "plugin call deadline exceeded while queued",
               ),
@@ -1188,7 +1291,10 @@ export class PluginHost {
         this.slots.find((candidate) =>
           candidate.ready && candidate.usable && !candidate.activeVersioning
         );
-      if (slot?.ready && slot.usable && !slot.activeVersioning) {
+      if (
+        slot?.ready && slot.usable && !slot.activeVersioning &&
+        this.serviceJobs.eligible(job.name)
+      ) {
         this.versioningQueue.shift();
         this.dispatch(slot, job);
       }
@@ -1244,6 +1350,9 @@ export class PluginHost {
       slot.active = job;
     }
     slot.lastDispatch = ++this.dispatches;
+    if (job.invocation?.serviceJob) {
+      this.serviceJobs.transition(job.invocation.serviceJob, "running");
+    }
     const common = {
       generation: slot.generation,
       id: job.id,
@@ -1285,6 +1394,7 @@ export class PluginHost {
   private retireSlot(slot: Slot, detail: string): void {
     if (slot.retired) return;
     slot.retired = true;
+    if (this.role === "service") this.serviceJobs.cancel();
     slot.retireGeneration();
     slot.bootTimer?.();
     slot.bootTimer = undefined;
@@ -1486,6 +1596,8 @@ export class PluginHost {
   }
   async dispose(): Promise<{ unfinished: number; errors: unknown[] }> {
     this.stopping = true;
+    this.serviceJobs.cancel();
+    const cancelledJobs = this.cancelServiceWork();
     for (const slot of this.slots) {
       slot.retireGeneration();
       slot.background.close({ status: "aborted" });
@@ -1504,7 +1616,7 @@ export class PluginHost {
       job.timer();
       job.reject(new Error("plugin guard owner disabled before execution"));
     }
-    let unfinished = cancelled.length;
+    let unfinished = cancelled.length + cancelledJobs;
     // The disposal budget is observed time; hold the clock while polling.
     const holding = this.clock.hold();
     try {

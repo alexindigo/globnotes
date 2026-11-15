@@ -62,6 +62,23 @@ permanent identity across directory relocation/replacement or distinct bind moun
 
 ## Status and recovery
 
+Startup registers `backup-recovery` through the public service job hook, then
+becomes ready without awaiting bulk journal IO. The host admits recovery once
+per successful generation, with its ordinary 30-second invocation deadline.
+Captures wait for recovery to settle inside the bounded versioning FIFO; saves
+and independent protection hooks do not wait for it. No timer or first save is
+needed to trigger recovery.
+
+The plugin catalogue's `jobs` record distinguishes pending/running startup work
+from succeeded/failed/cancelled recovery. Readiness alone is not completed
+recovery. `pendingRecovery` below means an actual unresolved journal was observed,
+not that inspection has begun or finished: consult the job state as well. Status
+commands/endpoints use the ordinary invocation FIFO and can wait behind recovery.
+A recoverable failure retains its failed job record and journal evidence while
+keeping a live Worker's status available. Later genuine captures retry recovery
+before publishing new bytes; there is no automatic retry or permanent success
+gate. Active timeout or retirement revokes old work, not committed effects.
+
 The namespaced **Inspect versioned backup status** command and protected
 `/_/api/plugins/globnotes-backup/status` route return current-activation counts,
 configuration, sanitized last error/operation identity, pending recovery and
