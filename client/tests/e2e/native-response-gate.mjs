@@ -1,4 +1,5 @@
 // Own real browser response barriers without forwarding or timing the RPC again.
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 export async function createNoteResponseGate(session, { methods = ["POST", "PATCH", "DELETE"], onDeadline } = {}) {
   const records = [], responses = [], reads = [], requests = new Map(), paused = new Map(), active = new Set(), jobs = new Set();
   let closed = false, peak = 0, failure;
@@ -62,11 +63,17 @@ export async function createNoteResponseGate(session, { methods = ["POST", "PATC
   });
   async function close() {
     if (closed) return;
-    closed = true; stop();
-    for (const owner of paused.values()) clearTimeout(owner.timer);
-    for (const owner of paused.values()) if (!owner.released) await session.send("Fetch.failRequest", { requestId: owner.id, errorReason: "Aborted" });
-    await session.send("Fetch.disable");
-    await Promise.allSettled([...jobs]);
+    closed = true;
+    await finalizeNativeCase({ cleanup: [
+      stop,
+      ...[...paused.values()].map(owner => () => clearTimeout(owner.timer)),
+      ...[...paused.values()].filter(owner => !owner.released).map(owner => () =>
+        session.send("Fetch.failRequest", { requestId: owner.id, errorReason: "Aborted" })),
+      () => session.send("Fetch.disable"),
+      // Snapshot after disable: every in-flight observer/deadline job settles
+      // even if an earlier abort or the disable itself failed.
+      () => finalizeNativeCase({ cleanup: [...jobs].map(job => () => job) }),
+    ] });
   }
   try { await session.send("Fetch.enable", { patterns: [{ urlPattern: "*/_/api/notes*", requestStage: "Response" }] }); }
   catch (error) { stop(); throw error; }

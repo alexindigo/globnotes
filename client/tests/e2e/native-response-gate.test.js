@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createNoteResponseGate } from "./native-response-gate.mjs";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 let gate;
 beforeEach(() => vi.useFakeTimers());
 afterEach(async () => { await gate?.close(); gate = null; expect(vi.getTimerCount()).toBe(0); vi.useRealTimers(); });
@@ -60,4 +61,38 @@ it("retains owned transport errors and aborts held responses at disposal, never 
   await gate.close(); expect(f.listeners.size).toBe(0);
   expect(f.send).toHaveBeenCalledWith("Fetch.failRequest", { requestId: "response-A", errorReason: "Aborted" });
   expect(f.send.mock.calls.some(row => row[0] === "Fetch.continueRequest")).toBe(false);
+});
+
+it.each([false, true])("settles jobs and attempts every cleanup after a rejected abort (disable rejects: %s)", async disableRejects => {
+  const f = await fixture(), abortError = Error("abort A failed"), disableError = Error("disable failed"), original = Error("original assertion");
+  f.start(); f.response(); await flush();
+  f.emit("Fetch.requestPaused", { requestId: "response-B", networkId: "wire-B", request, responseStatusCode: 200 }); await flush();
+  let finishBody;
+  const body = new Promise(resolve => { finishBody = resolve; });
+  f.send.mockImplementation(async (method, params) => {
+    if (method === "Fetch.getResponseBody") return body;
+    if (method === "Fetch.failRequest" && params.requestId === "response-A") throw abortError;
+    if (method === "Fetch.disable" && disableRejects) throw disableError;
+    return {};
+  });
+  f.emit("Fetch.requestPaused", { requestId: "response-C", networkId: "wire-C", request, responseStatusCode: 200 }); await flush();
+  const owner = gate; gate = null; // This test consumes and inspects the disposal failure itself.
+  let settled = false;
+  const cleanupAfter = vi.fn();
+  const outcome = finalizeNativeCase({ error: original, cleanup: [() => owner.close(), cleanupAfter] })
+    .then(() => null, error => error).finally(() => { settled = true; });
+  await flush();
+  expect(f.send.mock.calls.filter(row => row[0] === "Fetch.failRequest").map(row => row[1].requestId))
+    .toEqual(["response-A", "response-B", "response-C"]);
+  expect(f.send).toHaveBeenCalledWith("Fetch.disable");
+  expect(settled).toBe(false);
+  expect(f.listeners.size).toBe(0); expect(vi.getTimerCount()).toBe(0);
+  finishBody({ body: '{}', base64Encoded: false });
+  const error = await outcome;
+  expect(error).toBeInstanceOf(AggregateError); expect(error.cause).toBe(original);
+  const flatten = value => value instanceof AggregateError ? value.errors.flatMap(flatten) : [value];
+  expect(flatten(error)).toEqual(disableRejects ? [original, abortError, disableError] : [original, abortError]);
+  expect(cleanupAfter).toHaveBeenCalledOnce();
+  expect(owner.responses).toHaveLength(2);
+  expect(f.send.mock.calls.some(row => ["Fetch.continueRequest", "Fetch.fulfillRequest"].includes(row[0]))).toBe(false);
 });
