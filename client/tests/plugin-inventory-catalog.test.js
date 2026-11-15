@@ -49,6 +49,19 @@ it("one Review joins an already dispatched event read without another GET or PUT
   expect(f.write).toHaveBeenCalledTimes(1);
 });
 
+it("Review retains committed recovery when acknowledgement retires an already accepted joined read", async () => {
+  const f = await fixture(), reviewing = f.controller.review(); await flush();
+  f.invalidate(); await flush();
+  f.reads[3].resolve(catalog(1, true)); await flush();
+  expect(f.runtime.catalog.value.policy.revision).toBe(1);
+  expect(f.runtime.acknowledgePolicy(catalog(2, true).policy, f.runtime.captureOwnership())).toBe(true);
+  f.reads[2].resolve(catalog(1, true));
+  expect(await reviewing).toBe(false);
+  expect(f.controller.snapshot()).toMatchObject({ committed: true, hasWork: true, canRetry: false });
+  expect(f.read).toHaveBeenCalledTimes(4);
+  expect(f.write).toHaveBeenCalledTimes(1);
+});
+
 it.each(["session", "document"])("a Review cannot join the replacement %s lifetime", async ending => {
   const f = await fixture(), reviewing = f.controller.review(); await flush();
   let starting;

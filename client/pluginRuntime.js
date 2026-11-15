@@ -150,7 +150,12 @@ export function createPluginRuntime({
     for (;;) {
       const receipt = await pending;
       if (!active(scope)) return ["error", "inactive"].includes(receipt.status) ? receipt : { status: "superseded" };
-      if (pending === latestRead) return receipt;
+      if (pending === latestRead) {
+        // A completed read can remain latest after a write acknowledgement
+        // retires its publication while this caller is still joining it.
+        if (receipt.status === "accepted" && receipt.serial !== publicationSerial) return { status: "superseded" };
+        return receipt;
+      }
       if (!latestRead) return { status: "superseded" };
       pending = latestRead;
     }

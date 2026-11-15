@@ -59,6 +59,20 @@ describe("review repairs: R17 catalogue publication ownership", () => {
 });
 
 describe("review repairs: R17 shared publisher receipts and policy floor", () => {
+  it("does not lend an accepted receipt invalidated between newer and older read completion", async () => {
+    await runtime.startPluginRuntime();
+    const a = deferred(), b = deferred();
+    adapters.read.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+    const joined = runtime.refreshPluginRuntimeCatalog({ joinLatest: true });
+    const newer = runtime.refreshPluginRuntimeCatalog();
+    b.resolve(catalog(1));
+    expect((await newer).status).toBe("accepted");
+    expect(runtime.acknowledgePluginPolicy(catalog(2).policy, runtime.capturePluginCatalogOwnership())).toBe(true);
+    a.resolve(catalog(1));
+    expect(await joined).toEqual({ status: "superseded" });
+    expect(adapters.read).toHaveBeenCalledTimes(3);
+  });
+
   it("latest read owns a 401 while an older read failure cannot stop the accepted stream", async () => {
     const close = vi.fn(); adapters.events.mockResolvedValue(close);
     await runtime.startPluginRuntime();
