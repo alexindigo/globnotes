@@ -35,8 +35,7 @@
         </template>
       </SettingRow>
     </div>
-    <div v-if="snapshot.busy || snapshot.error" class="flex flex-col gap-2" data-branding-recovery>
-      <p v-if="snapshot.busy" role="status" class="settings-help text-theme-text-muted">{{ snapshot.pendingText }}</p>
+    <div v-if="snapshot.error" class="flex flex-col gap-2" data-branding-recovery>
       <p v-if="snapshot.error" role="alert" class="settings-help text-theme-danger">{{ snapshot.error }} Your branding choices are retained.</p>
       <CustomButton v-if="snapshot.canRetry && !snapshot.busy" size="settings" type="button" label="Check current status" variant="secondary" class="self-start" @click="onReview" />
     </div>

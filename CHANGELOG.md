@@ -132,6 +132,9 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Settings reserve a line for save and pending feedback, keeping that feedback from
+shifting fields and actions.
+
 Settings pages fill the content pane, keeping row controls aligned to its padding
 instead of an invisible narrower column.
 

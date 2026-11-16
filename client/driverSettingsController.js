@@ -20,7 +20,7 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
   writable = () => true, getSession = () => "sync", confirm = async () => "cancel", confirmRemove = async () => false,
   unload = createUnloadConfirmation(), clock = globalThis, timeout = 5000 } = {}) {
   const data = reactive({ loaded:false, loading:false, stale:false, error:"", notice:null, plugins:[],
-    records:new Map(), adding:false, plugin:"", label:"", addError:"", busy:false, reviewing:false, unknown:false, needsReview:false, message:"" });
+    records:new Map(), adding:false, plugin:"", label:"", addError:"", busy:false, reviewing:false, unknown:false, needsReview:false, message:"", feedback:"" });
   const inputs = reactive(new Map()), inputVersions = new Map();
   let disposed = false, active = false, generation = 0, readTicket = 0, flight = null, dirty = false;
   const operation = shallowRef(null);
@@ -125,6 +125,7 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
     };
   }
   const state = readonly(reactive({ ...Object.fromEntries(Object.keys(data).filter(key => key !== "records").map(key => [key, computed(() => data[key])])),
+    statusText:computed(() => data.loading && !data.loaded ? "Loading sync settings..." : data.feedback),
     addFields:computed(() => [{key:'plugin',label:'Sync plugin',type:'select',options:data.plugins.map(plugin=>({label:plugin.name,value:plugin.id}))},{key:'label',label:'Label',type:'text',maxLength:128}]),
     instances:computed(() => [...data.records.values()].map(snapshotRecord)),
     canAdd:computed(() => canMutate() && !!data.plugins.length), canCreate:computed(() => canMutate() && data.adding && !!data.label.trim() && data.plugins.some(plugin => plugin.id === data.plugin)),
@@ -165,7 +166,7 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
     if (record && target.kind === "key") record.base.revision = result.revision;
     if (target.kind === "remove") data.records.delete(target.id);
     if (target.kind === "create") { data.adding = false; data.label = ""; }
-    operation.value = null; data.unknown = data.needsReview = false; data.message = "Saved.";
+    operation.value = null; data.unknown = data.needsReview = false; data.message = ""; data.feedback = "Saved.";
     // Control receipts do not contain a fresh attention token or full state.
     // Keep subsequent actions unavailable until the owning snapshot observes it.
     data.stale = true;
@@ -175,7 +176,7 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
   async function dispatch(kind, id, payload, send, extra = {}) {
     if (!canMutate()) return false;
     const target = { kind, id, payload, generation, ...extra };
-    operation.value = target; data.busy = true; data.message = "Saving sync settings..."; data.error = "";
+    operation.value = target; data.busy = true; data.message = ""; data.feedback = "Saving sync settings..."; data.error = "";
     ++readTicket; flight = null; data.loading = false; updateUnload();
     let observed = false;
     const original = Promise.resolve().then(() => {
@@ -202,7 +203,7 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
       if (disposed || operation.value !== target) return false;
       const status = error.response?.status, code = error.response?.data?.code;
       const known = error.unsent || status && status < 500 && code !== "operation_partial";
-      data.unknown = !known; data.needsReview = true; failureVersion++;
+      data.unknown = !known; data.needsReview = true; data.feedback = ""; failureVersion++;
       data.message = known ? "Sync settings changed or the request was refused. Review current state; your edits are retained." : "The sync request outcome is unknown. Review current state before another explicit choice.";
       return false;
     }
@@ -231,7 +232,7 @@ export function createDriverSettings({ read = () => getDrivers(), create = paylo
       // not equality of write-only key status, fence the next explicit operation.
       operation.value = null; data.unknown = data.needsReview = false;
       for (const record of data.records.values()) record.changed = false;
-      data.message = "Current sync state reviewed. Your edits are retained; choose explicitly to apply them.";
+      data.feedback = ""; data.message = "Current sync state reviewed. Your edits are retained; choose explicitly to apply them.";
       return true;
     } catch { return false; }
     finally { data.reviewing = false; updateUnload(); }

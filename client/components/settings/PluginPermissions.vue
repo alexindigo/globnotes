@@ -24,7 +24,6 @@
       <p>Permission status unavailable.</p>
       <CustomButton size="settings" v-if="view.canReviewStatus" type="button" label="Check current status" variant="secondary" wrap-label @click="onReview(view.id)" />
     </div>
-    <p v-if="view.pendingText" class="permission-quiet" role="status">{{ view.pendingText }}</p>
     <p v-if="view.reloadText" class="permission-quiet">{{ view.reloadText }}</p>
     <p v-if="view.error" class="text-theme-danger settings-help" role="alert">{{ view.error }}</p>
     <div v-if="view.recovery" class="permission-recovery">

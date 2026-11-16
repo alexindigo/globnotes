@@ -66,15 +66,17 @@ describe("Sync workflow ownership", () => {
   });
   it("coalesces invalidations during reads and ignores the superseded snapshot", async () => {
     const first=deferred(), f=fixture({read:vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue({revision:2,notice:null,plugins:[],instances:[]})});
-    f.controller.activate();await flushPromises();f.events.get(TOPICS.VAULT_DRIVERS)();f.events.get(TOPICS.VAULT_DRIVERS)();
-    first.resolve(f.view);await flushPromises();expect(f.controller.state.instances).toHaveLength(0);expect(f.controller.state.loaded).toBe(true);
+    f.controller.activate();await flushPromises();expect(f.controller.state.statusText).toBe('Loading sync settings...');f.events.get(TOPICS.VAULT_DRIVERS)();f.events.get(TOPICS.VAULT_DRIVERS)();
+    first.resolve(f.view);await flushPromises();expect(f.controller.state.instances).toHaveLength(0);expect(f.controller.state.loaded).toBe(true);expect(f.controller.state.statusText).toBe('');
   });
   it("uses visible draft values with the instance CAS and preserves newer typing on acknowledgement", async () => {
     const f=await loaded(), held=deferred();f.update.mockReturnValueOnce(held.promise);
     f.controller.edit("home","baseUrl","http://chosen");f.controller.edit("home","limit","3");const saving=f.controller.save("home");await flushPromises();
+    expect(f.controller.state.statusText).toBe('Saving sync settings...');expect(f.controller.state.message).toBe('');
     expect(f.update).toHaveBeenCalledWith("home",{revision:1,label:"Home",enabled:false,settings:{baseUrl:"http://chosen",limit:3}});
     f.controller.edit("home","baseUrl","http://newer");Object.assign(f.view.instances[0],{revision:2,settings:{baseUrl:"http://chosen",limit:3}});
     held.resolve({id:"home",revision:2});expect(await saving).toBe(true);await flushPromises();
+    expect(f.controller.state.statusText).toBe('Saved.');expect(f.controller.state.message).toBe('');
     expect(row(f).fields[0].value).toBe("http://newer");expect(row(f).dirty).toBe(true);expect(row(f).canSave).toBe(true);
   });
   it("validates raw fields and retains them across explicit Save/Discard/Cancel departure", async () => {
@@ -109,7 +111,9 @@ describe("Sync workflow ownership", () => {
   it.each([409,503])("requires fresh review after a %s before a new explicit settings choice", async status => {
     const f=await loaded();f.controller.edit("home","baseUrl","http://mine");f.update.mockRejectedValueOnce({response:{status,data:{code:status===409?"driver_stale":"operation_partial"}}});
     expect(await f.controller.save("home")).toBe(false);await flushPromises();f.view.instances[0].revision=3;
+    expect(f.controller.state.statusText).toBe('');expect(f.controller.state.message).toContain('Review current state');
     expect(await f.controller.save("home")).toBe(false);expect(await f.controller.review()).toBe(true);expect(f.update).toHaveBeenCalledTimes(1);expect(row(f).fields[0].value).toBe("http://mine");
+    expect(f.controller.state.statusText).toBe('');expect(f.controller.state.message).toContain('choose explicitly');
     expect(await f.controller.save("home")).toBe(true);expect(f.update.mock.calls[1][1].revision).toBe(3);
   });
   it("does not replace a dirty schema with a changed declaration or make review permission to submit it", async () => {

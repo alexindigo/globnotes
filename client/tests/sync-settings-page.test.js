@@ -11,7 +11,7 @@ const button=(wrapper,text)=>wrapper.findAll("button").find(button=>button.text(
 describe("Sync settings rendering",()=>{
   it("renders honest empty/error/loading states and routes the plugin recovery link",async()=>{
     const c=controller(), onPlugins=vi.fn(), wrapper=mount(SyncSettingsPage,{props:{controller:c,onPlugins,snapshot:{loaded:false,loading:true,plugins:[],instances:[]}}});
-    expect(wrapper.text()).toContain("Loading sync settings");expect(wrapper.text()).not.toContain("No sync set up.");
+    expect(wrapper.find('[role=status]').exists()).toBe(false);expect(wrapper.text()).not.toContain("No sync set up.");
     await wrapper.setProps({snapshot:{loaded:true,plugins:[],instances:[]}});expect(wrapper.text()).toContain("No sync set up.");await button(wrapper,"Plugins").trigger("click");expect(onPlugins).toHaveBeenCalledOnce();
     await wrapper.setProps({snapshot:{loaded:true,stale:true,error:"Could not load",plugins:[],instances:[]}});expect(wrapper.text()).not.toContain("No sync set up.");await button(wrapper,"Retry reading").trigger("click");expect(c.refresh).toHaveBeenCalledOnce();
   });

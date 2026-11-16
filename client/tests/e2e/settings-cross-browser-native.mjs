@@ -159,7 +159,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   assert(reenabledEndpoint.status === 200 && reenabledGuard.status === 409, "Re-enable failed to restore endpoint/guard consumers");
    assert(await a.evaluate("document.querySelector('.cm-content')===window.__gpsEditor && document.querySelector('.cm-content')?.textContent.includes('GPS cross-browser dirty marker')"), "Peer reconciliation replaced or lost A's dirty editor");
   await record({ name: "remote-disable-reenable-owned-contributions", disabledCommand: 404, disabledEndpoint: 404, disabledGuardRemoved: 200, reenabledEndpoint: 200, reenabledGuard: 409, recoveredDraft: "A recovery after remote disable", enabledSubscriptionDelta: 1, dirtyEditorRetained: true, inventorySettlement: [disabledInventory, enabledInventory] });
-   await a.poll("!!document.querySelector('#settings-modal-title') && !document.querySelector('[data-modal-top=true]')?.textContent.includes('Saving…')");
+    await a.poll("!!document.querySelector('#settings-modal-title') && document.querySelector('[data-settings-status]')?.textContent===''");
   const beforeRestart = await api(a, "/_/api/plugin-host/session-guard/settings/preferences");
   const aUrl = await a.evaluate("location.href");
   const restarted = await server.restart();

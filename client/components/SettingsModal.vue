@@ -50,7 +50,7 @@
             </p>
             </SettingsTabs>
           </SettingsPage>
-          <SettingsPage v-else-if="currentPage?.kind === 'plugin-page'" :title="pluginPageHeader.title" :description="pluginPageHeader.description">
+          <SettingsPage v-else-if="currentPage?.kind === 'plugin-page'" :title="pluginPageHeader.title" :description="pluginPageHeader.description" :status="currentPageStatus">
           <template #action><CustomButton size="settings" type="button" label="Manage in Plugins" variant="secondary" @click="managePlugin(currentPage.owner)" /></template>
           <SettingsTabs :pages="pluginPageHeader.pages" :selected="currentPageId" :on-select="selectPage">
           <DeclarativeSettingsPage
@@ -65,7 +65,7 @@
           />
           </SettingsTabs>
           </SettingsPage>
-          <SettingsPage v-else-if="currentPage" :title="currentPage.label" :description="currentPage.description">
+          <SettingsPage v-else-if="currentPage" :title="currentPage.label" :description="currentPage.description" :status="currentPageStatus">
             <!-- Appearance: the theme list content (values + callbacks;
              the legacy popup wrapper is not rendered here). -->
             <AppearanceSettingsPage v-if="currentPage.preference === 'appearance'" :snapshot="appearanceSnapshot" :selected="core.currentTheme.value" :on-select="core.setTheme" />
@@ -181,7 +181,7 @@ const { core, permissions, pageState, inventory, drivers,
 const { brandingSnapshot, keybindingSnapshot, appearanceSnapshot, driverSnapshot, accessSummary, accountSummary, attentionItems, canLogout, versionLabel, currentPageId,
   riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice, pathEntries, pathChoiceError, pathLoading, pathCrumbs,
   departureVisible, departureMessage, departureCanSave, departureConfirmText,
-   groupedPages, currentSnapshot, currentPage,
+    groupedPages, currentSnapshot, currentPage, currentPageStatus,
    pluginRows, autoEnableView, pluginPageHeader,
 } = toRefs(session.state);
 onBeforeUnmount(session.dispose);

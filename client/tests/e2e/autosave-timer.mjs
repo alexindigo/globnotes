@@ -291,9 +291,41 @@ export async function autosaveTimer(f) {
       assert(banner.theme === theme && banner.heading === "Before you turn this on" && banner.paragraphs === 3 && banner.toggleInside && banner.checked === "false" && banner.pause === "2" && !banner.interval && banner.secure === false, `Banner/defaults contract: ${JSON.stringify(banner)}`);
       results.push({ case: "settings-banner", ...banner });
     }
-    await f.page.click('.settings-section-warning [role=switch]');
-    await f.page.poll("document.querySelector('.settings-section-warning [role=switch]')?.getAttribute('aria-checked')==='true' && !document.querySelector('[data-declarative-settings] [role=status]')");
-    assert((await f.api(settingsRoute)).body.values.enabled === true, "Native warning-banner toggle did not persist");
+    const toggleSaved = "document.querySelector('.settings-section-warning [role=switch]')?.getAttribute('aria-checked')==='true' && document.querySelector('[data-settings-status]')?.textContent===''";
+    let settingsResponse, gateError;
+    const boundary = {};
+    const stopSettingsGate = f.page.onEvent(event => {
+      if (event.method !== 'Fetch.requestPaused') return;
+      if (event.params.request.method === 'PUT') settingsResponse = event.params;
+      else f.page.send('Fetch.continueRequest', { requestId:event.params.requestId }).catch(error => { gateError=error; });
+    });
+    await f.page.send('Fetch.enable', { patterns:[{ urlPattern:`*/_/api/${settingsRoute}`, requestStage:'Response' }] });
+    try {
+      await f.page.click('.settings-section-warning [role=switch]');
+      await waitUntil(() => {
+        if (gateError) throw gateError;
+        return settingsResponse ? done() : pending('real autosave settings acknowledgement');
+      }, { label:'Autosave settings response held' });
+      await f.page.poll("document.querySelector('[data-settings-status]')?.textContent==='Saving…'");
+      Object.assign(boundary, { upstreamStatus:settingsResponse.responseStatusCode,
+        statusWhileHeld:await f.page.evaluate("document.querySelector('[data-settings-status]').textContent"),
+        readyWhileHeld:await f.page.evaluate(toggleSaved) });
+      assert(boundary.upstreamStatus === 200, 'Held native toggle did not succeed upstream');
+      assert(boundary.readyWhileHeld === false, 'Native toggle completion predicate admitted a still-held save acknowledgement');
+      await f.page.send('Fetch.continueRequest', { requestId:settingsResponse.requestId });
+      settingsResponse = null;
+      await f.page.poll(toggleSaved);
+      const persisted = await f.api(settingsRoute);
+      boundary.persistedEnabled = persisted.body.values.enabled;
+      boundary.statusAfter = await f.page.evaluate("document.querySelector('[data-settings-status]').textContent");
+      assert(boundary.persistedEnabled === true, 'Native warning-banner toggle did not persist');
+      results.push({ case:'settings-toggle-acknowledgement-boundary', ...boundary });
+    } finally {
+      if (settingsResponse) await f.page.send('Fetch.continueRequest', { requestId:settingsResponse.requestId });
+      await f.page.send('Fetch.disable');
+      stopSettingsGate();
+      await Deno.writeTextFile(`${f.directory}/settings-toggle-boundary.json`, JSON.stringify(boundary,null,2), { createNew:true });
+    }
     await capture(f, "settings-light", {
       frame: '[role="dialog"]', navigation: '[aria-label="Settings pages"]',
       content: '[data-settings-content]', warning: '.settings-section-warning', timing: '.settings-section:not(.settings-section-warning)',

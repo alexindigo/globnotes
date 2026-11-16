@@ -15,7 +15,6 @@
       <p v-if="snapshot.changedDescriptor" role="status" class="text-theme-warning">The page definition changed. Your original draft is retained; discard explicitly to load the new definition.</p>
       <pre v-if="!snapshot.available || snapshot.changedDescriptor" tabindex="0" class="focus-ring">{{ snapshot.retainedText }}</pre>
     </div>
-    <p v-if="snapshot.status === 'saving'" class="settings-help text-theme-text-muted" role="status">Saving…</p>
     <div ref="fieldStart" tabindex="-1" class="flex flex-col gap-8">
       <SettingsSection v-for="group in snapshot.fieldGroups" :key="group.id" :title="group.label" :tone="group.tone" :help-paragraphs="group.descriptionParagraphs">
         <SettingsField v-for="field in group.fields" :key="field.key" :field="field" v-bind="snapshot.fieldViews[field.key]" :on-browse="onBrowse"

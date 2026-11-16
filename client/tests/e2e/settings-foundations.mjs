@@ -340,7 +340,7 @@ try {
   const persisted = parseToml(await Deno.readTextFile(`${state}/config.toml`));
   assert(persisted.brand.name === "Foundation persisted A", "Held Branding response did not persist captured A");
   await session.send("Fetch.continueRequest", { requestId: heldBrand.requestId }); held.delete(heldBrand.requestId);
-   await session.poll("document.querySelector('#brand-name')?.value==='Foundation newer B' && !document.querySelector('[data-branding-settings] [role=status]')");
+    await session.poll("document.querySelector('#brand-name')?.value==='Foundation newer B' && document.querySelector('[data-settings-status]')?.textContent===''");
   await session.send("Fetch.disable");
   await invariant();
   assert(writes.length === 1 && writes[0].path === brandPath, "Branding newer-draft flow repeated a mutation");
@@ -359,7 +359,7 @@ try {
    await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Reset branding?')");
   assert(writes.length === 1, "Reset sent a write before explicit confirmation");
   await session.button("Reset branding", '[data-modal-top="true"]');
-  await session.poll("document.querySelector('#brand-name')?.value==='' && !document.querySelector('[data-branding-settings] [role=status]')");
+  await session.poll("document.querySelector('#brand-name')?.value==='' && document.querySelector('[data-settings-status]')?.textContent===''");
   const resetConfig = parseToml(await Deno.readTextFile(`${state}/config.toml`));
   const resetApi = await fetch(`${server.baseUrl}/_/api/config`, { signal: AbortSignal.timeout(5000) }).then(response => response.json());
   assert(!resetConfig.brand?.name && !resetConfig.brand?.accent && !resetApi.brand.name && !resetApi.brand.accent && !resetApi.brand.files.length, "Reset did not clear persisted/API branding");

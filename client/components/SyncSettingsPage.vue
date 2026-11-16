@@ -2,7 +2,6 @@
 <template>
   <div class="sync-settings" data-sync-settings>
     <p v-if="snapshot.notice" class="sync-settings__notice">{{ snapshot.notice }}</p>
-    <p v-if="snapshot.loading && !snapshot.loaded" role="status">Loading sync settings...</p>
     <div v-if="snapshot.error" role="alert"><p>{{ snapshot.error }}</p><CustomButton size="settings" v-if="!snapshot.busy" type="button" label="Retry reading" variant="secondary" @click="controller.refresh" /></div>
     <p v-if="snapshot.message" role="status" :aria-busy="snapshot.busy">{{ snapshot.message }}</p>
     <CustomButton size="settings" v-if="snapshot.canReview" type="button" label="Review current state" variant="secondary" class="self-start" @click="controller.review" />

@@ -6,7 +6,7 @@
 defineProps({ message: { type: String, default: "" } });
 </script>
 <style scoped>
-/* Reserve the same line for empty, pending and complete status snapshots. CSS
+/* Reserve one inherited typographic line for every status snapshot. CSS
    truncation preserves the full text for assistive technology and the title. */
-.status-line { display: block; box-sizing: content-box; block-size: 1.25rem; min-block-size: 1.25rem; line-height: 1.25rem; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-line { display: block; box-sizing: content-box; block-size: 1lh; min-block-size: 1lh; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

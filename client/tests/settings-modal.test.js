@@ -50,6 +50,35 @@ async function open(id, writable = true) {
 }
 
 describe("actual retained Settings entry and inline pages", () => {
+  it('keeps declarative save feedback in the page-owned status slot', async () => {
+    await open('plugin:a:p');
+    let acknowledge;
+    putPluginSettings.mockImplementation((id, page, values, revision) => new Promise(resolve => { acknowledge = () => resolve({ values, revision: revision + 1 }); }));
+    const slot = document.querySelector('[data-settings-status]');
+    expect(slot.textContent).toBe('');
+    await wrapper.find('#settings-field-message').setValue('held save');
+    await wrapper.find('#settings-field-message').trigger('blur'); await flushPromises();
+    expect(slot.textContent).toBe('Saving…');
+    expect(document.querySelector('[data-declarative-settings] [role=status]')).toBeNull();
+    acknowledge(); await flushPromises();
+    expect(document.querySelector('[data-settings-status]')).toBe(slot);
+    expect(slot.textContent).toBe('');
+    expect(document.querySelector('#settings-field-message').value).toBe('held save');
+  });
+  it('keeps Branding pending feedback in the same reserved page slot, not its recovery block', async () => {
+    await open('core:branding');
+    let acknowledge;
+    postBrand.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+    const slot = document.querySelector('[data-settings-status]');
+    await wrapper.find('#brand-name').setValue('held branding');
+    button('Save branding').click(); await flushPromises();
+    expect(slot.textContent).not.toBe('');
+    expect(document.querySelector('[data-branding-recovery]')).toBeNull();
+    expect(document.querySelector('[data-branding-settings] [role=status]')).toBeNull();
+    acknowledge({ name: 'held branding', accent: '#53c729', files: ['logo.svg', 'icon.svg'] }); await flushPromises();
+    expect(document.querySelector('[data-settings-status]')).toBe(slot);
+    expect(slot.textContent).toBe('');
+  });
   it('uses the shared account row for the signed-in summary and logout intent', async () => {
     useGlobalStore().config.authType = 'password';
     getAccessSettings.mockResolvedValue({ mode: 'password', username: 'alice', settingsWritable: true });

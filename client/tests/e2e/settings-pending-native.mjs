@@ -1,10 +1,11 @@
 // Feature-owned response gates exercise the real browser/Settings/store chain.
 // No application clock, request helper, or production acknowledgement is mocked.
+import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 export async function exerciseSettingsPending({ session, server, directory }) {
   const assert = (condition, message) => { if (!condition) throw Error(message); };
   const path = "/_/api/plugin-host/session-guard/settings/preferences";
   const gate = { next: false, response: null, writes: [] };
-  const removeObserver = session.page.onEvent(event => {
+  const observeGate = event => {
     if (event.method === "Network.requestWillBeSent" && event.params.request.method === "PUT" && new URL(event.params.request.url).pathname === path) {
       gate.writes.push({ requestId: event.params.requestId, at: Date.now() });
     }
@@ -14,7 +15,7 @@ export async function exerciseSettingsPending({ session, server, directory }) {
       gate.next = false;
       gate.response = { requestId: response.requestId, status: response.responseStatusCode, at: Date.now() };
     } else session.send("Fetch.continueRequest", { requestId: response.requestId }).catch(error => { gate.error = error.message; });
-  });
+  };
   const pollGate = async predicate => {
     const deadline = Date.now() + 15000;
     while (!predicate()) {
@@ -39,6 +40,9 @@ export async function exerciseSettingsPending({ session, server, directory }) {
   await session.poll("!!document.querySelector('#settings-modal-title')");
   await session.click('[data-settings-nav-id="plugin:session-guard"]');
   await session.poll("document.querySelector('#settings-field-message')?.matches('input:not([readonly]):not([disabled])')");
+  await exerciseSettingsIdleGeometry({ session, directory });
+  await exerciseSettingsStatusLine({ session, directory });
+  const removeObserver = session.page.onEvent(observeGate);
   const initial = await read();
   await session.send("Fetch.enable", { patterns: [{ urlPattern: `*${path}`, requestStage: "Response" }] });
   gate.next = true;
@@ -97,4 +101,106 @@ export async function exerciseSettingsPending({ session, server, directory }) {
   await session.send("Fetch.disable");
   removeObserver();
   return [late, recovery];
+}
+
+async function exerciseSettingsIdleGeometry({ session, directory }) {
+  const results = [];
+  for (const width of [1280, 360, 380, 480]) {
+    await session.send('Emulation.setDeviceMetricsOverride', { width, height: width === 1280 ? 900 : 1400, deviceScaleFactor: 1, mobile: false });
+    for (const [page, selector] of [
+      ['core:branding', '[data-branding-settings]'],
+      ['core:sync', '[data-sync-settings]'],
+      ['plugin:session-guard', '[data-declarative-settings]'],
+    ]) {
+      await session.click(`[data-settings-nav-id="${page}"]`);
+      await session.poll(`!!document.querySelector('${selector}') && !!document.querySelector('[data-settings-status]') && document.querySelector('[data-settings-status]').textContent!=='Loading sync settings...'`);
+      await session.evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
+      const geometry = await session.evaluate(`(()=>{
+        const title=document.querySelector('[data-settings-page-heading]').getBoundingClientRect();
+        const heading=document.querySelector('.settings-page-heading').getBoundingClientRect();
+        const body=document.querySelector('${selector}').getBoundingClientRect();
+        return {titleBottom:title.bottom,bodyTop:body.top,distance:body.top-title.bottom,headingHeight:heading.height};
+      })()`);
+      results.push({ width, page, ...geometry });
+    }
+  }
+  await Deno.writeTextFile(`${directory}/idle-geometry.json`, JSON.stringify(results, null, 2), { createNew: true });
+  // Measured on origin/main b227ecd with this same fixture and browser recipe.
+  for (const result of results) {
+    const expected = result.page === 'core:branding' ? { distance:24, headingHeight:27 }
+      : result.page === 'core:sync' ? { distance:53, headingHeight:27 }
+      : result.width === 360 ? { distance:76, headingHeight:79 } : { distance:34.5, headingHeight:44 };
+    if (Math.abs(result.distance - expected.distance) > 0.5 || Math.abs(result.headingHeight - expected.headingHeight) > 0.5) throw Error(`Idle settings geometry differs from main: ${JSON.stringify({result,expected})}`);
+  }
+  await session.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// Hold the real successful acknowledgement, not the write or a fabricated reply.
+async function exerciseSettingsStatusLine({ session, directory }) {
+  const path = "/_/api/plugin-host/session-guard/settings/preferences";
+  let response, gateError;
+  const requests = [];
+  const stop = session.page.onEvent(event => {
+    if (event.method === 'Network.requestWillBeSent' && event.params.request.method === 'PUT') requests.push(event.params.request);
+    if (event.method !== "Fetch.requestPaused") return;
+    if (event.params.request.method === "PUT") response = event.params;
+    else session.send("Fetch.continueRequest", { requestId: event.params.requestId }).catch(error => { gateError = error; });
+  });
+  const snapshot = () => session.evaluate(`({
+    first:document.querySelector('#settings-field-message').getBoundingClientRect().top,
+    next:document.querySelector('#settings-field-limit').getBoundingClientRect().top,
+    headingHeight:document.querySelector('.settings-page-heading').getBoundingClientRect().height,
+    lines:['[data-settings-status]','[data-note-save-status]'].map(selector=>{
+      const el=document.querySelector(selector);return el?{height:el.getBoundingClientRect().height,line:parseFloat(getComputedStyle(el).lineHeight)}:null;
+    }),
+    saving:document.querySelector('[data-settings-status]')?.textContent==='Saving…',
+    insecure:!isSecureContext, origin:location.origin
+  })`);
+  const capture = async label => {
+    const picture = await session.send("Page.captureScreenshot", { format: "png" });
+    await Deno.writeFile(`${directory}/status-${label}.png`, Uint8Array.from(atob(picture.data), char => char.charCodeAt(0)), { createNew: true });
+  };
+  await session.send("Fetch.enable", { patterns: [{ urlPattern: `*${path}`, requestStage: "Response" }] });
+  try {
+    for (const [label, width, height] of [['desktop',1280,900], ['narrow',360,1400]]) {
+    await session.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    const value = label === 'desktop' ? 'Stable settings feedback' : 'Stable settings feedback narrow';
+    const startWrites = requests.length;
+    await session.click("#settings-field-message");
+    await session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 });
+    await session.type(value);
+    await session.evaluate("document.fonts.ready.then(()=>true)");
+    const before = await snapshot();
+    await capture(`${label}-idle-before`);
+    await session.key("Tab", { code: "Tab", windowsVirtualKeyCode: 9 });
+    await waitUntil(() => {
+      if (gateError) throw gateError;
+      return response ? done() : pending("real blur save acknowledgement");
+    }, { label: "settings status held save" });
+    await session.poll("document.querySelector('[data-settings-status]')?.textContent==='Saving…'");
+    const during = await snapshot();
+    await capture(`${label}-saving`);
+    const status = response.responseStatusCode;
+    await session.send("Fetch.continueRequest", { requestId: response.requestId });
+    response = null;
+    await session.poll("document.querySelector('[data-settings-status]')?.textContent===''");
+    const after = await snapshot();
+    await capture(`${label}-idle-after`);
+    const saved = await session.evaluate(`fetch('${path}').then(r=>r.json())`);
+    const result = { before, during, after, status, saved, requests, movement: {
+      firstDuring: during.first - before.first, firstAfter: after.first - before.first,
+      nextDuring: during.next - before.next, nextAfter: after.next - before.next,
+    } };
+    await Deno.writeTextFile(`${directory}/status-geometry-${label}.json`, JSON.stringify(result, null, 2), { createNew: true });
+    if (status !== 200 || saved.values.message !== value || !before.insecure || before.saving || !during.saving || after.saving || requests.length !== startWrites + 1) throw Error("Status probe did not observe one real saved setting on insecure HTTP");
+    if (Object.values(result.movement).some(value => value !== 0)) throw Error(`Settings moved during save: ${JSON.stringify(result.movement)}`);
+    if (before.headingHeight !== during.headingHeight || before.headingHeight !== after.headingHeight) throw Error(`Heading height changed during ${label} save`);
+    if ([before, during, after].some(state => state.lines.some(line => !line || line.height !== line.line))) throw Error('Status feedback must reserve exactly one inherited typographic line');
+    }
+  } finally {
+    if (response) await session.send("Fetch.continueRequest", { requestId: response.requestId });
+    await session.send("Fetch.disable");
+    stop();
+    await session.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  }
 }

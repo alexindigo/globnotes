@@ -80,7 +80,8 @@ describe('Settings UI rules', () => {
     expect(inventory.findAll('button,[disabled]')).toHaveLength(0);
     const permissions=mount(PluginPermissions,{props:{view:{id:'test',available:true,allowNetwork:true,canChange:false,network:[],imports:[],requests:[],pendingText:recovery.pendingText,recovery}}});
     expect(permissions.text()).toContain('On');
-    expect(permissions.text()).toContain(recovery.pendingText);
+    expect(permissions.text()).not.toContain(recovery.pendingText);
+    expect(inventory.text()).not.toContain(recovery.pendingText);
     expect(permissions.findAll('button,[disabled],label[for]')).toHaveLength(0);
   });
 });

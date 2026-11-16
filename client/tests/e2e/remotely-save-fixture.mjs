@@ -90,14 +90,14 @@ export async function remotelySaveCase(backend, mode, run) {
           await s.key("Enter", {windowsVirtualKeyCode:13});
           assert(await s.read(selector, `document.querySelector(${JSON.stringify(selector)}).value`) === JSON.stringify(value), "Native selection differs");
         },
-        async controls() { await s.poll(`!!document.querySelector('${scope} .driver-instance__header [role=switch]') && !document.querySelector('[data-sync-settings] [aria-busy=true]')`); },
+        async controls() { await s.poll(`!!document.querySelector('${scope} .driver-instance__header [role=switch]') && ['', 'Saved.'].includes(document.querySelector('[data-settings-status]')?.textContent)`); },
         async open(page="Sync") {
           if (!await s.read('[data-app-shell]', "!!document.querySelector('#settings-modal-title')")) {
             if (await s.read('[data-app-shell]', "!!document.querySelector('[title=\"Open sidebar\"]')")) await s.click('[title="Open sidebar"]');
             await s.click('[aria-label="Settings"]');
           }
           await s.button(page, '[role=dialog] nav');
-          if(page === "Sync") await s.poll("!!document.querySelector('[data-sync-settings]') && !document.querySelector('[data-sync-settings]').textContent.includes('Loading sync settings...')");
+          if(page === "Sync") await s.poll("!!document.querySelector('[data-sync-settings]') && !!document.querySelector('[data-settings-status]') && document.querySelector('[data-settings-status]').textContent!=='Loading sync settings...'");
         },
         async close() {
           await s.click('[aria-label="Close settings"]'); await s.poll("!document.querySelector('#settings-modal-title')");

@@ -51,7 +51,7 @@ function fixture(options = {}) {
   const permissions = {
     snapshot: vi.fn(id => permissionRecords[id] ?? {available:false,hasServer:false,plugin:null}),
     permissionView: vi.fn(id => ({ id, requests:[], network:[], imports:[], allowNetwork:false,
-      recovery:permissionRecords[id]?.draft ? {text:"Retained permission choice"} : null })),
+      pendingText:permissionRecords[id]?.pendingText ?? '', recovery:permissionRecords[id]?.draft ? {text:"Retained permission choice"} : null })),
     recoveryIds: vi.fn(() => Object.keys(permissionRecords).filter(id => permissionRecords[id].draft)),
     setSession: vi.fn(), reconcile: vi.fn(), hasWork: vi.fn(() => false), settle: vi.fn(async () => true),
     load: vi.fn(async () => true), retry: vi.fn(async () => true), discard: vi.fn(() => true), dispose: vi.fn(),
@@ -78,6 +78,30 @@ function fixture(options = {}) {
 }
 
 describe("Settings composition and ownership", () => {
+  it('projects page feedback from existing snapshots without moving recovery content into it', async () => {
+    const f = fixture();
+    f.records[pluginPage.id] = { status: 'saving' };
+    await f.session.selectPage(pluginPage.id);
+    expect(f.session.state.currentPageStatus).toBe('Saving…');
+    f.records[pluginPage.id] = { status: 'error', message: 'Retry needed' };
+    expect(f.session.state.currentPageStatus).toBe('');
+    await f.session.selectPage('core:branding');
+    const brand = reactive({ busy: true, pendingText: 'Saving branding...', error: 'Retained choices' });
+    f.core.brandSnapshot.mockImplementation(() => brand);
+    // Invalidate the already-read branding snapshot through its existing input.
+    f.config.brand.name = 'Changed';
+    expect(f.session.state.currentPageStatus).toBe('Saving branding...');
+    brand.busy = false;
+    expect(f.session.state.currentPageStatus).toBe('');
+    const inventory = reactive({ canMutate: false, intent: { type: 'auto-enable' }, busy: true });
+    f.inventory.snapshot.mockImplementation(() => inventory);
+    await f.session.selectPage('core:plugins');
+    expect(f.session.state.currentPageStatus).toBe('Saving plugin policy…');
+    inventory.busy = false;
+    f.permissionRecords.a.pendingText = 'Reading current state...';
+    expect(f.session.state.currentPageStatus).toBe('a: Reading current state...');
+    expect(f.session.state.autoEnableView.recovery.text).toBe('Your policy choice is retained.');
+  });
   it('r2 B1 refreshes the account on reopen and clears a previous login immediately', async () => {
     const readAccess=vi.fn(async()=>({mode:'password',username:'alice',settingsWritable:true}));
     const f=fixture({readAccess}); f.pages.value.push({...corePage('account'),kind:'account'});

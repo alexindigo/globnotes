@@ -53,7 +53,7 @@ export async function syncCase(name, run) {
           if(await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')"))await session.click('[title="Open sidebar"]');
           await session.click('[aria-label="Settings"]');
         }
-        await session.button("Sync","[role=dialog]");await session.poll("!!document.querySelector('[data-sync-settings]') && !document.querySelector('[data-sync-settings]').textContent.includes('Loading sync settings...')");
+        await session.button("Sync","[role=dialog]");await session.poll("!!document.querySelector('[data-sync-settings]') && !!document.querySelector('[data-settings-status]') && document.querySelector('[data-settings-status]').textContent!=='Loading sync settings...'");
       },
       async close() {
         await session.click('[aria-label="Close settings"]');
@@ -64,7 +64,7 @@ export async function syncCase(name, run) {
       // A PUT receipt clears busy before its owning snapshot restores controls.
       // Wait for that rendered consumer, not just the absence of a busy flag:
       // restored Add/Remove rows change the position of lower fields.
-      async controlsReady() {await session.poll("!!document.querySelector('.driver-instance__header [role=switch]') && !document.querySelector('[data-sync-settings] [aria-busy=true]')");},
+      async controlsReady() {await session.poll("!!document.querySelector('.driver-instance__header [role=switch]') && ['', 'Saved.'].includes(document.querySelector('[data-settings-status]')?.textContent)");},
       async key(value) {await f.fill('#driver-key-home-token',value);await session.button("Save key",".driver-instance");await session.poll("document.querySelector('#driver-key-home-token')?.value===''");await f.controlsReady();},
       async one(){return (await api("drivers")).instances.find(row=>row.id==="home");},
       async sync(){await session.button("Sync now",".driver-instance");await f.controlsReady();},

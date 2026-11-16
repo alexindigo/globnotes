@@ -194,6 +194,17 @@ export function createSettingsSession({
     });
   });
 
+  const currentPageStatus = computed(() => {
+    if (currentPage.value?.kind === 'plugin-page') return currentSnapshot.value.status === 'saving' ? 'Saving…' : '';
+    if (currentPage.value?.kind === 'branding') return brandingSnapshot.value.busy ? brandingSnapshot.value.pendingText : '';
+    if (currentPage.value?.kind === 'sync') return driverSnapshot.value.statusText;
+    if (currentPage.value?.kind === 'plugins') return [
+      autoEnableView.value.recovery?.pendingText,
+      ...pluginRows.value.flatMap(row => [row.recovery?.pendingText, row.permission.pendingText ? `${row.name}: ${row.permission.pendingText}` : '']),
+    ].filter(Boolean).join(' ');
+    return '';
+  });
+
   async function refreshCatalog() {
     return await refreshRuntimeCatalog({ joinLatest: true });
   }
@@ -364,7 +375,7 @@ export function createSettingsSession({
     state: readonly(reactive({ brandingSnapshot, keybindingSnapshot, appearanceSnapshot, accessSummary, accountName, accountSummary, attentionItems, canLogout, versionLabel, currentPageId,
       riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice:pathChoiceView, pathEntries, pathChoiceError, pathCrumbs, pathLoading,
       departureVisible, departureMessage, departureCanSave, departureConfirmText, inventorySnapshot,
-       groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageIsPlugin, catalogPlugins, catalogPolicy, driverSnapshot,
+        groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageStatus, currentPageIsPlugin, catalogPlugins, catalogPolicy, driverSnapshot,
       pluginRows, autoEnableView, pluginPageHeader, expandedPluginId })),
     core, permissions, pageState, inventory, drivers,
     setRiskVisible: value => { riskVisible.value = value; },
