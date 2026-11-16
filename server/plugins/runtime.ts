@@ -22,7 +22,7 @@ import { MetadataWatches } from "../metadata/service.ts";
 import { CHANGES_API_VERSION } from "./change_contract.ts";
 import type { DisplacementOffer, Versioning } from "../hub/versioning.ts";
 import { readGrantCovers } from "./lifecycle.ts";
-import { PluginHost, type RpcAuthority } from "./host.ts";
+import { PluginHost, type RpcAuthority, type WorkLane } from "./host.ts";
 import { processClock } from "../observed_time.ts";
 import type { PluginManifest } from "./manifest.ts";
 import type {
@@ -129,6 +129,7 @@ export class PluginRuntime implements Versioning {
   private closed = false;
   private reconciliation = Promise.resolve();
   private catalogVersion = 0;
+  private settlementChanged = Promise.withResolvers<void>();
   private readonly retirements = new Set<Promise<void>>();
   readonly limits: PluginLimits;
 
@@ -150,8 +151,43 @@ export class PluginRuntime implements Versioning {
     this.limits = { ...PLUGIN_LIMITS, ...limits };
   }
   private changed() {
+    this.noteSettlement();
     this.catalogVersion++;
     this.adapters.changed?.();
+  }
+  private noteSettlement(): void {
+    const previous = this.settlementChanged;
+    this.settlementChanged = Promise.withResolvers<void>();
+    previous.resolve();
+  }
+  /** Internal owner observation. Deliberately not projected into HTTP/SDK status. */
+  settlement(id: string, lanes: readonly WorkLane[] = ["startup"]) {
+    const entry = this.entries.get(id);
+    const work = entry?.host?.settlement(lanes);
+    return {
+      owner: entry && !["disabled", "discovered"].includes(entry.status)
+        ? entry.activation
+        : undefined,
+      status: this.status(id),
+      pending: work?.pending ?? 0,
+      completion: work?.completion ?? Promise.resolve(),
+      failure: work?.failure ?? null,
+      changed: this.settlementChanged.promise,
+    };
+  }
+  /** Completion of this generation's already-admitted calls, under their own deadlines. */
+  async settleWork(id: string, lanes?: readonly WorkLane[]): Promise<void> {
+    const entry = this.entries.get(id), host = entry?.host;
+    if (!entry || !host) {
+      throw new Error(
+        entry?.diagnostics.at(-1)?.detail ?? `plugin '${id}' owner unavailable`,
+      );
+    }
+    const activation = entry.activation;
+    await host.settleWork(lanes);
+    if (entry.host !== host || entry.activation !== activation) {
+      throw new Error(`plugin '${id}' owner replaced before settlement`);
+    }
   }
   private diagnostic(
     entry: RuntimeEntry,
@@ -438,6 +474,7 @@ export class PluginRuntime implements Versioning {
             entry.metadata?.sync();
             this.changed();
           },
+          settlementChanged: () => this.noteSettlement(),
           failed: () => {
             if (entry.host !== host || !currentActivation()) return;
             entry.changes?.stop();

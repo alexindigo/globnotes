@@ -299,14 +299,12 @@ Deno.test("driver native acceptance: one hung HTTP-backed instance fails its hea
     const first = await f.add("First");
     remote.native.hang = true;
     const hanging = f.run(first);
-    await waitUntil(
-      async () =>
-        (await f.one(first)).status === "failed"
-          ? done()
-          : pending("heartbeat"),
-      { label: "hung native driver heartbeat failure" },
-    );
     await hanging;
+    assertEquals(
+      (await f.one(first)).status,
+      "failed",
+      "the owned cycle settles on its real Worker failure",
+    );
     remote.native.hang = false;
     remote.put("second.md", "other instance survives");
     const second = await f.add("Second");

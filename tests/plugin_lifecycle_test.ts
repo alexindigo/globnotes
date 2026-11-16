@@ -8,7 +8,7 @@ import { testMetadata, testServices } from "./helpers/environment.ts";
  * wiring main.ts performs. */
 
 import { currentBase } from "./helpers/storage.ts";
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import * as path from "@std/path";
 import { GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
@@ -944,14 +944,13 @@ Deno.test("lifecycle: on-only plugin overflow/failure never blocks a note action
     assert(expire, "hanging observer must arm its production call deadline");
     assertEquals(cancelled, false);
     assertEquals(b.runtime.status("hanger")?.status, "ready");
-    expire();
-    await waitUntil(
-      () =>
-        b.runtime.status("hanger")?.status === "failed"
-          ? done()
-          : waitPending(b.runtime.status("hanger")),
-      { label: "expired hanging observer retired" },
+    const settling = assertRejects(
+      () => b.runtime.settleWork("hanger", ["ordinary"]),
+      Error,
+      "deadline exceeded",
     );
+    expire();
+    await settling;
     assertEquals(cancelled, true);
     const status = b.runtime.status("hanger");
     assert(status !== null);

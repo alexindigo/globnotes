@@ -18,6 +18,7 @@ import { state } from "../server/state.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { command } from "./helpers/process.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
+import { pluginSettled } from "./helpers/plugin_ready.ts";
 
 const settingsPut = (await import(
   new URL(
@@ -88,10 +89,10 @@ async function settingsTransitionFixture(
         "unrelated-transition": runtime.status("unrelated-transition"),
       }), { label: "settings transition readiness" });
   await runtime.reconcile();
-  await until(() =>
-    runtime.status("transition")?.status === "ready" &&
-    runtime.status("unrelated-transition")?.status === "ready"
-  );
+  await Promise.all([
+    pluginSettled(runtime, "transition", "ready"),
+    pluginSettled(runtime, "unrelated-transition", "ready"),
+  ]);
   await manager.ensureStarted();
   let view = await manager.network.view("transition");
   await manager.network.controls("transition", {
@@ -288,7 +289,7 @@ Deno.test("review repairs: R02 publication failure reports persisted revision, f
     });
     try {
       await runtime.reconcile();
-      await b.until(() => runtime.status("transition")?.status === "ready");
+      await pluginSettled(runtime, "transition", "ready");
       const consumer = await runtime.invokeCommand(
         "transition",
         "state",
@@ -664,7 +665,7 @@ Deno.test("review repairs: R08 late recovery A cannot replace explicitly enabled
     const { metadata } = await b.manager.policy.read();
     await b.manager.policy.setEnabled("transition", true, metadata);
     await b.manager.reconcileOwners({ replaceId: "transition" });
-    await b.until(() => b.runtime.status("transition")?.status === "ready");
+    await pluginSettled(b.runtime, "transition", "ready");
     const generation = b.runtime.status("transition")!.generation;
     const render = b.manager.hosts.get("transition")!;
     const before = await b.runtime.invokeCommand("transition", "state", {});

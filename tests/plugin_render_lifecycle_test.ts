@@ -17,6 +17,11 @@ import {
   WorkerDeliveryGate,
 } from "./helpers/worker_liveness.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { pluginReady } from "./helpers/plugin_ready.ts";
+import {
+  hostInitialized,
+  workMilestone,
+} from "./helpers/product_settlement.ts";
 import {
   done as waitDone,
   failed as waitFailed,
@@ -139,14 +144,7 @@ async function ready(
   runtime: ReturnType<PluginManager["configureRuntime"]>,
   id: string,
 ) {
-  await waitUntil(() => {
-    const status = runtime.status(id);
-    if (status?.status === "ready") return waitDone();
-    if (status?.status === "failed") {
-      return waitFailed(`service ${id} failed`, status);
-    }
-    return waitPending(status);
-  }, { label: `service ${id} ready` });
+  await pluginReady(runtime, id);
 }
 
 async function reviewRenderBarrier(
@@ -342,7 +340,11 @@ Deno.test("review repairs: R03 held same-code recovery binds fresh settings sour
       host.call("parseNode", [{}]),
     ]) as { nonce: string }[];
     failing = host.call("parseNode", [{ crash: true }]).catch((error) => error);
-    await reviewRenderBarrier(crashEntered.promise, "fresh-source crash");
+    await workMilestone(
+      host.settleWork(["ordinary"]),
+      crashEntered.promise,
+      "fresh-source crash",
+    );
     const data = new PluginDataStore(b.fixture.statePath, {
       commit: (effect) => effect(),
     }).forPlugin("probe");
@@ -382,13 +384,7 @@ Deno.test("review repairs: R03 held same-code recovery binds fresh settings sour
       "recovery pending",
     );
     recoveryRelease.resolve();
-    await waitUntil(
-      () =>
-        host.available
-          ? waitDone()
-          : waitPending({ available: false, generations: host.generations }),
-      { label: "recovered render host available", intervalMs: 5 },
-    );
+    await hostInitialized(host);
     assert(host.available);
     assertEquals(b.manager.hosts.get("probe"), host);
     assertEquals(
@@ -469,7 +465,11 @@ Deno.test("review repairs: R03 late failed-pool admission cannot construct over 
       return value;
     };
     failing = old.call("parseNode", [{ crash: true }]).catch((error) => error);
-    await reviewRenderBarrier(crashEntered.promise, "A crash");
+    await workMilestone(
+      old.settleWork(["ordinary"]),
+      crashEntered.promise,
+      "A crash",
+    );
     crashRelease.resolve();
     await reviewRenderBarrier(entered.promise, "A recovery admission");
     assertEquals(old.available, false);

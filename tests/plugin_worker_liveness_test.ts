@@ -16,6 +16,7 @@ import {
   WorkerDeliveryGate,
 } from "./helpers/worker_liveness.ts";
 import { command } from "./helpers/process.ts";
+import { workMilestone } from "./helpers/product_settlement.ts";
 
 // Baseline-compatible: unchanged HostOptions and real native activation/watchdog timers.
 Deno.test("startup liveness: native ready-before-heartbeat beyond1000ms", async () => {
@@ -61,11 +62,15 @@ Deno.test("startup liveness: native ready-before-heartbeat beyond1000ms", async 
   });
   started.catch(() => undefined);
   try {
-    await bounded(gate.ready.promise, "actual initialized ready");
+    await workMilestone(
+      started,
+      gate.ready.promise,
+      "actual initialized ready",
+    );
     const generation = host.generation;
     const origin = performance.now();
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    await bounded(gate.heartbeat.promise, "real held heartbeat");
+    await workMilestone(started, gate.heartbeat.promise, "real held heartbeat");
     console.log(JSON.stringify({
       nativeProtocolReady: true,
       heldHeartbeats: gate.workers[0].held.length,
@@ -89,7 +94,7 @@ Deno.test("startup liveness: native ready-before-heartbeat beyond1000ms", async 
     );
     gate.holdHeartbeat = false;
     gate.releaseHeartbeat();
-    await bounded(started, "combined readiness");
+    await started;
     assert(host.available);
     assertEquals(host.generation, generation);
     const handler = [...host.registrations.keys()][0];
@@ -491,7 +496,7 @@ for (const waiting of ["heartbeat", "initialization"] as const) {
       c.gate.releaseHeartbeat();
       if (c.gate.workers[0].ready) c.gate.releaseReady();
       release.resolve();
-      await bounded(disposal, "pending-slot disposal");
+      await disposal;
       await assertRejects(() => c.started, Error, "stopped");
       assertEquals(await actor!.readiness, { status: "aborted" });
       assertEquals(c.host.available, false);
@@ -805,10 +810,7 @@ Deno.test("startup liveness: qualified disposal result remains deliverable while
     await c.heartbeats();
     c.gate.releaseHeartbeat();
     await c.started;
-    const result = await bounded(
-      c.host.dispose(),
-      "actual disposal result delivery",
-    );
+    const result = await c.host.dispose();
     assertEquals(result, {
       unfinished: 0,
       errors: ["actual disposal consumer"],

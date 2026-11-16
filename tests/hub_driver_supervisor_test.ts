@@ -19,6 +19,7 @@ import { LivenessClock } from "./helpers/worker_liveness.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 import { fixturePage } from "./helpers/plugin_fixture.ts";
 import { memoryRemote } from "./helpers/memory_remote.ts";
+import { pluginSettled } from "./helpers/plugin_ready.ts";
 
 const guard = () => {};
 function fixture(
@@ -874,13 +875,7 @@ Deno.test("driver supervisor: settings source reduction retires the driver at co
       commit: (effect) => f.lifecycle.gate.run(effect),
     });
     await runtime.reconcile();
-    await waitUntil(
-      () =>
-        runtime.status("test-driver")?.status === "ready"
-          ? done()
-          : pending(runtime.status("test-driver")),
-      { label: "driver's service contributor ready" },
-    );
+    await pluginSettled(runtime, "test-driver", "ready");
     await f.approve();
     const instance = await f.create();
     await f.key(instance.id);
@@ -953,13 +948,7 @@ Deno.test("driver supervisor: narrowed recovery cannot borrow an unsettled servi
       commit: (effect) => f.lifecycle.gate.run(effect),
     });
     await runtime.reconcile();
-    await waitUntil(
-      () =>
-        runtime.status("test-driver")?.status === "ready"
-          ? done()
-          : pending(runtime.status("test-driver")),
-      { label: "source-ceiling service ready" },
-    );
+    await pluginSettled(runtime, "test-driver", "ready");
     await f.approve();
     const instance = await f.create();
     await f.key(instance.id);

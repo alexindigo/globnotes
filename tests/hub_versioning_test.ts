@@ -4,13 +4,15 @@
  * plugin completion dependency on any writer. */
 
 import { currentBase } from "./helpers/storage.ts";
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { pluginOperationsFixture } from "./helpers/plugin_operations_fixture.ts";
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
 import { versionOf } from "../server/hub/merge.ts";
 import { VaultEffects } from "../server/hub/effects.ts";
-import { done, pending, waitUntil } from "./helpers/wait.ts";
+import { pluginSettled } from "./helpers/plugin_ready.ts";
+import { duringWork } from "./helpers/product_settlement.ts";
+import { done, pending } from "./helpers/wait.ts";
 
 const VERSIONER = `
 let mode = "keep", slowMs = 3000, guardMs = 0, finished = 0, release;
@@ -94,11 +96,7 @@ async function versionerFixture(
   });
   const facts: OperationFact[] = [];
   b.lifecycle.onFact((fact) => facts.push(fact));
-  const idle = (id = "versioner") =>
-    waitUntil(() => {
-      const status = b.runtime.status(id);
-      return status?.versioningPending === 0 ? done() : pending(status);
-    }, { label: `versioning delivery idle: ${id}` });
+  const idle = (id = "versioner") => b.runtime.settleWork(id, ["versioning"]);
   return {
     ...b,
     facts,
@@ -213,13 +211,7 @@ Deno.test("versioning: facade replace, overwrite-move and removal deliver only a
       }`,
     });
     await v.runtime.reconcile();
-    await waitUntil(
-      () =>
-        v.runtime.status("writer")?.status === "ready"
-          ? done()
-          : pending(v.runtime.status("writer")),
-      { label: "facade writer ready" },
-    );
+    await pluginSettled(v.runtime, "writer", "ready");
     Deno.writeTextFileSync(`${v.fixture.vault}/source.bin`, "old");
     Deno.writeTextFileSync(`${v.fixture.vault}/target.bin`, "target");
     await v.runtime.invokeCommand("writer", "write", { op: "replace" });
@@ -303,10 +295,7 @@ Deno.test("versioning: failures, declines and ordinary call deadlines are plugin
       Deno.readTextFileSync(`${v.fixture.vault}/Note.md`),
       "after-slow",
     );
-    await waitUntil(() => {
-      const status = v.runtime.status("versioner");
-      return status?.status === "failed" ? done() : pending(status);
-    }, { label: "hung versioner ordinary deadline" });
+    await assertRejects(() => v.idle(), Error, "deadline exceeded");
     await v.save("Note", "after-crash");
     assertEquals(
       Deno.readTextFileSync(`${v.fixture.vault}/Note.md`),
@@ -384,20 +373,14 @@ for (
         },
       }, { "service.js": `const GUARD = false;\n${VERSIONER}` });
       await v.runtime.reconcile();
-      await waitUntil(
-        () =>
-          v.runtime.status("healthy")?.status === "ready"
-            ? done()
-            : pending(v.runtime.status("healthy")),
-        { label: "healthy versioner ready" },
-      );
+      await pluginSettled(v.runtime, "healthy", "ready");
       await v.mode("hold");
       await v.create("Queue", "v0");
       await v.save("Queue", "v1");
-      await waitUntil(async () => {
+      await duringWork(v.idle(), async () => {
         const count = await v.command("run", { count: true });
         return count === 1 ? done() : pending(count);
-      }, { label: "first offer held" });
+      }, "first admitted offer entered the Worker");
       for (let i = 2; i <= 5; i++) {
         await v.save("Queue", `v${i}`);
         await v.idle("healthy");
@@ -441,10 +424,10 @@ Deno.test("versioning: guards finish before commit, not before plugin work finis
     v.facts.length = 0;
     await v.save("Note", "v2");
     assertEquals(Deno.readTextFileSync(`${v.fixture.vault}/Note.md`), "v2");
-    await waitUntil(async () => {
+    await duringWork(v.idle(), async () => {
       const count = await v.command("run", { count: true });
       return count === 1 ? done() : pending(count);
-    }, { label: "post-guard versioner started" });
+    }, "post-guard offer entered the Worker");
     await v.command("run", { release: true });
     assertEquals((await v.seen())[0].disk, "v2");
   } finally {

@@ -6,7 +6,6 @@ import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import {
   bounded as livenessBounded,
-  until,
   WorkerDeliveryGate,
 } from "./helpers/worker_liveness.ts";
 import { GlobalConfig } from "./helpers/config.ts";
@@ -18,6 +17,7 @@ import { processClock } from "../server/observed_time.ts";
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
+import { pluginMilestone, pluginSettled } from "./helpers/plugin_ready.ts";
 
 Deno.test("plugin runtime: failed Worker cannot become ready after final policy await", async () => {
   const fixture = await pluginFixture();
@@ -164,7 +164,9 @@ Deno.test("startup liveness: service catalog commands endpoints and SDK permissi
   const gate = new WorkerDeliveryGate();
   try {
     await runtime.reconcile();
-    await livenessBounded(
+    await pluginMilestone(
+      runtime,
+      "liveness-catalog",
       gate.ready.promise,
       "actual service initialized ready",
     );
@@ -182,16 +184,15 @@ Deno.test("startup liveness: service catalog commands endpoints and SDK permissi
       Error,
       "unavailable",
     );
-    await livenessBounded(
+    await pluginMilestone(
+      runtime,
+      "liveness-catalog",
       gate.heartbeat.promise,
       "actual held service heartbeat",
     );
     gate.holdHeartbeat = false;
     gate.releaseHeartbeat();
-    await until(
-      () => runtime.status("liveness-catalog")?.status === "ready",
-      "final runtime policy/catalog publication",
-    );
+    await pluginSettled(runtime, "liveness-catalog", "ready");
     const consumed = await runtime.invokeCommand(
       "liveness-catalog",
       "inspect",
@@ -254,7 +255,9 @@ for (const boundary of ["operation", "per-plugin"] as const) {
     const gate = new WorkerDeliveryGate();
     try {
       await runtime.reconcile();
-      await livenessBounded(
+      await pluginMilestone(
+        runtime,
+        "liveness-guard",
         gate.ready.promise,
         "registered real required guard",
       );
@@ -317,10 +320,7 @@ for (const boundary of ["operation", "per-plugin"] as const) {
         );
         assertEquals(cancelled, false);
         deadline.expire();
-        const error = await livenessBounded(
-          outcome,
-          "required guard deadline",
-        );
+        const error = await outcome;
         assertEquals(error.code, "plugin_guard_failed");
         assertEquals(error.status, 503);
         assertEquals(cancelled, true);

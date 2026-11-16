@@ -416,6 +416,60 @@ On failure, the launcher names the failing step and prints log tails. CI
 also uploads `test-failure-diagnostics`, containing the all/timing run
 directories' `logs/` and JSON artifacts.
 
+## Product settlement versus readiness
+
+An in-process wait for admitted plugin work uses the existing owner, not a
+second wall-clock verdict. `PluginHost.settlement()` captures only work already
+admitted in the selected lanes; `settleWork()` awaits that cohort under its
+unchanged product deadlines. Later admissions do not extend it. Ordinary,
+versioning, guard and startup lanes remain independent. A callback's normal
+rejection settles its work while retaining the existing runtime diagnostics.
+Host-driven termination, an included queued deadline, retirement or replacement
+rejects the wait, even when a surviving render pool replaces the failed replica.
+Settlement does not promise callback success or durable effects; tests
+still assert the final bytes, counters and diagnostics.
+
+`pluginSettled()`, `pluginReady()` and `hostInitialized()` follow bounded Worker initialization
+through the host/runtime's internal observation. Only policy/admission/publication
+phases without an admitted bounded cohort retain `waitUntil()`. Status-only sources
+retain their existing readiness behavior. No HTTP, SDK or Worker-message fields
+are added, and no production deadline or general readiness constant changes.
+`pluginReady()` also waits for enablement admission before an owner exists;
+`pluginSettled()` retains its terminal-state assertion. Intermediate observations
+of an admitted, deliberately held call use `duringWork()`: read the consumer until
+the expected marker or that captured call's actual settlement/deadline, never a
+new work cohort or an independent timer. The operation itself is never retried.
+`workMilestone()` races a native RPC/descriptor marker against its known call;
+`pluginMilestone()` first separates unbounded admission from bounded initialization.
+Neither adds a timer around admitted work.
+
+| # | Sites | Treatment |
+|---|---|---|
+| 1 | `helpers/backup_fixture.ts`, `hub_versioning_test.ts` idle/hung waits | Captured ordinary/versioning cohort, then one final consumer assertion; hung work rejects through its real deadline |
+| 2 | `helpers/plugin_operations_fixture.ts`, inline service startup in authority, data, schema-lease, render-lifecycle, endpoint-transport, driver-supervisor tests | Shared owner-aware startup helpers; existing callers in runtime, lifecycle, changes, settings, permissions and metadata tests inherit this behavior |
+| 3 | `plugin_worker_liveness_test.ts`, `helpers/plugin_worker_liveness_child.ts`, `plugin_runtime_readiness_test.ts` | Await production-clock startup, disposal and invocation promises directly where they already own termination; a replacement with a live product clock uses `hostInitialized()`. Keep fixture containment when a manually advanced clock deliberately disables automatic termination |
+| 4 | `hub_driver_runtime_test.ts`, `hub_driver_native_acceptance_test.ts`, hanging observer in `plugin_lifecycle_test.ts` | Await the actual open/cycle or captured owner cohort; inspect the failed consumer state afterward |
+| 5 | Native RPC entry in `plugin_invocation_context_test.ts`, native initialization/heartbeat markers and pre-crash RPCs in liveness/readiness/render tests | Known calls or admitted initialization cohorts bound the existing markers. The hung-child heartbeat count is inspected after its actual invocation deadline, not through another readiness poll |
+| 6 | Scanner/watcher admission and namespace propagation | Readiness remains: no deadline for the complete external event-to-scan pipeline |
+| 7 | Index rebuild, metadata projection/query/watch convergence, log cursor catch-up | Classified separately from a single callback: parsing, scheduling, multiple packets and retries have no whole-work completion deadline; readiness remains |
+| 8 | Action receipts, permission reloads and composite settings/driver replacement | Readiness remains for the complete coordinator: lock/policy/source I/O and later publication are not bounded by one Worker call |
+| 9 | Manually advanced clocks, background work and whole manager/policy barriers | Fixture containment remains where automatic product deadline progression is disabled or no whole-work bound exists; known native call milestones are converted separately |
+| 10 | Real filesystem `fs_deadline` | Unchanged: an actual product failure, not a competing readiness verdict |
+| 11 | Browser DOM and external process/transport readiness | Existing readiness remains |
+| 12 | Native backup idle in `client/tests/e2e/backup-plugin.mjs` | Unchanged and PENDING the user's public-projection decision, not declined or dropped; catalogue-only readiness also cannot consume the internal observation |
+
+`product_settlement_test.ts` covers fixed cohorts, independent lanes, normal
+callback errors, the unchanged hung-call deadline, queued expiry, retirement,
+replica replacement, synchronous admission failure and a missing intermediate
+consumer outcome. The serial timing regression
+`timing/product_settlement_stall_test.ts` stops only its owned backup child at the
+first staging cleanup of capture 63. The controller runs the original count test
+before resuming it, requiring a measured wall stall longer than 15 seconds and
+less than 30 seconds of product observed time. It records the first idle verdict,
+same-generation completion, exact backup bytes and journal removal. The baseline
+fails at readiness while the corrected owner wait can observe that same capture
+finish; neither capture nor idle observation is retried.
+
 ## Evidence
 
 ### Bounded log follower foundation

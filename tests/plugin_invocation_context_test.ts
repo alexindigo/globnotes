@@ -20,6 +20,7 @@ import { servicePluginRpc } from "../server/plugins/rpc.ts";
 import { PluginRuntime } from "../server/plugins/runtime.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
+import { workMilestone } from "./helpers/product_settlement.ts";
 
 function deferred<T>() {
   return Promise.withResolvers<T>();
@@ -103,7 +104,7 @@ Deno.test("plugin context: independent managed timer cannot borrow an active pre
       { causal: { parentId: "guard-op", depth: 4 } },
     );
     guarded.catch(() => undefined);
-    await bounded(guardEntered.promise);
+    await workMilestone(guarded, guardEntered.promise, "guard RPC entered");
     await bounded(backgroundEntered.promise);
     const request = observations.find((value) =>
       value.method === "actions.request"
@@ -315,7 +316,11 @@ Deno.test("plugin context: command arguments cannot inject causal metadata and r
       causalDepth: 900,
     }]);
     running.catch(() => undefined);
-    const authority = await bounded(accepted.promise);
+    const authority = await workMilestone(
+      running,
+      accepted.promise,
+      "request admission entered",
+    );
     assertEquals(authority.causal, { parentId: undefined, depth: 0 });
     const release =
       (authority as RpcAuthority & { release?: Promise<{ status: string }> })
@@ -365,7 +370,11 @@ Deno.test("plugin context: ordinary error releases admitted work but timeout abo
       const running = host.invoke([...host.registrations.keys()][0], []).catch(
         (error) => error,
       );
-      const authority = await bounded(accepted.promise);
+      const authority = await workMilestone(
+        host.settleWork(["ordinary"]),
+        accepted.promise,
+        "ending request admission entered",
+      );
       assert(await running instanceof Error);
       assertEquals(await authority.release, {
         status: ending === "error" ? "settled" : "aborted",
@@ -470,7 +479,11 @@ Deno.test("plugin context: missing unknown closed cross-slot and old-generation 
     const [a, b] = hosts;
     const holding = a.invoke(handler(a, "hold"), []);
     holding.catch(() => undefined);
-    const foreign = await bounded(entered.promise);
+    const foreign = await workMilestone(
+      holding,
+      entered.promise,
+      "foreign context RPC entered",
+    );
     const closed = await b.invoke(handler(b, "context"), []) as {
       contextId: string;
       generation: string;

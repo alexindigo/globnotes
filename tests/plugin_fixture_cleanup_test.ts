@@ -128,10 +128,7 @@ for (const scenario of scenarios) {
         scenario.name,
         10000,
       );
-      if (scenario.stage === "settled") {
-        assert(error instanceof Error);
-        assertEquals(error.cause, setupError);
-      } else assertEquals(error, setupError);
+      assertEquals(error, setupError);
       assertEquals(events.slice(0, 2), ["runtime", "manager"]);
       assertEquals({ ...state }, previousState);
       assertEquals(managers.length, 1);

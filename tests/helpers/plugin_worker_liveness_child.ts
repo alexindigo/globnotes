@@ -7,9 +7,9 @@ import { pluginFixture } from "./plugin_fixture.ts";
 import {
   bounded,
   LivenessClock,
-  until,
   WorkerDeliveryGate,
 } from "./worker_liveness.ts";
+import { workMilestone } from "./product_settlement.ts";
 
 const [kind, evidence] = Deno.args;
 assert(
@@ -66,30 +66,29 @@ try {
     clock.tick(10000, true);
     await assertRejects(() => pending!, Error, "activation deadline exceeded");
   } else {
-    await bounded(host.start(), "real established Worker");
+    await host.start();
     const initialCount = gate.workers[0].received.filter((message) =>
       message.type === "heartbeat"
     ).length;
     assert(initialCount > 0);
     pending = host.invoke([...host.registrations.keys()][0], []);
     pending.catch(() => undefined);
-    await bounded(entered.promise, "actual hung invocation");
-    if (kind === "asynchronous-hang") {
-      await until(
-        () =>
-          gate.workers[0].received.filter((message) =>
-            message.type === "heartbeat"
-          ).length >= initialCount + 2,
-        "live asynchronous handler heartbeats",
-      );
-    }
+    await workMilestone(pending, entered.promise, "actual hung invocation");
     await assertRejects(
-      () => bounded(pending!, "native hang rejected", 6000),
+      () => pending!,
       Error,
       kind === "synchronous-hang"
         ? "heartbeat timeout"
         : "call deadline exceeded",
     );
+    if (kind === "asynchronous-hang") {
+      assert(
+        gate.workers[0].received.filter((message) =>
+          message.type === "heartbeat"
+        ).length >= initialCount + 2,
+        "the actual hung handler retained live heartbeat delivery before its deadline",
+      );
+    }
   }
   assertEquals(host.available, false);
   assertEquals(host.registrations.size, 0);

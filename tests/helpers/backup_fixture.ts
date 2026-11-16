@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { readManifest } from "../../server/plugins/manifest.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
-import { done, pending, waitUntil } from "./wait.ts";
 import {
   pluginOperationsFixture,
   type RpcFault,
@@ -66,17 +65,20 @@ export async function backupFixture(options: {
       );
     },
     /** Wait for host delivery as well as the plugin's own processing queue. */
-    status: () =>
-      waitUntil(async () => {
-        const status = await runtime.invokeCommand(id, "status", {}) as
-          & BackupStatus
-          & { pendingJobs: number };
-        const delivery = runtime.status(id)?.versioningPending ?? 0;
-        return status.pendingJobs === 0 && delivery === 0
-          ? done(status)
-          : pending({ status, delivery });
-      }, { label: "backup queue idle", intervalMs: 5 }) as Promise<
-        BackupStatus
-      >,
+    status: async (): Promise<BackupStatus> => {
+      await runtime.settleWork(id);
+      const status = await runtime.invokeCommand(id, "status", {}) as
+        & BackupStatus
+        & { pendingJobs: number };
+      const delivery = runtime.status(id)?.versioningPending ?? 0;
+      if (status.pendingJobs || delivery) {
+        throw new Error(
+          `backup owner settled without idle: ${
+            JSON.stringify({ status, delivery })
+          }`,
+        );
+      }
+      return status;
+    },
   };
 }

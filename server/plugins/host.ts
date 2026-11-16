@@ -103,6 +103,8 @@ export interface HostOptions {
   snapshot?: JsonValues;
   limits?: Partial<PluginLimits>;
   registrationChanged?(): void;
+  /** Internal work observation only; not a catalogue invalidation or Worker API. */
+  settlementChanged?(): void;
   failed?(detail: string): void;
   effective?: PermissionDeclaration;
   source?: Source;
@@ -110,6 +112,17 @@ export interface HostOptions {
     previous: RenderRecoveryAdmission,
   ): Promise<RenderRecoveryAdmission>;
 }
+export type WorkLane = "ordinary" | "guard" | "versioning" | "startup";
+/** One captured cohort. Only existing product deadlines can settle its work. */
+export interface WorkSettlement {
+  owner: object | undefined;
+  pending: number;
+  completion: Promise<void>;
+  changed: Promise<void>;
+  failure: string | null;
+}
+/** Host-local classification; normal handler errors settle, termination does not. */
+class WorkTerminatedError extends Error {}
 interface Job {
   id: number;
   kind: "call" | "invoke" | "dispose";
@@ -156,6 +169,7 @@ interface Slot {
   resolveReady(): void;
   rejectReady(error: Error): void;
   readyPromise: Promise<void>;
+  startupSettlement: Promise<void>;
   background: ExecutionContext;
   contexts: Map<string, ExecutionContext>;
   permissions: PermissionDeclaration;
@@ -200,6 +214,55 @@ export class PluginHost {
   private startIdentity?: object;
   /** False until construction is admitted; true while its new slot initializes. */
   private readonly renderRecoveries = new Map<object, boolean>();
+  private readonly work = new Map<
+    number,
+    { lane: WorkLane; completion: Promise<void> }
+  >();
+  private workChanged = Promise.withResolvers<void>();
+
+  private noteSettlement(): void {
+    const previous = this.workChanged;
+    this.workChanged = Promise.withResolvers<void>();
+    previous.resolve();
+    this.options.settlementChanged?.();
+  }
+  /** Internal, value-free observation; later admissions cannot extend this cohort. */
+  settlement(
+    lanes: readonly WorkLane[] = ["ordinary", "versioning"],
+  ): WorkSettlement {
+    const completions = [...this.work.values()].filter(({ lane }) =>
+      lanes.includes(lane)
+    ).map(({ completion }) => completion);
+    if (lanes.includes("startup")) {
+      completions.push(
+        ...this.slots.filter((slot) => !slot.ready && !slot.retired).map(
+          (slot) => slot.startupSettlement,
+        ),
+      );
+    }
+    const completion = Promise.all(completions).then(() => undefined);
+    completion.catch(() => undefined);
+    return {
+      owner: this.startIdentity,
+      pending: completions.length,
+      completion,
+      changed: this.workChanged.promise,
+      failure: this.failedDetail ??
+        (this.stopped || this.stopping ? "plugin host retired" : null),
+    };
+  }
+  /** Await exactly the already-admitted cohort, not future callbacks or timers. */
+  async settleWork(lanes?: readonly WorkLane[]): Promise<void> {
+    const identity = this.startIdentity;
+    const cohort = this.settlement(lanes);
+    if (cohort.failure) throw new Error(cohort.failure);
+    await cohort.completion;
+    const failure = this.failedDetail ??
+      (this.stopped || this.stopping || this.startIdentity !== identity
+        ? "plugin host retired"
+        : null);
+    if (failure) throw new Error(failure);
+  }
 
   constructor(
     readonly manifest: PluginManifest,
@@ -272,6 +335,7 @@ export class PluginHost {
       for (let index = 0; index < this.workerCount; index++) {
         owned.push(this.spawn());
       }
+      this.noteSettlement();
       this.watchdog = this.liveness.every(() => this.checkHeartbeats());
       await Promise.all(owned.map((slot) => slot.readyPromise));
       if (this.startIdentity !== identity) {
@@ -311,6 +375,7 @@ export class PluginHost {
     slot.bootTimer = undefined;
     slot.background.settle({ status: "settled" });
     slot.resolveReady();
+    this.noteSettlement();
     this.pump();
   }
   private spawn(admission?: RenderRecoveryAdmission): Slot {
@@ -382,6 +447,7 @@ export class PluginHost {
         resolveReady,
         rejectReady,
         readyPromise,
+        startupSettlement: readyPromise.then(() => undefined, () => undefined),
         background: executionContext("background", false),
         contexts: new Map(),
         permissions: {
@@ -1034,7 +1100,10 @@ export class PluginHost {
       this.role === "render" && !initialization && this.slots.length &&
       this.slots.every((slot) => slot.ready && !slot.usable)
     ) return Promise.reject(new Error("render synchronization unavailable"));
-    return new Promise((resolve, reject) => {
+    const id = ++this.sequence;
+    const completion = Promise.withResolvers<void>();
+    completion.promise.catch(() => undefined);
+    const running = new Promise<unknown>((resolve, reject) => {
       const pendingQueue = () =>
         guardLane
           ? this.guardQueue
@@ -1042,7 +1111,7 @@ export class PluginHost {
           ? this.versioningQueue
           : this.queue;
       const job: Job = {
-        id: ++this.sequence,
+        id,
         kind,
         name,
         args,
@@ -1056,7 +1125,11 @@ export class PluginHost {
           const queued = pending.indexOf(job);
           if (queued >= 0) {
             pending.splice(queued, 1);
-            reject(new Error("plugin call deadline exceeded while queued"));
+            reject(
+              new WorkTerminatedError(
+                "plugin call deadline exceeded while queued",
+              ),
+            );
             this.pump();
             return;
           }
@@ -1078,6 +1151,19 @@ export class PluginHost {
         this.pump();
       }
     });
+    this.work.set(id, {
+      lane: guardLane ? "guard" : versioningLane ? "versioning" : "ordinary",
+      completion: completion.promise,
+    });
+    const finish = (error?: unknown) => {
+      this.work.delete(id);
+      if (error instanceof WorkTerminatedError) completion.reject(error);
+      else completion.resolve();
+      this.noteSettlement();
+    };
+    running.then(() => finish(), finish);
+    this.noteSettlement();
+    return running;
   }
   private pump() {
     if (this.stopped || this.failedDetail) return;
@@ -1214,17 +1300,17 @@ export class PluginHost {
     slot.rejectReady(new Error(detail));
     if (slot.active) {
       slot.active.timer();
-      slot.active.reject(new Error(detail));
+      slot.active.reject(new WorkTerminatedError(detail));
       slot.active = null;
     }
     if (slot.activeGuard) {
       slot.activeGuard.timer();
-      slot.activeGuard.reject(new Error(detail));
+      slot.activeGuard.reject(new WorkTerminatedError(detail));
       slot.activeGuard = null;
     }
     if (slot.activeVersioning) {
       slot.activeVersioning.timer();
-      slot.activeVersioning.reject(new Error(detail));
+      slot.activeVersioning.reject(new WorkTerminatedError(detail));
       slot.activeVersioning = null;
     }
     slot.ready = false;
@@ -1239,7 +1325,7 @@ export class PluginHost {
       ]
     ) {
       job.timer();
-      job.reject(new Error(detail));
+      job.reject(new WorkTerminatedError(detail));
     }
   }
   private reportFailure(detail: string): void {
@@ -1289,6 +1375,7 @@ export class PluginHost {
       }
       this.slots.push(candidate);
       this.renderRecoveries.set(ticket, true);
+      this.noteSettlement();
       await candidate.readyPromise;
       if (!current()) {
         this.retireSlot(
@@ -1309,6 +1396,7 @@ export class PluginHost {
       }
     } finally {
       this.renderRecoveries.delete(ticket);
+      this.noteSettlement();
       if (
         this.startIdentity === identity && !this.stopped && !this.failedDetail
       ) {
@@ -1330,6 +1418,7 @@ export class PluginHost {
       this.registry.clear();
       this.rejectQueued(detail);
       this.reportFailure(detail);
+      this.noteSettlement();
     } else {
       this.rejectQueued(
         "worker generation replaced; queued work was not replayed",
@@ -1484,5 +1573,6 @@ export class PluginHost {
     this.rejectQueued("plugin host stopped");
     this.slots = [];
     this.registry.clear();
+    this.noteSettlement();
   }
 }

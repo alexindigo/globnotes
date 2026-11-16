@@ -3,7 +3,6 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { DriverWorker, PluginRuntime } from "../server/plugins/runtime.ts";
 import { DriverContractError } from "../server/plugins/driver_contract.ts";
 import { driverFixture, minimalDriver } from "./helpers/driver_fixture.ts";
-import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 Deno.test("drivers: hook dispatch never sees a partial roster while a driver-only inventory reconciles", async () => {
   const fixture = await driverFixture();
@@ -263,11 +262,12 @@ Deno.test("drivers: heartbeat-stuck instance fails alone while another instance 
     await Promise.all([stuck.start(), healthy.start()]);
     const opening = stuck.open().catch((error) => error);
     assertEquals((await healthy.open()).state, "ready");
-    await waitUntil(
-      () => stuck.host.available ? pending("heartbeat running") : done(),
-      { label: "hung driver Worker retired" },
-    );
     assert(await opening instanceof Error);
+    assertEquals(
+      stuck.host.available,
+      false,
+      "the actual open promise must fail with its owner",
+    );
     assertEquals(
       (await healthy.discover({ mode: "snapshot" })).completion,
       "complete",

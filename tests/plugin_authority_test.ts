@@ -38,6 +38,8 @@ import {
   waitUntil,
 } from "./helpers/wait.ts";
 
+import { pluginSettled } from "./helpers/plugin_ready.ts";
+
 const api = () => fixtureApiOrigin(state.lifecycle!);
 function wait(predicate: () => boolean) {
   return waitUntil(
@@ -198,7 +200,7 @@ async function bundle(
     await approveFixtureNetwork(network, manifest.id);
   }
   await runtime.reconcile();
-  await wait(() => runtime.status("requester")?.status === "ready");
+  await pluginSettled(runtime, "requester", "ready");
   const generation = runtime.status("requester")!.generation!;
   const query = (requestId: string) =>
     actions.result("requester", generation, requestId);
@@ -284,7 +286,7 @@ Deno.test("review repairs: R25 real settle then retire returns receipt-ring coun
       assertEquals(b.actions.retentionCounts(), baseline);
       b.sources[0].enabled = true;
       await b.runtime.reconcile();
-      await wait(() => b.runtime.status("requester")?.status === "ready");
+      await pluginSettled(b.runtime, "requester", "ready");
     }
   } finally {
     await b.dispose();
@@ -327,7 +329,7 @@ Deno.test("review repairs: R25 unfinished retired accounting survives until sett
     });
     b.sources[0].enabled = true;
     await b.runtime.reconcile();
-    await wait(() => b.runtime.status("requester")?.status === "ready");
+    await pluginSettled(b.runtime, "requester", "ready");
     const generationB = b.runtime.status("requester")!.generation!;
     assert(generationA !== generationB);
     const fresh = await b.request("create", {
@@ -747,7 +749,7 @@ Deno.test("plugin authority: requester disabled behind independent healthy guard
     });
     await approveFixtureNetwork(b.network, "guard");
     await b.runtime.reconcile();
-    await wait(() => b.runtime.status("guard")?.status === "ready");
+    await pluginSettled(b.runtime, "guard", "ready");
     const id = await b.based("save", { path: "keep", newContent: "changed" });
     await wait(() => guardReceived);
     await guardEntered.promise;
@@ -1076,7 +1078,7 @@ Deno.test("plugin authority: old operation completion after real re-enable never
     await b.runtime.reconcile();
     b.sources[0].enabled = true;
     await b.runtime.reconcile();
-    await wait(() => b.runtime.status("requester")?.status === "ready");
+    await pluginSettled(b.runtime, "requester", "ready");
     const newGeneration = b.runtime.status("requester")!.generation!;
     assert(newGeneration !== b.generation);
     const fresh = await b.runtime.invokeCommand("requester", "request", {
@@ -1746,7 +1748,7 @@ Deno.test("plugin authority: disable and replacement abort accepted unstarted wo
         if (ending === "replacement") {
           b.sources[0].enabled = true;
           await b.runtime.reconcile();
-          await wait(() => b.runtime.status("requester")?.status === "ready");
+          await pluginSettled(b.runtime, "requester", "ready");
           const generation = b.runtime.status("requester")!.generation!;
           assert(generation !== b.generation);
           const fresh = await b.runtime.invokeCommand(
@@ -1831,7 +1833,7 @@ Deno.test("plugin authority: failed activation aborts its accepted mutation befo
     );
     assertEquals(b.notes.getPaths(), []);
     release.resolve();
-    await wait(() => b.runtime.status("startup")?.status === "failed");
+    await pluginSettled(b.runtime, "startup", "failed");
     await b.operations.createNote({
       path: "control",
       content: "unrelated control",
@@ -1897,7 +1899,7 @@ Deno.test("plugin authority: requester revoked while waiting for the managed ope
     });
     await approveFixtureNetwork(b.network, manifest.id);
     await b.runtime.reconcile();
-    await wait(() => b.runtime.status(manifest.id)?.status === "ready");
+    await pluginSettled(b.runtime, manifest.id, "ready");
     b.facts.length = 0;
     let rejected: string | undefined;
     const original = b.operations.updateNote.bind(b.operations);
@@ -2057,8 +2059,8 @@ Deno.test("plugin authority: real independent pre and partial-effect observers p
       b.sources.push({ id, enabled: true, manifest, hooks: manifest.hooks });
     }
     await b.runtime.reconcile();
-    await wait(() =>
-      ["narrow", "none"].every((id) => b.runtime.status(id)?.status === "ready")
+    await Promise.all(
+      ["narrow", "none"].map((id) => pluginSettled(b.runtime, id, "ready")),
     );
     b.facts.length = 0;
     armed = true;
@@ -2231,10 +2233,10 @@ Deno.test("plugin authority: sibling and relocated reserved writes deny while a 
       b.sources.push({ id, enabled: true, manifest, hooks: [] });
     }
     await b.runtime.reconcile();
-    await wait(() =>
-      ["narrow-writer", "broad-writer"].every((id) =>
-        b.runtime.status(id)?.status === "ready"
-      )
+    await Promise.all(
+      ["narrow-writer", "broad-writer"].map((id) =>
+        pluginSettled(b.runtime, id, "ready")
+      ),
     );
     await assertRejects(() =>
       b.runtime.invokeCommand("narrow-writer", "note", {

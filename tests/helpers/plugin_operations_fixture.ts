@@ -23,6 +23,7 @@ import { VaultHub } from "../../server/hub/hub.ts";
 import { PluginActions } from "../../server/plugins/actions.ts";
 import { HubGate } from "../../server/hub/gate.ts";
 import type { PluginLimits } from "../../server/plugins/contracts.ts";
+import { pluginSettled } from "./plugin_ready.ts";
 
 export type RpcFault = (
   method: string,
@@ -103,22 +104,12 @@ export async function pluginOperationsFixture(options: {
       actions: () => actions,
       filesystem,
     });
-    const ready = Promise.withResolvers<void>();
-    // Observe rejection while reconciliation is still in progress; it is awaited
-    // below and remains the setup failure, rather than an unhandled rejection.
-    ready.promise.catch(() => undefined);
     const runtime = runtimeToClose = manager.configureRuntime({
       operational: () => lifecycle.operational(),
       writable: () => lifecycle.writable(),
       commit: (effect) => lifecycle.gate.run(effect),
       sanitizeFact: (manifest, fact) =>
         lifecycle.applyReadGrants(manifest, fact as OperationFact),
-      changed: () => {
-        if (runtime.status(id)?.status === "ready") ready.resolve();
-        if (runtime.status(id)?.status === "failed") {
-          ready.reject(new Error(JSON.stringify(runtime.status(id))));
-        }
-      },
       rpc: async (manifest, method, args, authority) => {
         await options.fault?.(method, args, "before");
         const result = await rawRpc(manifest, method, args, authority);
@@ -147,16 +138,8 @@ export async function pluginOperationsFixture(options: {
         action: fact.action,
       })
     );
-    const timer = setTimeout(
-      () => ready.reject(new Error(`${id} fixture readiness failed`)),
-      10_000,
-    );
-    try {
-      await runtime.reconcile();
-      await ready.promise;
-    } finally {
-      clearTimeout(timer);
-    }
+    await runtime.reconcile();
+    await pluginSettled(runtime, id, "ready");
     return {
       fixture,
       dir,

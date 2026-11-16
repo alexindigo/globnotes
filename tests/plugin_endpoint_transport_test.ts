@@ -23,6 +23,7 @@ import {
 import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { PluginDataStore } from "../server/plugins/data.ts";
 import { AsyncLock } from "../server/plugins/lifecycle.ts";
+import { pluginSettled } from "./helpers/plugin_ready.ts";
 
 Deno.test("review repairs: R04 crossing unfinished body is rejected and cancelled before EOF", async () => {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
@@ -315,15 +316,7 @@ Deno.test("review repairs: R04 body wait admitted to A cannot invoke B reused en
     },
   }, { highWaterMark: 0 });
   let pending: Promise<Response | HttpError> | undefined;
-  const ready = () =>
-    waitUntil(() => {
-      const status = runtime.status("transport");
-      if (status?.status === "ready") return done();
-      if (status?.status === "failed") {
-        return failed("plugin 'transport' failed", status);
-      }
-      return waitPending(status);
-    }, { label: "body-race fixture plugin 'transport' ready" });
+  const ready = () => pluginSettled(runtime, "transport", "ready");
   try {
     const code = (label: string) =>
       `export default async(req,ctx)=>{const data=await ctx.data.load();await ctx.data.save({owner:'${label}'},data.revision);return{owner:'${label}'}}`;
