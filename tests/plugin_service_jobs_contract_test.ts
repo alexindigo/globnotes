@@ -241,6 +241,26 @@ function jobBoundary(
   return workMilestone(b.runtime.settleWork(b.id, ["ordinary"]), entry, label);
 }
 
+/** Observe the real released filesystem RPC, not job status or fixture teardown.
+ * Install while its fixture-owned before gate is held; preserve its real outcome. */
+function filesystemCompletion(
+  b: Pick<Awaited<ReturnType<typeof generic>>, "filesystem">,
+  method: string,
+  path: string,
+): Promise<unknown> {
+  const rpc = b.filesystem.rpc.bind(b.filesystem);
+  const completion = Promise.withResolvers<unknown>();
+  completion.promise.catch(() => undefined);
+  b.filesystem.rpc = (...args) => {
+    const running = rpc(...args);
+    if (args[1] === method && args[2][0] === path) {
+      running.then(completion.resolve, completion.reject);
+    }
+    return running;
+  };
+  return completion.promise;
+}
+
 for (const outcome of ["succeeded", "failed"] as const) {
   Deno.test(`service jobs: ordinary settlement includes post-activation job ${outcome}`, async () => {
     const entered = Promise.withResolvers<void>();
@@ -432,7 +452,13 @@ Deno.test("service jobs: blocked offers retain ordinary deadline", async () => {
     b.runtime.enqueue([offer("expired")]);
     processClock.deadline = original;
     assert(expire);
+    const expired = assertRejects(
+      () => b.runtime.settleWork(b.id, ["versioning"]),
+      Error,
+      "deadline exceeded while queued",
+    );
     expire();
+    await expired;
     assertEquals(b.runtime.status(b.id)!.versioningPending, 0);
     assertEquals(b.runtime.status(b.id)!.status, "ready");
     release.resolve();
@@ -585,6 +611,7 @@ Deno.test("service jobs: active deadline revokes held real write, not just its s
     );
     processClock.deadline = original;
     await jobBoundary(b, held.promise, "deadline write entered");
+    const completed = filesystemCompletion(b, "fs.writeFile", "timeout.bin");
     assert(expire);
     expire();
     const target = `${b.fixture.vault}/timeout.bin`;
@@ -594,8 +621,12 @@ Deno.test("service jobs: active deadline revokes held real write, not just its s
       code: "plugin_job_deadline",
     }]);
     release.resolve();
-    await b.close();
-    b = undefined;
+    const rejection = await assertRejects(
+      () => completed,
+      FsError,
+      "fs_generation_revoked",
+    );
+    assertEquals(rejection.effect, "none");
     await assertRejects(() => Deno.stat(target), Deno.errors.NotFound);
   } finally {
     processClock.deadline = original;
@@ -896,6 +927,7 @@ for (
     );
     try {
       await jobBoundary(b, held.promise, `${change} write entered`);
+      const completed = filesystemCompletion(b, "fs.writeFile", "late.bin");
       if (change === "disable") await b.runtime.retireOwner(b.id, false, true);
       if (change === "source") {
         await Deno.writeTextFile(`${b.dir}/extra.js`, "changed");
@@ -904,6 +936,13 @@ for (
       if (change === "suspend") b.runtime.suspend();
       if (change === "shutdown") await b.runtime.close();
       release.resolve();
+      const code = change === "source"
+        ? "fs_source_changed"
+        : change === "read-only"
+        ? "fs_denied"
+        : "fs_generation_revoked";
+      const rejection = await assertRejects(() => completed, FsError, code);
+      assertEquals(rejection.effect, "none");
       if (["source", "read-only"].includes(change)) await jobSettled(b);
       assert(b.runtime.status(b.id)!.jobs[0].state !== "running");
       await assertRejects(
