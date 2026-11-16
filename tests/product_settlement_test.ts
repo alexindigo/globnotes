@@ -14,6 +14,7 @@ import {
   workMilestone,
 } from "./helpers/product_settlement.ts";
 import { pending } from "./helpers/wait.ts";
+import { clearImmediate, setImmediate } from "node:timers";
 
 async function fixture() {
   return await pluginOperationsFixture({
@@ -282,4 +283,86 @@ Deno.test("product settlement: a missing intermediate outcome fails when its cap
     Error,
     "owner failed before marker",
   );
+});
+
+Deno.test("product settlement: synchronous stop/start excludes old work from the new owner", async () => {
+  const fixture = await pluginFixture();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const dir = await fixture.install("restart-settlement", {}, {
+    "main.js": `export function getSelectors(){return []}
+      export async function parseNode(node,ctx){
+        if(node.hold)await ctx.readNote('held');
+        return {parts:['new owner consumer']};
+      }`,
+  });
+  const host = new PluginHost(readManifest(dir), fixture.vault, () => {
+    entered.resolve();
+    return release.promise;
+  }, 1);
+  let restarting: Promise<void> | undefined;
+  try {
+    await host.start();
+    const running = host.call("parseNode", [{ hold: true }]);
+    const oldCall = assertRejects(() => running, Error, "plugin host stopped");
+    await workMilestone(running, entered.promise, "old invocation entered");
+    const old = host.settlement(["ordinary"]);
+    assertEquals(old.pending, 1);
+    const oldCompletion = assertRejects(
+      () => old.completion,
+      Error,
+      "plugin host stopped",
+    );
+    // No await: all three operations must execute in the same synchronous turn.
+    host.stop();
+    restarting = host.start();
+    restarting.catch(() => undefined);
+    const fresh = host.settlement(["ordinary"]);
+    assert(fresh.owner !== old.owner);
+    assertEquals(
+      fresh.pending,
+      0,
+      "new owner inherited the retired owner's work",
+    );
+    await fresh.completion;
+    await oldCompletion;
+    await oldCall;
+    await restarting;
+    assertEquals(await host.call("parseNode", [{}]), {
+      parts: ["new owner consumer"],
+    });
+  } finally {
+    release.resolve();
+    host.stop();
+    await restarting?.catch(() => undefined);
+    await fixture.dispose();
+  }
+});
+
+Deno.test("product settlement: microtask-only probes allow the captured completion to progress", async () => {
+  const completion = Promise.withResolvers<void>();
+  let delivered = false, probes = 0;
+  const event = setImmediate(() => {
+    delivered = true;
+    completion.resolve();
+  });
+  try {
+    await assertRejects(
+      () =>
+        duringWork(completion.promise, () => {
+          // Mechanism bound, not a time bound: the broken loop fails rather than
+          // starving this test's own completion event forever.
+          if (++probes > 256) {
+            throw new Error("microtask probes starved owner completion");
+          }
+          return Promise.resolve(pending("marker absent"));
+        }, "microtask consumer"),
+      Error,
+      "product work settled without the expected outcome",
+    );
+    assert(delivered, "captured owner completion never ran");
+    assert(probes <= 256);
+  } finally {
+    clearImmediate(event);
+  }
 });

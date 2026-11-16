@@ -216,7 +216,7 @@ export class PluginHost {
   private readonly renderRecoveries = new Map<object, boolean>();
   private readonly work = new Map<
     number,
-    { lane: WorkLane; completion: Promise<void> }
+    { owner: object | undefined; lane: WorkLane; completion: Promise<void> }
   >();
   private workChanged = Promise.withResolvers<void>();
 
@@ -230,8 +230,8 @@ export class PluginHost {
   settlement(
     lanes: readonly WorkLane[] = ["ordinary", "versioning"],
   ): WorkSettlement {
-    const completions = [...this.work.values()].filter(({ lane }) =>
-      lanes.includes(lane)
+    const completions = [...this.work.values()].filter(({ owner, lane }) =>
+      owner === this.startIdentity && lanes.includes(lane)
     ).map(({ completion }) => completion);
     if (lanes.includes("startup")) {
       completions.push(
@@ -1101,6 +1101,7 @@ export class PluginHost {
       this.slots.every((slot) => slot.ready && !slot.usable)
     ) return Promise.reject(new Error("render synchronization unavailable"));
     const id = ++this.sequence;
+    const owner = this.startIdentity;
     const completion = Promise.withResolvers<void>();
     completion.promise.catch(() => undefined);
     const running = new Promise<unknown>((resolve, reject) => {
@@ -1152,6 +1153,7 @@ export class PluginHost {
       }
     });
     this.work.set(id, {
+      owner,
       lane: guardLane ? "guard" : versioningLane ? "versioning" : "ordinary",
       completion: completion.promise,
     });

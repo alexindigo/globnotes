@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import type { PluginHost, WorkSettlement } from "../../server/plugins/host.ts";
+import { clearImmediate, setImmediate } from "node:timers";
 import {
   describe,
   done,
@@ -143,6 +144,16 @@ export async function duringWork<T>(
           describe(observation.state)
         }`,
       );
+    }
+    // A callback's intermediate marker has no owner notification. Yield one
+    // event-loop turn so microtask-only probes cannot starve the owner's I/O or
+    // deadline; this schedules progress, not a second terminal work timer.
+    const turn = Promise.withResolvers<void>();
+    const immediate = setImmediate(() => turn.resolve());
+    try {
+      await Promise.race([terminal, turn.promise]);
+    } finally {
+      clearImmediate(immediate);
     }
   }
 }
