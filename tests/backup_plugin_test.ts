@@ -4,6 +4,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { backupFixture } from "./helpers/backup_fixture.ts";
 import { fixtureApiOrigin } from "./helpers/plugin_fixture.ts";
 import { FsError, PluginContractError } from "../server/plugins/contracts.ts";
+import { workMilestone } from "./helpers/product_settlement.ts";
 
 async function ring(vault: string, path: string, expected: string[], max = 10) {
   for (let index = 0; index < max; index++) {
@@ -877,7 +878,11 @@ Deno.test("backup plugin: retirement at held publication preserves ACK and never
     await b.status();
     armed = true;
     await b.save("Retired", "C");
-    await entered.promise;
+    await workMilestone(
+      b.runtime.settleWork(b.id, ["versioning"]),
+      entered.promise,
+      "retired backup publication entered",
+    );
     await b.runtime.retireOwner(b.id, false, true);
     release.resolve();
     await ring(b.fixture.vault, "Retired", ["A"]);

@@ -297,6 +297,22 @@ for (const outcome of ["succeeded", "failed"] as const) {
   });
 }
 
+Deno.test("service jobs: failed owner rejects a held-boundary wait without entry", async () => {
+  const b = await generic(
+    `ctx.jobs.afterActivation({id:'one'},()=>{throw Error('before boundary');});`,
+  );
+  const entry = Promise.withResolvers<void>();
+  try {
+    await assertRejects(
+      () => jobBoundary(b, entry.promise, "unreached job boundary"),
+      Error,
+      "product work settled without the expected milestone",
+    );
+  } finally {
+    await b.close();
+  }
+});
+
 for (
   const limits of [{ versioningQueue: 2 }, {
     versioningQueue: 8,
