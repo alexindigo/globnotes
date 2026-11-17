@@ -23,6 +23,7 @@ export interface CatalogServer {
 export interface CatalogOptions {
   prefix?: string;
   headers?: HeadersInit;
+  signal?: AbortSignal;
 }
 type Lane = "ordinary" | "versioning" | "guard";
 const lanes: readonly Lane[] = ["ordinary", "versioning", "guard"];
@@ -49,6 +50,13 @@ export function captureWork(
   };
 }
 
+export class CatalogWorkFailure extends Error {
+  constructor(readonly plugin: CatalogPlugin, readonly fence: WorkFence) {
+    super(`plugin '${plugin.id}' work failed: ${JSON.stringify(plugin)}`);
+    this.name = "CatalogWorkFailure";
+  }
+}
+
 /** Conservative success: any intervening failure rejects, including later work.
  * This is not an attribution/receipt API. */
 export function workFenceSettled(
@@ -60,20 +68,25 @@ export function workFenceSettled(
     !plugin?.work || plugin.work.generation !== fence.generation ||
     baseline.generation !== fence.generation
   ) throw Error("plugin work owner replaced or retired before settlement");
+  if (plugin.status === "failed" || plugin.work.startup.state === "failed") {
+    throw Error(`plugin '${plugin.id}' failed: ${JSON.stringify(plugin)}`);
+  }
+  // Failure counts are a terminal cohort verdict, not a wake-up to inspect a
+  // different snapshot while another selected lane is still running.
+  if (
+    !lanes.every((lane) => {
+      const position = fence.lanes[lane];
+      return !position || plugin.work![lane].settled >= position.admitted;
+    })
+  ) return false;
   const failure = lanes.find((lane) => {
     const before = baseline.lanes[lane];
     return before && plugin.work![lane].failures !== before.failures;
   });
   if (failure || plugin.deliveryFailures !== baseline.deliveryFailures) {
-    throw Error(`plugin '${plugin.id}' work failed: ${JSON.stringify(plugin)}`);
+    throw new CatalogWorkFailure(plugin, fence);
   }
-  if (plugin.status === "failed" || plugin.work.startup.state === "failed") {
-    throw Error(`plugin '${plugin.id}' failed: ${JSON.stringify(plugin)}`);
-  }
-  return lanes.every((lane) => {
-    const position = fence.lanes[lane];
-    return !position || plugin.work![lane].settled >= position.admitted;
-  });
+  return true;
 }
 
 /** Subscribe before the first read. Capture changed before each read so an event
@@ -86,7 +99,9 @@ export async function observeCatalog(
   const url = `${server.baseUrl}${options.prefix ?? ""}/_/api/plugin-host`;
   const response = await fetch(`${url}/events`, {
     headers: options.headers,
-    signal: abort.signal,
+    signal: options.signal
+      ? AbortSignal.any([abort.signal, options.signal])
+      : abort.signal,
   });
   if (!response.ok || !response.body) {
     await response.body?.cancel();
@@ -133,7 +148,11 @@ export async function observeCatalog(
       if (server.status?.()) throw Error("catalog server exited");
       const response = await fetch(url, {
         headers: options.headers,
-        signal: signal ? AbortSignal.any([abort.signal, signal]) : abort.signal,
+        signal: AbortSignal.any([
+          abort.signal,
+          ...options.signal ? [options.signal] : [],
+          ...signal ? [signal] : [],
+        ]),
       });
       if (!response.ok) {
         throw Error(
@@ -181,14 +200,20 @@ export async function catalogPluginReady(
   id: string,
   options: CatalogOptions & { allowFailed?: boolean; label?: string } = {},
 ): Promise<CatalogPlugin> {
-  const observer = await observeCatalog(server, options);
+  let observer: Awaited<ReturnType<typeof observeCatalog>> | undefined;
   const children = server.pid && server.status
     ? [{ pid: server.pid, status: server.status, logs: server.logs }]
     : [];
   try {
     const read = async (signal?: AbortSignal) =>
-      (await observer.read(signal)).find((item) => item.id === id);
+      (await observer!.read(signal)).find((item) => item.id === id);
     const admitted = await waitUntil(async (signal) => {
+      observer ??= await observeCatalog(server, {
+        ...options,
+        signal: options.signal
+          ? AbortSignal.any([signal, options.signal])
+          : signal,
+      });
       const plugin = await read(signal);
       if (plugin?.status === "failed" && !options.allowFailed) {
         return failed(`plugin '${id}' failed`, plugin);
@@ -207,7 +232,7 @@ export async function catalogPluginReady(
     const generation = admitted.work?.generation;
     let plugin: CatalogPlugin | undefined = admitted;
     while (plugin?.work?.startup.state === "pending") {
-      const changed = observer.changed;
+      const changed = observer!.changed;
       plugin = await read();
       if (plugin?.status === "failed") break;
       if (!plugin?.work || plugin.work.generation !== generation) {
@@ -234,6 +259,6 @@ export async function catalogPluginReady(
       children,
     });
   } finally {
-    await observer.close();
+    await observer?.close();
   }
 }

@@ -2,6 +2,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { PLUGIN_LIMITS } from "../server/plugins/contracts.ts";
 import { processClock } from "../server/observed_time.ts";
+import { manualExpiry } from "./helpers/manual_deadline.ts";
 import { pluginOperationsFixture } from "./helpers/plugin_operations_fixture.ts";
 import { pluginSettled } from "./helpers/plugin_ready.ts";
 import { PluginHost } from "../server/plugins/host.ts";
@@ -95,7 +96,7 @@ Deno.test("product settlement: a genuinely hung invocation rejects through its u
     processClock.deadline = (ms, callback) => {
       const cancel = deadline(ms, callback);
       if (ms === PLUGIN_LIMITS.serviceCallMs && !expire) {
-        expire = callback;
+        expire = manualExpiry(cancel, callback);
         requested = ms;
       }
       return cancel;
@@ -164,7 +165,9 @@ Deno.test("product settlement: a queued deadline rejects its captured cohort wit
     assertEquals(await f.command("ping"), true);
     processClock.deadline = (ms, callback) => {
       const cancel = deadline(ms, callback);
-      if (ms === PLUGIN_LIMITS.serviceCallMs) expire = callback;
+      if (ms === PLUGIN_LIMITS.serviceCallMs) {
+        expire = manualExpiry(cancel, callback);
+      }
       return cancel;
     };
     await f.save("Note", "v2");

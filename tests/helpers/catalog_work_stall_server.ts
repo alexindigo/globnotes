@@ -4,6 +4,7 @@
 import { PluginHost } from "../../server/plugins/host.ts";
 import { AuxiliaryFilesystem } from "../../server/plugins/auxiliary_fs.ts";
 import { processClock } from "../../server/observed_time.ts";
+import { auditInvocation } from "./catalog_work_audit.ts";
 
 const directory = Deno.env.get("WORK_PROOF_DIR")!;
 const vault = Deno.env.get("GLOBNOTES_GLOBNOTES_PATH")!;
@@ -19,34 +20,35 @@ PluginHost.prototype.invoke = function (handler, args, pre, timeout, options) {
   const result = invoke.call(this, handler, args, pre, timeout, options);
   if (selected) {
     const generation = this.generation;
-    result.then(
-      () => {
-        const bytes = Array.from(
-          { length: 9 },
-          (_, index) =>
-            Deno.readTextFileSync(`${vault}/Count9.md.${index}.bak`),
-        );
-        const files = [...Deno.readDirSync(`${vault}/.globnotes-backup`)].map(
-          (item) => item.name,
-        );
-        Deno.writeTextFileSync(
-          `${directory}/completed.json`,
-          JSON.stringify({
-            generation,
-            completedGeneration: this.generation,
-            observed: processClock.now(),
-            wall: Date.now(),
-            bytes,
-            files,
-          }),
-        );
-      },
-      (error) =>
-        Deno.writeTextFileSync(
-          `${directory}/invocation-error.json`,
-          JSON.stringify({ detail: String(error) }),
-        ),
-    );
+    auditInvocation(result, () => {
+      const bytes = Array.from(
+        { length: 9 },
+        (_, index) => Deno.readTextFileSync(`${vault}/Count9.md.${index}.bak`),
+      );
+      const files = [...Deno.readDirSync(`${vault}/.globnotes-backup`)].map(
+        (item) => item.name,
+      );
+      Deno.writeTextFileSync(
+        `${directory}/completed.json`,
+        JSON.stringify({
+          generation,
+          completedGeneration: this.generation,
+          observed: processClock.now(),
+          wall: Date.now(),
+          bytes,
+          files,
+        }),
+      );
+    }, (error) =>
+      Deno.writeTextFileSync(
+        `${directory}/invocation-error.json`,
+        JSON.stringify({ detail: String(error) }),
+      )).catch((error) =>
+        console.error(
+          "Native invocation audit could not record its error",
+          error,
+        )
+      );
   }
   return result;
 };

@@ -6,6 +6,7 @@ import {
   captureWork,
   type CatalogPlugin,
   catalogPluginReady,
+  CatalogWorkFailure,
   catalogWorkSettled,
   observeCatalog,
   workFenceSettled,
@@ -69,6 +70,156 @@ Deno.test("catalogue work: later admissions cannot extend a fence or hide interv
     Error,
     "work failed",
   );
+});
+
+Deno.test("catalogue work: a versioning failure waits for the captured ordinary cohort", () => {
+  const current = plugin(),
+    baseline = captureWork(current, ["ordinary", "versioning"]),
+    fence = captureWork(current, ["ordinary", "versioning"]);
+  current.work!.versioning.settled = 2;
+  current.work!.versioning.pending = 0;
+  current.work!.versioning.failures = 1;
+  current.deliveryFailures = 1;
+  assertEquals(workFenceSettled(current, fence, baseline), false);
+  current.work!.ordinary.settled = 2;
+  current.work!.ordinary.pending = 0;
+  assertThrows(
+    () => workFenceSettled(current, fence, baseline),
+    Error,
+    "work failed",
+  );
+});
+
+Deno.test("catalogue work: withheld event headers observe the admission signal", async () => {
+  const entered = Promise.withResolvers<void>(),
+    headers = Promise.withResolvers<void>();
+  const controller = new AbortController();
+  const server = Deno.serve(
+    { hostname: "0.0.0.0", port: 0, onListen() {} },
+    async () => {
+      entered.resolve();
+      await headers.promise;
+      return new Response("event: hello\ndata: {}\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  );
+  const result = observeCatalog({
+    baseUrl: `http://${
+      Deno.env.get("GLOBNOTES_TEST_HOST")
+    }:${server.addr.port}`,
+  }, { signal: controller.signal } as Parameters<typeof observeCatalog>[1])
+    .then(async (observer) => {
+      await observer.close();
+      return false;
+    }, () => true);
+  try {
+    await entered.promise;
+    controller.abort(Error("admission expired with headers withheld"));
+    headers.resolve();
+    assertEquals(
+      await result,
+      true,
+      "withheld event establishment must reject on the admission signal",
+    );
+  } finally {
+    headers.resolve();
+    await result;
+    await server.shutdown();
+  }
+});
+
+Deno.test("catalogue work: admission itself bounds withheld event headers and closes the request", async () => {
+  const headers = Promise.withResolvers<void>();
+  const server = Deno.serve(
+    { hostname: "0.0.0.0", port: 0, onListen() {} },
+    async () => {
+      await headers.promise;
+      return new Response("event: hello\ndata: {}\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  );
+  try {
+    await assertRejects(
+      () =>
+        catalogPluginReady({
+          baseUrl: `http://${
+            Deno.env.get("GLOBNOTES_TEST_HOST")
+          }:${server.addr.port}`,
+        }, "withheld"),
+      Error,
+      "plugin 'withheld' catalogue admission: readiness bound exceeded",
+    );
+  } finally {
+    headers.resolve();
+    await server.shutdown();
+  }
+});
+
+Deno.test("catalogue work: HTTP reports the failure from the terminal selected snapshot", async () => {
+  const current = plugin(),
+    baseline = captureWork(current, ["ordinary", "versioning"]);
+  current.work!.versioning.settled = 2;
+  current.work!.versioning.pending = 0;
+  current.work!.versioning.failures = 1;
+  current.work!.versioning.lastFailure = {
+    sequence: 2,
+    code: "plugin_work_failed",
+  };
+  current.deliveryFailures = 1;
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const encoder = new TextEncoder();
+  const server = Deno.serve(
+    { hostname: "0.0.0.0", port: 0, onListen() {} },
+    (request) => {
+      if (new URL(request.url).pathname.endsWith("/events")) {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              stream = controller;
+              controller.enqueue(encoder.encode("event: hello\ndata: {}\n\n"));
+            },
+            cancel() {
+              stream = undefined;
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      const snapshot = structuredClone(current);
+      if (current.work!.ordinary.pending) {
+        current.work!.ordinary.settled = 2;
+        current.work!.ordinary.pending = 0;
+        stream?.enqueue(encoder.encode("event: invalidate\ndata: {}\n\n"));
+      }
+      return Response.json({ plugins: [snapshot] });
+    },
+  );
+  try {
+    const error = await assertRejects(
+      () =>
+        catalogWorkSettled(
+          {
+            baseUrl: `http://${
+              Deno.env.get("GLOBNOTES_TEST_HOST")
+            }:${server.addr.port}`,
+          },
+          "test",
+          { lanes: ["ordinary", "versioning"], baseline },
+        ),
+      CatalogWorkFailure,
+    );
+    assertEquals(error.plugin.work!.generation, baseline.generation);
+    assertEquals(error.plugin.work!.ordinary.pending, 0);
+    assertEquals(error.plugin.work!.ordinary.settled, 2);
+    assertEquals(
+      error.plugin.work!.versioning.lastFailure?.code,
+      "plugin_work_failed",
+    );
+  } finally {
+    await server.shutdown();
+  }
 });
 
 Deno.test("catalogue work: real HTTP invalidation settles admitted work without polling private status", async () => {

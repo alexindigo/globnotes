@@ -5,7 +5,7 @@ import { httpOrigin } from "./http-origin.mjs";
 import { bootServer } from "./harness-helpers.mjs";
 import { executeChild } from "./legacy-native-suite.mjs";
 import { BACKUP_CASES } from "./native-fixture-cases.mjs";
-import { captureWork, catalogPluginReady, catalogWorkSettled } from "../../../tests/helpers/catalog_work.ts";
+import { captureWork, catalogPluginReady, catalogWorkSettled, CatalogWorkFailure } from "../../../tests/helpers/catalog_work.ts";
 import { recordBackupNegative, requireBackupNegative } from "../helpers/backup-controls.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
@@ -103,16 +103,15 @@ if (options.controls) {
         failure.workBaseline = structuredClone(current.workBaseline);
         throw failure;
       }
-      assert(error.message.includes("work failed"), "Expected a returned callback failure, not owner loss or deadline");
+      assert(error instanceof CatalogWorkFailure, "Expected a returned callback failure, not owner loss or deadline");
       // These cases deliberately throw from their first versioning callback.
       // Acknowledge exactly that terminal failure, never an arbitrary new baseline.
-      const entry = (await api("/_/api/plugin-host")).body.plugins.find(plugin => plugin.id === "globnotes-backup");
+      const entry = error.plugin;
       equal(entry.work.generation, current.workBaseline.generation, "Expected-failure owner retained");
       equal(entry.deliveryFailures, current.workBaseline.deliveryFailures + 1, "Exactly one expected delivery failure");
       for (const lane of ["ordinary", "versioning"]) {
         equal(entry.work[lane].failures, current.workBaseline.lanes[lane].failures + (lane === "versioning" ? 1 : 0), "Only the injected callback failed");
-        equal(entry.work[lane].pending, 0, "Expected-failure cohort is terminal");
-        equal(entry.work[lane].settled, entry.work[lane].admitted, "No unsettled admission hole");
+        assert(entry.work[lane].settled >= error.fence.lanes[lane].admitted, "Expected-failure captured cohort is terminal without extending its fence");
       }
       equal(entry.work.versioning.lastFailure.code, "plugin_work_failed", "Ordinary callback rejection, not product deadline");
       current.workBaseline = captureWork(entry, ["ordinary", "versioning"]);

@@ -1,6 +1,8 @@
 // Real native backup fixture scheduling proof. Run through run.sh --browser.
 import { command } from "./process.ts";
 import { watchChild } from "./wait.ts";
+import { waitForAudit } from "./catalog_work_audit.ts";
+import { finalizeNativeCase } from "../../client/tests/e2e/native-case-finalization.mjs";
 
 const directory = Deno.args[0];
 if (!directory?.startsWith("/")) {
@@ -28,40 +30,17 @@ const child = command(Deno.execPath(), {
   stderr: "piped",
 }).spawn();
 const watching = watchChild(child), output = child.output();
-const read = async (name) => {
-  try {
-    return JSON.parse(await Deno.readTextFile(`${directory}/${name}.json`));
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return null;
-    throw error;
-  }
-};
-async function waitFile(name) {
-  const watcher = Deno.watchFs(directory);
-  try {
-    const existing = await read(name);
-    if (existing) return existing;
-    for await (const _event of watcher) {
-      const failure = await read("invocation-error");
-      if (failure) throw Error(failure.detail);
-      const value = await read(name);
-      if (value) return value;
-    }
-    throw Error(`Native audit watcher closed before ${name}`);
-  } finally {
-    watcher.close();
-  }
-}
-let serverPid, paused = false;
+const waitFile = (name) => waitForAudit(directory, name, child.status);
+let serverPid,
+  paused = false,
+  controlChild,
+  controlOutput,
+  controlWatching,
+  failure;
 try {
   // Each native preparation call has its own product outcome. Do not add a
   // readiness cap around their sequence merely to observe the scheduling seam.
-  const before = await Promise.race([
-    waitFile("before-stop"),
-    child.status.then((status) => {
-      throw Error(`Native child exited before seam: ${status.code}`);
-    }),
-  ]);
+  const before = await waitFile("before-stop");
   serverPid = before.pid;
   paused = true;
   assert(
@@ -70,7 +49,7 @@ try {
     "Wrong native capture seam",
   );
   // Meaningful verification supplies the scheduling gap, not a timer or sleep.
-  const control = await command(Deno.execPath(), {
+  controlChild = command(Deno.execPath(), {
     args: [
       "test",
       "--cached-only",
@@ -83,7 +62,15 @@ try {
     ],
     stdout: "piped",
     stderr: "piped",
-  }).output();
+  }).spawn();
+  controlWatching = watchChild(controlChild);
+  controlOutput = controlChild.output();
+  const control = await Promise.race([
+    controlOutput,
+    child.status.then((status) => {
+      throw Error(`Native child exited during verification: ${status.code}`);
+    }),
+  ]);
   await Deno.writeFile(`${directory}/count.stdout.log`, control.stdout);
   await Deno.writeFile(`${directory}/count.stderr.log`, control.stderr);
   const stalledWallMs = Date.now() - before.wall;
@@ -140,24 +127,48 @@ try {
     "Native journal/staging cleanup incomplete",
   );
   assert(result.code === 0, "First native backup idle observation failed");
+} catch (error) {
+  failure = error;
+  throw error;
 } finally {
-  if (serverPid) {
-    if (paused) {
-      try {
-        Deno.kill(serverPid, "SIGCONT");
-      } catch { /* exited */ }
-    }
-    // Failed native fixtures retain their server. This proof owns that exact PID.
-    try {
-      Deno.kill(serverPid, "SIGTERM");
-    } catch { /* healthy consumer closed it */ }
-  }
-  if (!watching.status()) {
-    try {
-      child.kill("SIGTERM");
-    } catch { /* exited */ }
-  }
-  const final = await output;
-  await Deno.writeFile(`${directory}/native.stdout.log`, final.stdout);
-  await Deno.writeFile(`${directory}/native.stderr.log`, final.stderr);
+  await finalizeNativeCase({
+    error: failure,
+    cleanup: [
+      () => {
+        if (serverPid && paused) {
+          try {
+            Deno.kill(serverPid, "SIGCONT");
+          } catch { /* exited */ }
+        }
+      },
+      async () => {
+        if (!controlChild) return;
+        if (!controlWatching.status()) {
+          try {
+            controlChild.kill("SIGTERM");
+          } catch { /* exited */ }
+        }
+        const final = await controlOutput;
+        await Deno.writeFile(`${directory}/count.stdout.log`, final.stdout);
+        await Deno.writeFile(`${directory}/count.stderr.log`, final.stderr);
+      },
+      () => {
+        if (serverPid) {
+          try {
+            Deno.kill(serverPid, "SIGTERM");
+          } catch { /* healthy consumer closed it */ }
+        }
+      },
+      async () => {
+        if (!watching.status()) {
+          try {
+            child.kill("SIGTERM");
+          } catch { /* exited */ }
+        }
+        const final = await output;
+        await Deno.writeFile(`${directory}/native.stdout.log`, final.stdout);
+        await Deno.writeFile(`${directory}/native.stderr.log`, final.stderr);
+      },
+    ],
+  });
 }

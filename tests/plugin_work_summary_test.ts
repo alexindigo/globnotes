@@ -8,6 +8,7 @@ import { PluginHost } from "../server/plugins/host.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
+import { manualExpiry } from "./helpers/manual_deadline.ts";
 
 async function fixture() {
   return await pluginOperationsFixture({
@@ -112,13 +113,21 @@ Deno.test("work summary: queued deadline cannot advance across an active hole", 
   const f = await fixture();
   const deadline = processClock.deadline.bind(processClock);
   let expire: (() => void) | undefined;
+  const scheduled = new Set<() => void>();
   try {
     await f.create("Note", "v0");
     await f.save("Note", "v1");
     await f.command("ping");
     processClock.deadline = (ms, callback) => {
-      const cancel = deadline(ms, callback);
-      if (ms === PLUGIN_LIMITS.serviceCallMs) expire = callback;
+      const stop = deadline(ms, callback);
+      const cancel = () => {
+        scheduled.delete(cancel);
+        stop();
+      };
+      scheduled.add(cancel);
+      if (ms === PLUGIN_LIMITS.serviceCallMs) {
+        expire = manualExpiry(cancel, callback);
+      }
       return cancel;
     };
     await f.save("Note", "v2");
@@ -140,6 +149,13 @@ Deno.test("work summary: queued deadline cannot advance across an active hole", 
   } finally {
     processClock.deadline = deadline;
     await f.close();
+    const remaining = scheduled.size;
+    for (const cancel of scheduled) cancel();
+    assertEquals(
+      remaining,
+      0,
+      "manual expiry must release its real deadline and clock hold",
+    );
   }
 });
 
@@ -152,7 +168,7 @@ Deno.test("work summary: a hung invocation records the existing product deadline
     processClock.deadline = (ms, callback) => {
       const cancel = deadline(ms, callback);
       if (ms === PLUGIN_LIMITS.serviceCallMs) {
-        expire ??= callback;
+        expire ??= manualExpiry(cancel, callback);
         budget = ms;
       }
       return cancel;

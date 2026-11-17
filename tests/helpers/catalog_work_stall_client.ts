@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 /** Run the unmodified native backup consumer, substituting only its server entry
  * with the test-owned scheduling seam. Works against an exact main export too. */
+import { waitForAudit } from "./catalog_work_audit.ts";
 const directory = Deno.args[0];
 const NativeCommand = Deno.Command;
 Deno.Command = class extends NativeCommand {
@@ -51,24 +52,13 @@ try {
     `${directory}/first-native-error.json`,
     JSON.stringify({ detail: String(error) }),
   );
-  const watcher = Deno.watchFs(directory);
   try {
-    const completed = () => {
-      for (const name of ["completed", "invocation-error"]) {
-        try {
-          Deno.statSync(`${directory}/${name}.json`);
-          return true;
-        } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) throw error;
-        }
-      }
-      return false;
-    };
-    if (!completed()) {
-      for await (const _event of watcher) if (completed()) break;
-    }
-  } finally {
-    watcher.close();
+    await waitForAudit(directory, "completed");
+  } catch (auditError) {
+    throw new AggregateError(
+      [error, auditError],
+      "Native consumer and invocation audit failed",
+    );
   }
   throw error;
 }
