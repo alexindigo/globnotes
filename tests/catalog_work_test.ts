@@ -129,6 +129,42 @@ Deno.test("catalogue work: withheld event headers observe the admission signal",
   }
 });
 
+Deno.test("catalogue work: owner exit aborts withheld event headers without waiting for admission expiry", async () => {
+  const entered = Promise.withResolvers<void>(),
+    headers = Promise.withResolvers<void>();
+  const owner = Promise.withResolvers<{ code: number }>();
+  const server = Deno.serve(
+    { hostname: "0.0.0.0", port: 0, onListen() {} },
+    async () => {
+      entered.resolve();
+      await headers.promise;
+      return new Response("event: hello\ndata: {}\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  );
+  const result = assertRejects(
+    () =>
+      observeCatalog({
+        baseUrl: `http://${
+          Deno.env.get("GLOBNOTES_TEST_HOST")
+        }:${server.addr.port}`,
+        exited: owner.promise,
+      }),
+    Error,
+    "catalog server exited: 17",
+  );
+  try {
+    await entered.promise;
+    owner.resolve({ code: 17 });
+    await result;
+  } finally {
+    headers.resolve();
+    await result;
+    await server.shutdown();
+  }
+});
+
 Deno.test("catalogue work: admission itself bounds withheld event headers and closes the request", async () => {
   const headers = Promise.withResolvers<void>();
   const server = Deno.serve(

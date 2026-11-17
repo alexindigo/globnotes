@@ -19,6 +19,7 @@ export interface CatalogServer {
   pid?: number;
   status?(): { code: number; signal?: string | null } | null;
   logs?(): { stdout?: string; stderr?: string };
+  exited?: Promise<{ code: number }>;
 }
 export interface CatalogOptions {
   prefix?: string;
@@ -96,6 +97,22 @@ export async function observeCatalog(
   options: CatalogOptions = {},
 ) {
   const abort = new AbortController();
+  let changed = Promise.withResolvers<void>();
+  let failure: Error | undefined;
+  const wake = () => {
+    const previous = changed;
+    changed = Promise.withResolvers<void>();
+    previous.resolve();
+  };
+  server.exited?.then((status) => {
+    failure = Error(`catalog server exited: ${status.code}`);
+    abort.abort(failure);
+    wake();
+  }, (error) => {
+    failure = error;
+    abort.abort(error);
+    wake();
+  });
   const url = `${server.baseUrl}${options.prefix ?? ""}/_/api/plugin-host`;
   const response = await fetch(`${url}/events`, {
     headers: options.headers,
@@ -107,13 +124,6 @@ export async function observeCatalog(
     await response.body?.cancel();
     throw Error(`catalog events rejected: ${response.status}`);
   }
-  let changed = Promise.withResolvers<void>();
-  let failure: Error | undefined;
-  const wake = () => {
-    const previous = changed;
-    changed = Promise.withResolvers<void>();
-    previous.resolve();
-  };
   const pumping = (async () => {
     let buffer = "";
     try {

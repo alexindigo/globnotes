@@ -1,12 +1,13 @@
 // Production-assets native consumers. Every target, server, variant and artifact is owned.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { fileURLToPath } from "node:url";
-import { httpOrigin } from "./http-origin.mjs";
 import { bootServer } from "./harness-helpers.mjs";
 import { executeChild } from "./legacy-native-suite.mjs";
 import { BACKUP_CASES } from "./native-fixture-cases.mjs";
 import { captureWork, catalogPluginReady, catalogWorkSettled, CatalogWorkFailure } from "../../../tests/helpers/catalog_work.ts";
 import { recordBackupNegative, requireBackupNegative } from "../helpers/backup-controls.js";
+import { publishRecord, readRecord, waitForRecord } from "../../../tests/helpers/process_records.ts";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
 const kinds = ["count", "order", "location", "preimage", "pin", "recovery", "aliases", "distinct", "retarget", "cleanup"];
@@ -61,28 +62,28 @@ if (options.controls) {
       for (const name of ["deno.json", "deno.lock"]) equal(await Deno.readTextFile(`${source}/${name}`), await Deno.readTextFile(`${ROOT}/${name}`), "Locked dependency inputs must match before cache reuse");
       assert((await Deno.stat(`${ROOT}/node_modules`)).isDirectory, "Installed dependency reference unavailable");
       await Deno.symlink(`${ROOT}/node_modules`, `${source}/node_modules`);
-      await Deno.writeTextFile(`${directory}/dependency-custody.json`, JSON.stringify({ reference: `${ROOT}/node_modules`, selected: `${source}/node_modules`, configAndLockBytesMatch: true, sourceOnlyVariant: true }, null, 2), { createNew: true });
+      await publishRecord(`${directory}/dependency-custody.json`, JSON.stringify({ reference: `${ROOT}/node_modules`, selected: `${source}/node_modules`, configAndLockBytesMatch: true, sourceOnlyVariant: true }, null, 2), { createNew: true });
       let text = original;
       if (mode === "broken") for (const [before, after] of deltas[kind]) { equal(text.split(before).length - 1, 1, "variant match count"); text = text.replace(before, after); }
-      await Deno.writeTextFile(`${source}/plugins/globnotes-backup/backup.js`, text);
-      await Deno.writeTextFile(`${directory}/variant.json`, JSON.stringify({ kind, mode, source, delta: mode === "broken" ? deltas[kind] : [], originalSource: original, variantSource: text }, null, 2), { createNew: true });
+      await publishRecord(`${source}/plugins/globnotes-backup/backup.js`, text);
+      await publishRecord(`${directory}/variant.json`, JSON.stringify({ kind, mode, source, delta: mode === "broken" ? deltas[kind] : [], originalSource: original, variantSource: text }, null, 2), { createNew: true });
       const result = await executeChild(["run", "--cached-only", "--frozen", `--config=${source}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-env", "--allow-run", "--allow-net", "--allow-sys", `${source}/client/tests/e2e/backup-plugin.mjs`, "--case", kind, ...(mode === "broken" ? ["--negative"] : []), "--artifacts", `${directory}/consumers`], { artifacts: directory, label: "child", timeout: 120000 });
       assert(!result.timedOut, `${kind}: timeout is not intended consumer failure`);
       if (mode === "healthy") {
         assert(result.code === 0, `${kind}: healthy producer failed`);
-        const summary = JSON.parse(await Deno.readTextFile(`${directory}/consumers/summary.json`));
+        const summary = readRecord(`${directory}/consumers/summary.json`);
         equal(summary.selected, [kind], `${kind}: complete healthy selection`);
         assert(summary.outcomes.length === 1 && summary.outcomes[0].label === kind && summary.outcomes[0].completed, `${kind}: complete healthy records`);
-        const consumer = JSON.parse(await Deno.readTextFile(`${summary.outcomes[0].directory}/consumers.json`));
+        const consumer = readRecord(`${summary.outcomes[0].directory}/consumers.json`);
         assert(consumer.status.status === 200 && consumer.pageErrors.length === 0, `${kind}: actual healthy API/browser consumer`);
       }
       const negative = mode === "broken" ? await requireBackupNegative(kind, result, async () =>
-        JSON.parse(await Deno.readTextFile(`${directory}/consumers/negative-consumer.json`))) : null;
+        readRecord(`${directory}/consumers/negative-consumer.json`)) : null;
       outcomes.push({ kind, mode, code: result.code, timedOut: result.timedOut, reason: negative?.reason ?? null });
     }
   }
   equal(await Deno.readTextFile(`${ROOT}/plugins/globnotes-backup/backup.js`), original, "Original producer unchanged");
-  await Deno.writeTextFile(`${artifacts}/controls.json`, JSON.stringify({ kinds, outcomes }, null, 2), { createNew: true });
+  await publishRecord(`${artifacts}/controls.json`, JSON.stringify({ kinds, outcomes }, null, 2), { createNew: true });
   console.log("BACKUP PLUGIN CONTROLS OK", JSON.stringify(outcomes));
 } else {
   const outcomes = [], fixtures = [];
@@ -124,27 +125,35 @@ if (options.controls) {
   }
   async function picture(name, session = current.session) {
     const { data } = await session.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-    await Deno.writeFile(`${current.directory}/${name}.png`, Uint8Array.from(atob(data), c => c.charCodeAt(0)), { createNew: true });
+    await publishRecord(`${current.directory}/${name}.png`, Uint8Array.from(atob(data), c => c.charCodeAt(0)), { createNew: true });
+  }
+  async function closeSession(fixture) {
+    if (!fixture?.session || fixture.sessionClosed) return;
+    fixture.sessionClosed = true;
+    await fixture.session.close();
+  }
+  async function closeServer(fixture) {
+    if (!fixture?.server || fixture.serverClosed) return;
+    fixture.serverClosed = true;
+    await fixture.server.close();
+  }
+  async function closeFixture(fixture) {
+    await finalizeNativeCase({ cleanup: [() => closeSession(fixture), () => closeServer(fixture)] });
+    fixture.closed = true;
   }
   async function launch(env) {
     const directory = `${current.directory}/backend-${++current.generation}`; await Deno.mkdir(directory);
-    const NativeCommand = Deno.Command, admitted = Promise.withResolvers();
+    const admitted = Promise.withResolvers(), observation = new AbortController();
     const samples = []; let finished = false;
-    Deno.Command = class extends NativeCommand {
-      constructor(command, options) {
-        super(command, options);
-        if (options?.args?.some(argument => argument.replace(/\/+/g, "/") === `${ROOT}/server/main.ts`)) admitted.resolve({ baseUrl: httpOrigin(options.env.GLOBNOTES__SERVER_PORT), vault: options.env.GLOBNOTES_GLOBNOTES_PATH });
-      }
-    };
-    const boot = bootServer(current.vault, current.state, { env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory });
-    Deno.Command = NativeCommand;
+    const boot = bootServer(current.vault, current.state, { env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory, onServer: server => admitted.resolve(server) });
     const observe = (async () => {
       const owner = await admitted.promise;
       assert(owner.vault === current.vault, "Startup observation must own this fixture");
       if (!owner.baseUrl) return;
+      owner.exited.then(() => observation.abort());
       while (!finished) {
         try {
-          const response = await fetch(`${owner.baseUrl}/_/api/plugin-host`, { signal: AbortSignal.timeout(1000) });
+          const response = await fetch(`${owner.baseUrl}/_/api/plugin-host`, { signal: AbortSignal.any([AbortSignal.timeout(1000), observation.signal]) });
           if (response.ok) { const catalog = await response.json(); samples.push({ time: Date.now(), plugins: catalog.plugins.map(plugin => ({ id: plugin.id, status: plugin.status, diagnostics: plugin.diagnostics })) }); }
           else await response.body?.cancel();
         } catch (error) { samples.push({ time: Date.now(), unavailable: error.name }); }
@@ -153,9 +162,10 @@ if (options.controls) {
     })();
     try {
       current.server = await boot;
+      current.serverClosed = false;
       current.workBaseline = captureWork(await catalogPluginReady(current.server, "globnotes-backup"), ["ordinary", "versioning"]);
     }
-    finally { finished = true; admitted.resolve({ baseUrl: null, vault: current.vault }); await observe; await Deno.writeTextFile(`${directory}/startup-catalogs.json`, JSON.stringify(samples, null, 2), { createNew: true }); }
+    finally { finished = true; observation.abort(); admitted.resolve({ baseUrl: null, vault: current.vault }); await observe; await publishRecord(`${directory}/startup-catalogs.json`, JSON.stringify(samples, null, 2), { createNew: true }); }
     current.servers.push({ pid: current.server.pid, baseUrl: current.server.baseUrl, directory });
   }
   async function fixture(label, env = {}, seed = null) {
@@ -166,27 +176,34 @@ if (options.controls) {
     await Deno.mkdir(current.vault); await Deno.mkdir(current.state, { recursive: true });
     await Deno.mkdir(`${current.vault}/misplaced`); await Deno.mkdir(`${current.vault}/dedicated`);
     await Deno.writeTextFile(`${current.vault}/Note.md`, "A");
-    await Deno.writeTextFile(`${current.state}/config.json`, JSON.stringify({ auth_type: "none", ...(label === "settings-lock" ? { read_only_settings: true } : {}) }));
-    if (seed) { await Deno.mkdir(`${current.state}/plugin-data/globnotes-backup`, { recursive: true }); await Deno.writeTextFile(`${current.state}/plugin-data/globnotes-backup/settings.json`, JSON.stringify({ schemaVersion: 1, revision: 1, values: { backup: seed } })); }
+    await publishRecord(`${current.state}/config.json`, JSON.stringify({ auth_type: "none", ...(label === "settings-lock" ? { read_only_settings: true } : {}) }));
+    if (seed) { await Deno.mkdir(`${current.state}/plugin-data/globnotes-backup`, { recursive: true }); await publishRecord(`${current.state}/plugin-data/globnotes-backup/settings.json`, JSON.stringify({ schemaVersion: 1, revision: 1, values: { backup: seed } })); }
     if (["recovery", "cleanup", "retarget"].includes(label)) {
       const plugin = `${current.state}/plugins/globnotes-backup`; await copyTree(`${ROOT}/plugins/globnotes-backup`, plugin);
       const file = `${plugin}/backup.js`, text = await Deno.readTextFile(file), target = label !== "retarget" ? "metadata = await writeRecord(fs, metadataPath, next, metadata, options);" : "const completed = [];";
       equal(text.split(target).length - 1, 1, "fault/barrier seam");
       const injection = label !== "retarget" ? `${target}\n      if(!globalThis.__backupNativeInterrupted){globalThis.__backupNativeInterrupted=true;throw new BackupError('native_recorded_interruption');}`
         : `${target}\n      if((globalThis.__backupNativePublications=(globalThis.__backupNativePublications??0)+1)===2){
-          await fs.writeFile(join(workspace.location,'retarget-ready'),new Uint8Array([1]),{...options,expect:{kind:'absent'}});
-          await new Promise((resolve,reject)=>{const release=this.ctx.timers.setInterval(async()=>{try{if(await fs.stat(join(workspace.location,'retarget-release'),options)){release();resolve();}}catch(error){release();reject(error);}},10);});
+          const publish = (${publishRecord.toString()});
+          await publish(join(workspace.location,'retarget-ready'),'{"ready":true}',{}, {
+            unique:()=>this.ctx.createUuid(),
+            write:async(path,text)=>{await fs.writeFile(path,new TextEncoder().encode(text),{...options,expect:{kind:'absent'}});},
+            rename:async(from,to)=>{const stat=await fs.stat(from,options);await fs.rename(from,to,{...options,sourceToken:stat.token,destination:{kind:'absent'}});},
+            remove:async(path)=>{const stat=await fs.stat(path,options);if(stat)await fs.remove(path,{...options,token:stat.token});}
+          });
+          await new Promise((resolve,reject)=>{const release=this.ctx.timers.setInterval(async()=>{try{const path=join(workspace.location,'retarget-release');if(await fs.stat(path,options) && JSON.parse(new TextDecoder().decode(await fs.readFile(path,options))).release===true){release();resolve();}}catch(error){release();reject(error);}},10);});
         }`;
       const mutated = text.replace(target, injection);
-      await Deno.writeTextFile(file, mutated);
-      await Deno.writeTextFile(`${directory}/fault-source.json`, JSON.stringify({ file, before: text, after: mutated }), { createNew: true });
+      await publishRecord(file, mutated);
+      await publishRecord(`${directory}/fault-source.json`, JSON.stringify({ file, before: text, after: mutated }), { createNew: true });
     }
     await launch(env);
     current.session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
+    current.sessionClosed = false;
     await current.session.goto(`${current.server.baseUrl}/Note`);
     await current.session.poll("!!document.querySelector('.toast-viewer')");
     await current.session.evaluate("document.fonts.ready.then(()=>true)");
-    await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({ vault: current.vault, state: current.state, pid: current.server.pid, baseUrl: current.server.baseUrl, targetId: current.session.targetId, browserContextId: current.session.browserContextId }, null, 2), { createNew: true });
+    await publishRecord(`${directory}/ownership.json`, JSON.stringify({ vault: current.vault, state: current.state, pid: current.server.pid, baseUrl: current.server.baseUrl, targetId: current.session.targetId, browserContextId: current.session.browserContextId }, null, 2), { createNew: true });
   }
   async function open() {
     const session = current.session;
@@ -231,20 +248,20 @@ if (options.controls) {
       try { observed.push(await Deno.readTextFile(`${root}/${path}.md.${index}.bak`)); }
       catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; observed.push(null); }
     }
-    await Deno.writeTextFile(`${current.directory}/ring-${current.rings = (current.rings ?? 0) + 1}.json`, JSON.stringify({ root, path, observed, expected, status: await status() }, null, 2), { createNew: true });
+    await publishRecord(`${current.directory}/ring-${current.rings = (current.rings ?? 0) + 1}.json`, JSON.stringify({ root, path, observed, expected, status: await status() }, null, 2), { createNew: true });
     equal(observed, [...expected, ...Array(10 - expected.length).fill(null)], `BACKUP_NATIVE_${kind}: exact ordered owned physical slots`);
     return observed;
   }
   async function finish(label, consumers) {
     assert(current.session.errors.length === 0, "Unexpected browser runtime exception");
     const result = { label, consumers, settings: await settings(), status: await status(), servers: current.servers, pageErrors: current.session.errors, events: current.session.events };
-    await Deno.writeTextFile(`${current.directory}/consumers.json`, JSON.stringify(result, null, 2), { createNew: true });
-    await current.session.close(); await current.server.close(); current.closed = true;
+    await publishRecord(`${current.directory}/consumers.json`, JSON.stringify(result, null, 2), { createNew: true });
+    await closeFixture(current);
     outcomes.push({ label, completed: true, directory: current.directory });
   }
   async function restart(env = {}) {
-    await Deno.writeTextFile(`${current.directory}/restart-${current.generation}-before.json`, JSON.stringify({ settings: await settings(), status: await status(), live: await Deno.readTextFile(`${current.vault}/Note.md`) }, null, 2), { createNew: true });
-    await current.server.close(); await launch(env);
+    await publishRecord(`${current.directory}/restart-${current.generation}-before.json`, JSON.stringify({ settings: await settings(), status: await status(), live: await Deno.readTextFile(`${current.vault}/Note.md`) }, null, 2), { createNew: true });
+    await closeServer(current); await launch(env);
     await current.session.goto(`${current.server.baseUrl}/Note`); await current.session.poll("!!document.querySelector('.toast-viewer')");
     await current.session.evaluate("document.fonts.ready.then(()=>true)");
   }
@@ -313,7 +330,7 @@ if (options.controls) {
         await fixture(kind); const failed = await save("Note", "B", true);
         assert(failed.pendingRecovery, `BACKUP_NATIVE_${kind}: interruption recorded`);
         const active = `${current.vault}/.globnotes-backup/active.json`, journal = JSON.parse(await Deno.readTextFile(active));
-        await Deno.writeTextFile(`${current.directory}/interrupted-journal.json`, JSON.stringify(journal, null, 2), { createNew: true });
+        await publishRecord(`${current.directory}/interrupted-journal.json`, JSON.stringify(journal, null, 2), { createNew: true });
         const live = await Deno.readTextFile(`${current.vault}/Note.md`); await restart();
         const recovered = (await status()).body;
         assert(!recovered.pendingRecovery, `BACKUP_NATIVE_${kind}: ring-committed cleanup completed without duplicate capture`);
@@ -323,7 +340,7 @@ if (options.controls) {
           try { await Deno.lstat(file); } catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; missing = true; }
           cleanup.push({ file, missing });
         }
-        await Deno.writeTextFile(`${current.directory}/physical-cleanup.json`, JSON.stringify(cleanup, null, 2), { createNew: true });
+        await publishRecord(`${current.directory}/physical-cleanup.json`, JSON.stringify(cleanup, null, 2), { createNew: true });
         assert(cleanup.every(item => item.missing), `BACKUP_NATIVE_${kind}: active journal and every recorded stage physically removed`);
         equal(await Deno.readTextFile(`${current.vault}/Note.md`), live, `BACKUP_NATIVE_${kind}: original note never replayed`);
         await ring(current.vault, "Note", ["A"], kind); await finish(kind, { failed, recovered, live });
@@ -340,18 +357,22 @@ if (options.controls) {
         const first = `${current.vault}/first`, second = `${current.vault}/second`, alias = `${current.vault}/alias`;
         await Deno.mkdir(first); await Deno.mkdir(second); await Deno.symlink(first, alias);
         await open(); await base(alias); await closeSettings(); await save("Note", "B");
-        const watcher = Deno.watchFs(`${current.vault}/.globnotes-backup`);
-        const ready = (async () => { for await (const event of watcher) if (event.paths.some(path => path.endsWith("/retarget-ready"))) { const observed = await Deno.stat(`${current.vault}/.globnotes-backup/retarget-ready`).catch(error => { if (error instanceof Deno.errors.NotFound) return null; throw error; }); if (observed) return; } throw new Error("barrier watcher closed before observation"); })();
-        try {
+        {
           const read = await api("/_/api/notes/Note");
           equal((await api("/_/api/notes/Note", "PATCH", { newContent: "C", base: { kind: "version", version: read.body.version } })).status, 200, "BACKUP_NATIVE_retarget: original ACK before deferred publication");
-          await ready;
-          Deno.removeSync(alias); Deno.symlinkSync(second, alias); Deno.writeTextFileSync(`${current.vault}/.globnotes-backup/retarget-release`, "release");
+          const work = catalogWorkSettled(current.server, "globnotes-backup", { lanes: ["ordinary", "versioning"], baseline: current.workBaseline });
+          const workspace = `${current.vault}/.globnotes-backup`;
+          await waitForRecord(workspace, "retarget-ready", () => { const value = readRecord(`${workspace}/retarget-ready`); return value?.ready === true ? value : null; }, [
+            { label: "backup server", exit: current.server.exited },
+            { label: "captured backup invocation", exit: work.then(() => ({code:0}), () => ({code:1})) },
+          ]);
+          Deno.removeSync(alias); Deno.symlinkSync(second, alias); publishRecord(`${workspace}/retarget-release`, '{"release":true}');
           const settled = (await status()).body;
           assert(!settled.pendingRecovery, "BACKUP_NATIVE_retarget: pinned transaction completes under surviving static authority");
           await ring(first, "Note", ["B", "A"], kind); await ring(second, "Note", [], kind);
           await finish(kind, { first, second, alias, settled, pinnedPlacement: true });
-        } finally { watcher.close(); }
+          await work;
+        }
       } else if (kind === "failure") {
         await fixture(kind); await Deno.writeTextFile(`${current.vault}/Note.md.0.bak`, "alien");
         const session = current.session;
@@ -382,11 +403,11 @@ if (options.controls) {
       }
     }
     equal(outcomes.length, selected.length, "Complete required native records");
-    await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ selected, outcomes, productionAssets: true, allConsumersCompleted: true }, null, 2), { createNew: true });
+    await publishRecord(`${artifacts}/summary.json`, JSON.stringify({ selected, outcomes, productionAssets: true, allConsumersCompleted: true }, null, 2), { createNew: true });
     console.log("BACKUP PLUGIN OK", JSON.stringify(outcomes));
   } catch (error) {
-    const failureRecord = () => Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ detail: error.message, outcomes, fixtures: fixtures.map(({ label, directory, vault, state, servers, closed }) => ({ label, directory, vault, state, servers, closed })) }, null, 2), { createNew: true });
-    if (options.negative) {
+    const failureRecord = () => publishRecord(`${artifacts}/failure.json`, JSON.stringify({ detail: error.message, outcomes, fixtures: fixtures.map(({ label, directory, vault, state, servers, closed }) => ({ label, directory, vault, state, servers, closed })) }, null, 2), { createNew: true });
+    try { if (options.negative) {
       await recordBackupNegative({ kind: options.case, error, pageErrors: current?.session?.errors ?? [],
         diagnostics: async () => {
           await failureRecord();
@@ -399,17 +420,17 @@ if (options.controls) {
           if (options.case === "retarget") state.retarget = {
             aliasTarget: await Deno.readLink(`${current.vault}/alias`),
             firstSlot: await readSlot(`${current.vault}/first/Note.md.0.bak`), secondSlot: await readSlot(`${current.vault}/second/Note.md.0.bak`),
-            ready: await readSlot(`${current.vault}/.globnotes-backup/retarget-ready`) !== null,
-            released: await readSlot(`${current.vault}/.globnotes-backup/retarget-release`) === "release",
+            ready: readRecord(`${current.vault}/.globnotes-backup/retarget-ready`)?.ready === true,
+            released: readRecord(`${current.vault}/.globnotes-backup/retarget-release`)?.release === true,
           };
-          await Deno.writeTextFile(`${current.directory}/negative-state.json`, JSON.stringify(state, null, 2), { createNew: true });
+          await publishRecord(`${current.directory}/negative-state.json`, JSON.stringify(state, null, 2), { createNew: true });
           return state;
         },
-        cleanup: [async () => { await current?.session?.close(); }, async () => { await current?.server?.close(); if (current) current.closed = true; }],
-        write: record => Deno.writeTextFile(`${artifacts}/negative-consumer.json`, JSON.stringify(record, null, 2), { createNew: true }),
+        cleanup: [() => closeSession(current), () => closeServer(current)],
+        write: record => publishRecord(`${artifacts}/negative-consumer.json`, JSON.stringify(record, null, 2), { createNew: true }),
       });
     } else await failureRecord();
-    // Failed owned contexts/server/fixtures stay available for diagnosis.
+    } finally { await finalizeNativeCase({ error, cleanup: fixtures.map(fixture => () => closeFixture(fixture)) }); }
     throw error;
   }
 }

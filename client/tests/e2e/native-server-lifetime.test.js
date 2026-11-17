@@ -16,7 +16,7 @@ for (const crash of [false, true]) {
     const cleanup = new Error("server exited on its own before close()");
     const close = vi.fn().mockRejectedValue(cleanup);
     launch.mockResolvedValue({ baseUrl: "http://globnotes.test:4321", pid: 23, output,
-      status: () => status, logs: () => output, close });
+      status: () => status, logs: () => output, exited: new Promise(() => {}), close });
     vi.stubGlobal("fetch", vi.fn(async () => {
       if (crash) status = { code: 17, signal: null };
       return new Response(JSON.stringify({ plugins: [{ id: "broken", enabled: true, runtime: { server: "service.js" }, status: "failed" }] }));
@@ -36,3 +36,23 @@ for (const crash of [false, true]) {
     expect(diagnostic).toHaveBeenCalledOnce();
   });
 }
+
+it("aborts a withheld inventory response on owner exit and closes the owned server", async () => {
+  const exited = Promise.withResolvers(), entered = Promise.withResolvers();
+  const output = { stdout: "owned output", stderr: "owned exit" }, close = vi.fn().mockResolvedValue();
+  let status = null;
+  launch.mockResolvedValue({ baseUrl: "http://globnotes.test:4321", pid: 23, output,
+    status: () => status, logs: () => output, exited: exited.promise, close });
+  vi.stubGlobal("fetch", vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    entered.resolve();
+  })));
+  const result = bootServer("/fixture/vault", "/fixture/state/globnotes").catch(error => error);
+  await entered.promise;
+  status = { code: 17, signal: null }; exited.resolve(status);
+  const error = await result;
+  expect(error).toBeInstanceOf(ReadinessError);
+  expect(error.label).toBe("e2e server plugins ready");
+  expect(error.reason).toContain("17");
+  expect(close).toHaveBeenCalledExactlyOnceWith();
+});

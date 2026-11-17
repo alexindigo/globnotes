@@ -5,6 +5,10 @@ import { PluginHost } from "../../server/plugins/host.ts";
 import { AuxiliaryFilesystem } from "../../server/plugins/auxiliary_fs.ts";
 import { processClock } from "../../server/observed_time.ts";
 import { auditInvocation } from "./catalog_work_audit.ts";
+import { publishRecord, watchOwnerPipe } from "./process_records.ts";
+
+const clientOwner = watchOwnerPipe(Deno.stdin.readable, "native client");
+clientOwner.exit.then(() => Deno.exit(1));
 
 const directory = Deno.env.get("WORK_PROOF_DIR")!;
 const vault = Deno.env.get("GLOBNOTES_GLOBNOTES_PATH")!;
@@ -28,7 +32,7 @@ PluginHost.prototype.invoke = function (handler, args, pre, timeout, options) {
       const files = [...Deno.readDirSync(`${vault}/.globnotes-backup`)].map(
         (item) => item.name,
       );
-      Deno.writeTextFileSync(
+      publishRecord(
         `${directory}/completed.json`,
         JSON.stringify({
           generation,
@@ -40,7 +44,7 @@ PluginHost.prototype.invoke = function (handler, args, pre, timeout, options) {
         }),
       );
     }, (error) =>
-      Deno.writeTextFileSync(
+      publishRecord(
         `${directory}/invocation-error.json`,
         JSON.stringify({ detail: String(error) }),
       )).catch((error) =>
@@ -63,7 +67,7 @@ AuxiliaryFilesystem.prototype.rpc = function (
     /\/stage-[^/]+-0\.bin$/.test(String(args[0]))
   ) {
     stopped = true;
-    Deno.writeTextFileSync(
+    publishRecord(
       `${directory}/before-stop.json`,
       JSON.stringify({
         pid: Deno.pid,
@@ -76,6 +80,7 @@ AuxiliaryFilesystem.prototype.rpc = function (
       }),
     );
     Deno.kill(Deno.pid, "SIGSTOP");
+    if (Deno.env.get("WORK_PROOF_EXIT_BEFORE_RECORD") === "1") Deno.exit(17);
   }
   return rpc.call(this, manifest, method, args, authority);
 };

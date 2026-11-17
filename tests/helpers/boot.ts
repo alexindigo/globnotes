@@ -18,6 +18,7 @@ import * as path from "@std/path";
 import { command, DENO } from "./process.ts";
 import { done, pending, waitUntil } from "./wait.ts";
 import { testEnvironment } from "./environment.ts";
+import { publishRecord } from "./process_records.ts";
 import type { StoredConfig } from "../../server/config.ts";
 
 const SERVER_MAIN = path.fromFileUrl(
@@ -59,6 +60,7 @@ export interface TestServer {
   logs: () => { stdout: string; stderr: string };
   /** The exit status once the server process has exited, else null. */
   status: () => Deno.CommandStatus | null;
+  exited: Promise<Deno.CommandStatus>;
   /** Stops the server with a 5 s SIGTERM grace, then owned-child SIGKILL.
    * Fails, with stderr, when the server had already exited on its own. */
   close: () => Promise<void>;
@@ -114,7 +116,7 @@ export async function bootServer(
     } catch (error) {
       if (!(error instanceof Deno.errors.NotFound)) throw error;
     }
-    await Deno.writeTextFile(
+    await publishRecord(
       path.join(metadata, "config.json"),
       JSON.stringify({ ...saved, ...fixture.fixtureAuth }),
     );
@@ -190,6 +192,10 @@ export async function bootServer(
   // With a path prefix the router only answers under it.
   const prefix = env.GLOBNOTES__SERVER_PATHPREFIX ?? "";
   let port: number | null = null;
+  const ownerGone = new AbortController();
+  status.then((value) =>
+    ownerGone.abort(Error(`server exited: ${value.code}`))
+  );
   try {
     await waitUntil(async (signal) => {
       port ??= Number(LISTENING.exec(output.stdout)?.[1]) || null;
@@ -198,12 +204,12 @@ export async function bootServer(
         const res = await fetch(
           `${opts.origin?.(port) ?? `http://127.0.0.1:${port}`}${prefix}` +
             "/_/api/health",
-          { signal },
+          { signal: AbortSignal.any([signal, ownerGone.signal]) },
         );
         await res.body?.cancel();
         return res.ok ? done() : pending({ port, health: res.status });
       } catch (error) {
-        if (signal.aborted) throw error;
+        if (signal.aborted || ownerGone.signal.aborted) throw error;
         return pending({ port, health: String(error) }); // not up yet
       }
     }, {
@@ -240,6 +246,7 @@ export async function bootServer(
     output,
     logs: () => ({ ...output }),
     status: () => exited,
+    exited: status,
     close: async () => {
       if (closed) return;
       closed = true;

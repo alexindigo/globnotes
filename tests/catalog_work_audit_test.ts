@@ -6,6 +6,7 @@ import {
   waitForAudit,
 } from "./helpers/catalog_work_audit.ts";
 import { finalizeNativeCase } from "../client/tests/e2e/native-case-finalization.mjs";
+import { publishRecord } from "./helpers/process_records.ts";
 // The existing JavaScript helper's empty-array default infers never[] in Deno.
 const finalize = finalizeNativeCase as unknown as (options: {
   report: () => Promise<unknown>;
@@ -20,7 +21,7 @@ Deno.test("catalogue audit: a throwing completion audit records invocation error
     await auditInvocation(original, () => {
       throw failure;
     }, async (error) => {
-      await Deno.writeTextFile(
+      await publishRecord(
         `${directory}/invocation-error.json`,
         JSON.stringify({ detail: String(error) }),
       );
@@ -44,7 +45,7 @@ Deno.test("catalogue audit: every event uses the same terminal error probe", asy
     "event audit failure",
   );
   try {
-    await Deno.writeTextFile(
+    await publishRecord(
       `${directory}/invocation-error.json`,
       JSON.stringify({ detail: "event audit failure" }),
     );
@@ -88,7 +89,7 @@ Deno.test("catalogue audit: child exit closes the pending watcher and still runs
 Deno.test("catalogue audit: terminal files win the exit race and errors win over completed", async () => {
   const directory = await Deno.makeTempDir({ prefix: "audit-exit-terminal-" });
   try {
-    await Deno.writeTextFile(
+    await publishRecord(
       `${directory}/completed.json`,
       JSON.stringify({ audited: true }),
     );
@@ -96,7 +97,7 @@ Deno.test("catalogue audit: terminal files win the exit race and errors win over
       await waitForAudit(directory, "completed", Promise.resolve({ code: 0 })),
       { audited: true },
     );
-    await Deno.writeTextFile(
+    await publishRecord(
       `${directory}/invocation-error.json`,
       JSON.stringify({ detail: "terminal error wins" }),
     );
@@ -113,7 +114,7 @@ Deno.test("catalogue audit: terminal files win the exit race and errors win over
 Deno.test("catalogue audit: the initial terminal probe rejects an existing error file", async () => {
   const directory = await Deno.makeTempDir({ prefix: "audit-existing-error-" });
   try {
-    await Deno.writeTextFile(
+    await publishRecord(
       `${directory}/invocation-error.json`,
       JSON.stringify({ detail: "already failed audit" }),
     );
