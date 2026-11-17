@@ -7,6 +7,7 @@ import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { join } from "node:path";
 import { authenticatorCode } from "../../../tests/helpers/totp.ts";
 import { captureClipboard, prepareClipboardWitness, restoreClipboard, writeClipboardText } from "./native-clipboard.mjs";
+import { assertToggleGeometry } from "./settings-frame-native.mjs";
 
 const externalBrowser = Deno.env.get("CDP_PORT");
 const port = Number(externalBrowser || 9398);
@@ -36,6 +37,7 @@ function stable(before, after, label) {
 }
 
 async function shell() {
+  await assertToggleGeometry(page);
    return await page.read(['[role=dialog] form > p[role=alert]', 'button[type=submit]'], `(() => {
     const dialog = document.querySelector('[role=dialog]');
     if(document.querySelector('button[type=submit]').getBoundingClientRect().top<dialog.querySelector('form > p[role=alert]').getBoundingClientRect().bottom)throw Error('Finish overlaps or precedes its feedback lane');

@@ -109,7 +109,9 @@ describe("button icon contracts", () => {
     let icons = wrapper.findAll("svg");
     expect(icons).toHaveLength(1);
     expect(paths(icons[0])).toEqual(pathData(tabToggleLeft));
-    expect(icons[0].element.style.width).toBe("auto");
+    expect(icons[0].element.style.width).toBe("100%");
+    expect(icons[0].element.style.height).toBe("100%");
+    expect(wrapper.find(".toggle-icon-slot").find("svg").exists()).toBe(true);
     expect(wrapper.text()).toBe("Edit");
     await wrapper.setProps({ isOn: true });
     icons = wrapper.findAll("svg");

@@ -5,6 +5,7 @@ import { applicationServer } from "./http-origin.mjs";
 import { connect } from "./cdp.mjs";
 import { tabSave, tabToggleLeft, tabToggleRight } from "../../icons.js";
 import { join } from "node:path";
+import { assertToggleGeometry } from "./settings-frame-native.mjs";
 
 const port = Number(Deno.env.get("CDP_PORT") || 9333);
 const artifacts = await Deno.makeTempDir({ prefix: "button-icons-artifacts-" });
@@ -91,7 +92,7 @@ function toolbar() {
     const el = document.querySelector(`button[data-button-icons="${text}"]`);
     const visible = el.getBoundingClientRect().width > 0;
     if (!visible) return { visible };
-    const label = el.querySelector("span");
+    const label = el.querySelector("span:not(.toggle-icon-slot)");
     return {
       visible,
       rect: rect(el),
@@ -127,6 +128,7 @@ async function markControls() {
 
 async function observe(state, editMode, dirty = false) {
   const label = `${phase} ${state}`;
+  await assertToggleGeometry(page);
    const m = await page.read([editSelector, saveSelector], `(${toolbar.toString()})()`);
   measurements.push({ label, measured: m });
   console.log(JSON.stringify({ label, measured: m }));

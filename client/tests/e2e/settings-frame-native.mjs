@@ -60,6 +60,7 @@ export async function assertSettingsFormRows(session) {
 
 export async function assertSettingsUiRules(session) {
   await assertSettingsTypography(session);
+  await assertToggleGeometry(session);
   const result=await session.read('#settings-modal-title', `(()=>{
     const frame=document.querySelector('#settings-modal-title').closest('[role=dialog]');
     const visible=el=>el.getBoundingClientRect().width>0&&!el.closest('[inert]');
@@ -70,6 +71,23 @@ export async function assertSettingsUiRules(session) {
   })()`);
   if(result.disabled.length||result.mutedActions.length||result.actionStyles.length||result.staticHints.length)throw Error(`Settings UI rules: ${JSON.stringify(result)}`);
   return result;
+}
+
+// Measure painted track edges, including the inherited stroke, not the SVG box.
+export async function assertToggleGeometry(session) {
+  const toggles = await session.read('body', `(()=>{
+    return [...document.querySelectorAll('.toggle-control')].filter(button=>button.getBoundingClientRect().width>0&&!button.closest('[inert]')).map(button=>{
+      const svg=button.querySelector('svg'),track=svg.querySelectorAll('path')[1],box=track.getBBox(),matrix=track.getScreenCTM(),stroke=parseFloat(getComputedStyle(track).strokeWidth)/2;
+      const start=new DOMPoint(box.x-stroke,box.y-stroke).matrixTransform(matrix),end=new DOMPoint(box.x+box.width+stroke,box.y+box.height+stroke).matrixTransform(matrix),control=button.getBoundingClientRect();
+      const gaps={left:start.x-control.left,top:start.y-control.top,bottom:control.bottom-end.y};
+      if(!button.textContent.trim())gaps.right=control.right-end.x;
+      const row=button.closest('.setting-row')||button.parentElement;
+      return {label:button.textContent.trim()||button.getAttribute('aria-label')||document.getElementById(button.getAttribute('aria-labelledby'))?.textContent.trim(),control:control.toJSON(),pill:{x:start.x,y:start.y,width:end.x-start.x,height:end.y-start.y},gaps,row:row.getBoundingClientRect().toJSON()};
+    });
+  })()`);
+  const invalid = toggles.filter(toggle => Math.max(...Object.values(toggle.gaps))-Math.min(...Object.values(toggle.gaps))>1);
+  if (invalid.length) throw Error(`Toggle painted gaps: ${JSON.stringify(invalid)}`);
+  return toggles;
 }
 
 export async function assertSettingsPaneEdges(session) {

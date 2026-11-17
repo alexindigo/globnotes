@@ -134,6 +134,8 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 Toggle knobs are filled in both on and off states across settings, setup and the editor.
 
+Toggle controls keep equal space around the painted pill in every shared consumer.
+
 Settings reserve a line for save and pending feedback, keeping that feedback from
 shifting fields and actions.
 

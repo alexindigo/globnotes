@@ -7,6 +7,7 @@ import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { join } from "node:path";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
+import { assertToggleGeometry } from "./settings-frame-native.mjs";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9399);
 const ARTIFACTS = await Deno.makeTempDir({ prefix: "setup-wizard-shots-" });
@@ -58,6 +59,7 @@ async function twoFrames(page) {
   await page.evaluate(
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`,
   );
+  await assertToggleGeometry(page);
 }
 
 async function selectMode(page, value) {
