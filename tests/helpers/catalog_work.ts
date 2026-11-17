@@ -1,0 +1,239 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
+/** HTTP consumers observe the same host work as in-process fixtures. The existing
+ * invalidation stream is a wake-up, never a receipt or a second work deadline. */
+import type { ServiceWorkSummary } from "../../server/plugins/host.ts";
+import { done, failed, pending, waitUntil } from "./wait.ts";
+
+export interface CatalogPlugin {
+  id: string;
+  status: string;
+  enabled?: boolean;
+  runtime?: { server: boolean };
+  work: ServiceWorkSummary | null;
+  deliveryFailures: number;
+  [key: string]: unknown;
+}
+export interface CatalogServer {
+  baseUrl: string;
+  pid?: number;
+  status?(): { code: number; signal?: string | null } | null;
+  logs?(): { stdout?: string; stderr?: string };
+}
+export interface CatalogOptions {
+  prefix?: string;
+  headers?: HeadersInit;
+}
+type Lane = "ordinary" | "versioning" | "guard";
+const lanes: readonly Lane[] = ["ordinary", "versioning", "guard"];
+export interface WorkFence {
+  generation: string;
+  deliveryFailures: number;
+  lanes: Partial<Record<Lane, { admitted: number; failures: number }>>;
+}
+
+/** Capture before the action for failure baselines; capture again afterward for
+ * its admitted fence. Never infer a clean baseline from evictable diagnostics. */
+export function captureWork(
+  plugin: CatalogPlugin,
+  selected: readonly Lane[] = lanes,
+): WorkFence {
+  if (!plugin.work) throw Error(`plugin '${plugin.id}' work owner unavailable`);
+  return {
+    generation: plugin.work.generation,
+    deliveryFailures: plugin.deliveryFailures,
+    lanes: Object.fromEntries(selected.map((lane) => [lane, {
+      admitted: plugin.work![lane].admitted,
+      failures: plugin.work![lane].failures,
+    }])),
+  };
+}
+
+/** Conservative success: any intervening failure rejects, including later work.
+ * This is not an attribution/receipt API. */
+export function workFenceSettled(
+  plugin: CatalogPlugin | undefined,
+  fence: WorkFence,
+  baseline: WorkFence = fence,
+): boolean {
+  if (
+    !plugin?.work || plugin.work.generation !== fence.generation ||
+    baseline.generation !== fence.generation
+  ) throw Error("plugin work owner replaced or retired before settlement");
+  const failure = lanes.find((lane) => {
+    const before = baseline.lanes[lane];
+    return before && plugin.work![lane].failures !== before.failures;
+  });
+  if (failure || plugin.deliveryFailures !== baseline.deliveryFailures) {
+    throw Error(`plugin '${plugin.id}' work failed: ${JSON.stringify(plugin)}`);
+  }
+  if (plugin.status === "failed" || plugin.work.startup.state === "failed") {
+    throw Error(`plugin '${plugin.id}' failed: ${JSON.stringify(plugin)}`);
+  }
+  return lanes.every((lane) => {
+    const position = fence.lanes[lane];
+    return !position || plugin.work![lane].settled >= position.admitted;
+  });
+}
+
+/** Subscribe before the first read. Capture changed before each read so an event
+ * arriving during that read cannot be lost. Closed streams fail, not reconnect. */
+export async function observeCatalog(
+  server: CatalogServer,
+  options: CatalogOptions = {},
+) {
+  const abort = new AbortController();
+  const url = `${server.baseUrl}${options.prefix ?? ""}/_/api/plugin-host`;
+  const response = await fetch(`${url}/events`, {
+    headers: options.headers,
+    signal: abort.signal,
+  });
+  if (!response.ok || !response.body) {
+    await response.body?.cancel();
+    throw Error(`catalog events rejected: ${response.status}`);
+  }
+  let changed = Promise.withResolvers<void>();
+  let failure: Error | undefined;
+  const wake = () => {
+    const previous = changed;
+    changed = Promise.withResolvers<void>();
+    previous.resolve();
+  };
+  const pumping = (async () => {
+    let buffer = "";
+    try {
+      for await (
+        const text of response.body!.pipeThrough(new TextDecoderStream())
+      ) {
+        buffer += text;
+        let end;
+        while ((end = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          if (/^event: (hello|invalidate)$/m.test(frame)) wake();
+          if (/^event: close$/m.test(frame)) {
+            throw Error(`catalog event stream closed: ${frame}`);
+          }
+        }
+      }
+      if (!abort.signal.aborted) throw Error("catalog event stream ended");
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        failure = error instanceof Error ? error : Error(String(error));
+        wake();
+      }
+    }
+  })();
+  return {
+    get changed() {
+      return changed.promise;
+    },
+    async read(signal?: AbortSignal): Promise<CatalogPlugin[]> {
+      if (failure) throw failure;
+      if (server.status?.()) throw Error("catalog server exited");
+      const response = await fetch(url, {
+        headers: options.headers,
+        signal: signal ? AbortSignal.any([abort.signal, signal]) : abort.signal,
+      });
+      if (!response.ok) {
+        throw Error(
+          `catalog rejected: ${response.status}; ${await response.text()}`,
+        );
+      }
+      return (await response.json()).plugins;
+    },
+    async close() {
+      abort.abort();
+      await pumping;
+    },
+  };
+}
+
+export async function catalogWorkSettled(
+  server: CatalogServer,
+  id: string,
+  options: CatalogOptions & {
+    lanes?: readonly Lane[];
+    baseline?: WorkFence;
+  } = {},
+): Promise<CatalogPlugin> {
+  const observer = await observeCatalog(server, options);
+  try {
+    let changed = observer.changed;
+    let plugin = (await observer.read()).find((item) => item.id === id);
+    if (!plugin) throw Error(`plugin '${id}' absent`);
+    const fence = captureWork(plugin, options.lanes);
+    while (!workFenceSettled(plugin, fence, options.baseline)) {
+      await changed;
+      changed = observer.changed;
+      plugin = (await observer.read()).find((item) => item.id === id);
+    }
+    return plugin!;
+  } finally {
+    await observer.close();
+  }
+}
+
+/** Only admission and final publication without a bounded startup owner retain
+ * readiness. Once captured, initialization follows that exact owner's deadline. */
+export async function catalogPluginReady(
+  server: CatalogServer,
+  id: string,
+  options: CatalogOptions & { allowFailed?: boolean; label?: string } = {},
+): Promise<CatalogPlugin> {
+  const observer = await observeCatalog(server, options);
+  const children = server.pid && server.status
+    ? [{ pid: server.pid, status: server.status, logs: server.logs }]
+    : [];
+  try {
+    const read = async (signal?: AbortSignal) =>
+      (await observer.read(signal)).find((item) => item.id === id);
+    const admitted = await waitUntil(async (signal) => {
+      const plugin = await read(signal);
+      if (plugin?.status === "failed" && !options.allowFailed) {
+        return failed(`plugin '${id}' failed`, plugin);
+      }
+      if (
+        plugin?.status === "ready" || plugin?.status === "failed" ||
+        plugin?.work
+      ) {
+        return done(plugin);
+      }
+      return pending(plugin ?? { id, status: "absent" });
+    }, {
+      label: options.label ?? `plugin '${id}' catalogue admission`,
+      children,
+    });
+    const generation = admitted.work?.generation;
+    let plugin: CatalogPlugin | undefined = admitted;
+    while (plugin?.work?.startup.state === "pending") {
+      const changed = observer.changed;
+      plugin = await read();
+      if (plugin?.status === "failed") break;
+      if (!plugin?.work || plugin.work.generation !== generation) {
+        throw Error(`plugin '${id}' startup owner replaced or retired`);
+      }
+      if (plugin.work.startup.state === "pending") await changed;
+    }
+    return await waitUntil(async (signal) => {
+      const plugin = await read(signal);
+      if (plugin?.status === "failed") {
+        return options.allowFailed
+          ? done(plugin)
+          : failed(`plugin '${id}' failed`, plugin);
+      }
+      if (generation && plugin?.work?.generation !== generation) {
+        return failed(
+          `plugin '${id}' startup owner replaced or retired`,
+          plugin,
+        );
+      }
+      return plugin?.status === "ready" ? done(plugin) : pending(plugin);
+    }, {
+      label: options.label ?? `plugin '${id}' catalogue publication`,
+      children,
+    });
+  } finally {
+    await observer.close();
+  }
+}

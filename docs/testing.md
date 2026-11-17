@@ -432,8 +432,9 @@ still assert the final bytes, counters and diagnostics.
 `pluginSettled()`, `pluginReady()` and `hostInitialized()` follow bounded Worker initialization
 through the host/runtime's internal observation. Only policy/admission/publication
 phases without an admitted bounded cohort retain `waitUntil()`. Status-only sources
-retain their existing readiness behavior. No HTTP, SDK or Worker-message fields
-are added, and no production deadline or general readiness constant changes.
+retain their existing readiness behavior. The public catalogue separately projects
+value-free service `work`; no SDK/Worker message, production deadline or general
+readiness constant changes.
 `pluginReady()` also waits for enablement admission before an owner exists;
 `pluginSettled()` retains its terminal-state assertion. Intermediate observations
 of an admitted, deliberately held call use `duringWork()`: read the consumer until
@@ -456,7 +457,8 @@ Neither adds a timer around admitted work.
 | 9 | Manually advanced clocks, background work and whole manager/policy barriers | Fixture containment remains where automatic product deadline progression is disabled or no whole-work bound exists; known native call milestones are converted separately |
 | 10 | Real filesystem `fs_deadline` | Unchanged: an actual product failure, not a competing readiness verdict |
 | 11 | Browser DOM and external process/transport readiness | Existing readiness remains |
-| 12 | Native backup idle in `client/tests/e2e/backup-plugin.mjs` | Unchanged and PENDING the user's public-projection decision, not declined or dropped; catalogue-only readiness also cannot consume the internal observation |
+| 12 | Native backup idle in `client/tests/e2e/backup-plugin.mjs` | Capture a generation-qualified ordinary/versioning fence from the catalogue; wait on existing invalidation events, reject intervening failure counts, then inspect private status once and assert exact backup bytes |
+| 13 | `helpers/plugin_ready.ts` catalogue-only startup and native `harness-helpers.mjs` | Shared HTTP observer follows admitted startup under its own product deadline; only unbounded admission/publication retains readiness |
 
 `product_settlement_test.ts` covers fixed cohorts, independent lanes, normal
 callback errors, the unchanged hung-call deadline, queued expiry, retirement,
@@ -469,6 +471,33 @@ less than 30 seconds of product observed time. It records the first idle verdict
 same-generation completion, exact backup bytes and journal removal. The baseline
 fails at readiness while the corrected owner wait can observe that same capture
 finish; neither capture nor idle observation is retried.
+
+`helpers/catalog_work.ts` opens the existing event stream before reading, keeps a
+fixed generation/fence and conservatively rejects changes in cumulative lane or
+delivery failures. Failure counts survive diagnostic eviction. Deliberately
+failing native recovery/alien-slot cases acknowledge exactly their one expected
+terminal callback failure, not arbitrary intervening failures, before inspecting
+the private status. They neither retry the operation nor await a new cohort.
+
+`plugin_work_summary_test.ts` and `catalog_work_test.ts` cover the additive public
+shape, startup separation, independent/contiguous lanes, overflow/queued expiry,
+diagnostic eviction, real HTTP invalidation, unchanged hung-job deadline and
+generation replacement. The browser-dependent scheduling proof runs separately:
+
+```sh
+# Inside run.sh --browser, in /workspace with disk-backed TMPDIR:
+deno run --cached-only --frozen --unstable-worker-options --allow-all \
+  tests/helpers/catalog_work_stall.mjs /artifacts/proof
+```
+
+It runs the actual native count-9 consumer and pauses only its server at the last
+capture's first staging cleanup. The original count test supplies a real >15 s
+scheduling gap. The proof records the first native verdict, existing observed
+budget, unchanged generation, exact physical slots and journal/stage removal.
+An exact main export with the same test-only seam supplies the red receipt; main's
+blocked status HTTP request has its own 30-second wall-clock abort, while the new
+catalogue/event observer adds no second timer. This is not a claim that the old
+600-attempt loop was a strict 15-second wall-clock deadline.
 
 ## Evidence
 

@@ -557,6 +557,57 @@ or use `ctx.fs` keep working. To migrate a writer: read the note or file first
 (`version` or the text), pass it as `base`, choose `onStale` for content that
 cannot merge, and handle `saveResult` and `base_stale` in your receipts.
 
+## Service work observation
+
+`GET /_/api/plugin-host` adds read-only `work` to each plugin entry. It is
+`null` without a current authoritative service host. Otherwise `generation`
+identifies that service owner; `startup.state` is `pending`, `succeeded` or
+`failed` for Worker initialization and first-heartbeat qualification. Earlier
+admission and later policy/publication are not bounded by startup.
+
+```ts
+{
+  generation: string,
+  startup: { state: "pending" | "succeeded" | "failed" },
+  ordinary: Lane,
+  versioning: Lane,
+  guard: Lane
+}
+type Lane = {
+  admitted: number,
+  settled: number,
+  pending: number,
+  failures: number,
+  lastFailure: null | {
+    sequence: number,
+    code: "plugin_work_failed" | "plugin_work_deadline" | "plugin_work_cancelled"
+  }
+}
+```
+
+`ordinary`, `versioning` and `guard` are independent lanes. Each reports
+`admitted`, contiguous `settled`, current `pending`, cumulative `failures` and
+`lastFailure` (`null` or `{sequence,code}`). Failure codes are value-free
+`plugin_work_failed`, `plugin_work_deadline` and `plugin_work_cancelled`.
+Counters are generation-local and monotonic except `pending`. Post-activation
+jobs belong to ordinary work. Render pools and driver instances are not included.
+
+Capture a lane's `admitted` as a fence. It settles when `settled >= fence` in
+that exact generation; later admissions cannot extend it. Settlement includes
+failure and cancellation, not just success. Capture failure baselines before
+starting owned work and reject increases in lane `failures` and existing
+`deliveryFailures`; rejected admission may never enter a lane. This conservative
+observation does not attribute another client's work to a particular save.
+
+Only the latest failure identifier/code is retained, with no timed expiry.
+Cumulative counts survive bounded diagnostic eviction until the generation ends.
+Replacement, disablement, retirement and server restart invalidate an old fence;
+a new owner cannot complete it. Missing history is never proof of success.
+Existing plugin-host `invalidate` events signal changes: subscribe before
+reading, and re-read the catalogue after invalidation. No promises, content,
+private settings or file paths are exposed. Ready is not idle, and settled is
+not a durable receipt, rollback, exactly-once delivery or backup guarantee.
+
 ## Deferred actions and invocation lifetime
 
 A saved server `ctx` belongs to its owning vault and Worker generation. It remains

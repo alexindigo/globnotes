@@ -57,7 +57,8 @@ Deno.test("product settlement: a captured cohort excludes later admissions and k
     const catalog = await f.manager.catalog();
     const entry = catalog.plugins.find((plugin) => plugin.id === f.id)!;
     assert(
-      !("settlement" in entry) && !("work" in entry),
+      !("settlement" in entry) &&
+        entry.work?.generation === f.runtime.status(f.id)?.generation,
       "internal accessor leaked into public catalogue",
     );
   } finally {

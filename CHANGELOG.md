@@ -4,6 +4,10 @@
 
 ### Added
 
+The plugin-host catalogue exposes read-only service work summaries: generation,
+startup, independent lane settlement and value-free failure counts. Native
+consumers can follow product-owned deadlines without a competing idle timer.
+
 Keep configuration pins and saved settings consistent across reloads.
 
 Switch server and container startup to strict layered configuration.

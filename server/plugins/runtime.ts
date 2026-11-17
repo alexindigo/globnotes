@@ -162,7 +162,7 @@ export class PluginRuntime implements Versioning {
     this.settlementChanged = Promise.withResolvers<void>();
     previous.resolve();
   }
-  /** Internal owner observation. Deliberately not projected into HTTP/SDK status. */
+  /** Internal promise/owner observation, separate from the public work summary. */
   settlement(id: string, lanes: readonly WorkLane[] = ["startup"]) {
     const entry = this.entries.get(id);
     const work = entry?.host?.settlement(lanes);
@@ -490,7 +490,7 @@ export class PluginRuntime implements Versioning {
             entry.metadata?.sync();
             this.changed();
           },
-          settlementChanged: () => this.noteSettlement(),
+          settlementChanged: () => this.changed(),
           failed: () => {
             if (entry.host !== host || !currentActivation()) return;
             entry.changes?.stop();
@@ -765,6 +765,7 @@ export class PluginRuntime implements Versioning {
     return {
       status: entry.status,
       generation: entry.host?.generation ?? null,
+      work: entry.host?.workSummary ?? null,
       delegated: entry.host?.delegated ?? null,
       jobs: entry.jobs?.snapshot ?? [],
       degraded: entry.deliveryFailures > 0 ||

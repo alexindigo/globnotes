@@ -110,7 +110,7 @@ export interface HostOptions {
   snapshot?: JsonValues;
   limits?: Partial<PluginLimits>;
   registrationChanged?(): void;
-  /** Internal work observation only; not a catalogue invalidation or Worker API. */
+  /** Work admission/settlement changed; no Worker API. */
   settlementChanged?(): void;
   failed?(detail: string): void;
   effective?: PermissionDeclaration;
@@ -120,6 +120,40 @@ export interface HostOptions {
   ): Promise<RenderRecoveryAdmission>;
 }
 export type WorkLane = "ordinary" | "guard" | "versioning" | "startup";
+type InvocationLane = Exclude<WorkLane, "startup">;
+export interface WorkLaneSummary {
+  admitted: number;
+  settled: number;
+  pending: number;
+  failures: number;
+  lastFailure: {
+    sequence: number;
+    code:
+      | "plugin_work_failed"
+      | "plugin_work_deadline"
+      | "plugin_work_cancelled";
+  } | null;
+}
+export interface ServiceWorkSummary {
+  generation: string;
+  startup: { state: "pending" | "succeeded" | "failed" };
+  ordinary: WorkLaneSummary;
+  versioning: WorkLaneSummary;
+  guard: WorkLaneSummary;
+}
+function workLanes() {
+  const lane = () => ({
+    summary: {
+      admitted: 0,
+      settled: 0,
+      pending: 0,
+      failures: 0,
+      lastFailure: null,
+    } as WorkLaneSummary,
+    outstanding: new Set<number>(),
+  });
+  return { ordinary: lane(), versioning: lane(), guard: lane() };
+}
 /** One captured cohort. Only existing product deadlines can settle its work. */
 export interface WorkSettlement {
   owner: object | undefined;
@@ -129,7 +163,15 @@ export interface WorkSettlement {
   failure: string | null;
 }
 /** Host-local classification; normal handler errors settle, termination does not. */
-class WorkTerminatedError extends Error {}
+class WorkTerminatedError extends Error {
+  constructor(
+    detail: string,
+    readonly code: NonNullable<WorkLaneSummary["lastFailure"]>["code"] =
+      "plugin_work_cancelled",
+  ) {
+    super(detail);
+  }
+}
 interface Job {
   id: number;
   kind: "call" | "invoke" | "dispose";
@@ -227,6 +269,25 @@ export class PluginHost {
     { owner: object | undefined; lane: WorkLane; completion: Promise<void> }
   >();
   private workChanged = Promise.withResolvers<void>();
+  private lanes = workLanes();
+
+  /** Value-free authoritative service observation, never live mutable state. */
+  get workSummary(): ServiceWorkSummary | null {
+    if (this.role !== "service" || !this.generation) return null;
+    return structuredClone({
+      generation: this.generation,
+      startup: {
+        state: this.slots.every((slot) => slot.steadyStartedAt !== null)
+          ? "succeeded" as const
+          : this.failedDetail || this.stopped || this.stopping
+          ? "failed" as const
+          : "pending" as const,
+      },
+      ordinary: this.lanes.ordinary.summary,
+      versioning: this.lanes.versioning.summary,
+      guard: this.lanes.guard.summary,
+    });
+  }
 
   private noteSettlement(): void {
     const previous = this.workChanged;
@@ -338,6 +399,7 @@ export class PluginHost {
     this.stopped = false;
     this.stopping = false;
     this.failedDetail = null;
+    this.lanes = workLanes();
     this.renderRecoveries.clear();
     const owned: Slot[] = [];
     this.slots = owned;
@@ -1184,6 +1246,13 @@ export class PluginHost {
     ) return Promise.reject(new Error("render synchronization unavailable"));
     const id = ++this.sequence;
     const owner = this.startIdentity;
+    const lane: InvocationLane = guardLane
+      ? "guard"
+      : versioningLane
+      ? "versioning"
+      : "ordinary";
+    const tracker = this.lanes[lane];
+    let workSequence: number | undefined;
     const completion = Promise.withResolvers<void>();
     completion.promise.catch(() => undefined);
     const running = new Promise<unknown>((resolve, reject) => {
@@ -1232,6 +1301,7 @@ export class PluginHost {
             job.reject(
               new WorkTerminatedError(
                 "plugin call deadline exceeded while queued",
+                "plugin_work_deadline",
               ),
             );
             this.pump();
@@ -1245,10 +1315,16 @@ export class PluginHost {
             this.fail(
               active,
               "plugin call deadline exceeded; in-flight outcome unknown",
+              "plugin_work_deadline",
             );
           }
         }),
       };
+      if (this.role === "service") {
+        workSequence = ++tracker.summary.admitted;
+        tracker.outstanding.add(workSequence);
+        tracker.summary.pending = tracker.outstanding.size;
+      }
       if (initialization && target) this.dispatch(target, job);
       else {
         pendingQueue().push(job);
@@ -1257,11 +1333,29 @@ export class PluginHost {
     });
     this.work.set(id, {
       owner,
-      lane: guardLane ? "guard" : versioningLane ? "versioning" : "ordinary",
+      lane,
       completion: completion.promise,
     });
     const finish = (error?: unknown) => {
       this.work.delete(id);
+      if (workSequence !== undefined) {
+        tracker.outstanding.delete(workSequence);
+        const summary = tracker.summary;
+        summary.pending = tracker.outstanding.size;
+        // Outstanding admissions, not completed holes, bound retained memory.
+        summary.settled = tracker.outstanding.size
+          ? Math.min(...tracker.outstanding) - 1
+          : summary.admitted;
+        if (error !== undefined) {
+          summary.failures++;
+          summary.lastFailure = {
+            sequence: workSequence,
+            code: error instanceof WorkTerminatedError
+              ? error.code
+              : "plugin_work_failed",
+          };
+        }
+      }
       if (error instanceof WorkTerminatedError) completion.reject(error);
       else completion.resolve();
       this.noteSettlement();
@@ -1391,7 +1485,12 @@ export class PluginHost {
     await this.start();
   }
   /** Exactly-once authority/resource retirement; no replacement can borrow it. */
-  private retireSlot(slot: Slot, detail: string): void {
+  private retireSlot(
+    slot: Slot,
+    detail: string,
+    code: NonNullable<WorkLaneSummary["lastFailure"]>["code"] =
+      "plugin_work_cancelled",
+  ): void {
     if (slot.retired) return;
     slot.retired = true;
     if (this.role === "service") this.serviceJobs.cancel();
@@ -1412,23 +1511,27 @@ export class PluginHost {
     slot.rejectReady(new Error(detail));
     if (slot.active) {
       slot.active.timer();
-      slot.active.reject(new WorkTerminatedError(detail));
+      slot.active.reject(new WorkTerminatedError(detail, code));
       slot.active = null;
     }
     if (slot.activeGuard) {
       slot.activeGuard.timer();
-      slot.activeGuard.reject(new WorkTerminatedError(detail));
+      slot.activeGuard.reject(new WorkTerminatedError(detail, code));
       slot.activeGuard = null;
     }
     if (slot.activeVersioning) {
       slot.activeVersioning.timer();
-      slot.activeVersioning.reject(new WorkTerminatedError(detail));
+      slot.activeVersioning.reject(new WorkTerminatedError(detail, code));
       slot.activeVersioning = null;
     }
     slot.ready = false;
     slot.usable = false;
   }
-  private rejectQueued(detail: string): void {
+  private rejectQueued(
+    detail: string,
+    code: NonNullable<WorkLaneSummary["lastFailure"]>["code"] =
+      "plugin_work_cancelled",
+  ): void {
     for (
       const job of [
         ...this.queue.splice(0),
@@ -1437,7 +1540,7 @@ export class PluginHost {
       ]
     ) {
       job.timer();
-      job.reject(new WorkTerminatedError(detail));
+      job.reject(new WorkTerminatedError(detail, code));
     }
   }
   private reportFailure(detail: string): void {
@@ -1517,18 +1620,23 @@ export class PluginHost {
       }
     }
   }
-  private fail(slot: Slot, detail: string) {
+  private fail(
+    slot: Slot,
+    detail: string,
+    code: NonNullable<WorkLaneSummary["lastFailure"]>["code"] =
+      "plugin_work_failed",
+  ) {
     if (!this.valid(slot)) return;
     const recoverable = this.role === "render" && slot.ready;
     const identity = this.startIdentity;
     if (this.role === "render") this.slots.splice(this.slots.indexOf(slot), 1);
-    this.retireSlot(slot, detail);
+    this.retireSlot(slot, detail, code);
     if (this.role !== "render") {
       this.failedDetail = detail;
       this.watchdog?.();
       this.watchdog = null;
       this.registry.clear();
-      this.rejectQueued(detail);
+      this.rejectQueued(detail, code);
       this.reportFailure(detail);
       this.noteSettlement();
     } else {

@@ -411,6 +411,7 @@ export class PluginManager {
               ],
               degraded: runtime?.degraded ?? false,
               jobs: runtime?.jobs ?? [],
+              work: runtime?.work ?? null,
               deliveryFailures: runtime?.deliveryFailures ?? 0,
               commands:
                 this.serviceRuntime?.commands().filter((command) =>

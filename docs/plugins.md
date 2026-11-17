@@ -212,6 +212,13 @@ This additive contract-2 hook is not a scheduler, automatic retry, persistent jo
 history, arbitrary dependency graph or exactly-once effect guarantee. Managed
 timers are not a replacement for it. Backup is its first consumer.
 
+The plugin-host catalogue also exposes a read-only, generation-qualified `work`
+summary: separate startup state and admitted/contiguous-settled/pending counts for
+ordinary, versioning and guard lanes, with cumulative failures and the latest
+value-free failure identifier. Existing invalidation events signal changes.
+Readiness is not idle, settlement is not success, and replacement cannot complete
+an old generation's fence. See [Service work observation](plugin-api.md#service-work-observation).
+
 ## Sync plugins and instances
 
 A plugin may declare a `driver` contribution ([driver author guide](drivers.md)).
