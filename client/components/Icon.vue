@@ -11,7 +11,12 @@
     stroke-linejoin="round"
     aria-hidden="true"
   >
-    <path v-for="(d, i) in paths" :key="i" :d="d" />
+    <path
+      v-for="(path, i) in paths"
+      :key="i"
+      :d="typeof path === 'string' ? path : path.d"
+      :fill="typeof path === 'string' ? undefined : path.fill"
+    />
   </svg>
 </template>
 
@@ -20,7 +25,7 @@ import { computed } from "vue";
 import { ICON_PATHS } from "../icons.js";
 
 const props = defineProps({
-  /** Icon path data (array of <path d> strings) from icons.js. */
+  /** Icon paths (d strings or { d, fill } parts) from icons.js. */
   icon: { type: [Array, String], default: () => [] },
   size: { type: String, default: "1.25em" },
   width: { type: String, default: undefined },

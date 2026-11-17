@@ -22,6 +22,10 @@ function paths(wrapper) {
   return wrapper.findAll("path").map((path) => path.attributes("d"));
 }
 
+function pathData(icon) {
+  return icon.map((path) => typeof path === "string" ? path : path.d);
+}
+
 describe("button icon contracts", () => {
   let warnings;
   beforeEach(() => {
@@ -104,13 +108,30 @@ describe("button icon contracts", () => {
     });
     let icons = wrapper.findAll("svg");
     expect(icons).toHaveLength(1);
-    expect(paths(icons[0])).toEqual(tabToggleLeft);
+    expect(paths(icons[0])).toEqual(pathData(tabToggleLeft));
     expect(icons[0].element.style.width).toBe("auto");
     expect(wrapper.text()).toBe("Edit");
     await wrapper.setProps({ isOn: true });
     icons = wrapper.findAll("svg");
     expect(icons).toHaveLength(1);
-    expect(paths(icons[0])).toEqual(tabToggleRight);
+    expect(paths(icons[0])).toEqual(pathData(tabToggleRight));
+  });
+
+  it.each([
+    [false, tabToggleLeft, "tabToggleLeft", "M6 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"],
+    [true, tabToggleRight, "tabToggleRight", "M14 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"],
+  ])("fills the knob, not the track, when on=%s", (isOn, icon, name, knob) => {
+    for (const value of [icon, name]) {
+      const wrapper = mount(Icon, { props: { icon: value } });
+      expect(wrapper.findAll("path")[0].attributes()).toMatchObject({ d: knob, fill: "currentColor" });
+      expect(wrapper.findAll("path")[1].attributes("fill")).toBeUndefined();
+      expect(wrapper.attributes("fill")).toBe("none");
+      expect(wrapper.attributes("stroke-width")).toBe("2");
+    }
+    const toggle = mount(Toggle, { props: { isOn } });
+    expect(toggle.find("path").attributes("fill")).toBe("currentColor");
+    expect(toggle.find("svg").classes()).toContain(isOn ? "text-theme-brand" : "text-theme-text-very-muted");
+    expect(toggle.attributes("aria-checked")).toBe(String(isOn));
   });
 
   it("preserves click handlers and disabled state", async () => {

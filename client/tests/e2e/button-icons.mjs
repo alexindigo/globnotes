@@ -82,6 +82,7 @@ function toolbar() {
           bbox: { w: box.width, h: box.height },
           rect: rect(p),
           stroke: getComputedStyle(p).stroke,
+          fill: getComputedStyle(p).fill,
         };
       }),
     };
@@ -142,7 +143,8 @@ async function observe(state, editMode, dirty = false) {
   };
   const paths = (icon, expected, name) => {
     assert(
-      JSON.stringify(icon.paths.map((p) => p.d)) === JSON.stringify(expected),
+      JSON.stringify(icon.paths.map((p) => p.d)) ===
+        JSON.stringify(expected.map((path) => typeof path === "string" ? path : path.d)),
       `${label}: ${name} paths preserved`,
     );
     assert(
@@ -167,6 +169,10 @@ async function observe(state, editMode, dirty = false) {
   );
   const pill = m.edit.icons[0];
   paths(pill, editMode ? tabToggleRight : tabToggleLeft, "switch");
+  assert(
+    pill.paths[0].fill === pill.stroke && pill.paths[1].fill === "none",
+    `${label}: switch knob is filled with its control color; track stays outlined`,
+  );
   assert(pill.viewBox === "1 5 22 14", `${label}: switch crop preserved`);
   assert(
     Math.abs(pill.rect.h - 16) < 0.05 &&

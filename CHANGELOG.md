@@ -132,6 +132,8 @@ attachment whose name is taken there gets the next free name (`name 1.png`,
 
 ### Fixed
 
+Toggle knobs are filled in both on and off states across settings, setup and the editor.
+
 Settings reserve a line for save and pending feedback, keeping that feedback from
 shifting fields and actions.
 

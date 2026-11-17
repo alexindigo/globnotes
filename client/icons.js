@@ -1,6 +1,6 @@
-// Tabler outline icon path data (generated from @tabler/icons/icons/outline/*).
-// ICON_PATHS maps a tab* name to its array of <path d> strings; each tab*
-// name is also exported as its own constant for direct import.
+// Tabler outline geometry from @tabler/icons/icons/outline/*.
+// Paths are d strings, or { d, fill } when a part needs its own paint.
+// Each registry name is also exported as a constant for direct import.
 export const ICON_PATHS = {
   tabCloud: ["M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878"],
   tabCloudUpload: ["M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7h-1", "M9 15l3 -3l3 3", "M12 12l0 9"],
@@ -534,11 +534,11 @@ export const ICON_PATHS = {
     "M6 20l5 -15h2l5 15",
   ],
   tabToggleRight: [
-    "M14 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+    { d: "M14 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0", fill: "currentColor" },
     "M2 12a6 6 0 0 1 6 -6h8a6 6 0 0 1 6 6a6 6 0 0 1 -6 6h-8a6 6 0 0 1 -6 -6",
   ],
   tabToggleLeft: [
-    "M6 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+    { d: "M6 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0", fill: "currentColor" },
     "M2 12a6 6 0 0 1 6 -6h8a6 6 0 0 1 6 6a6 6 0 0 1 -6 6h-8a6 6 0 0 1 -6 -6",
   ],
   tabBold: [
