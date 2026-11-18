@@ -22,6 +22,45 @@ export interface StoredConfigSnapshot {
     readonly nodes: readonly ConfigNode[];
   };
 }
+/** The bytes may already be visible and must not be rolled back in memory. */
+export class StoredConfigDurabilityError extends Error {
+  constructor(options?: ErrorOptions) {
+    super(
+      "Stored configuration directory durability could not be confirmed.",
+      options,
+    );
+  }
+}
+/** Flush one directory, or a newly created chain bottom-up through its bound
+ * existing parent. All state writers share this durability boundary. */
+export function syncStoredDirectory(
+  directory: string,
+  through = directory,
+): void {
+  let current = path.resolve(directory);
+  const bound = path.resolve(through), relative = path.relative(bound, current);
+  if (
+    relative === ".." || relative.startsWith(`..${path.SEPARATOR}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new StoredConfigConflict();
+  }
+  try {
+    while (true) {
+      const handle = Deno.openSync(current, { read: true });
+      try {
+        if (!handle.statSync().isDirectory) throw new StoredConfigConflict();
+        handle.syncSync();
+      } finally {
+        handle.close();
+      }
+      if (current === bound) return;
+      current = path.dirname(current);
+    }
+  } catch (cause) {
+    throw new StoredConfigDurabilityError({ cause });
+  }
+}
 export class StoredConfigConflict extends Error {
   constructor() {
     super("Stored configuration changed before commit.");
@@ -189,6 +228,10 @@ export class BoundFileStore {
       }),
     });
     this.assertUnchanged(prepared);
+    if (created.size) {
+      const directories = [...created.keys()];
+      syncStoredDirectory(directories.at(-1)!, path.dirname(directories[0]));
+    }
     return prepared;
   }
 
@@ -210,7 +253,7 @@ export class BoundFileStore {
       dir: path.dirname(target),
       prefix: ".config-",
     });
-    let failed = false, failure: unknown;
+    let failed = false, failure: unknown, published = false;
     try {
       Deno.writeTextFileSync(temporary, raw);
       if (identity) {
@@ -257,6 +300,7 @@ export class BoundFileStore {
         // candidate without replacing an inode created by a competing writer.
         Deno.linkSync(temporary, target);
       }
+      published = true;
       // Preserve the original publication point, even if later cleanup fails.
       committed?.(snapshot);
     } catch (error) {
@@ -272,6 +316,20 @@ export class BoundFileStore {
             [failure, error],
             "Configuration persistence and temporary-file cleanup failed.",
           )
+          : error;
+        failed = true;
+      }
+    }
+    if (published) {
+      try {
+        // Flush the final directory state after publication and candidate cleanup,
+        // even when cleanup failed. The known snapshot was published above.
+        syncStoredDirectory(path.dirname(target));
+      } catch (error) {
+        failure = failed
+          ? new StoredConfigDurabilityError({
+            cause: new AggregateError([failure, error]),
+          })
           : error;
         failed = true;
       }
