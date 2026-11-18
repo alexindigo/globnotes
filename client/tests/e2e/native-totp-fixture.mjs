@@ -2,6 +2,8 @@
 import { authenticatorCode, TOTP_STEP_MS } from "../../../tests/helpers/totp.ts";
 import { resolve } from "node:path";
 
+const LOGIN_STEP_CANDIDATES = 4;
+
 export async function createNativeTotpClock(directory, epochMs = Date.now()) {
   directory = resolve(directory);
   let now = Math.floor(epochMs / TOTP_STEP_MS) * TOTP_STEP_MS + TOTP_STEP_MS - 1;
@@ -14,13 +16,17 @@ export async function createNativeTotpClock(directory, epochMs = Date.now()) {
     // Move before choosing input; the owned verifier then stays frozen through
     // authentication. No request interception or adjacent-window fallback.
     async loginCode(secret, consumed) {
-      clock.advanceStep();
-      const code = await clock.code(secret);
-      if (new Set(consumed).has(code)) throw Error("Current-step login code was already consumed");
-      return code;
+      const used = new Set(consumed);
+      for (let steps = 1; steps <= LOGIN_STEP_CANDIDATES; steps++) {
+        const code = await clock.code(secret, steps);
+        if (used.has(code)) continue;
+        clock.advanceStep(steps);
+        return code;
+      }
+      throw Error("Every candidate login code was already consumed");
     },
-    advanceStep() {
-      now += TOTP_STEP_MS;
+    advanceStep(steps = 1) {
+      now += steps * TOTP_STEP_MS;
       Deno.writeTextFileSync(`${file}.next`, JSON.stringify(now));
       Deno.renameSync(`${file}.next`, file);
     },

@@ -79,6 +79,52 @@ Deno.test("native TOTP frozen clock: rollover selects the verifier's fresh curre
   }
 });
 
+Deno.test("native TOTP frozen clock: equal-code collision is skipped before publishing time", async () => {
+  const directory = await Deno.makeTempDir({
+    prefix: "native-frozen-collision-",
+  });
+  try {
+    const clock = await createNativeTotpClock(directory, 1234567890_000),
+      before = clock.now();
+    const secret = "JBSWY3DPEHPK3PXP",
+      consumed = await clock.code(secret),
+      reference = clock.code;
+    const candidates: { at: number; published: number }[] = [];
+    // Force an equal-code pair at the consumed step and its successor.
+    clock.code = (key: string, offset = 0) => {
+      const at = clock.now() + offset * TOTP_STEP_MS;
+      candidates.push({
+        at,
+        published: JSON.parse(
+          Deno.readTextFileSync(`${directory}/authenticator-time.json`),
+        ),
+      });
+      return at === before + TOTP_STEP_MS
+        ? Promise.resolve(consumed)
+        : reference(key, offset);
+    };
+    const selected = await clock.loginCode(secret, [consumed]);
+    assertEquals(
+      selected,
+      await authenticatorCode(secret, before + 2 * TOTP_STEP_MS),
+    );
+    assertEquals(selected === consumed, false);
+    assertEquals(candidates, [
+      { at: before + TOTP_STEP_MS, published: before },
+      { at: before + 2 * TOTP_STEP_MS, published: before },
+    ]);
+    assertEquals(clock.now(), before + 2 * TOTP_STEP_MS);
+    assertEquals(
+      JSON.parse(
+        await Deno.readTextFile(`${directory}/authenticator-time.json`),
+      ),
+      clock.now(),
+    );
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
 Deno.test("native TOTP frozen clock: current proofs leave later login codes unspent without adjacent-step fallback", async () => {
   const directory = await Deno.makeTempDir({ prefix: "native-frozen-proof-" });
   try {
@@ -92,11 +138,21 @@ Deno.test("native TOTP frozen clock: current proofs leave later login codes unsp
     const login = await clock.loginCode(secret, [initial, proof]);
     assertEquals(login, await clock.code(secret));
     assertEquals([initial, proof].includes(login), false);
-    const reserved = await clock.code(secret, 1);
+    const before = clock.now();
+    const reserved = await Promise.all(
+      [1, 2, 3, 4].map((offset) => clock.code(secret, offset)),
+    );
     await assertRejects(
-      () => clock.loginCode(secret, [reserved]),
+      () => clock.loginCode(secret, reserved),
       Error,
       "already consumed",
+    );
+    assertEquals(clock.now(), before);
+    assertEquals(
+      JSON.parse(
+        await Deno.readTextFile(`${directory}/authenticator-time.json`),
+      ),
+      before,
     );
   } finally {
     await Deno.remove(directory, { recursive: true });

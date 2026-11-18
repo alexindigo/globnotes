@@ -239,8 +239,9 @@ review, and a noisy heuristic would reject valid invariants or miss real reads.
 
 TOTP browser fixtures share `native-totp-fixture.mjs`. Its preload controls
 `Date.now()` only in the owned server subprocess. Before selecting login input,
-`loginCode` advances that clock and returns its current code from the independent
-RFC 6238 reference, rejecting spent codes without adjacent-window fallback.
+`loginCode` checks up to four future steps using the independent RFC 6238
+reference, then publishes the first unspent step and returns its current code.
+Ordinarily this advances one step; exhausting all four leaves time unchanged.
 The verifier stays frozen until authentication finishes, so input and
 verification use the same step without request interception or crossing receipts.
 Current-credential proofs use a fresh current step without spending a later
