@@ -7,7 +7,7 @@ import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { awaitHealthy, bootServer } from "./harness-helpers.mjs";
 import { ACCESS_SETTINGS_CASES, parseFixtureArguments } from "./native-fixture-cases.mjs";
 import { hashPassword } from "../../../server/helpers.ts";
-import { authenticatorCode, unusedWindowCode } from "../../../tests/helpers/totp.ts";
+import { createNativeTotpClock } from "./native-totp-fixture.mjs";
 import { SignJWT } from "jose";
 import { createSettingsRestartFixture } from "./settings-restart-fixture.mjs";
 import { showSidebar } from './sidebar-navigation-native.mjs';
@@ -60,13 +60,14 @@ async function fixture(label, protectedMode) {
     await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["access-workflow"], autoEnable: false }));
   }
   const token = protectedAccount ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  let server = setup ? await bootFirstRun(vault, state, directory, prefix) : await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), ...(label === "locked-controls" ? {} : { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }), GLOBNOTES__SERVER_PATHPREFIX: prefix }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const totpClock = totp || label === "totp-in-place" ? await createNativeTotpClock(directory) : null;
+  let server = setup ? await bootFirstRun(vault, state, directory, prefix) : await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), ...(label === "locked-controls" ? {} : { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }), GLOBNOTES__SERVER_PATHPREFIX: prefix }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {}, denoArgs: totpClock?.denoArgs });
   if (label === "peer-policy") server = createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
     const logsDir = `${directory}/backend-${count}`; await Deno.mkdir(logsDir);
     return bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }, logsDir });
   } });
   const session = await nativeSession({ port });
-  owned = { label, directory, vault, state, server, session, prefix, closed: false, initial: config };
+  owned = { label, directory, vault, state, server, session, prefix, totpClock, closed: false, initial: config };
   fixtures.push(owned);
   await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({ label, vault, state, pid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
   await session.goto(`${server.baseUrl}${prefix}/Seed`);
@@ -74,8 +75,11 @@ async function fixture(label, protectedMode) {
   if (protectedAccount) {
     await session.poll("!!document.querySelector('#username')");
     await fill("#username", username); await fill("#password", password);
-    if (totp) { const { totpSecretFromRawKey } = await import("../../../server/auth/local.ts"); await fill("#one-time-code", await authenticatorCode(totpSecretFromRawKey(config.totp_key), Date.now())); }
-    await session.button("Log In");
+    if (totp) {
+      const { totpSecretFromRawKey } = await import("../../../server/auth/local.ts");
+      await fill("#one-time-code", await totpClock.code(totpSecretFromRawKey(config.totp_key)));
+      await totpClock.submitAcrossStep(session, () => session.button("Log In"));
+    } else await session.button("Log In");
   }
   await session.poll("!!document.querySelector('.toast-viewer')");
 }
@@ -163,12 +167,12 @@ try {
   const response = await session.send("Network.getResponseBody", { requestId: bundles[0] });
   const bundle = JSON.parse(response.base64Encoded ? atob(response.body) : response.body);
   await fill("#access-current-password", password);
-  await fill("#setup-totp-code", await authenticatorCode(bundle.secret, Date.now() - 300_000));
+  await fill("#setup-totp-code", await owned.totpClock.code(bundle.secret, -10));
   await session.button("Save access settings");
   await session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('Confirm the new authenticator')");
   assert(await saved() === bytes, "Invalid new code changed config");
   assert((await api("auth-check", "GET", undefined, oldToken)).status === 200, "Invalid enrolment logged the user out");
-  const confirmedCode = await authenticatorCode(bundle.secret, Date.now());
+  const confirmedCode = await owned.totpClock.code(bundle.secret);
   await fill("#setup-totp-code", confirmedCode);
   await session.button("Save access settings");
   await session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
@@ -176,8 +180,8 @@ try {
   assert(after.auth_type === "totp" && after.password_hash === owned.initial.password_hash && after.username === username && after.brand_name === owned.initial.brand_name && after.unrelated_fixture.kept, "Confirmed 2FA replaced existing credentials/config");
   assert((await api("auth-check", "GET", undefined, oldToken)).status === 401, "Confirmed 2FA left old session valid");
   await closeSidebar(session);
-  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await unusedWindowCode(bundle.secret, [confirmedCode]));
-  await session.button("Log In"); await session.poll("!document.querySelector('#username')");
+  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await owned.totpClock.unusedCode(bundle.secret, [confirmedCode]));
+  await owned.totpClock.submitAcrossStep(session, () => session.button("Log In")); await session.poll("!document.querySelector('#username')");
   const freshToken = await session.evaluate("sessionStorage.getItem('token')");
   assert((await api("auth-check", "GET", undefined, freshToken)).status === 200, "Confirmed authenticator cannot sign in");
   dispose();
@@ -243,17 +247,17 @@ try {
   const currentSecret = totpSecretFromRawKey(owned.initial.totp_key);
   const old = await owned.session.evaluate("sessionStorage.getItem('token')"), original = await saved();
   await access(); await fill("#setup-password", "changed-native-password"); await fill("#access-current-password", password);
-  await fill("#access-current-totp", await authenticatorCode(currentSecret, Date.now() - 300_000));
+  await fill("#access-current-totp", await owned.totpClock.code(currentSecret, -10));
   await owned.session.button("Save access settings");
   await owned.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('confirmation failed')");
   assert(await saved() === original && (await api("auth-check", "GET", undefined, old)).status === 200, "Wrong current TOTP changed credentials/session");
-  const acceptedCode = await authenticatorCode(currentSecret, Date.now() + 30_000);
+  const acceptedCode = await owned.totpClock.code(currentSecret, 1);
   await fill("#access-current-totp", acceptedCode); await owned.session.button("Save access settings"); await owned.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
   assert((await api("auth-check", "GET", undefined, old)).status === 401, "Password change did not invalidate the old session");
   assert(JSON.parse(await saved()).totp_key === owned.initial.totp_key, "Password change replaced the existing authenticator");
   await closeSidebar();
-  await fill("#username", username); await fill("#password", "changed-native-password"); await fill("#one-time-code", await unusedWindowCode(currentSecret, [acceptedCode]));
-  await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
+  await fill("#username", username); await fill("#password", "changed-native-password"); await fill("#one-time-code", await owned.totpClock.unusedCode(currentSecret, [acceptedCode]));
+  await owned.totpClock.submitAcrossStep(owned.session, () => owned.session.button("Log In")); await owned.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, await owned.session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Changed password/current authenticator cannot log in");
   await finishCase("native fresh-current-2FA rejection and password-change login", { wrongCurrentCodePreservedSession: true, passwordChangeRevokedOldSession: true, currentAuthenticatorRetained: true, newPasswordLoginAccepted: true });
   }
@@ -293,16 +297,16 @@ try {
   const replacementResponse = await owned.session.send("Network.getResponseBody", { requestId: replacementRequests[0] });
   const replacement = JSON.parse(replacementResponse.base64Encoded ? atob(replacementResponse.body) : replacementResponse.body);
   assert(await saved() === replacementBefore && (await api("auth-check", "GET", undefined, replacementToken)).status === 200, "Opening replacement changed the existing account/session");
-  await fill("#access-current-password", password); await fill("#access-current-totp", await authenticatorCode(originalSecret, Date.now() + 30_000));
-  const newConfirmation = await authenticatorCode(replacement.secret, Date.now()); await fill("#setup-totp-code", newConfirmation);
+  await fill("#access-current-password", password); await fill("#access-current-totp", await owned.totpClock.code(originalSecret, 1));
+  const newConfirmation = await owned.totpClock.code(replacement.secret); await fill("#setup-totp-code", newConfirmation);
   await owned.session.button("Save access settings"); await owned.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
   const replacementSaved = JSON.parse(await saved());
   assert(replacementSaved.totp_key === replacement.key && replacementSaved.password_hash === owned.initial.password_hash, "Authenticator replacement changed the password or failed to persist the new key");
   assert((await api("auth-check", "GET", undefined, replacementToken)).status === 401, "Confirmed replacement retained old session authority");
   assert((await api("token", "POST", { username, password: password + newConfirmation })).status === 401, "Replacement enrolment code can be replayed as login");
   await closeSidebar();
-  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await unusedWindowCode(replacement.secret, [newConfirmation]));
-  await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
+  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await owned.totpClock.unusedCode(replacement.secret, [newConfirmation]));
+  await owned.totpClock.submitAcrossStep(owned.session, () => owned.session.button("Log In")); await owned.session.poll("!document.querySelector('#username')");
   disposeReplacement(); await finishCase("native current/new authenticator proofs and replacement login", { activeKeyUnchangedDuringEnrolment: true, passwordHashRetained: true, confirmedNewKeyPersisted: true, spentNewCodeRejected: true, replacementLoginAccepted: true });
   }
 

@@ -61,15 +61,20 @@ export async function settledTotpNow(
   }
 }
 
-/** A code the verifier accepts now that is not one already consumed. Prefers
- * the current step, then the next, then the previous: the first two stay valid
- * if a step boundary passes before the request arrives. */
+/** A code the verifier accepts that is not already consumed. Prefer current,
+ * then next, then previous. An owned fixture clock can supply both generation
+ * and verification time: only the intersection of their windows is eligible,
+ * without waiting on the wall clock. */
 export async function unusedWindowCode(
   secret: string,
   consumed: Iterable<string>,
+  epochMs?: number,
+  verifiedAtMs?: number,
 ): Promise<string> {
-  const used = new Set(consumed), now = await settledTotpNow();
+  const used = new Set(consumed), now = epochMs ?? await settledTotpNow();
+  const verificationStep = totpStep(verifiedAtMs ?? now);
   for (const offset of [0, 1, -1]) {
+    if (Math.abs(totpStep(now) + offset - verificationStep) > 1) continue;
     const code = await authenticatorCode(secret, now + offset * TOTP_STEP_MS);
     if (!used.has(code)) return code;
   }

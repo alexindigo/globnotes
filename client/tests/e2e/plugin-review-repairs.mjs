@@ -7,8 +7,8 @@ import { bootServer } from "./harness-helpers.mjs";
 import { REVIEW_REPAIR_CASES, parseReviewRepairArguments } from "./review-repair-cases.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
-import { authenticatorCode } from "../../../tests/helpers/totp.ts";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
+import { createNativeTotpClock } from "./native-totp-fixture.mjs";
 
 const options = parseReviewRepairArguments(Deno.args);
 if (options.help) { console.log("Usage: plugin-review-repairs.mjs --artifacts <directory> [--variant <fixture>]"); Deno.exit(0); }
@@ -108,7 +108,8 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
     const token = await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(config.secret_key));
     headers = { authorization: `Bearer ${token}` };
   }
-  current.server = await bootServer(vault, state, { logsDir: directory, headers });
+  if (label === "access-conflict") current.totpClock = await createNativeTotpClock(directory);
+  current.server = await bootServer(vault, state, { logsDir: directory, headers, denoArgs: current.totpClock?.denoArgs });
   const owner = current;
   current.proxy = Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, async request => {
     const url = new URL(request.url);
@@ -201,7 +202,7 @@ try {
   await current.session.click("#setup-totp"); await current.session.poll("!!document.querySelector('#setup-totp-qr img')");
   const response = await current.session.send("Network.getResponseBody", { requestId: bundles[0] });
   const bundle = JSON.parse(response.base64Encoded ? atob(response.body) : response.body);
-  await fill(current.session, "#setup-totp-code", await authenticatorCode(bundle.secret, Date.now()));
+  await fill(current.session, "#setup-totp-code", await current.totpClock.code(bundle.secret));
   await fill(current.session, "#access-current-password", password);
   await access(current.peer); await fill(current.peer, "#access-current-password", password); await current.peer.button("Save access settings");
   await current.peer.poll("!document.querySelector('#setup-title')");
@@ -214,7 +215,7 @@ try {
    assert(await current.session.evaluate("document.querySelector('#setup-password')?.value==='review-fixture-new-password' && !!document.querySelector('#setup-totp-qr img')"), "Review discarded proposal or bundle");
   assert(bundles.length === 1 && current.requests.filter(row => row.method === "PUT" && row.path === "/_/api/access").length === 1, "Review minted/replayed Access work");
   const oldToken = await current.session.evaluate("sessionStorage.getItem('token')");
-  const confirmed = await authenticatorCode(bundle.secret, Date.now()); await fill(current.session, "#setup-totp-code", confirmed);
+  const confirmed = await current.totpClock.code(bundle.secret); await fill(current.session, "#setup-totp-code", confirmed);
   await current.session.button("Save access settings"); await current.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
   const stored = JSON.parse(await Deno.readTextFile(`${current.state}/config.json`));
   assert(stored.auth_type === "totp" && stored.username === username && stored.totp_key === bundle.key && stored.unrelated_fixture.retained && stored.access_revision === 2, "Reviewed explicit Access Save did not reach stored account");
@@ -222,13 +223,14 @@ try {
   if (await current.session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width")) await current.session.click('[title="Close sidebar"]');
   await current.session.poll("!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width");
   await fill(current.session, "#username", username); await fill(current.session, "#password", "review-fixture-new-password");
-  const now = Date.now(), codes = await Promise.all([now - 30000, now, now + 30000].map(time => authenticatorCode(bundle.secret, time)));
-  await fill(current.session, "#one-time-code", codes.find(code => code !== confirmed)); await current.session.button("Log In");
+  await fill(current.session, "#one-time-code", await current.totpClock.unusedCode(bundle.secret, [confirmed]));
+  await current.totpClock.submitAcrossStep(current.session, () => current.session.button("Log In"));
   await current.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, current.session)).status === 200, "Confirmed proposed credentials cannot log in");
   // Access deliberately routes to login without a resource redirect; the real
   // login consumer returns Home. Navigate to the fixture note for its viewer.
-  await current.session.goto(`${current.entryBase}/Seed`); await current.session.poll("!!document.querySelector('.toast-viewer')");
+  await current.session.goto(`${current.entryBase}/Seed`); await current.session.poll("document.querySelector('.toast-viewer')?.textContent.includes('Review seed.')");
+  await capture("access-conflict-authenticated");
   removeBundle(); await outcome("Access conflict recovery", { conflictedBytesRetained: true, reviewedRevision: 1, finalRevision: stored.access_revision, retainedBundle: true, separateSaves: 2, oldSessionStatus: 401, confirmedLoginStatus: 200 }); await finish();
   }
 
@@ -324,8 +326,15 @@ try {
   await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ complete: true, outcomes, retainedRoots: fixtures.map(value => value.directory) }, null, 2), { createNew: true });
   console.log(`PLUGIN REVIEW REPAIRS OK (${outcomes.length} repair groups)`);
 } catch (error) {
-  await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ failure: error.stack, outcomes, current: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server?.pid, entryBase: current.entryBase,
-    sessions: current.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })), unresolvedGates: current.gates.filter(gate => !gate.released).map(gate => ({ method: gate.method, path: gate.path, response: gate.response })) } }, null, 2), { createNew: true });
+  let captureFailure;
+  if (current?.session) {
+    try {
+      await capture("failure");
+      await Deno.copyFile(`${current.directory}/failure.png`, `${artifacts}/failure.png`);
+    } catch (diagnosticError) { captureFailure = diagnosticError.stack; }
+  }
+  await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ failure: error.stack, captureFailure, outcomes, current: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server?.pid, entryBase: current.entryBase,
+    sessions: current.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })), requests: current.requests, serverLogs: current.server?.logs, unresolvedGates: current.gates.filter(gate => !gate.released).map(gate => ({ method: gate.method, path: gate.path, response: gate.response })) } }, null, 2), { createNew: true });
   console.error(`Retained native repair failure: ${error.message}; ${artifacts}/failure.json`);
   // Preserve original wires, children and targets for evidence-backed recovery.
   for (;;) await delay(1000);

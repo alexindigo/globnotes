@@ -5,14 +5,15 @@ import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { join } from "node:path";
-import { authenticatorCode } from "../../../tests/helpers/totp.ts";
+import { createNativeTotpClock } from "./native-totp-fixture.mjs";
 import { captureClipboard, prepareClipboardWitness, restoreClipboard, writeClipboardText } from "./native-clipboard.mjs";
 import { assertToggleGeometry } from "./settings-frame-native.mjs";
 
 const externalBrowser = Deno.env.get("CDP_PORT");
 const port = Number(externalBrowser || 9398);
 const artifacts = await Deno.makeTempDir({ prefix: "totp-desktop-shots-" });
-const server = await bootServer({}, applicationServer());
+const totpClock = await createNativeTotpClock(artifacts);
+const server = await bootServer({}, { ...applicationServer(), denoArgs: totpClock.denoArgs });
 let browser;
 let page;
 let priorClipboard;
@@ -322,12 +323,11 @@ try {
   }
   // Finish through the real UI on the probe's own disposable vault, then
   // prove the resulting session at the authenticated consumer endpoint.
-  const codeAt = (epoch) => authenticatorCode(bundle.secret, epoch);
   await page.fill("#setup-username", "desktop-user");
   await page.fill("#setup-password", "desktop-password");
   const validCodes = new Set(
     await Promise.all(
-      [-30000, 0, 30000].map((offset) => codeAt(Date.now() + offset)),
+      [-1, 0, 1].map((offset) => totpClock.code(bundle.secret, offset)),
     ),
   );
   let wrongCode = 0;
@@ -340,16 +340,16 @@ try {
   await page.poll("document.querySelector('#setup-totp-code')?.value === ''");
   await fit("server rejected code");
   await page.screenshot(join(artifacts, "server-code-error.png"));
-  await page.fill("#setup-totp-code", await codeAt(Date.now()));
+  const confirmedCode = await totpClock.code(bundle.secret);
+  await page.fill("#setup-totp-code", confirmedCode);
   await page.click("button[type=submit]");
   await page.poll(
     "location.pathname.includes('/_/login') && !document.querySelector('[role=dialog]')",
   );
   await page.fill("#username", "desktop-user");
   await page.fill("#password", "desktop-password");
-  // The enrolment code is spent; use the adjacent allowed step at login.
-  await page.fill("#one-time-code", await codeAt(Date.now() + 30000));
-  await page.clickText("Log In");
+  await page.fill("#one-time-code", await totpClock.unusedCode(bundle.secret, [confirmedCode]));
+  await totpClock.submitAcrossStep(page, () => page.clickText("Log In"));
   await page.poll("!location.pathname.includes('/_/login')");
   assert(
     await page.evaluate("fetch('/_/api/auth-check').then(r => r.status)") ===

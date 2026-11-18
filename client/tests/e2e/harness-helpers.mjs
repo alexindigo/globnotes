@@ -12,14 +12,14 @@ import { publishRecord } from "../../../tests/helpers/process_records.ts";
 
 const configFile = resolve(dirname(fileURLToPath(import.meta.url)), "../../../deno.json");
 
-export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFailed = false, headers = {}, onServer = () => {} } = {}) {
+export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFailed = false, headers = {}, onServer = () => {}, denoArgs = [] } = {}) {
   const hostname = bindAddress();
   // Reuse the owner of port-0 binding, private build/cwd and clean child env.
   const server = await launchServer({
       ...env,
        GLOBNOTES_GLOBNOTES_PATH: vault,
        GLOBNOTES__METADATA_PATH: metadataBase(vault, stateDir),
-  }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${configFile}`] });
+  }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${configFile}`, ...denoArgs] });
   const logs = server.output;
   let closed = false;
   async function close() {

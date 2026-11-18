@@ -6,6 +6,13 @@ import { REVIEW_REPAIR_CASES, parseReviewRepairArguments, reviewRepairSelection 
 import { MATRIX_CASES, nativeMatrixSelection, parseFixtureArguments } from "./native-fixture-cases.mjs";
 
 describe("native suite child result ownership", () => {
+  it("keeps every authenticator fixture and its held-boundary proof in CI", () => {
+    const cases = FILE_CASES["client/tests/e2e/native-totp-fixture.mjs"];
+    expect(cases).toEqual(["setup-totp-desktop", "plugin-review-repairs---variant-access-conflict",
+      ...["totp-in-place", "current-totp-password", "replace-authenticator", "protected-current-totp-geometry"].map(label => `access-settings---variant-${label}`)]);
+    expect(cases.every(name => SELECTION.some(item => caseName(item) === name))).toBe(true);
+    expect(NATIVE_HELPERS["native-totp-fixture.mjs"]).toContain("authenticator");
+  });
   it("registers layered configuration with the existing shared controls", () => {
     expect(selectCases("layered-config-native")).toEqual([
       ["native-ownership-control"], ["native-actions-control"], ["layered-config-native"],

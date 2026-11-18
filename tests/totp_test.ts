@@ -97,3 +97,40 @@ Deno.test("totp helper: an unused window code avoids every consumed code", async
   assert(window.includes(fresh));
   await assertRejects(() => unusedWindowCode(secret, window));
 });
+
+Deno.test("totp helper: held token admission crosses a step without using an expired or consumed code", async () => {
+  const secret = "JBSWY3DPEHPK3PXP";
+  const now = Math.floor(1234567890_000 / TOTP_STEP_MS) * TOTP_STEP_MS +
+    TOTP_STEP_MS - 1;
+  const verifiedAt = now + TOTP_STEP_MS;
+  const [previous, current, next] = await Promise.all(
+    [-1, 0, 1].map((offset) =>
+      authenticatorCode(secret, now + offset * TOTP_STEP_MS)
+    ),
+  );
+  const originalNow = Date.now;
+  try {
+    // Hold generation at the last millisecond of the step. The old native
+    // selector picked `previous` merely because enrolment spent `current`.
+    Date.now = () => now;
+    const legacy = [previous, current, next].find((code) => code !== current)!;
+    assertEquals(legacy, previous);
+    for (const consumed of [[current], [next], [previous]]) {
+      const selected = await unusedWindowCode(
+        secret,
+        consumed,
+        now,
+        verifiedAt,
+      );
+      assert(!consumed.includes(selected));
+      Date.now = () => verifiedAt;
+      assertEquals(checkTotpCode(selected, secret), true);
+    }
+    assertEquals(checkTotpCode(legacy, secret), false);
+    await assertRejects(() =>
+      unusedWindowCode(secret, [current, next], now, verifiedAt)
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+});

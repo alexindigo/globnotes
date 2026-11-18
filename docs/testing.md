@@ -237,6 +237,18 @@ outside the default selection. There is no broad static DOM-read classifier:
 nullable aliases, guarded optional regions and action callbacks need semantic
 review, and a noisy heuristic would reject valid invariants or miss real reads.
 
+TOTP browser fixtures share `native-totp-fixture.mjs`. Its preload controls
+`Date.now()` only in the owned server subprocess, with the clock file and
+`authenticator-crossings.json` retained beside the fixture evidence. Codes come
+from the independent RFC 6238 reference. Selection excludes spent codes and
+intersects the generation and verification windows. A real token POST is held
+before server admission, the fixture advances one step, and that same request
+is released once. The browser must then leave sign-in and reach its authenticated
+consumer. This covers Access conflict review, in-place enrolment, password
+change, authenticator replacement, the current-authenticator geometry fixture's
+initial login, and first-run desktop enrolment. No product verifier, window,
+request, readiness bound or wall-clock sleep is substituted or extended.
+
 ## Browser tests: a local HTTP domain
 
 Browser tests open the application only through an ordinary local HTTP

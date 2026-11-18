@@ -44,6 +44,7 @@ export const NATIVE_HELPERS = {
   "native-actions.mjs": "native input adapter",
   "native-case-finalization.mjs": "case finalization helper",
   "native-response-gate.mjs": "owned native note response barriers",
+  "native-totp-fixture.mjs": "owned authenticator clock and token request barrier",
   "native-matrix-cases.mjs": "shared matrix argument and leaf selection owner",
   "native-fixture-cases.mjs": "canonical consumer-fixture inventory",
   "native-cdp-session.mjs": "owned browser session adapter",
@@ -324,6 +325,7 @@ export const SHARED_CASE_FILES = [
 ].map(file => "client/tests/e2e/" + file);
 
 export const FILE_CASES = Object.fromEntries([
+  ["client/tests/e2e/native-totp-fixture.mjs", ["setup-totp-desktop", "plugin-review-repairs---variant-access-conflict", ...["totp-in-place", "current-totp-password", "replace-authenticator", "protected-current-totp-geometry"].map(label => `access-settings---variant-${label}`)]],
   ["client/tests/e2e/native-response-gate.mjs", [...nativeMatrixSelection("plugin-permissions"), ["note-save-fifo"], ["note-save-owner-guards"]].map(caseName)],
   ...SHARED_CASE_FILES.map(file => [file, SELECTION.map(caseName)]),
   ...["prefix-auth-fixture.mjs", "prefix-auth-cases.mjs"].map(file => [`client/tests/e2e/${file}`, prefixAuthSelection().map(caseName)]),
