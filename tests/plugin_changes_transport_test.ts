@@ -210,21 +210,19 @@ Deno.test("log example: persistence before lost host ack deduplicates replay; re
           }
           return value;
         },
-      );
+      ).catch((error) => {
+        retired.reject(error);
+        throw error;
+      });
     };
     drop = true;
     Deno.writeTextFileSync(`${f.vault}/once.md`, "once");
     f.hub.scanNow();
-    await waitUntil(
-      async () =>
-        (await store.load()).values.cursor === 1
-          ? done()
-          : pending(runtime.status(manifest.id)),
-      { label: "plugin persisted before lost ack" },
-    );
     // JSON publication precedes the Worker reply. It cannot establish that
-    // the lost-ack callback retired the old owner; reconcile would reuse it.
+    // the lost-ack callback retired the old owner. The invocation's own
+    // outcome/deadline settles this milestone, including rejection.
     await retired.promise;
+    assertEquals((await store.load()).values.cursor, 1);
     assertEquals(runtime.status(manifest.id)?.status, "disabled");
     assertEquals(f.hub.store.pluginCursor(manifest.id)?.seq, 0);
     PluginHost.prototype.invoke = invoke;
@@ -293,6 +291,7 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     commit: (effect) => effect(),
   }).forPlugin(manifest.id);
   const advance = f.hub.store.advancePluginCursor.bind(f.hub.store);
+  const invoke = PluginHost.prototype.invoke;
   const retired = Promise.withResolvers<void>();
   try {
     await runtime.reconcile();
@@ -306,12 +305,27 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     );
     const generation = runtime.status(manifest.id)?.generation;
     assert(generation);
+    // Publication retires the owner on success; the same delivery's native
+    // rejection/deadline must fail the milestone instead of waiting forever.
+    PluginHost.prototype.invoke = function (id, args, pre, timeout, options) {
+      return invoke.call(this, id, args, pre, timeout, options).catch(
+        (error) => {
+          retired.reject(error);
+          throw error;
+        },
+      );
+    };
     f.hub.store.advancePluginCursor = (plugin, expected, next) => {
-      const accepted = advance(plugin, expected, next);
-      if (accepted && next.seq === 128) {
+      try {
+        assertEquals(next.seq, 128);
+        const accepted = advance(plugin, expected, next);
+        assert(accepted, "multipart cursor publication rejected");
         retired.resolve(runtime.retireOwner(manifest.id, false, true));
+        return accepted;
+      } catch (error) {
+        retired.reject(error);
+        throw error;
       }
-      return accepted;
     };
     for (let i = 0; i < 130; i++) {
       Deno.writeTextFileSync(`${f.vault}/${i}.md`, `member ${i}`);
@@ -324,6 +338,7 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     assertEquals(Object.keys(values.staged as object).length, 1);
     assertEquals(f.hub.store.pluginCursor(manifest.id)?.seq, 128);
     f.hub.store.advancePluginCursor = advance;
+    PluginHost.prototype.invoke = invoke;
     await runtime.reconcile();
     await pluginSettled(runtime, manifest.id, "ready");
     assert(runtime.status(manifest.id)?.generation !== generation);
@@ -345,6 +360,7 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     ) assertEquals(row.body, Deno.readTextFileSync(`${f.vault}/${row.path}`));
   } finally {
     f.hub.store.advancePluginCursor = advance;
+    PluginHost.prototype.invoke = invoke;
     await runtime.close();
     f.close();
   }
