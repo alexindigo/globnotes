@@ -191,11 +191,14 @@ Deno.test("log example: persistence before lost host ack deduplicates replay; re
       { label: "example durable cursor" },
     );
   const invoke = PluginHost.prototype.invoke;
+  const retired = Promise.withResolvers<void>();
   let drop = false;
   try {
     await runtime.reconcile();
     await pluginSettled(runtime, manifest.id, "ready");
     await waitCursor(0);
+    const generation = runtime.status(manifest.id)?.generation;
+    assert(generation);
     PluginHost.prototype.invoke = function (id, args, pre, timeout, options) {
       return invoke.call(this, id, args, pre, timeout, options).then(
         (value) => {
@@ -203,7 +206,7 @@ Deno.test("log example: persistence before lost host ack deduplicates replay; re
             drop = false;
             // This boundary is after real Worker JSON persistence and before
             // its reply reaches the follower. Retirement fences the late ack.
-            runtime.retireOwner(manifest.id, false, true);
+            retired.resolve(runtime.retireOwner(manifest.id, false, true));
           }
           return value;
         },
@@ -219,10 +222,15 @@ Deno.test("log example: persistence before lost host ack deduplicates replay; re
           : pending(runtime.status(manifest.id)),
       { label: "plugin persisted before lost ack" },
     );
+    // JSON publication precedes the Worker reply. It cannot establish that
+    // the lost-ack callback retired the old owner; reconcile would reuse it.
+    await retired.promise;
+    assertEquals(runtime.status(manifest.id)?.status, "disabled");
     assertEquals(f.hub.store.pluginCursor(manifest.id)?.seq, 0);
     PluginHost.prototype.invoke = invoke;
     await runtime.reconcile();
     await pluginSettled(runtime, manifest.id, "ready");
+    assert(runtime.status(manifest.id)?.generation !== generation);
     await waitCursor(1);
     let values = (await store.load()).values;
     assertEquals((values.facts as unknown[]).length, 1);
@@ -285,7 +293,7 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     commit: (effect) => effect(),
   }).forPlugin(manifest.id);
   const advance = f.hub.store.advancePluginCursor.bind(f.hub.store);
-  const staged = Promise.withResolvers<void>();
+  const retired = Promise.withResolvers<void>();
   try {
     await runtime.reconcile();
     await pluginSettled(runtime, manifest.id, "ready");
@@ -296,11 +304,12 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
           : pending(runtime.status(manifest.id)),
       { label: "multipart example initial snapshot" },
     );
+    const generation = runtime.status(manifest.id)?.generation;
+    assert(generation);
     f.hub.store.advancePluginCursor = (plugin, expected, next) => {
       const accepted = advance(plugin, expected, next);
       if (accepted && next.seq === 128) {
-        runtime.retireOwner(manifest.id, false, true);
-        staged.resolve();
+        retired.resolve(runtime.retireOwner(manifest.id, false, true));
       }
       return accepted;
     };
@@ -308,7 +317,8 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
       Deno.writeTextFileSync(`${f.vault}/${i}.md`, `member ${i}`);
     }
     f.hub.scanNow();
-    await staged.promise;
+    await retired.promise;
+    assertEquals(runtime.status(manifest.id)?.status, "disabled");
     let values = (await store.load()).values;
     assertEquals(Object.keys(values.rows as object).length, 0);
     assertEquals(Object.keys(values.staged as object).length, 1);
@@ -316,6 +326,7 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     f.hub.store.advancePluginCursor = advance;
     await runtime.reconcile();
     await pluginSettled(runtime, manifest.id, "ready");
+    assert(runtime.status(manifest.id)?.generation !== generation);
     await waitUntil(
       () =>
         f.hub.store.pluginCursor(manifest.id)?.seq === 130
