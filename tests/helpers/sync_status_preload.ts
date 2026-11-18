@@ -17,7 +17,9 @@ function seam(): Seam {
       }/.globnotes/sync-status-test.json`,
     ));
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return {};
+    if (error instanceof Deno.errors.NotFound || error instanceof SyntaxError) {
+      return {};
+    }
     throw error;
   }
 }

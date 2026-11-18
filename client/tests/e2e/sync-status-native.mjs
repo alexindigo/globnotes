@@ -7,6 +7,7 @@ import { applicationServer, bindAddress, httpOrigin } from "./http-origin.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { ICON_PATHS } from "../../icons.js";
+import { publishRecord } from "../../../tests/helpers/process_records.ts";
 
 const directory = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({prefix:"sync-status-"});
 const vault=`${directory}/vault`,state=`${vault}/.globnotes`,token="sync-status-native-key";
@@ -23,7 +24,7 @@ async function api(route,method="GET",body) {
   const response=await fetch(`${server.baseUrl}/_/api/${route}`,{method,headers:{"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
   const value=await response.json();assert(response.ok,`${method} ${route}: ${response.status} ${JSON.stringify(value)}`);return value;
 }
-const controls=()=>Deno.writeTextFile(`${state}/sync-status-test.json`,JSON.stringify(seam));
+const controls=()=>publishRecord(`${state}/sync-status-test.json`,JSON.stringify(seam));
 async function sync(id="office") {const row=(await api("drivers")).instances.find(row=>row.id===id);return api(`drivers/${id}/sync`,"POST",{revision:row.revision});}
 async function stateIs(icon,tone) {
   const token=tone==="danger"?"--theme-danger":tone==="active"?"--theme-brand":"--theme-text-muted";
