@@ -250,7 +250,13 @@ export class BoundFileStore {
       });
       if (identity) Deno.openSync(target, { write: true }).close();
       this.assertUnchanged(prepared);
-      Deno.renameSync(temporary, target);
+      if (identity) {
+        Deno.renameSync(temporary, target);
+      } else {
+        // An absence check cannot reserve a pathname. Publish the complete
+        // candidate without replacing an inode created by a competing writer.
+        Deno.linkSync(temporary, target);
+      }
       // Preserve the original publication point, even if later cleanup fails.
       committed?.(snapshot);
     } catch (error) {

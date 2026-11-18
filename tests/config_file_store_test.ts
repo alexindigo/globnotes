@@ -30,12 +30,51 @@ const formats = [
   },
 ];
 
+for (
+  const name of [
+    "identity.lock",
+    "accounts.json",
+    "sessions.json",
+    "access.json",
+    "identity-transaction.json",
+    "single-vault.json",
+  ]
+) {
+  Deno.test(`bound file ${name}: initial publication never clobbers a concurrent creator`, () =>
+    fixture((root) => {
+      const store = new BoundFileStore(`${root}/deployment/${name}`);
+      const unchanged = store.assertUnchanged.bind(store);
+      let held = false, committed = false;
+      store.assertUnchanged = (snapshot) => {
+        unchanged(snapshot);
+        if (
+          !held &&
+          [...Deno.readDirSync(`${root}/deployment`)].some((e) =>
+            e.name.startsWith(".config-")
+          )
+        ) {
+          held = true;
+          Deno.writeTextFileSync(store.filename, "winner");
+        }
+      };
+      assertThrows(() =>
+        store.replace("loser", store.capture(), () => {
+          committed = true;
+        }), Deno.errors.AlreadyExists);
+      assertEquals(held, true);
+      assertEquals(committed, false);
+      assertEquals(Deno.readTextFileSync(store.filename), "winner");
+      assertEquals(residue(root), []);
+    }));
+}
+
 for (const { filename, after } of formats) {
   Deno.test(`bound file ${filename}: post-rename equal-byte replacement is not adopted as committed identity`, () =>
     fixture((root) => {
       const target = `${root}/deployment/${filename}`,
         store = new BoundFileStore(target),
         rename = Deno.renameSync;
+      Deno.writeTextFileSync(target, "before");
       let committed: StoredConfigSnapshot | undefined;
       let writtenInode: number | null = null;
       try {
@@ -80,6 +119,7 @@ for (const { filename, after } of formats) {
         const store = new BoundFileStore(existing ? configured : target),
           expected = store.capture(),
           rename = Deno.renameSync,
+          link = Deno.linkSync,
           read = Deno.readTextFileSync,
           stat = Deno.statSync,
           lstat = Deno.lstatSync;
@@ -94,11 +134,18 @@ for (const { filename, after } of formats) {
             Deno.statSync = denied;
             Deno.lstatSync = denied;
           }) as typeof rename;
+          Deno.linkSync = ((from, to) => {
+            link(from, to);
+            Deno.readTextFileSync = denied;
+            Deno.statSync = denied;
+            Deno.lstatSync = denied;
+          }) as typeof link;
           store.replace(after, expected, (snapshot) => {
             committed = snapshot;
           });
         } finally {
           Deno.renameSync = rename;
+          Deno.linkSync = link;
           Deno.readTextFileSync = read;
           Deno.statSync = stat;
           Deno.lstatSync = lstat;

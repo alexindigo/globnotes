@@ -244,6 +244,11 @@ const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
   },
   {
     file: "server/config/file_store.ts",
+    line: "Deno.linkSync(temporary, target);",
+    reason: "no-clobber initial state publication in the bound state directory",
+  },
+  {
+    file: "server/config/file_store.ts",
     line: "Deno.removeSync(temporary);",
     reason: "stored configuration in the state directory",
   },

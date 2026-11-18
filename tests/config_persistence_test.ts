@@ -98,15 +98,15 @@ const deploymentConfig = {
 };
 
 for (const boundary of ["capture-failure", "cleanup-failure"]) {
-  Deno.test(`JSON config: post-rename ${boundary} retains publication and following saves`, async () => {
+  Deno.test(`JSON config: post-publication ${boundary} retains publication and following saves`, async () => {
     await persistenceFixture((_root, config) => {
       const rename = Deno.renameSync,
+        link = Deno.linkSync,
         remove = Deno.removeSync,
         capture = BoundFileStore.prototype.capture,
         next = { ...deploymentConfig, brand_name: "Committed" };
       try {
-        Deno.renameSync = ((from, to) => {
-          rename(from, to);
+        const published = (to: string | URL) => {
           if (String(to) !== config.configPath) return;
           if (boundary === "capture-failure") {
             BoundFileStore.prototype.capture = () => {
@@ -120,7 +120,15 @@ for (const boundary of ["capture-failure", "cleanup-failure"]) {
               remove(name, options);
             }) as typeof remove;
           }
-        }) as typeof rename;
+        };
+        Deno.renameSync = (from, to) => {
+          rename(from, to);
+          published(to);
+        };
+        Deno.linkSync = (from, to) => {
+          link(from, to);
+          published(to);
+        };
         if (boundary === "cleanup-failure") {
           assertThrows(
             () => config.saveStoredConfig(next),
@@ -134,6 +142,7 @@ for (const boundary of ["capture-failure", "cleanup-failure"]) {
         );
       } finally {
         Deno.renameSync = rename;
+        Deno.linkSync = link;
         Deno.removeSync = remove;
         BoundFileStore.prototype.capture = capture;
       }

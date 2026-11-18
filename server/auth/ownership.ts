@@ -16,10 +16,33 @@ export function acquireIdentityOwnership(root: string): {
   const store = new BoundFileStore(join(root, "identity.lock"));
   let held = store.capture();
   if (held.raw === null) {
-    store.replace("", held, () => {
-      held = store.capture();
-      if (held.raw !== "") throw new StoredConfigConflict();
-    });
+    try {
+      held = store.prepareParents(held);
+      store.replace("", held, (snapshot) => {
+        held = snapshot;
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Deno.errors.AlreadyExists) &&
+        !(error instanceof StoredConfigConflict)
+      ) throw error;
+      const winner = store.capture();
+      // Reuse the winner only under the same bound parents and links.
+      if (
+        winner.raw === null || winner.binding.target !== held.binding.target ||
+        JSON.stringify(
+            winner.binding.nodes.filter((n) =>
+              n.location !== winner.binding.target
+            ),
+          ) !==
+          JSON.stringify(
+            held.binding.nodes.filter((n) =>
+              n.location !== held.binding.target
+            ),
+          )
+      ) throw new StoredConfigConflict();
+      held = winner;
+    }
   }
   const handle = Deno.openSync(held.binding.target, { read: true });
   let closed = false;

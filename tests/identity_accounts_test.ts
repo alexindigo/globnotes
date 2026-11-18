@@ -2,7 +2,10 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { AccountRepository, prepareAccount } from "../server/auth/accounts.ts";
 import { IdentityStateError } from "../server/auth/records.ts";
-import { StoredConfigConflict } from "../server/config/file_store.ts";
+import {
+  BoundFileStore,
+  StoredConfigConflict,
+} from "../server/config/file_store.ts";
 import {
   ACCOUNT_B,
   identityAccount,
@@ -220,3 +223,63 @@ Deno.test("accounts: credential CAS and TOTP consumption have different revision
       1,
     );
   }));
+
+for (const interference of ["unreadable", "equal-file"]) {
+  Deno.test(`accounts: committed binding survives ${interference} after publication`, () =>
+    identityFixture((root) => {
+      const repo = new AccountRepository(root);
+      repo.create(identityAccount());
+      const capture = BoundFileStore.prototype.capture;
+      const rename = Deno.renameSync;
+      let published = false, reads = 0;
+      try {
+        BoundFileStore.prototype.capture = function () {
+          if (published && this.filename === `${root}/accounts.json`) {
+            reads++;
+            if (interference === "unreadable") {
+              throw new Error("post-publication capture");
+            }
+          }
+          return capture.call(this);
+        };
+        Deno.renameSync = ((from, to) => {
+          rename(from, to);
+          if (String(to) !== `${root}/accounts.json`) return;
+          published = true;
+          if (interference === "equal-file") {
+            Deno.writeTextFileSync(
+              `${root}/foreign`,
+              Deno.readTextFileSync(to),
+            );
+            rename(`${root}/foreign`, to);
+          }
+        }) as typeof rename;
+        repo.create(identityAccount({ id: ACCOUNT_B, login: "bob" }));
+        assertEquals(reads, 0);
+      } finally {
+        BoundFileStore.prototype.capture = capture;
+        Deno.renameSync = rename;
+      }
+      assertEquals(
+        repo.capture().value,
+        JSON.parse(Deno.readTextFileSync(`${root}/accounts.json`)),
+      );
+      if (interference === "equal-file") {
+        assertThrows(
+          () => repo.changeCredentials(ACCOUNT_B, 0, {}, UPDATE),
+          StoredConfigConflict,
+        );
+      } else {
+        repo.changeCredentials(
+          ACCOUNT_B,
+          0,
+          { passwordChangeRequired: false },
+          UPDATE,
+        );
+        assertEquals(
+          new AccountRepository(root).byId(ACCOUNT_B)?.credentialRevision,
+          1,
+        );
+      }
+    }));
+}

@@ -81,11 +81,7 @@ export class IdentityFile<T> {
     this.#file.replace(
       JSON.stringify(value) + "\n",
       expected.persistence,
-      () => {
-        const persistence = this.#file.capture();
-        if (persistence.raw !== JSON.stringify(value) + "\n") {
-          throw new StoredConfigConflict();
-        }
+      (persistence) => {
         this.#snapshot = freeze({ value, persistence });
       },
     );
