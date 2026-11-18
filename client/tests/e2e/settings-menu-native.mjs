@@ -1,5 +1,6 @@
 // Actual Settings adapters, rendered viewer/debug consumers and search-sort UI.
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 export async function exerciseSettingsMenu({ session, server, state }) {
   const assert = (condition, message) => { if (!condition) throw Error(message); };
   const api = async path => {
@@ -8,7 +9,7 @@ export async function exerciseSettingsMenu({ session, server, state }) {
     return response.json();
   };
   async function open() {
-    if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+    await showSidebar(session);
     await session.click('[aria-label="Settings"]');
     await session.poll("!!document.querySelector('#settings-modal-title')");
   }

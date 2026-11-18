@@ -1,4 +1,5 @@
 // Feature-owned Appearance consumer: keyboard intent reaches the persisted palette.
+import { showSidebar } from './sidebar-navigation-native.mjs';
 export async function exerciseAppearanceDesign(session) {
   const assert=(condition,message)=>{if(!condition)throw Error(message);};
   const inspect=expression=>session.evaluate(expression);
@@ -25,7 +26,7 @@ export async function exerciseAppearanceDesign(session) {
   await session.click('[aria-label="Close settings"]'); await session.poll("!document.querySelector('#settings-modal-title')");
   await inspect("window.__appearanceDocument='before-reload';true");
   await session.send('Page.reload'); await session.poll("window.__appearanceDocument===undefined && document.readyState==='complete' && !!document.querySelector('.toast-viewer') && document.body.classList.contains('dark')");
-  if(await inspect("!!document.querySelector('[title=\"Open sidebar\"]')"))await session.click('[title="Open sidebar"]');
+  await showSidebar(session);
   await session.click('[aria-label="Settings"]'); await session.poll("document.querySelector('[data-theme-id=globnotes-dark]')?.getAttribute('aria-checked')==='true'");
   return {keyboard,contrast,reloadedSelection:'globnotes-dark',browserErrors:session.errors};
 }

@@ -1,4 +1,5 @@
 // Feature-owned real Settings foundation consumers; shared native helpers stay unchanged.
+import { showSidebar } from './sidebar-navigation-native.mjs';
 import { nativeSession } from "./native-cdp-session.mjs";
 import { fileURLToPath } from "node:url";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
@@ -105,7 +106,7 @@ async function enabledButton(label, scope) {
   await session.button(label, scope);
 }
 async function open() {
-  if (await inspect("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+  await showSidebar(session);
   await session.click('[aria-label="Settings"]');
   await session.poll("!!document.querySelector('#settings-modal-title')");
 }

@@ -1,4 +1,5 @@
 // Actual viewport/DPR/theme geometry, hit testing, wheel and keyboard consumers.
+import { showSidebar } from './sidebar-navigation-native.mjs';
 export async function exerciseSettingsGeometry({ session, directory }) {
   const assert = (condition, message) => { if (!condition) throw Error(message); };
   const outcomes = [];
@@ -6,7 +7,7 @@ export async function exerciseSettingsGeometry({ session, directory }) {
     for (const dpr of [1, 2]) for (const theme of ["light", "dark"]) {
       const label = `${viewport.name}-dpr-${dpr}-${theme}`;
       await session.send("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: dpr, mobile: false });
-      if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+      await showSidebar(session);
       await session.poll("!!document.querySelector('[aria-label=Settings]')?.getBoundingClientRect().width");
       await session.evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
        const footer = await session.read(['[aria-label=Settings]', '[title="Recent notes"]'], `(()=>{

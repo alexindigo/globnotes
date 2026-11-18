@@ -1,5 +1,6 @@
 // Production-assets native consumers. Every target, server, variant and artifact is owned.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 import { fileURLToPath } from "node:url";
 import { bootServer } from "./harness-helpers.mjs";
 import { executeChild } from "./legacy-native-suite.mjs";
@@ -208,7 +209,7 @@ if (options.controls) {
   async function open() {
     const session = current.session;
     if (!await session.evaluate("!!document.querySelector('#settings-modal-title')")) {
-      if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+      await showSidebar(session);
       await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
     }
     await session.click('[data-settings-nav-id="plugin:globnotes-backup"]');

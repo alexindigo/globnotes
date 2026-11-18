@@ -8,6 +8,7 @@ import { applicationServer } from "./http-origin.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 import { assert } from "./test-outcomes.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { readExportOwner, waitForDriverExport } from "./driver-export-owner.mjs";
@@ -93,7 +94,7 @@ export async function remotelySaveCase(backend, mode, run) {
         async controls() { await s.poll(`!!document.querySelector('${scope} .driver-instance__header [role=switch]') && ['', 'Saved.'].includes(document.querySelector('[data-settings-status]')?.textContent)`); },
         async open(page="Sync") {
           if (!await s.read('[data-app-shell]', "!!document.querySelector('#settings-modal-title')")) {
-            if (await s.read('[data-app-shell]', "!!document.querySelector('[title=\"Open sidebar\"]')")) await s.click('[title="Open sidebar"]');
+            await showSidebar(s);
             await s.click('[aria-label="Settings"]');
           }
           await s.button(page, '[role=dialog] nav');

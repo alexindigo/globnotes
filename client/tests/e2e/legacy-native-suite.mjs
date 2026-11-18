@@ -67,6 +67,7 @@ export const NATIVE_HELPERS = {
   "settings-primitives-native.mjs": "shared primitive scenarios",
   "settings-restart-fixture.mjs": "Settings restart fixture",
   "settings-surfaces-native.mjs": "Settings surface matrix",
+  "sidebar-navigation-native.mjs": "rendered sidebar navigation owner",
   "sync-native-fixture.mjs": "sync fixture",
   "test-outcomes.mjs": "consumer assertions",
 };

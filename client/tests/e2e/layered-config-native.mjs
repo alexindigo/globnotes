@@ -3,6 +3,7 @@ import { parse } from "@std/toml";
 import { bootServer } from "./harness-helpers.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { createSettingsRestartFixture } from "./settings-restart-fixture.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { assert } from "./test-outcomes.mjs";
 
@@ -37,7 +38,7 @@ async function fill(selector, value) {
   await session.poll(`document.querySelector(${JSON.stringify(selector)})?.value===${JSON.stringify(value)}`);
 }
 async function branding() {
-  if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+  await showSidebar(session);
   await session.click('[aria-label="Settings"]'); await session.button("Branding");
   await session.poll("!!document.querySelector('#brand-name')");
 }

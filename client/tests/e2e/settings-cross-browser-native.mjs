@@ -2,6 +2,7 @@ import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 
 export async function exerciseSettingsCrossBrowser({ session: a, server, directory, username, password, vault, state }) {
   const assert = (condition, message) => { if (!condition) throw Error(message); };
@@ -19,7 +20,7 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
   async function replace(peer, selector, value) { await peer.click(selector); await peer.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); if (value) await peer.type(value); else await peer.key("Backspace", { windowsVirtualKeyCode: 8 }); }
   async function open(peer, page) {
     if (!await peer.evaluate("!!document.querySelector('#settings-modal-title')")) {
-      if (await peer.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await peer.click('[title="Open sidebar"]');
+      await showSidebar(peer);
       await peer.click('[aria-label="Settings"]'); await peer.poll("!!document.querySelector('#settings-modal-title')");
     }
     if(page==='Native preferences')await peer.click('[data-settings-nav-id="plugin:session-guard"]');

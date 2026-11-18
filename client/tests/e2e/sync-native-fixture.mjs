@@ -7,6 +7,7 @@ import { nativeSession } from "./native-cdp-session.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { waitForDriverExport } from "./driver-export-owner.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 export { assert };
 export const until = (predicate, label) => waitUntil(async () => await predicate() ? done() : pending({label}), {label,intervalMs:50});
 export async function syncCase(name, run) {
@@ -50,7 +51,7 @@ export async function syncCase(name, run) {
       url:path=>`${server.baseUrl}${path}`,
       async open() {
         if(!await session.evaluate("!!document.querySelector('#settings-modal-title')")){
-          if(await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')"))await session.click('[title="Open sidebar"]');
+          await showSidebar(session);
           await session.click('[aria-label="Settings"]');
         }
         await session.button("Sync","[role=dialog]");await session.poll("!!document.querySelector('[data-sync-settings]') && !!document.querySelector('[data-settings-status]') && document.querySelector('[data-settings-status]').textContent!=='Loading sync settings...'");

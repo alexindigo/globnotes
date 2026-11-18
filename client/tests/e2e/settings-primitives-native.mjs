@@ -1,5 +1,6 @@
 // Observe shared appearance at real main/Settings consumers and layout at every
 // action row. No test-only render path or synthetic CSS is injected into the app.
+import { showSidebar } from './sidebar-navigation-native.mjs';
 import { nativeSession } from './native-cdp-session.mjs';
 import { bootServer } from './harness-helpers.mjs';
 
@@ -80,7 +81,7 @@ export async function exercisePrimitiveOwnership({ port, directory }) {
       await session.send('Input.dispatchMouseEvent',{type:'mouseMoved',...await session.evaluate('({x:innerWidth-1,y:innerHeight-1})')});
       const main = await primaryStyle(session, 'button[data-variant=cta]');
       const mainHover = await hoverStyle(session, 'button[data-variant=cta]', directory, `${mode}-main`);
-      if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+      await showSidebar(session);
       await session.click('[aria-label=Settings]');
       await session.poll("!!document.querySelector('#settings-modal-title')");
       await session.click('[data-settings-nav-id="core:branding"]');

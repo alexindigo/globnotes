@@ -217,6 +217,14 @@ write/sync. A cleared PUT busy flag alone precedes the owning snapshot; restorin
 Add/Remove rows can still move lower inputs. The positive controls-ready marker
 keeps the next native gesture after that snapshot's actual UI result.
 
+Sidebar-dependent native navigation uses `showSidebar` from
+`sidebar-navigation-native.mjs`. It waits for SidebarPanel's interactive opener
+or visible Settings gear in one DOM observation, opens the collapsed sidebar
+once if necessary, then waits for its interactive gear. Document load completion
+and an absent opener do not establish that the sidebar has rendered. Sync's
+CI-selected Settings case holds the real config response until navigation starts,
+proving that a late-mounted, initially collapsed sidebar still opens Settings.
+
 Native read-only DOM snapshots use `session.read(requiredSelectors, expression)`.
 Required nodes and the synchronous snapshot are observed in one page task through
 the shared readiness helper; a separate presence poll followed by evaluate leaves

@@ -1,5 +1,6 @@
 // Callback-injected actual Settings/permission/local-preference consumers.
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 export async function exerciseLockedControls({ session, api, baseUrl, state, vault, openAccess, closeSidebar, capture }) {
   const assert = (value, message) => { if (!value) throw Error(message); };
   const id = "access-workflow", settingsRoute = `plugin-host/${id}/settings/preferences`;
@@ -26,7 +27,7 @@ export async function exerciseLockedControls({ session, api, baseUrl, state, vau
     if (request.method !== "GET" && /^\/_\/api\/(brand(?:\/|$)|access(?:\/|$)|setup(?:\/|$)|plugin-host\/(policy(?:\/|$)|[^/]+\/(enabled|settings|permissions|permission-requests)(?:\/|$)))/.test(path)) writes.push({ path, method: request.method });
   });
   async function open() {
-    if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+    await showSidebar(session);
     await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
   }
   async function close() {

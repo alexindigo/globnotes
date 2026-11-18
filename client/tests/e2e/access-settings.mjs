@@ -10,6 +10,7 @@ import { hashPassword } from "../../../server/helpers.ts";
 import { authenticatorCode, unusedWindowCode } from "../../../tests/helpers/totp.ts";
 import { SignJWT } from "jose";
 import { createSettingsRestartFixture } from "./settings-restart-fixture.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 import { exerciseLockedControls } from "./access-lock-controls-native.mjs";
 import { metadataBase, metadataDirectory } from "./config-fixture.mjs";
 import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
@@ -87,7 +88,7 @@ async function fill(selector, value) {
 }
 async function access({ pinnedMode = false } = {}) {
   const session = owned.session;
-  if (await session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+  await showSidebar(session);
   await session.click('[aria-label="Settings"]'); await session.button("Access"); await waitForAccessSummary(session); await session.button("Change access…");
    await session.poll(pinnedMode ? "!!document.querySelector('#setup-title') && document.querySelector('#access-current-password')?.disabled===false" : "!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-none')?.disabled===false");
 }
@@ -205,7 +206,7 @@ try {
   assert((await api("plugin-host/access-workflow/commands/report", "POST", {})).body.result.owner === workflowOwner, "Settings-only lock replaced the unrelated workflow owner");
   assert(JSON.parse(await Deno.readTextFile(`${owned.state}/plugin-data/access-workflow/data.json`)).values.content.includes("Still public after settings lock"), "Unrelated private workflow data did not persist under settings lock");
   for (const [route, method] of [["brand", "POST"], ["plugin-host/policy", "PUT"], ["plugin-host/missing/enabled", "PUT"], ["plugin-host/missing/settings/page", "PUT"], ["plugin-host/missing/permissions", "PUT"], ["plugin-host/missing/permission-requests/request/decision", "POST"], ["access", "PUT"], ["access/totp-enrolment", "POST"], ["setup/reset", "POST"]]) assert((await api(route, method, {})).status === 403, `Locked public mutation escaped: ${route}`);
-  if (await owned.session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await owned.session.click('[title="Open sidebar"]');
+  await showSidebar(owned.session);
   await owned.session.click('[aria-label="Settings"]'); await owned.session.button("Access");
    assert(!await owned.session.read('[data-access-summary]', "[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access…')"), "Locked Access can unlock itself");
   await owned.session.button("Appearance"); await owned.session.click('[data-theme-id="globnotes-light"]');
@@ -377,7 +378,7 @@ try {
     for (const dpr of [1, 2]) for (const theme of ["light", "dark"]) {
       const label = `${viewport.name}-dpr-${dpr}-${theme}`;
       await owned.session.send("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: dpr, mobile: false });
-      if (await owned.session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await owned.session.click('[title="Open sidebar"]');
+      await showSidebar(owned.session);
       await owned.session.click('[aria-label="Settings"]'); await owned.session.button("Appearance");
       await owned.session.click(`[data-theme-id="globnotes-${theme}"]`);
       await owned.session.poll(`document.body.classList.contains('dark')===${theme === "dark"}`);
@@ -444,7 +445,7 @@ try {
   await owned.session.poll("(()=>{const button=[...document.querySelectorAll('.content-column button')].find(button=>button.textContent.trim()==='Save');return button?.getAttribute('aria-busy')==='false'&&!button.querySelector('.animate-spin');})()");
   const pinnedToken = await owned.session.evaluate("sessionStorage.getItem('token')"), pinnedBytes = await saved();
   assert((await api("notes/Seed", "GET", undefined, pinnedToken)).body.content.includes("Pinned confirmation retained editor marker"), "Pinned note precondition did not persist before Access");
-  if (await owned.session.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await owned.session.click('[title="Open sidebar"]');
+  await showSidebar(owned.session);
   await owned.session.click('[aria-label="Settings"]'); await owned.session.button("Appearance"); await owned.session.click('[data-theme-id="globnotes-light"]');
   await owned.session.poll("!document.body.classList.contains('dark')"); await owned.session.click('[aria-label="Close settings"]'); await owned.session.poll("!document.querySelector('#settings-modal-title')");
   await access({ pinnedMode: true });

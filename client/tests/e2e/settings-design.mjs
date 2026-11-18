@@ -4,6 +4,7 @@ import { editableControl } from "./native-actions.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { formatVersion } from "../../../shared/version.ts";
 import { assertSettingsHeaderRuleEdge, assertSettingsActionHierarchy, assertSettingRowAlignment, assertSettingRowErrors, assertSettingsVisualLanes } from "./settings-frame-native.mjs";
@@ -80,7 +81,7 @@ async function invariant() {
   assert(!wireError, wireError);
 }
 async function open() {
-  if (await inspect("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+  await showSidebar(session);
   await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
 }
 async function launch(id, page) {

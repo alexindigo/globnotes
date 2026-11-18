@@ -1,5 +1,6 @@
 // Feature-owned complete Settings surface matrix. Ordinary HTTP; no test hooks in views.
 import { nativeSession } from './native-cdp-session.mjs';
+import { showSidebar } from './sidebar-navigation-native.mjs';
 import { createServerWorkingDirectory } from '../../../tests/helpers/boot.ts';
 import { awaitHealthy, bootServer } from './harness-helpers.mjs';
 import { applicationServer, assertHttpTestUrl } from './http-origin.mjs';
@@ -23,7 +24,7 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
   const inspect=expression=>session.evaluate(expression);
   const settled=()=>inspect('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
   async function replace(selector,value){await session.click(selector);await session.key('a',{code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});if(value)await session.type(value);else await session.key('Backspace',{windowsVirtualKeyCode:8});}
-  async function open(){if(await inspect("!!document.querySelector('#settings-modal-title')"))return;if(await inspect("!!document.querySelector('[title=\"Open sidebar\"]')"))await session.click('[title="Open sidebar"]');await session.click('[aria-label=Settings]');await session.poll("!!document.querySelector('#settings-modal-title')");}
+  async function open(){if(await inspect("!!document.querySelector('#settings-modal-title')"))return;await showSidebar(session);await session.click('[aria-label=Settings]');await session.poll("!!document.querySelector('#settings-modal-title')");}
   async function nav(id){await session.click(`[data-settings-nav-id="${id}"]`);await session.poll(`document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage===${JSON.stringify(id==='plugin:globnotes-backup'?'plugin:globnotes-backup:backup':id)}`);}
   async function probe(name,cell){
     if(name==='backups')await session.poll("(()=>{const input=document.querySelector('#settings-field-basePath');return !!input&&!input.readOnly&&!!input.parentElement.querySelector('button');})()");

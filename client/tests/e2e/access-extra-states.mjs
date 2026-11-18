@@ -1,5 +1,6 @@
 // Final native clipboard and Access transport/conflict/error consumers.
 import { nativeSession } from "./native-cdp-session.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 import { captureClipboard, closeClipboardWitness, prepareClipboardWitness, readClipboardText, restoreClipboard, writeClipboardText } from "./native-clipboard.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done as waitDone, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
@@ -52,7 +53,7 @@ async function fixture(label, protectedMode = false, narrow = false) {
   session.page.onEvent(event => { if (event.method === "Network.requestWillBeSent" && event.params.request.method === "PUT" && new URL(event.params.request.url).pathname === "/_/api/access") current.writes.push(event.params.requestId); });
 }
 async function open(waitForLoaded = true) {
-  const s = current.session; if (await s.evaluate("!!document.querySelector('[title=\"Open sidebar\"]')")) await s.click('[title="Open sidebar"]');
+  const s = current.session; await showSidebar(s);
   await s.click('[aria-label="Settings"]'); await s.button("Access"); await waitForAccessSummary(s); await s.button("Change access…");
   await s.poll("!!document.querySelector('#setup-title')");
   // The visible wizard initially owns a loading form. Its admitted read also

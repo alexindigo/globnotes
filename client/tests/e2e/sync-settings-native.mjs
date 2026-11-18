@@ -4,7 +4,28 @@ import { waitForAccessSummary } from './settings-access-native.mjs';
 await syncCase("sync-settings-native",async f=>{
   const s=f.session;
   f.remote.put("Welcome.md","remote welcome\n");f.remote.put("Restore.md","restore base\n");f.remote.put("Delete.md","delete base\n");
-  await s.goto(f.url("/"));await f.open();await f.capture("empty");
+  // Hold the app's config acknowledgement: document.complete is earlier than
+  // LoadingIndicator mounting the sidebar. Release only once open() reaches
+  // its first navigation wait/action, not after an arbitrary delay.
+  const held=Promise.withResolvers(),entered=Promise.withResolvers();
+  const stop=s.page.onEvent(event=>{if(event.method==='Fetch.requestPaused')held.resolve(event.params.requestId);});
+  const poll=s.poll,click=s.click;
+  try {
+    await s.send('Fetch.enable',{patterns:[{urlPattern:'*/_/api/config',requestStage:'Response'}]});
+    await s.goto(f.url('/'));const requestId=await held.promise;
+    assert(!await s.evaluate("!!document.querySelector('[title=\"Open sidebar\"], [aria-label=Settings]')"),'Sidebar rendered before held configuration');
+    s.poll=expression=>{entered.resolve({kind:'owner-wait',expression});return poll(expression);};
+    s.click=selector=>{entered.resolve({kind:'action',selector});return click(selector);};
+    const opening=f.open();opening.catch(()=>{});
+    const first=await entered.promise;
+    const before=await s.evaluate("({sidebar:!!document.querySelector('aside'),settings:!!document.querySelector('[aria-label=Settings]')})");
+    assert(!before.sidebar&&!before.settings,'Render boundary was not held through navigation admission');
+    const boundary={label:'held-sidebar-render',first,before,settingsOpened:false};f.results.push(boundary);
+    await s.send('Fetch.continueRequest',{requestId});await s.send('Fetch.disable');
+    await opening;
+    boundary.settingsOpened=true;
+  } finally {s.poll=poll;s.click=click;stop();await s.send('Fetch.disable');}
+  await f.capture("empty");
   // This case is selected by CI. Observe both shared lanes at the real pages,
   // including the narrow width that previously wrapped the policy control.
   for(const width of [1280,1600,360]){

@@ -1,5 +1,6 @@
 // Feature-owned native Settings consumers. No shared CDP/helper changes.
 import { exerciseSettingsFields } from "./settings-fields-native.mjs";
+import { showSidebar } from './sidebar-navigation-native.mjs';
 export async function exerciseInlineSettings({ session, server, vault, state, directory }) {
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   const evidence = [];
@@ -20,7 +21,7 @@ export async function exerciseInlineSettings({ session, server, vault, state, di
     await session.poll("!document.querySelector('#settings-modal-title')");
   }
   async function open() {
-    if (await inspect("!!document.querySelector('[title=\"Open sidebar\"]')")) await session.click('[title="Open sidebar"]');
+    await showSidebar(session);
     await session.click('[aria-label="Settings"]');
     await session.poll("!!document.querySelector('#settings-modal-title')");
   }
