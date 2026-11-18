@@ -238,18 +238,17 @@ nullable aliases, guarded optional regions and action callbacks need semantic
 review, and a noisy heuristic would reject valid invariants or miss real reads.
 
 TOTP browser fixtures share `native-totp-fixture.mjs`. Its preload controls
-`Date.now()` only in the owned server subprocess, with the clock file and
-`authenticator-crossings.json` retained beside the fixture evidence. Codes come
-from the independent RFC 6238 reference. Positive login codes are selected for
-the release step, with no adjacent-window fallback or reuse of spent proofs.
-A real token POST is held before server admission, the fixture advances one
-step, and its submitted code must equal that step's current code before the
-same request is released once. Current-credential proofs use a fresh current
-step without spending the next login's code. Crossing receipts distinguish
-`plannedVerificationAt` from `released` and `releaseAcknowledgedAt`; only a
-successful continuation acknowledgment records a release, never verification.
-The browser must then leave sign-in and reach its authenticated
-consumer. This covers Access conflict review, in-place enrolment, password
+`Date.now()` only in the owned server subprocess. Before selecting login input,
+`loginCode` advances that clock and returns its current code from the independent
+RFC 6238 reference, rejecting spent codes without adjacent-window fallback.
+The verifier stays frozen until authentication finishes, so input and
+verification use the same step without request interception or crossing receipts.
+Current-credential proofs use a fresh current step without spending a later
+login's code. Targeted tests reproduce the old expired previous-code boundary
+failure and compare selected codes with the actual child verifier's frozen step.
+Browser input checks observe the filled code; every TOTP login must then use
+the stored session token to reach `auth-check` with status 200, not just leave
+the login screen. This covers Access conflict review, in-place enrolment, password
 change, authenticator replacement, the current-authenticator geometry fixture's
 initial login, and first-run desktop enrolment. No product verifier, window,
 request, readiness bound or wall-clock sleep is substituted or extended.

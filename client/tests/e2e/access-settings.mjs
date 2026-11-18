@@ -79,10 +79,11 @@ async function fixture(label, protectedMode) {
       const { totpSecretFromRawKey } = await import("../../../server/auth/local.ts");
       const secret = totpSecretFromRawKey(config.totp_key);
       await fill("#one-time-code", await totpClock.loginCode(secret, []));
-      await totpClock.submitAcrossStep(session, () => session.button("Log In"), { secret });
+      await session.button("Log In");
     } else await session.button("Log In");
   }
   await session.poll("!!document.querySelector('.toast-viewer')");
+  if (totp) assert((await api("auth-check", "GET", undefined, await session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Initial authenticator login has no authenticated session");
 }
 async function fill(selector, value) {
   const session = owned.session;
@@ -182,7 +183,7 @@ try {
   assert((await api("auth-check", "GET", undefined, oldToken)).status === 401, "Confirmed 2FA left old session valid");
   await closeSidebar(session);
   await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await owned.totpClock.loginCode(bundle.secret, [confirmedCode]));
-  await owned.totpClock.submitAcrossStep(session, () => session.button("Log In"), { secret: bundle.secret, consumed: [confirmedCode] }); await session.poll("!document.querySelector('#username')");
+  await session.button("Log In"); await session.poll("!document.querySelector('#username')");
   const freshToken = await session.evaluate("sessionStorage.getItem('token')");
   assert((await api("auth-check", "GET", undefined, freshToken)).status === 200, "Confirmed authenticator cannot sign in");
   dispose();
@@ -253,7 +254,7 @@ try {
   await owned.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('confirmation failed')");
   assert(await saved() === original && (await api("auth-check", "GET", undefined, old)).status === 200, "Wrong current TOTP changed credentials/session");
   // The initial login spent the current code. Advance for a fresh current
-  // proof, leaving the next release step unspent for the post-change login.
+  // proof, leaving the next login's step unspent.
   owned.totpClock.advanceStep();
   const acceptedCode = await owned.totpClock.code(currentSecret);
   await fill("#access-current-totp", acceptedCode); await owned.session.button("Save access settings"); await owned.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
@@ -261,7 +262,7 @@ try {
   assert(JSON.parse(await saved()).totp_key === owned.initial.totp_key, "Password change replaced the existing authenticator");
   await closeSidebar();
   await fill("#username", username); await fill("#password", "changed-native-password"); await fill("#one-time-code", await owned.totpClock.loginCode(currentSecret, [acceptedCode]));
-  await owned.totpClock.submitAcrossStep(owned.session, () => owned.session.button("Log In"), { secret: currentSecret, consumed: [acceptedCode] }); await owned.session.poll("!document.querySelector('#username')");
+  await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, await owned.session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Changed password/current authenticator cannot log in");
   await finishCase("native fresh-current-2FA rejection and password-change login", { wrongCurrentCodePreservedSession: true, passwordChangeRevokedOldSession: true, currentAuthenticatorRetained: true, newPasswordLoginAccepted: true });
   }
@@ -311,7 +312,9 @@ try {
   assert((await api("token", "POST", { username, password: password + newConfirmation })).status === 401, "Replacement enrolment code can be replayed as login");
   await closeSidebar();
   await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await owned.totpClock.loginCode(replacement.secret, [newConfirmation]));
-  await owned.totpClock.submitAcrossStep(owned.session, () => owned.session.button("Log In"), { secret: replacement.secret, consumed: [newConfirmation] }); await owned.session.poll("!document.querySelector('#username')");
+  await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
+  const freshToken = await owned.session.evaluate("sessionStorage.getItem('token')");
+  assert((await api("auth-check", "GET", undefined, freshToken)).status === 200, "Replacement authenticator has no authenticated session");
   disposeReplacement(); await finishCase("native current/new authenticator proofs and replacement login", { activeKeyUnchangedDuringEnrolment: true, passwordHashRetained: true, confirmedNewKeyPersisted: true, spentNewCodeRejected: true, replacementLoginAccepted: true });
   }
 

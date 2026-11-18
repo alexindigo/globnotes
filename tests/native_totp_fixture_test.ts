@@ -5,335 +5,98 @@ import { authenticatorCode, TOTP_STEP_MS } from "./helpers/totp.ts";
 import { isAbsolute, relative } from "node:path";
 import { command, DENO } from "./helpers/process.ts";
 import { captureNativeDiagnostics } from "../client/tests/e2e/harness-helpers.mjs";
-import { checkTotpCode } from "../server/auth/local.ts";
 
-type Paused = {
-  method: string;
-  params: {
-    requestId: string;
-    request: { method: string; url: string; postData?: string };
-  };
-};
-
-function pausedToken(code: string, requestId = "token"): Paused {
-  return {
-    method: "Fetch.requestPaused",
-    params: {
-      requestId,
-      request: {
-        method: "POST",
-        url: "http://globnotes.test:80/_/api/token",
-        postData: JSON.stringify({
-          username: "fixture",
-          password: "password" + code,
-        }),
-      },
-    },
-  };
-}
-
-Deno.test("native TOTP fixture: one held token request crosses only its owned verifier clock", async () => {
-  const directory = await Deno.makeTempDir({ prefix: "native-totp-clock-" });
+Deno.test("native TOTP frozen clock: rollover selects the verifier's fresh current step before input", async () => {
+  const directory = await Deno.makeTempDir({
+    prefix: "native-frozen-boundary-",
+  });
   const originalNow = Date.now;
   try {
     const clock = await createNativeTotpClock(directory, 1234567890_000),
       before = clock.now();
     assertEquals(before % TOTP_STEP_MS, TOTP_STEP_MS - 1);
-    const secret = "JBSWY3DPEHPK3PXP", consumed = await clock.code(secret);
-    const selected = await clock.loginCode(secret, [consumed]);
+    const secret = "JBSWY3DPEHPK3PXP";
+    const legacyPrevious = await clock.code(secret, -1),
+      enrolment = await clock.code(secret);
+    const selected = await clock.loginCode(secret, [enrolment]);
     assertEquals(
-      selected,
-      await authenticatorCode(secret, before + TOTP_STEP_MS),
+      clock.now(),
+      before + TOTP_STEP_MS,
+      "Advance the verifier before selecting input, not while a request is in flight",
     );
-    let receive = (_event: Paused) => {}, removed = false;
-    const order: string[] = [];
-    const session = {
-      page: {
-        onEvent(listener: typeof receive) {
-          receive = listener;
-          return () => {
-            removed = true;
-          };
-        },
-      },
-      send(method: string) {
-        order.push(method);
-        if (method === "Fetch.continueRequest") {
-          assertEquals(clock.now(), before + TOTP_STEP_MS);
-          assertEquals(
-            JSON.parse(
-              Deno.readTextFileSync(`${directory}/authenticator-time.json`),
-            ),
-            before + TOTP_STEP_MS,
-          );
-        }
-        return Promise.resolve();
-      },
-    };
-    await clock.submitAcrossStep(session, () => {
-      order.push("native submit");
-      receive(pausedToken(selected, "one-token-request"));
-    }, { secret, consumed: [consumed] });
-    assertEquals(order, [
-      "Fetch.enable",
-      "native submit",
-      "Fetch.continueRequest",
-      "Fetch.disable",
-    ]);
-    assertEquals(removed, true);
-    assertEquals(Date.now, originalNow);
-    assertEquals(clock.denoArgs, [
-      "--preload",
-      `${directory}/authenticator-time.mjs`,
-    ]);
-    const [{ releaseAcknowledgedAt, ...crossing }] = JSON.parse(
-      await Deno.readTextFile(`${directory}/authenticator-crossings.json`),
+    assertEquals(selected, await authenticatorCode(secret, clock.now()));
+    assertEquals(selected === enrolment, false);
+    const probe = `${directory}/verify.mjs`;
+    await Deno.writeTextFile(
+      probe,
+      `
+      import { checkTotpCode } from ${
+        JSON.stringify(new URL("../server/auth/local.ts", import.meta.url).href)
+      };
+      console.log(JSON.stringify({ now: Date.now(), legacyAccepted: checkTotpCode(${
+        JSON.stringify(legacyPrevious)
+      }, ${JSON.stringify(secret)}), currentAccepted: checkTotpCode(${
+        JSON.stringify(selected)
+      }, ${JSON.stringify(secret)}) }));
+    `,
     );
-    assertEquals(typeof releaseAcknowledgedAt, "number");
-    assertEquals(crossing, {
-      before,
-      plannedVerificationAt: before + TOTP_STEP_MS,
-      released: true,
-      submittedCodeMatchesPlannedStep: true,
-      method: "POST",
-      path: "/_/api/token",
+    const result = await command(DENO, {
+      args: [
+        "run",
+        "--cached-only",
+        "--frozen",
+        `--config=${new URL("../deno.json", import.meta.url).pathname}`,
+        "--allow-read",
+        "--allow-env",
+        ...clock.denoArgs,
+        probe,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+    const verified = JSON.parse(new TextDecoder().decode(result.stdout));
+    assertEquals(verified, {
+      now: clock.now(),
+      legacyAccepted: false,
+      currentAccepted: true,
     });
-  } finally {
-    await Deno.remove(directory, { recursive: true });
-  }
-});
-
-Deno.test("native TOTP fixture: failed input aborts its held request without advancing or replaying it", async () => {
-  const directory = await Deno.makeTempDir({
-    prefix: "native-totp-clock-failure-",
-  });
-  try {
-    const clock = await createNativeTotpClock(directory, 1234567890_000),
-      before = clock.now();
-    let receive = (_event: Paused) => {};
-    const order: string[] = [];
-    const session = {
-      page: {
-        onEvent(listener: typeof receive) {
-          receive = listener;
-          return () => order.push("unsubscribe");
-        },
-      },
-      send(method: string) {
-        order.push(method);
-        return Promise.resolve();
-      },
-    };
-    await assertRejects(
-      () =>
-        clock.submitAcrossStep(session, () => {
-          receive({
-            method: "Fetch.requestPaused",
-            params: {
-              requestId: "failed-input",
-              request: {
-                method: "POST",
-                url: "http://globnotes.test:80/_/api/token",
-              },
-            },
-          });
-          throw Error("native input failed");
-        }, { secret: "JBSWY3DPEHPK3PXP" }),
-      Error,
-      "native input failed",
+    assertEquals(Date.now, originalNow);
+    assertEquals(
+      JSON.parse(
+        await Deno.readTextFile(`${directory}/authenticator-time.json`),
+      ),
+      clock.now(),
     );
-    assertEquals(order, [
-      "Fetch.enable",
-      "unsubscribe",
-      "Fetch.failRequest",
-      "Fetch.disable",
-    ]);
-    assertEquals(clock.now(), before);
-  } finally {
-    await Deno.remove(directory, { recursive: true });
-  }
-});
-
-Deno.test("native TOTP release-step assertion rejects a previous-window pass", async () => {
-  const directory = await Deno.makeTempDir({ prefix: "native-release-code-" });
-  try {
-    const clock = await createNativeTotpClock(directory, 1234567890_000);
-    const secret = "JBSWY3DPEHPK3PXP", releaseAt = clock.now() + TOTP_STEP_MS;
-    const selected = await clock.loginCode(secret, []);
-    const current = await authenticatorCode(secret, releaseAt);
-    const originalNow = Date.now;
-    let accepted;
-    try {
-      Date.now = () => releaseAt;
-      accepted = checkTotpCode(selected, secret);
-    } finally {
-      Date.now = originalNow;
-    }
-    assertEquals(accepted, true);
     console.log(
       JSON.stringify({
-        control: "release-step",
-        verifierAccepts: accepted,
-        matchesReleaseStep: selected === current,
+        boundary: "last millisecond -> fresh frozen step",
+        ...verified,
       }),
     );
-    assertEquals(
-      selected,
-      current,
-      "A previous-step allowance is not a current release-step login proof",
-    );
   } finally {
     await Deno.remove(directory, { recursive: true });
   }
 });
 
-Deno.test("native TOTP receipt and interception await continuation acknowledgment", async () => {
-  const directory = await Deno.makeTempDir({ prefix: "native-release-ack-" });
-  try {
-    const clock = await createNativeTotpClock(directory, 1234567890_000);
-    const before = clock.now(),
-      entered = Promise.withResolvers<void>(),
-      acknowledgment = Promise.withResolvers<void>();
-    const secret = "JBSWY3DPEHPK3PXP",
-      selected = await clock.loginCode(secret, []);
-    let receive = (_event: Paused) => {};
-    const order: string[] = [];
-    const session = {
-      page: {
-        onEvent(listener: typeof receive) {
-          receive = listener;
-          return () => {};
-        },
-      },
-      send(method: string) {
-        order.push(method);
-        if (method === "Fetch.continueRequest") {
-          entered.resolve();
-          return acknowledgment.promise;
-        }
-        return Promise.resolve();
-      },
-    };
-    const operation = clock.submitAcrossStep(session, () => {
-      receive(pausedToken(selected, "held-ack"));
-    }, { secret });
-    await entered.promise;
-    try {
-      assertEquals(order.includes("Fetch.disable"), false);
-      const [planned] = JSON.parse(
-        await Deno.readTextFile(`${directory}/authenticator-crossings.json`),
-      );
-      assertEquals(planned.plannedVerificationAt, before + TOTP_STEP_MS);
-      assertEquals(planned.released, false);
-      assertEquals(Object.hasOwn(planned, "verifiedAt"), false);
-      assertEquals(Object.hasOwn(planned, "releaseAcknowledgedAt"), false);
-    } finally {
-      acknowledgment.resolve();
-      await operation;
-    }
-    assertEquals(order.at(-1), "Fetch.disable");
-    const [released] = JSON.parse(
-      await Deno.readTextFile(`${directory}/authenticator-crossings.json`),
-    );
-    assertEquals(released.released, true);
-    assertEquals(typeof released.releaseAcknowledgedAt, "number");
-    assertEquals(Object.hasOwn(released, "verifiedAt"), false);
-  } finally {
-    await Deno.remove(directory, { recursive: true });
-  }
-});
-
-Deno.test("native TOTP gate rejects previous/spent codes and never labels failed continuation as released", async (t) => {
-  for (const fault of ["previous", "spent", "continuation"]) {
-    await t.step(fault, async () => {
-      const directory = await Deno.makeTempDir({
-        prefix: `native-rejected-${fault}-`,
-      });
-      try {
-        const clock = await createNativeTotpClock(directory, 1234567890_000),
-          before = clock.now();
-        const secret = "JBSWY3DPEHPK3PXP", future = await clock.code(secret, 1);
-        if (fault === "spent") {
-          await assertRejects(
-            () => clock.loginCode(secret, [future]),
-            Error,
-            "already consumed",
-          );
-        }
-        const submitted = fault === "previous"
-          ? await clock.code(secret)
-          : future;
-        let receive = (_event: Paused) => {};
-        const order: string[] = [];
-        const session = {
-          page: {
-            onEvent(listener: typeof receive) {
-              receive = listener;
-              return () => {};
-            },
-          },
-          send(method: string) {
-            order.push(method);
-            return method === "Fetch.continueRequest"
-              ? Promise.reject(Error("continuation disconnected"))
-              : Promise.resolve();
-          },
-        };
-        const reason = fault === "previous"
-          ? "does not match the planned release step"
-          : fault === "spent"
-          ? "already consumed"
-          : "continuation disconnected";
-        await assertRejects(
-          () =>
-            clock.submitAcrossStep(
-              session,
-              () => receive(pausedToken(submitted)),
-              {
-                secret,
-                consumed: fault === "spent" ? [future] : [],
-              },
-            ),
-          Error,
-          reason,
-        );
-        assertEquals(
-          order.includes("Fetch.continueRequest"),
-          fault === "continuation",
-        );
-        assertEquals(order.slice(-2), ["Fetch.failRequest", "Fetch.disable"]);
-        const [record] = JSON.parse(
-          await Deno.readTextFile(`${directory}/authenticator-crossings.json`),
-        );
-        assertEquals(record.plannedVerificationAt, before + TOTP_STEP_MS);
-        assertEquals(record.released, false);
-        assertEquals(Object.hasOwn(record, "releaseAcknowledgedAt"), false);
-        assertEquals(Object.hasOwn(record, "verifiedAt"), false);
-      } finally {
-        await Deno.remove(directory, { recursive: true });
-      }
-    });
-  }
-});
-
-Deno.test("native TOTP password-change proof leaves the next release-step code unspent", async () => {
-  const directory = await Deno.makeTempDir({
-    prefix: "native-proof-reservation-",
-  });
+Deno.test("native TOTP frozen clock: current proofs leave later login codes unspent without adjacent-step fallback", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "native-frozen-proof-" });
   try {
     const clock = await createNativeTotpClock(directory, 1234567890_000),
       secret = "JBSWY3DPEHPK3PXP";
     const initial = await clock.loginCode(secret, []);
-    clock.advanceStep(); // Initial login verified this current step.
     assertEquals(initial, await clock.code(secret));
-    clock.advanceStep(); // Fresh current proof, not the next login's step.
+    clock.advanceStep();
     const proof = await clock.code(secret);
-    const login = await clock.loginCode(secret, [proof]);
     assertEquals(proof === initial, false);
-    assertEquals(login === proof, false);
-    assertEquals(
-      login,
-      await authenticatorCode(secret, clock.now() + TOTP_STEP_MS),
+    const login = await clock.loginCode(secret, [initial, proof]);
+    assertEquals(login, await clock.code(secret));
+    assertEquals([initial, proof].includes(login), false);
+    const reserved = await clock.code(secret, 1);
+    await assertRejects(
+      () => clock.loginCode(secret, [reserved]),
+      Error,
+      "already consumed",
     );
   } finally {
     await Deno.remove(directory, { recursive: true });

@@ -212,11 +212,12 @@ try {
         () => heldEnrolment ? done() : pending({ heldEnrolment: null }),
         { label: `${label}: enrolment request held`, intervalMs: 25 },
       );
+      const requestId = heldEnrolment;
       assert(
-        heldEnrolment,
+        requestId,
         `${label}: enrolment request held for loading check`,
       );
-      await page.send("Fetch.continueRequest", { requestId: heldEnrolment });
+      await page.send("Fetch.continueRequest", { requestId });
       await page.send("Fetch.disable");
       await page.poll(
         "document.querySelector('#setup-totp-qr img')?.complete && document.querySelector('#setup-totp-qr img')?.naturalWidth > 0",
@@ -349,10 +350,10 @@ try {
   await page.fill("#username", "desktop-user");
   await page.fill("#password", "desktop-password");
   await page.fill("#one-time-code", await totpClock.loginCode(bundle.secret, [confirmedCode]));
-  await totpClock.submitAcrossStep(page, () => page.clickText("Log In"), { secret: bundle.secret, consumed: [confirmedCode] });
+  await page.clickText("Log In");
   await page.poll("!location.pathname.includes('/_/login')");
   assert(
-    await page.evaluate("fetch('/_/api/auth-check').then(r => r.status)") ===
+    await page.evaluate("fetch('/_/api/auth-check', {headers: {authorization: 'Bearer ' + sessionStorage.getItem('token')}}).then(r => r.status)") ===
       200,
     "wizard TOTP setup and UI login yield authenticated access",
   );
