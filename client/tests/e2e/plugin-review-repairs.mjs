@@ -224,8 +224,8 @@ try {
   if (await current.session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width")) await current.session.click('[title="Close sidebar"]');
   await current.session.poll("!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width");
   await fill(current.session, "#username", username); await fill(current.session, "#password", "review-fixture-new-password");
-  await fill(current.session, "#one-time-code", await current.totpClock.unusedCode(bundle.secret, [confirmed]));
-  await current.totpClock.submitAcrossStep(current.session, () => current.session.button("Log In"));
+  await fill(current.session, "#one-time-code", await current.totpClock.loginCode(bundle.secret, [confirmed]));
+  await current.totpClock.submitAcrossStep(current.session, () => current.session.button("Log In"), { secret: bundle.secret, consumed: [confirmed] });
   await current.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, current.session)).status === 200, "Confirmed proposed credentials cannot log in");
   // Access deliberately routes to login without a resource redirect; the real

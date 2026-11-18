@@ -348,8 +348,8 @@ try {
   );
   await page.fill("#username", "desktop-user");
   await page.fill("#password", "desktop-password");
-  await page.fill("#one-time-code", await totpClock.unusedCode(bundle.secret, [confirmedCode]));
-  await totpClock.submitAcrossStep(page, () => page.clickText("Log In"));
+  await page.fill("#one-time-code", await totpClock.loginCode(bundle.secret, [confirmedCode]));
+  await totpClock.submitAcrossStep(page, () => page.clickText("Log In"), { secret: bundle.secret, consumed: [confirmedCode] });
   await page.poll("!location.pathname.includes('/_/login')");
   assert(
     await page.evaluate("fetch('/_/api/auth-check').then(r => r.status)") ===

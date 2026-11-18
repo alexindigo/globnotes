@@ -240,10 +240,15 @@ review, and a noisy heuristic would reject valid invariants or miss real reads.
 TOTP browser fixtures share `native-totp-fixture.mjs`. Its preload controls
 `Date.now()` only in the owned server subprocess, with the clock file and
 `authenticator-crossings.json` retained beside the fixture evidence. Codes come
-from the independent RFC 6238 reference. Selection excludes spent codes and
-intersects the generation and verification windows. A real token POST is held
-before server admission, the fixture advances one step, and that same request
-is released once. The browser must then leave sign-in and reach its authenticated
+from the independent RFC 6238 reference. Positive login codes are selected for
+the release step, with no adjacent-window fallback or reuse of spent proofs.
+A real token POST is held before server admission, the fixture advances one
+step, and its submitted code must equal that step's current code before the
+same request is released once. Current-credential proofs use a fresh current
+step without spending the next login's code. Crossing receipts distinguish
+`plannedVerificationAt` from `released` and `releaseAcknowledgedAt`; only a
+successful continuation acknowledgment records a release, never verification.
+The browser must then leave sign-in and reach its authenticated
 consumer. This covers Access conflict review, in-place enrolment, password
 change, authenticator replacement, the current-authenticator geometry fixture's
 initial login, and first-run desktop enrolment. No product verifier, window,
