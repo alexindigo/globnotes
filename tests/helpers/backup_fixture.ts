@@ -54,6 +54,10 @@ export async function backupFixture(options: {
     ...b,
     settings: () => data.forPlugin(id).page(readManifest(dir).settings[0]),
     async configure(retention: number, basePath = "") {
+      // Sequential fixture setup must not invalidate the settings source of
+      // admitted recovery/capture work. Tests of concurrent source changes use
+      // the data store directly, as a real settings client would.
+      await runtime.settleWork(id);
       const current = await data.forPlugin(id).page(
         readManifest(dir).settings[0],
       );

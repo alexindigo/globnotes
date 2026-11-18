@@ -29,8 +29,11 @@ for (const broken of [false, true]) {
       await b.configure(5);
       await b.create("Note", "A");
       await b.save("Note", "B");
-      await b.status();
+      const baselinePrivate = await b.status();
       const baseline = b.runtime.status(b.id)!;
+      assertEquals(baselinePrivate.failed, 0);
+      assertEquals(baseline.jobs[0].state, "succeeded");
+      assertEquals(baseline.work!.ordinary.failures, 0);
       assertEquals(baseline.work!.versioning.failures, 0);
       assertEquals(baseline.deliveryFailures, 0);
       await b.configure(5, ".");
