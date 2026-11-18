@@ -16,7 +16,8 @@ await syncCase("sync-settings-native",async f=>{
     assert(!await s.evaluate("!!document.querySelector('[title=\"Open sidebar\"], [aria-label=Settings]')"),'Sidebar rendered before held configuration');
     s.poll=expression=>{entered.resolve({kind:'owner-wait',expression});return poll(expression);};
     s.click=selector=>{entered.resolve({kind:'action',selector});return click(selector);};
-    const opening=f.open();opening.catch(()=>{});
+    // An initial evaluation can fail before poll/click reports entry.
+    const opening=f.open();opening.catch(entered.reject);
     const first=await entered.promise;
     const before=await s.evaluate("({sidebar:!!document.querySelector('aside'),settings:!!document.querySelector('[aria-label=Settings]')})");
     assert(!before.sidebar&&!before.settings,'Render boundary was not held through navigation admission');
