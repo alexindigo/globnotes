@@ -481,10 +481,10 @@ try {
 finally {
   await finalizeNativeCase({
     error: failure,
-    report: async () => {
-      await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, ownership: owned && { vault: owned.vault, state: owned.state, pid: owned.server.pid, baseUrl: owned.server.baseUrl, targetId: owned.session.targetId, browserContextId: owned.session.browserContextId, peerTargetId: owned.peer?.targetId, peerContextId: owned.peer?.browserContextId }, pageErrors: owned?.session.errors }, null, 2));
-      if (failure && owned && !owned.closed) await screenshot("failure").catch(error => console.error(error.message));
-    },
+    report: () => finalizeNativeCase({ error: failure, cleanup: [
+      () => Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, ownership: owned && { vault: owned.vault, state: owned.state, pid: owned.server.pid, baseUrl: owned.server.baseUrl, targetId: owned.session.targetId, browserContextId: owned.session.browserContextId, peerTargetId: owned.peer?.targetId, peerContextId: owned.peer?.browserContextId }, pageErrors: owned?.session.errors }, null, 2)),
+      ...(failure && owned && !owned.closed ? [() => screenshot("failure")] : []),
+    ] }),
     cleanup: failure && owned && !owned.closed ? [async () => {
       await finalizeNativeCase({ cleanup: [() => owned.peer?.close(), () => owned.session.close(), () => owned.server.close()] });
       owned.closed = true;

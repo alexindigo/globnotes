@@ -2,8 +2,10 @@
 import { authenticatorCode, TOTP_STEP_MS, unusedWindowCode } from "../../../tests/helpers/totp.ts";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
+import { resolve } from "node:path";
 
 export async function createNativeTotpClock(directory, epochMs = Date.now()) {
+  directory = resolve(directory);
   let now = Math.floor(epochMs / TOTP_STEP_MS) * TOTP_STEP_MS + TOTP_STEP_MS - 1;
   const file = `${directory}/authenticator-time.json`, preload = `${directory}/authenticator-time.mjs`;
   await Deno.writeTextFile(file, JSON.stringify(now), { createNew: true });

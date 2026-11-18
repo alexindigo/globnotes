@@ -249,6 +249,13 @@ change, authenticator replacement, the current-authenticator geometry fixture's
 initial login, and first-run desktop enrolment. No product verifier, window,
 request, readiness bound or wall-clock sleep is substituted or extended.
 
+Fixture owners resolve child-facing vault, metadata, preload and clock-file
+paths before launch, so relative `--artifacts` works across the child's private
+working directory. Native repair captures publish each PNG destination and
+geometry independently; font or geometry failure cannot suppress a captured
+failure PNG. Server log streams and Access failure reports also use the shared
+finalizer so one artifact's publication error cannot skip its sibling.
+
 ## Browser tests: a local HTTP domain
 
 Browser tests open the application only through an ordinary local HTTP

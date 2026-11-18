@@ -9,28 +9,26 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { catalogPluginReady } from "../../../tests/helpers/catalog_work.ts";
 import { publishRecord } from "../../../tests/helpers/process_records.ts";
+import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const configFile = resolve(dirname(fileURLToPath(import.meta.url)), "../../../deno.json");
 
-export async function bootServer(vault, stateDir, { env = {}, logsDir, allowFailed = false, headers = {}, onServer = () => {}, denoArgs = [] } = {}) {
+export async function bootServer(vault, stateDir, { env = {}, logsDir = "", allowFailed = false, headers = {}, onServer = () => {}, denoArgs = [] } = {}) {
   const hostname = bindAddress();
   // Reuse the owner of port-0 binding, private build/cwd and clean child env.
   const server = await launchServer({
       ...env,
-       GLOBNOTES_GLOBNOTES_PATH: vault,
-       GLOBNOTES__METADATA_PATH: metadataBase(vault, stateDir),
+        GLOBNOTES_GLOBNOTES_PATH: resolve(vault),
+        GLOBNOTES__METADATA_PATH: metadataBase(resolve(vault), resolve(stateDir)),
   }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${configFile}`, ...denoArgs] });
   const logs = server.output;
   let closed = false;
   async function close() {
     if (closed) return;
     closed = true;
-    try { await server.close(); }
-    finally {
-      if (logsDir) for (const name of ["stdout", "stderr"]) {
-        await publishRecord(`${logsDir}/server-${name}.log`, logs[name], { createNew: true });
-      }
-    }
+    await finalizeNativeCase({ cleanup: [() => server.close(),
+      ...(logsDir ? ["stdout", "stderr"].map(name => () => publishRecord(`${logsDir}/server-${name}.log`, logs[name], { createNew: true })) : []),
+    ] });
   }
   const baseUrl = server.baseUrl;
    const prefix = env.GLOBNOTES__SERVER_PATHPREFIX ?? "";
@@ -86,6 +84,22 @@ export function awaitHealthy(base, { label, child, logs, intervalMs = 100 }) {
  * plugin, a rejected catalog or an exited `child` fails at once. */
 export function awaitPluginReady(base, id, { label = `plugin '${id}' ready`, child, logs, headers = {} } = {}) {
    return catalogPluginReady({ baseUrl: base, ...child ? { ...watchChild(child, logs), exited: child.status } : {} }, id, { headers, label });
+}
+
+/** Each artifact and each PNG destination is attempted even if another fails. */
+export function captureNativeDiagnostics(session, { imagePaths, geometryPath }) {
+  return finalizeNativeCase({ cleanup: [
+    () => session.evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))"),
+    async () => {
+      const screenshot = await session.send("Page.captureScreenshot", { format: "png" });
+      const bytes = Uint8Array.from(atob(screenshot.data), ch => ch.charCodeAt(0));
+      await finalizeNativeCase({ cleanup: imagePaths.map(path => () => Deno.writeFile(path, bytes)) });
+    },
+    ...(geometryPath ? [async () => {
+      const geometry = await session.evaluate("({url:location.href,focus:document.activeElement?.outerHTML,dialogs:[...document.querySelectorAll('[role=dialog]')].map(el=>({title:el.getAttribute('aria-labelledby'),rect:el.getBoundingClientRect().toJSON(),inert:!!el.closest('[inert]')})),text:document.body.innerText})");
+      await Deno.writeTextFile(geometryPath, JSON.stringify(geometry, null, 2), { createNew: true });
+    }] : []),
+  ] });
 }
 
 export { parseArguments } from "./harness-arguments.mjs";

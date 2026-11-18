@@ -3,7 +3,7 @@
 // never replace a controller, a response, the registry or its ownership logic.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
-import { bootServer } from "./harness-helpers.mjs";
+import { bootServer, captureNativeDiagnostics } from "./harness-helpers.mjs";
 import { REVIEW_REPAIR_CASES, parseReviewRepairArguments } from "./review-repair-cases.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
@@ -155,12 +155,13 @@ async function browserCode(kind) {
   }`);
 }
 async function capture(label) {
-  const session = current.session;
-  await session.evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
-  const screenshot = await session.send("Page.captureScreenshot", { format: "png" });
-  await Deno.writeFile(`${current.directory}/${label}.png`, Uint8Array.from(atob(screenshot.data), ch => ch.charCodeAt(0)));
-  const geometry = await session.evaluate("({url:location.href,focus:document.activeElement?.outerHTML,dialogs:[...document.querySelectorAll('[role=dialog]')].map(el=>({title:el.getAttribute('aria-labelledby'),rect:el.getBoundingClientRect().toJSON(),inert:!!el.closest('[inert]')})),text:document.body.innerText})");
-  await Deno.writeTextFile(`${current.directory}/${label}.json`, JSON.stringify(geometry, null, 2), { createNew: true });
+  await captureNativeDiagnostics(current.session, {
+    imagePaths: [`${current.directory}/${label}.png`, ...(label === "failure" ? [`${artifacts}/failure.png`] : [])],
+    geometryPath: `${current.directory}/${label}.json`,
+  });
+}
+function failureDetails(error) {
+  return [error.stack ?? String(error), ...(error instanceof AggregateError ? error.errors.map(failureDetails) : [])].join("\n");
 }
 async function outcome(group, consumers) {
   assert(!outcomes.some(row => row.group === group), "Duplicate repair group");
@@ -330,10 +331,9 @@ try {
   if (current?.session) {
     try {
       await capture("failure");
-      await Deno.copyFile(`${current.directory}/failure.png`, `${artifacts}/failure.png`);
-    } catch (diagnosticError) { captureFailure = diagnosticError.stack; }
+    } catch (diagnosticError) { captureFailure = failureDetails(diagnosticError); }
   }
-  await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ failure: error.stack, captureFailure, outcomes, current: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server?.pid, entryBase: current.entryBase,
+  await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ failure: failureDetails(error), captureFailure, outcomes, current: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server?.pid, entryBase: current.entryBase,
     sessions: current.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })), requests: current.requests, serverLogs: current.server?.logs, unresolvedGates: current.gates.filter(gate => !gate.released).map(gate => ({ method: gate.method, path: gate.path, response: gate.response })) } }, null, 2), { createNew: true });
   console.error(`Retained native repair failure: ${error.message}; ${artifacts}/failure.json`);
   // Preserve original wires, children and targets for evidence-backed recovery.
