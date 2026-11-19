@@ -104,7 +104,12 @@ const auth = globalConfig.authType === AuthType.PASSWORD ||
     globalConfig.authType === AuthType.TOTP
   ? new LocalAuth(globalConfig, services.sessions)
   : null;
-globalConfig.resolved.vault.prepareParents();
+try {
+  globalConfig.resolved.vault.prepareParents();
+} catch (error) {
+  console.error((error as Error).message);
+  Deno.exit(1);
+}
 const indexer = new Fts5Indexer(globalConfig.statePath, services.index);
 const fileServing = new FileServing(globalConfig.notesPath, effects);
 const hub = new VaultHub(

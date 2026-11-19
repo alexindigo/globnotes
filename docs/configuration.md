@@ -67,8 +67,33 @@ file. Bound-file identity and bytes are rechecked immediately before an atomic
 rename; a detected change causes a conflict. The check and rename are separate
 operations: a concurrent external edit in that short window can still be
 overwritten. Owners serialize their own writes; only the owner parses policy
-and publishes updated state at successful replacement. Cleanup failures remain
-errors, including after replacement has already committed.
+and publishes updated state at successful link or replacement. Later directory
+sync or temporary-file cleanup failures are logged as secret-free durability
+warnings and exposed through config diagnostics, not as failed operations.
+
+### Owned state-root permissions and durability
+
+The configured instance and vault metadata roots are the durability boundaries.
+Startup opens and syncs each owned root before serving requests. The server user
+needs read and search (`r+x`) permission on these roots and their owned directories,
+plus write permission wherever it creates or replaces entries. A problem is a
+startup operator error naming the directory and required permission.
+
+Every publication re-syncs the target directory and every directory back through
+its owned root, including directories left by an earlier failed attempt. Saves
+do not open ancestors above that root: an existing root beneath a traversable but
+unreadable directory such as `/srv` is supported.
+
+When an operator or Docker volume provides a root, making the root's own entry
+durable in its parent is the deployment's responsibility. When the server creates
+a missing root at startup, it opens and syncs the parent at creation time; that
+parent must grant the server user read, write and search permission. The same
+requirement applies to each missing parent the server must create. An unreadable
+parent is rejected before creation, rather than making every later save fail.
+
+Directory aliases remain supported. A file link to an external deployment file
+syncs its existing target parent without walking above it; the deployment owns
+that external parent and its ancestor entries.
 
 ## Plugin deployment pins
 

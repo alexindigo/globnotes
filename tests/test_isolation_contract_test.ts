@@ -209,6 +209,12 @@ const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
   },
   {
     file: "server/config/file_store.ts",
+    line: "Deno.removeSync(node.location);",
+    reason:
+      "rollback only the verified new empty state-root entry when its parent sync fails",
+  },
+  {
+    file: "server/config/file_store.ts",
     line: "if (identity) Deno.openSync(target, { write: true }).close();",
     reason: "stored configuration in the state directory",
   },

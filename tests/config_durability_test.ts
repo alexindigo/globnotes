@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { dirname, parse } from "@std/path";
+import { dirname } from "@std/path";
 import {
   BoundFileStore,
   StoredConfigConflict,
@@ -23,9 +23,9 @@ function identityFixture(run: (root: string) => void) {
   );
 }
 
-const chain = (directory: string) => {
+const chain = (directory: string, root = directory) => {
   const result = [directory];
-  while (directory !== parse(directory).root) {
+  while (directory !== root) {
     result.push(directory = dirname(directory));
   }
   return result;
@@ -40,7 +40,7 @@ for (const existing of [false, true]) {
         Deno.writeTextFileSync(filename, "before");
       }
       observe((events) => {
-        new BoundFileStore(filename).replace("after");
+        new BoundFileStore(filename, root).replace("after");
         const published = events.findIndex((e) =>
           e.kind === (existing ? "rename" : "link") && e.file === filename
         );
@@ -55,7 +55,7 @@ for (const existing of [false, true]) {
           events.slice(published + 1).filter((e) => e.kind === "directory").map(
             (e) => e.file,
           ),
-          chain(dirname(filename)),
+          chain(dirname(filename), root),
         );
       });
       assertEquals(Deno.readTextFileSync(filename), "after");
@@ -69,7 +69,7 @@ for (const fresh of [false, true]) {
         directory = `${root}/state/identity`;
       let repo = new AccountRepository(directory);
       observe((events, deny) => {
-        deny(root);
+        deny(directory);
         assertThrows(() => repo.create(identityAccount()));
         assertEquals(repo.initialized, false);
         assertEquals(
@@ -155,14 +155,15 @@ for (const existing of [false, true]) {
 Deno.test("bound preparation retains only owned directory bindings after an unpublished failure", () =>
   identityFixture((fixtureRoot) => {
     const root = fixtureRoot,
-      repo = new AccountRepository(`${root}/a/b`);
+      store = new BoundFileStore(`${root}/a/b/config.json`, root),
+      before = store.capture();
     observe((_events, deny) => {
-      deny(root);
-      assertThrows(() => repo.create(identityAccount()));
+      deny(`${root}/a`);
+      assertThrows(() => store.replace("after", before));
     });
     const moved = `${root}/a-original`;
     Deno.renameSync(`${root}/a`, moved);
     Deno.mkdirSync(`${root}/a/b`, { recursive: true });
-    assertThrows(() => repo.create(identityAccount()), StoredConfigConflict);
-    assertEquals(repo.initialized, false);
+    assertThrows(() => store.replace("after", before), StoredConfigConflict);
+    assertEquals(store.capture().raw, null);
   }));

@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import * as path from "@std/path";
 import { warnStoredDurability } from "./durability.ts";
+import {
+  openStateDirectory,
+  physicalStateRoot,
+  preflightStateRoot,
+  StateRootError,
+} from "./state_root.ts";
 
 interface ConfigNode {
   readonly location: string;
@@ -65,6 +71,24 @@ export function syncStoredDirectory(
 export class StoredConfigConflict extends Error {
   constructor() {
     super("Stored configuration changed before commit.");
+  }
+}
+const below = (root: string, location: string): boolean => {
+  const relative = path.relative(root, location);
+  return relative !== ".." && !relative.startsWith(`..${path.SEPARATOR}`) &&
+    !path.isAbsolute(relative);
+};
+/** Sync only owned directories. An external file-link target has an existing,
+ * deployment-provided parent, which is synced without walking above it. */
+export function syncOwnedStoredDirectory(
+  directory: string,
+  root: string,
+): void {
+  const owned = physicalStateRoot(root), target = path.resolve(directory);
+  if (below(owned, target)) syncStoredDirectory(target, owned);
+  else {
+    syncStoredDirectory(target);
+    syncStoredDirectory(owned);
   }
 }
 class ConfigBindingError extends Error {}
@@ -180,7 +204,10 @@ export class BoundFileStore {
     while (this.#parents.has(snapshot)) snapshot = this.#parents.get(snapshot)!;
     return snapshot;
   }
-  constructor(readonly filename: string) {}
+  constructor(
+    readonly filename: string,
+    readonly root = path.dirname(path.resolve(filename)),
+  ) {}
 
   capture(): StoredConfigSnapshot {
     const binding = configBinding(path.resolve(this.filename));
@@ -213,18 +240,49 @@ export class BoundFileStore {
   prepareParents(expected = this.capture()): StoredConfigSnapshot {
     expected = this.#bound(expected);
     this.assertUnchanged(expected);
+    const owned = physicalStateRoot(this.root);
+    let rootExists = false;
+    try {
+      rootExists = Deno.statSync(owned).isDirectory;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    if (rootExists) preflightStateRoot(owned);
     let prepared = expected;
     for (const node of expected.binding.nodes) {
       if (node.identity || node.location === expected.binding.target) continue;
+      let parent: Deno.FsFile | undefined;
+      let created: ConfigNode;
       try {
+        if (node.location === owned || !below(owned, node.location)) {
+          parent = openStateDirectory(path.dirname(node.location));
+        }
         Deno.mkdirSync(node.location);
+        created = configNode(node.location);
+        try {
+          parent?.syncSync();
+        } catch (cause) {
+          const current = configNode(node.location);
+          if (
+            current.identity?.dev === created.identity?.dev &&
+            current.identity?.ino === created.identity?.ino
+          ) {
+            Deno.removeSync(node.location);
+          }
+          throw new StateRootError(
+            path.dirname(node.location),
+            "confirm the new state-root entry",
+            { cause },
+          );
+        }
       } catch (error) {
         if (error instanceof Deno.errors.AlreadyExists) {
           throw new StoredConfigConflict();
         }
         throw error;
+      } finally {
+        parent?.close();
       }
-      const created = configNode(node.location);
       const next = Object.freeze({
         raw: prepared.raw,
         binding: Object.freeze({
@@ -240,10 +298,8 @@ export class BoundFileStore {
       prepared = next;
     }
     this.assertUnchanged(prepared);
-    syncStoredDirectory(
-      path.dirname(prepared.binding.target),
-      path.parse(prepared.binding.target).root,
-    );
+    if (!rootExists) preflightStateRoot(owned);
+    syncOwnedStoredDirectory(path.dirname(prepared.binding.target), this.root);
     return prepared;
   }
 
@@ -336,7 +392,7 @@ export class BoundFileStore {
       try {
         // Flush the final directory state after publication and candidate cleanup,
         // even when cleanup failed. The known snapshot was published above.
-        syncStoredDirectory(path.dirname(target), path.parse(target).root);
+        syncOwnedStoredDirectory(path.dirname(target), this.root);
       } catch (error) {
         failure = failed
           ? new StoredConfigDurabilityError({

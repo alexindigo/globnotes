@@ -15,9 +15,9 @@ export function acquireIdentityOwnership(root: string): {
 } {
   const store = new BoundFileStore(join(root, "identity.lock"));
   let held = store.capture();
+  held = store.prepareParents(held);
   if (held.raw === null) {
     try {
-      held = store.prepareParents(held);
       store.replace("", held, (snapshot) => {
         held = snapshot;
       });
