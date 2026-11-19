@@ -26,19 +26,26 @@ Deno.test("readiness wait: returns the value once the probe is done", async () =
 });
 
 Deno.test("readiness wait: a terminal state fails at once with its full state", async () => {
+  let probes = 0;
   const error = await assertRejects(
     () =>
       waitUntil(
-        () =>
-          failed("plugin 'b' failed", {
+        () => {
+          probes++;
+          return failed("plugin 'b' failed", {
             a: { status: "ready" },
             b: { status: "failed", diagnostics: ["worker failed"] },
-          }),
+          });
+        },
         { label: "plugins a and b ready" },
       ),
     ReadinessError,
   );
-  assert(error.elapsedMs < READINESS_MS / 2);
+  assertEquals(
+    probes,
+    1,
+    "a terminal failure must not be retried until readiness expires",
+  );
   assert(error.message.startsWith("plugins a and b ready: plugin 'b' failed"));
   assert(error.message.includes('"a":{"status":"ready"}'), error.message);
   assert(error.message.includes('"diagnostics":["worker failed"]'));

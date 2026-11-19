@@ -448,6 +448,38 @@ On failure, the launcher names the failing step and prints log tails. CI
 also uploads `test-failure-diagnostics`, containing the all/timing run
 directories' `logs/` and JSON artifacts.
 
+## Work counts instead of machine-speed budgets
+
+Algorithmic cost checks use the index owner's existing `readText` and
+`openDatabase` adapters, not elapsed time on a shared runner. The SQL probe in
+`tests/helpers/index_work.ts` counts actual statement executions, returned rows,
+note reads and outer write transactions. It does not add a production API.
+
+| # | Former timing test | Deterministic assertion in the ordinary server suite |
+|---|---|---|
+| 1 | `timing/index_sync_scale_test.ts` | `index_sync_work_test.ts`: 3,000 notes are read once initially, additions share configured batches, restart reads indexed mtimes in one query, unchanged notes cause zero content reads and zero row-writing statements, three changed notes cause exactly three reads/replacements and updated search results |
+| 2 | `timing/search_paging_scale_test.ts` | `search_paging_scale_test.ts`: first and deep pages over 10,000 notes return only 20 SQL rows and, for matching queries, 20 snippets; scoped totals and returned pages remain correct |
+| 3 | `timing/hub_versioning_test.ts` | `hub_versioning_independence_test.ts`: save reaches disk while its versioning cohort is still pending; a held handler completes only after explicit release and an unreleased handler remains pending |
+| 4 | `readiness_wait_test.ts` elapsed-time check | A terminal failure rejects after one probe, with the original reason/state rather than a readiness-expiry error |
+
+The remaining actual timing assertions were audited across `tests/` and
+`client/tests/`. They are not proxies for algorithmic cost:
+
+| # | Site | Why time remains |
+|---|---|---|
+| 1 | `timing/hub_conflict_invalidation_test.ts` | Real OS watcher deletion must publish resolved metadata within 3 seconds; tests live watcher delivery, not inventory work |
+| 2 | `timing/plugin_stall_test.ts` | Real SIGSTOP gaps and heartbeat timeout detection exercise observed-time liveness, including its 3-second silence bound |
+| 3 | `timing/product_settlement_stall_test.ts`, `helpers/catalog_work_stall.mjs` | Whole-process suspension must exceed readiness while actual product work remains inside its unchanged observed-time deadline |
+| 4 | `timing/plugin_stream_expiry_test.ts`, native `plugin-prefix-auth.mjs` | Real signed-token expiry must close a live stream before heartbeat or further invalidations |
+| 5 | Native `autosave-timer.mjs` | Configured pause/interval autosave timing under continuous real input is the behavior being asserted |
+| 6 | Native `note-save-owner-guards.mjs` | The first committed WYSIWYG edit must protect unload before the debounce; native responsiveness, not work proportional to input size. Synchronous snapshot ordering is separately covered by component tests |
+| 7 | Native `background-connections-native.mjs`, `settings-pending-native.mjs` | Hidden grace and the pending-response window are deliberate product intervals |
+
+Other clock uses are readiness/fixture containment (including lifecycle/scanner
+polls), virtual/observed clock deadline tests, timestamp/expiry fixtures or
+diagnostic-only timing (`metadata_read_cost_test.ts`, worker startup and native
+runner reports). Metadata read cost already asserts I/O counts, not milliseconds.
+
 ## Product settlement versus readiness
 
 An in-process wait for admitted plugin work uses the existing owner, not a
