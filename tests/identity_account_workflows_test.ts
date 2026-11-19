@@ -15,8 +15,218 @@ import { hashPassword } from "../server/helpers.ts";
 import { identityFixture, UPDATE } from "./helpers/identity.ts";
 import { authenticatorCode } from "./helpers/totp.ts";
 import { totpSecretFromRawKey } from "../server/auth/credentials.ts";
+import { SignJWT } from "jose";
+import { workMilestone } from "./helpers/product_settlement.ts";
 
 const NOW = 1_800_000_000_000;
+
+async function replayFixture(f: Awaited<ReturnType<typeof setup>>) {
+  const key = "commit-old-key";
+  f.accounts.changeCredentials(f.alice.id, 0, { totpKey: key }, createUuid());
+  const signed = await f.login("alice", "password", await f.code(key));
+  f.tick();
+  f.tick();
+  return {
+    key,
+    signed,
+    step: NOW / 30_000 + 2,
+    previous: await authenticatorCode(totpSecretFromRawKey(key), NOW + 30_000),
+    current: await f.code(key),
+  };
+}
+
+for (
+  const kind of ["unchanged-key", "password", "replace", "remove"] as const
+) {
+  Deno.test(`TOTP commit fence: ${kind} rejects an independent consumption during hashing`, () =>
+    fixture(async (f) => {
+      const replay = await replayFixture(f);
+      const entered = Promise.withResolvers<void>(),
+        release = Promise.withResolvers<string>();
+      const hashed = await hashPassword("new-password");
+      const workflow = new OwnAccount(f.sessions, {
+        now: () => NOW + 60_000,
+        hash: () => {
+          entered.resolve();
+          return release.promise;
+        },
+      });
+      const totp = kind === "unchanged-key"
+        ? { enabled: true, key: replay.key, code: replay.current }
+        : kind === "replace"
+        ? {
+          enabled: true,
+          key: "commit-new-key",
+          code: await f.code("commit-new-key"),
+        }
+        : kind === "remove"
+        ? { enabled: false }
+        : undefined;
+      const changing = workflow.change(replay.signed.principal, {
+        revision: 1,
+        updateId: createUuid(),
+        currentPassword: "password",
+        currentTotp: replay.previous,
+        newPassword: "new-password",
+        ...(totp ? { totp } : {}),
+      });
+      changing.catch(() => {});
+      try {
+        await workMilestone(
+          changing,
+          entered.promise,
+          "credential hashing entered after current TOTP proof",
+        );
+        assertEquals(
+          f.accounts.byId(f.alice.id)?.lastTotpStep,
+          replay.step - 1,
+        );
+        const winner = await f.login("alice", "password", replay.current);
+        const committed = Deno.readTextFileSync(`${f.root}/accounts.json`);
+        release.resolve(hashed);
+        await assertRejects(() => changing, StoredConfigConflict);
+        assertEquals(
+          Deno.readTextFileSync(`${f.root}/accounts.json`),
+          committed,
+        );
+        assertEquals(f.accounts.byId(f.alice.id)?.credentialRevision, 1);
+        assertEquals(
+          new AccountRepository(f.root).byId(f.alice.id)?.lastTotpStep,
+          replay.step,
+        );
+        await f.sessions.validateToken(winner.access_token);
+        await f.sessions.validateToken(replay.signed.access_token);
+      } finally {
+        release.resolve(hashed);
+        await changing.catch(() => {});
+      }
+    }));
+}
+
+Deno.test("TOTP commit fence: the operation may confirm its own consumed step", () =>
+  fixture(async (f) => {
+    const replay = await replayFixture(f);
+    const entered = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<string>();
+    const hashed = await hashPassword("new-password");
+    const workflow = new OwnAccount(f.sessions, {
+      now: () => NOW + 60_000,
+      hash: () => {
+        entered.resolve();
+        return release.promise;
+      },
+    });
+    const changing = workflow.change(replay.signed.principal, {
+      revision: 1,
+      updateId: createUuid(),
+      currentPassword: "password",
+      currentTotp: replay.current,
+      newPassword: "new-password",
+      totp: { enabled: true, key: replay.key, code: replay.current },
+    });
+    changing.catch(() => {});
+    try {
+      await workMilestone(
+        changing,
+        entered.promise,
+        "own TOTP consumption before hashing",
+      );
+      f.accounts.changeCredentials(
+        f.bob.id,
+        0,
+        { totpKey: replay.key },
+        createUuid(),
+      );
+      await f.login("bob", "password", replay.current);
+      release.resolve(hashed);
+      const result = await changing;
+      assertEquals(result.account.credentialRevision, 2);
+      assertEquals(f.accounts.byId(f.alice.id)?.lastTotpStep, replay.step);
+      assertEquals(f.accounts.byId(f.bob.id)?.lastTotpStep, replay.step);
+    } finally {
+      release.resolve(hashed);
+      await changing.catch(() => {});
+    }
+  }));
+
+Deno.test("TOTP commit fence: first enrollment cannot overwrite a newly active authenticator", () =>
+  fixture(async (f) => {
+    const key = "first-enrollment-key", code = await f.code(key);
+    const entered = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<string>();
+    const hashed = await hashPassword("new-password");
+    const workflow = new OwnAccount(f.sessions, {
+      now: () => NOW,
+      hash: () => {
+        entered.resolve();
+        return release.promise;
+      },
+    });
+    const changing = workflow.change(f.token.principal, {
+      ...f.change,
+      totp: { enabled: true, key, code },
+    });
+    changing.catch(() => {});
+    try {
+      await workMilestone(
+        changing,
+        entered.promise,
+        "first enrollment proof before hashing",
+      );
+      f.accounts.changeCredentials(
+        f.alice.id,
+        0,
+        { totpKey: key },
+        createUuid(),
+      );
+      const winner = await f.login("alice", "password", code);
+      const committed = Deno.readTextFileSync(`${f.root}/accounts.json`);
+      release.resolve(hashed);
+      await assertRejects(() => changing, AuthenticationError);
+      assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), committed);
+      await f.sessions.validateToken(winner.access_token);
+    } finally {
+      release.resolve(hashed);
+      await changing.catch(() => {});
+    }
+  }));
+
+Deno.test("TOTP commit fence: async signing cannot publish a stale login proof", () =>
+  fixture(async (f) => {
+    const replay = await replayFixture(f);
+    const entered = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<void>();
+    const sign = SignJWT.prototype.sign;
+    let first = true;
+    SignJWT.prototype.sign = async function (...args) {
+      const held = first;
+      first = false;
+      const signed = await sign.apply(this, args);
+      if (held) {
+        entered.resolve();
+        await release.promise;
+      }
+      return signed;
+    };
+    const signing = f.login("alice", "password", replay.previous);
+    signing.catch(() => {});
+    try {
+      await workMilestone(
+        signing,
+        entered.promise,
+        "real JWT signing held after TOTP consumption",
+      );
+      const winner = await f.login("alice", "password", replay.current);
+      release.resolve();
+      await assertRejects(() => signing, AuthenticationError);
+      await f.sessions.validateToken(winner.access_token);
+      await f.sessions.validateToken(replay.signed.access_token);
+    } finally {
+      SignJWT.prototype.sign = sign;
+      release.resolve();
+      await signing.catch(() => {});
+    }
+  }));
 async function fixture(
   run: (f: Awaited<ReturnType<typeof setup>>) => Promise<void>,
 ) {

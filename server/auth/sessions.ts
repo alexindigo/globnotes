@@ -126,6 +126,14 @@ export class InstanceSessions {
       this.#now() >= principal.expiresAt
     ) throw new AuthenticationError();
   }
+  /** Proofs pending async work are fenced; already issued sessions are not. */
+  assertCredentialProof(account: Account): void {
+    try {
+      this.accounts.assertCredentialProof(account);
+    } catch {
+      throw new AuthenticationError();
+    }
+  }
   async confirmCredentials(
     login: string,
     password: string,
@@ -155,14 +163,18 @@ export class InstanceSessions {
       );
       if (step === null) throw new AuthenticationError();
       try {
-        this.accounts.consumeTotp(account.id, account.credentialRevision, step);
+        return this.accounts.consumeTotp(
+          account.id,
+          account.credentialRevision,
+          step,
+        );
       } catch {
         throw new AuthenticationError();
       }
     } else if (code !== undefined && code !== "") {
       throw new AuthenticationError();
     }
-    return this.accounts.byId(account.id)!;
+    return live;
   }
   async login(
     input: unknown,
@@ -201,6 +213,7 @@ export class InstanceSessions {
       expiresAt: expiry * 1000,
       passwordChangeRequired: account.passwordChangeRequired,
     });
+    this.assertCredentialProof(account);
     this.assertCurrent(principal);
     return { access_token, token_type: "bearer", principal };
   }

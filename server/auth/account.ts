@@ -132,6 +132,7 @@ export class OwnAccount {
       input.updateId,
       guard,
       confirmedTotpStep,
+      proof,
     );
     // The old session is revoked by this commit; do not reauthorize it to acknowledge.
     return Object.freeze({
@@ -157,6 +158,7 @@ export class OwnAccount {
       input.password,
       input.totp as string | undefined,
     );
+    this.sessions.assertCredentialProof(account);
     return Object.freeze({
       matched: account.credentialUpdateId === input.updateId,
       account: accountView(account),
