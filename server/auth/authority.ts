@@ -21,9 +21,20 @@ const REQUIREMENTS = {
 export type VaultOperation = keyof typeof REQUIREMENTS;
 export type InstanceOperation = "manageOwnAccount" | "createVault";
 export interface AuthorityVault {
+  /** Retained host bundle identity, shared by projections; replace on rebind. */
+  readonly identity: object;
   readonly id: string;
   readonly acl: AclRepository;
   readonly lifecycle: Pick<PluginLifecycle, "epoch" | "operational">;
+}
+/** Projection allocation is not an owner change. Owner bindings still must agree. */
+export function sameAuthorityVault(
+  current: AuthorityVault | null,
+  captured: AuthorityVault,
+): boolean {
+  return current !== null && current.identity === captured.identity &&
+    current.id === captured.id && current.acl === captured.acl &&
+    current.lifecycle === captured.lifecycle;
 }
 export interface VaultAuthorityLease extends NoteMutationLease {
   readonly vaultId: string;
@@ -105,10 +116,11 @@ export class InstanceAuthority {
   }
   lease(principal: Principal, operation: VaultOperation): VaultAuthorityLease {
     this.#principal(principal);
-    const vault = this.currentVault();
-    if (!vault || vault.id !== vault.acl.vaultId) {
+    const selected = this.currentVault();
+    if (!selected || selected.id !== selected.acl.vaultId) {
       throw new HttpError(404, "Vault unavailable.");
     }
+    const vault = Object.freeze({ ...selected });
     const allows = () => {
       this.#principal(principal);
       if (!vault.lifecycle.operational()) {
@@ -131,7 +143,8 @@ export class InstanceAuthority {
     const assertCurrent = (operationId?: string) => {
       this.#principal(principal);
       if (
-        this.currentVault() !== vault || vault.lifecycle.epoch !== epoch ||
+        !sameAuthorityVault(this.currentVault(), vault) ||
+        vault.lifecycle.epoch !== epoch ||
         vault.acl.policyKey !== policy
       ) changed(operationId);
       try {

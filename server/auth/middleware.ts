@@ -12,6 +12,7 @@ import { HttpError } from "@pathfinder/pathfinder";
 import { state } from "../state.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
 import { OperationError } from "../plugins/errors.ts";
+import { readCredential } from "../../shared/credentials.ts";
 import {
   type AuthorityVault,
   InstanceAuthority,
@@ -37,21 +38,15 @@ export function createInstanceAuth(adapters: {
       "WWW-Authenticate": "Bearer",
     });
   const token = (request: Request): string | null => {
-    const header = request.headers.get("authorization");
-    if (header !== null) {
-      if (!/^Bearer \S+$/i.test(header)) throw invalid();
-      return header.slice(7);
+    try {
+      return readCredential(
+        request.headers.get("authorization"),
+        request.headers.get("cookie") ?? "",
+        adapters.cookieName,
+      );
+    } catch {
+      throw invalid();
     }
-    const cookies = (request.headers.get("cookie") ?? "").split(";").map((
-      part,
-    ) => part.trim());
-    const values = cookies.filter((part) =>
-      part.startsWith(adapters.cookieName + "=")
-    );
-    if (values.length > 1) throw invalid();
-    return values.length
-      ? values[0].slice(adapters.cookieName.length + 1)
-      : null;
   };
   const principal = async (request: Request): Promise<Principal> => {
     let pending = requests.get(request);
@@ -94,21 +89,6 @@ export function createInstanceAuth(adapters: {
   });
 }
 
-function tokenFromRequest(req: Request): string | null {
-  const authorization = req.headers.get("authorization");
-  if (authorization?.toLowerCase().startsWith("bearer ")) {
-    return authorization.slice(7);
-  }
-  const cookie = req.headers.get("cookie");
-  if (cookie) {
-    for (const pair of cookie.split(";")) {
-      const [name, ...rest] = pair.trim().split("=");
-      if (name === "token") return rest.join("=");
-    }
-  }
-  return null;
-}
-
 /** The auth rules themselves, usable both by the middleware (gated by
  * ctx.authRequired) and by the catch-all which serves vault files. */
 export async function enforceAuth(req: Request): Promise<void> {
@@ -146,7 +126,11 @@ async function authenticate(
   if (auth !== null) {
     try {
       const { expiresAt } = await auth.validateTokenMetadata(
-        tokenFromRequest(req),
+        readCredential(
+          req.headers.get("authorization"),
+          req.headers.get("cookie") ?? "",
+          "token",
+        ),
       );
       // A valid token's subject is the account (validateTokenMetadata
       // checks it).

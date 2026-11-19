@@ -74,7 +74,7 @@ async function scope(root: string) {
   const lifecycle = new PluginLifecycle(config);
   const acl = new AclRepository(metadata, VAULT_A, { accounts: base.accounts });
   acl.initializeForCreator(base.alice, "none");
-  const target: AuthorityVault = { id: VAULT_A, acl, lifecycle };
+  const target: AuthorityVault = { identity: {}, id: VAULT_A, acl, lifecycle };
   let selected: AuthorityVault | null = target;
   const authority = new InstanceAuthority(base.sessions, () => selected);
   const auth = createInstanceAuth({
@@ -229,6 +229,103 @@ Deno.test("identity middleware: explicit bad headers/cookies never fall back to 
     assertEquals(explicit.kind, "account");
   }));
 
+Deno.test("identity review 1: fresh projections retain the same bundle lease", () =>
+  fixture(async (f) => {
+    const authority = new InstanceAuthority(
+      f.sessions,
+      () => ({ ...f.target }),
+    );
+    const lease = authority.lease(f.token.principal, "editNotes");
+    lease.assertCurrent();
+    assertEquals(
+      await lease.read(() => Promise.resolve("same bundle bytes")),
+      "same bundle bytes",
+    );
+    assertEquals(
+      lease.disclose(() => "same bundle response"),
+      "same bundle response",
+    );
+  }));
+
+Deno.test("identity review 1: a real bundle replacement conflicts even with the same vault id", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    f.select({
+      ...f.target,
+      identity: {},
+    });
+    const error = assertThrows(
+      () => lease.assertCurrent(UPDATE),
+      OperationError,
+    );
+    assertEquals(error.operationId, UPDATE);
+  }));
+
+Deno.test("identity review 2: Bearer accepts ASCII separator spaces without credential fallback", () =>
+  fixture(async (f) => {
+    for (const separator of [" ", "  ", "     "]) {
+      const principal = await f.auth.principal(f.request("GET", {
+        authorization: `bEaReR${separator}${f.token.access_token}`,
+        cookie: "fixture-token=invalid",
+      }));
+      assertEquals(principal.kind, "account");
+    }
+    for (
+      const authorization of [
+        "Basic invalid",
+        "Bearer",
+        "Bearer ",
+        "Bearer\tinvalid",
+        "Bearer a b",
+        "Bearer a,b",
+        "Bearer =bad",
+        "Bearer bad=tail",
+      ]
+    ) {
+      const error = await assertRejects(
+        () =>
+          f.auth.principal(f.request("GET", {
+            authorization,
+            cookie: `fixture-token=${f.token.access_token}`,
+          })),
+        HttpError,
+      );
+      assertEquals(error.status, 401);
+    }
+  }));
+
+Deno.test("identity review 3: malformed credential cookie is rejected, unrelated cookies are ignored", () =>
+  fixture(async (f) => {
+    const good = `fixture-token=${f.token.access_token}`;
+    for (
+      const cookie of [
+        "fixture-token",
+        `other; fixture-token`,
+        `${good}; fixture-token`,
+        `fixture-token; ${good}`,
+        "fixture-token=",
+        "fixture-token=%ZZ",
+      ]
+    ) {
+      const error = await assertRejects(
+        () => f.auth.principal(f.request("GET", { cookie })),
+        HttpError,
+      );
+      assertEquals(error.status, 401);
+    }
+    assertEquals(
+      await f.auth.principal(
+        f.request("GET", { cookie: "other; fixture-token-extra; another=%ZZ" }),
+      ),
+      GUEST,
+    );
+    assertEquals(
+      (await f.auth.principal(f.request("GET", { cookie: `other; ${good}` })))
+        .kind,
+      "account",
+    );
+  }));
+
 Deno.test("identity authority: expiry, credential changes, ACL and bundle replacement retire captured leases", () =>
   fixture(async (f) => {
     const lease = await f.auth.noteMutationLease(f.request());
@@ -240,6 +337,7 @@ Deno.test("identity authority: expiry, credential changes, ACL and bundle replac
       declaredAdmin: "bob",
     });
     const other: AuthorityVault = {
+      identity: {},
       id: VAULT_B,
       acl: otherAcl,
       lifecycle: f.lifecycle,
@@ -262,7 +360,7 @@ Deno.test("identity authority: expiry, credential changes, ACL and bundle replac
     );
     fresh.assertCurrent();
     assertThrows(() => otherLease.assertCurrent(), HttpError);
-    f.select({ ...f.target });
+    f.select({ ...f.target, identity: {} });
     assertThrows(() => fresh.assertCurrent(), OperationError);
     f.select(f.target);
     const expiring = await f.auth.readLease(f.request());
@@ -372,7 +470,12 @@ for (const kind of ["note", "file"] as const) {
           accounts: f.accounts,
         });
         acl.initializeForCreator(f.alice, "none");
-        const target = { id: VAULT_A, acl, lifecycle: w.lifecycle };
+        const target = {
+          identity: {},
+          id: VAULT_A,
+          acl,
+          lifecycle: w.lifecycle,
+        };
         const authority = new InstanceAuthority(f.sessions, () => target);
         const lease = authority.lease(f.token.principal, "editNotes");
         const writing = kind === "note"
