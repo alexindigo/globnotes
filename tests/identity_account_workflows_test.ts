@@ -20,6 +20,27 @@ import { workMilestone } from "./helpers/product_settlement.ts";
 
 const NOW = 1_800_000_000_000;
 
+Deno.test("TOTP identity: a surrogate alias cannot reset an authenticator's consumed floor", () =>
+  fixture(async (f) => {
+    const key = "\ufffd", alias = "\ud800";
+    f.accounts.changeCredentials(f.alice.id, 0, { totpKey: key }, createUuid());
+    const code = await f.code(key);
+    const signed = await f.login("alice", "password", code);
+    f.tick();
+    const currentTotp = await f.code(key);
+    const before = Deno.readTextFileSync(`${f.root}/accounts.json`);
+    await assertRejects(() =>
+      f.workflow.change(signed.principal, {
+        revision: 1,
+        updateId: createUuid(),
+        currentPassword: "password",
+        currentTotp,
+        totp: { enabled: true, key: alias, code },
+      })
+    );
+    assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), before);
+  }));
+
 async function replayFixture(f: Awaited<ReturnType<typeof setup>>) {
   const key = "commit-old-key";
   f.accounts.changeCredentials(f.alice.id, 0, { totpKey: key }, createUuid());
@@ -456,6 +477,7 @@ for (
     fixture(async (f) => {
       const held = Promise.withResolvers<string>(),
         entered = Promise.withResolvers<void>();
+      const hashed = await hashPassword("new-password");
       const workflow = new OwnAccount(f.sessions, {
         hash: () => {
           entered.resolve();
@@ -471,28 +493,32 @@ for (
         abort.signal,
       );
       changing.catch(() => {});
-      await entered.promise;
-      if (cause === "cancel") abort.abort();
-      if (cause === "same-account") {
-        f.accounts.changeCredentials(f.alice.id, 0, {
-          passwordChangeRequired: true,
-        }, createUuid());
-      }
-      if (cause === "other-account") {
-        f.accounts.changeCredentials(f.bob.id, 0, {
-          passwordChangeRequired: true,
-        }, createUuid());
-      }
-      if (cause === "external") {
-        Deno.writeTextFileSync(`${f.root}/accounts.json`, "external");
-      }
       try {
+        await workMilestone(
+          changing,
+          entered.promise,
+          "account hashing entered",
+        );
+        if (cause === "cancel") abort.abort();
+        if (cause === "same-account") {
+          f.accounts.changeCredentials(f.alice.id, 0, {
+            passwordChangeRequired: true,
+          }, createUuid());
+        }
+        if (cause === "other-account") {
+          f.accounts.changeCredentials(f.bob.id, 0, {
+            passwordChangeRequired: true,
+          }, createUuid());
+        }
+        if (cause === "external") {
+          Deno.writeTextFileSync(`${f.root}/accounts.json`, "external");
+        }
         if (cause === "rename-failure") {
           Deno.renameSync = () => {
             throw new Deno.errors.PermissionDenied("fixture");
           };
         }
-        held.resolve(await hashPassword("new-password"));
+        held.resolve(hashed);
         if (cause === "other-account") {
           await changing;
           await f.login("alice", "new-password");
@@ -513,6 +539,8 @@ for (
         }
       } finally {
         Deno.renameSync = rename;
+        held.resolve(hashed);
+        await changing.catch(() => {});
       }
     }));
 }

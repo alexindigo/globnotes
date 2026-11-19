@@ -3,6 +3,7 @@ import { join } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { hashPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
+import { sameTotpKey, validTotpKey } from "./credentials.ts";
 import {
   fields,
   identity,
@@ -77,8 +78,7 @@ export function validateAccount(value: unknown): Account {
     ]) || !identity(value.id) || typeof value.login !== "string" ||
     normalizeLogin(value.login) !== value.login ||
     !validPasswordHash(value.passwordHash) ||
-    !(value.totpKey === null ||
-      (typeof value.totpKey === "string" && value.totpKey.length > 0)) ||
+    !(value.totpKey === null || validTotpKey(value.totpKey)) ||
     !(value.lastTotpStep === null || integer(value.lastTotpStep)) ||
     (value.totpKey === null && value.lastTotpStep !== null) ||
     !integer(value.credentialRevision) ||
@@ -229,7 +229,7 @@ export class AccountRepository {
     if (
       !account || account.id !== proof.id ||
       account.credentialRevision !== proof.credentialRevision ||
-      account.totpKey !== proof.totpKey ||
+      !sameTotpKey(account.totpKey, proof.totpKey) ||
       account.lastTotpStep !== proof.lastTotpStep
     ) throw new StoredConfigConflict();
   }
@@ -265,12 +265,23 @@ export class AccountRepository {
     if (!account || account.credentialRevision !== credentialRevision) {
       throw new StoredConfigConflict();
     }
+    if (
+      (changes.totpKey !== undefined && changes.totpKey !== null &&
+        !validTotpKey(changes.totpKey)) ||
+      (confirmedTotpStep !== undefined &&
+        (!integer(confirmedTotpStep) || !validTotpKey(changes.totpKey)))
+    ) throw new IdentityStateError();
+    const key = changes.totpKey === undefined
+      ? account.totpKey
+      : changes.totpKey;
+    const floor = sameTotpKey(key, account.totpKey)
+      ? account.lastTotpStep
+      : null;
     if (proof) this.#assertCredentialProof(account, proof);
     if (
-      confirmedTotpStep !== undefined && changes.totpKey === account.totpKey &&
-      account.lastTotpStep !== null &&
-      (confirmedTotpStep < account.lastTotpStep ||
-        confirmedTotpStep === account.lastTotpStep &&
+      confirmedTotpStep !== undefined && floor !== null &&
+      (confirmedTotpStep < floor ||
+        confirmedTotpStep === floor &&
           (!proof || confirmedTotpStep !== proof.lastTotpStep))
     ) {
       throw new StoredConfigConflict();
@@ -278,11 +289,9 @@ export class AccountRepository {
     const next = validateAccount({
       ...account,
       ...changes,
-      lastTotpStep: confirmedTotpStep ?? (
-        changes.totpKey !== undefined && changes.totpKey !== account.totpKey
-          ? null
-          : account.lastTotpStep
-      ),
+      lastTotpStep: confirmedTotpStep === undefined
+        ? floor
+        : Math.max(floor ?? confirmedTotpStep, confirmedTotpStep),
       credentialRevision: account.credentialRevision + 1,
       credentialUpdateId: updateId,
     });
