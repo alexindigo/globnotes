@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { type InvocationOptions, PluginHost } from "../server/plugins/host.ts";
 import { followPluginChanges } from "../server/plugins/changes.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
@@ -256,7 +256,10 @@ Deno.test("log example: persistence before lost host ack deduplicates replay; re
   }
 });
 
-Deno.test("log example: a multipart batch persists staging before ack and a new Worker publishes the complete group only after its tail", async () => {
+async function multipartExample(
+  forgeAcknowledgement = false,
+  closed: (root: string) => void = () => {},
+) {
   const f = hubOperationsFixture();
   const root = new URL(
     "./fixtures/plugins/globnotes-log-example/",
@@ -274,6 +277,12 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     manifest,
     hooks: [],
   }];
+  const retired = Promise.withResolvers<void>();
+  const failedDelivery = Promise.withResolvers<void>();
+  let retirementFailure: unknown;
+  retired.promise.catch((error) => {
+    retirementFailure = error;
+  });
   const runtime = new PluginRuntime(() => sources, {
     vaultPath: f.vault,
     statePath: f.config.statePath,
@@ -281,6 +290,15 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     operational: () => true,
     writable: () => true,
     commit: (effect) => effect(),
+    changed: () => {
+      // Ack validation happens after invocation fulfillment. Observe the
+      // follower's failure notification, not its unbounded retry loop.
+      const failure = runtime.status(manifest.id)?.changes?.lastError;
+      if (failure) {
+        retired.reject(new Error(`multipart retirement: ${failure}`));
+        failedDelivery.resolve();
+      }
+    },
     rpc: servicePluginRpc({
       vaultPath: f.vault,
       statePath: f.config.statePath,
@@ -292,7 +310,6 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
   }).forPlugin(manifest.id);
   const advance = f.hub.store.advancePluginCursor.bind(f.hub.store);
   const invoke = PluginHost.prototype.invoke;
-  const retired = Promise.withResolvers<void>();
   try {
     await runtime.reconcile();
     await pluginSettled(runtime, manifest.id, "ready");
@@ -308,7 +325,12 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     // Publication retires the owner on success; the same delivery's native
     // rejection/deadline must fail the milestone instead of waiting forever.
     PluginHost.prototype.invoke = function (id, args, pre, timeout, options) {
-      return invoke.call(this, id, args, pre, timeout, options).catch(
+      return invoke.call(this, id, args, pre, timeout, options).then(
+        (value) =>
+          forgeAcknowledgement && options?.prepareArgs
+            ? { ack: "forged" }
+            : value,
+      ).catch(
         (error) => {
           retired.reject(error);
           throw error;
@@ -331,6 +353,17 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
       Deno.writeTextFileSync(`${f.vault}/${i}.md`, `member ${i}`);
     }
     f.hub.scanNow();
+    if (forgeAcknowledgement) {
+      await Promise.race([failedDelivery.promise, retired.promise]);
+      assert(
+        retirementFailure instanceof Error,
+        "retirement milestone did not reject on the first follower failure",
+      );
+      assertEquals(
+        retirementFailure.message,
+        "multipart retirement: changes_delivery_failed",
+      );
+    }
     await retired.promise;
     assertEquals(runtime.status(manifest.id)?.status, "disabled");
     let values = (await store.load()).values;
@@ -363,5 +396,26 @@ Deno.test("log example: a multipart batch persists staging before ack and a new 
     PluginHost.prototype.invoke = invoke;
     await runtime.close();
     f.close();
+    closed(f.root);
   }
+}
+
+Deno.test("log example: a multipart batch persists staging before ack and a new Worker publishes the complete group only after its tail", () =>
+  multipartExample());
+
+Deno.test("log example: forged multipart acknowledgement fails retirement on the first follower failure and cleans up", async () => {
+  const invoke = PluginHost.prototype.invoke;
+  let cleaned = false;
+  await assertRejects(
+    () =>
+      multipartExample(true, (root) => {
+        assertEquals(PluginHost.prototype.invoke, invoke);
+        assertThrows(() => Deno.statSync(root), Deno.errors.NotFound);
+        cleaned = true;
+        console.log(JSON.stringify({ forgedAckCleanup: true }));
+      }),
+    Error,
+    "multipart retirement: changes_delivery_failed",
+  );
+  assert(cleaned);
 });
