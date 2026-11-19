@@ -170,16 +170,22 @@ Deno.test("driver session: only real file movement emits activity, coalesced acr
     await session.run();
     assertEquals(transitions.filter(Boolean), []);
     transitions.length = 0;
+    // Keep timestamps equal to the imported states: size must distinguish edits.
     for (let i = 0; i < 20; i++) {
-      Deno.writeTextFileSync(`${f.vault}/remote${i}.md`, `edit ${i}`);
+      const mtime = new Date(f.hub.fileState(`remote${i}.md`)!.mtimeMs);
+      Deno.writeTextFileSync(`${f.vault}/remote${i}.md`, `local edit ${i}`);
+      Deno.utimeSync(`${f.vault}/remote${i}.md`, mtime, mtime);
     }
     f.hub.scanNow();
+    assertEquals(f.hub.sequence(), 40);
     await session.run(false);
     assertEquals(transitions, ["sending", null]);
-    assertEquals(
-      new TextDecoder().decode(f.remote.files.get("remote0.md")!.bytes),
-      "edit 0",
-    );
+    for (let i = 0; i < 20; i++) {
+      assertEquals(
+        new TextDecoder().decode(f.remote.files.get(`remote${i}.md`)!.bytes),
+        `local edit ${i}`,
+      );
+    }
   } finally {
     f.close();
   }
@@ -675,7 +681,10 @@ Deno.test("driver session: a changed export receipt cannot skip hub changes made
     Deno.writeTextFileSync(`${f.vault}/A.md`, "first");
     f.hub.scanNow();
     f.remote.applyConflict = () => {
-      Deno.writeTextFileSync(`${f.vault}/A.md`, "newer");
+      // The dispatch-time edit must be scannable even in the same mtime tick.
+      const mtime = new Date(f.hub.fileState("A.md")!.mtimeMs);
+      Deno.writeTextFileSync(`${f.vault}/A.md`, "newer edit");
+      Deno.utimeSync(`${f.vault}/A.md`, mtime, mtime);
       f.hub.scanNow();
     };
     await session.run(false);
@@ -686,7 +695,7 @@ Deno.test("driver session: a changed export receipt cannot skip hub changes made
     await session.run(false);
     assertEquals(
       new TextDecoder().decode(f.remote.files.get("A.md")!.bytes),
-      "newer",
+      "newer edit",
     );
     assertEquals(f.remote.writes.length, 2);
   } finally {

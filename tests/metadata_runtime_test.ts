@@ -198,10 +198,18 @@ Deno.test("metadata Worker: retention gap rebuild reaches get/query/watch withou
   try {
     await pluginSettled(f.runtime, "meta", "ready");
     await drain();
+    // Scans observe size+mtime, not individual writes. Distinct sizes must
+    // produce the retention gap even when every write shares one timestamp.
     for (let i = 0; i < 6; i++) {
-      Deno.writeTextFileSync(`${f.vault}/current.md`, `# current ${i}`);
+      Deno.writeTextFileSync(
+        `${f.vault}/current.md`,
+        `# current ${i}${"\n".repeat(i)}`,
+      );
+      Deno.utimeSync(`${f.vault}/current.md`, 1000, 1000);
       f.hub.scanNow();
     }
+    assertEquals(f.hub.sequence(), 6);
+    assert(f.hub.changesSince(0).gap);
     assertEquals(
       (await f.runtime.invokeCommand("meta", "query", {}) as MetadataPage)
         .catchingUp,

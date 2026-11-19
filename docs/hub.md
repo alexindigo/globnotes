@@ -31,6 +31,10 @@ Unchanged size+mtime skips hashing; SHA-256 is streamed otherwise. Unreadable
 subtrees are unknown, never interpreted as deletion. Only an unambiguous
 one-source/one-destination content-hash match in a scan is a rename.
 
+The log records observed content states, not individual outside writes. Same-size
+writes sharing the recorded mtime are indistinguishable to a scan; intermediate
+states between scans are not retained either.
+
 Paths are vault-relative, `/`-separated, case-sensitive and compared as NFC.
 Real disk spelling is retained. NFC collisions are reported through
 `collisions()` and warned once per key; one selected file is tracked, without

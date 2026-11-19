@@ -2,6 +2,7 @@ import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals } from "@std/assert";
 import { VaultHub } from "../server/hub/hub.ts";
+import { contentVersion } from "../server/hub/merge.ts";
 import type { ChangeEntry } from "../server/hub/types.ts";
 import {
   type FixtureEnvironment,
@@ -99,6 +100,41 @@ Deno.test("hub scanner: external create/modify/delete/rename, stat-only skip, hi
     f.hub.scanNow();
     assertEquals(f.batches.at(-1)![0].kind, "deleted");
     assert(f.batches.flat().every((e) => e.peer === "local"));
+  } finally {
+    f.close();
+  }
+});
+Deno.test("hub scanner: equal size+mtime coalesces writes; either changed stat hint observes current bytes", () => {
+  const f = fixture();
+  const file = `${f.vault}/note.md`;
+  try {
+    Deno.writeTextFileSync(file, "first");
+    Deno.utimeSync(file, 1000, 1000);
+    assertEquals(f.hub.scanNow().hashed, 1);
+    assertEquals(f.hub.sequence(), 1);
+
+    Deno.writeTextFileSync(file, "other");
+    Deno.utimeSync(file, 1000, 1000);
+    assertEquals(f.hub.scanNow().hashed, 0);
+    assertEquals(f.hub.sequence(), 1);
+    assertEquals(f.hub.fileState("note.md")!.hash, contentVersion("first"));
+
+    Deno.utimeSync(file, 1000, 1001);
+    assertEquals(f.hub.scanNow().hashed, 1);
+    assertEquals(f.hub.sequence(), 2);
+    assertEquals(f.hub.fileState("note.md")!.hash, contentVersion("other"));
+
+    Deno.writeTextFileSync(file, "longer");
+    Deno.utimeSync(file, 1000, 1001);
+    assertEquals(f.hub.scanNow().hashed, 1);
+    assertEquals(f.hub.sequence(), 3);
+    assertEquals(f.hub.fileState("note.md")!.hash, contentVersion("longer"));
+    assertEquals(f.batches.flat().map((entry) => entry.kind), [
+      "created",
+      "modified",
+      "modified",
+    ]);
+    assertEquals(f.hub.scanNow().hashed, 0);
   } finally {
     f.close();
   }

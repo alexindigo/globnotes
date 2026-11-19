@@ -170,11 +170,19 @@ Deno.test("metadata projection: pruned-log recovery rebuilds and snapshot pages 
   try {
     await drain();
     const revision = p.revision;
+    // Distinct sizes force observations independently of timestamp resolution.
     for (let i = 0; i < 6; i++) {
-      Deno.writeTextFileSync(`${f.vault}/note.md`, `# revision ${i}`);
+      Deno.writeTextFileSync(
+        `${f.vault}/note.md`,
+        `# revision ${i}${"\n".repeat(i)}`,
+      );
+      Deno.utimeSync(`${f.vault}/note.md`, 1000, 1000);
       f.hub.scanNow();
     }
+    assertEquals(f.hub.sequence(), 6);
+    assert(f.hub.changesSince(0).gap);
     await drain();
+    assertEquals(p.cursor, 6);
     const row = p.records()[0];
     assert(row.status === "ready");
     assertEquals(row.headings[0].text, "revision 5");
