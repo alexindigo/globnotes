@@ -6,11 +6,8 @@
  * Ported from the Python server's post_setup with identical behavior.
  */
 
-import {
-  checkTotpCode,
-  LocalAuth,
-  totpSecretFromRawKey,
-} from "@server/auth/local.ts";
+import { checkTotpCode, LocalAuth } from "@server/auth/local.ts";
+import { validTotpKey } from "@server/auth/credentials.ts";
 import { AuthType, StoredConfigConflict } from "@server/config.ts";
 import { hashPassword } from "@server/helpers.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
@@ -90,6 +87,9 @@ export default async function (
         }
         let authType: AuthType = AuthType.PASSWORD;
         if (data.totpKey !== undefined) {
+          if (!validTotpKey(data.totpKey)) {
+            throw new HttpError(422, "Invalid authenticator key.");
+          }
           // The code is verified BEFORE anything is persisted — a mismatch
           // leaves setup pending so the wizard stays open.
           if (!data.totpCode) {
@@ -99,7 +99,7 @@ export default async function (
             );
           }
           if (
-            !checkTotpCode(data.totpCode, totpSecretFromRawKey(data.totpKey))
+            !checkTotpCode(data.totpCode, data.totpKey)
           ) {
             throw new HttpError(
               400,

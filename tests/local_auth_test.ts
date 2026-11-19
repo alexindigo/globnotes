@@ -4,9 +4,8 @@ import { fixturePasswordHash } from "./helpers/config.ts";
 /** LocalAuth fixtures own private credentials and resolved session settings. */
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { encodeBase32 } from "@std/encoding/base32";
 import { SignJWT } from "jose";
-import { LocalAuth, totpSecretFromRawKey } from "../server/auth/local.ts";
+import { LocalAuth } from "../server/auth/local.ts";
 import { GlobalConfig } from "./helpers/config.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { authenticatorCode, settledTotpNow } from "./helpers/totp.ts";
@@ -143,7 +142,7 @@ Deno.test("LocalAuth: expiry metadata shares verification and preserves no-expir
 });
 
 Deno.test("LocalAuth: TOTP login and single-use enforcement", async () => {
-  const totpKey = "my-totp-key";
+  const totpKey = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
   const env = {
     fixtureAuth: {
       auth_type: "totp",
@@ -158,8 +157,7 @@ Deno.test("LocalAuth: TOTP login and single-use enforcement", async () => {
 
   // The client sends password + code concatenated. Codes are generated
   // independently from the QR secret, with its base32-decoded bytes.
-  const secret = encodeBase32(new TextEncoder().encode(totpKey))
-    .replace(/=+$/, "");
+  const secret = totpKey;
   const stepMs = 30_000;
   const now = await settledTotpNow();
   const codeAt = (epochMs: number) => authenticatorCode(secret, epochMs);
@@ -222,7 +220,7 @@ Deno.test("LocalAuth: wizard-enrolled TOTP (stored key + password hash)", async 
   // Post-setup state with NO env vars: config.json holds the hash and
   // the wizard-minted totp_key — the login path must behave exactly as
   // if TOTP had been env-configured.
-  const totpKey = "wizard-minted-key";
+  const totpKey = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
   const vault = await Deno.makeTempDir();
   const { hashPassword } = await import("../server/helpers.ts");
   await Deno.mkdir(`${vault}/.globnotes`, { recursive: true });
@@ -242,7 +240,7 @@ Deno.test("LocalAuth: wizard-enrolled TOTP (stored key + password hash)", async 
   assert(auth.isTotpEnabled);
   assert(!("totpKeyFromEnv" in auth));
 
-  const secret = totpSecretFromRawKey(totpKey);
+  const secret = totpKey;
   const stepMs = 30_000;
   const now = await settledTotpNow();
   const codeAt = (epochMs: number) => authenticatorCode(secret, epochMs);

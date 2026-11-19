@@ -31,9 +31,9 @@ async function selectMode(wrapper, value) {
 }
 
 const bundle = {
-  key: "rawkey",
-  secret: "BASE32SECRET",
-  uri: "otpauth://totp/globnotes:alice?secret=BASE32SECRET",
+  key: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+  secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+  uri: "otpauth://totp/globnotes:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
   qr: "data:image/png;base64,xxxx",
 };
 const writeClipboard = vi.fn();
@@ -331,9 +331,9 @@ describe("SetupModal", () => {
 
   it("the real switch mints a bundle and shows the QR and code, not the key", async () => {
     postTotpEnrolment.mockResolvedValue({
-      key: "rawkey",
-      secret: "BASE32SECRET",
-      uri: "otpauth://totp/globnotes:alice?secret=BASE32SECRET",
+      key: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      uri: "otpauth://totp/globnotes:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
       qr: "data:image/png;base64,xxxx",
     });
     const wrapper = mountModal();
@@ -350,7 +350,7 @@ describe("SetupModal", () => {
     expect(wrapper.find('img[alt="TOTP enrolment QR code"]').attributes("src"))
       .toBe("data:image/png;base64,xxxx");
     expect(toggle.attributes("aria-checked")).toBe("true");
-    expect(wrapper.text()).not.toContain("BASE32SECRET");
+    expect(wrapper.text()).not.toContain("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
     expect(wrapper.find("#setup-totp-qr").attributes("type")).toBe("button");
     expect(wrapper.find("#setup-totp-code").element.disabled).toBe(false);
     expect(postSetup).not.toHaveBeenCalled();
@@ -371,8 +371,8 @@ describe("SetupModal", () => {
 
   it("blocks finish until a 6-digit code is entered", async () => {
     postTotpEnrolment.mockResolvedValue({
-      key: "rawkey",
-      secret: "BASE32SECRET",
+      key: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
       uri: "otpauth://x",
       qr: "data:image/png;base64,xxxx",
     });
@@ -397,8 +397,8 @@ describe("SetupModal", () => {
 
   it("submits the TOTP payload with the minted key and entered code", async () => {
     postTotpEnrolment.mockResolvedValue({
-      key: "rawkey",
-      secret: "BASE32SECRET",
+      key: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
       uri: "otpauth://x",
       qr: "data:image/png;base64,xxxx",
     });
@@ -415,7 +415,7 @@ describe("SetupModal", () => {
       mode: "password",
       username: "alice",
       password: "secret",
-      totpKey: "rawkey",
+      totpKey: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
       totpCode: "123456",
     });
     expect(wrapper.emitted("completed")).toHaveLength(1);
@@ -423,8 +423,8 @@ describe("SetupModal", () => {
 
   it("a 400 shows the server's reason and clears the code for a retry", async () => {
     postTotpEnrolment.mockResolvedValue({
-      key: "rawkey",
-      secret: "BASE32SECRET",
+      key: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
       uri: "otpauth://x",
       qr: "data:image/png;base64,xxxx",
     });
@@ -458,7 +458,7 @@ describe("SetupModal", () => {
     );
     await qr.trigger("click");
     await flushPromises();
-    expect(writeClipboard).toHaveBeenCalledExactlyOnceWith("BASE32SECRET");
+    expect(writeClipboard).toHaveBeenCalledExactlyOnceWith("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
     expect(wrapper.find("[role=tooltip]").text()).toBe("Setup key copied.");
     await qr.trigger("click");
     expect(writeClipboard).toHaveBeenCalledTimes(1);

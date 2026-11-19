@@ -7,11 +7,7 @@ import {
   type Principal,
 } from "./sessions.ts";
 import { identity, integer, record } from "./records.ts";
-import {
-  matchingTotpStep,
-  totpSecretFromRawKey,
-  validTotpKey,
-} from "./credentials.ts";
+import { matchingTotpStep, validTotpKey } from "./credentials.ts";
 import { totpEnrolment } from "./totp_enrolment.ts";
 import { hashPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
@@ -93,16 +89,14 @@ export class OwnAccount {
         typeof input.totp.code === "string"
       ) {
         key = input.totp.key;
-        const secret = totpSecretFromRawKey(key);
         const step = matchingTotpStep(
           input.totp.code,
-          secret,
+          key,
           (this.options.now ?? Date.now)(),
         );
         if (
           step === null ||
-          (account.totpKey !== null &&
-            secret === totpSecretFromRawKey(account.totpKey) &&
+          (key === account.totpKey &&
             account.lastTotpStep !== null &&
             step <= account.lastTotpStep)
         ) invalid();

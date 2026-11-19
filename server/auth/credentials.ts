@@ -1,33 +1,22 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { totp } from "otplib";
 import { hotpCreateHmacKey, KeyEncodings } from "otplib/core.js";
-import { decodeBase32, encodeBase32 } from "@std/encoding/base32";
+import { decodeBase32 } from "@std/encoding/base32";
 
-/** Raw keys must survive UTF-8 encoding without replacement characters. */
+export const TOTP_KEY_BYTES = 20;
+
+/** One encoding of one fixed-length SHA-1 key, never arbitrary raw text. */
 export function validTotpKey(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 &&
-    ![...value].some((char) => {
-      const point = char.codePointAt(0)!;
-      return point >= 0xd800 && point <= 0xdfff;
-    });
+  return typeof value === "string" && value.length === TOTP_KEY_BYTES * 8 / 5 &&
+    /^[A-Z2-7]+$/.test(value);
 }
 
-/** Canonical, lossless representation of the authenticator's key bytes. */
-export function totpSecretFromRawKey(rawKey: string): string {
-  if (!validTotpKey(rawKey)) throw new TypeError("Invalid authenticator key.");
-  return encodeBase32(new TextEncoder().encode(rawKey)).replace(/=+$/, "");
+export function decodeTotpKey(key: string): Uint8Array {
+  if (!validTotpKey(key)) throw new TypeError("Invalid authenticator key.");
+  return decodeBase32(key);
 }
 
-export function sameTotpKey(
-  left: string | null,
-  right: string | null,
-): boolean {
-  return left === null || right === null
-    ? left === right
-    : totpSecretFromRawKey(left) === totpSecretFromRawKey(right);
-}
-
-/** Keep the authenticator's exact UTF-8 secret bytes and current +/-1 window.
+/** Keep the authenticator's exact key bytes and current +/-1 window.
  * checkDelta is the library's matched-window offset, not a guessed current step. */
 function verifierFor(unpaddedSecret: string, epochMs?: number) {
   const verifier = totp.clone();
@@ -38,11 +27,7 @@ function verifierFor(unpaddedSecret: string, epochMs?: number) {
     ...(epochMs === undefined ? {} : { epoch: epochMs }),
     createHmacKey: hotpCreateHmacKey,
   };
-  const padded = unpaddedSecret.padEnd(
-    Math.ceil(unpaddedSecret.length / 8) * 8,
-    "=",
-  );
-  const key = [...decodeBase32(padded)]
+  const key = [...decodeTotpKey(unpaddedSecret)]
     .map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return { verifier, key };
 }

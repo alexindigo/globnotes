@@ -2,7 +2,7 @@
 import { join } from "@std/path";
 import { jwtVerify, SignJWT } from "jose";
 import { type Account, AccountRepository, normalizeLogin } from "./accounts.ts";
-import { matchingTotpStep, totpSecretFromRawKey } from "./credentials.ts";
+import { matchingTotpStep } from "./credentials.ts";
 import {
   fields,
   identity,
@@ -158,7 +158,7 @@ export class InstanceSessions {
     if (account.totpKey) {
       const step = matchingTotpStep(
         code ?? "",
-        totpSecretFromRawKey(account.totpKey),
+        account.totpKey,
         this.#now(),
       );
       if (step === null) throw new AuthenticationError();

@@ -269,7 +269,7 @@ describe("real App/Note session integration", () => {
     document.querySelector("#setup-mode-password").click(); await flushPromises();
     const input = async (selector, value) => { const field = document.querySelector(selector); field.value = value; field.dispatchEvent(new Event("input", { bubbles: true })); await flushPromises(); };
     await input("#setup-username", "new-account"); await input("#setup-password", "new-password");
-    postAccessTotpEnrolment.mockResolvedValue({ key: "fixture-new-key", qr: "data:image/png;base64,test", secret: "fixture-secret" });
+    postAccessTotpEnrolment.mockResolvedValue({ key: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", qr: "data:image/png;base64,test", secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" });
     document.querySelector("#setup-totp").click(); await flushPromises();
     await input("#setup-totp-code", "123456");
     putAccessSettings.mockResolvedValueOnce({ view: { mode: "password", username: "new-account", totpEnabled: true, settingsWritable: true, revision: 1, pinned: {} }, requiresLogin: true });

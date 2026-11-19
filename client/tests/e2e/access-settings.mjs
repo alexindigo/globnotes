@@ -14,6 +14,7 @@ import { showSidebar } from './sidebar-navigation-native.mjs';
 import { exerciseLockedControls } from "./access-lock-controls-native.mjs";
 import { metadataBase, metadataDirectory } from "./config-fixture.mjs";
 import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
+import { totpEnrolment } from "../../../server/auth/totp_enrolment.ts";
 
 let options;
 try { options = parseFixtureArguments("access-settings", Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -50,7 +51,7 @@ async function fixture(label, protectedMode) {
   const secret = crypto.randomUUID();
   const setup = protectedMode === "setup", totp = protectedMode === "totp", protectedAccount = !setup && !!protectedMode;
   const prefix = label.includes("prefixed") ? "/notes" : "";
-  const config = protectedAccount ? { auth_type: totp ? "totp" : "password", ...(totp ? { totp_key: crypto.randomUUID() } : {}), username, password_hash: await hashPassword(password), secret_key: secret, brand_name: "Native retained brand", unrelated_fixture: { kept: true } } : label === "locked-controls" ? { auth_type: "none", brand_name: "Native locked brand", brand_accent: "#aabbcc", unrelated_fixture: { kept: true } } : { auth_type: "none" };
+  const config = protectedAccount ? { auth_type: totp ? "totp" : "password", ...(totp ? { totp_key: (await totpEnrolment(username)).key } : {}), username, password_hash: await hashPassword(password), secret_key: secret, brand_name: "Native retained brand", unrelated_fixture: { kept: true } } : label === "locked-controls" ? { auth_type: "none", brand_name: "Native locked brand", brand_accent: "#aabbcc", unrelated_fixture: { kept: true } } : { auth_type: "none" };
   if (!setup) await Deno.writeTextFile(`${state}/config.json`, JSON.stringify(config));
   if (config.brand_name) await Deno.writeTextFile(`${state}/config.toml`, `[brand]\nname=${JSON.stringify(config.brand_name)}\naccent=${JSON.stringify(config.brand_accent ?? "")}\n`);
   if (["public-lock", "peer-policy", "locked-controls"].includes(label)) {
@@ -76,8 +77,7 @@ async function fixture(label, protectedMode) {
     await session.poll("!!document.querySelector('#username')");
     await fill("#username", username); await fill("#password", password);
     if (totp) {
-      const { totpSecretFromRawKey } = await import("../../../server/auth/local.ts");
-      const secret = totpSecretFromRawKey(config.totp_key);
+      const secret = config.totp_key;
       await fill("#one-time-code", await totpClock.loginCode(secret, []));
       await session.button("Log In");
     } else await session.button("Log In");
@@ -245,8 +245,7 @@ try {
 
   if (selected("current-totp-password")) {
   await fixture("current-totp-password", "totp");
-  const { totpSecretFromRawKey } = await import("../../../server/auth/local.ts");
-  const currentSecret = totpSecretFromRawKey(owned.initial.totp_key);
+  const currentSecret = owned.initial.totp_key;
   const old = await owned.session.evaluate("sessionStorage.getItem('token')"), original = await saved();
   await access(); await fill("#setup-password", "changed-native-password"); await fill("#access-current-password", password);
   await fill("#access-current-totp", await owned.totpClock.code(currentSecret, -10));
@@ -293,10 +292,9 @@ try {
   }
 
   if (selected("replace-authenticator")) {
-  const { totpSecretFromRawKey } = await import("../../../server/auth/local.ts");
   await fixture("replace-authenticator", "totp");
   const replacementToken = await owned.session.evaluate("sessionStorage.getItem('token')"), replacementBefore = await saved();
-  const originalSecret = totpSecretFromRawKey(owned.initial.totp_key), replacementRequests = [];
+  const originalSecret = owned.initial.totp_key, replacementRequests = [];
   const disposeReplacement = owned.session.page.onEvent(event => { if (event.method === "Network.responseReceived" && event.params.response.url.endsWith("/_/api/access/totp-enrolment")) replacementRequests.push(event.params.requestId); });
   await access(); await owned.session.button("Set up a new authenticator"); await owned.session.poll("!!document.querySelector('#setup-totp-qr img')");
   const replacementResponse = await owned.session.send("Network.getResponseBody", { requestId: replacementRequests[0] });

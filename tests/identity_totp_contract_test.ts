@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { AccountRepository } from "../server/auth/accounts.ts";
-import { totpSecretFromRawKey } from "../server/auth/credentials.ts";
+import { decodeTotpKey } from "../server/auth/credentials.ts";
 import { StoredConfigConflict } from "../server/config/file_store.ts";
 import { IdentityStateError } from "../server/auth/records.ts";
 import { identityAccount, identityFixture } from "./helpers/identity.ts";
 import { createUuid } from "../shared/uuid.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
 
+const KEY = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+
 for (const raw of ["\ud800", "\udfff", "a\ud800b", "a\udfffb", "", null, 17]) {
   Deno.test(`TOTP boundary: rejects invalid raw key ${JSON.stringify(raw)}`, () => {
-    assertThrows(() => totpSecretFromRawKey(raw as string));
+    assertThrows(() => decodeTotpKey(raw as string));
   });
 }
 
@@ -23,7 +25,7 @@ for (const path of ["create", "change", "reload"] as const) {
         assertEquals(repo.byLogin("alice"), null);
         return;
       }
-      const account = repo.create(identityAccount({ totpKey: "\ufffd" }));
+      const account = repo.create(identityAccount({ totpKey: KEY }));
       repo.consumeTotp(account.id, 0, 100);
       const raw = Deno.readTextFileSync(`${root}/accounts.json`);
       if (path === "change") {
@@ -40,7 +42,7 @@ for (const path of ["create", "change", "reload"] as const) {
         assertEquals(Deno.readTextFileSync(`${root}/accounts.json`), raw);
         assertEquals(repo.byId(account.id)?.lastTotpStep, 100);
       } else {
-        const invalid = raw.replace("\ufffd", "\\ud800");
+        const invalid = raw.replace(KEY, "\\ud800");
         assert(invalid !== raw);
         Deno.writeTextFileSync(`${root}/accounts.json`, invalid);
         assertThrows(() => new AccountRepository(root));
@@ -55,14 +57,14 @@ for (
     { passwordHash: identityAccount().passwordHash },
     { passwordChangeRequired: true },
     { totpKey: undefined },
-    { totpKey: "key" },
+    { totpKey: KEY },
   ]
 ) {
   Deno.test(`TOTP floor: repository rejects a lower confirmed step with ${JSON.stringify(changes)}`, () =>
     identityFixture((root) => {
       const repo = new AccountRepository(root);
       const account = repo.create(
-        identityAccount({ totpKey: "key", lastTotpStep: 100 }),
+        identityAccount({ totpKey: KEY, lastTotpStep: 100 }),
       );
       const before = Deno.readTextFileSync(`${root}/accounts.json`);
       assertThrows(
@@ -75,7 +77,7 @@ for (
             undefined,
             99,
           ),
-        changes.totpKey === "key" ? StoredConfigConflict : IdentityStateError,
+        changes.totpKey === KEY ? StoredConfigConflict : IdentityStateError,
       );
       assertEquals(repo.byId(account.id)?.lastTotpStep, 100);
       assertEquals(Deno.readTextFileSync(`${root}/accounts.json`), before);
@@ -94,7 +96,7 @@ Deno.test("TOTP floor: confirmed steps require an explicit key; password-only ch
   identityFixture((root) => {
     const repo = new AccountRepository(root);
     const account = repo.create(
-      identityAccount({ totpKey: "key", lastTotpStep: 100 }),
+      identityAccount({ totpKey: KEY, lastTotpStep: 100 }),
     );
     for (const totpKey of [undefined, null]) {
       const before = Deno.readTextFileSync(`${root}/accounts.json`);
@@ -119,7 +121,7 @@ Deno.test("TOTP floor: confirmed steps require an explicit key; password-only ch
     const next = repo.changeCredentials(
       account.id,
       1,
-      { totpKey: "key" },
+      { totpKey: KEY },
       createUuid(),
       undefined,
       101,
@@ -129,7 +131,7 @@ Deno.test("TOTP floor: confirmed steps require an explicit key; password-only ch
     const own = repo.changeCredentials(
       account.id,
       2,
-      { totpKey: "key" },
+      { totpKey: KEY },
       createUuid(),
       undefined,
       102,
@@ -140,7 +142,7 @@ Deno.test("TOTP floor: confirmed steps require an explicit key; password-only ch
       repo.changeCredentials(
         account.id,
         3,
-        { totpKey: "new-key" },
+        { totpKey: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP" },
         createUuid(),
         undefined,
         99,

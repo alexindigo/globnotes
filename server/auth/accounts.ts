@@ -3,7 +3,7 @@ import { join } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { hashPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
-import { sameTotpKey, validTotpKey } from "./credentials.ts";
+import { validTotpKey } from "./credentials.ts";
 import {
   fields,
   identity,
@@ -229,7 +229,7 @@ export class AccountRepository {
     if (
       !account || account.id !== proof.id ||
       account.credentialRevision !== proof.credentialRevision ||
-      !sameTotpKey(account.totpKey, proof.totpKey) ||
+      account.totpKey !== proof.totpKey ||
       account.lastTotpStep !== proof.lastTotpStep
     ) throw new StoredConfigConflict();
   }
@@ -274,9 +274,8 @@ export class AccountRepository {
     const key = changes.totpKey === undefined
       ? account.totpKey
       : changes.totpKey;
-    const floor = sameTotpKey(key, account.totpKey)
-      ? account.lastTotpStep
-      : null;
+    // Validated canonical text is an exact identity for the fixed-length bytes.
+    const floor = key === account.totpKey ? account.lastTotpStep : null;
     if (proof) this.#assertCredentialProof(account, proof);
     if (
       confirmedTotpStep !== undefined && floor !== null &&

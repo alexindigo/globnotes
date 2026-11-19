@@ -14,15 +14,14 @@ import { StoredConfigConflict } from "../server/config/file_store.ts";
 import { hashPassword } from "../server/helpers.ts";
 import { identityFixture, UPDATE } from "./helpers/identity.ts";
 import { authenticatorCode } from "./helpers/totp.ts";
-import { totpSecretFromRawKey } from "../server/auth/credentials.ts";
 import { SignJWT } from "jose";
 import { workMilestone } from "./helpers/product_settlement.ts";
 
 const NOW = 1_800_000_000_000;
 
-Deno.test("TOTP identity: a surrogate alias cannot reset an authenticator's consumed floor", () =>
+Deno.test("TOTP identity: a zero-padded alias cannot reset an authenticator's consumed floor", () =>
   fixture(async (f) => {
-    const key = "\ufffd", alias = "\ud800";
+    const key = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", alias = key + "\0";
     f.accounts.changeCredentials(f.alice.id, 0, { totpKey: key }, createUuid());
     const code = await f.code(key);
     const signed = await f.login("alice", "password", code);
@@ -42,7 +41,7 @@ Deno.test("TOTP identity: a surrogate alias cannot reset an authenticator's cons
   }));
 
 async function replayFixture(f: Awaited<ReturnType<typeof setup>>) {
-  const key = "commit-old-key";
+  const key = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
   f.accounts.changeCredentials(f.alice.id, 0, { totpKey: key }, createUuid());
   const signed = await f.login("alice", "password", await f.code(key));
   f.tick();
@@ -51,7 +50,7 @@ async function replayFixture(f: Awaited<ReturnType<typeof setup>>) {
     key,
     signed,
     step: NOW / 30_000 + 2,
-    previous: await authenticatorCode(totpSecretFromRawKey(key), NOW + 30_000),
+    previous: await authenticatorCode(key, NOW + 30_000),
     current: await f.code(key),
   };
 }
@@ -77,8 +76,8 @@ for (
         : kind === "replace"
         ? {
           enabled: true,
-          key: "commit-new-key",
-          code: await f.code("commit-new-key"),
+          key: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+          code: await f.code("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"),
         }
         : kind === "remove"
         ? { enabled: false }
@@ -172,7 +171,7 @@ Deno.test("TOTP commit fence: the operation may confirm its own consumed step", 
 
 Deno.test("TOTP commit fence: first enrollment cannot overwrite a newly active authenticator", () =>
   fixture(async (f) => {
-    const key = "first-enrollment-key", code = await f.code(key);
+    const key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", code = await f.code(key);
     const entered = Promise.withResolvers<void>(),
       release = Promise.withResolvers<string>();
     const hashed = await hashPassword("new-password");
@@ -281,7 +280,7 @@ async function setup(root: string) {
     tick: () => {
       now += 30_000;
     },
-    code: (key: string) => authenticatorCode(totpSecretFromRawKey(key), now),
+    code: (key: string) => authenticatorCode(key, now),
     change: {
       revision: 0,
       updateId: UPDATE,
