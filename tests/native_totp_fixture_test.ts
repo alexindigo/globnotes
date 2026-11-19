@@ -125,6 +125,57 @@ Deno.test("native TOTP frozen clock: equal-code collision is skipped before publ
   }
 });
 
+Deno.test("native TOTP frozen clock: failed publication preserves the starting step for the next login", async (t) => {
+  for (const boundary of ["write", "rename"]) {
+    await t.step(boundary, async () => {
+      const directory = await Deno.makeTempDir({
+        prefix: "native-frozen-publication-",
+      });
+      try {
+        const clock = await createNativeTotpClock(directory, 1234567890_000),
+          before = clock.now();
+        const secret = "JBSWY3DPEHPK3PXP",
+          file = `${directory}/authenticator-time.json`;
+        const consumed = await Promise.all(
+          [1, 2, 3].map((offset) => clock.code(secret, offset)),
+        );
+        const write = Deno.writeTextFileSync, rename = Deno.renameSync;
+        try {
+          if (boundary === "write") {
+            Deno.writeTextFileSync = ((path, data, options) => {
+              if (String(path) === `${file}.next`) {
+                throw Error("injected staging write failure");
+              }
+              write(path, data, options);
+            }) as typeof write;
+          } else {
+            Deno.renameSync = ((from, to) => {
+              if (String(to) === file) throw Error("injected rename failure");
+              rename(from, to);
+            }) as typeof rename;
+          }
+          await assertRejects(
+            () => clock.loginCode(secret, consumed),
+            Error,
+            "injected",
+          );
+        } finally {
+          Deno.writeTextFileSync = write;
+          Deno.renameSync = rename;
+        }
+        assertEquals(JSON.parse(await Deno.readTextFile(file)), before);
+        assertEquals(clock.now(), before);
+        const code = await clock.loginCode(secret, consumed);
+        assertEquals(clock.now(), before + 4 * TOTP_STEP_MS);
+        assertEquals(code, await authenticatorCode(secret, clock.now()));
+        assertEquals(JSON.parse(await Deno.readTextFile(file)), clock.now());
+      } finally {
+        await Deno.remove(directory, { recursive: true });
+      }
+    });
+  }
+});
+
 Deno.test("native TOTP frozen clock: current proofs leave later login codes unspent without adjacent-step fallback", async () => {
   const directory = await Deno.makeTempDir({ prefix: "native-frozen-proof-" });
   try {

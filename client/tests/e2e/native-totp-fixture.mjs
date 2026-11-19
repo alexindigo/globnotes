@@ -26,9 +26,10 @@ export async function createNativeTotpClock(directory, epochMs = Date.now()) {
       throw Error("Every candidate login code was already consumed");
     },
     advanceStep(steps = 1) {
-      now += steps * TOTP_STEP_MS;
-      Deno.writeTextFileSync(`${file}.next`, JSON.stringify(now));
+      const next = now + steps * TOTP_STEP_MS;
+      Deno.writeTextFileSync(`${file}.next`, JSON.stringify(next));
       Deno.renameSync(`${file}.next`, file);
+      now = next;
     },
   };
   return clock;
