@@ -74,10 +74,13 @@ warnings and exposed through config diagnostics, not as failed operations.
 ### Owned state-root permissions and durability
 
 The configured instance and vault metadata roots are the durability boundaries.
-Startup opens and syncs each owned root before serving requests. The server user
-needs read and search (`r+x`) permission on these roots and their owned directories,
-plus write permission wherever it creates or replaces entries. A problem is a
-startup operator error naming the directory and required permission.
+Startup currently opens and syncs only the active vault metadata root before
+serving requests. The instance path is resolved, but its storage is not yet active;
+instance storage joins startup preflight when activated. The server user needs
+read and search (`r+x`) permission on active roots and their owned directories,
+plus write permission wherever it creates or replaces entries. Failure to prepare
+an active root is a startup operator error naming the directory and required
+permission.
 
 Every publication re-syncs the target directory and every directory back through
 its owned root, including directories left by an earlier failed attempt. Saves
