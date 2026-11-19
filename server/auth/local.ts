@@ -8,7 +8,6 @@
  */
 
 import { jwtVerify, SignJWT } from "jose";
-import { encodeBase32 } from "@std/encoding/base32";
 import QRCode from "qrcode";
 
 import { AuthType, type GlobalConfig } from "../config.ts";
@@ -20,8 +19,8 @@ import { serviceSettings } from "../config/consumers.ts";
 
 const JWT_ALGORITHM = "HS256";
 
-import { checkTotpCode } from "./credentials.ts";
-export { checkTotpCode, totpSecretFromRawKey } from "./credentials.ts";
+import { checkTotpCode, validTotpKey } from "./credentials.ts";
+export { checkTotpCode } from "./credentials.ts";
 
 export class LocalAuth {
   readonly username: string;
@@ -29,7 +28,6 @@ export class LocalAuth {
   private readonly secretKey: string;
   private readonly sessionExpirySeconds: number;
   readonly isTotpEnabled: boolean;
-  private totpSecret = "";
   private unpaddedTotpSecret = "";
   private lastUsedTotp: string | null = null;
 
@@ -69,11 +67,9 @@ export class LocalAuth {
         );
         Deno.exit(1);
       }
+      if (!validTotpKey(rawKey)) throw new Error("Invalid authenticator key.");
       this.isTotpEnabled = true;
-      this.totpSecret = encodeBase32(new TextEncoder().encode(rawKey));
-      // Authenticators enrol the UNPADDED form (the QR/manual key strips
-      // padding) — check against the same string, stripped once here.
-      this.unpaddedTotpSecret = this.totpSecret.replace(/=+$/, "");
+      this.unpaddedTotpSecret = rawKey;
     }
   }
 

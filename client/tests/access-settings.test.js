@@ -14,7 +14,7 @@ afterEach(() => { wrapper?.unmount(); wrapper = null; vi.useRealTimers(); });
 
 describe("configured Access through the shared mode/enrolment content", () => {
   it("retains the account without requesting a new password when enabling 2FA", async () => {
-    postAccessTotpEnrolment.mockResolvedValue({ key: "new-key", secret: "NEWSECRET", qr: "data:image/png;base64,test" });
+    postAccessTotpEnrolment.mockResolvedValue({ key: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", qr: "data:image/png;base64,test" });
     wrapper = mount(SetupModal, { props: { dismissible: true }, attachTo: document.body }); await flushPromises();
     expect(wrapper.get("#setup-username").element.value).toBe("alice");
     expect(wrapper.get("#setup-password").element.value).toBe("");
@@ -25,7 +25,7 @@ describe("configured Access through the shared mode/enrolment content", () => {
     await wrapper.get("form").trigger("submit"); await flushPromises();
     const data = putAccessSettings.mock.calls[0][0];
     expect(data.password).toBeUndefined(); expect(data.username).toBeUndefined();
-    expect(data).toMatchObject({ mode: "password", totpEnabled: true, totpKey: "new-key", totpCode: "123456", currentPassword: "current-password", revision: 3, signature: "current" });
+    expect(data).toMatchObject({ mode: "password", totpEnabled: true, totpKey: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", totpCode: "123456", currentPassword: "current-password", revision: 3, signature: "current" });
     expect(postSetup).not.toHaveBeenCalled();
   });
   it("current and new authenticator proofs remain distinct and the current key is not disclosed", async () => {
@@ -64,7 +64,7 @@ describe("configured Access through the shared mode/enrolment content", () => {
     wrapper = mount(SetupModal, { props: { dismissible: true }, attachTo: document.body }); await flushPromises();
     await wrapper.get("#setup-totp").trigger("click"); await flushPromises();
     await wrapper.get("#setup-totp").trigger("click");
-    respond({ key: "late-key", qr: "data:image/png;base64,late", secret: "late-secret" }); await flushPromises();
+    respond({ key: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", qr: "data:image/png;base64,late", secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP" }); await flushPromises();
     expect(wrapper.find("#setup-totp-qr").exists()).toBe(false); expect(putAccessSettings).not.toHaveBeenCalled();
   });
 });
@@ -192,7 +192,7 @@ describe("review repairs: R14 Access conflict review ownership", () => {
   });
   it("review repairs: R14 mounted Review retains proposed credentials and bundle without renaming the changed current account", async () => {
     const beforeCommit = vi.fn(async () => true);
-    postAccessTotpEnrolment.mockResolvedValue({ key: "retained-key", secret: "RETAINEDSECRET", qr: "data:image/png;base64,retained" });
+    postAccessTotpEnrolment.mockResolvedValue({ key: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", qr: "data:image/png;base64,retained" });
     putAccessSettings.mockRejectedValueOnce(conflict).mockResolvedValueOnce({ view: { ...view(), username: "bob", totpEnabled: true, revision: 6 }, requiresLogin: true });
     wrapper = mount(SetupModal, { props: { dismissible: true, beforeCommit }, attachTo: document.body }); await flushPromises();
     await wrapper.get("#setup-password").setValue("proposed-new-password");
@@ -220,7 +220,7 @@ describe("review repairs: R14 Access conflict review ownership", () => {
     await wrapper.get("form").trigger("submit"); await flushPromises();
     expect(beforeCommit).toHaveBeenCalledTimes(2); expect(putAccessSettings).toHaveBeenCalledTimes(2);
     expect(putAccessSettings.mock.calls[1][0]).toMatchObject({ mode: "password", password: "proposed-new-password", revision: 5,
-      signature: "fresh-account", currentPassword: "fresh-current-password", currentTotp: "654321", totpKey: "retained-key", totpCode: "123456" });
+      signature: "fresh-account", currentPassword: "fresh-current-password", currentTotp: "654321", totpKey: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", totpCode: "123456" });
     expect(putAccessSettings.mock.calls[1][0].username).toBeUndefined();
   });
   it("review repairs: R14 review cannot publish across a newer form load", async () => {

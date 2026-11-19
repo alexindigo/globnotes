@@ -3,6 +3,7 @@ import { join } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { hashPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
+import { validTotpKey } from "./credentials.ts";
 import {
   fields,
   identity,
@@ -23,6 +24,11 @@ export interface Account {
   readonly passwordChangeRequired: boolean;
   readonly credentialUpdateId: string | null;
 }
+/** Snapshot returned by current-credential confirmation, not a session lifetime. */
+export type CredentialProof = Pick<
+  Account,
+  "id" | "credentialRevision" | "totpKey" | "lastTotpStep"
+>;
 export interface ProvisioningReceipt {
   readonly operationId: string;
   readonly actorId: string;
@@ -72,8 +78,7 @@ export function validateAccount(value: unknown): Account {
     ]) || !identity(value.id) || typeof value.login !== "string" ||
     normalizeLogin(value.login) !== value.login ||
     !validPasswordHash(value.passwordHash) ||
-    !(value.totpKey === null ||
-      (typeof value.totpKey === "string" && value.totpKey.length > 0)) ||
+    !(value.totpKey === null || validTotpKey(value.totpKey)) ||
     !(value.lastTotpStep === null || integer(value.lastTotpStep)) ||
     (value.totpKey === null && value.lastTotpStep !== null) ||
     !integer(value.credentialRevision) ||
@@ -217,6 +222,27 @@ export class AccountRepository {
   importAccount(account: Account, expected = this.capture()): Account {
     return this.create(account, expected);
   }
+  #assertCredentialProof(
+    account: Account | null,
+    proof: CredentialProof,
+  ): void {
+    if (
+      !account || account.id !== proof.id ||
+      account.credentialRevision !== proof.credentialRevision ||
+      account.totpKey !== proof.totpKey ||
+      account.lastTotpStep !== proof.lastTotpStep
+    ) throw new StoredConfigConflict();
+  }
+  /** Recheck an admitted proof at final disclosure after asynchronous work. */
+  assertCredentialProof(proof: CredentialProof): void {
+    const expected = this.capture();
+    this.#assertCredentialProof(
+      expected.value.accounts.find((account) => account.id === proof.id) ??
+        null,
+      proof,
+    );
+    this.#file.assertUnchanged(expected);
+  }
   changeCredentials(
     id: string,
     credentialRevision: number,
@@ -225,6 +251,8 @@ export class AccountRepository {
     >,
     updateId: string,
     guard: () => void = () => {},
+    confirmedTotpStep?: number,
+    proof?: CredentialProof,
   ): Account {
     const expected = this.capture(), account = this.byId(id);
     if (
@@ -237,13 +265,32 @@ export class AccountRepository {
     if (!account || account.credentialRevision !== credentialRevision) {
       throw new StoredConfigConflict();
     }
+    if (
+      (changes.totpKey !== undefined && changes.totpKey !== null &&
+        !validTotpKey(changes.totpKey)) ||
+      (confirmedTotpStep !== undefined &&
+        (!integer(confirmedTotpStep) || !validTotpKey(changes.totpKey)))
+    ) throw new IdentityStateError();
+    const key = changes.totpKey === undefined
+      ? account.totpKey
+      : changes.totpKey;
+    // Validated canonical text is an exact identity for the fixed-length bytes.
+    const floor = key === account.totpKey ? account.lastTotpStep : null;
+    if (proof) this.#assertCredentialProof(account, proof);
+    if (
+      confirmedTotpStep !== undefined && floor !== null &&
+      (confirmedTotpStep < floor ||
+        confirmedTotpStep === floor &&
+          (!proof || confirmedTotpStep !== proof.lastTotpStep))
+    ) {
+      throw new StoredConfigConflict();
+    }
     const next = validateAccount({
       ...account,
       ...changes,
-      lastTotpStep:
-        changes.totpKey !== undefined && changes.totpKey !== account.totpKey
-          ? null
-          : account.lastTotpStep,
+      lastTotpStep: confirmedTotpStep === undefined
+        ? floor
+        : Math.max(floor ?? confirmedTotpStep, confirmedTotpStep),
       credentialRevision: account.credentialRevision + 1,
       credentialUpdateId: updateId,
     });
@@ -259,20 +306,20 @@ export class AccountRepository {
     );
     return this.byId(id)!;
   }
-  consumeTotp(id: string, credentialRevision: number, step: number): void {
+  consumeTotp(id: string, credentialRevision: number, step: number): Account {
     const expected = this.capture(), account = this.byId(id);
     if (
       !account?.totpKey || account.credentialRevision !== credentialRevision ||
       !integer(step) ||
       (account.lastTotpStep !== null && step <= account.lastTotpStep)
     ) throw new StoredConfigConflict();
+    const consumed = Object.freeze({ ...account, lastTotpStep: step });
     this.#file.commit({
       ...expected.value,
       revision: expected.value.revision + 1,
       updateId: createUuid(),
-      accounts: expected.value.accounts.map((a) =>
-        a.id === id ? { ...a, lastTotpStep: step } : a
-      ),
+      accounts: expected.value.accounts.map((a) => a.id === id ? consumed : a),
     }, expected);
+    return consumed;
   }
 }

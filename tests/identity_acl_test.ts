@@ -122,7 +122,9 @@ Deno.test("identity ACL: creator/adopter preparation gives only that account Adm
 Deno.test("identity ACL: safe view exposes CAS facts, not private account or filesystem state", () =>
   identityFixture(async (root) => {
     const accounts = new AccountRepository(root);
-    accounts.create(identityAccount({ totpKey: "fixture-secret" }));
+    accounts.create(
+      identityAccount({ totpKey: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" }),
+    );
     const acl = new AclRepository(root, VAULT_A, { accounts });
     const before = await acl.view();
     acl.save(

@@ -11,7 +11,8 @@ import {
 } from "../config.ts";
 import { hashPassword } from "../helpers.ts";
 import { state } from "../state.ts";
-import { checkTotpCode, LocalAuth, totpSecretFromRawKey } from "./local.ts";
+import { checkTotpCode, LocalAuth } from "./local.ts";
+import { validTotpKey } from "./credentials.ts";
 import { settingsWriteGuard } from "./middleware.ts";
 
 function conflict(message: string): never {
@@ -218,12 +219,12 @@ export async function updateAccess(
   }
   if (
     (!enabled && (newKey !== undefined || data.totpCode !== undefined)) ||
-    (newKey === "")
+    (newKey !== undefined && !validTotpKey(newKey))
   ) throw new HttpError(422, "Invalid authenticator enrolment.");
   if (enabled && (!before.totpEnabled || newKey !== undefined)) {
     if (
       !newKey || !/^\d{6}$/.test(String(data.totpCode ?? "")) ||
-      !checkTotpCode(String(data.totpCode), totpSecretFromRawKey(newKey))
+      !checkTotpCode(String(data.totpCode), newKey)
     ) {
       throw new HttpError(
         400,

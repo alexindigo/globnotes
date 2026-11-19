@@ -15,7 +15,7 @@ import {
   TOTP_STEP_MS,
   totpStep,
 } from "./helpers/totp.ts";
-import { totpSecretFromRawKey } from "../server/auth/local.ts";
+import { validTotpKey } from "../server/auth/credentials.ts";
 import { bootServer } from "./helpers/boot.ts";
 
 Deno.test("auth: setup mode", async (t) => {
@@ -325,13 +325,13 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
         );
         assertEquals(res.status, 200);
         const body = await res.json();
-        assert(typeof body.key === "string" && body.key.length === 20);
+        assert(validTotpKey(body.key));
         assert(body.uri.startsWith("otpauth://totp/globnotes:alice"));
         assert(body.uri.includes("issuer=globnotes"));
         assert(body.qr.startsWith("data:image/png;base64,"));
         key = body.key;
         secret = new URL(body.uri).searchParams.get("secret")!;
-        assertEquals(secret, totpSecretFromRawKey(key));
+        assertEquals(secret, key);
         // The manual-entry form is the base32 secret, same as the boot log.
         assertEquals(body.secret, secret);
         assert(body.uri.includes(`secret=${secret}`));
@@ -476,11 +476,9 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
       try {
         const res = await fetch(`${restarted.baseUrl}/_/api/config`);
         assertEquals((await res.json()).authType, "totp");
-        const code = totpSecretFromRawKey(
-          JSON.parse(
-            await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
-          ).totp_key,
-        );
+        const code = JSON.parse(
+          await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
+        ).totp_key;
         const login = await fetch(`${restarted.baseUrl}/_/api/token`, {
           method: "POST",
           headers: { "content-type": "application/json" },

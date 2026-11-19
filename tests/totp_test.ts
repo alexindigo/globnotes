@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { totp } from "otplib";
 import { checkTotpCode } from "../server/auth/local.ts";
@@ -57,7 +57,11 @@ Deno.test("TOTP verification: authenticator key bytes, window and preset isolati
             "",
           );
           const code = await authenticatorCode(secret, epoch);
-          assertEquals(checkTotpCode(code, secret), true);
+          if (new TextEncoder().encode(raw).length === 20) {
+            assertEquals(checkTotpCode(code, secret), true);
+          } else {
+            assertThrows(() => checkTotpCode(code, secret));
+          }
         },
       );
     }
@@ -85,7 +89,7 @@ Deno.test("TOTP verification: authenticator key bytes, window and preset isolati
 });
 
 Deno.test("totp helper: an unused window code avoids every consumed code", async () => {
-  const secret = "JBSWY3DPEHPK3PXP";
+  const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
   const now = await settledTotpNow();
   const window = await Promise.all(
     [0, 1, -1].map((offset) =>
@@ -99,7 +103,7 @@ Deno.test("totp helper: an unused window code avoids every consumed code", async
 });
 
 Deno.test("totp helper: held token admission crosses a step without using an expired or consumed code", async () => {
-  const secret = "JBSWY3DPEHPK3PXP";
+  const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
   const now = Math.floor(1234567890_000 / TOTP_STEP_MS) * TOTP_STEP_MS +
     TOTP_STEP_MS - 1;
   const verifiedAt = now + TOTP_STEP_MS;

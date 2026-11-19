@@ -2,10 +2,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { AccountRepository, prepareAccount } from "../server/auth/accounts.ts";
-import {
-  matchingTotpStep,
-  totpSecretFromRawKey,
-} from "../server/auth/credentials.ts";
+import { decodeTotpKey, matchingTotpStep } from "../server/auth/credentials.ts";
 import {
   AuthenticationError,
   InstanceSessions,
@@ -16,21 +13,15 @@ import { identityFixture, UPDATE } from "./helpers/identity.ts";
 
 const NOW = 1_800_000_000_000;
 for (
-  const raw of [
-    "A",
-    "ABCDE",
-    "12345678901234567890",
-    "A".repeat(65),
-    "caf\u00e9",
-    "\ud83d\udd10",
+  const bytes of [
+    new TextEncoder().encode("12345678901234567890"),
+    new Uint8Array(20).fill(0),
+    new Uint8Array(20).fill(255),
   ]
 ) {
-  Deno.test(`identity TOTP: exact ${new TextEncoder().encode(raw).length}-byte key and matched window step`, async () => {
-    const secret = encodeBase32(new TextEncoder().encode(raw)).replace(
-      /=+$/,
-      "",
-    );
-    assertEquals(totpSecretFromRawKey(raw), secret);
+  Deno.test(`identity TOTP: exact 20-byte key ${encodeBase32(bytes)} and matched window step`, async () => {
+    const secret = encodeBase32(bytes);
+    assertEquals(decodeTotpKey(secret), bytes);
     for (const delta of [-2, -1, 0, 1, 2]) {
       const code = await authenticatorCode(secret, NOW + delta * 30_000);
       assertEquals(
@@ -46,14 +37,14 @@ Deno.test("identity TOTP: accepted-step replay survives concurrent logins and re
     const accounts = new AccountRepository(root);
     const alice = accounts.create(await prepareAccount("alice", "password"));
     const bob = accounts.create(await prepareAccount("bob", "password"));
-    const raw = "short";
+    const raw = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
     accounts.changeCredentials(alice.id, 0, { totpKey: raw }, UPDATE);
     accounts.changeCredentials(bob.id, 0, { totpKey: raw }, UPDATE);
     const signing = new SessionRepository(root);
     signing.initialize();
     const settings = { expirySeconds: 1000 }, options = { now: () => NOW };
     const sessions = new InstanceSessions(accounts, signing, settings, options);
-    const code = await authenticatorCode(totpSecretFromRawKey(raw), NOW);
+    const code = await authenticatorCode(raw, NOW);
     const input = { username: "alice", password: "password", totp: code };
     const results = await Promise.allSettled([
       sessions.login(input),
@@ -70,7 +61,7 @@ Deno.test("identity TOTP: accepted-step replay survives concurrent logins and re
     await assertRejects(() => restarted.login(input), AuthenticationError);
     await restarted.login({ ...input, username: "bob" });
     const previous = await authenticatorCode(
-      totpSecretFromRawKey(raw),
+      raw,
       NOW - 30_000,
     );
     await assertRejects(
@@ -78,7 +69,7 @@ Deno.test("identity TOTP: accepted-step replay survives concurrent logins and re
       AuthenticationError,
     );
     const next = await authenticatorCode(
-      totpSecretFromRawKey(raw),
+      raw,
       NOW + 30_000,
     );
     const accepted = await restarted.login({ ...input, totp: next });
@@ -97,13 +88,18 @@ Deno.test("identity TOTP: password and code are separate and failed proof never 
   identityFixture(async (root) => {
     const accounts = new AccountRepository(root),
       person = accounts.create(await prepareAccount("alice", "password"));
-    accounts.changeCredentials(person.id, 0, { totpKey: "ABCDE" }, UPDATE);
+    accounts.changeCredentials(person.id, 0, {
+      totpKey: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+    }, UPDATE);
     const signing = new SessionRepository(root);
     signing.initialize();
     const sessions = new InstanceSessions(accounts, signing, {
       expirySeconds: 1000,
     }, { now: () => NOW });
-    const code = await authenticatorCode(totpSecretFromRawKey("ABCDE"), NOW);
+    const code = await authenticatorCode(
+      "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+      NOW,
+    );
     for (
       const input of [
         { username: "alice", password: "password" + code },

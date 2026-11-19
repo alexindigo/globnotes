@@ -15,7 +15,7 @@ Deno.test("native TOTP frozen clock: rollover selects the verifier's fresh curre
     const clock = await createNativeTotpClock(directory, 1234567890_000),
       before = clock.now();
     assertEquals(before % TOTP_STEP_MS, TOTP_STEP_MS - 1);
-    const secret = "JBSWY3DPEHPK3PXP";
+    const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
     const legacyPrevious = await clock.code(secret, -1),
       enrolment = await clock.code(secret);
     const selected = await clock.loginCode(secret, [enrolment]);
@@ -86,7 +86,7 @@ Deno.test("native TOTP frozen clock: equal-code collision is skipped before publ
   try {
     const clock = await createNativeTotpClock(directory, 1234567890_000),
       before = clock.now();
-    const secret = "JBSWY3DPEHPK3PXP",
+    const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
       consumed = await clock.code(secret),
       reference = clock.code;
     const candidates: { at: number; published: number }[] = [];
@@ -134,7 +134,7 @@ Deno.test("native TOTP frozen clock: failed publication preserves the starting s
       try {
         const clock = await createNativeTotpClock(directory, 1234567890_000),
           before = clock.now();
-        const secret = "JBSWY3DPEHPK3PXP",
+        const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
           file = `${directory}/authenticator-time.json`;
         const consumed = await Promise.all(
           [1, 2, 3].map((offset) => clock.code(secret, offset)),
@@ -180,7 +180,7 @@ Deno.test("native TOTP frozen clock: current proofs leave later login codes unsp
   const directory = await Deno.makeTempDir({ prefix: "native-frozen-proof-" });
   try {
     const clock = await createNativeTotpClock(directory, 1234567890_000),
-      secret = "JBSWY3DPEHPK3PXP";
+      secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
     const initial = await clock.loginCode(secret, []);
     assertEquals(initial, await clock.code(secret));
     clock.advanceStep();

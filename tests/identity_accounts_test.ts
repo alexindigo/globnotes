@@ -196,7 +196,9 @@ for (
 Deno.test("accounts: credential CAS and TOTP consumption have different revisions", () =>
   identityFixture((root) => {
     const repo = new AccountRepository(root);
-    const alice = repo.create(identityAccount({ totpKey: "raw-key" }));
+    const alice = repo.create(
+      identityAccount({ totpKey: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" }),
+    );
     repo.consumeTotp(alice.id, 0, 100);
     assertEquals(repo.byId(alice.id)?.credentialRevision, 0);
     assertThrows(

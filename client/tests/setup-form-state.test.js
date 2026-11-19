@@ -14,7 +14,7 @@ const view = (overrides = {}) => ({
   mode: "password", username: "alice", totpEnabled: false, settingsWritable: true,
   readOnlySettings: false, revision: 3, signature: "current", pinned: {}, ...overrides,
 });
-const bundle = { key: "minted-key", secret: "BASE32SECRET", qr: "data:image/png;base64,qr" };
+const bundle = { key: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", qr: "data:image/png;base64,qr" };
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -176,7 +176,7 @@ describe("ticketed enrolment and copy arming", () => {
   it.each(["success", "failure"])("ignores late enrolment %s after a new toggle", async outcome => {
     const old = deferred(); const { form, state, enrolSetup } = setup({ enrolSetup: vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce(bundle) });
     await enrol(form); form.setField("totpEnabled", false); await nextTick(); await enrol(form);
-    if (outcome === "success") old.resolve({ key: "old", secret: "OLD", qr: "old" }); else old.reject(Error("old failure"));
+    if (outcome === "success") old.resolve({ key: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", qr: "old" }); else old.reject(Error("old failure"));
     await flushPromises();
     expect(state).toMatchObject({ totpEnabled: true, totpKey: bundle.key, totpSecret: bundle.secret, feedback: "" });
     expect(enrolSetup).toHaveBeenCalledTimes(2);
