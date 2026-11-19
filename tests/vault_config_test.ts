@@ -143,18 +143,10 @@ for (
             }) as typeof remove;
           }
         }) as typeof rename;
-        if (boundary === "cleanup-failure") {
-          assertThrows(
-            () => store.save({ brand: { name: "Committed" } }),
-            Deno.errors.PermissionDenied,
-            "post-rename cleanup",
-          );
-        } else {
-          assertEquals(
-            store.save({ brand: { name: "Committed" } }).brand.name,
-            "Committed",
-          );
-        }
+        assertEquals(
+          store.save({ brand: { name: "Committed" } }).brand.name,
+          "Committed",
+        );
         assertEquals(store.settings.brand.name, "Committed");
         assert(store.capture() !== before);
         assertEquals(store.capture().persistence.raw, written);

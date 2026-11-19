@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import * as path from "@std/path";
+import { warnStoredDurability } from "./durability.ts";
 
 interface ConfigNode {
   readonly location: string;
@@ -172,6 +173,13 @@ function configBinding(configured: string): StoredConfigSnapshot["binding"] {
 /** Main's bound-file persistence, independent of serialization and config policy.
  * The owning service serializes writes and publishes its state only on success. */
 export class BoundFileStore {
+  // Ownership bindings only, never durability credit. A failed preparation can
+  // retry our own mkdir effects without accepting any foreign replacement.
+  readonly #parents = new WeakMap<StoredConfigSnapshot, StoredConfigSnapshot>();
+  #bound(snapshot: StoredConfigSnapshot): StoredConfigSnapshot {
+    while (this.#parents.has(snapshot)) snapshot = this.#parents.get(snapshot)!;
+    return snapshot;
+  }
   constructor(readonly filename: string) {}
 
   capture(): StoredConfigSnapshot {
@@ -184,6 +192,7 @@ export class BoundFileStore {
   }
 
   assertUnchanged(snapshot: StoredConfigSnapshot): void {
+    snapshot = this.#bound(snapshot);
     let current: StoredConfigSnapshot;
     try {
       current = this.capture();
@@ -202,8 +211,9 @@ export class BoundFileStore {
 
   /** The only metadata-parent creator. No file bytes are written or recaptured. */
   prepareParents(expected = this.capture()): StoredConfigSnapshot {
+    expected = this.#bound(expected);
     this.assertUnchanged(expected);
-    const created = new Map<string, ConfigNode>();
+    let prepared = expected;
     for (const node of expected.binding.nodes) {
       if (node.identity || node.location === expected.binding.target) continue;
       try {
@@ -214,24 +224,26 @@ export class BoundFileStore {
         }
         throw error;
       }
-      created.set(node.location, configNode(node.location));
-    }
-    const prepared = Object.freeze({
-      raw: expected.raw,
-      binding: Object.freeze({
-        ...expected.binding,
-        nodes: Object.freeze(
-          expected.binding.nodes.map((node) =>
-            created.get(node.location) ?? node
+      const created = configNode(node.location);
+      const next = Object.freeze({
+        raw: prepared.raw,
+        binding: Object.freeze({
+          ...prepared.binding,
+          nodes: Object.freeze(
+            prepared.binding.nodes.map((n) =>
+              n.location === created.location ? created : n
+            ),
           ),
-        ),
-      }),
-    });
-    this.assertUnchanged(prepared);
-    if (created.size) {
-      const directories = [...created.keys()];
-      syncStoredDirectory(directories.at(-1)!, path.dirname(directories[0]));
+        }),
+      });
+      this.#parents.set(prepared, next);
+      prepared = next;
     }
+    this.assertUnchanged(prepared);
+    syncStoredDirectory(
+      path.dirname(prepared.binding.target),
+      path.parse(prepared.binding.target).root,
+    );
     return prepared;
   }
 
@@ -324,7 +336,7 @@ export class BoundFileStore {
       try {
         // Flush the final directory state after publication and candidate cleanup,
         // even when cleanup failed. The known snapshot was published above.
-        syncStoredDirectory(path.dirname(target));
+        syncStoredDirectory(path.dirname(target), path.parse(target).root);
       } catch (error) {
         failure = failed
           ? new StoredConfigDurabilityError({
@@ -333,6 +345,10 @@ export class BoundFileStore {
           : error;
         failed = true;
       }
+    }
+    if (published) {
+      if (failed) warnStoredDurability();
+      return;
     }
     if (failed) throw failure;
   }

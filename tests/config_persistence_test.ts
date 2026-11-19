@@ -129,12 +129,7 @@ for (const boundary of ["capture-failure", "cleanup-failure"]) {
           link(from, to);
           published(to);
         };
-        if (boundary === "cleanup-failure") {
-          assertThrows(
-            () => config.saveStoredConfig(next),
-            Deno.errors.PermissionDenied,
-          );
-        } else config.saveStoredConfig(next);
+        config.saveStoredConfig(next);
         assertEquals(config.storedConfig, next);
         assertEquals(
           JSON.parse(Deno.readTextFileSync(config.configPath)),

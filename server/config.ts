@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 /** Resolved single-vault settings plus the temporary piece-2-owned auth record. */
 import * as path from "@std/path";
+import { storedDurabilityStatus } from "./config/durability.ts";
 import { parseAllowedHosts } from "./host_admission.ts";
 import {
   BoundFileStore,
@@ -31,6 +32,9 @@ export interface StoredConfig {
 }
 export type ResolvedVaultSettings = ReturnType<typeof singleVaultSettings>;
 export class GlobalConfig {
+  get storageDurability() {
+    return storedDurabilityStatus();
+  }
   readonly notesPath: string;
   readonly statePath: string;
   readonly pathPrefix: string;

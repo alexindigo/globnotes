@@ -358,10 +358,9 @@ for (const { filename, before, after } of formats) {
           }
           remove(file, opts);
         }) as typeof remove;
-        assertThrows(() =>
-          store.replace(after, store.capture(), () => {
-            published = true;
-          }), Deno.errors.PermissionDenied);
+        store.replace(after, store.capture(), () => {
+          published = true;
+        });
         assert(published);
         assertEquals(Deno.readTextFileSync(target), after);
         Deno.renameSync = (() => {

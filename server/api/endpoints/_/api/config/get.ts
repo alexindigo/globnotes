@@ -18,6 +18,7 @@ export default function (request?: PathfinderRequest): Record<string, unknown> {
   assertVaultTarget(c, request);
   return {
     setupRequired: c.setupRequired,
+    storageDurability: c.storageDurability,
     authType: c.authType,
     settingsWritable: c.settingsWritable,
     readOnlySettings: c.readOnlySettings,

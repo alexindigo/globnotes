@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-export type DurabilityEvent = { kind: string; file: string };
+export type DurabilityEvent = { kind: string; file: string; source?: string };
 /** Real fsyncs and effects, with an optional one-shot directory failure. */
 export function observeDurability(
   run: (
@@ -38,11 +38,11 @@ export function observeDurability(
     }) as typeof mkdir;
     Deno.linkSync = (from, to) => {
       link(from, to);
-      events.push({ kind: "link", file: String(to) });
+      events.push({ kind: "link", file: String(to), source: String(from) });
     };
     Deno.renameSync = (from, to) => {
       rename(from, to);
-      events.push({ kind: "rename", file: String(to) });
+      events.push({ kind: "rename", file: String(to), source: String(from) });
     };
     run(events, (file) => {
       denied = file;
