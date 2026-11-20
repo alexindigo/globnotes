@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
+import { fixtureGate, fixtureTest } from "./helpers/fixture_coordination.ts";
+import type { FixtureScope } from "./helpers/fixture_scope.ts";
 import { HttpError } from "@pathfinder/pathfinder";
 import { AccountRepository, prepareAccount } from "../server/auth/accounts.ts";
 import { AclRepository, type AclValues } from "../server/auth/acl.ts";
@@ -27,6 +35,7 @@ import {
 } from "./helpers/identity.ts";
 import { pluginOperationsFixture } from "./helpers/plugin_operations_fixture.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
+import { createOperationLease } from "../server/operation_lease.ts";
 
 const NOW = 1_800_000_000_000;
 async function identities(root: string) {
@@ -57,11 +66,13 @@ async function identities(root: string) {
 async function fixture(
   run: (f: Awaited<ReturnType<typeof scope>>) => Promise<void>,
 ) {
-  await identityFixture(async (root) => {
-    await run(await scope(root));
+  await identityFixture(async (root, owner) => {
+    const f = await scope(root, owner);
+    owner.onCancel(() => f.lifetime.retire());
+    await run(f);
   });
 }
-async function scope(root: string) {
+async function scope(root: string, owner: FixtureScope) {
   const base = await identities(root),
     vaultPath = `${root}/notes`,
     metadata = `${root}/meta`;
@@ -76,12 +87,19 @@ async function scope(root: string) {
   acl.initializeForCreator(base.alice, "none");
   const target: AuthorityVault = { identity: {}, id: VAULT_A, acl, lifecycle };
   let selected: AuthorityVault | null = target;
-  const authority = new InstanceAuthority(base.sessions, () => selected);
-  const auth = createInstanceAuth({
+  const lifetime = createOperationLease("live", [() => {}]);
+  const authority = new InstanceAuthority(
+    base.sessions,
+    () => selected,
+    lifetime.lease,
+  );
+  const authAdapters = {
     sessions: base.sessions,
     vault: () => selected,
     cookieName: "fixture-token",
-  });
+    lifetime: () => lifetime.lease,
+  };
+  const auth = createInstanceAuth(authAdapters);
   const request = (
     method = "POST",
     headers: HeadersInit = {
@@ -95,13 +113,17 @@ async function scope(root: string) {
     });
   return {
     ...base,
+    owner,
     root,
     metadata,
     acl,
     lifecycle,
+    lifetime,
     target,
     authority,
     auth,
+    authAdapters,
+    config,
     request,
     policy,
     select: (value: AuthorityVault | null) => {
@@ -127,9 +149,8 @@ Deno.test("identity authority: capabilities implement the level matrix, not meth
       assertEquals(f.authority.capabilities(GUEST).canManageVault, false);
     }
     f.policy({ everybody: "none", grants: { [f.alice.id]: "view" } });
-    assert(
-      (await f.auth.readLease(f.request("POST"))).disclose(() => "rendered"),
-    );
+    const renderLease = await f.auth.readLease(f.request("POST"));
+    assert(renderLease.disclose(renderLease.prepare("rendered")));
     await assertRejects(
       () => f.auth.noteMutationLease(f.request("GET")),
       HttpError,
@@ -234,15 +255,18 @@ Deno.test("identity review 1: fresh projections retain the same bundle lease", (
     const authority = new InstanceAuthority(
       f.sessions,
       () => ({ ...f.target }),
+      f.lifetime.lease,
     );
     const lease = authority.lease(f.token.principal, "editNotes");
     lease.assertCurrent();
     assertEquals(
-      await lease.read(() => Promise.resolve("same bundle bytes")),
+      lease.disclose(
+        await lease.read(() => Promise.resolve("same bundle bytes")),
+      ),
       "same bundle bytes",
     );
     assertEquals(
-      lease.disclose(() => "same bundle response"),
+      lease.disclose(lease.prepare("same bundle response")),
       "same bundle response",
     );
   }));
@@ -342,7 +366,11 @@ Deno.test("identity authority: expiry, credential changes, ACL and bundle replac
       acl: otherAcl,
       lifecycle: f.lifecycle,
     };
-    const otherAuthority = new InstanceAuthority(f.sessions, () => other);
+    const otherAuthority = new InstanceAuthority(
+      f.sessions,
+      () => other,
+      f.lifetime.lease,
+    );
     const otherLease = otherAuthority.lease(bob, "manageVault");
     f.policy({ everybody: "none", grants: { [f.alice.id]: "view" } });
     otherLease.assertCurrent();
@@ -371,7 +399,7 @@ Deno.test("identity authority: expiry, credential changes, ACL and bundle replac
 Deno.test("identity authority: late read and actual streamed disclosure stop at revocation", () =>
   fixture(async (f) => {
     const lease = await f.auth.readLease(f.request()),
-      held = Promise.withResolvers<void>();
+      held = fixtureGate(f.owner);
     Deno.writeTextFileSync(`${f.root}/note.md`, "private bytes");
     const observed: string[] = [];
     const reading = lease.read(async () => {
@@ -379,7 +407,7 @@ Deno.test("identity authority: late read and actual streamed disclosure stop at 
       return Deno.readTextFileSync(`${f.root}/note.md`);
     })
       .then((value) => {
-        observed.push(value);
+        observed.push(lease.disclose(value));
       });
     reading.catch(() => {});
     f.policy({ everybody: "none", grants: {} });
@@ -389,8 +417,8 @@ Deno.test("identity authority: late read and actual streamed disclosure stop at 
 
     f.policy({ everybody: "none", grants: { [f.alice.id]: "view" } });
     const streamLease = await f.auth.readLease(f.request());
-    const release = Promise.withResolvers<void>();
-    const entered = Promise.withResolvers<void>();
+    const release = fixtureGate(f.owner);
+    const entered = fixtureGate(f.owner);
     let cancelled = false;
     const source = new ReadableStream<string>({
       async pull(controller) {
@@ -453,7 +481,7 @@ for (const revoke of [false, true]) {
           "revoked",
           "persistence",
         ]);
-        assertEquals(settings.capture(), before);
+        assertStrictEquals(settings.capture(), before);
         assertEquals(new BoundFileStore(settings.filename).capture().raw, raw);
       } else {
         const expected = {
@@ -472,116 +500,494 @@ for (const revoke of [false, true]) {
     }));
 }
 
+const P05_CHANGES = [
+  "bundle",
+  "acl-owner",
+  "lifecycle-owner",
+  "epoch",
+  "policy",
+  "credentials",
+  "expiry",
+  "composition",
+  "sessions",
+  "abort",
+  "same-wrapper",
+] as const;
+type P05Change = typeof P05_CHANGES[number];
+function replaceP05Owner(
+  f: Awaited<ReturnType<typeof scope>>,
+  change: P05Change,
+  abort: AbortController,
+) {
+  switch (change) {
+    case "bundle":
+      f.select({ ...f.target, identity: {} });
+      break;
+    case "acl-owner":
+      f.select({
+        ...f.target,
+        acl: new AclRepository(f.metadata, VAULT_A, { accounts: f.accounts }),
+      });
+      break;
+    case "lifecycle-owner":
+      f.select({ ...f.target, lifecycle: new PluginLifecycle(f.config) });
+      break;
+    case "epoch":
+      f.lifecycle.bumpEpoch();
+      break;
+    case "policy":
+      // Keep this caller authorized: only the captured policy changed.
+      f.policy({ everybody: "view", grants: { [f.alice.id]: "admin" } });
+      break;
+    case "credentials":
+      f.accounts.changeCredentials(f.alice.id, 0, {
+        passwordChangeRequired: true,
+      }, UPDATE);
+      break;
+    case "expiry":
+      f.expire();
+      break;
+    case "composition":
+      f.lifetime.retire();
+      break;
+    case "sessions":
+      f.authAdapters.sessions = new InstanceSessions(
+        f.accounts,
+        f.sessions.signing,
+        { expirySeconds: 1000 },
+        { now: () => NOW },
+      );
+      break;
+    case "abort":
+      abort.abort(new Error("P05 request retired"));
+      break;
+    case "same-wrapper":
+      f.select({ ...f.target });
+      break;
+  }
+}
+
+for (const change of P05_CHANGES) {
+  Deno.test(`P05 authority admission: ${change} during validation cannot borrow a later owner or read a body`, () =>
+    fixture(async (f) => {
+      const entered = fixtureGate(f.owner);
+      const held = fixtureGate(f.owner);
+      const abort = new AbortController();
+      const request = new Request(f.request(), { signal: abort.signal });
+      const resolve = f.sessions.resolve.bind(f.sessions);
+      f.sessions.resolve = async (token) => {
+        const principal = await resolve(token);
+        entered.resolve();
+        await held.promise;
+        return principal;
+      };
+      let bodies = 0;
+      const admitted = f.auth.readLease(request).then(async (lease) =>
+        lease.disclose(
+          await lease.read(() => {
+            bodies++;
+            return Promise.resolve("private body");
+          }),
+        )
+      );
+      admitted.catch(() => {});
+      try {
+        await workMilestone(admitted, entered.promise, "P05 token validation");
+        replaceP05Owner(f, change, abort);
+        held.resolve();
+        if (change === "same-wrapper") {
+          assertEquals(await admitted, "private body");
+          assertEquals(bodies, 1);
+        } else {
+          await assertRejects(() => admitted);
+          assertEquals(bodies, 0);
+        }
+      } finally {
+        held.resolve();
+        await admitted.catch(() => {});
+      }
+    }));
+
+  Deno.test(`P05 authority sink: ${change} after preparation prevents final value and chunk disclosure`, () =>
+    fixture(async (f) => {
+      const abort = new AbortController();
+      const request = new Request(f.request(), { signal: abort.signal });
+      const lease = await f.auth.readLease(request);
+      const entered = fixtureGate(f.owner);
+      const held = fixtureGate(f.owner);
+      const disclosed: string[] = [];
+      const next = lease.prepare("next bytes");
+      const sourceEntered = fixtureGate(f.owner);
+      let cancelled = false;
+      const source = new ReadableStream<string>({
+        async pull(controller) {
+          sourceEntered.resolve();
+          await held.promise;
+          controller.enqueue("private stream bytes");
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }, { highWaterMark: 0 });
+      const reader = lease.stream(source).getReader();
+      const chunk = reader.read();
+      chunk.catch(() => {});
+      const preparing = lease.read(async () => {
+        entered.resolve();
+        await held.promise;
+        return "private prepared bytes";
+      }).then((value) => {
+        disclosed.push(lease.disclose(value));
+      });
+      preparing.catch(() => {});
+      try {
+        await workMilestone(preparing, entered.promise, "P05 read preparation");
+        await workMilestone(
+          chunk,
+          sourceEntered.promise,
+          "P05 chunk preparation",
+        );
+        replaceP05Owner(f, change, abort);
+        // A real continuation boundary before the consumer, not only a source scan.
+        await Promise.resolve();
+        held.resolve();
+        if (change === "same-wrapper") {
+          await preparing;
+          assertEquals(lease.disclose(next), "next bytes");
+          assertEquals(disclosed, ["private prepared bytes"]);
+          assertEquals(await chunk, {
+            value: "private stream bytes",
+            done: false,
+          });
+        } else {
+          await assertRejects(() => preparing);
+          assertThrows(() => lease.disclose(next));
+          assertEquals(disclosed, []);
+          await assertRejects(() => chunk);
+          assertEquals(cancelled, true);
+          let bodies = 0;
+          await assertRejects(() =>
+            lease.read(() => {
+              bodies++;
+              return Promise.resolve("retired read");
+            })
+          );
+          assertEquals(bodies, 0);
+        }
+      } finally {
+        held.resolve();
+        await preparing.catch(() => {});
+        await chunk.catch(() => {});
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
+      }
+    }));
+}
+
+Deno.test("P05 authority stream: reentrant source retirement cannot enqueue a prepared chunk", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    let pulled = 0, cancelled = 0;
+    const source = new ReadableStream<string>({
+      pull(controller) {
+        pulled++;
+        controller.enqueue("first private bytes");
+        f.lifetime.retire();
+      },
+      cancel() {
+        cancelled++;
+      },
+    }, { highWaterMark: 0 });
+    const reader = lease.stream(source).getReader();
+    try {
+      await assertRejects(() => reader.read());
+      assertEquals(pulled, 1);
+      assertEquals(cancelled, 1);
+    } finally {
+      reader.releaseLock();
+    }
+  }));
+
+Deno.test("P05 authority stream: first consumer retirement prevents the next source read", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    let pulls = 0;
+    const seen: string[] = [];
+    const source = new ReadableStream<string>({
+      pull(controller) {
+        controller.enqueue(`chunk-${++pulls}`);
+      },
+    }, { highWaterMark: 0 });
+    const reader = lease.stream(source).getReader();
+    try {
+      const first = await reader.read();
+      seen.push(first.value!);
+      f.lifetime.retire();
+      await assertRejects(() => reader.read());
+      assertEquals(seen, ["chunk-1"]);
+      assertEquals(pulls, 1);
+    } finally {
+      reader.releaseLock();
+    }
+  }));
+
+Deno.test("P05 authority: public disclosure takes data, never an arbitrary final callback", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    assertThrows(() => {
+      // @ts-expect-error The public boundary does not execute arbitrary effects.
+      lease.disclose(() => "effect");
+    }, TypeError);
+    assertThrows(() => {
+      // @ts-expect-error Disclosure cannot be an asynchronous preparation callback.
+      lease.disclose(async () => await Promise.resolve("effect"));
+    }, TypeError);
+    assertThrows(() => {
+      // @ts-expect-error Nor can a Promise be disclosed before it settles.
+      lease.disclose(Promise.resolve("effect"));
+    }, TypeError);
+  }));
+
+Deno.test("P05 authority: direct prepared binding requires issued live lifetime at admission and final consumer", () =>
+  fixture(async (f) => {
+    for (
+      const binding of [
+        undefined,
+        { ...f.lifetime.lease },
+        createOperationLease("outcome", [() => {}]).lease,
+      ]
+    ) {
+      const authority = new InstanceAuthority(
+        f.sessions,
+        () => f.target,
+        binding as never,
+      );
+      assertThrows(
+        () => authority.lease(f.token.principal, "readVault"),
+        TypeError,
+      );
+    }
+    const lease = f.authority.lease(f.token.principal, "readVault");
+    const prepared = lease.prepare("no bytes");
+    f.lifetime.retire();
+    assertThrows(() => lease.disclose(prepared));
+    let preparationCalls = 0;
+    await assertRejects(() =>
+      lease.read(() => {
+        preparationCalls++;
+        return Promise.resolve("no bytes");
+      })
+    );
+    assertEquals(preparationCalls, 0);
+  }));
+
+Deno.test("P05 authority stream: reentrant result access between validation and enqueue is fenced at actual sink", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    let cancelled = 0;
+    const source = new ReadableStream<string>({
+      pull(controller) {
+        controller.enqueue("private chunk");
+      },
+      cancel() {
+        cancelled++;
+      },
+    }, { highWaterMark: 0 });
+    const sourceReader = source.getReader();
+    const read = sourceReader.read.bind(sourceReader);
+    sourceReader.read = async () => {
+      const result = await read();
+      if (result.done) return result;
+      return {
+        done: false,
+        get value() {
+          f.lifetime.retire();
+          return result.value;
+        },
+      };
+    };
+    source.getReader = (() => sourceReader) as typeof source.getReader;
+    const reader = lease.stream(source).getReader();
+    try {
+      await assertRejects(() => reader.read());
+      assertEquals(cancelled, 1);
+    } finally {
+      reader.releaseLock();
+    }
+  }));
+
+Deno.test("P05 authority admission: capture does not change invalid-credential precedence for an unavailable vault", () =>
+  fixture(async (f) => {
+    f.select(null);
+    const invalid = await assertRejects(
+      () =>
+        f.auth.readLease(f.request("GET", { authorization: "Bearer invalid" })),
+      HttpError,
+    );
+    assertEquals(invalid.status, 401);
+    const unavailable = await assertRejects(
+      () => f.auth.readLease(f.request()),
+      HttpError,
+    );
+    assertEquals(unavailable.status, 404);
+  }));
+
+Deno.test("P05 authority read: the promise-to-consumer microtask carries no raw private bytes", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    const reading = lease.read(() =>
+      Promise.resolve("private microtask bytes")
+    );
+    queueMicrotask(() => f.lifetime.retire());
+    const prepared = await reading;
+    assertEquals(JSON.stringify(prepared), "{}");
+    assertThrows(() => lease.disclose(prepared));
+  }));
+
+Deno.test("P05 authority read: forged, cloned and foreign prepared reads cannot enter a disclosure sink", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    const foreign = await f.auth.readLease(f.request());
+    const prepared = await lease.read(() => Promise.resolve("private bytes"));
+    assertEquals(lease.disclose(prepared), "private bytes");
+    assertThrows(() => foreign.disclose(prepared), TypeError);
+    assertThrows(() => lease.disclose({ ...prepared }), TypeError);
+    assertThrows(() => {
+      // @ts-expect-error A value is not an operation-issued prepared handle.
+      lease.disclose("unsealed bytes");
+    }, TypeError);
+    assertThrows(() => {
+      // @ts-expect-error Prepare is data-only, not an effect callback.
+      lease.prepare(() => "effect");
+    }, TypeError);
+  }));
+
 for (const kind of ["note", "file"] as const) {
   for (const change of ["acl", "credentials", "expiry", "unchanged"] as const) {
-    Deno.test(`identity authority: ${change} at a real Worker pre-hook ${change === "unchanged" ? "permits" : "prevents"} the final ${kind} effect`, async () => {
-      const release = Promise.withResolvers<void>();
-      const entered = Promise.withResolvers<void>();
-      const w = await pluginOperationsFixture({
-        id: "identity-guard",
-        manifest: {
-          runtime: { server: "service.js" },
-          hooks: ["pre-create", "pre-upload"],
-          capabilities: { read: ["vault"] },
-        },
-        files: {
-          "service.js":
-            `export function activate(ctx) { for (const hook of ['pre-create','pre-upload']) ctx.hooks.on(hook, async () => { await ctx.readNote('gate'); }); }`,
-        },
-        fault: async (method, args, boundary) => {
-          if (
-            method === "readNote" && args[0] === "gate" && boundary === "before"
-          ) {
-            entered.resolve();
-            await release.promise;
-          }
-        },
-      });
-      try {
-        Deno.writeTextFileSync(`${w.fixture.vault}/gate.md`, "guard fixture");
-        const f = await identities(w.fixture.root);
-        const acl = new AclRepository(w.fixture.statePath, VAULT_A, {
-          accounts: f.accounts,
+    fixtureTest(
+      `identity authority: ${change} at a real Worker pre-hook ${
+        change === "unchanged" ? "permits" : "prevents"
+      } the final ${kind} effect`,
+      async (scope) => {
+        const release = fixtureGate(scope);
+        const entered = fixtureGate(scope);
+        const w = await pluginOperationsFixture({
+          id: "identity-guard",
+          manifest: {
+            runtime: { server: "service.js" },
+            hooks: ["pre-create", "pre-upload"],
+            capabilities: { read: ["vault"] },
+          },
+          files: {
+            "service.js":
+              `export function activate(ctx) { for (const hook of ['pre-create','pre-upload']) ctx.hooks.on(hook, async () => { await ctx.readNote('gate'); }); }`,
+          },
+          fault: async (method, args, boundary) => {
+            if (
+              method === "readNote" && args[0] === "gate" &&
+              boundary === "before"
+            ) {
+              entered.resolve();
+              await release.promise;
+            }
+          },
         });
-        acl.initializeForCreator(f.alice, "none");
-        const target = {
-          identity: {},
-          id: VAULT_A,
-          acl,
-          lifecycle: w.lifecycle,
-        };
-        const authority = new InstanceAuthority(f.sessions, () => target);
-        const lease = authority.lease(f.token.principal, "editNotes");
-        const writing = kind === "note"
-          ? w.operations.createNote({
-            path: "forbidden",
-            content: "guarded bytes",
-          }, { origin: "api", lease })
-          : w.operations.uploadFile(
-            "",
-            "forbidden.bin",
-            new TextEncoder().encode("guarded bytes"),
-            { origin: "api", lease },
-          );
-        const filename = `${w.fixture.vault}/${
-          kind === "note" ? "forbidden.md" : "forbidden.bin"
-        }`;
-        writing.catch(() => {});
-        await workMilestone(
-          writing,
-          entered.promise,
-          "actual Worker pre-create RPC",
-        );
-        // The short policy gate is available while the Worker is waiting.
-        await w.lifecycle.gate.run(() => {
-          if (change === "acl") {
-            acl.save(
-              { everybody: "none", grants: { [f.alice.id]: "view" } },
-              acl.capture(),
-              { updateId: UPDATE, actorId: f.alice.id },
+        w.scope.onCancel(() => release.resolve());
+        try {
+          await w.fixture.admit(async () => {
+            Deno.writeTextFileSync(
+              `${w.fixture.vault}/gate.md`,
+              "guard fixture",
             );
-          }
-          if (change === "credentials") {
-            f.accounts.changeCredentials(f.alice.id, 0, {
-              passwordChangeRequired: true,
-            }, UPDATE);
-          }
-          if (change === "expiry") f.expire();
-        });
-        release.resolve();
-        if (change === "unchanged") {
-          await writing;
-          assertEquals(
-            Deno.readTextFileSync(filename),
-            "guarded bytes",
-          );
-          acl.save({ everybody: "none", grants: {} }, acl.capture(), {
-            updateId: UPDATE,
-            actorId: f.alice.id,
+            const f = await identities(w.fixture.root);
+            const acl = new AclRepository(w.fixture.statePath, VAULT_A, {
+              accounts: f.accounts,
+            });
+            acl.initializeForCreator(f.alice, "none");
+            const target = {
+              identity: {},
+              id: VAULT_A,
+              acl,
+              lifecycle: w.lifecycle,
+            };
+            const authority = new InstanceAuthority(
+              f.sessions,
+              () => target,
+              createOperationLease("live", [() => {}]).lease,
+            );
+            const lease = authority.lease(f.token.principal, "editNotes");
+            const writing = kind === "note"
+              ? w.operations.createNote({
+                path: "forbidden",
+                content: "guarded bytes",
+              }, { origin: "api", lease })
+              : w.operations.uploadFile(
+                "",
+                "forbidden.bin",
+                new TextEncoder().encode("guarded bytes"),
+                { origin: "api", lease },
+              );
+            const filename = `${w.fixture.vault}/${
+              kind === "note" ? "forbidden.md" : "forbidden.bin"
+            }`;
+            writing.catch(() => {});
+            await workMilestone(
+              writing,
+              entered.promise,
+              "actual Worker pre-create RPC",
+            );
+            // The short policy gate is available while the Worker is waiting.
+            await w.lifecycle.gate.run(() => {
+              if (change === "acl") {
+                acl.save(
+                  { everybody: "none", grants: { [f.alice.id]: "view" } },
+                  acl.capture(),
+                  { updateId: UPDATE, actorId: f.alice.id },
+                );
+              }
+              if (change === "credentials") {
+                f.accounts.changeCredentials(f.alice.id, 0, {
+                  passwordChangeRequired: true,
+                }, UPDATE);
+              }
+              if (change === "expiry") f.expire();
+            });
+            release.resolve();
+            if (change === "unchanged") {
+              await writing;
+              assertEquals(
+                Deno.readTextFileSync(filename),
+                "guarded bytes",
+              );
+              acl.save({ everybody: "none", grants: {} }, acl.capture(), {
+                updateId: UPDATE,
+                actorId: f.alice.id,
+              });
+              assertThrows(() => lease.assertCurrent(), OperationError);
+              // Revoking future authority never rolls an already committed effect back.
+              assertEquals(
+                Deno.readTextFileSync(filename),
+                "guarded bytes",
+              );
+            } else {
+              if (change === "acl") {
+                await assertRejects(() => writing, OperationError);
+              } else await assertRejects(() => writing, HttpError);
+              assertThrows(
+                () => Deno.statSync(filename),
+                Deno.errors.NotFound,
+              );
+            }
+            assertEquals(
+              Deno.readTextFileSync(`${w.fixture.vault}/gate.md`),
+              "guard fixture",
+            );
           });
-          assertThrows(() => lease.assertCurrent(), OperationError);
-          // Revoking future authority never rolls an already committed effect back.
-          assertEquals(
-            Deno.readTextFileSync(filename),
-            "guarded bytes",
-          );
-        } else {
-          if (change === "acl") {
-            await assertRejects(() => writing, OperationError);
-          } else await assertRejects(() => writing, HttpError);
-          assertThrows(
-            () => Deno.statSync(filename),
-            Deno.errors.NotFound,
-          );
+        } finally {
+          release.resolve();
+          await w.close();
         }
-        assertEquals(
-          Deno.readTextFileSync(`${w.fixture.vault}/gate.md`),
-          "guard fixture",
-        );
-      } finally {
-        release.resolve();
-        await w.close();
-      }
-    });
+      },
+    );
   }
 }

@@ -189,6 +189,16 @@ Status retirement is recorded in the first callback on the native status promise
 Boot uses an explicit Deno allowlist and rejects health outcomes after actual
 child exit, including outcomes returned through the contract-only health IO port.
 
+## Operation leases and sinks (P05)
+
+`OPERATION_OWNERSHIP` composes `RESOURCE_OWNERSHIP` and registers the lease issuer
+and private guarded sink modules with exact authority/middleware/contract owners.
+Ordinary consumers may import erased lease types, not runtime private factories.
+An alias or bridge fails at its producer's private import, not a later call site.
+The 15 former flow-site allowances are removed. Final-effect synchrony, issued
+provenance, mode binding and actual value/chunk delivery remain runtime/type
+contracts; there is no flow hook or arbitrary callback-body scanner.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from

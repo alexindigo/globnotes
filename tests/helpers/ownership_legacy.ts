@@ -86,6 +86,16 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
       "tests/plugin_write_bases_test.ts",
     ],
   },
+  "operation-lease-pilot": {
+    replacement: "P05; wider adoption A04-A07/I05-I14",
+    closed: true,
+    consumers: [
+      "tests/operation_lease_test.ts",
+      "tests/identity_authority_test.ts",
+      "tests/http_mutation_lease_test.ts",
+      "tests/operation_lease_guard_test.ts",
+    ],
+  },
   "resource-core-pilot": {
     replacement: "P02",
     closed: true,

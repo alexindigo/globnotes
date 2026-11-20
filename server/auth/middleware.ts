@@ -24,6 +24,10 @@ import {
   type InstanceSessions,
   type Principal,
 } from "./sessions.ts";
+import {
+  assertOperationLease,
+  type OperationLease,
+} from "../operation_lease.ts";
 
 /** Preparatory v3 adapter. The old exported production functions below stay
  * active until cutover; tests/next composition inject concrete instance owners. */
@@ -31,6 +35,8 @@ export function createInstanceAuth(adapters: {
   sessions: InstanceSessions;
   vault(request: Request): AuthorityVault | null;
   cookieName: string;
+  /** Explicit prepared composition binding; never a silent production no-op. */
+  lifetime(request: Request): OperationLease<"live">;
 }) {
   const requests = new WeakMap<Request, Promise<Principal>>();
   const invalid = () =>
@@ -65,10 +71,31 @@ export function createInstanceAuth(adapters: {
       throw error;
     }
   };
-  const evaluator = (request: Request) =>
-    new InstanceAuthority(adapters.sessions, () => adapters.vault(request));
-  const lease = async (request: Request, operation: VaultOperation) =>
-    evaluator(request).lease(await principal(request), operation);
+  const admission = (request: Request) => {
+    const lifetime = adapters.lifetime(request);
+    assertOperationLease(lifetime, "live");
+    const sessions = adapters.sessions;
+    const check = () => {
+      assertOperationLease(lifetime, "live");
+      request.signal.throwIfAborted();
+      if (adapters.sessions !== sessions) throw invalid();
+    };
+    check();
+    return {
+      check,
+      evaluator: new InstanceAuthority(sessions, () => {
+        check();
+        return adapters.vault(request);
+      }, lifetime),
+    };
+  };
+  const lease = async (request: Request, operation: VaultOperation) => {
+    const admitted = admission(request);
+    const bind = admitted.evaluator.prepareLease(operation);
+    const value = await principal(request);
+    admitted.check();
+    return bind(value);
+  };
   return Object.freeze({
     principal,
     lease,
@@ -81,10 +108,14 @@ export function createInstanceAuth(adapters: {
       request: Request,
       operation: InstanceOperation,
     ): Promise<() => void> {
-      return evaluator(request).instanceGuard(
-        await principal(request),
-        operation,
-      );
+      const admitted = admission(request);
+      const value = await principal(request);
+      admitted.check();
+      const guard = admitted.evaluator.instanceGuard(value, operation);
+      return () => {
+        admitted.check();
+        guard();
+      };
     },
   });
 }

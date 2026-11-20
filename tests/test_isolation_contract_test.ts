@@ -20,6 +20,7 @@ import "./ownership_resource_guard_test.ts";
 import "./ownership_fixture_guard_test.ts";
 import "./ownership_record_guard_test.ts";
 import "./ownership_child_guard_test.ts";
+import "./operation_lease_guard_test.ts";
 import {
   FIXTURE_OWNERSHIP,
   registeredOwnership,

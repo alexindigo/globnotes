@@ -1264,46 +1264,6 @@
     "family": "coordination:tests/identity_accounts_test.ts"
   },
   {
-    "file": "tests/identity_authority_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 374,
-    "source": "Promise.withResolvers",
-    "context": "held = Promise.withResolvers<void>();",
-    "family": "coordination:tests/identity_authority_test.ts"
-  },
-  {
-    "file": "tests/identity_authority_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 392,
-    "source": "Promise.withResolvers",
-    "context": "const release = Promise.withResolvers<void>();",
-    "family": "coordination:tests/identity_authority_test.ts"
-  },
-  {
-    "file": "tests/identity_authority_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 393,
-    "source": "Promise.withResolvers",
-    "context": "const entered = Promise.withResolvers<void>();",
-    "family": "coordination:tests/identity_authority_test.ts"
-  },
-  {
-    "file": "tests/identity_authority_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 444,
-    "source": "Promise.withResolvers",
-    "context": "const release = Promise.withResolvers<void>();",
-    "family": "coordination:tests/identity_authority_test.ts"
-  },
-  {
-    "file": "tests/identity_authority_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 445,
-    "source": "Promise.withResolvers",
-    "context": "const entered = Promise.withResolvers<void>();",
-    "family": "coordination:tests/identity_authority_test.ts"
-  },
-  {
     "file": "tests/identity_sessions_test.ts",
     "capability": "Promise.withResolvers",
     "line": 227,

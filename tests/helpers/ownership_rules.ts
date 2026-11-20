@@ -30,6 +30,30 @@ export const RESOURCE_OWNERSHIP: OwnershipRules = {
   },
 };
 
+export const OPERATION_LEASE_OWNER = "server/operation_lease.ts";
+export const GUARDED_SINK_OWNER = "server/internal/guarded_sink.ts";
+export const AUTHORITY_PILOT = "server/auth/authority.ts";
+
+/** P05 protects capability acquisition at resolved private module imports.
+ * Semantics inside these exact owners remain type/runtime contract obligations. */
+export const OPERATION_OWNERSHIP: OwnershipRules = {
+  roots: RESOURCE_OWNERSHIP.roots,
+  modules: {
+    ...RESOURCE_OWNERSHIP.modules,
+    [OPERATION_LEASE_OWNER]: [
+      AUTHORITY_PILOT,
+      "server/auth/middleware.ts",
+      GUARDED_SINK_OWNER,
+      "tests/operation_lease_test.ts",
+      "tests/identity_authority_test.ts",
+    ],
+    [GUARDED_SINK_OWNER]: [
+      AUTHORITY_PILOT,
+      "tests/operation_lease_test.ts",
+    ],
+  },
+};
+
 /** Platform-free engine: no runtime root is a public capability here.
  * Imports are checked independently against its graph dependency manifest.
  * This is another registration for the same analyzer, not a second source rule.
@@ -55,9 +79,9 @@ export const PLUGIN_OPERATIONS = "tests/helpers/plugin_operations_fixture.ts";
 /** Private construction modules have public callback facades. Every import form
  * is checked at the resolved module, never by following the imported value. */
 export const FIXTURE_OWNERSHIP: OwnershipRules = {
-  ...RESOURCE_OWNERSHIP,
+  ...OPERATION_OWNERSHIP,
   modules: {
-    ...RESOURCE_OWNERSHIP.modules,
+    ...OPERATION_OWNERSHIP.modules,
     [FIXTURE_SCOPE_ENGINE]: [
       "tests/helpers/fixture_scope.ts",
       PLUGIN_FIXTURE_ENGINE,
