@@ -1256,22 +1256,6 @@
     "family": "coordination:tests/hub_watcher_test.ts"
   },
   {
-    "file": "tests/identity_accounts_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 115,
-    "source": "Promise.withResolvers",
-    "context": "const held = Promise.withResolvers<string>();",
-    "family": "coordination:tests/identity_accounts_test.ts"
-  },
-  {
-    "file": "tests/identity_sessions_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 227,
-    "source": "Promise.withResolvers",
-    "context": "const held = Promise.withResolvers<boolean>();",
-    "family": "coordination:tests/identity_sessions_test.ts"
-  },
-  {
     "file": "tests/index_pass_isolation_test.ts",
     "capability": "Promise.withResolvers",
     "line": 134,

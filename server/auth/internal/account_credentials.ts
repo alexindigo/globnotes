@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import type { Account, AccountIdentity, AccountSnapshot } from "../accounts.ts";
+import type { AccountIdentity } from "../accounts.ts";
+import type { Account, AccountSnapshot } from "./account_record.ts";
+import { reduceAccountCredentials } from "./credential_reducer.ts";
 import { hashPassword, verifyPassword } from "../../helpers.ts";
 import { AuthenticationError } from "../account_credentials.ts";
 import { createUuid } from "../../../shared/uuid.ts";
@@ -9,10 +11,8 @@ import {
 } from "../offline_recovery.ts";
 import {
   createTotpCandidate,
-  decodeStoredAuthenticator,
   matchingStoredTotpStep,
   sameStoredTotpSecret,
-  serializeStoredTotpSecret,
   type StoredAuthenticator,
   type StoredTotpSecret,
 } from "../credentials.ts";
@@ -160,7 +160,7 @@ interface CredentialStore {
   capture(): AccountSnapshot;
   assertSnapshot(snapshot: AccountSnapshot): void;
   normalizeLogin(login: string): string;
-  validateAccount(account: Account): Account;
+  validateAccount(account: unknown): Account;
   byLogin(login: string): Account | null;
   byId(id: string): Account | null;
   authenticator(account: Account): StoredAuthenticator;
@@ -379,7 +379,7 @@ export function bindAccountCredentials(
     };
     return { authority, guard, lease: owner.lease };
   };
-  // One reducer for both sealed commands and the quarantined fixture adapter.
+  // Pure private arithmetic; authority and publication stay in this aggregate.
   const derive = (
     account: Account,
     after: StoredAuthenticator,
@@ -387,33 +387,14 @@ export function bindAccountCredentials(
     passwordHash = account.passwordHash,
     restricted = account.passwordChangeRequired,
   ): Account => {
-    const before = store.authenticator(account);
-    const same = before.kind === "totp" && after.kind === "totp" &&
-      sameStoredTotpSecret(before.secret, after.secret);
-    const floor = after.kind === "none"
-      ? null
-      : same
-      ? Math.max(before.lastTotpStep ?? -1, after.lastTotpStep ?? -1)
-      : after.lastTotpStep;
-    const next = {
-      ...account,
+    return reduceAccountCredentials(
+      account,
+      store.authenticator(account),
+      after,
+      updateId,
       passwordHash,
-      passwordChangeRequired: restricted,
-      credentialRevision: account.credentialRevision + 1,
-      credentialUpdateId: updateId,
-      totpKey: after.kind === "none"
-        ? null
-        : serializeStoredTotpSecret(after.secret).key,
-      lastTotpStep: floor === -1 ? null : floor,
-    };
-    delete next.totpKeyEncoding;
-    if (after.kind === "totp") {
-      const stored = serializeStoredTotpSecret(after.secret);
-      if (Object.hasOwn(stored, "encoding")) {
-        next.totpKeyEncoding = stored.encoding;
-      }
-    }
-    return Object.freeze(next);
+      restricted,
+    );
   };
   const prepareAccount = async (
     purpose: PreparationPurpose,
@@ -492,6 +473,22 @@ export function bindAccountCredentials(
       if (!issued) operation.retire();
     }
   };
+  const recoveryGuard = (
+    authority: OfflineRecoveryAuthority,
+    signal?: AbortSignal,
+    snapshot?: AccountSnapshot,
+  ) => {
+    const recovery = assertOfflineRecovery(authority, store.root);
+    const operation = createOperationLease("live", [() => {
+      if (signal?.aborted) throw new AuthenticationError();
+      store.assertBound();
+      if (snapshot) store.assertSnapshot(snapshot);
+    }], [lifetime.lease, recovery]);
+    const guard = (): undefined => {
+      assertOperationLease(operation.lease, "live");
+    };
+    return { guard, operation };
+  };
   const recoverAccount = async (
     kind: "reset" | "disable",
     authority: OfflineRecoveryAuthority,
@@ -512,27 +509,17 @@ export function bindAccountCredentials(
         (typeof request.password !== "string" || !request.password)) ||
       (signal !== undefined && !(signal instanceof AbortSignal))
     ) throw new IdentityStateError();
-    const recovery = assertOfflineRecovery(authority, store.root);
-    const guard = (): undefined => {
-      if (signal?.aborted) throw new AuthenticationError();
-      store.assertBound();
-      return undefined;
-    };
-    guard();
-    const account = store.byId(request.accountId);
-    if (!account || account.credentialRevision !== request.credentialRevision) {
-      throw new StoredConfigConflict();
-    }
-    const proof: ProofRecord = {
-      account,
-      operation: createOperationLease("live", [guard], [
-        lifetime.lease,
-        recovery,
-      ]),
-      phase: "claimed",
-    };
+    const { guard, operation } = recoveryGuard(authority, signal);
+    // The operation is owned from creation: a stale request retires it too.
+    let proof: ProofRecord | undefined;
     let token: PreparedCredentialTransition | undefined;
     try {
+      guard();
+      const account = store.byId(request.accountId);
+      if (
+        !account || account.credentialRevision !== request.credentialRevision
+      ) throw new StoredConfigConflict();
+      proof = { account, operation, phase: "claimed" };
       const passwordHash = kind === "reset"
         ? await hash(request.password as string)
         : account.passwordHash;
@@ -553,10 +540,51 @@ export function bindAccountCredentials(
       return result;
     } finally {
       if (token) transitions.get(token)!.phase = "finished";
-      close(proof);
+      if (proof) close(proof);
+      else operation.retire();
     }
   };
   const credentials = Object.freeze({
+    /** Privileged append-only historical import, never ordinary account creation. */
+    importAccount(
+      authority: OfflineRecoveryAuthority,
+      input: unknown,
+    ): AccountIdentity {
+      const snapshot = store.capture();
+      const { guard, operation } = recoveryGuard(
+        authority,
+        undefined,
+        snapshot,
+      );
+      // Publication takes custody of the operation with the handle; any
+      // earlier rejection retires it here.
+      const prepared = Object.freeze({}) as PreparedAccount;
+      let issued = false;
+      try {
+        guard();
+        const account = Object.freeze(
+          store.validateAccount(structuredClone(input)),
+        );
+        if (
+          snapshot.value.accounts.some((a) =>
+            a.id === account.id || a.login === account.login
+          )
+        ) throw new StoredConfigConflict();
+        guard();
+        preparedAccounts.set(prepared, {
+          account,
+          snapshot,
+          updateId: createUuid(),
+          guard,
+          operation,
+          phase: "prepared",
+        });
+        issued = true;
+      } finally {
+        if (!issued) operation.retire();
+      }
+      return credentials.publishPreparedAccount(prepared);
+    },
     prepareInitialAccount(
       authority: AccountPreparationAuthority,
       request: AccountPreparationRequest,
@@ -831,35 +859,6 @@ export function bindAccountCredentials(
       return Object.freeze({
         account: transition.next,
         lease: transition.proof.operation.lease,
-      });
-    },
-    legacyChange(
-      account: Account,
-      changes: Partial<
-        Pick<
-          Account,
-          | "passwordHash"
-          | "passwordChangeRequired"
-          | "totpKey"
-          | "totpKeyEncoding"
-        >
-      >,
-      updateId: string,
-    ): Account {
-      const candidate = { ...account, ...changes };
-      // Supplied keys and encoding are one replacement value. Omitted encoding
-      // means historical UTF-8, never metadata inherited from the old key.
-      const after = Object.hasOwn(changes, "totpKey")
-        ? decodeStoredAuthenticator(
-          changes.totpKey,
-          changes.totpKeyEncoding,
-          null,
-        )
-        : store.authenticator(account);
-      return Object.freeze({
-        ...derive(account, after, updateId),
-        passwordHash: candidate.passwordHash,
-        passwordChangeRequired: candidate.passwordChangeRequired,
       });
     },
     retire(): boolean {

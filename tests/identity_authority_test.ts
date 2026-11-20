@@ -10,7 +10,12 @@ import {
 import { fixtureGate, fixtureTest } from "./helpers/fixture_coordination.ts";
 import type { FixtureScope } from "./helpers/fixture_scope.ts";
 import { HttpError } from "@pathfinder/pathfinder";
-import { AccountRepository, prepareAccount } from "../server/auth/accounts.ts";
+import { AccountRepository } from "../server/auth/accounts.ts";
+import { prepareFixtureAccount } from "./helpers/identity.ts";
+import {
+  disableFixtureAuthenticator,
+  importFixtureAccount,
+} from "./helpers/account_preparation.ts";
 import { AclRepository, type AclValues } from "../server/auth/acl.ts";
 import {
   type AuthorityVault,
@@ -325,10 +330,16 @@ Deno.test("P05 response body consumes its prepared handle only while the owner i
     );
   }));
 
-async function identities(root: string) {
+async function identities(root: string, owner: FixtureScope) {
   const accounts = new AccountRepository(`${root}/identity`);
-  const alice = accounts.create(await prepareAccount("alice", "password"));
-  const bob = accounts.create(await prepareAccount("bob", "password"));
+  const alice = importFixtureAccount(
+    accounts,
+    await prepareFixtureAccount("alice", "password"),
+  );
+  const bob = importFixtureAccount(
+    accounts,
+    await prepareFixtureAccount("bob", "password"),
+  );
   const signing = new SessionRepository(`${root}/identity`);
   signing.initialize();
   let now = NOW;
@@ -339,7 +350,19 @@ async function identities(root: string) {
     username: "alice",
     password: "password",
   });
+  const credentialWrites: Promise<unknown>[] = [];
+  owner.onCancel(() => accounts.retireCredentials());
+  owner.defer(() => Promise.all(credentialWrites));
+  const revokeCredentials = (id: string) => {
+    const completion = owner.admit(() =>
+      disableFixtureAuthenticator(accounts, id, UPDATE)
+    );
+    completion.catch(() => {});
+    credentialWrites.push(completion);
+  };
   return {
+    credentialWrites,
+    revokeCredentials,
     accounts,
     alice,
     bob,
@@ -360,7 +383,7 @@ async function fixture(
   });
 }
 async function scope(root: string, owner: FixtureScope) {
-  const base = await identities(root),
+  const base = await identities(root, owner),
     vaultPath = `${root}/notes`,
     metadata = `${root}/meta`;
   Deno.mkdirSync(vaultPath);
@@ -458,8 +481,11 @@ Deno.test("identity authority: capabilities implement the level matrix, not meth
 
 Deno.test("identity authority: temporary accounts can only manage themselves", () =>
   fixture(async (f) => {
-    const recipient = f.accounts.create(
-      await prepareAccount("recipient", "temporary", { temporary: true }),
+    const recipient = importFixtureAccount(
+      f.accounts,
+      await prepareFixtureAccount("recipient", "temporary", {
+        temporary: true,
+      }),
     );
     f.policy({ everybody: "edit", grants: { [recipient.id]: "admin" } });
     const principal = (await signIn(f.sessions, {
@@ -499,9 +525,7 @@ Deno.test("identity middleware: verification is once per request, while credenti
       f.auth.noteMutationLease(request),
     ]);
     assertEquals(calls, 1);
-    f.accounts.changeCredentials(f.alice.id, 0, {
-      passwordChangeRequired: true,
-    }, UPDATE);
+    await disableFixtureAuthenticator(f.accounts, f.alice.id, UPDATE);
     await assertRejects(() => f.auth.principal(request), HttpError);
     assertEquals(calls, 1);
   }));
@@ -673,12 +697,7 @@ Deno.test("identity authority: expiry, credential changes, ACL and bundle replac
     );
     assertEquals(error.operationId, UPDATE);
     const fresh = await f.auth.readLease(f.request());
-    f.accounts.changeCredentials(
-      f.bob.id,
-      0,
-      { passwordChangeRequired: true },
-      UPDATE,
-    );
+    await disableFixtureAuthenticator(f.accounts, f.bob.id, UPDATE);
     fresh.assertCurrent();
     assertThrows(() => otherLease.assertCurrent(), HttpError);
     f.select({ ...f.target, identity: {} });
@@ -833,9 +852,7 @@ function replaceP05Owner(
       f.policy({ everybody: "view", grants: { [f.alice.id]: "admin" } });
       break;
     case "credentials":
-      f.accounts.changeCredentials(f.alice.id, 0, {
-        passwordChangeRequired: true,
-      }, UPDATE);
+      f.revokeCredentials(f.alice.id);
       break;
     case "expiry":
       f.expire();
@@ -1234,7 +1251,7 @@ for (const kind of ["note", "file"] as const) {
               `${w.fixture.vault}/gate.md`,
               "guard fixture",
             );
-            const f = await identities(w.fixture.root);
+            const f = await identities(w.fixture.root, w.scope);
             const acl = new AclRepository(w.fixture.statePath, VAULT_A, {
               accounts: f.accounts,
             });
@@ -1281,9 +1298,7 @@ for (const kind of ["note", "file"] as const) {
                 );
               }
               if (change === "credentials") {
-                f.accounts.changeCredentials(f.alice.id, 0, {
-                  passwordChangeRequired: true,
-                }, UPDATE);
+                f.revokeCredentials(f.alice.id);
               }
               if (change === "expiry") f.expire();
             });

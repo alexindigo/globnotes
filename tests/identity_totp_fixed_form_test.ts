@@ -1,19 +1,25 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals, assertThrows } from "@std/assert";
-import { AccountRepository, validateAccount } from "../server/auth/accounts.ts";
+import { AccountRepository } from "../server/auth/accounts.ts";
+import { validateAccount } from "../server/auth/internal/account_record.ts";
 import { IdentityStateError } from "../server/auth/records.ts";
+import {
+  disableFixtureAuthenticator,
+  importFixtureAccount,
+} from "./helpers/account_preparation.ts";
 import {
   identityAccount,
   identityFixture,
+  storedAccount,
+  storedState,
   UPDATE,
 } from "./helpers/identity.ts";
-
-Deno.test("stored TOTP fixed form: marked keys validate at create, import, change and reopen without repair", () =>
-  identityFixture((root) => {
+Deno.test("stored TOTP fixed form: marked keys validate at private decode, import and reopen without repair", () =>
+  identityFixture(async (root) => {
     const accounts = new AccountRepository(root);
-    const account = accounts.create(identityAccount());
-    const filename = `${root}/accounts.json`;
-    const original = Deno.readTextFileSync(filename);
+    const account = importFixtureAccount(accounts, identityAccount());
+    const filename = `${root}/accounts.json`,
+      original = Deno.readTextFileSync(filename);
     for (
       const key of [
         "short",
@@ -28,19 +34,13 @@ Deno.test("stored TOTP fixed form: marked keys validate at create, import, chang
         totpKeyEncoding: "base32",
       });
       assertThrows(() => validateAccount(malformed), IdentityStateError);
-      assertThrows(() => accounts.create(malformed), IdentityStateError);
-      assertThrows(() => accounts.importAccount(malformed), IdentityStateError);
       assertThrows(
-        () =>
-          accounts.changeCredentials(account.id, 0, {
-            totpKey: key,
-            totpKeyEncoding: "base32",
-          }, UPDATE),
+        () => importFixtureAccount(accounts, malformed),
         IdentityStateError,
       );
       assertEquals(Deno.readTextFileSync(filename), original);
       const bytes = JSON.stringify({
-        ...accounts.capture().value,
+        ...storedState(accounts),
         accounts: [malformed],
       });
       Deno.writeTextFileSync(filename, bytes);
@@ -48,25 +48,22 @@ Deno.test("stored TOTP fixed form: marked keys validate at create, import, chang
       assertEquals(Deno.readTextFileSync(filename), bytes);
       Deno.writeTextFileSync(filename, original);
     }
-    accounts.changeCredentials(account.id, 0, {
-      totpKey: "A".repeat(32),
-      totpKeyEncoding: "base32",
-    }, UPDATE);
+    const marked = new AccountRepository(`${root}/marked`);
+    importFixtureAccount(
+      marked,
+      identityAccount({ totpKey: "A".repeat(32), totpKeyEncoding: "base32" }),
+    );
     assertEquals(
-      new AccountRepository(root).byId(account.id)?.totpKeyEncoding,
+      storedAccount(new AccountRepository(marked.root), account.id)
+        .totpKeyEncoding,
       "base32",
     );
+    // No encoding-only patch is a stored import or a normal command.
     assertThrows(
-      () =>
-        accounts.changeCredentials(
-          account.id,
-          1,
-          { totpKeyEncoding: null },
-          UPDATE,
-        ),
+      () => importFixtureAccount(marked, { totpKeyEncoding: null }),
       IdentityStateError,
     );
-    accounts.changeCredentials(account.id, 1, { totpKey: null }, UPDATE);
-    assertEquals(accounts.storedAuthenticator(account.id), { kind: "none" });
-    assertEquals(accounts.byId(account.id)?.lastTotpStep, null);
+    await disableFixtureAuthenticator(marked, account.id, UPDATE);
+    assertEquals(marked.byId(account.id)?.totpEnabled, false);
+    assertEquals(storedAccount(marked, account.id).lastTotpStep, null);
   }));

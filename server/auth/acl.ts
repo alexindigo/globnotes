@@ -3,10 +3,10 @@ import { join } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
 import {
-  type Account,
+  type AccountIdentity,
   AccountRepository,
   normalizeLogin,
-  validateAccount,
+  validateAccountIdentity,
 } from "./accounts.ts";
 import {
   fields,
@@ -71,10 +71,10 @@ export function validateAcl(value: unknown, vaultId: string): AclState {
 /** Preparation only: piece 3 owns create/adopt consent, journal and publication. */
 export function prepareInitialAcl(
   vaultId: string,
-  creator: Account,
+  creator: AccountIdentity,
   everybody: EverybodyLevel,
 ): AclState {
-  validateAccount(creator);
+  validateAccountIdentity(creator);
   if (creator.passwordChangeRequired) throw new IdentityStateError();
   return validateAcl({
     version: 1,
@@ -207,7 +207,7 @@ export class AclRepository {
     );
   }
   initializeForCreator(
-    creator: Account,
+    creator: AccountIdentity,
     everybody: EverybodyLevel,
     expected = this.capture(),
     guard: () => void = () => {},

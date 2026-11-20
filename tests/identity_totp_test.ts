@@ -2,7 +2,9 @@
 import { signIn } from "./helpers/session_delivery.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
-import { AccountRepository, prepareAccount } from "../server/auth/accounts.ts";
+import { AccountRepository } from "../server/auth/accounts.ts";
+import { importFixtureAccount } from "./helpers/account_preparation.ts";
+import { prepareFixtureAccount, storedAccount } from "./helpers/identity.ts";
 import {
   matchingTotpStep,
   totpSecretFromRawKey,
@@ -13,7 +15,7 @@ import {
   SessionRepository,
 } from "../server/auth/sessions.ts";
 import { authenticatorCode } from "./helpers/totp.ts";
-import { identityFixture, UPDATE } from "./helpers/identity.ts";
+import { identityFixture } from "./helpers/identity.ts";
 
 const NOW = 1_800_000_000_000;
 for (
@@ -45,11 +47,17 @@ for (
 Deno.test("identity TOTP: accepted-step replay survives concurrent logins and restart, per account", () =>
   identityFixture(async (root) => {
     const accounts = new AccountRepository(root, undefined, { now: () => NOW });
-    const alice = accounts.create(await prepareAccount("alice", "password"));
-    const bob = accounts.create(await prepareAccount("bob", "password"));
     const raw = "short";
-    accounts.changeCredentials(alice.id, 0, { totpKey: raw }, UPDATE);
-    accounts.changeCredentials(bob.id, 0, { totpKey: raw }, UPDATE);
+    const alice = importFixtureAccount(accounts, {
+      ...await prepareFixtureAccount("alice", "password"),
+      totpKey: raw,
+      credentialRevision: 1,
+    });
+    importFixtureAccount(accounts, {
+      ...await prepareFixtureAccount("bob", "password"),
+      totpKey: raw,
+      credentialRevision: 1,
+    });
     const signing = new SessionRepository(root);
     signing.initialize();
     const settings = { expirySeconds: 1000 }, options = { now: () => NOW };
@@ -104,8 +112,11 @@ Deno.test("identity TOTP: accepted-step replay survives concurrent logins and re
 Deno.test("identity TOTP: password and code are separate and failed proof never consumes a step", () =>
   identityFixture(async (root) => {
     const accounts = new AccountRepository(root, undefined, { now: () => NOW }),
-      person = accounts.create(await prepareAccount("alice", "password"));
-    accounts.changeCredentials(person.id, 0, { totpKey: "ABCDE" }, UPDATE);
+      person = importFixtureAccount(accounts, {
+        ...await prepareFixtureAccount("alice", "password"),
+        totpKey: "ABCDE",
+        credentialRevision: 1,
+      });
     const signing = new SessionRepository(root);
     signing.initialize();
     const sessions = new InstanceSessions(accounts, signing, {
@@ -119,11 +130,11 @@ Deno.test("identity TOTP: password and code are separate and failed proof never 
         { username: "alice", password: "password", totp: "bad" },
       ]
     ) await assertRejects(() => signIn(sessions, input), AuthenticationError);
-    assertEquals(accounts.byId(person.id)?.lastTotpStep, null);
+    assertEquals(storedAccount(accounts, person.id).lastTotpStep, null);
     await signIn(sessions, {
       username: "alice",
       password: "password",
       totp: code,
     });
-    assertEquals(accounts.byId(person.id)?.lastTotpStep, NOW / 30_000);
+    assertEquals(storedAccount(accounts, person.id).lastTotpStep, NOW / 30_000);
   }));

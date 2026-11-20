@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { dirname } from "@std/path";
+import { StateRootError } from "../server/config/state_root.ts";
 import {
   BoundFileStore,
   StoredConfigConflict,
 } from "../server/config/file_store.ts";
 import { AccountRepository } from "../server/auth/accounts.ts";
+import {
+  importFixtureAccount,
+  preparationContext,
+  recoveryForRoot,
+} from "./helpers/account_preparation.ts";
 import { logger } from "../server/logger.ts";
 import {
   ACCOUNT_B,
@@ -17,7 +23,7 @@ import { observeDurability as observe } from "./helpers/durability.ts";
 
 // Deliberately noncanonical input: assertions must use the same real pathname
 // that the bound store publishes, even when TMPDIR has an alias or dot segments.
-function identityFixture(run: (root: string) => void) {
+function identityFixture(run: (root: string) => void | Promise<void>) {
   return fixture((root) =>
     run(Deno.realPathSync(`${root}/../${root.split("/").at(-1)}`))
   );
@@ -64,22 +70,41 @@ for (const existing of [false, true]) {
 
 for (const fresh of [false, true]) {
   Deno.test(`bound durability: parent-sync failure is retryable with ${fresh ? "fresh" : "same"} repository`, () =>
-    identityFixture((fixtureRoot) => {
+    identityFixture(async (fixtureRoot) => {
       const root = fixtureRoot,
         directory = `${root}/state/identity`;
-      let repo = new AccountRepository(directory);
-      observe((events, deny) => {
+      let context = preparationContext(directory, {}), repo = context.accounts;
+      const first = await repo.credentials.prepareInitialAccount(
+        context.authority("initial"),
+        context.request(),
+      );
+      observe((_events, deny) => {
         deny(directory);
-        assertThrows(() => repo.create(identityAccount()));
+        const error = assertThrows(
+          () => repo.credentials.publishPreparedAccount(first.prepared),
+          StateRootError,
+        );
+        assert(error.cause instanceof Deno.errors.PermissionDenied);
+        assertEquals(error.cause.message, "fixture directory fsync failure");
         assertEquals(repo.initialized, false);
         assertEquals(
           new BoundFileStore(`${directory}/accounts.json`).capture().raw,
           null,
         );
-        if (fresh) repo = new AccountRepository(directory);
-        const start = events.length;
-        repo.create(identityAccount());
-        const next = events.slice(start);
+      });
+      if (fresh) {
+        context.retire();
+        repo.retireCredentials();
+        context = preparationContext(directory, {});
+        repo = context.accounts;
+      }
+      const second = await repo.credentials.prepareInitialAccount(
+        context.authority("initial"),
+        context.request(),
+      );
+      observe((events) => {
+        repo.credentials.publishPreparedAccount(second.prepared);
+        const next = events;
         const publication = next.findIndex((e) => e.kind === "link");
         assert(publication >= 0);
         assertEquals(
@@ -90,15 +115,21 @@ for (const fresh of [false, true]) {
         );
       });
       assertEquals(repo.initialized, true);
+      context.retire();
+      repo.retireCredentials();
     }));
 }
 
 for (const existing of [false, true]) {
   Deno.test(`accounts durability warning: ${existing ? "rename" : "link"} publishes exact disk revision before warning and permits next mutation`, () =>
-    identityFixture((fixtureRoot) => {
+    identityFixture(async (fixtureRoot) => {
       const root = fixtureRoot,
         repo = new AccountRepository(root);
-      if (existing) repo.create(identityAccount());
+      const recovery = recoveryForRoot(root);
+      if (existing) {
+        repo.credentials.importAccount(recovery.authority, identityAccount());
+      }
+      let changing: Promise<unknown> | undefined;
       const original = logger.warning;
       const warnings: unknown[][] = [];
       try {
@@ -112,7 +143,14 @@ for (const existing of [false, true]) {
               disk.accounts[0].credentialUpdateId,
               existing ? UPDATE : null,
             );
-            assertEquals(disk.accounts[0], repo.byId(identityAccount().id));
+            assertEquals(
+              disk.accounts[0].credentialRevision,
+              repo.byId(identityAccount().id)?.credentialRevision,
+            );
+            assertEquals(
+              disk.accounts[0].id,
+              repo.byId(identityAccount().id)?.id,
+            );
             warnings.push(args);
           };
           const rename = Deno.renameSync, link = Deno.linkSync;
@@ -127,8 +165,19 @@ for (const existing of [false, true]) {
           };
           try {
             if (existing) {
-              repo.changeCredentials(identityAccount().id, 0, {}, UPDATE);
-            } else repo.create(identityAccount());
+              changing = repo.credentials.disableAuthenticator(
+                recovery.authority,
+                {
+                  accountId: identityAccount().id,
+                  credentialRevision: 0,
+                  updateId: UPDATE,
+                },
+              );
+              changing.catch(() => {});
+            } else {repo.credentials.importAccount(
+                recovery.authority,
+                identityAccount(),
+              );}
           } finally {
             Deno.renameSync = rename;
             Deno.linkSync = link;
@@ -137,6 +186,11 @@ for (const existing of [false, true]) {
         });
       } finally {
         logger.warning = original;
+        try {
+          await changing;
+        } finally {
+          recovery.close();
+        }
       }
       assertEquals(warnings.length, 1);
       assert(!JSON.stringify(warnings).includes(root));
@@ -144,10 +198,15 @@ for (const existing of [false, true]) {
         !JSON.stringify(warnings).includes(identityAccount().passwordHash),
       );
       assertEquals(
-        repo.capture().persistence,
-        new BoundFileStore(`${root}/accounts.json`).capture(),
+        repo.capture().value.revision,
+        JSON.parse(new BoundFileStore(`${root}/accounts.json`).capture().raw!)
+          .revision,
       );
-      repo.create(identityAccount({ id: ACCOUNT_B, login: "bob" }));
+      repo.assertUnchanged();
+      importFixtureAccount(
+        repo,
+        identityAccount({ id: ACCOUNT_B, login: "bob" }),
+      );
       assertEquals(new AccountRepository(root).byId(ACCOUNT_B)?.login, "bob");
     }));
 }

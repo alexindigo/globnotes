@@ -6,6 +6,7 @@ import {
   prepareInitialAcl,
 } from "../server/auth/acl.ts";
 import { AccountRepository } from "../server/auth/accounts.ts";
+import { importFixtureAccount } from "./helpers/account_preparation.ts";
 import { IdentityStateError } from "../server/auth/records.ts";
 import { type AccountPrincipal, GUEST } from "../server/auth/sessions.ts";
 import { StoredConfigConflict } from "../server/config/file_store.ts";
@@ -31,12 +32,16 @@ export const principal = (accountId: string): AccountPrincipal => ({
 Deno.test("identity ACL: all named levels override, rather than maximize, Everybody else", () =>
   identityFixture((root) => {
     const accounts = new AccountRepository(root);
-    accounts.create(identityAccount());
-    accounts.create(identityAccount({ id: ACCOUNT_B, login: "bob" }));
+    importFixtureAccount(accounts, identityAccount());
+    importFixtureAccount(
+      accounts,
+      identityAccount({ id: ACCOUNT_B, login: "bob" }),
+    );
     const acl = new AclRepository(`${root}/vault`, VAULT_A, { accounts });
     assertEquals(acl.effectiveLevel(GUEST), "none");
-    assertEquals([...Deno.readDirSync(root)].map((e) => e.name), [
+    assertEquals([...Deno.readDirSync(root)].map((e) => e.name).sort(), [
       "accounts.json",
+      "identity.lock",
     ]);
     for (const everybody of ["none", "view", "edit"] as const) {
       for (const grant of ACCESS_LEVELS) {
@@ -64,7 +69,7 @@ Deno.test("identity ACL: all named levels override, rather than maximize, Everyb
 Deno.test("identity ACL: guest Admin, malformed grants, unknown account IDs and unknown fields cannot persist", () =>
   identityFixture((root) => {
     const accounts = new AccountRepository(root);
-    accounts.create(identityAccount());
+    importFixtureAccount(accounts, identityAccount());
     const acl = new AclRepository(root, VAULT_A, { accounts });
     const before = acl.capture();
     for (
@@ -83,20 +88,22 @@ Deno.test("identity ACL: guest Admin, malformed grants, unknown account IDs and 
         }), IdentityStateError);
     }
     assertEquals(acl.capture(), before);
-    assertEquals([...Deno.readDirSync(root)].map((e) => e.name), [
+    assertEquals([...Deno.readDirSync(root)].map((e) => e.name).sort(), [
       "accounts.json",
+      "identity.lock",
     ]);
   }));
 
 Deno.test("identity ACL: creator/adopter preparation gives only that account Admin, without registry effects", () =>
   identityFixture((root) => {
     const accounts = new AccountRepository(root),
-      creator = accounts.create(identityAccount());
+      creator = importFixtureAccount(accounts, identityAccount());
     const acl = new AclRepository(`${root}/vault`, VAULT_A, { accounts });
     const prepared = prepareInitialAcl(VAULT_A, creator, "view");
     assertEquals(prepared.grants, { [creator.id]: "admin" });
-    assertEquals([...Deno.readDirSync(root)].map((e) => e.name), [
+    assertEquals([...Deno.readDirSync(root)].map((e) => e.name).sort(), [
       "accounts.json",
+      "identity.lock",
     ]);
     acl.initializeForCreator(creator, "view");
     assertEquals(acl.effectiveLevel(principal(creator.id)), "admin");
@@ -108,7 +115,7 @@ Deno.test("identity ACL: creator/adopter preparation gives only that account Adm
       () =>
         prepareInitialAcl(
           VAULT_A,
-          identityAccount({ passwordChangeRequired: true }),
+          { ...creator, passwordChangeRequired: true },
           "none",
         ),
       IdentityStateError,
@@ -122,7 +129,10 @@ Deno.test("identity ACL: creator/adopter preparation gives only that account Adm
 Deno.test("identity ACL: safe view exposes CAS facts, not private account or filesystem state", () =>
   identityFixture(async (root) => {
     const accounts = new AccountRepository(root);
-    accounts.create(identityAccount({ totpKey: "fixture-secret" }));
+    importFixtureAccount(
+      accounts,
+      identityAccount({ totpKey: "fixture-secret" }),
+    );
     const acl = new AclRepository(root, VAULT_A, { accounts });
     const before = await acl.view();
     acl.save(
@@ -156,9 +166,9 @@ for (
   Deno.test(`identity ACL: ${interference} retains original state and rejects stale writes`, () =>
     identityFixture((root) => {
       const accounts = new AccountRepository(root);
-      accounts.create(identityAccount());
+      importFixtureAccount(accounts, identityAccount());
       const acl = new AclRepository(`${root}/vault`, VAULT_A, { accounts });
-      acl.initializeForCreator(identityAccount(), "none");
+      acl.initializeForCreator(accounts.byId(ACCOUNT_A)!, "none");
       const before = acl.capture(),
         raw = Deno.readTextFileSync(`${root}/vault/access.json`),
         rename = Deno.renameSync;
@@ -195,7 +205,7 @@ for (
 Deno.test("identity ACL: vault bindings and imported records cannot cross owners or grant guest Admin", () =>
   identityFixture((root) => {
     const accounts = new AccountRepository(root),
-      creator = accounts.create(identityAccount());
+      creator = importFixtureAccount(accounts, identityAccount());
     const acl = new AclRepository(root, VAULT_A, { accounts });
     const prepared = prepareInitialAcl(VAULT_A, creator, "none");
     assertThrows(

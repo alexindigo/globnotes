@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { signIn } from "./helpers/session_delivery.ts";
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { AccountRepository } from "../server/auth/accounts.ts";
+import { reduceAccountCredentials } from "../server/auth/internal/credential_reducer.ts";
+import { decodeStoredAuthenticator } from "../server/auth/credentials.ts";
+import {
+  disableFixtureAuthenticator,
+  importFixtureAccount,
+  resetFixturePassword,
+} from "./helpers/account_preparation.ts";
+import { storedAccount } from "./helpers/identity.ts";
 import {
   AuthenticationError,
   InstanceSessions,
@@ -36,18 +44,24 @@ for (
       const accounts = new AccountRepository(root, undefined, {
         now: () => NOW,
       });
-      const original = accounts.importAccount(identityAccount({
+      const original = identityAccount({
         passwordHash: fixturePasswordHash("password"),
         totpKey: "A".repeat(32),
         totpKeyEncoding: "base32",
         lastTotpStep: 100,
-      }));
-      const changed = accounts.changeCredentials(original.id, 0, {
-        totpKey: replacement.key,
-        ...("encoding" in replacement
-          ? { totpKeyEncoding: replacement.encoding }
-          : {}),
-      }, UPDATE);
+      });
+      // Arbitrary historical stored values are a reducer/import contract, not
+      // ordinary enrollment input. The live commands accept only issued keys.
+      const changed = reduceAccountCredentials(
+        original,
+        decodeStoredAuthenticator(
+          original.totpKey,
+          original.totpKeyEncoding,
+          original.lastTotpStep,
+        ),
+        decodeStoredAuthenticator(replacement.key, replacement.encoding, null),
+        UPDATE,
+      );
       assertEquals(
         changed,
         identityAccount({
@@ -61,10 +75,11 @@ for (
           credentialUpdateId: UPDATE,
         }),
       );
+      importFixtureAccount(accounts, changed);
       const reopened = new AccountRepository(root, undefined, {
         now: () => NOW,
       });
-      assertEquals(reopened.byId(original.id), changed);
+      assertEquals(storedAccount(reopened, original.id), changed);
       const signing = new SessionRepository(root);
       signing.initialize();
       const sessions = new InstanceSessions(reopened, signing, {
@@ -82,9 +97,8 @@ for (
         (await sessions.validateToken(token.access_token)).accountId,
         original.id,
       );
-      const removed = reopened.changeCredentials(original.id, 1, {
-        totpKey: null,
-      }, UPDATE);
+      await disableFixtureAuthenticator(reopened, original.id, UPDATE);
+      const removed = storedAccount(reopened, original.id);
       assertEquals(
         removed,
         identityAccount({
@@ -96,9 +110,26 @@ for (
         }),
       );
       assertEquals(Object.hasOwn(removed, "totpKeyEncoding"), false);
+      const cleared = new AccountRepository(root, undefined, {
+        now: () => NOW,
+      });
+      assertEquals(cleared.byId(original.id), {
+        id: removed.id,
+        login: removed.login,
+        credentialRevision: removed.credentialRevision,
+        passwordChangeRequired: removed.passwordChangeRequired,
+        credentialUpdateId: removed.credentialUpdateId,
+        totpEnabled: false,
+      });
+      const passwordOnly = await signIn(
+        new InstanceSessions(cleared, new SessionRepository(root), {
+          expirySeconds: 1000,
+        }, { now: () => NOW }),
+        { username: "alice", password: "password" },
+      );
       assertEquals(
-        new AccountRepository(root).storedAuthenticator(original.id),
-        { kind: "none" },
+        (await sessions.validateToken(passwordOnly.access_token)).accountId,
+        original.id,
       );
     }));
 }
@@ -106,14 +137,20 @@ for (
 Deno.test("stored TOTP upgrade: effective legacy aliases retain the persisted replay floor", () =>
   identityFixture((root) => {
     const accounts = new AccountRepository(root);
-    const account = accounts.importAccount(identityAccount({
+    const account = identityAccount({
       totpKey: "key",
       lastTotpStep: 100,
-    }));
-    accounts.changeCredentials(account.id, 0, { totpKey: "key\0" }, UPDATE);
-    assertEquals(accounts.byId(account.id)?.lastTotpStep, 100);
+    });
+    const next = reduceAccountCredentials(
+      account,
+      decodeStoredAuthenticator(account.totpKey, undefined, 100),
+      decodeStoredAuthenticator("key\0", undefined, null),
+      UPDATE,
+    );
+    importFixtureAccount(accounts, next);
+    assertEquals(storedAccount(accounts, account.id).lastTotpStep, 100);
     assertEquals(
-      new AccountRepository(root).byId(account.id)?.lastTotpStep,
+      storedAccount(new AccountRepository(root), account.id).lastTotpStep,
       100,
     );
   }));
@@ -264,24 +301,51 @@ Deno.test("stored TOTP upgrade: alias classes preserve floor, block-boundary and
     for (const [index, control] of cases.entries()) {
       const directory = `${root}/case-${index}`;
       const accounts = new AccountRepository(directory);
-      const account = accounts.importAccount(
-        identityAccount({ totpKey: control.left, lastTotpStep: 100 }),
+      const account = identityAccount({
+        totpKey: control.left,
+        lastTotpStep: 100,
+        passwordHash: fixturePasswordHash("password"),
+      });
+      const next = reduceAccountCredentials(
+        account,
+        decodeStoredAuthenticator(control.left, undefined, 100),
+        decodeStoredAuthenticator(
+          control.right,
+          control.marked ? "base32" : undefined,
+          null,
+        ),
+        UPDATE,
       );
-      accounts.changeCredentials(account.id, 0, {
-        totpKey: control.right,
-        ...(control.marked ? { totpKeyEncoding: "base32" as const } : {}),
-      }, UPDATE);
-      const reopened = new AccountRepository(directory);
+      importFixtureAccount(accounts, next);
+      const reopened = new AccountRepository(directory, undefined, {
+        now: () => 3_000_000,
+      });
       assertEquals(
-        reopened.byId(account.id)?.lastTotpStep,
+        storedAccount(reopened, account.id).lastTotpStep,
         control.same ? 100 : null,
       );
       if (control.same) {
-        assertThrows(() => reopened.consumeTotp(account.id, 1, 100));
+        const code = await authenticatorCode(
+          control.marked ? control.right : base32(utf8(control.right)),
+          3_000_000,
+        );
+        await assertRejects(
+          () => reopened.credentials.authenticate("alice", "password", code),
+          AuthenticationError,
+          "Invalid authentication credentials.",
+        );
       }
-      reopened.consumeTotp(account.id, 1, 101);
+      await reopened.credentials.authenticate(
+        "alice",
+        "password",
+        await authenticatorCode(
+          control.marked ? control.right : base32(utf8(control.right)),
+          3_030_000,
+        ),
+      );
       assertEquals(
-        new AccountRepository(directory).byId(account.id)?.lastTotpStep,
+        storedAccount(new AccountRepository(directory), account.id)
+          .lastTotpStep,
         101,
       );
     }
@@ -303,11 +367,14 @@ for (
       const accounts = new AccountRepository(root, undefined, {
         now: () => NOW,
       });
-      const account = accounts.importAccount(identityAccount({
-        passwordHash: fixturePasswordHash("password"),
-        totpKey: stored.key,
-        ...("encoding" in stored ? { totpKeyEncoding: stored.encoding } : {}),
-      }));
+      const account = importFixtureAccount(
+        accounts,
+        identityAccount({
+          passwordHash: fixturePasswordHash("password"),
+          totpKey: stored.key,
+          ...("encoding" in stored ? { totpKeyEncoding: stored.encoding } : {}),
+        }),
+      );
       const path = `${root}/accounts.json`;
       const bytes = Deno.readTextFileSync(path);
       const reopened = new AccountRepository(root, undefined, {
@@ -342,7 +409,7 @@ for (
       await assertRejects(() => signIn(restarted, input), AuthenticationError);
       const nextCode = await authenticatorCode(secret, NOW + 30_000);
       await signIn(restarted, { ...input, totp: nextCode });
-      const saved = restarted.accounts.byId(account.id)!;
+      const saved = storedAccount(restarted.accounts, account.id);
       assertEquals(saved.totpKey, stored.key);
       assertEquals(saved.totpKeyEncoding, stored.encoding);
       assertEquals(
@@ -350,9 +417,13 @@ for (
         "encoding" in stored,
       );
       assertEquals(saved.lastTotpStep, NOW / 30_000 + 1);
-      const reset = restarted.accounts.changeCredentials(account.id, 0, {
-        passwordHash: fixturePasswordHash("new password"),
-      }, UPDATE);
+      await resetFixturePassword(
+        restarted.accounts,
+        account.id,
+        "new password",
+        UPDATE,
+      );
+      const reset = storedAccount(restarted.accounts, account.id);
       assertEquals(reset.totpKey, stored.key);
       assertEquals(reset.totpKeyEncoding, stored.encoding);
       assertEquals(reset.lastTotpStep, saved.lastTotpStep);

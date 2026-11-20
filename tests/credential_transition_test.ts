@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { signIn } from "./helpers/session_delivery.ts";
+import { importFixtureAccount } from "./helpers/account_preparation.ts";
+import { storedAccount } from "./helpers/identity.ts";
 import {
   assert,
   assertEquals,
@@ -43,17 +45,27 @@ import { OwnershipError } from "../shared/ownership.js";
 Deno.test("credential commands: repository validation cannot retire domain authority then enter the renderer", () => {
   let renders = 0;
   return credentialCommandFixture(async (f) => {
-    const before = Deno.readTextFileSync(`${f.root}/accounts.json`);
-    const unchanged = f.accounts.assertUnchanged.bind(f.accounts);
-    f.accounts.assertUnchanged = (snapshot) => {
-      unchanged(snapshot);
-      f.retire();
+    const before = Deno.readTextFileSync(`${f.root}/accounts.json`),
+      read = Deno.readTextFileSync;
+    let checked = false;
+    Deno.readTextFileSync = (file) => {
+      const value = read(file);
+      if (String(file) === `${f.root}/accounts.json`) {
+        checked = true;
+        f.retire();
+      }
+      return value;
     };
-    await assertRejects(
-      () => f.accounts.credentials.beginEnrollment(f.authority),
-      OwnershipError,
-      "Owner is retired",
-    );
+    try {
+      await assertRejects(
+        () => f.accounts.credentials.beginEnrollment(f.authority),
+        OwnershipError,
+        "Owner is retired",
+      );
+    } finally {
+      Deno.readTextFileSync = read;
+    }
+    assertEquals(checked, true);
     assertEquals(renders, 0);
     assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), before);
   }, {
@@ -108,7 +120,8 @@ Deno.test("credential commands: the renderer is captured with the other aggregat
 
 Deno.test("credential commands: password change returns exact redacted committed identity and revokes only its old sessions", () =>
   credentialCommandFixture(async (f) => {
-    f.accounts.importAccount(
+    importFixtureAccount(
+      f.accounts,
       identityAccount({
         id: ACCOUNT_B,
         login: "bob",
@@ -176,7 +189,7 @@ Deno.test("credential commands: enrollment is inert, fixed-form and bound to the
       }),
     );
     assert(result.totpEnabled);
-    const account = f.accounts.byId(ACCOUNT_A)!;
+    const account = storedAccount(f.accounts, ACCOUNT_A);
     assertEquals(account.totpKey, bundle.key);
     assertEquals(account.totpKeyEncoding, "base32");
     assertEquals(account.lastTotpStep, COMMAND_NOW / 30_000);
@@ -216,7 +229,7 @@ Deno.test("credential commands: replacement needs both codes and removal clears 
             code: "bad",
           } as CredentialChangeRequest["authenticator"],
         }), IdentityStateError);
-      assertEquals(f.accounts.byId(ACCOUNT_A)?.lastTotpStep, null);
+      assertEquals(storedAccount(f.accounts, ACCOUNT_A).lastTotpStep, null);
       await f.accounts.credentials.changeOwn(f.authority, request);
       await signIn(f.sessions, {
         username: "alice",
@@ -237,7 +250,7 @@ Deno.test("credential commands: replacement needs both codes and removal clears 
         }),
       );
       assertEquals(removed.totpEnabled, false);
-      const saved = new AccountRepository(f.root).byId(ACCOUNT_A)!;
+      const saved = storedAccount(new AccountRepository(f.root), ACCOUNT_A);
       assertEquals(saved.totpKey, null);
       assertEquals(saved.lastTotpStep, null);
       assert(!Object.hasOwn(saved, "totpKeyEncoding"));
@@ -370,7 +383,7 @@ fixtureTest(
         assertEquals(second.key, first.key);
         release.resolve(fixturePasswordHash("new password"));
         await assertRejects(() => pending);
-        assertEquals(f.accounts.byId(ACCOUNT_A)?.totpKey, null);
+        assertEquals(storedAccount(f.accounts, ACCOUNT_A).totpKey, null);
       } finally {
         crypto.getRandomValues = random;
         release.resolve(fixturePasswordHash("new password"));
@@ -487,7 +500,8 @@ Deno.test("credential commands: a forced change rejects the temporary password b
 Deno.test("credential commands: enrollment renders a login with an unpaired surrogate and keeps it stored as is", () =>
   credentialCommandFixture(async (f) => {
     const login = "alice\uD800";
-    f.accounts.importAccount(
+    importFixtureAccount(
+      f.accounts,
       identityAccount({
         id: ACCOUNT_B,
         login,
@@ -515,8 +529,8 @@ Deno.test("credential commands: enrollment renders a login with an unpaired surr
       }),
     );
     assert(result.totpEnabled);
-    assertEquals(f.accounts.byId(ACCOUNT_B)!.login, login);
-    assertEquals(f.accounts.byId(ACCOUNT_B)!.totpKey, bundle.key);
+    assertEquals(storedAccount(f.accounts, ACCOUNT_B).login, login);
+    assertEquals(storedAccount(f.accounts, ACCOUNT_B).totpKey, bundle.key);
     const setup = await totpEnrolment(login);
     assertEquals(
       setup.uri,
@@ -534,7 +548,8 @@ fixtureTest(
     ];
     const uris: string[] = [];
     return credentialCommandFixture(async (f) => {
-      f.accounts.importAccount(
+      importFixtureAccount(
+        f.accounts,
         identityAccount({
           id: ACCOUNT_B,
           login: "bob",
@@ -571,7 +586,8 @@ fixtureTest(
 
 Deno.test("credential commands: foreign authority and another account's candidate cannot change this account", () =>
   credentialCommandFixture(async (f) => {
-    f.accounts.importAccount(
+    importFixtureAccount(
+      f.accounts,
       identityAccount({
         id: ACCOUNT_B,
         login: "bob",
@@ -642,7 +658,7 @@ fixtureTest(
             },
           }),
         );
-        assertEquals(f.accounts.byId(ACCOUNT_A)?.totpKey, second.key);
+        assertEquals(storedAccount(f.accounts, ACCOUNT_A).totpKey, second.key);
       } finally {
         release.resolve("old QR");
         await first.catch(() => {});
@@ -687,7 +703,7 @@ for (
           }
           release.resolve("retired QR");
           await assertRejects(() => pending);
-          assertEquals(f.accounts.byId(ACCOUNT_A)?.totpKey, null);
+          assertEquals(storedAccount(f.accounts, ACCOUNT_A).totpKey, null);
         } finally {
           release.resolve("retired QR");
           await pending.catch(() => {});
@@ -749,7 +765,7 @@ for (
             before,
           );
           assertEquals(
-            f.accounts.byId(ACCOUNT_A)?.lastTotpStep,
+            storedAccount(f.accounts, ACCOUNT_A).lastTotpStep,
             COMMAND_NOW / 30_000,
           );
         } finally {
@@ -796,7 +812,7 @@ Deno.test("credential commands: hashing failure spends current proof but retains
         code: await f.code("key", undefined, 1),
       },
     });
-    assertEquals(f.accounts.byId(ACCOUNT_A)?.totpKey, candidate.key);
+    assertEquals(storedAccount(f.accounts, ACCOUNT_A).totpKey, candidate.key);
     await signIn(f.sessions, {
       username: "alice",
       password: "new password",
@@ -845,7 +861,7 @@ Deno.test("credential commands: unpublished credential write retains consumed co
       } finally {
         Deno.renameSync = rename;
       }
-      const saved = new AccountRepository(f.root).byId(ACCOUNT_A)!;
+      const saved = storedAccount(new AccountRepository(f.root), ACCOUNT_A);
       assertEquals(saved.credentialRevision, 0);
       assertEquals(saved.lastTotpStep, COMMAND_NOW / 30_000);
       assertEquals(saved.totpKey, "key");
@@ -860,7 +876,7 @@ Deno.test("credential commands: unpublished credential write retains consumed co
           code: await f.code("key", undefined, 1),
         },
       });
-      assertEquals(f.accounts.byId(ACCOUNT_A)?.totpKey, candidate.key);
+      assertEquals(storedAccount(f.accounts, ACCOUNT_A).totpKey, candidate.key);
     },
     {},
     { key: "key" },
@@ -893,7 +909,7 @@ fixtureTest(
         release.resolve(fixturePasswordHash("new password"));
         await pending;
         assertEquals(
-          f.accounts.byId(ACCOUNT_A)?.lastTotpStep,
+          storedAccount(f.accounts, ACCOUNT_A).lastTotpStep,
           COMMAND_NOW / 30_000,
         );
       } finally {
@@ -943,7 +959,10 @@ fixtureTest(
         release.resolve(fixturePasswordHash("new password"));
         const result = await pending;
         assertEquals(result.credentialUpdateId, UPDATE);
-        assertEquals(f.accounts.byId(ACCOUNT_A)?.totpKey, candidate.key);
+        assertEquals(
+          storedAccount(f.accounts, ACCOUNT_A).totpKey,
+          candidate.key,
+        );
       } finally {
         release.resolve(fixturePasswordHash("new password"));
         await pending.catch(() => {});
@@ -1028,7 +1047,7 @@ Deno.test("credential commands: a durability warning retains the committed recei
         },
       }),
     );
-    assertEquals(f.accounts.byId(ACCOUNT_A)?.totpKey, replacement.key);
+    assertEquals(storedAccount(f.accounts, ACCOUNT_A).totpKey, replacement.key);
   }));
 
 fixtureTest(
@@ -1063,7 +1082,7 @@ fixtureTest(
         await assertRejects(() => pending, AuthenticationError);
         assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), before);
         assertEquals(
-          f.accounts.byId(ACCOUNT_A)?.lastTotpStep,
+          storedAccount(f.accounts, ACCOUNT_A).lastTotpStep,
           COMMAND_NOW / 30_000,
         );
         await f.accounts.credentials.authenticate("alice", "password", fresh);
@@ -1089,7 +1108,8 @@ fixtureTest(
     const entered = fixtureGate(scope),
       release = fixtureGate<string>(scope);
     return credentialCommandFixture(async (f) => {
-      f.accounts.importAccount(
+      importFixtureAccount(
+        f.accounts,
         identityAccount({
           id: ACCOUNT_B,
           login: "bob",
@@ -1168,7 +1188,7 @@ fixtureTest(
         release.resolve(fixturePasswordHash("new password"));
         await assertRejects(() => pending);
         assertEquals(f.accounts.identityById(ACCOUNT_A), winner);
-        assertEquals(f.accounts.byId(ACCOUNT_A)?.totpKey, null);
+        assertEquals(storedAccount(f.accounts, ACCOUNT_A).totpKey, null);
         await signIn(f.sessions, {
           username: "alice",
           password: "winner password",

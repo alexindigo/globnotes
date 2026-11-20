@@ -15,7 +15,12 @@ import { fixtureGate, fixtureTest } from "./helpers/fixture_coordination.ts";
 import type { FixtureScope } from "./helpers/fixture_scope.ts";
 import { SignJWT } from "jose";
 import { AccountRepository } from "../server/auth/accounts.ts";
-import type { Account } from "../server/auth/accounts.ts";
+import type { AccountIdentity } from "../server/auth/accounts.ts";
+import {
+  importFixtureAccount,
+  recoveryForRoot,
+} from "./helpers/account_preparation.ts";
+import { storedLogin, storedState } from "./helpers/identity.ts";
 import type {
   CredentialOptions,
   LoginClaim,
@@ -147,7 +152,8 @@ Deno.test("sign-in delivery: cancellation closes the claimed proof without relea
     }
     const accounts = new ObservedAccounts(root, undefined, { now: () => NOW });
     scope.onCancel(() => accounts.retireCredentials());
-    accounts.importAccount(
+    importFixtureAccount(
+      accounts,
       identityAccount({
         passwordHash: fixturePasswordHash("password"),
         totpKey: "key",
@@ -182,9 +188,10 @@ Deno.test("sign-in delivery: cancellation closes the claimed proof without relea
 
 for (const mutation of ["same account", "abort", "other account"] as const) {
   Deno.test(`sign-in delivery: final clock callback ${mutation} is checked before enqueue`, () =>
-    proofFixture(async (accounts, sessions) => {
+    proofFixture(async (accounts, sessions, root) => {
       const abort = new AbortController();
-      accounts.importAccount(
+      importFixtureAccount(
+        accounts,
         identityAccount({
           id: ACCOUNT_B,
           login: "bob",
@@ -194,6 +201,10 @@ for (const mutation of ["same account", "abort", "other account"] as const) {
       );
       const events: string[] = [];
       let delivering = false, checks = 0;
+      // The raw code counter is gone; the synchronous credential change is the
+      // offline disable command, whose commit completes inside this callback.
+      let change: Promise<AccountIdentity> | undefined;
+      const recovery = recoveryForRoot(root);
       const owner = new InstanceSessions(accounts, sessions.signing, {
         expirySeconds: 1000,
       }, {
@@ -209,51 +220,73 @@ for (const mutation of ["same account", "abort", "other account"] as const) {
               } else {
                 const login = mutation === "same account" ? "alice" : "bob";
                 const account = accounts.byLogin(login)!;
-                accounts.consumeTotp(
-                  account.id,
-                  account.credentialRevision,
-                  NOW / 30_000 + (mutation === "same account" ? 1 : 0),
+                change = accounts.credentials.disableAuthenticator(
+                  recovery.authority,
+                  {
+                    accountId: account.id,
+                    credentialRevision: account.credentialRevision,
+                    updateId: UPDATE,
+                  },
                 );
-                events.push(`advanced ${login}`);
+                change.catch(() => {});
+                events.push(
+                  `${
+                    storedLogin(accounts, login).totpKey === null
+                      ? "changed"
+                      : "unchanged"
+                  } ${login}`,
+                );
               }
             }
           }
           return NOW;
         },
       });
-      const issued = await owner.login({
-        username: "alice",
-        password: "password",
-        totp: await codeAt(),
-      }, abort.signal);
-      delivering = true;
-      if (mutation === "other account") {
-        const result = await receiveSession(issued);
-        assertEquals(
-          (await owner.validateToken(result.access_token)).accountId,
-          issued.principal.accountId,
-        );
-      } else {
-        await assertRejects(
-          () => new Response(issued.body).text(),
-          AuthenticationError,
-          "Invalid authentication credentials.",
-        );
+      try {
+        const issued = await owner.login({
+          username: "alice",
+          password: "password",
+          totp: await codeAt(),
+        }, abort.signal);
+        delivering = true;
+        if (mutation === "other account") {
+          const result = await receiveSession(issued);
+          assertEquals(
+            (await owner.validateToken(result.access_token)).accountId,
+            issued.principal.accountId,
+          );
+        } else {
+          await assertRejects(
+            () => new Response(issued.body).text(),
+            AuthenticationError,
+            "Invalid authentication credentials.",
+          );
+        }
+        assertEquals(events, [
+          "binder clock",
+          "delivery clock",
+          mutation === "abort"
+            ? "aborted"
+            : `changed ${mutation === "same account" ? "alice" : "bob"}`,
+        ]);
+        if (mutation !== "abort") {
+          const changed = await change!;
+          assertEquals(
+            [changed.login, changed.credentialRevision, changed.totpEnabled],
+            [mutation === "same account" ? "alice" : "bob", 1, false],
+          );
+        }
+        assertEquals([
+          storedLogin(accounts, "alice").lastTotpStep,
+          storedLogin(accounts, "bob").lastTotpStep,
+        ], [
+          mutation === "same account" ? null : NOW / 30_000,
+          null,
+        ]);
+      } finally {
+        recovery.close();
+        await change?.catch(() => {});
       }
-      assertEquals(events, [
-        "binder clock",
-        "delivery clock",
-        mutation === "abort"
-          ? "aborted"
-          : `advanced ${mutation === "same account" ? "alice" : "bob"}`,
-      ]);
-      assertEquals([
-        accounts.byLogin("alice")!.lastTotpStep,
-        accounts.byLogin("bob")!.lastTotpStep,
-      ], [
-        NOW / 30_000 + (mutation === "same account" ? 1 : 0),
-        mutation === "other account" ? NOW / 30_000 : null,
-      ]);
     }));
 }
 
@@ -290,8 +323,10 @@ Deno.test("sign-in proof: storage validation retirement cannot spend the code af
   }));
 
 Deno.test("sign-in delivery: clock callback runs before current credential comparison", () =>
-  proofFixture(async (accounts, sessions) => {
+  proofFixture(async (accounts, sessions, root) => {
     let armed = false, changes = 0;
+    let mutation: Promise<unknown> | undefined;
+    const recovery = recoveryForRoot(root);
     const owner = new InstanceSessions(accounts, sessions.signing, {
       expirySeconds: 1000,
     }, {
@@ -299,30 +334,43 @@ Deno.test("sign-in delivery: clock callback runs before current credential compa
         if (armed) {
           armed = false;
           changes++;
-          accounts.changeCredentials(accounts.byLogin("alice")!.id, 0, {
-            passwordChangeRequired: true,
-          }, UPDATE);
+          mutation = accounts.credentials.disableAuthenticator(
+            recovery.authority,
+            {
+              accountId: accounts.byLogin("alice")!.id,
+              credentialRevision: 0,
+              updateId: UPDATE,
+            },
+          );
+          mutation.catch(() => {});
         }
         return NOW;
       },
     });
-    const issued = await owner.login({
-      username: "alice",
-      password: "password",
-      totp: await codeAt(),
-    });
-    armed = true;
-    await assertRejects(
-      () => new Response(issued.body).text(),
-      AuthenticationError,
-      "Invalid authentication credentials.",
-    );
-    assertEquals(changes, 1);
+    try {
+      const issued = await owner.login({
+        username: "alice",
+        password: "password",
+        totp: await codeAt(),
+      });
+      armed = true;
+      await assertRejects(
+        () => new Response(issued.body).text(),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+      assertEquals(changes, 1);
+      assert(mutation);
+      await mutation;
+    } finally {
+      recovery.close();
+    }
   }));
 Deno.test("sign-in proof: later code progress fences a held session signature", () =>
   identityFixture(async (root, scope) => {
     const accounts = new AccountRepository(root, undefined, { now: () => NOW });
-    accounts.importAccount(
+    importFixtureAccount(
+      accounts,
       identityAccount({
         passwordHash: fixturePasswordHash("password"),
         totpKey: "key",
@@ -393,7 +441,8 @@ async function proofFixture(
       ...options,
     });
     scope.onCancel(() => accounts.retireCredentials());
-    accounts.importAccount(
+    importFixtureAccount(
+      accounts,
       identityAccount({
         passwordHash: fixturePasswordHash("password"),
         totpKey: key,
@@ -419,7 +468,8 @@ Deno.test("sign-in proof: a warning handler cannot replace the account confirmed
     const open = Deno.openSync,
       warning = logger.warning,
       rename = Deno.renameSync;
-    const replacementHash = fixturePasswordHash("replacement password");
+    const recovery = recoveryForRoot(root);
+    let replacement: Promise<unknown> | undefined;
     let deny = false, changed = false;
     Deno.renameSync = (from, to) => {
       rename(from, to);
@@ -438,9 +488,15 @@ Deno.test("sign-in proof: a warning handler cannot replace the account confirmed
       deny = false;
       if (!changed) {
         changed = true;
-        accounts.changeCredentials(accounts.byLogin("alice")!.id, 0, {
-          passwordHash: replacementHash,
-        }, UPDATE);
+        replacement = accounts.credentials.disableAuthenticator(
+          recovery.authority,
+          {
+            accountId: accounts.byLogin("alice")!.id,
+            credentialRevision: 0,
+            updateId: UPDATE,
+          },
+        );
+        replacement.catch(() => {});
       }
     };
     try {
@@ -454,12 +510,14 @@ Deno.test("sign-in proof: a warning handler cannot replace the account confirmed
         AuthenticationError,
       );
       assert(changed);
+      await replacement;
       assertEquals(accounts.byLogin("alice")?.credentialRevision, 1);
-      assertEquals(accounts.byLogin("alice")?.lastTotpStep, NOW / 30_000);
+      assertEquals(storedLogin(accounts, "alice").lastTotpStep, null);
     } finally {
       Deno.openSync = open;
       logger.warning = warning;
       Deno.renameSync = rename;
+      recovery.close();
     }
   }));
 
@@ -473,7 +531,8 @@ Deno.test("sign-in proof: forged, cloned, foreign, other-purpose and raw account
     const foreign = new AccountRepository(`${root}/foreign`, undefined, {
       now: () => NOW,
     });
-    foreign.importAccount(
+    importFixtureAccount(
+      foreign,
       identityAccount({ passwordHash: fixturePasswordHash("password") }),
     );
     const foreignProof = await foreign.credentials.authenticate(
@@ -505,7 +564,7 @@ Deno.test("sign-in proof: forged, cloned, foreign, other-purpose and raw account
       () => issueSession(sessions, proof),
       AuthenticationError,
     );
-    const typeContract = (account: Account) => {
+    const typeContract = (account: AccountIdentity) => {
       // @ts-expect-error Account data is not evidence of sign-in.
       issueSession(sessions, account);
       // @ts-expect-error A matched step is not accepted by the command.
@@ -622,13 +681,13 @@ Deno.test("sign-in proof: invalid code or supplied step cannot consume a current
         ),
       AuthenticationError,
     );
-    assertEquals(accounts.byLogin("alice")?.lastTotpStep, null);
+    assertEquals(storedLogin(accounts, "alice").lastTotpStep, null);
     await signIn(sessions, {
       username: "alice",
       password: "password",
       totp: await codeAt(),
     });
-    assertEquals(accounts.byLogin("alice")?.lastTotpStep, NOW / 30_000);
+    assertEquals(storedLogin(accounts, "alice").lastTotpStep, NOW / 30_000);
   }));
 
 for (
@@ -665,16 +724,26 @@ for (
           "session signature entered",
         );
         if (boundary === "credential change") {
-          accounts.changeCredentials(accounts.byLogin("alice")!.id, 0, {
-            passwordChangeRequired: true,
-          }, UPDATE);
+          const recovery = recoveryForRoot(root);
+          try {
+            await accounts.credentials.disableAuthenticator(
+              recovery.authority,
+              {
+                accountId: accounts.byLogin("alice")!.id,
+                credentialRevision: 0,
+                updateId: UPDATE,
+              },
+            );
+          } finally {
+            recovery.close();
+          }
         }
         if (boundary === "abort") abort.abort();
         if (boundary === "owner retirement") accounts.retireCredentials();
         if (boundary === "account file replacement") {
           Deno.writeTextFileSync(
             `${root}/accounts.json`,
-            JSON.stringify({ ...accounts.capture().value, revision: 999 }),
+            JSON.stringify({ ...storedState(accounts), revision: 999 }),
           );
         }
         if (boundary === "signing file replacement") {
@@ -692,7 +761,10 @@ for (
           AuthenticationError,
           "Invalid authentication credentials.",
         );
-        assertEquals(accounts.byLogin("alice")?.lastTotpStep, NOW / 30_000);
+        assertEquals(
+          storedLogin(accounts, "alice").lastTotpStep,
+          boundary === "credential change" ? null : NOW / 30_000,
+        );
       } finally {
         SignJWT.prototype.sign = sign;
         release.resolve();
@@ -703,7 +775,8 @@ for (
 
 Deno.test("sign-in proof: another account's code progress does not cancel this account's held signature", () =>
   proofFixture(async (accounts, sessions, _root, scope) => {
-    accounts.importAccount(
+    importFixtureAccount(
+      accounts,
       identityAccount({
         id: ACCOUNT_B,
         login: "bob",
@@ -817,7 +890,7 @@ Deno.test("sign-in proof: failed code publication returns no proof and does not 
       Deno.renameSync = rename;
     }
     assertEquals(Deno.readTextFileSync(`${root}/accounts.json`), before);
-    assertEquals(accounts.byLogin("alice")?.lastTotpStep, null);
+    assertEquals(storedLogin(accounts, "alice").lastTotpStep, null);
     await signIn(sessions, {
       username: "alice",
       password: "password",
@@ -913,7 +986,7 @@ for (const boundary of ["abort", "owner retirement"] as const) {
           else accounts.retireCredentials();
           release.resolve(true);
           await assertRejects(() => pending, AuthenticationError);
-          assertEquals(accounts.byLogin("alice")?.lastTotpStep, null);
+          assertEquals(storedLogin(accounts, "alice").lastTotpStep, null);
         } finally {
           release.resolve(true);
           await pending.catch(() => {});

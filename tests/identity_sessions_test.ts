@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { signIn } from "./helpers/session_delivery.ts";
+import { fixtureGate } from "./helpers/fixture_coordination.ts";
+import type { FixtureScope } from "./helpers/fixture_scope.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { decodeJwt, SignJWT } from "jose";
-import { AccountRepository, prepareAccount } from "../server/auth/accounts.ts";
+import { AccountRepository } from "../server/auth/accounts.ts";
+import { prepareFixtureAccount } from "./helpers/identity.ts";
+import {
+  importFixtureAccount,
+  resetFixturePassword,
+} from "./helpers/account_preparation.ts";
+import { withCredentialAuthority as credentialAuthorityFor } from "./helpers/credential_commands.ts";
 import {
   AuthenticationError,
   GUEST,
@@ -21,16 +29,24 @@ import {
 const NOW = 1_800_000_000_000;
 const settings = { expirySeconds: 30 * 86_400 };
 async function fixture(
-  run: (s: InstanceSessions, root: string) => Promise<void>,
+  run: (
+    s: InstanceSessions,
+    root: string,
+    scope: FixtureScope,
+  ) => Promise<void>,
 ) {
-  await identityFixture(async (root) => {
+  await identityFixture(async (root, scope) => {
     const accounts = new AccountRepository(root);
-    accounts.create(await prepareAccount("Alice", "password"));
+    importFixtureAccount(
+      accounts,
+      await prepareFixtureAccount("Alice", "password"),
+    );
     const signing = new SessionRepository(root);
     signing.initialize();
     await run(
       new InstanceSessions(accounts, signing, settings, { now: () => NOW }),
       root,
+      scope,
     );
   });
 }
@@ -91,7 +107,8 @@ Deno.test("identity sessions: invalid submitted credentials are never guest and 
 
 Deno.test("identity sessions: own credential revision revokes every old token, not another account", () =>
   fixture(async (sessions) => {
-    sessions.accounts.create(
+    importFixtureAccount(
+      sessions.accounts,
       identityAccount({
         id: ACCOUNT_B,
         login: "bob",
@@ -110,9 +127,12 @@ Deno.test("identity sessions: own credential revision revokes every old token, n
       username: "bob",
       password: "bob-password",
     });
-    sessions.accounts.changeCredentials(a.principal.accountId, 0, {
-      passwordHash: await hashPassword("new-password"),
-    }, UPDATE);
+    await resetFixturePassword(
+      sessions.accounts,
+      a.principal.accountId,
+      "new-password",
+      UPDATE,
+    );
     await assertRejects(
       () => sessions.validateToken(a.access_token),
       AuthenticationError,
@@ -138,18 +158,29 @@ Deno.test("identity sessions: own credential revision revokes every old token, n
 
 Deno.test("identity sessions: temporary password remains explicitly restricted until credential change", () =>
   fixture(async (sessions) => {
-    const person = sessions.accounts.create(
-      await prepareAccount("recipient", "temporary", { temporary: true }),
+    const person = importFixtureAccount(
+      sessions.accounts,
+      await prepareFixtureAccount("recipient", "temporary", {
+        temporary: true,
+      }),
     );
     const first = await signIn(sessions, {
       username: "recipient",
       password: "temporary",
     });
     assertEquals(first.principal.passwordChangeRequired, true);
-    sessions.accounts.changeCredentials(person.id, 0, {
-      passwordHash: await hashPassword("own-password"),
-      passwordChangeRequired: false,
-    }, UPDATE);
+    await credentialAuthorityFor(
+      sessions.accounts,
+      person.id,
+      (authority) =>
+        sessions.accounts.credentials.changeOwn(authority, {
+          credentialRevision: 0,
+          updateId: UPDATE,
+          current: { password: "temporary" },
+          newPassword: "own-password",
+          authenticator: { kind: "keep" },
+        }),
+    );
     await assertRejects(
       () => sessions.validateToken(first.access_token),
       AuthenticationError,
@@ -227,11 +258,12 @@ Deno.test("identity sessions: HS256, required claims, subject and signing revisi
   }));
 
 Deno.test("identity sessions: credential changes during password proof cannot mint an old session", () =>
-  fixture(async (sessions, root) => {
-    const held = Promise.withResolvers<boolean>();
+  fixture(async (sessions, root, scope) => {
+    const held = fixtureGate<boolean>(scope);
     const accounts = new AccountRepository(root, undefined, {
       verify: () => held.promise,
     });
+    scope.onCancel(() => accounts.retireCredentials());
     const racing = new InstanceSessions(
       accounts,
       sessions.signing,
@@ -239,10 +271,11 @@ Deno.test("identity sessions: credential changes during password proof cannot mi
       { now: () => NOW },
     );
     const pending = signIn(racing, { username: "alice", password: "password" });
-    accounts.changeCredentials(
+    pending.catch(() => {});
+    await resetFixturePassword(
+      accounts,
       sessions.accounts.byLogin("alice")!.id,
-      0,
-      { passwordChangeRequired: true },
+      "new-password",
       UPDATE,
     );
     held.resolve(true);

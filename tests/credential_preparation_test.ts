@@ -9,10 +9,8 @@ import {
   assertThrows,
 } from "@std/assert";
 import { fixtureGate, fixtureTest } from "./helpers/fixture_coordination.ts";
-import {
-  AccountRepository,
-  type AccountState,
-} from "../server/auth/accounts.ts";
+import { AccountRepository } from "../server/auth/accounts.ts";
+import type { AccountState } from "../server/auth/internal/account_record.ts";
 import {
   type AccountPreparationAuthority,
   type AccountPreparationRequest,
@@ -41,6 +39,7 @@ import { AclRepository } from "../server/auth/acl.ts";
 import { InstanceAuthority } from "../server/auth/authority.ts";
 import { createOperationLease } from "../server/operation_lease.ts";
 import { VAULT_A } from "./helpers/identity.ts";
+import { storedAccount, storedState } from "./helpers/identity.ts";
 
 const AUTHENTICATION_MESSAGE = "Invalid authentication credentials.";
 const CONFLICT_MESSAGE = "Stored configuration changed before commit.";
@@ -167,10 +166,45 @@ Deno.test("offline recovery: the forced change after a reset cannot keep the rec
     await f.accounts.credentials.authenticate("alice", "permanent password");
   }));
 
+Deno.test("offline recovery: a stale request rejects without effect and the same lock owner then resets the live revision", () =>
+  preparationFixture(async (f) => {
+    const account = await f.createInitial(), owner = f.offline();
+    try {
+      const before = Deno.readTextFileSync(`${f.root}/accounts.json`);
+      await assertRejects(
+        () =>
+          f.accounts.credentials.resetPassword(owner.authority, {
+            accountId: account.id,
+            credentialRevision: 1,
+            updateId: NEXT_UPDATE,
+            password: "recovered",
+          }),
+        StoredConfigConflict,
+        CONFLICT_MESSAGE,
+      );
+      assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), before);
+      const reset = await f.accounts.credentials.resetPassword(
+        owner.authority,
+        {
+          accountId: account.id,
+          credentialRevision: 0,
+          updateId: NEXT_UPDATE,
+          password: "recovered",
+        },
+      );
+      assertEquals(
+        [reset.id, reset.credentialRevision, reset.passwordChangeRequired],
+        [account.id, 1, true],
+      );
+    } finally {
+      owner.close();
+    }
+  }));
+
 Deno.test("offline recovery: disable preserves the password and unrestricted sign-in without a reset", () =>
   credentialCommandFixture(
     async (f) => {
-      const before = f.accounts.byId(ACCOUNT_A)!,
+      const before = storedAccount(f.accounts, ACCOUNT_A),
         owner = recoveryForRoot(f.root);
       try {
         const result = await f.accounts.credentials.disableAuthenticator(
@@ -182,7 +216,7 @@ Deno.test("offline recovery: disable preserves the password and unrestricted sig
           before.passwordChangeRequired,
         );
         assertEquals(
-          f.accounts.byId(ACCOUNT_A)!.passwordHash,
+          storedAccount(f.accounts, ACCOUNT_A).passwordHash,
           before.passwordHash,
         );
         assertEquals(result.credentialRevision, 1);
@@ -371,7 +405,7 @@ Deno.test("account preparation: initial password-only handle is inert, opaque an
     );
     assertEquals(f.accounts.capture().value.updateId, UPDATE);
     assertEquals(f.accounts.capture().value.initialized, true);
-    assertEquals(f.accounts.byId(created.id)?.lastTotpStep, null);
+    assertEquals(storedAccount(f.accounts, created.id).lastTotpStep, null);
     f.signing.initialize();
     const token = await signIn(f.sessions, {
       username: "alice",
@@ -773,7 +807,7 @@ for (const mismatched of [false, true]) {
     credentialCommandFixture(async (f) => {
       const filename = `${f.root}/accounts.json`,
         otherRoot = `${f.root}/other-root`;
-      const before = f.accounts.capture().value;
+      const before = storedState(f.accounts);
       // Trusted fixture state uses the injected persistence seam; reopened
       // AccountRepository instances below still apply the real schema validator.
       const file = new IdentityFile<AccountState>(
@@ -795,6 +829,7 @@ for (const mismatched of [false, true]) {
         password: "recovered",
       };
       try {
+        assertEquals(accounts.root, f.accounts.root);
         const originalBytes = Deno.readTextFileSync(filename);
         const wrong = recoveryForRoot(otherRoot);
         try {
@@ -807,13 +842,13 @@ for (const mismatched of [false, true]) {
           wrong.close();
         }
         assertEquals(Deno.readTextFileSync(filename), originalBytes);
-        const right = recoveryForRoot(f.root);
+        const right = recoveryForRoot(accounts.root);
         try {
           await accounts.credentials.resetPassword(right.authority, request);
         } finally {
           right.close();
         }
-        assertEquals(new AccountRepository(f.root).capture().value, {
+        assertEquals(storedState(new AccountRepository(accounts.root)), {
           ...before,
           revision: before.revision + 1,
           updateId: UPDATE,
@@ -844,7 +879,7 @@ for (
   Deno.test(`offline recovery: reset preserves stored key, marker and floor; disable clears only that account (${JSON.stringify(stored)})`, () =>
     credentialCommandFixture(
       async (f) => {
-        const before = f.accounts.byId(ACCOUNT_A)!;
+        const before = storedAccount(f.accounts, ACCOUNT_A);
         const owner = recoveryForRoot(f.root);
         try {
           const reset = await f.accounts.credentials.resetPassword(
@@ -858,7 +893,7 @@ for (
           );
           assert(reset.passwordChangeRequired);
           assertEquals(reset.credentialRevision, 1);
-          const after = f.accounts.byId(ACCOUNT_A)!;
+          const after = storedAccount(f.accounts, ACCOUNT_A);
           assertEquals(after.totpKey, before.totpKey);
           assertEquals(after.totpKeyEncoding, before.totpKeyEncoding);
           assertEquals(
@@ -900,7 +935,7 @@ for (
           );
           assertEquals(removed.totpEnabled, false);
           assertEquals(removed.passwordChangeRequired, true);
-          const final = new AccountRepository(f.root).byId(ACCOUNT_A)!;
+          const final = storedAccount(new AccountRepository(f.root), ACCOUNT_A);
           assertEquals(final.totpKey, null);
           assertEquals(final.lastTotpStep, null);
           assert(!Object.hasOwn(final, "totpKeyEncoding"));

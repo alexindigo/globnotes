@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { dirname, join } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
-import { hashPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
 import type { OperationLease } from "../operation_lease.ts";
 import {
@@ -12,29 +11,24 @@ import { bindAccountCredentials } from "./internal/account_credentials.ts";
 import {
   decodeStoredAuthenticator,
   type StoredAuthenticator,
-  type TotpKeyEncoding,
 } from "./credentials.ts";
+import {
+  type Account,
+  type AccountSnapshot,
+  type AccountState,
+  normalizeLogin,
+  validateAccount,
+  validateState,
+} from "./internal/account_record.ts";
 import {
   fields,
   identity,
   IdentityFile,
-  type IdentitySnapshot,
   IdentityStateError,
   integer,
   record,
 } from "./records.ts";
-
-export interface Account {
-  readonly id: string;
-  readonly login: string;
-  readonly passwordHash: string;
-  readonly totpKey: string | null;
-  readonly totpKeyEncoding?: TotpKeyEncoding;
-  readonly lastTotpStep: number | null;
-  readonly credentialRevision: number;
-  readonly passwordChangeRequired: boolean;
-  readonly credentialUpdateId: string | null;
-}
+export { normalizeLogin } from "./internal/account_record.ts";
 export interface AccountIdentity {
   readonly id: string;
   readonly login: string;
@@ -43,142 +37,40 @@ export interface AccountIdentity {
   readonly credentialUpdateId: string | null;
   readonly totpEnabled: boolean;
 }
-export interface ProvisioningReceipt {
-  readonly operationId: string;
-  readonly actorId: string;
-  readonly vaultId: string;
-  readonly accountId: string;
-  readonly payloadHash: string;
-}
-export interface AccountState {
-  readonly version: 1;
-  readonly revision: number;
-  readonly initialized: boolean;
-  readonly updateId: string | null;
-  readonly accounts: readonly Account[];
-  readonly provisioning: readonly ProvisioningReceipt[];
-}
-export type AccountSnapshot = IdentitySnapshot<AccountState>;
-
-export function normalizeLogin(value: string): string {
-  const login = value.trim().toLowerCase();
-  const control = [...login].some((char) => {
-    const point = char.codePointAt(0)!;
-    return point < 32 || point === 127;
-  });
-  if (!login || login === "guest" || control) {
-    throw new IdentityStateError();
-  }
-  return login;
-}
-export function validPasswordHash(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const match = /^pbkdf2_sha256\$([1-9][0-9]*)\$([0-9a-f]+)\$([0-9a-f]{64})$/
-    .exec(value);
-  return !!match && Number.isSafeInteger(Number(match[1])) &&
-    match[2].length % 2 === 0;
-}
-export function validateAccount(value: unknown): Account {
+export function validateAccountIdentity(value: unknown): AccountIdentity {
   if (
-    !record(value) || !fields(value, [
+    !record(value) ||
+    !fields(value, [
       "id",
       "login",
-      "passwordHash",
-      "totpKey",
-      "lastTotpStep",
       "credentialRevision",
       "passwordChangeRequired",
       "credentialUpdateId",
-      ...(Object.hasOwn(value, "totpKeyEncoding") ? ["totpKeyEncoding"] : []),
+      "totpEnabled",
     ]) || !identity(value.id) || typeof value.login !== "string" ||
     normalizeLogin(value.login) !== value.login ||
-    !validPasswordHash(value.passwordHash) ||
     !integer(value.credentialRevision) ||
     typeof value.passwordChangeRequired !== "boolean" ||
+    typeof value.totpEnabled !== "boolean" ||
     !(value.credentialUpdateId === null || identity(value.credentialUpdateId))
   ) throw new IdentityStateError();
-  decodeStoredAuthenticator(
-    value.totpKey,
-    value.totpKeyEncoding,
-    value.lastTotpStep,
-  );
-  return value as unknown as Account;
+  return value as unknown as AccountIdentity;
 }
-function validateState(value: unknown): AccountState {
-  if (
-    !record(value) || !fields(value, [
-      "version",
-      "revision",
-      "initialized",
-      "updateId",
-      "accounts",
-      "provisioning",
-    ]) || value.version !== 1 || !integer(value.revision) ||
-    typeof value.initialized !== "boolean" ||
-    !(value.updateId === null || identity(value.updateId)) ||
-    !Array.isArray(value.accounts) || !Array.isArray(value.provisioning)
-  ) throw new IdentityStateError();
-  const accounts = value.accounts.map(validateAccount);
-  if (
-    new Set(accounts.map((a) => a.id)).size !== accounts.length ||
-    new Set(accounts.map((a) => a.login)).size !== accounts.length ||
-    (!value.initialized && accounts.length > 0)
-  ) throw new IdentityStateError();
-  const operations = new Set<string>();
-  for (const receipt of value.provisioning) {
-    if (
-      !record(receipt) || !fields(receipt, [
-        "operationId",
-        "actorId",
-        "vaultId",
-        "accountId",
-        "payloadHash",
-      ]) || !identity(receipt.operationId) || !identity(receipt.actorId) ||
-      !identity(receipt.vaultId) || !identity(receipt.accountId) ||
-      !accounts.some((a) => a.id === receipt.accountId) ||
-      typeof receipt.payloadHash !== "string" ||
-      !/^[0-9a-f]{64}$/.test(receipt.payloadHash) ||
-      operations.has(receipt.operationId)
-    ) throw new IdentityStateError();
-    operations.add(receipt.operationId);
-  }
-  return value as unknown as AccountState;
+declare const directoryBrand: unique symbol;
+export interface AccountDirectorySnapshot {
+  readonly [directoryBrand]: true;
+  readonly value: Omit<AccountState, "accounts"> & {
+    readonly accounts: readonly AccountIdentity[];
+  };
 }
-
-/** Hash outside the repository's short synchronous commit boundary. */
-export async function prepareAccount(
-  login: string,
-  password: string,
-  options: {
-    temporary?: boolean;
-    hash?: (password: string) => Promise<string>;
-  } = {},
-): Promise<Account> {
-  const normalized = normalizeLogin(login);
-  if (!password) throw new IdentityStateError();
-  return Object.freeze(validateAccount({
-    id: createUuid(),
-    login: normalized,
-    passwordHash: await (options.hash ?? hashPassword)(password),
-    totpKey: null,
-    lastTotpStep: null,
-    credentialRevision: 0,
-    passwordChangeRequired: options.temporary ?? false,
-    credentialUpdateId: null,
-  }));
-}
-
-/** Instance-owned records. Synchronous commits serialize effects in one process;
- * slow proof/hash preparation happens before capture revalidation, never inside it. */
+/** Repository owns stored records; only its aggregate binding sees credentials. */
 export class AccountRepository {
+  readonly root: string;
   readonly #file: IdentityFile<AccountState>;
   readonly #authenticators = new WeakMap<Account, StoredAuthenticator>();
-  #decodedSnapshot?: AccountSnapshot;
+  #directory?: { stored: AccountSnapshot; public: AccountDirectorySnapshot };
   readonly #credentials: AccountCredentials;
   readonly #retireCredentials: () => boolean;
-  readonly #legacyChange: ReturnType<
-    typeof bindAccountCredentials
-  >["legacyChange"];
   constructor(
     root: string,
     file = new IdentityFile<AccountState>(
@@ -196,21 +88,22 @@ export class AccountRepository {
     credentialOptions: CredentialOptions = {},
   ) {
     this.#file = file;
-    const snapshot = this.capture();
+    const snapshot = this.#file.capture();
+    // Recovery and fixture integrations share the same resolved binding as writes.
+    this.root = dirname(snapshot.persistence.binding.configured);
+    this.capture();
     const owner: ReturnType<typeof bindAccountCredentials> =
       bindAccountCredentials({
-        // Recovery admission follows the same resolved file binding as writes.
-        // The constructor's root selects only the default file, never authority.
-        root: dirname(snapshot.persistence.binding.configured),
-        capture: () => this.capture(),
-        assertSnapshot: (snapshot) => this.assertUnchanged(snapshot),
+        root: this.root,
+        capture: () => this.#file.capture(),
+        assertSnapshot: (snapshot) => this.#file.assertUnchanged(snapshot),
         normalizeLogin,
         validateAccount,
-        byLogin: (login) => this.byLogin(login),
-        byId: (id) => this.byId(id),
+        byLogin: (login) => this.#byLogin(login),
+        byId: (id) => this.#byId(id),
         authenticator: (account) => this.#decode(account),
         identity: (account) => this.#identity(account),
-        assertBound: () => this.assertUnchanged(),
+        assertBound: () => this.#file.assertUnchanged(),
         consume: (account, step, guard, lease) =>
           this.#consumeTotp(
             account.id,
@@ -222,7 +115,7 @@ export class AccountRepository {
         publish: (transition) => {
           const prepared = owner.resolveTransition(transition);
           const next = validateAccount(prepared.account);
-          const expected = this.capture();
+          const expected = this.#file.capture();
           this.#file.commit(
             {
               ...expected.value,
@@ -261,7 +154,6 @@ export class AccountRepository {
       }, credentialOptions);
     this.#credentials = owner.credentials;
     this.#retireCredentials = owner.retire;
-    this.#legacyChange = owner.legacyChange;
   }
   retireCredentials(): void {
     this.#retireCredentials();
@@ -280,16 +172,23 @@ export class AccountRepository {
     });
   }
   identityById(id: string): AccountIdentity | null {
-    const account = this.byId(id);
-    return account ? this.#identity(account) : null;
+    return this.byId(id);
   }
-  capture(): AccountSnapshot {
+  capture(): AccountDirectorySnapshot {
     const snapshot = this.#file.capture();
-    if (snapshot !== this.#decodedSnapshot) {
-      for (const account of snapshot.value.accounts) this.#decode(account);
-      this.#decodedSnapshot = snapshot;
+    if (snapshot !== this.#directory?.stored) {
+      const value = Object.freeze({
+        ...snapshot.value,
+        accounts: Object.freeze(
+          snapshot.value.accounts.map((account) => this.#identity(account)),
+        ),
+      });
+      this.#directory = {
+        stored: snapshot,
+        public: Object.freeze({ value }) as AccountDirectorySnapshot,
+      };
     }
-    return snapshot;
+    return this.#directory!.public;
   }
   #decode(account: Account): StoredAuthenticator {
     let authenticator = this.#authenticators.get(account);
@@ -303,110 +202,32 @@ export class AccountRepository {
     }
     return authenticator;
   }
-  storedAuthenticator(id: string): StoredAuthenticator | null {
-    const account = this.byId(id);
-    return account ? this.#decode(account) : null;
-  }
   assertUnchanged(expected = this.capture()): void {
-    this.#file.assertUnchanged(expected);
+    if (expected !== this.capture()) throw new StoredConfigConflict();
+    this.#file.assertUnchanged(this.#directory!.stored);
   }
   prepareParents(): void {
     this.#file.prepareParents();
   }
   get initialized(): boolean {
-    return this.capture().value.initialized;
+    return this.#file.capture().value.initialized;
   }
-  byId(id: string): Account | null {
+  #byId(id: string): Account | null {
+    return this.#file.capture().value.accounts.find((a) => a.id === id) ?? null;
+  }
+  #byLogin(login: string): Account | null {
+    const normalized = normalizeLogin(login);
+    return this.#file.capture().value.accounts.find((a) =>
+      a.login === normalized
+    ) ?? null;
+  }
+  byId(id: string): AccountIdentity | null {
     return this.capture().value.accounts.find((a) => a.id === id) ?? null;
   }
-  byLogin(login: string): Account | null {
+  byLogin(login: string): AccountIdentity | null {
     const normalized = normalizeLogin(login);
     return this.capture().value.accounts.find((a) => a.login === normalized) ??
       null;
-  }
-  create(
-    account: Account,
-    expected = this.capture(),
-    guard: () => void = () => {},
-  ): Account {
-    validateAccount(account);
-    if (
-      expected.value.accounts.some((a) =>
-        a.id === account.id || a.login === account.login
-      )
-    ) {
-      throw new StoredConfigConflict();
-    }
-    this.#file.commit(
-      {
-        ...expected.value,
-        initialized: true,
-        revision: expected.value.revision + 1,
-        updateId: createUuid(),
-        accounts: [...expected.value.accounts, account],
-      },
-      expected,
-      guard,
-    );
-    return this.byId(account.id)!;
-  }
-  /** Host-only validated import seam, never an HTTP hash/password endpoint. */
-  importAccount(account: Account, expected = this.capture()): Account {
-    return this.create(account, expected);
-  }
-  changeCredentials(
-    id: string,
-    credentialRevision: number,
-    changes: Partial<
-      Pick<
-        Account,
-        | "passwordHash"
-        | "totpKey"
-        | "totpKeyEncoding"
-        | "passwordChangeRequired"
-      >
-    >,
-    updateId: string,
-    guard: () => void = () => {},
-  ): Account {
-    // Exact pre-existing fixture calls are quarantined until A01. Product
-    // credential commands use the sealed aggregate binding, never this port.
-    const expected = this.capture(), account = this.byId(id);
-    if (
-      Object.keys(changes).some((key) =>
-        ![
-          "passwordHash",
-          "totpKey",
-          "totpKeyEncoding",
-          "passwordChangeRequired",
-        ].includes(key)
-      ) ||
-      (Object.hasOwn(changes, "totpKeyEncoding") &&
-        !Object.hasOwn(changes, "totpKey"))
-    ) {
-      throw new IdentityStateError();
-    }
-    if (!account || account.credentialRevision !== credentialRevision) {
-      throw new StoredConfigConflict();
-    }
-    const next = validateAccount(
-      this.#legacyChange(account, changes, updateId),
-    );
-    this.#file.commit(
-      {
-        ...expected.value,
-        revision: expected.value.revision + 1,
-        updateId,
-        accounts: expected.value.accounts.map((a) => a.id === id ? next : a),
-      },
-      expected,
-      guard,
-    );
-    return this.byId(id)!;
-  }
-  consumeTotp(id: string, credentialRevision: number, step: number): void {
-    // Inventoried legacy fixture arithmetic only; no sign-in caller may use it.
-    this.#consumeTotp(id, credentialRevision, step);
   }
   #consumeTotp(
     id: string,
@@ -415,14 +236,12 @@ export class AccountRepository {
     guard: () => void = () => {},
     parents: readonly OperationLease<"live">[] = [],
   ): Account {
-    const expected = this.capture(), account = this.byId(id);
+    const expected = this.#file.capture(), account = this.#byId(id);
     if (
       !account?.totpKey || account.credentialRevision !== credentialRevision ||
       !integer(step) ||
       (account.lastTotpStep !== null && step <= account.lastTotpStep)
     ) throw new StoredConfigConflict();
-    // Retain this operation's exact consumed record. Publication diagnostics may
-    // reenter the repository; their later account must never become our proof.
     const consumed = Object.freeze({ ...account, lastTotpStep: step });
     this.#file.commit(
       {

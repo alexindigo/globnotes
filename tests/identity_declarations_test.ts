@@ -2,6 +2,10 @@
 import { assertEquals } from "@std/assert";
 import { AclRepository } from "../server/auth/acl.ts";
 import { AccountRepository } from "../server/auth/accounts.ts";
+import {
+  importFixtureAccount,
+  recoveryForRoot,
+} from "./helpers/account_preparation.ts";
 import { type AccountPrincipal, GUEST } from "../server/auth/sessions.ts";
 import {
   ACCOUNT_A,
@@ -37,11 +41,12 @@ Deno.test("identity declarations: missing login stays pending; the eventual acco
     });
     assertEquals(acl.effectiveLevel(GUEST), "none");
     assertEquals([...Deno.readDirSync(root)], []);
-    accounts.create(identityAccount());
+    importFixtureAccount(accounts, identityAccount());
     assertEquals(acl.declaredAdmin.pending, false);
     assertEquals(acl.effectiveLevel(principal(ACCOUNT_A)), "admin");
-    assertEquals([...Deno.readDirSync(root)].map((e) => e.name), [
+    assertEquals([...Deno.readDirSync(root)].map((e) => e.name).sort(), [
       "accounts.json",
+      "identity.lock",
     ]);
     assertEquals(
       new AclRepository(`${root}/vault`, VAULT_A, {
@@ -55,8 +60,11 @@ Deno.test("identity declarations: missing login stays pending; the eventual acco
 Deno.test("identity declarations: configured Admin is independent of saved grants and removal changes only the overlay", () =>
   identityFixture((root) => {
     const accounts = new AccountRepository(root);
-    accounts.create(identityAccount());
-    accounts.create(identityAccount({ id: ACCOUNT_B, login: "bob" }));
+    importFixtureAccount(accounts, identityAccount());
+    importFixtureAccount(
+      accounts,
+      identityAccount({ id: ACCOUNT_B, login: "bob" }),
+    );
     const acl = new AclRepository(`${root}/vault`, VAULT_A, {
       accounts,
       declaredAdmin: "alice",
@@ -79,10 +87,13 @@ Deno.test("identity declarations: configured Admin is independent of saved grant
   }));
 
 Deno.test("identity declarations: separate vault policy keys do not track unrelated account credential writes", () =>
-  identityFixture((root) => {
+  identityFixture(async (root) => {
     const accounts = new AccountRepository(root);
-    accounts.create(identityAccount());
-    accounts.create(identityAccount({ id: ACCOUNT_B, login: "bob" }));
+    importFixtureAccount(accounts, identityAccount());
+    importFixtureAccount(
+      accounts,
+      identityAccount({ id: ACCOUNT_B, login: "bob" }),
+    );
     const a = new AclRepository(`${root}/a`, VAULT_A, {
       accounts,
       declaredAdmin: "alice",
@@ -92,13 +103,17 @@ Deno.test("identity declarations: separate vault policy keys do not track unrela
       declaredAdmin: "bob",
     });
     const key = b.policyKey;
-    a.initializeForCreator(identityAccount(), "view");
-    accounts.changeCredentials(
-      ACCOUNT_A,
-      0,
-      { passwordChangeRequired: true },
-      UPDATE,
-    );
+    a.initializeForCreator(accounts.byId(ACCOUNT_A)!, "view");
+    const recovery = recoveryForRoot(root);
+    try {
+      await accounts.credentials.disableAuthenticator(recovery.authority, {
+        accountId: ACCOUNT_A,
+        credentialRevision: 0,
+        updateId: UPDATE,
+      });
+    } finally {
+      recovery.close();
+    }
     assertEquals(b.policyKey, key);
     assertEquals(b.effectiveLevel(principal(ACCOUNT_A)), "none");
     assertEquals(b.effectiveLevel(principal(ACCOUNT_B)), "admin");

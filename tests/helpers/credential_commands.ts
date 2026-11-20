@@ -12,6 +12,7 @@ import { bindCredentialAuthority } from "../../server/auth/internal/account_cred
 import { StoredConfigConflict } from "../../server/config/file_store.ts";
 import type { TotpEnrollmentBundle } from "../../server/auth/totp_enrolment.ts";
 import { createOperationLease } from "../../server/operation_lease.ts";
+import type { OperationLease } from "../../server/operation_lease.ts";
 import {
   InstanceSessions,
   SessionRepository,
@@ -24,6 +25,7 @@ import {
 } from "./identity.ts";
 import { fixturePasswordHash } from "./config.ts";
 import { authenticatorCode } from "./totp.ts";
+import { importFixtureAccount } from "./account_preparation.ts";
 import {
   decodeStoredTotpSecret,
   storedTotpManualSecret,
@@ -31,6 +33,31 @@ import {
 
 export const COMMAND_NOW = 1_800_000_000_000;
 export const NEXT_UPDATE = "00000000-0000-4000-8000-000000000006";
+function credentialBinding(
+  accounts: AccountRepository,
+  account: AccountIdentity,
+  lease: OperationLease<"live">,
+): CredentialAuthority {
+  return bindCredentialAuthority(
+    accounts.credentials,
+    account,
+    lease,
+  );
+}
+export async function withCredentialAuthority<T>(
+  accounts: AccountRepository,
+  id: string,
+  run: (authority: CredentialAuthority) => Promise<T>,
+): Promise<T> {
+  const lifetime = createOperationLease("live", [() => undefined]);
+  try {
+    return await run(
+      credentialBinding(accounts, accounts.byId(id)!, lifetime.lease),
+    );
+  } finally {
+    lifetime.retire();
+  }
+}
 export interface CommandFixture {
   readonly root: string;
   readonly options: CredentialOptions;
@@ -63,19 +90,22 @@ export async function credentialCommandFixture(
       ...options,
     };
     const accounts = new AccountRepository(root, undefined, credentialOptions);
-    accounts.importAccount(identityAccount({
-      passwordHash: fixturePasswordHash("password"),
-      passwordChangeRequired: restricted,
-      ...(stored
-        ? {
-          totpKey: stored.key,
-          ...(Object.hasOwn(stored, "encoding")
-            ? { totpKeyEncoding: stored.encoding }
-            : {}),
-          lastTotpStep: stored.floor ?? null,
-        }
-        : {}),
-    }));
+    importFixtureAccount(
+      accounts,
+      identityAccount({
+        passwordHash: fixturePasswordHash("password"),
+        passwordChangeRequired: restricted,
+        ...(stored
+          ? {
+            totpKey: stored.key,
+            ...(Object.hasOwn(stored, "encoding")
+              ? { totpKeyEncoding: stored.encoding }
+              : {}),
+            lastTotpStep: stored.floor ?? null,
+          }
+          : {}),
+      }),
+    );
     const signing = new SessionRepository(root);
     signing.initialize();
     const sessions = new InstanceSessions(accounts, signing, {
@@ -94,11 +124,7 @@ export async function credentialCommandFixture(
         ) throw new StoredConfigConflict();
         return undefined;
       }], [lifetime.lease]);
-      return bindCredentialAuthority(
-        accounts.credentials,
-        account,
-        operation.lease,
-      );
+      return credentialBinding(accounts, account, operation.lease);
     };
     await run({
       root,

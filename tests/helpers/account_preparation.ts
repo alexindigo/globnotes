@@ -14,6 +14,53 @@ import {
 import { identityFixture, UPDATE } from "./identity.ts";
 import { fixturePasswordHash } from "./config.ts";
 export const recoveryForRoot = (root: string) => acquireOfflineRecovery(root);
+/** Historical fixture input enters only the aggregate's locked import lane. */
+export function importFixtureAccount(
+  accounts: AccountRepository,
+  input: unknown,
+) {
+  accounts.prepareParents();
+  const recovery = recoveryForRoot(accounts.root);
+  try {
+    return accounts.credentials.importAccount(recovery.authority, input);
+  } finally {
+    recovery.close();
+  }
+}
+export async function resetFixturePassword(
+  accounts: AccountRepository,
+  id: string,
+  password: string,
+  updateId: string,
+) {
+  const recovery = recoveryForRoot(accounts.root);
+  try {
+    return await accounts.credentials.resetPassword(recovery.authority, {
+      accountId: id,
+      credentialRevision: accounts.byId(id)!.credentialRevision,
+      password,
+      updateId,
+    });
+  } finally {
+    recovery.close();
+  }
+}
+export async function disableFixtureAuthenticator(
+  accounts: AccountRepository,
+  id: string,
+  updateId: string,
+) {
+  const recovery = recoveryForRoot(accounts.root);
+  try {
+    return await accounts.credentials.disableAuthenticator(recovery.authority, {
+      accountId: id,
+      credentialRevision: accounts.byId(id)!.credentialRevision,
+      updateId,
+    });
+  } finally {
+    recovery.close();
+  }
+}
 
 export async function preparationFixture(
   run: (fixture: ReturnType<typeof preparationContext>) => Promise<void>,
@@ -46,7 +93,7 @@ export function preparationContext(root: string, options: CredentialOptions) {
     updateId: UPDATE,
     ...changes,
   });
-  const signing = new SessionRepository(root);
+  const signing = new SessionRepository(accounts.root);
   const sessions = new InstanceSessions(accounts, signing, {
     expirySeconds: 86400,
   });
@@ -58,7 +105,7 @@ export function preparationContext(root: string, options: CredentialOptions) {
     return accounts.credentials.publishPreparedAccount(prepared.prepared);
   };
   return {
-    root,
+    root: accounts.root,
     accounts,
     authority,
     request,
@@ -66,6 +113,6 @@ export function preparationContext(root: string, options: CredentialOptions) {
     sessions,
     createInitial,
     retire: lifetime.retire,
-    offline: () => recoveryForRoot(root),
+    offline: () => recoveryForRoot(accounts.root),
   };
 }

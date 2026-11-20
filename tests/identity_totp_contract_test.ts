@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { signIn } from "./helpers/session_delivery.ts";
+import { storedAccount } from "./helpers/identity.ts";
 import { assertEquals, assertRejects } from "@std/assert";
 import {
   AuthenticationError,
@@ -40,7 +41,7 @@ Deno.test("credential transition shape: no encoding-only patch, stored key patch
         ), IdentityStateError);
     }
     assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), before);
-    assertEquals(f.accounts.byId(ACCOUNT_A)?.lastTotpStep, null);
+    assertEquals(storedAccount(f.accounts, ACCOUNT_A).lastTotpStep, null);
     const typeContract = () => {
       f.accounts.credentials.changeOwn(f.authority, {
         ...f.request(),
@@ -88,7 +89,7 @@ for (
           }),
         );
         assertEquals(result.credentialRevision, 1);
-        const saved = f.accounts.byId(ACCOUNT_A)!;
+        const saved = storedAccount(f.accounts, ACCOUNT_A);
         assertEquals(saved.lastTotpStep, COMMAND_NOW / 30_000 + 1);
         assertEquals(saved.totpKeyEncoding, "base32");
         const oldCode = await f.code(bundle.key, "base32");
@@ -119,7 +120,7 @@ Deno.test("credential transition floor: equal-step confirmation is allowed only 
         }),
       );
       assertEquals(
-        f.accounts.byId(ACCOUNT_A)?.lastTotpStep,
+        storedAccount(f.accounts, ACCOUNT_A).lastTotpStep,
         COMMAND_NOW / 30_000,
       );
     },
@@ -173,10 +174,13 @@ Deno.test("credential transition floor: a genuinely different issued secret star
         }),
       );
       assertEquals(
-        f.accounts.byId(ACCOUNT_A)?.lastTotpStep,
+        storedAccount(f.accounts, ACCOUNT_A).lastTotpStep,
         COMMAND_NOW / 30_000 - 1,
       );
-      assertEquals(f.accounts.byId(ACCOUNT_A)?.totpKeyEncoding, "base32");
+      assertEquals(
+        storedAccount(f.accounts, ACCOUNT_A).totpKeyEncoding,
+        "base32",
+      );
     },
     {},
     { key: "A".repeat(32), floor: COMMAND_NOW / 30_000 - 2 },
@@ -195,7 +199,7 @@ for (
   Deno.test(`credential transition history: password change preserves stored interpretation ${JSON.stringify(stored)}`, () =>
     credentialCommandFixture(
       async (f) => {
-        const before = f.accounts.byId(ACCOUNT_A)!;
+        const before = storedAccount(f.accounts, ACCOUNT_A);
         await f.accounts.credentials.changeOwn(
           f.authority,
           f.request({
@@ -203,7 +207,7 @@ for (
             current: { password: "password", code: await f.code() },
           }),
         );
-        const after = f.accounts.byId(ACCOUNT_A)!;
+        const after = storedAccount(f.accounts, ACCOUNT_A);
         assertEquals(after.totpKey, before.totpKey);
         assertEquals(after.totpKeyEncoding, before.totpKeyEncoding);
         assertEquals(
