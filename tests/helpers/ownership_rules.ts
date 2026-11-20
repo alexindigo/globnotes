@@ -254,6 +254,54 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
     ],
   },
 };
+export const ACCOUNT_RECORD = "server/auth/internal/account_record.ts";
+export const CREDENTIAL_REDUCER = "server/auth/internal/credential_reducer.ts";
+export const IDENTITY_HELPER = "tests/helpers/identity.ts";
+/** New privileged import/schema boundaries, separate from fixture migration. */
+export const ADOPTION_OWNERSHIP: OwnershipRules = {
+  roots: PREPARATION_OWNERSHIP.roots,
+  modules: {
+    ...PREPARATION_OWNERSHIP.modules,
+    [ACCOUNT_REPOSITORY]: [
+      ...PREPARATION_OWNERSHIP.modules[ACCOUNT_REPOSITORY],
+      "tests/credential_import_test.ts",
+    ],
+    [PREPARATION_HELPER]: [
+      ...PREPARATION_OWNERSHIP.modules[PREPARATION_HELPER],
+      "tests/credential_import_test.ts",
+    ],
+    [ACCOUNT_RECORD]: [
+      ACCOUNT_REPOSITORY,
+      IDENTITY_HELPER,
+      "tests/identity_totp_fixed_form_test.ts",
+    ],
+    [CREDENTIAL_REDUCER]: [
+      CREDENTIAL_ENGINE,
+      "tests/identity_totp_upgrade_test.ts",
+    ],
+    [IDENTITY_HELPER]: [
+      "tests/config_durability_test.ts",
+      "tests/config_owned_root_test.ts",
+      "tests/credential_directory_test.ts",
+      "tests/credential_import_test.ts",
+      "tests/credential_preparation_test.ts",
+      "tests/credential_proof_test.ts",
+      "tests/credential_transition_test.ts",
+      PREPARATION_HELPER,
+      "tests/helpers/credential_commands.ts",
+      "tests/identity_accounts_test.ts",
+      "tests/identity_acl_test.ts",
+      "tests/identity_authority_test.ts",
+      "tests/identity_declarations_test.ts",
+      "tests/identity_ownership_test.ts",
+      "tests/identity_sessions_test.ts",
+      "tests/identity_totp_contract_test.ts",
+      "tests/identity_totp_fixed_form_test.ts",
+      "tests/identity_totp_test.ts",
+      "tests/identity_totp_upgrade_test.ts",
+    ],
+  },
+};
 
 export const FIXTURE_SCOPE_ENGINE = "tests/helpers/fixture_scope_engine.ts";
 export const PLUGIN_FIXTURE_ENGINE = "tests/helpers/plugin_fixture_engine.ts";
@@ -261,9 +309,9 @@ export const PLUGIN_OPERATIONS = "tests/helpers/plugin_operations_fixture.ts";
 /** Private construction modules have public callback facades. Every import form
  * is checked at the resolved module, never by following the imported value. */
 export const FIXTURE_OWNERSHIP: OwnershipRules = {
-  ...PREPARATION_OWNERSHIP,
+  ...ADOPTION_OWNERSHIP,
   modules: {
-    ...PREPARATION_OWNERSHIP.modules,
+    ...ADOPTION_OWNERSHIP.modules,
     [FIXTURE_SCOPE_ENGINE]: [
       "tests/helpers/fixture_scope.ts",
       PLUGIN_FIXTURE_ENGINE,
