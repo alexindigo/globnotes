@@ -262,6 +262,19 @@ export const OPERATION_PILOT_OWNERSHIP: OwnershipRules = {
     },
   },
 };
+export const CONTENDER_ADAPTER = "tests/helpers/owned_contenders.ts";
+export const CONTENDER_PILOT = "tests/owned_contenders_test.ts";
+export const CONTENDER_GUARD = "tests/owned_contenders_guard_test.ts";
+export const CONTENDER_PILOT_OWNERSHIP: OwnershipRules = {
+  ...OPERATION_ADAPTER_OWNERSHIP,
+  roots: {
+    ...OPERATION_ADAPTER_OWNERSHIP.roots,
+    Deno: {
+      members: ["test"],
+      ownedMembers: PROCESS_OWNERSHIP.roots.Deno.ownedMembers,
+    },
+  },
+};
 const allModules = (rules: OwnershipRules): OwnershipRules => ({
   ...rules,
   modules: { ...rules.modules, ...RECORD_MODULE_RULES, ...CHILD_MODULE_RULES },
@@ -275,7 +288,11 @@ export function registeredOwnership(sources: SourceModule[]) {
     readonly [OwnershipRules, OwnershipRules]
   >();
   for (const source of sources) {
-    const rules = source.file === OPERATION_ADAPTER
+    const rules = source.file === CONTENDER_ADAPTER
+      ? OPERATION_ADAPTER_OWNERSHIP
+      : source.file === CONTENDER_PILOT || source.file === CONTENDER_GUARD
+      ? CONTENDER_PILOT_OWNERSHIP
+      : source.file === OPERATION_ADAPTER
       ? OPERATION_ADAPTER_OWNERSHIP
       : source.file === OPERATION_PILOT
       ? OPERATION_PILOT_OWNERSHIP

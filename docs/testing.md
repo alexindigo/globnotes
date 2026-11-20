@@ -572,6 +572,40 @@ remain rejected instead of being added to an expanding deny list.
 Existing occurrences remain an exact, shrinking inventory with named
 consumer coverage, not a helper-directory exemption or a claim of full closure.
 
+### Named contenders
+
+`helpers/owned_contenders.ts` layers only group ordering over held operations:
+`ownedContenders({ repeated, independent }, "independent")`. Each named entry has
+its own `owner`, `progress` and `start(hold, signal)`; the injected hold belongs
+inside that operation's actual admission. There is no caller-supplied entry or
+completion promise. Numeric positions, array inputs and unknown names reject.
+
+All contenders must reach admission before release. The named `completeFirst`
+operation is released and awaited to actual settlement before the remaining
+operations are released. It must be able to finish while peers remain held.
+Failure before entry rejects the exercise; cleanup releases every held peer
+before P04 drains them. Post-entry failures are named rejected outcomes, not
+inferred winners. Results are a frozen keyed object of `PromiseSettledResult`
+values with the original value/error identities, never a positional winner array.
+The registry borrows each handle only inside its P04 callback and removes it
+before that scope retires; outer cleanup never reuses a closed peer. P04 retains
+its cancellation-before-drain scope. Resources used by contenders remain in
+their P03 owner/borrower admission, whose result is read through `.value`.
+Definition ports and nested progress mode are captured before any sibling starts;
+owner/start methods retain their original receiver. Each optional `signal` reaches
+P04. Failed admission, revoked results and failed release cancel the live group
+before nested drain, so dependent peer IO cannot remain behind an unopened gate.
+Only actual product rejections become keyed outcomes; authority failures reject
+the exercise. The adapter has no Deno APIs, and its runtime/guard contracts permit
+only `Deno.test`, through the same explicit ownership registration as other pilots.
+
+The contract pilot exercises both completion orders and reversed submission,
+including a duplicate caller's identical receipt or correlated conflict and one
+effect/receipt. Do not infer fulfillment counts from submission or callback order.
+The always-selected isolation gate runs this exercise and parsed bypass controls;
+neither adapter nor pilot acquires raw gates/timers. Real provisioning adoption
+is separate and must retain its product consumer assertions.
+
 ### Existing settlement and admission families
 
 | # | Sites | Treatment |
