@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import { VaultHub } from "../server/hub/hub.ts";
 import { PluginManager } from "../server/plugins/manager.ts";
 import { PluginRuntime } from "../server/plugins/runtime.ts";
@@ -31,6 +37,201 @@ const scopePlugin = {
       "export function activate(ctx) { ctx.commands.register({id:'ping', label:'ping', target:'server'}, () => 'pong'); }",
   },
 };
+
+Deno.test("fixture phases P11: rejecting listener cleanup joins held IO before root release", async () => {
+  const failure = new Error("listener cleanup failed");
+  const entered = Promise.withResolvers<void>(),
+    cancelled = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>();
+  let root = "", active = 0, workSettled = false;
+  let work: Promise<unknown> | undefined;
+  const closing = withPluginFixture(async (fixture, scope) => {
+    root = fixture.root;
+    scope.defer(() => {
+      assert(workSettled);
+      assertEquals(active, 0);
+    });
+    const channel = new AbortController();
+    scope.onCancel((signal) => channel.abort(signal.reason));
+    scope.defer(() => {
+      throw failure;
+    });
+    work = scope.admit(async () => {
+      active++;
+      channel.signal.addEventListener("abort", () => cancelled.resolve(), {
+        once: true,
+      });
+      entered.resolve();
+      try {
+        await release.promise;
+        channel.signal.throwIfAborted();
+      } finally {
+        active--;
+      }
+    }).finally(() => {
+      workSettled = true;
+    });
+    work.catch(() => {});
+    await entered.promise;
+  });
+  const outcome = closing.then(() => undefined, (error: unknown) => error);
+  try {
+    await workMilestone(
+      closing,
+      cancelled.promise,
+      "P11 failing listener cleanup cancelled IO",
+    );
+    assertEquals(active, 1);
+    assert((await Deno.stat(root)).isDirectory);
+  } finally {
+    release.resolve();
+    await outcome;
+    await work?.catch(() => {});
+  }
+  assertStrictEquals(await outcome, failure);
+  assertEquals(active, 0);
+  await assertRejects(() => Deno.stat(root), Deno.errors.NotFound);
+});
+
+Deno.test("fixture phases P11: enclosing fixture cancellation drains its read before root deletion", async () => {
+  let root = "",
+    active = 0,
+    scope!: FixtureScope,
+    waiting: Promise<unknown> | undefined;
+  const entered = Promise.withResolvers<void>();
+  await withPluginFixture(async (fixture, owner) => {
+    root = fixture.root;
+    scope = owner;
+    scope.defer(() => assertEquals(active, 0));
+    waiting = scope.admit((signal) => {
+      active++;
+      return new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+        entered.resolve();
+      }).finally(() => active--);
+    });
+    waiting.catch(() => {});
+    await entered.promise;
+  });
+  await assertRejects(() => waiting!, OwnershipError, "retired");
+  assertEquals([active, scope.size], [0, 0]);
+  await assertRejects(() => Deno.stat(root), Deno.errors.NotFound);
+});
+
+for (const operation of ["read", "publish"] as const) {
+  Deno.test(`fixture phases P11: scope disposal joins a direct ${operation} before root deletion`, async () => {
+    const entered = Promise.withResolvers<void>(),
+      cancelled = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<void>();
+    let root = "", workSettled = false, closed = false;
+    let work: Promise<unknown> | undefined;
+    const closing = withPluginFixture(async (fixture, scope) => {
+      root = fixture.root;
+      scope.defer(() =>
+        assert(workSettled, `direct ${operation} outlived drain`)
+      );
+      work = scope.admit(async (signal) => {
+        if (operation === "publish") {
+          await Deno.writeTextFile(`${root}/candidate.json`, "owned candidate");
+        }
+        entered.resolve();
+        await release.promise;
+        signal.throwIfAborted();
+      }).finally(() => {
+        workSettled = true;
+      });
+      work.catch(() => {});
+      // Registered after admission, just as older channel callbacks were before it.
+      scope.onCancel(() => cancelled.resolve());
+      await entered.promise;
+    }).then(() => {
+      closed = true;
+    });
+    try {
+      await workMilestone(
+        closing,
+        cancelled.promise,
+        `P11 direct ${operation} cancellation`,
+      );
+      assertEquals(closed, false);
+      assert((await Deno.stat(root)).isDirectory);
+      if (operation === "publish") {
+        assertEquals(
+          await Deno.readTextFile(`${root}/candidate.json`),
+          "owned candidate",
+        );
+      }
+    } finally {
+      release.resolve();
+      await closing;
+      await work?.catch(() => {});
+    }
+    await assertRejects(() => Deno.stat(root), Deno.errors.NotFound);
+  });
+}
+
+for (const first of ["owner", "borrower"] as const) {
+  for (const operation of ["read", "publish"] as const) {
+    Deno.test(`fixture phases P11: borrowed ${operation} drains when ${first} closes first`, async () => {
+      const root = await pluginFixture();
+      const borrower = await pluginOperationsFixture({
+        ...scopePlugin,
+        fixture: root,
+      });
+      const entered = Promise.withResolvers<void>();
+      let workSettled = false, active = 0;
+      borrower.scope.defer(() => {
+        assert(workSettled);
+        assertEquals(active, 0);
+      });
+      const running = borrower.fixture.admit(async (signal) => {
+        active++;
+        try {
+          if (operation === "publish") {
+            await Deno.writeTextFile(
+              `${root.root}/candidate.json`,
+              "owned borrowed candidate",
+            );
+          }
+          entered.resolve();
+          await new Promise<void>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          });
+        } finally {
+          active--;
+        }
+      }).finally(() => {
+        workSettled = true;
+      });
+      const rejected = assertRejects(() => running, OwnershipError, "retired");
+      try {
+        await workMilestone(
+          running,
+          entered.promise,
+          `borrowed ${operation} entered`,
+        );
+        if (first === "owner") await root.dispose();
+        else await borrower.close();
+        await rejected;
+        assertEquals(active, 0);
+        if (first === "borrower") {
+          assert((await Deno.stat(root.root)).isDirectory);
+        }
+      } finally {
+        try {
+          await borrower.close();
+        } finally {
+          await root.dispose();
+        }
+      }
+      await assertRejects(() => Deno.stat(root.root), Deno.errors.NotFound);
+    });
+  }
+}
 
 for (const source of ["original", "spread", "retained"] as const) {
   Deno.test(`fixture admission: ${source} root disposal drains a held borrower mkdir`, async () => {
@@ -157,7 +358,9 @@ Deno.test("fixture admission: root disposal closes a borrowed runtime before del
   });
   try {
     assertEquals(await borrower.command("ping"), "pong");
-    await root.dispose();
+    const closing = root.dispose();
+    assert(borrower.scope.signal.aborted);
+    await closing;
     await assertRejects(() => Deno.stat(root.root), Deno.errors.NotFound);
     assertThrows(
       () => borrower.scope.assertCurrent(),
@@ -360,10 +563,12 @@ Deno.test("fixture capabilities: retirement drains an in-flight installation bef
   };
   const running = withPluginFixture(async (fixture, scope) => {
     root = fixture.root;
+    const before = scope.size;
     const installing = fixture.install("inflight", {});
     rejected = assertRejects(() => installing, OwnershipError, "retired");
+    assertEquals(scope.size, before + 1);
     await entered.promise;
-    scope.defer(() => closing.resolve());
+    scope.onCancel(() => closing.resolve());
   });
   try {
     try {

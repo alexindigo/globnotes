@@ -89,7 +89,7 @@ function pluginCapabilities(
   const { root, vault, statePath, metadataBase } = paths;
   const bind = <Args extends unknown[], T>(effect: (...args: Args) => T) =>
     scope.bind(rootOwner.bind(effect));
-  const admit = bind(<T>(effect: () => T | PromiseLike<T>) =>
+  const admit = bind(<T>(effect: (signal: AbortSignal) => T | PromiseLike<T>) =>
     rootOwner.admit(effect, scope)
   );
   const mkdir = bind(Deno.mkdir), writeTextFile = bind(Deno.writeTextFile);
@@ -142,7 +142,7 @@ export interface ScopedPluginFixture {
   /** One resource-owned admission port for installation, preparation and domain
    * helper effects, co-admitted by this runtime's scope when borrowed. */
   readonly admit: <T>(
-    effect: () => T | PromiseLike<T>,
+    effect: (signal: AbortSignal) => T | PromiseLike<T>,
   ) => Promise<Readonly<{ value: T }>>;
   readonly install: (
     id: string,

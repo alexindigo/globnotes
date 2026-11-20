@@ -170,6 +170,7 @@ async function constructPluginOperationsFixture(
     manager,
     hub,
   );
+  scope.onCancel(() => manager.runtime?.suspend());
   scope.defer(() => manager.runtime?.close());
   const data = new PluginDataStore(fixture.statePath, {
     commit: (effect) => lifecycle.gate.run(effect),

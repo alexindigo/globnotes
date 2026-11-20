@@ -3,10 +3,18 @@ import {
   createOwnershipScope,
   type OwnedResource,
   type OwnerIdentity,
+  OwnershipError,
+  type OwnershipRelease,
   type OwnershipScope,
 } from "../../shared/ownership.js";
 
-const engines = new WeakMap<FixtureScope, OwnershipScope>();
+interface FixtureController {
+  readonly work: OwnershipScope;
+  readonly signal: AbortSignal;
+  cancel(): Promise<OwnershipRelease>;
+  finish(): Promise<OwnershipRelease>;
+}
+const engines = new WeakMap<FixtureScope, FixtureController>();
 const children = new WeakMap<FixtureScope, WeakSet<FixtureScope>>();
 
 /** Private fixture construction port: a root closes its dedicated runtime
@@ -25,19 +33,26 @@ export function ownFixtureScope(
   let linked = children.get(owner);
   if (!linked) children.set(owner, linked = new WeakSet());
   if (linked.has(child)) return;
-  owner.defer(async () => (await engine.releaseAll()).throwIfFailed());
+  owner.onCancel(() => engine.cancel());
+  owner.defer(async () => (await engine.finish()).throwIfFailed());
   linked.add(child);
 }
 
 /** Private construction implementation. Public scenarios enter via fixture_scope.ts.
  * Allocation is reserved before invocation;
  * constructors must register each partial resource, not return an opaque factory.
- * LIFO ordering puts held-gate release before work join and runtimes before roots.
+ * Cancellation is independent of registration order; only resource release is LIFO.
  */
 export interface FixtureScope {
   readonly identity: OwnerIdentity;
   readonly size: number;
+  /** Owned cancellation, fired synchronously when close starts. */
+  readonly signal: AbortSignal;
   assertCurrent(): void;
+  /** Invoked synchronously on cancellation, before any admitted-work drain.
+   * All hooks start even if another throws or returns a pending/rejected value.
+   * Hook outcomes are joined before draining; hooks must not await scope close. */
+  onCancel(cancel: (signal: AbortSignal) => unknown): void;
   /** Bind a fixture-issued effect to this exact scope, without resolving its result. */
   bind<Args extends unknown[], T>(
     effect: (...args: Args) => T,
@@ -52,7 +67,7 @@ export interface FixtureScope {
    * Every owner drains it; completed work releases its reservations immediately.
    * Results remain wrapped across awaits, including thenable resource values. */
   admit<T>(
-    effect: () => T | PromiseLike<T>,
+    effect: (signal: AbortSignal) => T | PromiseLike<T>,
     ...borrowers: FixtureScope[]
   ): Promise<Readonly<{ value: T }>>;
   defer(dispose: () => unknown): void;
@@ -60,16 +75,84 @@ export interface FixtureScope {
 
 /** Construction compatibility owner. Ordinary scenarios use fixtureScope instead.
  * prepare retains custody on success; a rejected constructor has no escaped owner.
- * close is idempotent; it adds neither a settlement algorithm nor a deadline.
+ * close retires/cancels, drains admitted work, then releases resources. Each
+ * phase uses the common core; no settlement algorithm or deadline is added.
  */
 export function createFixtureScope() {
   const resources = createOwnershipScope();
+  const work = createOwnershipScope();
+  const cancellationResults = createOwnershipScope();
+  const controller = new AbortController();
+  let cancelled: Promise<OwnershipRelease> | undefined;
+  let finished: Promise<OwnershipRelease> | undefined;
+  const cancel = (): Promise<OwnershipRelease> => {
+    if (!cancelled) {
+      // Fence every acquisition before firing user cancellation code. Cache the
+      // phase before abort dispatch so reentrant close joins this same phase.
+      resources.retire();
+      work.retire();
+      let complete!: (report: OwnershipRelease) => void;
+      cancelled = new Promise((resolve) => {
+        complete = resolve;
+      });
+      try {
+        controller.abort(new OwnershipError("Fixture scope retired"));
+      } catch (error) {
+        cancellationResults.defer(() => {
+          throw error;
+        });
+      }
+      // Abort dispatch starts every hook synchronously. Only now may its captured
+      // outcomes be awaited; a pending early hook cannot prevent later hooks.
+      void cancellationResults.releaseAll().then(complete);
+    }
+    return cancelled;
+  };
+  const finish = (): Promise<OwnershipRelease> => {
+    const cancelling = cancel();
+    if (!finished) {
+      const phases = createOwnershipScope();
+      phases.defer(async () => (await resources.releaseAll()).throwIfFailed());
+      phases.defer(async () => (await work.releaseAll()).throwIfFailed());
+      phases.defer(async () => (await cancelling).throwIfFailed());
+      finished = phases.releaseAll();
+    }
+    return finished;
+  };
   const scope: FixtureScope = Object.freeze({
     identity: resources.identity,
     get size() {
-      return resources.size;
+      return resources.size + work.size + cancellationResults.size;
     },
+    signal: controller.signal,
     assertCurrent: () => resources.assertCurrent(),
+    onCancel(cancel: (signal: AbortSignal) => unknown) {
+      resources.assertCurrent();
+      if (typeof cancel !== "function") {
+        throw new TypeError("Cancellation hook must be callable");
+      }
+      const signal = controller.signal;
+      const invoke = () => {
+        // Observe each result immediately and resolve it exactly once, even if
+        // another hook stays pending. The core report owns callback failures;
+        // retirement of this phase's acquisition promise is expected, not lost IO.
+        const pending = cancellationResults.acquire(async () => {
+          try {
+            await cancel(signal);
+            return { failed: false as const };
+          } catch (error) {
+            return { failed: true as const, error };
+          }
+        }, (outcome) => {
+          if (outcome.failed) throw outcome.error;
+        });
+        pending.catch(() => {});
+      };
+      // Native abort dispatch is synchronous and all-attempt through invoke's
+      // error capture. Listener removal is ordinary release, after IO drains.
+      resources.defer(() => signal.removeEventListener("abort", invoke));
+      signal.addEventListener("abort", invoke, { once: true });
+    },
     bind<Args extends unknown[], T>(effect: (...args: Args) => T) {
       return (...args: Args): T => {
         resources.assertCurrent();
@@ -86,7 +169,7 @@ export function createFixtureScope() {
       return resources.adopt(value, dispose);
     },
     async admit<T>(
-      effect: () => T | PromiseLike<T>,
+      effect: (signal: AbortSignal) => T | PromiseLike<T>,
       ...borrowers: FixtureScope[]
     ) {
       const owners = [...new Set([scope, ...borrowers])].map((owner) => {
@@ -98,10 +181,13 @@ export function createFixtureScope() {
         }
         return engine;
       });
+      const signal = owners.length === 1
+        ? owners[0].signal
+        : AbortSignal.any(owners.map((owner) => owner.signal));
       const enter = async (index: number): Promise<Readonly<{ value: T }>> => {
-        const owner = owners[index];
+        const owner = owners[index].work;
         if (index === owners.length - 1) {
-          const handle = await owner.acquire(effect, () => {});
+          const handle = await owner.acquire(() => effect(signal), () => {});
           await owner.release(handle);
           return handle;
         }
@@ -115,9 +201,9 @@ export function createFixtureScope() {
       resources.defer(dispose);
     },
   });
-  engines.set(scope, resources);
+  engines.set(scope, { work, signal: controller.signal, cancel, finish });
   const close = async (...primary: [] | [unknown]) => {
-    (await resources.releaseAll()).throwIfFailed(...primary);
+    (await finish()).throwIfFailed(...primary);
   };
   return Object.freeze({
     scope,
@@ -143,13 +229,11 @@ export function createFixtureScope() {
         primary = [error];
         throw error;
       } finally {
-        resources.retire();
+        cancel();
         // These are phase tasks, not a second resource registry. The common core
         // owns report-before-release, all-attempt execution and error propagation.
         const finalization = createOwnershipScope();
-        finalization.defer(async () =>
-          (await resources.releaseAll()).throwIfFailed()
-        );
+        finalization.defer(async () => (await finish()).throwIfFailed());
         if (report) finalization.defer(report);
         (await finalization.releaseAll()).throwIfFailed(...primary);
       }
