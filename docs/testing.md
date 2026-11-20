@@ -791,6 +791,20 @@ malformed/oversized/unsafe messages, isolated heartbeat failure, 256-file/64-MiB
 unit splits and smaller maxBatch export packets. Native atomicity is not claimed
 for the ordinary storage provider API.
 
+`storageServerFixture.restart()` returns the transport-ready server and its
+captured `initialDriver(id, "active" | "paused")` observer. HTTP readiness is
+not driver readiness. The observer binds the actual child and first
+reconciliation cycle at restart, rejects replacement/failure and requires
+completed work with the explicit expected state. Only pre-admission uses the
+readiness bound; admitted work keeps its real Worker/RPC deadline. The preload
+does not await or delay production startup. P11 owns typed atomic snapshots,
+watcher cancellation and the final exit read. P03 owns preparation and cleanup
+before any new handle escapes. `driver_phase_ownership_test.ts` holds discovery
+while HTTP serves Starting, then checks the same cycle's Active state and
+imported bytes; it also exercises Paused, missing/wrong state, replacement,
+exit/cancel and the unchanged native heartbeat deadline. The read-only restart
+pilot awaits Paused before its immediate assertion.
+
 Run the targeted server acceptance through the authorized container launcher:
 
 ```sh

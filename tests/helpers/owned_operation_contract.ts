@@ -16,8 +16,13 @@ const deferredOwners = [
   "tests/fixture_scope_test.ts",
   "tests/owned_record_channel_test.ts",
   "tests/owned_child_test.ts",
+  "tests/driver_phase_ownership_test.ts",
 ];
-const timerOwners = ["tests/helpers/wait.ts", "tests/helpers/owned_child.ts"];
+const timerOwners = [
+  "tests/helpers/wait.ts",
+  "tests/helpers/owned_child.ts",
+  "tests/driver_phase_ownership_test.ts",
+];
 const constructorOwners = [
   "tests/helpers/fixture_scope_engine.ts",
   "tests/helpers/fixture_coordination.ts",

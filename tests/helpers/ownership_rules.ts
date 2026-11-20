@@ -6,6 +6,16 @@ import {
   type SourceModule,
 } from "./ownership_contract.ts";
 import { coordinationRules } from "./owned_operation_contract.ts";
+export const DRIVER_STARTUP = "tests/helpers/driver_startup.ts";
+export const DRIVER_PRELOAD = "tests/helpers/driver_startup_preload.ts";
+export const DRIVER_PROTOCOL = "tests/helpers/driver_startup_protocol.ts";
+export const DRIVER_FIXTURE = "tests/helpers/driver_fixture.ts";
+export const DRIVER_CONTRACT = "tests/driver_phase_ownership_test.ts";
+const DRIVER_MODULE_RULES = {
+  [DRIVER_STARTUP]: [DRIVER_FIXTURE, DRIVER_CONTRACT],
+  [DRIVER_PROTOCOL]: [DRIVER_PRELOAD, DRIVER_CONTRACT],
+  [DRIVER_PRELOAD]: [DRIVER_CONTRACT],
+};
 
 export const RESOURCE_CORE = "shared/ownership.js";
 export const RESOURCE_ENGINE = "shared/ownership-engine.js";
@@ -61,9 +71,11 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       "tests/helpers/owned_record_channel.ts",
       "tests/owned_record_channel_test.ts",
       "tests/helpers/boot.ts",
+      DRIVER_FIXTURE,
     ],
     [PLUGIN_FIXTURE_ENGINE]: [
       "tests/helpers/plugin_fixture.ts",
+      DRIVER_FIXTURE,
       PLUGIN_OPERATIONS,
       "tests/helpers/plugin_lifecycle.ts",
       "tests/helpers/auxiliary_fixture.ts",
@@ -140,11 +152,15 @@ export const RECORD_MODULE_RULES = {
     SYNC_CONTROL,
     "tests/helpers/record_schema.ts",
     "tests/owned_record_channel_test.ts",
+    DRIVER_STARTUP,
+    DRIVER_CONTRACT,
   ],
   "tests/helpers/process_records.ts": [
     RECORD_CHANNEL,
     "tests/owned_record_channel_test.ts",
     "tests/process_records_test.ts",
+    DRIVER_PROTOCOL,
+    DRIVER_CONTRACT,
   ],
   [RECORD_PUBLICATION]: ["tests/helpers/process_records.ts"],
 };
@@ -152,7 +168,14 @@ export const RECORD_OWNERSHIP: OwnershipRules = {
   ...FIXTURE_OWNERSHIP,
   modules: { ...FIXTURE_OWNERSHIP.modules, ...RECORD_MODULE_RULES },
 };
-export const RECORD_PILOT_FILES = [SYNC_NATIVE, SYNC_PRELOAD, SYNC_CONTROL];
+export const RECORD_PILOT_FILES = [
+  SYNC_NATIVE,
+  SYNC_PRELOAD,
+  SYNC_CONTROL,
+  DRIVER_STARTUP,
+  DRIVER_PRELOAD,
+  DRIVER_PROTOCOL,
+];
 export const RECORD_PILOT_OWNERSHIP: OwnershipRules = {
   ...RECORD_OWNERSHIP,
   roots: {
@@ -277,8 +300,31 @@ export const CONTENDER_PILOT_OWNERSHIP: OwnershipRules = {
 };
 const allModules = (rules: OwnershipRules): OwnershipRules => ({
   ...rules,
-  modules: { ...rules.modules, ...RECORD_MODULE_RULES, ...CHILD_MODULE_RULES },
+  modules: {
+    ...rules.modules,
+    ...RECORD_MODULE_RULES,
+    ...CHILD_MODULE_RULES,
+    ...DRIVER_MODULE_RULES,
+  },
 });
+const driverDenoMembers: Record<string, readonly string[]> = {
+  [DRIVER_STARTUP]: [],
+  [DRIVER_PRELOAD]: ["pid"],
+  [DRIVER_PROTOCOL]: [],
+  [DRIVER_FIXTURE]: ["readTextFile", "writeTextFileSync", "renameSync"],
+};
+const DRIVER_OWNERSHIP = Object.fromEntries(
+  Object.entries(driverDenoMembers).map(([file, members]) => [file, {
+    ...RECORD_PILOT_OWNERSHIP,
+    roots: {
+      ...RECORD_PILOT_OWNERSHIP.roots,
+      Deno: {
+        members,
+        ownedMembers: PROCESS_OWNERSHIP.roots.Deno.ownedMembers,
+      },
+    },
+  }]),
+);
 /** Partition by explicit pilot identities, analyze every module exactly once.
  * This selects registrations, not allowed sites; every violation is inventoried. */
 export function registeredOwnership(sources: SourceModule[]) {
@@ -288,28 +334,29 @@ export function registeredOwnership(sources: SourceModule[]) {
     readonly [OwnershipRules, OwnershipRules]
   >();
   for (const source of sources) {
-    const rules = source.file === CONTENDER_ADAPTER
-      ? OPERATION_ADAPTER_OWNERSHIP
-      : source.file === CONTENDER_PILOT || source.file === CONTENDER_GUARD
-      ? CONTENDER_PILOT_OWNERSHIP
-      : source.file === OPERATION_ADAPTER
-      ? OPERATION_ADAPTER_OWNERSHIP
-      : source.file === OPERATION_PILOT
-      ? OPERATION_PILOT_OWNERSHIP
-      : source.file === BOOT_OWNER
-      ? BOOT_OWNERSHIP
-      : fixtureScenarios.includes(source.file)
-      ? FIXTURE_SCENARIO_OWNERSHIP
-      : source.file === RECORD_CHANNEL
-      ? RECORD_ENGINE_OWNERSHIP
-      : RECORD_PILOT_FILES.includes(source.file)
-      ? RECORD_PILOT_OWNERSHIP
-      : FIXTURE_PILOT_FILES.includes(source.file)
-      ? FIXTURE_PILOT_OWNERSHIP
-      : source.file.startsWith("tests/") ||
-          source.file.startsWith("client/tests/")
-      ? CHILD_OWNERSHIP
-      : PRODUCT_OWNERSHIP;
+    const rules = DRIVER_OWNERSHIP[source.file] ??
+      (source.file === CONTENDER_ADAPTER
+        ? OPERATION_ADAPTER_OWNERSHIP
+        : source.file === CONTENDER_PILOT || source.file === CONTENDER_GUARD
+        ? CONTENDER_PILOT_OWNERSHIP
+        : source.file === OPERATION_ADAPTER
+        ? OPERATION_ADAPTER_OWNERSHIP
+        : source.file === OPERATION_PILOT
+        ? OPERATION_PILOT_OWNERSHIP
+        : source.file === BOOT_OWNER
+        ? BOOT_OWNERSHIP
+        : fixtureScenarios.includes(source.file)
+        ? FIXTURE_SCENARIO_OWNERSHIP
+        : source.file === RECORD_CHANNEL
+        ? RECORD_ENGINE_OWNERSHIP
+        : RECORD_PILOT_FILES.includes(source.file)
+        ? RECORD_PILOT_OWNERSHIP
+        : FIXTURE_PILOT_FILES.includes(source.file)
+        ? FIXTURE_PILOT_OWNERSHIP
+        : source.file.startsWith("tests/") ||
+            source.file.startsWith("client/tests/")
+        ? CHILD_OWNERSHIP
+        : PRODUCT_OWNERSHIP);
     let pair = policies.get(rules);
     if (!pair) {
       const ordinary = allModules(rules);
