@@ -11,8 +11,6 @@ import {
 import { bindAccountCredentials } from "./internal/account_credentials.ts";
 import {
   decodeStoredAuthenticator,
-  sameStoredTotpSecret,
-  serializeStoredTotpSecret,
   type StoredAuthenticator,
   type TotpKeyEncoding,
 } from "./credentials.ts";
@@ -178,6 +176,9 @@ export class AccountRepository {
   #decodedSnapshot?: AccountSnapshot;
   readonly #credentials: AccountCredentials;
   readonly #retireCredentials: () => boolean;
+  readonly #legacyChange: ReturnType<
+    typeof bindAccountCredentials
+  >["legacyChange"];
   constructor(
     root: string,
     file = new IdentityFile<AccountState>(
@@ -196,19 +197,45 @@ export class AccountRepository {
   ) {
     this.#file = file;
     this.capture();
-    const owner = bindAccountCredentials({
-      byLogin: (login) => this.byLogin(login),
-      byId: (id) => this.byId(id),
-      authenticator: (account) => this.#decode(account),
-      identity: (account) => this.#identity(account),
-      assertBound: () => this.assertUnchanged(),
-      consume: (account, step, guard, lease) =>
-        this.#consumeTotp(account.id, account.credentialRevision, step, guard, [
-          lease,
-        ]),
-    }, credentialOptions);
+    const owner: ReturnType<typeof bindAccountCredentials> =
+      bindAccountCredentials({
+        byLogin: (login) => this.byLogin(login),
+        byId: (id) => this.byId(id),
+        authenticator: (account) => this.#decode(account),
+        identity: (account) => this.#identity(account),
+        assertBound: () => this.assertUnchanged(),
+        consume: (account, step, guard, lease) =>
+          this.#consumeTotp(
+            account.id,
+            account.credentialRevision,
+            step,
+            guard,
+            [lease],
+          ),
+        publish: (transition) => {
+          const prepared = owner.resolveTransition(transition);
+          const next = validateAccount(prepared.account);
+          const expected = this.capture();
+          this.#file.commit(
+            {
+              ...expected.value,
+              revision: expected.value.revision + 1,
+              updateId: next.credentialUpdateId,
+              accounts: expected.value.accounts.map((account) =>
+                account.id === next.id ? next : account
+              ),
+            },
+            expected,
+            () => {
+              owner.resolveTransition(transition);
+            },
+            [prepared.lease],
+          );
+        },
+      }, credentialOptions);
     this.#credentials = owner.credentials;
     this.#retireCredentials = owner.retire;
+    this.#legacyChange = owner.legacyChange;
   }
   retireCredentials(): void {
     this.#retireCredentials();
@@ -316,6 +343,8 @@ export class AccountRepository {
     updateId: string,
     guard: () => void = () => {},
   ): Account {
+    // Exact pre-existing fixture calls are quarantined until A01. Product
+    // credential commands use the sealed aggregate binding, never this port.
     const expected = this.capture(), account = this.byId(id);
     if (
       Object.keys(changes).some((key) =>
@@ -334,35 +363,9 @@ export class AccountRepository {
     if (!account || account.credentialRevision !== credentialRevision) {
       throw new StoredConfigConflict();
     }
-    const before = this.#decode(account);
-    // A replacement is one codec value, never a key merged with old metadata.
-    // Omitted encoding on a supplied key means historical UTF-8, not inheritance.
-    const after = Object.hasOwn(changes, "totpKey")
-      ? decodeStoredAuthenticator(
-        changes.totpKey,
-        changes.totpKeyEncoding,
-        null,
-      )
-      : before;
-    const candidate = { ...account, ...changes };
-    if (Object.hasOwn(changes, "totpKey")) {
-      delete candidate.totpKeyEncoding;
-      if (after.kind === "totp") {
-        const stored = serializeStoredTotpSecret(after.secret);
-        candidate.totpKey = stored.key;
-        if (stored.encoding !== undefined) {
-          candidate.totpKeyEncoding = stored.encoding;
-        }
-      }
-    }
-    const keepFloor = before.kind === "totp" && after.kind === "totp" &&
-      sameStoredTotpSecret(before.secret, after.secret);
-    const next = validateAccount({
-      ...candidate,
-      lastTotpStep: keepFloor ? account.lastTotpStep : null,
-      credentialRevision: account.credentialRevision + 1,
-      credentialUpdateId: updateId,
-    });
+    const next = validateAccount(
+      this.#legacyChange(account, changes, updateId),
+    );
     this.#file.commit(
       {
         ...expected.value,

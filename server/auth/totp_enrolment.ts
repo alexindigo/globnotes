@@ -1,6 +1,30 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import QRCode from "qrcode";
 import { totpSecretFromRawKey } from "./local.ts";
+import {
+  storedTotpManualSecret,
+  type StoredTotpSecret,
+} from "./credentials.ts";
+
+export interface TotpEnrollmentBundle {
+  readonly key: string;
+  readonly secret: string;
+  readonly uri: string;
+  readonly qr: string;
+}
+export type EnrollmentRenderer = (uri: string) => Promise<string>;
+/** Presentation only. The credential aggregate owns issuance and generation. */
+export async function renderAccountTotpEnrollment(
+  username: string,
+  candidate: StoredTotpSecret,
+  render: EnrollmentRenderer = (uri) => QRCode.toDataURL(uri, { margin: 1 }),
+): Promise<TotpEnrollmentBundle> {
+  const secret = storedTotpManualSecret(candidate);
+  const uri = `otpauth://totp/globnotes:${
+    encodeURIComponent(username)
+  }?secret=${secret}&issuer=globnotes`;
+  return Object.freeze({ key: secret, secret, uri, qr: await render(uri) });
+}
 
 /** Shared stateless enrolment. No active credential is changed or logged. */
 export async function totpEnrolment(

@@ -64,6 +64,14 @@ export function decodeStoredTotpSecret(
 export function serializeStoredTotpSecret(secret: StoredTotpSecret) {
   return payload(secret).stored;
 }
+/** New account enrollment is always a server-issued 20-byte marked secret.
+ * Creating a value alone does not make it a current enrollment candidate. */
+export function createTotpCandidate(): StoredTotpSecret {
+  return decodeStoredTotpSecret(
+    unpadded(crypto.getRandomValues(new Uint8Array(20))),
+    "base32",
+  );
+}
 export function sameStoredTotpSecret(
   left: StoredTotpSecret,
   right: StoredTotpSecret,

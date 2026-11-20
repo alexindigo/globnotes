@@ -57,6 +57,8 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "tests/owned_publication_test.ts",
       "server/auth/internal/account_credentials.ts",
       "tests/credential_proof_test.ts",
+      "tests/credential_transition_test.ts",
+      "tests/helpers/credential_commands.ts",
     ],
     [GUARDED_SINK_OWNER]: [
       AUTHORITY_PILOT,
@@ -169,6 +171,8 @@ export const SECRET_OWNERSHIP: OwnershipRules = {
       "tests/credential_proof_test.ts",
       "tests/credential_secret_test.ts",
       "tests/identity_totp_test.ts",
+      "server/auth/totp_enrolment.ts",
+      "tests/helpers/credential_commands.ts",
     ],
   },
 };
@@ -180,12 +184,21 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
   roots: SECRET_OWNERSHIP.roots,
   modules: {
     ...SECRET_OWNERSHIP.modules,
-    [CREDENTIAL_ENGINE]: [ACCOUNT_REPOSITORY],
+    [CREDENTIAL_ENGINE]: [
+      ACCOUNT_REPOSITORY,
+      "tests/helpers/credential_commands.ts",
+    ],
+    "tests/helpers/credential_commands.ts": [
+      "tests/credential_transition_test.ts",
+      "tests/identity_totp_contract_test.ts",
+    ],
     [ACCOUNT_REPOSITORY]: [
       "server/auth/sessions.ts",
       "server/auth/acl.ts",
       "tests/config_durability_test.ts",
       "tests/credential_proof_test.ts",
+      "tests/credential_transition_test.ts",
+      "tests/helpers/credential_commands.ts",
       "tests/identity_accounts_test.ts",
       "tests/identity_acl_test.ts",
       "tests/identity_authority_test.ts",

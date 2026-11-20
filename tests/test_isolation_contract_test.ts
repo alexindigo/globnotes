@@ -24,6 +24,7 @@ import "./operation_lease_guard_test.ts";
 import "./owned_publication_guard_test.ts";
 import "./credential_secret_guard_test.ts";
 import "./credential_proof_guard_test.ts";
+import "./credential_transition_guard_test.ts";
 import {
   FIXTURE_OWNERSHIP,
   registeredOwnership,
