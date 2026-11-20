@@ -59,7 +59,8 @@ export class HubStore {
       throw new Error("Hub metadata parent is not prepared");
     }
     this.db = new DatabaseSync(path.join(statePath, "hub.sqlite"));
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;
+    try {
+      this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS peers(id TEXT PRIMARY KEY, kind TEXT NOT NULL,
         label TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL);
@@ -74,15 +75,15 @@ export class HubStore {
       CREATE INDEX IF NOT EXISTS changes_old_path_key ON changes(old_path_key);
       CREATE TABLE IF NOT EXISTS tombstones(path_key TEXT PRIMARY KEY, vector TEXT NOT NULL,
         deleted_at TEXT NOT NULL, seq INTEGER NOT NULL);`);
-    const version = this.db.prepare(
-      "SELECT value FROM meta WHERE key='schema_version'",
-    ).get();
-    if (
-      version && !["1", "2", "3", "4", "5"].includes(version.value as string)
-    ) {
-      throw new Error("Unsupported hub schema");
-    }
-    this.db.exec(`BEGIN IMMEDIATE;
+      const version = this.db.prepare(
+        "SELECT value FROM meta WHERE key='schema_version'",
+      ).get();
+      if (
+        version && !["1", "2", "3", "4", "5"].includes(version.value as string)
+      ) {
+        throw new Error("Unsupported hub schema");
+      }
+      this.db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS conflicts(id TEXT PRIMARY KEY, path TEXT,
         path_key TEXT NOT NULL, copy_path TEXT, copy_path_key TEXT NOT NULL,
         peer TEXT NOT NULL, reason TEXT NOT NULL, state TEXT NOT NULL,
@@ -90,33 +91,33 @@ export class HubStore {
       CREATE INDEX IF NOT EXISTS conflicts_path_key ON conflicts(path_key);
       CREATE INDEX IF NOT EXISTS conflicts_copy_path_key ON conflicts(copy_path_key);
       INSERT OR IGNORE INTO meta VALUES ('conflict_revision','0');`);
-    if (
-      !this.db.prepare("PRAGMA table_info(conflicts)").all().some((r) =>
-        r.name === "revision"
-      )
-    ) {
-      this.db.exec(
-        "ALTER TABLE conflicts ADD COLUMN revision INTEGER NOT NULL DEFAULT 1",
-      );
-    }
-    for (
-      const [table, name, definition] of [
-        ["peers", "plugin", "TEXT"],
-        ["peers", "settings", "TEXT NOT NULL DEFAULT '{}'"],
-        ["peers", "enabled", "INTEGER NOT NULL DEFAULT 0"],
-        ["peers", "revision", "INTEGER NOT NULL DEFAULT 1"],
-        ["changes", "batch", "INTEGER"],
-      ]
-    ) {
       if (
-        !this.db.prepare(`PRAGMA table_info(${table})`).all().some((r) =>
-          r.name === name
+        !this.db.prepare("PRAGMA table_info(conflicts)").all().some((r) =>
+          r.name === "revision"
         )
       ) {
-        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+        this.db.exec(
+          "ALTER TABLE conflicts ADD COLUMN revision INTEGER NOT NULL DEFAULT 1",
+        );
       }
-    }
-    this.db.exec(`
+      for (
+        const [table, name, definition] of [
+          ["peers", "plugin", "TEXT"],
+          ["peers", "settings", "TEXT NOT NULL DEFAULT '{}'"],
+          ["peers", "enabled", "INTEGER NOT NULL DEFAULT 0"],
+          ["peers", "revision", "INTEGER NOT NULL DEFAULT 1"],
+          ["changes", "batch", "INTEGER"],
+        ]
+      ) {
+        if (
+          !this.db.prepare(`PRAGMA table_info(${table})`).all().some((r) =>
+            r.name === name
+          )
+        ) {
+          this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+        }
+      }
+      this.db.exec(`
       CREATE TABLE IF NOT EXISTS peer_sync(peer TEXT PRIMARY KEY,
         endpoint_id TEXT, endpoint_epoch TEXT, scope TEXT, cursor TEXT,
         export_seq INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
@@ -128,27 +129,41 @@ export class HubStore {
         updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS changes_batch ON changes(COALESCE(batch,seq),seq);
     `);
-    this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('log_id',?)").run(
-      crypto.randomUUID(),
-    );
-    this.db.exec(
-      "INSERT OR REPLACE INTO meta VALUES ('schema_version','5'); COMMIT;",
-    );
-    this.logId = this.db.prepare("SELECT value FROM meta WHERE key='log_id'")
-      .get()!.value as string;
-    const secret = [...crypto.getRandomValues(new Uint8Array(32))]
-      .map((v) => v.toString(16).padStart(2, "0")).join("");
-    this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('path_secret',?)").run(
-      secret,
-    );
-    this.secret = this.db.prepare(
-      "SELECT value FROM meta WHERE key='path_secret'",
-    ).get()!.value as string;
-    const seed = this.db.prepare(
-      "INSERT OR IGNORE INTO peers(id,kind,label,created_at) VALUES(?,?,?,?)",
-    );
-    seed.run("local", "local", "Local folder", new Date().toISOString());
-    seed.run("globnotes", "driver", "globnotes", new Date().toISOString());
+      this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('log_id',?)").run(
+        crypto.randomUUID(),
+      );
+      this.db.exec(
+        "INSERT OR REPLACE INTO meta VALUES ('schema_version','5'); COMMIT;",
+      );
+      this.logId = this.db.prepare("SELECT value FROM meta WHERE key='log_id'")
+        .get()!.value as string;
+      const secret = [...crypto.getRandomValues(new Uint8Array(32))]
+        .map((v) => v.toString(16).padStart(2, "0")).join("");
+      this.db.prepare("INSERT OR IGNORE INTO meta VALUES ('path_secret',?)")
+        .run(
+          secret,
+        );
+      this.secret = this.db.prepare(
+        "SELECT value FROM meta WHERE key='path_secret'",
+      ).get()!.value as string;
+      const seed = this.db.prepare(
+        "INSERT OR IGNORE INTO peers(id,kind,label,created_at) VALUES(?,?,?,?)",
+      );
+      seed.run("local", "local", "Local folder", new Date().toISOString());
+      seed.run("globnotes", "driver", "globnotes", new Date().toISOString());
+    } catch (error) {
+      // The constructor cannot hand custody to its caller on failure.
+      try {
+        this.db.close();
+      } catch (cleanup) {
+        throw new AggregateError(
+          [error, cleanup],
+          "Hub store construction failed",
+          { cause: error },
+        );
+      }
+      throw error;
+    }
   }
   fileState(name: string): FileState | null {
     const row = this.db.prepare("SELECT * FROM files WHERE key=?").get(

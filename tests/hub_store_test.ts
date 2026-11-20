@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
+import { DatabaseSync } from "node:sqlite";
+import { VaultHub } from "../server/hub/hub.ts";
+import { withPluginFixture } from "./helpers/plugin_fixture.ts";
+import { testServices } from "./helpers/environment.ts";
 import { CHANGE_LIMIT, HubStore } from "../server/hub/store.ts";
 import { anonymousPath } from "../server/hub/paths.ts";
 import type { Observation } from "../server/hub/types.ts";
@@ -11,6 +15,61 @@ const observation = (name: string, hash = "abc"): Observation => ({
   size: 3,
   mtimeMs: 42,
 });
+
+for (const failure of ["unsupported-schema", "initialization", "state-path"]) {
+  Deno.test(`hub construction: ${failure} leaves no open database`, async () => {
+    await withPluginFixture((fixture) => {
+      const seed = new HubStore(fixture.statePath);
+      try {
+        if (failure === "unsupported-schema") {
+          seed.db.exec(
+            "UPDATE meta SET value='unsupported' WHERE key='schema_version'",
+          );
+        }
+      } finally {
+        seed.close();
+      }
+      const exec = DatabaseSync.prototype.exec, realPath = Deno.realPathSync;
+      const opened: DatabaseSync[] = [];
+      const primary = new Error(`hub construction ${failure}`);
+      DatabaseSync.prototype.exec = function (sql) {
+        if (!opened.includes(this)) opened.push(this);
+        if (failure === "initialization" && sql.includes("BEGIN IMMEDIATE")) {
+          throw primary;
+        }
+        return exec.call(this, sql);
+      };
+      Deno.realPathSync = (path) => {
+        if (failure === "state-path" && path === fixture.statePath) {
+          throw primary;
+        }
+        return realPath(path);
+      };
+      try {
+        const error = assertThrows(
+          () =>
+            new VaultHub(fixture.vault, fixture.statePath, testServices().hub),
+          Error,
+        );
+        if (failure === "unsupported-schema") {
+          assertEquals(error.message, "Unsupported hub schema");
+        } else assertEquals(error, primary);
+        assertEquals(opened.length, failure === "state-path" ? 0 : 1);
+        // Observe the actual SQLite handle before rescue cleanup, not merely
+        // a close callback or removal of an unlinkable database file.
+        for (const db of opened) assertThrows(() => db.prepare("SELECT 1"));
+      } finally {
+        DatabaseSync.prototype.exec = exec;
+        Deno.realPathSync = realPath;
+        for (const db of opened) {
+          try {
+            db.close();
+          } catch { /* already closed by construction rollback */ }
+        }
+      }
+    });
+  });
+}
 
 Deno.test("hub store: persistent peers/secret, vectors, rename, anonymous deletion and recreation", () => {
   const root = Deno.makeTempDirSync();

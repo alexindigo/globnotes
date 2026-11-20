@@ -55,19 +55,31 @@ export class VaultHub {
     if (!(this.#intervalMs > 0) || !Number.isFinite(this.#intervalMs)) {
       throw new Error("Hub scanIntervalMs must be positive and finite");
     }
-    this.store = new HubStore(statePath, options);
     this.#stateRoot = Deno.realPathSync(statePath);
-    this.#scanner = new HubScanner(
-      this.root,
-      this.#stateRoot,
-      this.store,
-      (name) =>
-        [...this.#expectations.values()].some((paths) =>
-          paths.some((p) =>
-            p === "" || pathKey(name) === p || pathKey(name).startsWith(p + "/")
-          )
-        ),
-    );
+    this.store = new HubStore(statePath, options);
+    try {
+      this.#scanner = new HubScanner(
+        this.root,
+        this.#stateRoot,
+        this.store,
+        (name) =>
+          [...this.#expectations.values()].some((paths) =>
+            paths.some((p) =>
+              p === "" || pathKey(name) === p ||
+              pathKey(name).startsWith(p + "/")
+            )
+          ),
+      );
+    } catch (error) {
+      try {
+        this.store.close();
+      } catch (cleanup) {
+        throw new AggregateError([error, cleanup], "Hub construction failed", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
   }
   start(): void {
     if (this.#started) return;
