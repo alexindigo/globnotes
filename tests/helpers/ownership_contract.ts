@@ -203,10 +203,160 @@ export function assertOwnershipParse(
   }
 }
 
+// Closed erasure boundaries, not isTypeNode: mixed runtime/type nodes (including
+// class heritage) must never authorize skipping an unknown expression subtree.
+const TYPE_ANNOTATION_PARENTS = new Set([
+  ts.SyntaxKind.VariableDeclaration,
+  ts.SyntaxKind.Parameter,
+  ts.SyntaxKind.PropertyDeclaration,
+  ts.SyntaxKind.PropertySignature,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.MethodSignature,
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.ArrowFunction,
+  ts.SyntaxKind.GetAccessor,
+  ts.SyntaxKind.SetAccessor,
+  ts.SyntaxKind.CallSignature,
+  ts.SyntaxKind.ConstructSignature,
+  ts.SyntaxKind.IndexSignature,
+  ts.SyntaxKind.AsExpression,
+  ts.SyntaxKind.TypeAssertionExpression,
+  ts.SyntaxKind.SatisfiesExpression,
+]);
+const TYPE_ARGUMENT_PARENTS = new Set([
+  ts.SyntaxKind.CallExpression,
+  ts.SyntaxKind.NewExpression,
+  ts.SyntaxKind.TaggedTemplateExpression,
+  ts.SyntaxKind.ExpressionWithTypeArguments,
+  ts.SyntaxKind.JsxOpeningElement,
+  ts.SyntaxKind.JsxSelfClosingElement,
+]);
+function isErasedPosition(node: ts.Node): boolean {
+  for (
+    let child = node, parent: ts.Node | undefined = node;
+    parent;
+    child = parent, parent = parent.parent
+  ) {
+    switch (parent.kind) {
+      case ts.SyntaxKind.SourceFile:
+        if ((parent as ts.SourceFile).isDeclarationFile) return true;
+        break;
+      case ts.SyntaxKind.InterfaceDeclaration:
+      case ts.SyntaxKind.TypeAliasDeclaration:
+      case ts.SyntaxKind.TypeParameter:
+        return true;
+      case ts.SyntaxKind.HeritageClause:
+        if (
+          (parent as ts.HeritageClause).token ===
+            ts.SyntaxKind.ImplementsKeyword
+        ) return true;
+        break;
+      case ts.SyntaxKind.ImportDeclaration:
+        if ((parent as ts.ImportDeclaration).importClause?.isTypeOnly) {
+          return true;
+        }
+        break;
+      case ts.SyntaxKind.ImportClause:
+      case ts.SyntaxKind.ImportSpecifier:
+      case ts.SyntaxKind.ExportDeclaration:
+      case ts.SyntaxKind.ExportSpecifier:
+      case ts.SyntaxKind.ImportEqualsDeclaration:
+        if (
+          (parent as
+            | ts.ImportClause
+            | ts.ImportSpecifier
+            | ts.ExportDeclaration
+            | ts.ExportSpecifier
+            | ts.ImportEqualsDeclaration).isTypeOnly
+        ) return true;
+        break;
+      case ts.SyntaxKind.VariableStatement:
+      case ts.SyntaxKind.FunctionDeclaration:
+      case ts.SyntaxKind.ClassDeclaration:
+      case ts.SyntaxKind.EnumDeclaration:
+      case ts.SyntaxKind.ModuleDeclaration:
+        if (
+          (parent as
+            | ts.VariableStatement
+            | ts.FunctionDeclaration
+            | ts.ClassDeclaration
+            | ts.EnumDeclaration
+            | ts.ModuleDeclaration).modifiers?.some((m) =>
+              m.kind === ts.SyntaxKind.DeclareKeyword
+            )
+        ) return true;
+        break;
+    }
+    if (
+      TYPE_ANNOTATION_PARENTS.has(parent.kind) && "type" in parent &&
+      parent.type === child
+    ) return true;
+    if (
+      TYPE_ARGUMENT_PARENTS.has(parent.kind) &&
+      (parent as ts.CallExpression).typeArguments?.some((type) =>
+        type === child
+      )
+    ) return true;
+  }
+  return false;
+}
+
+// Only these known name positions are non-value syntax. A future node with a
+// field called "name" is not implicitly exempt from protected-root checks.
+const NON_VALUE_NAMES = new Set([
+  ts.SyntaxKind.VariableDeclaration,
+  ts.SyntaxKind.Parameter,
+  ts.SyntaxKind.BindingElement,
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.ClassDeclaration,
+  ts.SyntaxKind.ClassExpression,
+  ts.SyntaxKind.ModuleDeclaration,
+  ts.SyntaxKind.EnumDeclaration,
+  ts.SyntaxKind.EnumMember,
+  ts.SyntaxKind.PropertyDeclaration,
+  ts.SyntaxKind.PropertySignature,
+  ts.SyntaxKind.PropertyAssignment,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.MethodSignature,
+  ts.SyntaxKind.GetAccessor,
+  ts.SyntaxKind.SetAccessor,
+  ts.SyntaxKind.ImportClause,
+  ts.SyntaxKind.ImportSpecifier,
+  ts.SyntaxKind.NamespaceImport,
+  ts.SyntaxKind.ImportEqualsDeclaration,
+  ts.SyntaxKind.NamespaceExport,
+  ts.SyntaxKind.JsxAttribute,
+]);
+const LEXICAL_DECLARATIONS = new Set([
+  ts.SyntaxKind.VariableDeclaration,
+  ts.SyntaxKind.BindingElement,
+  ts.SyntaxKind.Parameter,
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.ClassDeclaration,
+  ts.SyntaxKind.ClassExpression,
+  ts.SyntaxKind.ModuleDeclaration,
+  ts.SyntaxKind.EnumDeclaration,
+  ts.SyntaxKind.EnumMember,
+  ts.SyntaxKind.ImportClause,
+  ts.SyntaxKind.ImportSpecifier,
+  ts.SyntaxKind.NamespaceImport,
+  ts.SyntaxKind.ImportEqualsDeclaration,
+]);
 /** Syntax-only reference positions; lexical shadowing is supplied by the compiler. */
 function isReference(node: ts.Identifier): boolean {
   const parent = node.parent;
-  if (ts.isJsxClosingElement(parent)) return false;
+  for (
+    let ancestor: ts.Node | undefined = parent;
+    ancestor;
+    ancestor = ts.isPropertyAccessExpression(ancestor)
+      ? ancestor.parent
+      : undefined
+  ) {
+    if (ts.isJsxClosingElement(ancestor)) return false;
+  }
   if (
     (ts.isJsxOpeningElement(parent) || ts.isJsxSelfClosingElement(parent)) &&
     parent.tagName === node && /^[a-z]/.test(node.text)
@@ -216,10 +366,16 @@ function isReference(node: ts.Identifier): boolean {
     return (parent.propertyName ?? parent.name) === node;
   }
   if (ts.isBindingElement(parent) && parent.propertyName === node) return false;
+  if (ts.isImportSpecifier(parent)) return false;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
+    return false;
+  }
+  if (ts.isQualifiedName(parent) && parent.right === node) return false;
   if (ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) {
     return false;
   }
-  return !("name" in parent && parent.name === node);
+  return !(NON_VALUE_NAMES.has(parent.kind) && "name" in parent &&
+    parent.name === node);
 }
 const moduleIdentity = (specifier: string) =>
   ["child_process", "module", "process"].includes(specifier)
@@ -297,8 +453,24 @@ export function analyzeOwnership(
         report(node.parent, "unresolved-import");
       }
     };
-    const visit = (node: ts.Node) => {
-      if (ts.isTypeNode(node)) return;
+    // Enumerate the whole AST first, with no pruning or rule-dependent returns.
+    // Classification below can exempt an occurrence, never conceal descendants.
+    const nodes: ts.Node[] = [];
+    const collect = (node: ts.Node) => {
+      nodes.push(node);
+      ts.forEachChild(node, collect);
+    };
+    collect(ast);
+    for (const node of nodes) {
+      const root = ts.isIdentifier(node) &&
+        Object.hasOwn(rules.roots, node.text);
+      const importCall = ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      if (
+        !root && !importCall && !ts.isImportDeclaration(node) &&
+        !ts.isExportDeclaration(node) && !ts.isImportEqualsDeclaration(node)
+      ) continue;
+      if (isErasedPosition(node)) continue;
       if (ts.isImportDeclaration(node)) {
         const clause = node.importClause, bindings = clause?.namedBindings;
         const erased = clause?.isTypeOnly ||
@@ -307,7 +479,7 @@ export function analyzeOwnership(
               s.isTypeOnly
             ));
         if (!erased) dependency(node.moduleSpecifier);
-        return;
+        continue;
       }
       if (ts.isExportDeclaration(node)) {
         const clause = node.exportClause;
@@ -315,7 +487,7 @@ export function analyzeOwnership(
           (clause && ts.isNamedExports(clause) && clause.elements.length > 0 &&
             clause.elements.every((s) => s.isTypeOnly));
         if (!erased && node.moduleSpecifier) dependency(node.moduleSpecifier);
-        if (node.moduleSpecifier || erased) return;
+        if (node.moduleSpecifier || erased) continue;
       }
       if (ts.isImportEqualsDeclaration(node)) {
         if (
@@ -323,7 +495,7 @@ export function analyzeOwnership(
           ts.isExternalModuleReference(node.moduleReference) &&
           node.moduleReference.expression
         ) dependency(node.moduleReference.expression);
-        return;
+        continue;
       }
       if (
         ts.isCallExpression(node) &&
@@ -342,7 +514,8 @@ export function analyzeOwnership(
         const lexical = symbol &&
           (symbol.flags & (ts.SymbolFlags.Value | ts.SymbolFlags.Alias)) &&
           symbol.declarations?.some((d) =>
-            !ts.isIdentifier(d) && !d.getSourceFile().isDeclarationFile &&
+            LEXICAL_DECLARATIONS.has(d.kind) &&
+            !d.getSourceFile().isDeclarationFile &&
             !ts.isTypeOnlyImportOrExportDeclaration(d) &&
             !(ts.getCombinedModifierFlags(d) & ts.ModifierFlags.Ambient)
           );
@@ -367,9 +540,7 @@ export function analyzeOwnership(
             );}
         }
       }
-      ts.forEachChild(node, visit);
-    };
-    visit(ast);
+    }
   }
   return sites.sort((a, b) =>
     a.file.localeCompare(b.file) || a.line - b.line ||

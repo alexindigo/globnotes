@@ -26,6 +26,14 @@ shadows from runtime globals; erased declarations and JS expando writes do not
 create runtime shadows. Types are parsed but erased type-only dependencies do
 not acquire a runtime capability.
 
+Root occurrences are collected from the entire AST without subtree pruning.
+Each occurrence is then classified by a closed list of erased ancestor positions:
+annotations, type arguments, type parameters/aliases/interfaces, implements
+clauses, type-only import/export forms and ambient declarations. Runtime class
+heritage and internal import-equals aliases receive the ordinary root checks.
+Unknown future node kinds are not presumed erased merely because they look like
+types or have a field named `name`; known non-value names are listed explicitly.
+
 Imports are classified by the graph's resolved identity, not alias spelling or
 selected export names. Empty runtime re-exports still load their module.
 Dynamic imports require a string literal and a graph edge; no string folding,
