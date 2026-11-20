@@ -1,0 +1,877 @@
+{
+  "coordination:plugins/globnotes-remotely-save/mapping.js": {
+    "replacement": "A11",
+    "consumers": [
+      "plugins/globnotes-remotely-save/mapping.js"
+    ],
+    "reason": "Existing raw coordination root/module reference; migrate its domain family without new bypasses."
+  },
+  "coordination:client/tests/e2e/autosave-timer.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/autosave-timer.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/backup-plugin.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/backup-plugin.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/button-icons.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/button-icons.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/cdp.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/anchor-history.mjs",
+      "client/tests/e2e/button-icons.mjs",
+      "client/tests/e2e/ctrl-f-search.mjs",
+      "client/tests/e2e/line-wrap.mjs",
+      "client/tests/e2e/native-actions-control.mjs",
+      "client/tests/e2e/native-ownership-control.mjs",
+      "client/tests/e2e/note-naming.mjs",
+      "client/tests/e2e/save-preview.mjs",
+      "client/tests/e2e/setup-totp-desktop.mjs",
+      "client/tests/e2e/setup-wizard.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/conflict-review-native.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/conflict-review-native.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/generic-plugin-system.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/generic-plugin-system.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/hub-writers-gate-native.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/hub-writers-gate-native.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/legacy-fixture.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/autosave-timer.mjs",
+      "client/tests/e2e/background-connections-native.mjs",
+      "client/tests/e2e/client-driven-links.mjs",
+      "client/tests/e2e/code-tokens.mjs",
+      "client/tests/e2e/copy-button.mjs",
+      "client/tests/e2e/edit-mode-url.mjs",
+      "client/tests/e2e/editor-modes.mjs",
+      "client/tests/e2e/html-safety.mjs",
+      "client/tests/e2e/native-consumer-controls.mjs",
+      "client/tests/e2e/native-ownership-control.mjs",
+      "client/tests/e2e/quick-switcher.mjs",
+      "client/tests/e2e/recent-files.mjs",
+      "client/tests/e2e/rename-options.mjs",
+      "client/tests/e2e/rename-twice.mjs",
+      "client/tests/e2e/sidebar-refresh.mjs",
+      "client/tests/e2e/surfaces.mjs",
+      "client/tests/e2e/test-quality-geometry.mjs",
+      "client/tests/e2e/test-vault.mjs",
+      "client/tests/e2e/theme.mjs",
+      "client/tests/e2e/tour-chain.mjs",
+      "client/tests/e2e/wikilink-rename.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/legacy-native-suite.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/backup-plugin.mjs",
+      "client/tests/e2e/native-consumer-controls.mjs",
+      "client/tests/e2e/native-result-controls.mjs",
+      "client/tests/e2e/native-suite-results.test.js",
+      "client/tests/e2e/runner-entrypoint-controls.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/native-cdp-session.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/access-extra-states.mjs",
+      "client/tests/e2e/access-settings.mjs",
+      "client/tests/e2e/anchor-history.mjs",
+      "client/tests/e2e/autosave-timer.mjs",
+      "client/tests/e2e/background-connections-native.mjs",
+      "client/tests/e2e/backup-plugin.mjs",
+      "client/tests/e2e/button-icons.mjs",
+      "client/tests/e2e/client-driven-links.mjs",
+      "client/tests/e2e/code-tokens.mjs",
+      "client/tests/e2e/conflict-inbox-native.mjs",
+      "client/tests/e2e/conflict-resolution-native.mjs",
+      "client/tests/e2e/conflict-review-native.mjs",
+      "client/tests/e2e/copy-button.mjs",
+      "client/tests/e2e/ctrl-f-search.mjs",
+      "client/tests/e2e/edit-mode-url.mjs",
+      "client/tests/e2e/editor-modes.mjs",
+      "client/tests/e2e/harness-helpers.test.js",
+      "client/tests/e2e/html-safety.mjs",
+      "client/tests/e2e/hub-safe-saves-native.mjs",
+      "client/tests/e2e/hub-writers-gate-native.mjs",
+      "client/tests/e2e/layered-config-native.mjs",
+      "client/tests/e2e/line-wrap.mjs",
+      "client/tests/e2e/native-actions-control.mjs",
+      "client/tests/e2e/native-clipboard.test.js",
+      "client/tests/e2e/native-consumer-controls.mjs",
+      "client/tests/e2e/native-dom-snapshot.test.js",
+      "client/tests/e2e/native-ownership-control.mjs",
+      "client/tests/e2e/note-naming.mjs",
+      "client/tests/e2e/note-save-fifo.mjs",
+      "client/tests/e2e/note-save-owner-guards.mjs",
+      "client/tests/e2e/plugin-guard-preservation.mjs",
+      "client/tests/e2e/plugin-permissions.mjs",
+      "client/tests/e2e/plugin-prefix-auth.mjs",
+      "client/tests/e2e/plugin-review-repairs.mjs",
+      "client/tests/e2e/quick-switcher.mjs",
+      "client/tests/e2e/reauthentication-native.mjs",
+      "client/tests/e2e/recent-files.mjs",
+      "client/tests/e2e/remotely-save-native.mjs",
+      "client/tests/e2e/rename-options.mjs",
+      "client/tests/e2e/rename-twice.mjs",
+      "client/tests/e2e/save-preview.mjs",
+      "client/tests/e2e/settings-design.mjs",
+      "client/tests/e2e/settings-foundations.mjs",
+      "client/tests/e2e/settings-ui.mjs",
+      "client/tests/e2e/setup-totp-desktop.mjs",
+      "client/tests/e2e/setup-wizard.mjs",
+      "client/tests/e2e/sidebar-refresh.mjs",
+      "client/tests/e2e/surfaces.mjs",
+      "client/tests/e2e/sync-driver-native.mjs",
+      "client/tests/e2e/sync-settings-boundary.test.js",
+      "client/tests/e2e/sync-settings-native.mjs",
+      "client/tests/e2e/sync-status-native.mjs",
+      "client/tests/e2e/test-quality-geometry.mjs",
+      "client/tests/e2e/test-vault.mjs",
+      "client/tests/e2e/theme.mjs",
+      "client/tests/e2e/tour-chain.mjs",
+      "client/tests/e2e/wikilink-rename.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/native-response-gate.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/native-response-gate.test.js",
+      "client/tests/e2e/note-save-fifo.mjs",
+      "client/tests/e2e/note-save-owner-guards.mjs",
+      "client/tests/e2e/plugin-permissions.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/native-response-gate.test.js": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/native-response-gate.test.js"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/native-server-lifetime.test.js": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/native-server-lifetime.test.js"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/native-suite-results.test.js": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/native-suite-results.test.js"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/plugin-permissions.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/plugin-permissions.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/plugin-prefix-auth.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/plugin-prefix-auth.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/plugin-review-repairs.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/plugin-review-repairs.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/prefix-auth-fixture.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/plugin-prefix-auth.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/remotely-save-fixture.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/remotely-save-native.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/save-preview.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/save-preview.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/settings-foundations.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/settings-foundations.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/settings-pending-native.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/settings-ui.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/settings-restart-fixture.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/access-settings.mjs",
+      "client/tests/e2e/layered-config-native.mjs",
+      "client/tests/e2e/settings-ui.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/setup-wizard.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/setup-wizard.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:client/tests/e2e/sync-settings-native.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/sync-settings-boundary.test.js",
+      "client/tests/e2e/sync-settings-native.mjs"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/access_commit_guards_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/access_commit_guards_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/access_settings_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/access_settings_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/access_snapshot_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/access_snapshot_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/backup_fixture_order_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/backup_fixture_order_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/backup_plugin_controls_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/backup_plugin_controls_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/backup_plugin_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/backup_plugin_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/catalog_work_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/catalog_work_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/config_consumers_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/config_consumers_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/driver_export_owner_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/driver_export_owner_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/helpers/auxiliary_fixture.ts": {
+    "replacement": "A02",
+    "consumers": [
+      "tests/hub_gate_test.ts",
+      "tests/plugin_fixture_cleanup_test.ts",
+      "tests/plugin_fs_test.ts",
+      "tests/plugin_settings_environment_test.ts",
+      "tests/plugin_settings_path_grants_test.ts"
+    ],
+    "reason": "Remaining held work/startup is a separate adoption; P04 migrates schema-lease only."
+  },
+  "coordination:tests/helpers/catalog_work_stall.mjs": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/timing/product_settlement_stall_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/helpers/catalog_work.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/access-extra-states.mjs",
+      "client/tests/e2e/access-settings.mjs",
+      "client/tests/e2e/autosave-timer.mjs",
+      "client/tests/e2e/background-connections-native.mjs",
+      "client/tests/e2e/backup-plugin.mjs",
+      "client/tests/e2e/client-driven-links.mjs",
+      "client/tests/e2e/code-tokens.mjs",
+      "client/tests/e2e/copy-button.mjs",
+      "client/tests/e2e/edit-mode-url.mjs",
+      "client/tests/e2e/editor-modes.mjs",
+      "client/tests/e2e/generic-plugin-system.mjs",
+      "client/tests/e2e/html-safety.mjs",
+      "client/tests/e2e/layered-config-native.mjs",
+      "client/tests/e2e/native-consumer-controls.mjs",
+      "client/tests/e2e/native-ownership-control.mjs",
+      "client/tests/e2e/native-server-lifetime.test.js",
+      "client/tests/e2e/note-save-fifo.mjs",
+      "client/tests/e2e/note-save-owner-guards.mjs",
+      "client/tests/e2e/plugin-guard-preservation.mjs",
+      "client/tests/e2e/plugin-permissions.mjs",
+      "client/tests/e2e/plugin-prefix-auth.mjs",
+      "client/tests/e2e/plugin-review-repairs.mjs",
+      "client/tests/e2e/quick-switcher.mjs",
+      "client/tests/e2e/recent-files.mjs",
+      "client/tests/e2e/rename-options.mjs",
+      "client/tests/e2e/rename-twice.mjs",
+      "client/tests/e2e/settings-design.mjs",
+      "client/tests/e2e/settings-foundations.mjs",
+      "client/tests/e2e/settings-ui.mjs",
+      "client/tests/e2e/sidebar-refresh.mjs",
+      "client/tests/e2e/surfaces.mjs",
+      "client/tests/e2e/test-quality-geometry.mjs",
+      "client/tests/e2e/test-vault.mjs",
+      "client/tests/e2e/theme.mjs",
+      "client/tests/e2e/tour-chain.mjs",
+      "client/tests/e2e/wikilink-rename.mjs",
+      "tests/backup_fixture_order_test.ts",
+      "tests/backup_plugin_test.ts",
+      "tests/backup_work_summary_test.ts",
+      "tests/catalog_work_test.ts",
+      "tests/hub_driver_supervisor_test.ts",
+      "tests/hub_gate_contract_test.ts",
+      "tests/hub_versioning_independence_test.ts",
+      "tests/hub_versioning_test.ts",
+      "tests/identity_authority_test.ts",
+      "tests/mcp_endpoint_test.ts",
+      "tests/metadata_acceptance_test.ts",
+      "tests/metadata_runtime_test.ts",
+      "tests/native_totp_fixture_test.ts",
+      "tests/plugin_api_test.ts",
+      "tests/plugin_authority_test.ts",
+      "tests/plugin_changes_acceptance_test.ts",
+      "tests/plugin_changes_runtime_test.ts",
+      "tests/plugin_changes_transport_test.ts",
+      "tests/plugin_data_test.ts",
+      "tests/plugin_endpoint_transport_test.ts",
+      "tests/plugin_fixture_cleanup_test.ts",
+      "tests/plugin_lifecycle_test.ts",
+      "tests/plugin_network_api_test.ts",
+      "tests/plugin_permissions_test.ts",
+      "tests/plugin_prefix_test.ts",
+      "tests/plugin_render_lifecycle_test.ts",
+      "tests/plugin_runtime_readiness_test.ts",
+      "tests/plugin_runtime_test.ts",
+      "tests/plugin_service_jobs_contract_test.ts",
+      "tests/plugin_service_jobs_test.ts",
+      "tests/plugin_settings_evolution_test.ts",
+      "tests/plugin_settings_schema_lease_test.ts",
+      "tests/plugin_work_summary_test.ts",
+      "tests/plugin_write_bases_test.ts",
+      "tests/product_settlement_test.ts",
+      "tests/timing/plugin_lifecycle_test.ts",
+      "tests/timing/plugin_runtime_test.ts",
+      "tests/timing/plugin_stream_expiry_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/helpers/plugin_stall_child.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/timing/plugin_stall_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/helpers/plugin_worker_liveness_child.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_worker_liveness_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/helpers/remotely_save_remote.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/remotely-save-native.mjs",
+      "tests/driver_export_owner_test.ts",
+      "tests/remotely_save_acceptance_test.ts",
+      "tests/remotely_save_providers_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/helpers/render_recovery_child.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_render_recovery_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/helpers/totp.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "client/tests/e2e/access-settings.mjs",
+      "client/tests/e2e/plugin-review-repairs.mjs",
+      "client/tests/e2e/setup-totp-desktop.mjs",
+      "tests/access_settings_test.ts",
+      "tests/auth_test.ts",
+      "tests/identity_totp_test.ts",
+      "tests/local_auth_test.ts",
+      "tests/native_totp_fixture_test.ts",
+      "tests/totp_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/helpers/worker_liveness.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/hub_driver_native_acceptance_test.ts",
+      "tests/hub_driver_supervisor_test.ts",
+      "tests/metadata_projection_test.ts",
+      "tests/metadata_read_cost_test.ts",
+      "tests/metadata_runtime_test.ts",
+      "tests/plugin_changes_follower_test.ts",
+      "tests/plugin_endpoint_transport_test.ts",
+      "tests/plugin_fixture_cleanup_test.ts",
+      "tests/plugin_fs_test.ts",
+      "tests/plugin_invocation_context_test.ts",
+      "tests/plugin_render_lifecycle_test.ts",
+      "tests/plugin_runtime_readiness_test.ts",
+      "tests/plugin_runtime_test.ts",
+      "tests/plugin_worker_liveness_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/http_mutation_lease_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/http_mutation_lease_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/hub_changes_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/hub_changes_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/hub_conflict_resolution_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/hub_conflict_resolution_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/hub_driver_acceptance_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/hub_driver_acceptance_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/hub_driver_runtime_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/hub_driver_runtime_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/hub_driver_supervisor_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/hub_driver_supervisor_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/hub_scanner_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/hub_scanner_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/hub_watcher_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/hub_watcher_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/identity_accounts_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/identity_accounts_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/identity_authority_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/identity_authority_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/identity_sessions_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/identity_sessions_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/index_pass_isolation_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/index_pass_isolation_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/interop/remotely_save_boundaries.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/interop/remotely_save_real.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/interop/remotely_save_traffic.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/interop/remotely_save_real.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/manual_deadline_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/manual_deadline_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/mcp_hub_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/mcp_hub_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/mcp_rate_limit_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/mcp_rate_limit_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/mcp_stale_write_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/mcp_stale_write_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/metadata_projection_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/metadata_projection_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/metadata_runtime_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/metadata_runtime_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/native_finalization_ownership_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/native_finalization_ownership_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/ownership_scope_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/ownership_scope_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_api_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_api_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_authority_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_authority_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_changes_follower_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_changes_follower_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_changes_transport_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_changes_transport_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_data_test.ts": {
+    "replacement": "A02",
+    "consumers": [
+      "tests/plugin_data_test.ts"
+    ],
+    "reason": "Remaining held work/startup is a separate adoption; P04 migrates schema-lease only."
+  },
+  "coordination:tests/plugin_endpoint_transport_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_endpoint_transport_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_fs_test.ts": {
+    "replacement": "A02",
+    "consumers": [
+      "tests/plugin_fs_test.ts"
+    ],
+    "reason": "Remaining held work/startup is a separate adoption; P04 migrates schema-lease only."
+  },
+  "coordination:tests/plugin_inventory_source_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_inventory_source_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_invocation_context_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_invocation_context_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_lifecycle_test.ts": {
+    "replacement": "A02",
+    "consumers": [
+      "tests/plugin_lifecycle_test.ts"
+    ],
+    "reason": "Remaining held work/startup is a separate adoption; P04 migrates schema-lease only."
+  },
+  "coordination:tests/plugin_network_api_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_network_api_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_network_permissions_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_network_permissions_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_render_lifecycle_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_render_lifecycle_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_render_recovery_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_render_recovery_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_runtime_readiness_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_runtime_readiness_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_runtime_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_runtime_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_service_jobs_contract_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_service_jobs_contract_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_service_jobs_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_service_jobs_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_settings_environment_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_settings_environment_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_work_summary_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_work_summary_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugin_worker_liveness_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugin_worker_liveness_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/plugins_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/plugins_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/process_records_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/process_records_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/product_settlement_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/product_settlement_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/remotely_save_providers_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/remotely_save_providers_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/render_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/render_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/timing/plugin_lifecycle_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/timing/plugin_lifecycle_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/timing/plugin_runtime_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/timing/plugin_runtime_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/timing/plugin_stall_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/timing/plugin_stall_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/timing/plugin_stream_expiry_test.ts": {
+    "replacement": "A11",
+    "consumers": [
+      "tests/timing/plugin_stream_expiry_test.ts"
+    ],
+    "reason": "Existing fixture, domain observation or deliberate low-level control; classify/adopt at closure without expanding the P04 pilot."
+  },
+  "coordination:tests/timing/product_settlement_stall_test.ts": {
+    "replacement": "T01",
+    "consumers": [
+      "tests/timing/product_settlement_stall_test.ts"
+    ],
+    "reason": "Existing suspension intent/transition coordination remains with its suspension owner."
+  }
+}

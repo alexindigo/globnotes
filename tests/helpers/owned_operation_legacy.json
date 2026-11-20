@@ -1,0 +1,3298 @@
+[
+  {
+    "file": "plugins/globnotes-remotely-save/mapping.js",
+    "capability": "Promise.*",
+    "line": 332,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => ctx.timers.setTimeout(resolve, 250));",
+    "family": "coordination:plugins/globnotes-remotely-save/mapping.js"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Promise.*",
+    "line": 11,
+    "source": "Promise",
+    "context": "const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));",
+    "family": "coordination:client/tests/e2e/autosave-timer.mjs"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "setTimeout.*",
+    "line": 11,
+    "source": "setTimeout",
+    "context": "const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));",
+    "family": "coordination:client/tests/e2e/autosave-timer.mjs"
+  },
+  {
+    "file": "client/tests/e2e/backup-plugin.mjs",
+    "capability": "Promise.withResolvers",
+    "line": 147,
+    "source": "Promise.withResolvers",
+    "context": "const admitted = Promise.withResolvers(), observation = new AbortController();",
+    "family": "coordination:client/tests/e2e/backup-plugin.mjs"
+  },
+  {
+    "file": "client/tests/e2e/backup-plugin.mjs",
+    "capability": "Promise.*",
+    "line": 161,
+    "source": "Promise",
+    "context": "if (!finished) await new Promise(resolve => setTimeout(resolve, 100));",
+    "family": "coordination:client/tests/e2e/backup-plugin.mjs"
+  },
+  {
+    "file": "client/tests/e2e/backup-plugin.mjs",
+    "capability": "setTimeout.*",
+    "line": 161,
+    "source": "setTimeout",
+    "context": "if (!finished) await new Promise(resolve => setTimeout(resolve, 100));",
+    "family": "coordination:client/tests/e2e/backup-plugin.mjs"
+  },
+  {
+    "file": "client/tests/e2e/button-icons.mjs",
+    "capability": "Promise.race",
+    "line": 34,
+    "source": "Promise.race",
+    "context": "const result = await Promise.race([",
+    "family": "coordination:client/tests/e2e/button-icons.mjs"
+  },
+  {
+    "file": "client/tests/e2e/button-icons.mjs",
+    "capability": "Promise.*",
+    "line": 36,
+    "source": "Promise",
+    "context": "new Promise((_, reject) => {",
+    "family": "coordination:client/tests/e2e/button-icons.mjs"
+  },
+  {
+    "file": "client/tests/e2e/button-icons.mjs",
+    "capability": "setTimeout.*",
+    "line": 37,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(",
+    "family": "coordination:client/tests/e2e/button-icons.mjs"
+  },
+  {
+    "file": "client/tests/e2e/cdp.mjs",
+    "capability": "Promise.*",
+    "line": 38,
+    "source": "Promise",
+    "context": "waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),",
+    "family": "coordination:client/tests/e2e/cdp.mjs"
+  },
+  {
+    "file": "client/tests/e2e/cdp.mjs",
+    "capability": "setTimeout.*",
+    "line": 38,
+    "source": "setTimeout",
+    "context": "waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),",
+    "family": "coordination:client/tests/e2e/cdp.mjs"
+  },
+  {
+    "file": "client/tests/e2e/conflict-review-native.mjs",
+    "capability": "Promise.*",
+    "line": 100,
+    "source": "Promise",
+    "context": "await new Promise(resolve => setTimeout(resolve, 61_000));",
+    "family": "coordination:client/tests/e2e/conflict-review-native.mjs"
+  },
+  {
+    "file": "client/tests/e2e/conflict-review-native.mjs",
+    "capability": "setTimeout.*",
+    "line": 100,
+    "source": "setTimeout",
+    "context": "await new Promise(resolve => setTimeout(resolve, 61_000));",
+    "family": "coordination:client/tests/e2e/conflict-review-native.mjs"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "capability": "Promise.*",
+    "line": 33,
+    "source": "Promise",
+    "context": "const status = await Promise.race([child.status, new Promise((_, reject) => { timer = setTimeout(() => reject(Error(`${name}: whole-driver deadline`)), 300000); })]);",
+    "family": "coordination:client/tests/e2e/generic-plugin-system.mjs"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "capability": "Promise.race",
+    "line": 33,
+    "source": "Promise.race",
+    "context": "const status = await Promise.race([child.status, new Promise((_, reject) => { timer = setTimeout(() => reject(Error(`${name}: whole-driver deadline`)), 300000); })]);",
+    "family": "coordination:client/tests/e2e/generic-plugin-system.mjs"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "capability": "setTimeout.*",
+    "line": 33,
+    "source": "setTimeout",
+    "context": "const status = await Promise.race([child.status, new Promise((_, reject) => { timer = setTimeout(() => reject(Error(`${name}: whole-driver deadline`)), 300000); })]);",
+    "family": "coordination:client/tests/e2e/generic-plugin-system.mjs"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "capability": "Promise.*",
+    "line": 40,
+    "source": "Promise",
+    "context": "const stopped = await Promise.race([child.status, new Promise(resolve => { stopTimer = setTimeout(() => resolve(null), 5000); })]);",
+    "family": "coordination:client/tests/e2e/generic-plugin-system.mjs"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "capability": "Promise.race",
+    "line": 40,
+    "source": "Promise.race",
+    "context": "const stopped = await Promise.race([child.status, new Promise(resolve => { stopTimer = setTimeout(() => resolve(null), 5000); })]);",
+    "family": "coordination:client/tests/e2e/generic-plugin-system.mjs"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "capability": "setTimeout.*",
+    "line": 40,
+    "source": "setTimeout",
+    "context": "const stopped = await Promise.race([child.status, new Promise(resolve => { stopTimer = setTimeout(() => resolve(null), 5000); })]);",
+    "family": "coordination:client/tests/e2e/generic-plugin-system.mjs"
+  },
+  {
+    "file": "client/tests/e2e/hub-writers-gate-native.mjs",
+    "capability": "Promise.*",
+    "line": 52,
+    "source": "Promise",
+    "context": "for (let i = 0; i < 200 && !held; i++) await new Promise(resolve => setTimeout(resolve, 10));",
+    "family": "coordination:client/tests/e2e/hub-writers-gate-native.mjs"
+  },
+  {
+    "file": "client/tests/e2e/hub-writers-gate-native.mjs",
+    "capability": "setTimeout.*",
+    "line": 52,
+    "source": "setTimeout",
+    "context": "for (let i = 0; i < 200 && !held; i++) await new Promise(resolve => setTimeout(resolve, 10));",
+    "family": "coordination:client/tests/e2e/hub-writers-gate-native.mjs"
+  },
+  {
+    "file": "client/tests/e2e/legacy-fixture.mjs",
+    "capability": "Promise.*",
+    "line": 82,
+    "source": "Promise",
+    "context": "waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),",
+    "family": "coordination:client/tests/e2e/legacy-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/legacy-fixture.mjs",
+    "capability": "setTimeout.*",
+    "line": 82,
+    "source": "setTimeout",
+    "context": "waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),",
+    "family": "coordination:client/tests/e2e/legacy-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/legacy-native-suite.mjs",
+    "capability": "Promise.race",
+    "line": 367,
+    "source": "Promise.race",
+    "context": "while (active.size >= concurrency) await Promise.race(active);",
+    "family": "coordination:client/tests/e2e/legacy-native-suite.mjs"
+  },
+  {
+    "file": "client/tests/e2e/legacy-native-suite.mjs",
+    "capability": "setTimeout.*",
+    "line": 386,
+    "source": "setTimeout",
+    "context": "const timer = setTimeout(() => {",
+    "family": "coordination:client/tests/e2e/legacy-native-suite.mjs"
+  },
+  {
+    "file": "client/tests/e2e/legacy-native-suite.mjs",
+    "capability": "setTimeout.*",
+    "line": 389,
+    "source": "setTimeout",
+    "context": "escalation = setTimeout(() => {",
+    "family": "coordination:client/tests/e2e/legacy-native-suite.mjs"
+  },
+  {
+    "file": "client/tests/e2e/native-cdp-session.mjs",
+    "capability": "Promise.*",
+    "line": 6,
+    "source": "Promise",
+    "context": "return new Promise((resolve, reject) => {",
+    "family": "coordination:client/tests/e2e/native-cdp-session.mjs"
+  },
+  {
+    "file": "client/tests/e2e/native-cdp-session.mjs",
+    "capability": "setTimeout.*",
+    "line": 13,
+    "source": "setTimeout",
+    "context": "const connectTimer = setTimeout(() => {",
+    "family": "coordination:client/tests/e2e/native-cdp-session.mjs"
+  },
+  {
+    "file": "client/tests/e2e/native-cdp-session.mjs",
+    "capability": "Promise.*",
+    "line": 28,
+    "source": "Promise",
+    "context": "return new Promise((resolve, reject) => {",
+    "family": "coordination:client/tests/e2e/native-cdp-session.mjs"
+  },
+  {
+    "file": "client/tests/e2e/native-cdp-session.mjs",
+    "capability": "setTimeout.*",
+    "line": 29,
+    "source": "setTimeout",
+    "context": "const timer = setTimeout(() => finish(new Error(`${method}: CDP request deadline`)), timeout);",
+    "family": "coordination:client/tests/e2e/native-cdp-session.mjs"
+  },
+  {
+    "file": "client/tests/e2e/native-response-gate.mjs",
+    "capability": "Promise.*",
+    "line": 11,
+    "source": "Promise",
+    "context": "const released = new Promise(resolve => { settle = resolve; });",
+    "family": "coordination:client/tests/e2e/native-response-gate.mjs"
+  },
+  {
+    "file": "client/tests/e2e/native-response-gate.mjs",
+    "capability": "setTimeout.*",
+    "line": 43,
+    "source": "setTimeout",
+    "context": "owner.timer = setTimeout(() => {",
+    "family": "coordination:client/tests/e2e/native-response-gate.mjs"
+  },
+  {
+    "file": "client/tests/e2e/native-response-gate.test.js",
+    "capability": "Promise.*",
+    "line": 71,
+    "source": "Promise",
+    "context": "const body = new Promise(resolve => { finishBody = resolve; });",
+    "family": "coordination:client/tests/e2e/native-response-gate.test.js"
+  },
+  {
+    "file": "client/tests/e2e/native-server-lifetime.test.js",
+    "capability": "Promise.*",
+    "line": 19,
+    "source": "Promise",
+    "context": "status: () => status, logs: () => output, exited: new Promise(() => {}), close });",
+    "family": "coordination:client/tests/e2e/native-server-lifetime.test.js"
+  },
+  {
+    "file": "client/tests/e2e/native-server-lifetime.test.js",
+    "capability": "Promise.withResolvers",
+    "line": 41,
+    "source": "Promise.withResolvers",
+    "context": "const exited = Promise.withResolvers(), entered = Promise.withResolvers();",
+    "family": "coordination:client/tests/e2e/native-server-lifetime.test.js"
+  },
+  {
+    "file": "client/tests/e2e/native-server-lifetime.test.js",
+    "capability": "Promise.withResolvers",
+    "line": 41,
+    "source": "Promise.withResolvers",
+    "context": "const exited = Promise.withResolvers(), entered = Promise.withResolvers();",
+    "family": "coordination:client/tests/e2e/native-server-lifetime.test.js"
+  },
+  {
+    "file": "client/tests/e2e/native-server-lifetime.test.js",
+    "capability": "Promise.*",
+    "line": 46,
+    "source": "Promise",
+    "context": "vi.stubGlobal(\"fetch\", vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {",
+    "family": "coordination:client/tests/e2e/native-server-lifetime.test.js"
+  },
+  {
+    "file": "client/tests/e2e/native-suite-results.test.js",
+    "capability": "Promise.*",
+    "line": 192,
+    "source": "Promise",
+    "context": "return new Promise(resolve => running.set(name, () => {",
+    "family": "coordination:client/tests/e2e/native-suite-results.test.js"
+  },
+  {
+    "file": "client/tests/e2e/native-suite-results.test.js",
+    "capability": "Promise.*",
+    "line": 211,
+    "source": "Promise",
+    "context": "const execute = vi.fn(name => name === \"bad\" ? Promise.resolve({ success: false, code: 7 }) : new Promise(resolve => { finish = resolve; }));",
+    "family": "coordination:client/tests/e2e/native-suite-results.test.js"
+  },
+  {
+    "file": "client/tests/e2e/plugin-permissions.mjs",
+    "capability": "Promise.withResolvers",
+    "line": 69,
+    "source": "Promise.withResolvers",
+    "context": "const guardRelease = Promise.withResolvers();",
+    "family": "coordination:client/tests/e2e/plugin-permissions.mjs"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "setTimeout.*",
+    "line": 84,
+    "source": "setTimeout",
+    "context": "const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 5000);",
+    "family": "coordination:client/tests/e2e/plugin-prefix-auth.mjs"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Promise.*",
+    "line": 219,
+    "source": "Promise",
+    "context": "for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, \"Prefix/auth consumer observation deadline\"); await new Promise(resolve => setTimeout(resolve, 25)); }",
+    "family": "coordination:client/tests/e2e/plugin-prefix-auth.mjs"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "setTimeout.*",
+    "line": 219,
+    "source": "setTimeout",
+    "context": "for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, \"Prefix/auth consumer observation deadline\"); await new Promise(resolve => setTimeout(resolve, 25)); }",
+    "family": "coordination:client/tests/e2e/plugin-prefix-auth.mjs"
+  },
+  {
+    "file": "client/tests/e2e/plugin-review-repairs.mjs",
+    "capability": "Promise.*",
+    "line": 21,
+    "source": "Promise",
+    "context": "const delay = ms => new Promise(resolve => setTimeout(resolve, ms));",
+    "family": "coordination:client/tests/e2e/plugin-review-repairs.mjs"
+  },
+  {
+    "file": "client/tests/e2e/plugin-review-repairs.mjs",
+    "capability": "setTimeout.*",
+    "line": 21,
+    "source": "setTimeout",
+    "context": "const delay = ms => new Promise(resolve => setTimeout(resolve, ms));",
+    "family": "coordination:client/tests/e2e/plugin-review-repairs.mjs"
+  },
+  {
+    "file": "client/tests/e2e/plugin-review-repairs.mjs",
+    "capability": "Promise.withResolvers",
+    "line": 84,
+    "source": "Promise.withResolvers",
+    "context": "const gate = { method, path, response: null, released: false, ready: Promise.withResolvers(), release: Promise.withResolvers() };",
+    "family": "coordination:client/tests/e2e/plugin-review-repairs.mjs"
+  },
+  {
+    "file": "client/tests/e2e/plugin-review-repairs.mjs",
+    "capability": "Promise.withResolvers",
+    "line": 84,
+    "source": "Promise.withResolvers",
+    "context": "const gate = { method, path, response: null, released: false, ready: Promise.withResolvers(), release: Promise.withResolvers() };",
+    "family": "coordination:client/tests/e2e/plugin-review-repairs.mjs"
+  },
+  {
+    "file": "client/tests/e2e/plugin-review-repairs.mjs",
+    "capability": "Promise.withResolvers",
+    "line": 117,
+    "source": "Promise.withResolvers",
+    "context": "const barrier = Promise.withResolvers(); owner.browserHolds.push(barrier); await barrier.promise;",
+    "family": "coordination:client/tests/e2e/plugin-review-repairs.mjs"
+  },
+  {
+    "file": "client/tests/e2e/prefix-auth-fixture.mjs",
+    "capability": "Promise.*",
+    "line": 61,
+    "source": "Promise",
+    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
+    "family": "coordination:client/tests/e2e/prefix-auth-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/prefix-auth-fixture.mjs",
+    "capability": "Promise.race",
+    "line": 61,
+    "source": "Promise.race",
+    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
+    "family": "coordination:client/tests/e2e/prefix-auth-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/prefix-auth-fixture.mjs",
+    "capability": "setTimeout.*",
+    "line": 61,
+    "source": "setTimeout",
+    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
+    "family": "coordination:client/tests/e2e/prefix-auth-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/remotely-save-fixture.mjs",
+    "capability": "Promise.withResolvers",
+    "line": 188,
+    "source": "Promise.withResolvers",
+    "context": "const gate=Promise.withResolvers();const trace=[];",
+    "family": "coordination:client/tests/e2e/remotely-save-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/save-preview.mjs",
+    "capability": "Promise.race",
+    "line": 24,
+    "source": "Promise.race",
+    "context": "return await Promise.race([",
+    "family": "coordination:client/tests/e2e/save-preview.mjs"
+  },
+  {
+    "file": "client/tests/e2e/save-preview.mjs",
+    "capability": "Promise.*",
+    "line": 26,
+    "source": "Promise",
+    "context": "new Promise((_, reject) => {",
+    "family": "coordination:client/tests/e2e/save-preview.mjs"
+  },
+  {
+    "file": "client/tests/e2e/save-preview.mjs",
+    "capability": "setTimeout.*",
+    "line": 27,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(() => reject(new Error(`${phase}: CDP timeout`)), timeout);",
+    "family": "coordination:client/tests/e2e/save-preview.mjs"
+  },
+  {
+    "file": "client/tests/e2e/settings-foundations.mjs",
+    "capability": "Promise.*",
+    "line": 53,
+    "source": "Promise",
+    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
+    "family": "coordination:client/tests/e2e/settings-foundations.mjs"
+  },
+  {
+    "file": "client/tests/e2e/settings-foundations.mjs",
+    "capability": "Promise.race",
+    "line": 53,
+    "source": "Promise.race",
+    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
+    "family": "coordination:client/tests/e2e/settings-foundations.mjs"
+  },
+  {
+    "file": "client/tests/e2e/settings-foundations.mjs",
+    "capability": "setTimeout.*",
+    "line": 53,
+    "source": "setTimeout",
+    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
+    "family": "coordination:client/tests/e2e/settings-foundations.mjs"
+  },
+  {
+    "file": "client/tests/e2e/settings-pending-native.mjs",
+    "capability": "Promise.*",
+    "line": 23,
+    "source": "Promise",
+    "context": "await new Promise(resolve => setTimeout(resolve, 50));",
+    "family": "coordination:client/tests/e2e/settings-pending-native.mjs"
+  },
+  {
+    "file": "client/tests/e2e/settings-pending-native.mjs",
+    "capability": "setTimeout.*",
+    "line": 23,
+    "source": "setTimeout",
+    "context": "await new Promise(resolve => setTimeout(resolve, 50));",
+    "family": "coordination:client/tests/e2e/settings-pending-native.mjs"
+  },
+  {
+    "file": "client/tests/e2e/settings-restart-fixture.mjs",
+    "capability": "setTimeout.*",
+    "line": 16,
+    "source": "setTimeout",
+    "context": "const timer = setTimeout(() => deadline.abort(), 5000);",
+    "family": "coordination:client/tests/e2e/settings-restart-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/settings-restart-fixture.mjs",
+    "capability": "Promise.*",
+    "line": 53,
+    "source": "Promise",
+    "context": "try { await Promise.race([proxy.finished, new Promise((_, reject) => { timer=setTimeout(()=>reject(Error(\"Owned restart proxy closure deadline\")),5000); })]); }",
+    "family": "coordination:client/tests/e2e/settings-restart-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/settings-restart-fixture.mjs",
+    "capability": "Promise.race",
+    "line": 53,
+    "source": "Promise.race",
+    "context": "try { await Promise.race([proxy.finished, new Promise((_, reject) => { timer=setTimeout(()=>reject(Error(\"Owned restart proxy closure deadline\")),5000); })]); }",
+    "family": "coordination:client/tests/e2e/settings-restart-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/settings-restart-fixture.mjs",
+    "capability": "setTimeout.*",
+    "line": 53,
+    "source": "setTimeout",
+    "context": "try { await Promise.race([proxy.finished, new Promise((_, reject) => { timer=setTimeout(()=>reject(Error(\"Owned restart proxy closure deadline\")),5000); })]); }",
+    "family": "coordination:client/tests/e2e/settings-restart-fixture.mjs"
+  },
+  {
+    "file": "client/tests/e2e/setup-wizard.mjs",
+    "capability": "Promise.*",
+    "line": 213,
+    "source": "Promise",
+    "context": "const slowWait = new Promise((r) => (slowRelease = r));",
+    "family": "coordination:client/tests/e2e/setup-wizard.mjs"
+  },
+  {
+    "file": "client/tests/e2e/sync-settings-native.mjs",
+    "capability": "Promise.withResolvers",
+    "line": 10,
+    "source": "Promise.withResolvers",
+    "context": "const held=Promise.withResolvers(),entered=Promise.withResolvers();",
+    "family": "coordination:client/tests/e2e/sync-settings-native.mjs"
+  },
+  {
+    "file": "client/tests/e2e/sync-settings-native.mjs",
+    "capability": "Promise.withResolvers",
+    "line": 10,
+    "source": "Promise.withResolvers",
+    "context": "const held=Promise.withResolvers(),entered=Promise.withResolvers();",
+    "family": "coordination:client/tests/e2e/sync-settings-native.mjs"
+  },
+  {
+    "file": "tests/access_commit_guards_test.ts",
+    "capability": "Promise.*",
+    "line": 82,
+    "source": "Promise",
+    "context": "const reached = new Promise<void>((resolve) => {",
+    "family": "coordination:tests/access_commit_guards_test.ts"
+  },
+  {
+    "file": "tests/access_commit_guards_test.ts",
+    "capability": "Promise.*",
+    "line": 85,
+    "source": "Promise",
+    "context": "const waiting = new Promise<void>((resolve) => {",
+    "family": "coordination:tests/access_commit_guards_test.ts"
+  },
+  {
+    "file": "tests/access_settings_test.ts",
+    "capability": "Promise.*",
+    "line": 547,
+    "source": "Promise",
+    "context": "const arrived = new Promise<void>((resolve) => {",
+    "family": "coordination:tests/access_settings_test.ts"
+  },
+  {
+    "file": "tests/access_settings_test.ts",
+    "capability": "Promise.*",
+    "line": 550,
+    "source": "Promise",
+    "context": "const suspended = new Promise<void>((resolve) => {",
+    "family": "coordination:tests/access_settings_test.ts"
+  },
+  {
+    "file": "tests/access_settings_test.ts",
+    "capability": "Promise.*",
+    "line": 599,
+    "source": "Promise",
+    "context": "const policyArrived = new Promise<void>((resolve) => {",
+    "family": "coordination:tests/access_settings_test.ts"
+  },
+  {
+    "file": "tests/access_settings_test.ts",
+    "capability": "Promise.*",
+    "line": 602,
+    "source": "Promise",
+    "context": "const policyWait = new Promise<void>((resolve) => {",
+    "family": "coordination:tests/access_settings_test.ts"
+  },
+  {
+    "file": "tests/access_snapshot_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 112,
+    "source": "Promise.withResolvers",
+    "context": "const reached = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/access_snapshot_test.ts"
+  },
+  {
+    "file": "tests/access_snapshot_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 113,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/access_snapshot_test.ts"
+  },
+  {
+    "file": "tests/access_snapshot_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 178,
+    "source": "Promise.withResolvers",
+    "context": "reached = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/access_snapshot_test.ts"
+  },
+  {
+    "file": "tests/access_snapshot_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 179,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/access_snapshot_test.ts"
+  },
+  {
+    "file": "tests/access_snapshot_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 257,
+    "source": "Promise.withResolvers",
+    "context": "reached = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/access_snapshot_test.ts"
+  },
+  {
+    "file": "tests/access_snapshot_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 258,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/access_snapshot_test.ts"
+  },
+  {
+    "file": "tests/access_snapshot_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 324,
+    "source": "Promise.withResolvers",
+    "context": "reached = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/access_snapshot_test.ts"
+  },
+  {
+    "file": "tests/access_snapshot_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 325,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/access_snapshot_test.ts"
+  },
+  {
+    "file": "tests/backup_fixture_order_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 9,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/backup_fixture_order_test.ts"
+  },
+  {
+    "file": "tests/backup_fixture_order_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 10,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/backup_fixture_order_test.ts"
+  },
+  {
+    "file": "tests/backup_fixture_order_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 36,
+    "source": "Promise.withResolvers",
+    "context": "const captured = Promise.withResolvers<void>();",
+    "family": "coordination:tests/backup_fixture_order_test.ts"
+  },
+  {
+    "file": "tests/backup_fixture_order_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 89,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/backup_fixture_order_test.ts"
+  },
+  {
+    "file": "tests/backup_fixture_order_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 90,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/backup_fixture_order_test.ts"
+  },
+  {
+    "file": "tests/backup_plugin_controls_test.ts",
+    "capability": "setTimeout.*",
+    "line": 48,
+    "source": "setTimeout",
+    "context": "const timer = setTimeout(() => {",
+    "family": "coordination:tests/backup_plugin_controls_test.ts"
+  },
+  {
+    "file": "tests/backup_plugin_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 860,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/backup_plugin_test.ts"
+  },
+  {
+    "file": "tests/backup_plugin_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 861,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/backup_plugin_test.ts"
+  },
+  {
+    "file": "tests/catalog_work_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 94,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/catalog_work_test.ts"
+  },
+  {
+    "file": "tests/catalog_work_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 95,
+    "source": "Promise.withResolvers",
+    "context": "headers = Promise.withResolvers<void>();",
+    "family": "coordination:tests/catalog_work_test.ts"
+  },
+  {
+    "file": "tests/catalog_work_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 133,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/catalog_work_test.ts"
+  },
+  {
+    "file": "tests/catalog_work_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 134,
+    "source": "Promise.withResolvers",
+    "context": "headers = Promise.withResolvers<void>();",
+    "family": "coordination:tests/catalog_work_test.ts"
+  },
+  {
+    "file": "tests/catalog_work_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 135,
+    "source": "Promise.withResolvers",
+    "context": "const owner = Promise.withResolvers<{ code: number }>();",
+    "family": "coordination:tests/catalog_work_test.ts"
+  },
+  {
+    "file": "tests/catalog_work_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 169,
+    "source": "Promise.withResolvers",
+    "context": "const headers = Promise.withResolvers<void>();",
+    "family": "coordination:tests/catalog_work_test.ts"
+  },
+  {
+    "file": "tests/config_consumers_test.ts",
+    "capability": "globalThis.setInterval",
+    "line": 121,
+    "source": "globalThis.setInterval",
+    "context": "original = globalThis.setInterval;",
+    "family": "coordination:tests/config_consumers_test.ts"
+  },
+  {
+    "file": "tests/config_consumers_test.ts",
+    "capability": "globalThis.setInterval",
+    "line": 125,
+    "source": "globalThis.setInterval",
+    "context": "globalThis.setInterval = (...args: Parameters<typeof original>) => {",
+    "family": "coordination:tests/config_consumers_test.ts"
+  },
+  {
+    "file": "tests/config_consumers_test.ts",
+    "capability": "globalThis.setInterval",
+    "line": 137,
+    "source": "globalThis.setInterval",
+    "context": "globalThis.setInterval = original;",
+    "family": "coordination:tests/config_consumers_test.ts"
+  },
+  {
+    "file": "tests/driver_export_owner_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 25,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/driver_export_owner_test.ts"
+  },
+  {
+    "file": "tests/driver_export_owner_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 65,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/driver_export_owner_test.ts"
+  },
+  {
+    "file": "tests/driver_export_owner_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 66,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<undefined>();",
+    "family": "coordination:tests/driver_export_owner_test.ts"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "Promise.race",
+    "line": 123,
+    "source": "Promise.race",
+    "context": "const control = await Promise.race([",
+    "family": "coordination:tests/helpers/catalog_work_stall.mjs"
+  },
+  {
+    "file": "tests/helpers/catalog_work.ts",
+    "capability": "Promise.withResolvers",
+    "line": 100,
+    "source": "Promise.withResolvers",
+    "context": "let changed = Promise.withResolvers<void>();",
+    "family": "coordination:tests/helpers/catalog_work.ts"
+  },
+  {
+    "file": "tests/helpers/catalog_work.ts",
+    "capability": "Promise.withResolvers",
+    "line": 104,
+    "source": "Promise.withResolvers",
+    "context": "changed = Promise.withResolvers<void>();",
+    "family": "coordination:tests/helpers/catalog_work.ts"
+  },
+  {
+    "file": "tests/helpers/plugin_stall_child.ts",
+    "capability": "Promise.*",
+    "line": 21,
+    "source": "Promise",
+    "context": "const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));",
+    "family": "coordination:tests/helpers/plugin_stall_child.ts"
+  },
+  {
+    "file": "tests/helpers/plugin_stall_child.ts",
+    "capability": "setTimeout.*",
+    "line": 21,
+    "source": "setTimeout",
+    "context": "const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));",
+    "family": "coordination:tests/helpers/plugin_stall_child.ts"
+  },
+  {
+    "file": "tests/helpers/plugin_worker_liveness_child.ts",
+    "capability": "Promise.withResolvers",
+    "line": 21,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/helpers/plugin_worker_liveness_child.ts"
+  },
+  {
+    "file": "tests/helpers/plugin_worker_liveness_child.ts",
+    "capability": "Promise.*",
+    "line": 57,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 300));",
+    "family": "coordination:tests/helpers/plugin_worker_liveness_child.ts"
+  },
+  {
+    "file": "tests/helpers/plugin_worker_liveness_child.ts",
+    "capability": "setTimeout.*",
+    "line": 57,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 300));",
+    "family": "coordination:tests/helpers/plugin_worker_liveness_child.ts"
+  },
+  {
+    "file": "tests/helpers/remotely_save_remote.ts",
+    "capability": "Promise.*",
+    "line": 74,
+    "source": "Promise",
+    "context": "const extra = intercepted instanceof Promise",
+    "family": "coordination:tests/helpers/remotely_save_remote.ts"
+  },
+  {
+    "file": "tests/helpers/render_recovery_child.ts",
+    "capability": "Promise.withResolvers",
+    "line": 13,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/helpers/render_recovery_child.ts"
+  },
+  {
+    "file": "tests/helpers/render_recovery_child.ts",
+    "capability": "Promise.withResolvers",
+    "line": 14,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/helpers/render_recovery_child.ts"
+  },
+  {
+    "file": "tests/helpers/totp.ts",
+    "capability": "Promise.*",
+    "line": 37,
+    "source": "Promise",
+    "context": "const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));",
+    "family": "coordination:tests/helpers/totp.ts"
+  },
+  {
+    "file": "tests/helpers/totp.ts",
+    "capability": "setTimeout.*",
+    "line": 37,
+    "source": "setTimeout",
+    "context": "const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));",
+    "family": "coordination:tests/helpers/totp.ts"
+  },
+  {
+    "file": "tests/helpers/worker_liveness.ts",
+    "capability": "Promise.race",
+    "line": 13,
+    "source": "Promise.race",
+    "context": "return await Promise.race([",
+    "family": "coordination:tests/helpers/worker_liveness.ts"
+  },
+  {
+    "file": "tests/helpers/worker_liveness.ts",
+    "capability": "Promise.*",
+    "line": 15,
+    "source": "Promise",
+    "context": "new Promise<never>((_, reject) => {",
+    "family": "coordination:tests/helpers/worker_liveness.ts"
+  },
+  {
+    "file": "tests/helpers/worker_liveness.ts",
+    "capability": "setTimeout.*",
+    "line": 16,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(",
+    "family": "coordination:tests/helpers/worker_liveness.ts"
+  },
+  {
+    "file": "tests/helpers/worker_liveness.ts",
+    "capability": "Promise.withResolvers",
+    "line": 45,
+    "source": "Promise.withResolvers",
+    "context": "readonly ready = Promise.withResolvers<void>();",
+    "family": "coordination:tests/helpers/worker_liveness.ts"
+  },
+  {
+    "file": "tests/helpers/worker_liveness.ts",
+    "capability": "Promise.withResolvers",
+    "line": 46,
+    "source": "Promise.withResolvers",
+    "context": "readonly heartbeat = Promise.withResolvers<void>();",
+    "family": "coordination:tests/helpers/worker_liveness.ts"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 43,
+    "source": "Promise.withResolvers",
+    "context": "const reached = Promise.withResolvers<void>();",
+    "family": "coordination:tests/http_mutation_lease_test.ts"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 44,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/http_mutation_lease_test.ts"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Promise.race",
+    "line": 56,
+    "source": "Promise.race",
+    "context": "return await Promise.race([",
+    "family": "coordination:tests/http_mutation_lease_test.ts"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Promise.*",
+    "line": 58,
+    "source": "Promise",
+    "context": "new Promise<never>((_, reject) => {",
+    "family": "coordination:tests/http_mutation_lease_test.ts"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "setTimeout.*",
+    "line": 59,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(",
+    "family": "coordination:tests/http_mutation_lease_test.ts"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Promise.*",
+    "line": 144,
+    "source": "Promise",
+    "context": "await new Promise((r) => setTimeout(r, 10));",
+    "family": "coordination:tests/http_mutation_lease_test.ts"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "setTimeout.*",
+    "line": 144,
+    "source": "setTimeout",
+    "context": "await new Promise((r) => setTimeout(r, 10));",
+    "family": "coordination:tests/http_mutation_lease_test.ts"
+  },
+  {
+    "file": "tests/hub_changes_test.ts",
+    "capability": "Promise.race",
+    "line": 27,
+    "source": "Promise.race",
+    "context": "const result = await Promise.race([",
+    "family": "coordination:tests/hub_changes_test.ts"
+  },
+  {
+    "file": "tests/hub_changes_test.ts",
+    "capability": "Promise.*",
+    "line": 29,
+    "source": "Promise",
+    "context": "new Promise<never>((_, reject) => {",
+    "family": "coordination:tests/hub_changes_test.ts"
+  },
+  {
+    "file": "tests/hub_changes_test.ts",
+    "capability": "setTimeout.*",
+    "line": 30,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(",
+    "family": "coordination:tests/hub_changes_test.ts"
+  },
+  {
+    "file": "tests/hub_conflict_resolution_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 170,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_conflict_resolution_test.ts"
+  },
+  {
+    "file": "tests/hub_conflict_resolution_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 171,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/hub_conflict_resolution_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_acceptance_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 599,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_driver_acceptance_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_acceptance_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 600,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/hub_driver_acceptance_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 159,
+    "source": "Promise.withResolvers",
+    "context": "const reached = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_driver_runtime_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 160,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<string>();",
+    "family": "coordination:tests/hub_driver_runtime_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 423,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 424,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 425,
+    "source": "Promise.withResolvers",
+    "context": "discoveryEntered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 426,
+    "source": "Promise.withResolvers",
+    "context": "releaseDiscovery = Promise.withResolvers<void>();",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.race",
+    "line": 470,
+    "source": "Promise.race",
+    "context": "await Promise.race([",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 552,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 553,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 670,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 671,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 716,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 786,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 787,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 931,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_driver_supervisor_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 932,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/hub_driver_supervisor_test.ts"
+  },
+  {
+    "file": "tests/hub_scanner_test.ts",
+    "capability": "Promise.*",
+    "line": 254,
+    "source": "Promise",
+    "context": "await new Promise((r) => setTimeout(r, 10));",
+    "family": "coordination:tests/hub_scanner_test.ts"
+  },
+  {
+    "file": "tests/hub_scanner_test.ts",
+    "capability": "setTimeout.*",
+    "line": 254,
+    "source": "setTimeout",
+    "context": "await new Promise((r) => setTimeout(r, 10));",
+    "family": "coordination:tests/hub_scanner_test.ts"
+  },
+  {
+    "file": "tests/hub_scanner_test.ts",
+    "capability": "Promise.*",
+    "line": 362,
+    "source": "Promise",
+    "context": "await new Promise((r) => setTimeout(r, 30));",
+    "family": "coordination:tests/hub_scanner_test.ts"
+  },
+  {
+    "file": "tests/hub_scanner_test.ts",
+    "capability": "setTimeout.*",
+    "line": 362,
+    "source": "setTimeout",
+    "context": "await new Promise((r) => setTimeout(r, 30));",
+    "family": "coordination:tests/hub_scanner_test.ts"
+  },
+  {
+    "file": "tests/hub_watcher_test.ts",
+    "capability": "Promise.*",
+    "line": 133,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 700));",
+    "family": "coordination:tests/hub_watcher_test.ts"
+  },
+  {
+    "file": "tests/hub_watcher_test.ts",
+    "capability": "setTimeout.*",
+    "line": 133,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 700));",
+    "family": "coordination:tests/hub_watcher_test.ts"
+  },
+  {
+    "file": "tests/hub_watcher_test.ts",
+    "capability": "Promise.*",
+    "line": 163,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 700));",
+    "family": "coordination:tests/hub_watcher_test.ts"
+  },
+  {
+    "file": "tests/hub_watcher_test.ts",
+    "capability": "setTimeout.*",
+    "line": 163,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 700));",
+    "family": "coordination:tests/hub_watcher_test.ts"
+  },
+  {
+    "file": "tests/identity_accounts_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 115,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<string>();",
+    "family": "coordination:tests/identity_accounts_test.ts"
+  },
+  {
+    "file": "tests/identity_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 374,
+    "source": "Promise.withResolvers",
+    "context": "held = Promise.withResolvers<void>();",
+    "family": "coordination:tests/identity_authority_test.ts"
+  },
+  {
+    "file": "tests/identity_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 392,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/identity_authority_test.ts"
+  },
+  {
+    "file": "tests/identity_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 393,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/identity_authority_test.ts"
+  },
+  {
+    "file": "tests/identity_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 444,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/identity_authority_test.ts"
+  },
+  {
+    "file": "tests/identity_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 445,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/identity_authority_test.ts"
+  },
+  {
+    "file": "tests/identity_sessions_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 227,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<boolean>();",
+    "family": "coordination:tests/identity_sessions_test.ts"
+  },
+  {
+    "file": "tests/index_pass_isolation_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 134,
+    "source": "Promise.withResolvers",
+    "context": "let completed = Promise.withResolvers<void>();",
+    "family": "coordination:tests/index_pass_isolation_test.ts"
+  },
+  {
+    "file": "tests/index_pass_isolation_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 191,
+    "source": "Promise.withResolvers",
+    "context": "completed = Promise.withResolvers<void>();",
+    "family": "coordination:tests/index_pass_isolation_test.ts"
+  },
+  {
+    "file": "tests/interop/remotely_save_boundaries.ts",
+    "capability": "setTimeout.*",
+    "line": 81,
+    "source": "setTimeout",
+    "context": "timers: { setTimeout },",
+    "family": "coordination:tests/interop/remotely_save_boundaries.ts"
+  },
+  {
+    "file": "tests/interop/remotely_save_traffic.ts",
+    "capability": "setTimeout.*",
+    "line": 92,
+    "source": "setTimeout",
+    "context": "timers: { setTimeout },",
+    "family": "coordination:tests/interop/remotely_save_traffic.ts"
+  },
+  {
+    "file": "tests/manual_deadline_test.ts",
+    "capability": "setTimeout.*",
+    "line": 12,
+    "source": "setTimeout",
+    "context": "const id = setTimeout(callback, ms);",
+    "family": "coordination:tests/manual_deadline_test.ts"
+  },
+  {
+    "file": "tests/manual_deadline_test.ts",
+    "capability": "setInterval.*",
+    "line": 21,
+    "source": "setInterval",
+    "context": "const id = setInterval(callback, ms);",
+    "family": "coordination:tests/manual_deadline_test.ts"
+  },
+  {
+    "file": "tests/mcp_hub_test.ts",
+    "capability": "Promise.*",
+    "line": 103,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 20));",
+    "family": "coordination:tests/mcp_hub_test.ts"
+  },
+  {
+    "file": "tests/mcp_hub_test.ts",
+    "capability": "setTimeout.*",
+    "line": 103,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 20));",
+    "family": "coordination:tests/mcp_hub_test.ts"
+  },
+  {
+    "file": "tests/mcp_rate_limit_test.ts",
+    "capability": "Promise.*",
+    "line": 350,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 1_100));",
+    "family": "coordination:tests/mcp_rate_limit_test.ts"
+  },
+  {
+    "file": "tests/mcp_rate_limit_test.ts",
+    "capability": "setTimeout.*",
+    "line": 350,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 1_100));",
+    "family": "coordination:tests/mcp_rate_limit_test.ts"
+  },
+  {
+    "file": "tests/mcp_stale_write_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 107,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/mcp_stale_write_test.ts"
+  },
+  {
+    "file": "tests/mcp_stale_write_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 108,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/mcp_stale_write_test.ts"
+  },
+  {
+    "file": "tests/metadata_projection_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 25,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/metadata_projection_test.ts"
+  },
+  {
+    "file": "tests/metadata_projection_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 26,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/metadata_projection_test.ts"
+  },
+  {
+    "file": "tests/metadata_projection_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 399,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/metadata_projection_test.ts"
+  },
+  {
+    "file": "tests/metadata_projection_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 400,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/metadata_projection_test.ts"
+  },
+  {
+    "file": "tests/metadata_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 262,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/metadata_runtime_test.ts"
+  },
+  {
+    "file": "tests/metadata_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 263,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/metadata_runtime_test.ts"
+  },
+  {
+    "file": "tests/metadata_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 264,
+    "source": "Promise.withResolvers",
+    "context": "queued = Promise.withResolvers<void>();",
+    "family": "coordination:tests/metadata_runtime_test.ts"
+  },
+  {
+    "file": "tests/native_finalization_ownership_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 99,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/native_finalization_ownership_test.ts"
+  },
+  {
+    "file": "tests/native_finalization_ownership_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 100,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/native_finalization_ownership_test.ts"
+  },
+  {
+    "file": "tests/ownership_scope_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 70,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>();",
+    "family": "coordination:tests/ownership_scope_test.ts"
+  },
+  {
+    "file": "tests/ownership_scope_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 71,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/ownership_scope_test.ts"
+  },
+  {
+    "file": "tests/ownership_scope_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 124,
+    "source": "Promise.withResolvers",
+    "context": "const allocation = Promise.withResolvers<object>();",
+    "family": "coordination:tests/ownership_scope_test.ts"
+  },
+  {
+    "file": "tests/ownership_scope_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 205,
+    "source": "Promise.withResolvers",
+    "context": "held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/ownership_scope_test.ts"
+  },
+  {
+    "file": "tests/ownership_scope_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 206,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/ownership_scope_test.ts"
+  },
+  {
+    "file": "tests/ownership_scope_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 325,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/ownership_scope_test.ts"
+  },
+  {
+    "file": "tests/ownership_scope_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 326,
+    "source": "Promise.withResolvers",
+    "context": "held = Promise.withResolvers<void>();",
+    "family": "coordination:tests/ownership_scope_test.ts"
+  },
+  {
+    "file": "tests/ownership_scope_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 387,
+    "source": "Promise.withResolvers",
+    "context": "marker = Promise.withResolvers<void>();",
+    "family": "coordination:tests/ownership_scope_test.ts"
+  },
+  {
+    "file": "tests/plugin_api_test.ts",
+    "capability": "Promise.*",
+    "line": 459,
+    "source": "Promise",
+    "context": "const gate = new Promise<void>((resolve) => {",
+    "family": "coordination:tests/plugin_api_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 100,
+    "source": "Promise.withResolvers",
+    "context": "const retirement = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 303,
+    "source": "Promise.withResolvers",
+    "context": "const reached = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 304,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 593,
+    "source": "Promise.withResolvers",
+    "context": "const gate = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.*",
+    "line": 602,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 0));",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "setTimeout.*",
+    "line": 602,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 0));",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 710,
+    "source": "Promise.withResolvers",
+    "context": "const guardEntered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 711,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 773,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<{ status: \"settled\" }>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.*",
+    "line": 797,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 0));",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "setTimeout.*",
+    "line": 797,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 0));",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 814,
+    "source": "Promise.withResolvers",
+    "context": "const gate = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 892,
+    "source": "Promise.withResolvers",
+    "context": "const gate = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1005,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<{ status: \"settled\" }>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1060,
+    "source": "Promise.withResolvers",
+    "context": "const finish = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1061,
+    "source": "Promise.withResolvers",
+    "context": "committed = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1292,
+    "source": "Promise.withResolvers",
+    "context": "const begin = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1293,
+    "source": "Promise.withResolvers",
+    "context": "fetched = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1418,
+    "source": "Promise.withResolvers",
+    "context": "const accepted = Promise.withResolvers<string>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1419,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1593,
+    "source": "Promise.withResolvers",
+    "context": "const network = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1594,
+    "source": "Promise.withResolvers",
+    "context": "interval = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1595,
+    "source": "Promise.withResolvers",
+    "context": "observer = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1704,
+    "source": "Promise.withResolvers",
+    "context": "const accepted = Promise.withResolvers<string>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1705,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1800,
+    "source": "Promise.withResolvers",
+    "context": "const accepted = Promise.withResolvers<string>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1801,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1865,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1866,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 2142,
+    "source": "Promise.withResolvers",
+    "context": "const accepted = Promise.withResolvers<string>(),",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 2143,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_authority_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_follower_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 114,
+    "source": "Promise.withResolvers",
+    "context": "const reply = Promise.withResolvers<unknown>();",
+    "family": "coordination:tests/plugin_changes_follower_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_follower_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 287,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<unknown>();",
+    "family": "coordination:tests/plugin_changes_follower_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_follower_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 385,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<unknown>();",
+    "family": "coordination:tests/plugin_changes_follower_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_follower_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 464,
+    "source": "Promise.withResolvers",
+    "context": "const queued = Promise.withResolvers<unknown>();",
+    "family": "coordination:tests/plugin_changes_follower_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_transport_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 46,
+    "source": "Promise.withResolvers",
+    "context": "const hold = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_changes_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_transport_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 47,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_changes_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_transport_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 48,
+    "source": "Promise.withResolvers",
+    "context": "const queued = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_changes_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_transport_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 194,
+    "source": "Promise.withResolvers",
+    "context": "const retired = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_changes_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_transport_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 280,
+    "source": "Promise.withResolvers",
+    "context": "const retired = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_changes_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_transport_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 281,
+    "source": "Promise.withResolvers",
+    "context": "const failedDelivery = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_changes_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_changes_transport_test.ts",
+    "capability": "Promise.race",
+    "line": 357,
+    "source": "Promise.race",
+    "context": "await Promise.race([failedDelivery.promise, retired.promise]);",
+    "family": "coordination:tests/plugin_changes_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 388,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 389,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 458,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 459,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 550,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 551,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.race",
+    "line": 583,
+    "source": "Promise.race",
+    "context": "await Promise.race([",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.*",
+    "line": 585,
+    "source": "Promise",
+    "context": "new Promise<never>((_, reject) => {",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "setTimeout.*",
+    "line": 586,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 639,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 640,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_data_test.ts"
+  },
+  {
+    "file": "tests/plugin_endpoint_transport_test.ts",
+    "capability": "Promise.race",
+    "line": 49,
+    "source": "Promise.race",
+    "context": "const observed = await Promise.race([",
+    "family": "coordination:tests/plugin_endpoint_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_endpoint_transport_test.ts",
+    "capability": "Promise.*",
+    "line": 51,
+    "source": "Promise",
+    "context": "new Promise<{ status: number; bytes: number }>((resolve) => {",
+    "family": "coordination:tests/plugin_endpoint_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_endpoint_transport_test.ts",
+    "capability": "setTimeout.*",
+    "line": 52,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(() => resolve({ status: 0, bytes: 0 }), 100);",
+    "family": "coordination:tests/plugin_endpoint_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_endpoint_transport_test.ts",
+    "capability": "Promise.*",
+    "line": 226,
+    "source": "Promise",
+    "context": "return new Promise<void>(() => {});",
+    "family": "coordination:tests/plugin_endpoint_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_endpoint_transport_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 310,
+    "source": "Promise.withResolvers",
+    "context": "const reached = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_endpoint_transport_test.ts"
+  },
+  {
+    "file": "tests/plugin_fs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 215,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_fs_test.ts"
+  },
+  {
+    "file": "tests/plugin_fs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 216,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_fs_test.ts"
+  },
+  {
+    "file": "tests/plugin_fs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 291,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_fs_test.ts"
+  },
+  {
+    "file": "tests/plugin_fs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 292,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_fs_test.ts"
+  },
+  {
+    "file": "tests/plugin_fs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 379,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_fs_test.ts"
+  },
+  {
+    "file": "tests/plugin_fs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 380,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_fs_test.ts"
+  },
+  {
+    "file": "tests/plugin_fs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 445,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_fs_test.ts"
+  },
+  {
+    "file": "tests/plugin_fs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 446,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_fs_test.ts"
+  },
+  {
+    "file": "tests/plugin_inventory_source_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 304,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_inventory_source_test.ts"
+  },
+  {
+    "file": "tests/plugin_inventory_source_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 305,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_inventory_source_test.ts"
+  },
+  {
+    "file": "tests/plugin_invocation_context_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 26,
+    "source": "Promise.withResolvers",
+    "context": "return Promise.withResolvers<T>();",
+    "family": "coordination:tests/plugin_invocation_context_test.ts"
+  },
+  {
+    "file": "tests/plugin_invocation_context_test.ts",
+    "capability": "Promise.race",
+    "line": 31,
+    "source": "Promise.race",
+    "context": "return await Promise.race([",
+    "family": "coordination:tests/plugin_invocation_context_test.ts"
+  },
+  {
+    "file": "tests/plugin_invocation_context_test.ts",
+    "capability": "Promise.*",
+    "line": 33,
+    "source": "Promise",
+    "context": "new Promise<T>((_, reject) => {",
+    "family": "coordination:tests/plugin_invocation_context_test.ts"
+  },
+  {
+    "file": "tests/plugin_invocation_context_test.ts",
+    "capability": "setTimeout.*",
+    "line": 34,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(",
+    "family": "coordination:tests/plugin_invocation_context_test.ts"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 54,
+    "source": "Promise.withResolvers",
+    "context": "const reached = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 55,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Promise.*",
+    "line": 718,
+    "source": "Promise",
+    "context": "await new Promise((r) => setTimeout(r, 800));",
+    "family": "coordination:tests/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "setTimeout.*",
+    "line": 718,
+    "source": "setTimeout",
+    "context": "await new Promise((r) => setTimeout(r, 800));",
+    "family": "coordination:tests/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Promise.*",
+    "line": 1005,
+    "source": "Promise",
+    "context": "await new Promise((r) => setTimeout(r, 100));",
+    "family": "coordination:tests/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "setTimeout.*",
+    "line": 1005,
+    "source": "setTimeout",
+    "context": "await new Promise((r) => setTimeout(r, 100));",
+    "family": "coordination:tests/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_network_api_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 67,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_network_api_test.ts"
+  },
+  {
+    "file": "tests/plugin_network_api_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 68,
+    "source": "Promise.withResolvers",
+    "context": "releaseHeld = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_network_api_test.ts"
+  },
+  {
+    "file": "tests/plugin_network_api_test.ts",
+    "capability": "Promise.race",
+    "line": 323,
+    "source": "Promise.race",
+    "context": "await Promise.race([",
+    "family": "coordination:tests/plugin_network_api_test.ts"
+  },
+  {
+    "file": "tests/plugin_network_api_test.ts",
+    "capability": "Promise.*",
+    "line": 325,
+    "source": "Promise",
+    "context": "new Promise<never>((_, reject) => {",
+    "family": "coordination:tests/plugin_network_api_test.ts"
+  },
+  {
+    "file": "tests/plugin_network_api_test.ts",
+    "capability": "setTimeout.*",
+    "line": 326,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(",
+    "family": "coordination:tests/plugin_network_api_test.ts"
+  },
+  {
+    "file": "tests/plugin_network_permissions_test.ts",
+    "capability": "Promise.*",
+    "line": 457,
+    "source": "Promise",
+    "context": "const observed = await new Promise<{ value?: string; denied?: string }>(",
+    "family": "coordination:tests/plugin_network_permissions_test.ts"
+  },
+  {
+    "file": "tests/plugin_network_permissions_test.ts",
+    "capability": "setTimeout.*",
+    "line": 459,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(",
+    "family": "coordination:tests/plugin_network_permissions_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.race",
+    "line": 156,
+    "source": "Promise.race",
+    "context": "await Promise.race([",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.*",
+    "line": 158,
+    "source": "Promise",
+    "context": "new Promise<never>((_, reject) => {",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "setTimeout.*",
+    "line": 159,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 172,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.*",
+    "line": 197,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 1000));",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "setTimeout.*",
+    "line": 197,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 1000));",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 307,
+    "source": "Promise.withResolvers",
+    "context": "const crashEntered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 308,
+    "source": "Promise.withResolvers",
+    "context": "crashRelease = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 309,
+    "source": "Promise.withResolvers",
+    "context": "const recoveryEntered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 310,
+    "source": "Promise.withResolvers",
+    "context": "recoveryRelease = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 436,
+    "source": "Promise.withResolvers",
+    "context": "const crashEntered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 437,
+    "source": "Promise.withResolvers",
+    "context": "crashRelease = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 438,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 439,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 516,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 517,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 728,
+    "source": "Promise.withResolvers",
+    "context": "const delivered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 729,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 786,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 787,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 831,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 832,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 859,
+    "source": "Promise.withResolvers",
+    "context": "const renderEntered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 860,
+    "source": "Promise.withResolvers",
+    "context": "serviceEntered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 861,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 931,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 932,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1254,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 1255,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_render_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/plugin_render_recovery_test.ts",
+    "capability": "setTimeout.*",
+    "line": 31,
+    "source": "setTimeout",
+    "context": "const timer = setTimeout(() => {",
+    "family": "coordination:tests/plugin_render_recovery_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_readiness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 41,
+    "source": "Promise.withResolvers",
+    "context": "const finalPolicy = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_runtime_readiness_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_readiness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 42,
+    "source": "Promise.withResolvers",
+    "context": "const gate = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_runtime_readiness_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_readiness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 43,
+    "source": "Promise.withResolvers",
+    "context": "const settled = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_runtime_readiness_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_readiness_test.ts",
+    "capability": "Promise.race",
+    "line": 68,
+    "source": "Promise.race",
+    "context": "await Promise.race([",
+    "family": "coordination:tests/plugin_runtime_readiness_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_readiness_test.ts",
+    "capability": "Promise.*",
+    "line": 70,
+    "source": "Promise",
+    "context": "new Promise<never>((_, reject) => {",
+    "family": "coordination:tests/plugin_runtime_readiness_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_readiness_test.ts",
+    "capability": "setTimeout.*",
+    "line": 71,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(() => reject(Error(label)), 3000);",
+    "family": "coordination:tests/plugin_runtime_readiness_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_readiness_test.ts",
+    "capability": "Promise.*",
+    "line": 173,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 1000));",
+    "family": "coordination:tests/plugin_runtime_readiness_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_readiness_test.ts",
+    "capability": "setTimeout.*",
+    "line": 173,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 1000));",
+    "family": "coordination:tests/plugin_runtime_readiness_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_readiness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 267,
+    "source": "Promise.withResolvers",
+    "context": "const captured = Promise.withResolvers<",
+    "family": "coordination:tests/plugin_runtime_readiness_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 56,
+    "source": "Promise.withResolvers",
+    "context": "const hold = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 57,
+    "source": "Promise.withResolvers",
+    "context": "const reached = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 58,
+    "source": "Promise.withResolvers",
+    "context": "const effectSettled = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.race",
+    "line": 115,
+    "source": "Promise.race",
+    "context": "Promise.race([",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 190,
+    "source": "Promise.withResolvers",
+    "context": "const prepared = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 191,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 192,
+    "source": "Promise.withResolvers",
+    "context": "const completed = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.*",
+    "line": 546,
+    "source": "Promise",
+    "context": "const gate = new Promise<void>((resolve) => {",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.*",
+    "line": 549,
+    "source": "Promise",
+    "context": "const entered = new Promise<void>((resolve) => {",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.*",
+    "line": 585,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 5));",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "setTimeout.*",
+    "line": 585,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 5));",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 814,
+    "source": "Promise.withResolvers",
+    "context": "reached: Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 815,
+    "source": "Promise.withResolvers",
+    "context": "release: Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Promise.race",
+    "line": 1002,
+    "source": "Promise.race",
+    "context": "await Promise.race([",
+    "family": "coordination:tests/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 99,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 100,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 252,
+    "source": "Promise.withResolvers",
+    "context": "const completion = Promise.withResolvers<unknown>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 266,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 267,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 324,
+    "source": "Promise.withResolvers",
+    "context": "const entry = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 343,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 344,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 429,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 430,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 587,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 588,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 639,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 640,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 915,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_contract_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 916,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_contract_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 19,
+    "source": "Promise.withResolvers",
+    "context": "const held = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_service_jobs_test.ts"
+  },
+  {
+    "file": "tests/plugin_service_jobs_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 20,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_service_jobs_test.ts"
+  },
+  {
+    "file": "tests/plugin_settings_environment_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 63,
+    "source": "Promise.withResolvers",
+    "context": "const ready = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_settings_environment_test.ts"
+  },
+  {
+    "file": "tests/plugin_settings_environment_test.ts",
+    "capability": "setTimeout.*",
+    "line": 88,
+    "source": "setTimeout",
+    "context": "const timer = setTimeout(",
+    "family": "coordination:tests/plugin_settings_environment_test.ts"
+  },
+  {
+    "file": "tests/plugin_settings_environment_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 297,
+    "source": "Promise.withResolvers",
+    "context": "const ready = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_settings_environment_test.ts"
+  },
+  {
+    "file": "tests/plugin_settings_environment_test.ts",
+    "capability": "setTimeout.*",
+    "line": 319,
+    "source": "setTimeout",
+    "context": "const timer = setTimeout(",
+    "family": "coordination:tests/plugin_settings_environment_test.ts"
+  },
+  {
+    "file": "tests/plugin_work_summary_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 243,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_work_summary_test.ts"
+  },
+  {
+    "file": "tests/plugin_work_summary_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 244,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<unknown>();",
+    "family": "coordination:tests/plugin_work_summary_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.*",
+    "line": 72,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 1000));",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "setTimeout.*",
+    "line": 72,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 1000));",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 230,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 231,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 270,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 271,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 325,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 326,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 423,
+    "source": "Promise.withResolvers",
+    "context": "const entered = new Set<string>(), release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 467,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 468,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 513,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "setTimeout.*",
+    "line": 589,
+    "source": "setTimeout",
+    "context": "const timer = setTimeout(() => {",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 639,
+    "source": "Promise.withResolvers",
+    "context": "const replacementSync = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 640,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 732,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 733,
+    "source": "Promise.withResolvers",
+    "context": "entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/plugin_worker_liveness_test.ts"
+  },
+  {
+    "file": "tests/plugins_test.ts",
+    "capability": "Promise.*",
+    "line": 551,
+    "source": "Promise",
+    "context": "await new Promise((r) => setTimeout(r, 10));",
+    "family": "coordination:tests/plugins_test.ts"
+  },
+  {
+    "file": "tests/plugins_test.ts",
+    "capability": "setTimeout.*",
+    "line": 551,
+    "source": "setTimeout",
+    "context": "await new Promise((r) => setTimeout(r, 10));",
+    "family": "coordination:tests/plugins_test.ts"
+  },
+  {
+    "file": "tests/process_records_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 157,
+    "source": "Promise.withResolvers",
+    "context": "const owner = Promise.withResolvers<{ code: number }>();",
+    "family": "coordination:tests/process_records_test.ts"
+  },
+  {
+    "file": "tests/process_records_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 205,
+    "source": "Promise.withResolvers",
+    "context": "const first = Promise.withResolvers<{ code: number }>(),",
+    "family": "coordination:tests/process_records_test.ts"
+  },
+  {
+    "file": "tests/process_records_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 206,
+    "source": "Promise.withResolvers",
+    "context": "second = Promise.withResolvers<{ code: number }>();",
+    "family": "coordination:tests/process_records_test.ts"
+  },
+  {
+    "file": "tests/process_records_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 266,
+    "source": "Promise.withResolvers",
+    "context": "const owner = Promise.withResolvers<{ code: number }>();",
+    "family": "coordination:tests/process_records_test.ts"
+  },
+  {
+    "file": "tests/process_records_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 145,
+    "source": "Promise.withResolvers",
+    "context": "const client = Promise.withResolvers<{ code: number }>(),",
+    "family": "coordination:tests/process_records_test.ts"
+  },
+  {
+    "file": "tests/process_records_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 146,
+    "source": "Promise.withResolvers",
+    "context": "server = Promise.withResolvers<{ code: number }>();",
+    "family": "coordination:tests/process_records_test.ts"
+  },
+  {
+    "file": "tests/product_settlement_test.ts",
+    "capability": "module:node:timers",
+    "line": 18,
+    "source": "\"node:timers\"",
+    "context": "import { clearImmediate, setImmediate } from \"node:timers\";",
+    "family": "coordination:tests/product_settlement_test.ts"
+  },
+  {
+    "file": "tests/product_settlement_test.ts",
+    "capability": "Promise.*",
+    "line": 268,
+    "source": "Promise",
+    "context": "const missing = new Promise<never>(() => undefined);",
+    "family": "coordination:tests/product_settlement_test.ts"
+  },
+  {
+    "file": "tests/product_settlement_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 294,
+    "source": "Promise.withResolvers",
+    "context": "const entered = Promise.withResolvers<void>();",
+    "family": "coordination:tests/product_settlement_test.ts"
+  },
+  {
+    "file": "tests/product_settlement_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 295,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/product_settlement_test.ts"
+  },
+  {
+    "file": "tests/product_settlement_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 347,
+    "source": "Promise.withResolvers",
+    "context": "const completion = Promise.withResolvers<void>();",
+    "family": "coordination:tests/product_settlement_test.ts"
+  },
+  {
+    "file": "tests/remotely_save_providers_test.ts",
+    "capability": "setTimeout.*",
+    "line": 35,
+    "source": "setTimeout",
+    "context": "timers: { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms) },",
+    "family": "coordination:tests/remotely_save_providers_test.ts"
+  },
+  {
+    "file": "tests/render_test.ts",
+    "capability": "Promise.*",
+    "line": 192,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 10));",
+    "family": "coordination:tests/render_test.ts"
+  },
+  {
+    "file": "tests/render_test.ts",
+    "capability": "setTimeout.*",
+    "line": 192,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 10));",
+    "family": "coordination:tests/render_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 60,
+    "source": "Promise.withResolvers",
+    "context": "const reached = Promise.withResolvers<void>(),",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 61,
+    "source": "Promise.withResolvers",
+    "context": "release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Promise.*",
+    "line": 145,
+    "source": "Promise",
+    "context": ") await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "setTimeout.*",
+    "line": 145,
+    "source": "setTimeout",
+    "context": ") await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Promise.*",
+    "line": 151,
+    "source": "Promise",
+    "context": ") await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "setTimeout.*",
+    "line": 151,
+    "source": "setTimeout",
+    "context": ") await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Promise.*",
+    "line": 157,
+    "source": "Promise",
+    "context": ") await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "setTimeout.*",
+    "line": 157,
+    "source": "setTimeout",
+    "context": ") await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Promise.*",
+    "line": 172,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "setTimeout.*",
+    "line": 172,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Promise.*",
+    "line": 302,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "setTimeout.*",
+    "line": 302,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, 2));",
+    "family": "coordination:tests/timing/plugin_lifecycle_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 21,
+    "source": "Promise.withResolvers",
+    "context": "const release = Promise.withResolvers<void>();",
+    "family": "coordination:tests/timing/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_runtime_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 22,
+    "source": "Promise.withResolvers",
+    "context": "const commitSettled = Promise.withResolvers<void>();",
+    "family": "coordination:tests/timing/plugin_runtime_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_stall_test.ts",
+    "capability": "Promise.*",
+    "line": 64,
+    "source": "Promise",
+    "context": "await new Promise((resolve) => setTimeout(resolve, stopMs));",
+    "family": "coordination:tests/timing/plugin_stall_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_stall_test.ts",
+    "capability": "setTimeout.*",
+    "line": 64,
+    "source": "setTimeout",
+    "context": "await new Promise((resolve) => setTimeout(resolve, stopMs));",
+    "family": "coordination:tests/timing/plugin_stall_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_stream_expiry_test.ts",
+    "capability": "Promise.*",
+    "line": 73,
+    "source": "Promise",
+    "context": "await new Promise((resolve) =>",
+    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_stream_expiry_test.ts",
+    "capability": "setTimeout.*",
+    "line": 74,
+    "source": "setTimeout",
+    "context": "setTimeout(resolve, Math.max(0, expiry * 1000 - Date.now() + 25))",
+    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_stream_expiry_test.ts",
+    "capability": "Promise.race",
+    "line": 97,
+    "source": "Promise.race",
+    "context": "const closed = await Promise.race([",
+    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_stream_expiry_test.ts",
+    "capability": "Promise.*",
+    "line": 99,
+    "source": "Promise",
+    "context": "new Promise<boolean>((resolve) => {",
+    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
+  },
+  {
+    "file": "tests/timing/plugin_stream_expiry_test.ts",
+    "capability": "setTimeout.*",
+    "line": 100,
+    "source": "setTimeout",
+    "context": "timer = setTimeout(() => resolve(false), 500);",
+    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
+  },
+  {
+    "file": "tests/timing/product_settlement_stall_test.ts",
+    "capability": "Promise.withResolvers",
+    "line": 36,
+    "source": "Promise.withResolvers",
+    "context": "const stopped = Promise.withResolvers<void>();",
+    "family": "coordination:tests/timing/product_settlement_stall_test.ts"
+  },
+  {
+    "file": "tests/timing/product_settlement_stall_test.ts",
+    "capability": "Promise.race",
+    "line": 61,
+    "source": "Promise.race",
+    "context": "await Promise.race([",
+    "family": "coordination:tests/timing/product_settlement_stall_test.ts"
+  }
+]

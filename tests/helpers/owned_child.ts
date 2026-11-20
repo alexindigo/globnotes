@@ -9,7 +9,7 @@ export interface ChildSignalClock {
 }
 const clock: ChildSignalClock = {
   set(callback, milliseconds) {
-    const timer = setTimeout(callback, milliseconds);
+    const timer = globalThis.setTimeout(callback, milliseconds);
     return () => clearTimeout(timer);
   },
 };

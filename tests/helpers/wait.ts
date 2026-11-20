@@ -116,13 +116,12 @@ export async function waitUntil<T>(
   const started = Date.now();
   const deadline = started + READINESS_MS;
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<typeof EXPIRED>((resolve) => {
-    timer = setTimeout(() => {
-      controller.abort(new Error(`${label}: readiness bound exceeded`));
-      resolve(EXPIRED);
-    }, READINESS_MS);
-  });
+  const expiry = Promise.withResolvers<typeof EXPIRED>();
+  const expired = expiry.promise;
+  const timer = globalThis.setTimeout(() => {
+    controller.abort(new Error(`${label}: readiness bound exceeded`));
+    expiry.resolve(EXPIRED);
+  }, READINESS_MS);
   let last: unknown = "nothing observed yet";
   const fail = (reason: string, state: unknown, cause?: unknown): never => {
     throw new ReadinessError(
@@ -179,9 +178,10 @@ export async function waitUntil<T>(
       }
       last = (observation as { state: unknown }).state;
       if (Date.now() >= deadline) exceeded();
-      let pause: ReturnType<typeof setTimeout> | undefined;
+      const turn = Promise.withResolvers<void>();
+      const pause = globalThis.setTimeout(() => turn.resolve(), intervalMs);
       const paused = await Promise.race([
-        new Promise<void>((resolve) => pause = setTimeout(resolve, intervalMs)),
+        turn.promise,
         expired,
       ]);
       clearTimeout(pause);

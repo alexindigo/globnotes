@@ -24,6 +24,7 @@ import {
   FIXTURE_OWNERSHIP,
   registeredOwnership,
 } from "./helpers/ownership_rules.ts";
+import "./owned_operation_guard_test.ts";
 import {
   CHILD_OWNER,
   familyInventoryErrors,

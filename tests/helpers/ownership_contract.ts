@@ -36,6 +36,8 @@ export interface RootRule {
   members: readonly string[];
   /** Overrides members: these members require an exact owner module. */
   ownedMembers?: Readonly<Record<string, readonly string[]>>;
+  /** Exact low-level modules that own a direct root reference/constructor. */
+  ownedReferences?: readonly string[];
 }
 export interface OwnershipRules {
   roots: Readonly<Record<string, RootRule>>;
@@ -534,12 +536,17 @@ export function analyzeOwnership(
                 ? !owners.includes(input.file)
                 : !rule.members.includes(member)
             ) report(parent, `${node.text}.${member}`);
-          } else {report(
+          } else if (
+            ts.isElementAccessExpression(parent) ||
+            !rule.ownedReferences?.includes(input.file)
+          ) {
+            report(
               ts.isElementAccessExpression(parent) && parent.expression === node
                 ? parent
                 : node,
               `${node.text}.*`,
-            );}
+            );
+          }
         }
       }
     }

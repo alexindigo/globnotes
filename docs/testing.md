@@ -509,6 +509,59 @@ new work cohort or an independent timer. The operation itself is never retried.
 `pluginMilestone()` first separates unbounded admission from bounded initialization.
 Neither adds a timer around admitted work.
 
+### Held operations
+
+`helpers/owned_operation.ts` binds a held boundary to the operation that starts
+it. Use `heldOperation(options, start, use)`: `start(hold, signal)` installs the
+injected boundary and starts the real request; the callback uses `reached()`,
+`release()` and `result()`. `result()` releases before awaiting
+the original result. No bare entry promise or unrelated completion is exposed.
+Cleanup is registered before `start`, always releases before draining, and the
+common resource core preserves the callback failure plus any distinct drain
+failure. An explicitly asserted operation rejection is not reported twice.
+The adapter keeps its own fixture scope: `onCancel` releases the hold and the
+scope's signal cancels cooperative I/O before ordinary cleanup drains it.
+Effects on another fixture's resources enter through that fixture's `admit`
+port; the schema pilot owns construction, runtime cleanup and state restoration
+inside `withPluginFixture`. Read admitted results and acquired resources through
+their `.value` envelopes, not by resolving the owned value itself.
+Pass that admitted resource's cancellation `signal` in the held-operation
+options. It releases the hold and reaches cooperative additional I/O even while
+the caller's scope is waiting for admitted work to drain. A pre-aborted resource
+never captures an owner or starts work. Label, progress, signal and owner-getter
+ports are captured once; current ownership is checked on success and failure.
+The original request is subscribed once, recording its outcome in that first
+callback; later observations and cleanup use the captured completion.
+
+Name the actual request/resource/generation through `owner`; replacement rejects
+without recapturing work, while cleanup still drains the original operation.
+Choose `progress: { kind: "product" }` only for an actual automatically bounded
+operation. Its milestone reuses `workMilestone`, never a competing readiness
+clock. Deliberately controlled external or manually clocked work uses
+`{ kind: "controlled", clock: "external" | "manual" }`, retaining `waitUntil`'s
+existing fixture containment. Additional I/O must honor release or the supplied
+abort signal; this adapter cannot force an arbitrary promise to terminate.
+Settlement still is not success or durability: assert the actual consumer.
+The adapter does not accept arbitrary probes or downstream completion promises;
+the existing domain observers keep their own separate completion contracts.
+
+The schema-lease held-request family is the initial pilot. Startup still uses
+`plugin_ready.ts`; auxiliary startup and other held families are separate
+adoptions. The always-selected isolation contract composes explicit Promise,
+timer-root and timer-module rules with P01's process/resource registrations.
+Bare/computed roots, constructors and private timer imports reject at acquisition,
+not at later alias calls. Exact direct members identify the low-level owners;
+direct Promise constructor/type references also name their precise P02/P03/P11/P12
+engine and contract-test owners. Those registrations do not authorize computed
+members, raw scenario gates or unrelated operation-test constructors.
+The adapter has no public Deno surface. Its schema pilot explicitly permits
+only test registration and text-file read/write ports; unlisted future APIs
+remain rejected instead of being added to an expanding deny list.
+Existing occurrences remain an exact, shrinking inventory with named
+consumer coverage, not a helper-directory exemption or a claim of full closure.
+
+### Existing settlement and admission families
+
 | # | Sites | Treatment |
 |---|---|---|
 | 1 | `helpers/backup_fixture.ts`, `hub_versioning_test.ts` idle/hung waits | Captured ordinary/versioning cohort, then one final consumer assertion; hung work rejects through its real deadline |

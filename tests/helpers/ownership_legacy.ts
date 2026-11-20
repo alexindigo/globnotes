@@ -4,6 +4,12 @@ import sites from "./ownership_legacy_sites.json" with { type: "json" };
 import rootSites from "./ownership_root_sites.json" with { type: "json" };
 import recordSites from "./ownership_record_sites.json" with { type: "json" };
 import childSites from "./ownership_child_sites.json" with { type: "json" };
+import operationSites from "./owned_operation_legacy.json" with {
+  type: "json",
+};
+import operationFamilies from "./owned_operation_families.json" with {
+  type: "json",
+};
 
 /** Exact execution-base occurrences, not owner declarations/path exemptions.
  * Remove sites as their named families migrate; keep the consumer manifest.
@@ -12,6 +18,15 @@ import childSites from "./ownership_child_sites.json" with { type: "json" };
  */
 export const INVENTORY_BASE = "4436da3d6819790f52a4d4d50969800c72ddb663";
 export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
+  ...operationFamilies,
+  "schema-lease-held-work": {
+    replacement: "P04",
+    closed: true,
+    consumers: [
+      "tests/owned_operation_test.ts",
+      "tests/plugin_settings_schema_lease_test.ts",
+    ],
+  },
   "child-lifetime-pilot": {
     replacement: "P12",
     closed: true,
@@ -213,6 +228,7 @@ export const LEGACY_OWNERSHIP: LegacySite[] = [
   ...rootSites,
   ...recordSites,
   ...childSites,
+  ...operationSites,
 ]
   .map((site) => {
     const family = OWNERSHIP_FAMILIES[site.family];

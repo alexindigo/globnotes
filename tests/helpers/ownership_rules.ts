@@ -5,6 +5,7 @@ import {
   PROCESS_OWNERSHIP,
   type SourceModule,
 } from "./ownership_contract.ts";
+import { coordinationRules } from "./owned_operation_contract.ts";
 
 export const RESOURCE_CORE = "shared/ownership.js";
 export const RESOURCE_ENGINE = "shared/ownership-engine.js";
@@ -239,6 +240,28 @@ export const BOOT_OWNERSHIP: OwnershipRules = {
     },
   },
 };
+export const OPERATION_ADAPTER = "tests/helpers/owned_operation.ts";
+export const OPERATION_PILOT = "tests/plugin_settings_schema_lease_test.ts";
+export const OPERATION_ADAPTER_OWNERSHIP: OwnershipRules = {
+  ...CHILD_OWNERSHIP,
+  roots: {
+    ...CHILD_OWNERSHIP.roots,
+    Deno: {
+      members: [],
+      ownedMembers: PROCESS_OWNERSHIP.roots.Deno.ownedMembers,
+    },
+  },
+};
+export const OPERATION_PILOT_OWNERSHIP: OwnershipRules = {
+  ...OPERATION_ADAPTER_OWNERSHIP,
+  roots: {
+    ...OPERATION_ADAPTER_OWNERSHIP.roots,
+    Deno: {
+      members: ["test", "readTextFile", "writeTextFile"],
+      ownedMembers: PROCESS_OWNERSHIP.roots.Deno.ownedMembers,
+    },
+  },
+};
 const allModules = (rules: OwnershipRules): OwnershipRules => ({
   ...rules,
   modules: { ...rules.modules, ...RECORD_MODULE_RULES, ...CHILD_MODULE_RULES },
@@ -247,8 +270,16 @@ const allModules = (rules: OwnershipRules): OwnershipRules => ({
  * This selects registrations, not allowed sites; every violation is inventoried. */
 export function registeredOwnership(sources: SourceModule[]) {
   const groups = new Map<OwnershipRules, SourceModule[]>();
+  const policies = new Map<
+    OwnershipRules,
+    readonly [OwnershipRules, OwnershipRules]
+  >();
   for (const source of sources) {
-    const rules = source.file === BOOT_OWNER
+    const rules = source.file === OPERATION_ADAPTER
+      ? OPERATION_ADAPTER_OWNERSHIP
+      : source.file === OPERATION_PILOT
+      ? OPERATION_PILOT_OWNERSHIP
+      : source.file === BOOT_OWNER
       ? BOOT_OWNERSHIP
       : fixtureScenarios.includes(source.file)
       ? FIXTURE_SCENARIO_OWNERSHIP
@@ -262,11 +293,24 @@ export function registeredOwnership(sources: SourceModule[]) {
           source.file.startsWith("client/tests/")
       ? CHILD_OWNERSHIP
       : PRODUCT_OWNERSHIP;
-    const group = groups.get(rules) ?? [];
+    let pair = policies.get(rules);
+    if (!pair) {
+      const ordinary = allModules(rules);
+      pair = [ordinary, coordinationRules(ordinary)];
+      policies.set(rules, pair);
+    }
+    // Server work and the private resource engine retain their own contracts.
+    // Other local transitives cannot hide a coordinator behind a re-export.
+    const effective = pair[
+      source.file.startsWith("server/") || source.file === RESOURCE_ENGINE
+        ? 0
+        : 1
+    ];
+    const group = groups.get(effective) ?? [];
     group.push(source);
-    groups.set(rules, group);
+    groups.set(effective, group);
   }
   return [...groups].flatMap(([rules, modules]) =>
-    analyzeOwnership(modules, allModules(rules))
+    analyzeOwnership(modules, rules)
   );
 }

@@ -496,14 +496,6 @@
     "family": "handler-loader"
   },
   {
-    "file": "tests/plugin_settings_schema_lease_test.ts",
-    "capability": "dynamic-import.*",
-    "line": 22,
-    "source": "import(\n  new URL(\n    \"../server/api/endpoints/_/api/plugin-host/%23id/settings/%23page/put.ts\",\n    import.meta.url,\n  ).href\n)",
-    "context": "const settingsPut = (await import(",
-    "family": "handler-loader"
-  },
-  {
     "file": "tests/timing/product_settlement_stall_test.ts",
     "capability": "Deno.kill",
     "line": 101,
