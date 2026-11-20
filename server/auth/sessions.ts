@@ -1,8 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { join } from "@std/path";
 import { jwtVerify, SignJWT } from "jose";
-import { type Account, AccountRepository, normalizeLogin } from "./accounts.ts";
-import { matchingStoredTotpStep } from "./credentials.ts";
+import { AccountRepository } from "./accounts.ts";
+import {
+  type AccountCredentials,
+  AuthenticationError,
+  type LoginProof,
+} from "./account_credentials.ts";
+export { AuthenticationError };
+import { bindGuardedSink } from "../internal/guarded_sink.ts";
+import {
+  assertOperationLease,
+  createOperationLease,
+} from "../operation_lease.ts";
 import {
   fields,
   identity,
@@ -11,7 +21,6 @@ import {
   integer,
   record,
 } from "./records.ts";
-import { verifyPassword } from "../helpers.ts";
 import type { SessionSettings } from "../config/consumers.ts";
 
 interface SessionState {
@@ -32,11 +41,6 @@ function validate(value: unknown): SessionState {
   ) throw new IdentityStateError();
   return value as unknown as SessionState;
 }
-export class AuthenticationError extends Error {
-  constructor() {
-    super("Invalid authentication credentials.");
-  }
-}
 export interface AccountPrincipal {
   readonly kind: "account";
   readonly accountId: string;
@@ -47,6 +51,11 @@ export interface AccountPrincipal {
 }
 export interface GuestPrincipal {
   readonly kind: "guest";
+}
+/** Signed bytes stay private until this guarded response body is consumed. */
+export interface IssuedSession {
+  readonly principal: AccountPrincipal;
+  readonly body: ReadableStream<Uint8Array>;
 }
 export type Principal = AccountPrincipal | GuestPrincipal;
 export const GUEST: GuestPrincipal = Object.freeze({ kind: "guest" });
@@ -69,6 +78,9 @@ export class SessionRepository {
   }
   capture() {
     return this.#file.capture();
+  }
+  assertUnchanged(expected = this.capture()): void {
+    this.#file.assertUnchanged(expected);
   }
   prepareParents(): void {
     this.#file.prepareParents();
@@ -94,12 +106,12 @@ export class SessionRepository {
 
 export class InstanceSessions {
   readonly #now: () => number;
-  readonly #verify: typeof verifyPassword;
+  readonly #credentials: AccountCredentials;
   constructor(
     readonly accounts: AccountRepository,
     readonly signing: SessionRepository,
     readonly settings: SessionSettings,
-    options: { now?: () => number; verify?: typeof verifyPassword } = {},
+    options: { now?: () => number } = {},
   ) {
     if (
       !Number.isSafeInteger(settings.expirySeconds) ||
@@ -109,67 +121,28 @@ export class InstanceSessions {
     }
     // Expiry is real wall time; callers inject the clock for deterministic tests.
     this.#now = options.now ?? Date.now;
-    this.#verify = options.verify ?? verifyPassword;
+    this.#credentials = accounts.credentials;
   }
   /** An absent credential is guest; an explicitly submitted bad one never is. */
   async resolve(token: string | null): Promise<Principal> {
     return token === null ? GUEST : await this.validateToken(token);
   }
   assertCurrent(principal: AccountPrincipal): void {
-    const account = this.accounts.byId(principal.accountId),
+    const now = this.#now();
+    const account = this.accounts.identityById(principal.accountId),
       signing = this.signing.current();
     if (
       !account || account.credentialRevision !== principal.credentialRevision ||
       account.passwordChangeRequired !== principal.passwordChangeRequired ||
       signing.signingRevision !== principal.signingRevision ||
       !Number.isFinite(principal.expiresAt) ||
-      this.#now() >= principal.expiresAt
+      now >= principal.expiresAt
     ) throw new AuthenticationError();
-  }
-  async confirmCredentials(
-    login: string,
-    password: string,
-    code?: string,
-  ): Promise<Account> {
-    let account: Account | null;
-    try {
-      account = this.accounts.byLogin(normalizeLogin(login));
-    } catch {
-      throw new AuthenticationError();
-    }
-    if (
-      !account || typeof password !== "string" ||
-      !await this.#verify(password, account.passwordHash)
-    ) {
-      throw new AuthenticationError();
-    }
-    const live = this.accounts.byId(account.id);
-    if (!live || live.credentialRevision !== account.credentialRevision) {
-      throw new AuthenticationError();
-    }
-    const authenticator = this.accounts.storedAuthenticator(account.id);
-    if (authenticator?.kind === "totp") {
-      const step = matchingStoredTotpStep(
-        code ?? "",
-        authenticator.secret,
-        this.#now(),
-      );
-      if (step === null) throw new AuthenticationError();
-      try {
-        this.accounts.consumeTotp(account.id, account.credentialRevision, step);
-      } catch {
-        throw new AuthenticationError();
-      }
-    } else if (code !== undefined && code !== "") {
-      throw new AuthenticationError();
-    }
-    return this.accounts.byId(account.id)!;
   }
   async login(
     input: unknown,
-  ): Promise<
-    { access_token: string; token_type: "bearer"; principal: AccountPrincipal }
-  > {
+    signal?: AbortSignal,
+  ): Promise<IssuedSession> {
     if (
       !record(input) ||
       Object.keys(input).some((key) =>
@@ -179,31 +152,84 @@ export class InstanceSessions {
       typeof input.password !== "string" ||
       (input.totp !== undefined && typeof input.totp !== "string")
     ) throw new AuthenticationError();
-    const account = await this.confirmCredentials(
+    const proof = await this.#credentials.authenticate(
       input.username,
       input.password,
       input.totp as string | undefined,
+      signal,
     );
-    const signing = this.signing.current(),
-      seconds = Math.floor(this.#now() / 1000);
-    const expiry = seconds + this.settings.expirySeconds;
-    if (!Number.isSafeInteger(expiry)) throw new AuthenticationError();
-    const access_token = await new SignJWT({
-      credentialRevision: account.credentialRevision,
-      signingRevision: signing.signingRevision,
-    }).setSubject(account.id).setProtectedHeader({ alg: "HS256" })
-      .setIssuedAt(seconds).setExpirationTime(expiry)
-      .sign(new TextEncoder().encode(signing.signingKey));
-    const principal: AccountPrincipal = Object.freeze({
-      kind: "account",
-      accountId: account.id,
-      credentialRevision: account.credentialRevision,
-      signingRevision: signing.signingRevision,
-      expiresAt: expiry * 1000,
-      passwordChangeRequired: account.passwordChangeRequired,
-    });
-    this.assertCurrent(principal);
-    return { access_token, token_type: "bearer", principal };
+    return await this.issue(proof);
+  }
+  async issue(
+    proof: LoginProof,
+  ): Promise<IssuedSession> {
+    const credentials = this.#credentials;
+    const claim = credentials.beginLogin(proof);
+    let transferred = false;
+    try {
+      const account = claim.identity;
+      const signingSnapshot = this.signing.capture();
+      const signing = this.signing.current(),
+        seconds = Math.floor(this.#now() / 1000);
+      const expiry = seconds + this.settings.expirySeconds;
+      if (!Number.isSafeInteger(expiry)) throw new AuthenticationError();
+      const access_token = await new SignJWT({
+        credentialRevision: account.credentialRevision,
+        signingRevision: signing.signingRevision,
+      }).setSubject(account.id).setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt(seconds).setExpirationTime(expiry)
+        .sign(new TextEncoder().encode(signing.signingKey));
+      const principal: AccountPrincipal = Object.freeze({
+        kind: "account",
+        accountId: account.id,
+        credentialRevision: account.credentialRevision,
+        signingRevision: signing.signingRevision,
+        expiresAt: expiry * 1000,
+        passwordChangeRequired: account.passwordChangeRequired,
+      });
+      // Serialization and all user callbacks precede the final owner fences.
+      const bytes = new TextEncoder().encode(
+        JSON.stringify({ access_token, token_type: "bearer", principal }),
+      );
+      const delivery = createOperationLease("live", [() => {
+        this.assertCurrent(principal);
+        this.signing.assertUnchanged(signingSnapshot);
+      }], [claim.lease]);
+      const close = () => {
+        delivery.retire();
+        credentials.closeLogin(claim);
+      };
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const enqueue = controller.enqueue.bind(controller),
+            finish = controller.close.bind(controller);
+          try {
+            bindGuardedSink(
+              delivery.lease,
+              "live",
+              () => ({ value: bytes }),
+              ({ value }) => {
+                enqueue(value);
+                finish();
+                return undefined;
+              },
+            )(undefined);
+          } catch {
+            controller.error(new AuthenticationError());
+          } finally {
+            close();
+          }
+        },
+        cancel: close,
+      }, { highWaterMark: 0 });
+      assertOperationLease(delivery.lease, "live");
+      transferred = true;
+      return Object.freeze({ principal, body });
+    } catch {
+      throw new AuthenticationError();
+    } finally {
+      if (!transferred) credentials.closeLogin(claim);
+    }
   }
   async validateToken(token: string): Promise<AccountPrincipal> {
     try {
@@ -227,7 +253,7 @@ export class InstanceSessions {
         !integer(payload.signingRevision) || !integer(payload.exp) ||
         !Number.isSafeInteger(payload.exp * 1000)
       ) throw new AuthenticationError();
-      const account = this.accounts.byId(payload.sub);
+      const account = this.accounts.identityById(payload.sub);
       if (!account) throw new AuthenticationError();
       const principal: AccountPrincipal = Object.freeze({
         kind: "account",

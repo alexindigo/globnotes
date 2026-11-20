@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { signIn } from "./helpers/session_delivery.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { AccountRepository } from "../server/auth/accounts.ts";
@@ -32,7 +33,9 @@ for (
 ) {
   Deno.test(`stored TOTP replacement: key and encoding replace together ${JSON.stringify(replacement)}`, () =>
     identityFixture(async (root) => {
-      const accounts = new AccountRepository(root);
+      const accounts = new AccountRepository(root, undefined, {
+        now: () => NOW,
+      });
       const original = accounts.importAccount(identityAccount({
         passwordHash: fixturePasswordHash("password"),
         totpKey: "A".repeat(32),
@@ -58,7 +61,9 @@ for (
           credentialUpdateId: UPDATE,
         }),
       );
-      const reopened = new AccountRepository(root);
+      const reopened = new AccountRepository(root, undefined, {
+        now: () => NOW,
+      });
       assertEquals(reopened.byId(original.id), changed);
       const signing = new SessionRepository(root);
       signing.initialize();
@@ -68,7 +73,7 @@ for (
       const secret = replacement.encoding === "base32"
         ? replacement.key
         : base32(utf8(replacement.key));
-      const token = await sessions.login({
+      const token = await signIn(sessions, {
         username: "alice",
         password: "password",
         totp: await authenticatorCode(secret, NOW),
@@ -295,7 +300,9 @@ for (
 ) {
   Deno.test(`stored TOTP upgrade: account login/restart preserves ${JSON.stringify(stored)}`, () =>
     identityFixture(async (root) => {
-      const accounts = new AccountRepository(root);
+      const accounts = new AccountRepository(root, undefined, {
+        now: () => NOW,
+      });
       const account = accounts.importAccount(identityAccount({
         passwordHash: fixturePasswordHash("password"),
         totpKey: stored.key,
@@ -303,7 +310,9 @@ for (
       }));
       const path = `${root}/accounts.json`;
       const bytes = Deno.readTextFileSync(path);
-      const reopened = new AccountRepository(root);
+      const reopened = new AccountRepository(root, undefined, {
+        now: () => NOW,
+      });
       assertEquals(
         Deno.readTextFileSync(path),
         bytes,
@@ -319,20 +328,20 @@ for (
         : base32(utf8(stored.key));
       const code = await authenticatorCode(secret, NOW);
       const input = { username: "alice", password: "password", totp: code };
-      const token = await sessions.login(input);
+      const token = await signIn(sessions, input);
       assertEquals(
         (await sessions.validateToken(token.access_token)).accountId,
         account.id,
       );
       const restarted = new InstanceSessions(
-        new AccountRepository(root),
+        new AccountRepository(root, undefined, { now: () => NOW }),
         new SessionRepository(root),
         { expirySeconds: 1000 },
         { now: () => NOW },
       );
-      await assertRejects(() => restarted.login(input), AuthenticationError);
+      await assertRejects(() => signIn(restarted, input), AuthenticationError);
       const nextCode = await authenticatorCode(secret, NOW + 30_000);
-      await restarted.login({ ...input, totp: nextCode });
+      await signIn(restarted, { ...input, totp: nextCode });
       const saved = restarted.accounts.byId(account.id)!;
       assertEquals(saved.totpKey, stored.key);
       assertEquals(saved.totpKeyEncoding, stored.encoding);

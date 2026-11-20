@@ -266,6 +266,18 @@ replace the name between them, and that replacement can be removed. Deno has no
 descriptor-relative unlink; service write serialization does not exclude external
 writers or eliminate this residual window.
 
+## Sign-in delivery (P08)
+
+The preparatory instance sign-in API returns an issued principal and a lazy
+response body, never raw token fields. Its private stream retains signed bytes
+and the claimed proof until native enqueue or cancellation. Parent, claim and
+session-validation callbacks precede the final lifetime fences. Proof completion
+and retirement happen after actual delivery, not before those fences. Tests
+consume the real JSON response body through a test-only consumer helper; active
+legacy sign-in handlers are unchanged.
+Inspection returns a plain envelope; token bytes are delivered data, never a
+pending inspection result.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from

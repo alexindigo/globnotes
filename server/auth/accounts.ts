@@ -3,6 +3,12 @@ import { join } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { hashPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
+import type { OperationLease } from "../operation_lease.ts";
+import {
+  type AccountCredentials,
+  type CredentialOptions,
+} from "./account_credentials.ts";
+import { bindAccountCredentials } from "./internal/account_credentials.ts";
 import {
   decodeStoredAuthenticator,
   sameStoredTotpSecret,
@@ -30,6 +36,14 @@ export interface Account {
   readonly credentialRevision: number;
   readonly passwordChangeRequired: boolean;
   readonly credentialUpdateId: string | null;
+}
+export interface AccountIdentity {
+  readonly id: string;
+  readonly login: string;
+  readonly credentialRevision: number;
+  readonly passwordChangeRequired: boolean;
+  readonly credentialUpdateId: string | null;
+  readonly totpEnabled: boolean;
 }
 export interface ProvisioningReceipt {
   readonly operationId: string;
@@ -162,6 +176,8 @@ export class AccountRepository {
   readonly #file: IdentityFile<AccountState>;
   readonly #authenticators = new WeakMap<Account, StoredAuthenticator>();
   #decodedSnapshot?: AccountSnapshot;
+  readonly #credentials: AccountCredentials;
+  readonly #retireCredentials: () => boolean;
   constructor(
     root: string,
     file = new IdentityFile<AccountState>(
@@ -176,9 +192,43 @@ export class AccountRepository {
         provisioning: [],
       },
     ),
+    credentialOptions: CredentialOptions = {},
   ) {
     this.#file = file;
     this.capture();
+    const owner = bindAccountCredentials({
+      byLogin: (login) => this.byLogin(login),
+      byId: (id) => this.byId(id),
+      authenticator: (account) => this.#decode(account),
+      identity: (account) => this.#identity(account),
+      assertBound: () => this.assertUnchanged(),
+      consume: (account, step, guard, lease) =>
+        this.#consumeTotp(account.id, account.credentialRevision, step, guard, [
+          lease,
+        ]),
+    }, credentialOptions);
+    this.#credentials = owner.credentials;
+    this.#retireCredentials = owner.retire;
+  }
+  retireCredentials(): void {
+    this.#retireCredentials();
+  }
+  get credentials(): AccountCredentials {
+    return this.#credentials;
+  }
+  #identity(account: Account): AccountIdentity {
+    return Object.freeze({
+      id: account.id,
+      login: account.login,
+      credentialRevision: account.credentialRevision,
+      passwordChangeRequired: account.passwordChangeRequired,
+      credentialUpdateId: account.credentialUpdateId,
+      totpEnabled: this.#decode(account).kind === "totp",
+    });
+  }
+  identityById(id: string): AccountIdentity | null {
+    const account = this.byId(id);
+    return account ? this.#identity(account) : null;
   }
   capture(): AccountSnapshot {
     const snapshot = this.#file.capture();
@@ -326,19 +376,38 @@ export class AccountRepository {
     return this.byId(id)!;
   }
   consumeTotp(id: string, credentialRevision: number, step: number): void {
+    // Inventoried legacy fixture arithmetic only; no sign-in caller may use it.
+    this.#consumeTotp(id, credentialRevision, step);
+  }
+  #consumeTotp(
+    id: string,
+    credentialRevision: number,
+    step: number,
+    guard: () => void = () => {},
+    parents: readonly OperationLease<"live">[] = [],
+  ): Account {
     const expected = this.capture(), account = this.byId(id);
     if (
       !account?.totpKey || account.credentialRevision !== credentialRevision ||
       !integer(step) ||
       (account.lastTotpStep !== null && step <= account.lastTotpStep)
     ) throw new StoredConfigConflict();
-    this.#file.commit({
-      ...expected.value,
-      revision: expected.value.revision + 1,
-      updateId: createUuid(),
-      accounts: expected.value.accounts.map((a) =>
-        a.id === id ? { ...a, lastTotpStep: step } : a
-      ),
-    }, expected);
+    // Retain this operation's exact consumed record. Publication diagnostics may
+    // reenter the repository; their later account must never become our proof.
+    const consumed = Object.freeze({ ...account, lastTotpStep: step });
+    this.#file.commit(
+      {
+        ...expected.value,
+        revision: expected.value.revision + 1,
+        updateId: createUuid(),
+        accounts: expected.value.accounts.map((a) =>
+          a.id === id ? consumed : a
+        ),
+      },
+      expected,
+      guard,
+      parents,
+    );
+    return consumed;
   }
 }

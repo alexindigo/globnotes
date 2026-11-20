@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { signIn } from "./helpers/session_delivery.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { decodeJwt, SignJWT } from "jose";
 import { AccountRepository, prepareAccount } from "../server/auth/accounts.ts";
@@ -36,7 +37,7 @@ async function fixture(
 
 Deno.test("identity sessions: one account ID token survives restart without vault grants or secrets", () =>
   fixture(async (sessions, root) => {
-    const result = await sessions.login({
+    const result = await signIn(sessions, {
       username: "ALICE",
       password: "password",
     });
@@ -81,7 +82,7 @@ Deno.test("identity sessions: invalid submitted credentials are never guest and 
       ]
     ) {
       await assertRejects(
-        () => sessions.login(input),
+        () => signIn(sessions, input),
         AuthenticationError,
         "Invalid authentication credentials.",
       );
@@ -97,12 +98,15 @@ Deno.test("identity sessions: own credential revision revokes every old token, n
         passwordHash: await hashPassword("bob-password"),
       }),
     );
-    const a = await sessions.login({ username: "alice", password: "password" });
-    const a2 = await sessions.login({
+    const a = await signIn(sessions, {
       username: "alice",
       password: "password",
     });
-    const b = await sessions.login({
+    const a2 = await signIn(sessions, {
+      username: "alice",
+      password: "password",
+    });
+    const b = await signIn(sessions, {
       username: "bob",
       password: "bob-password",
     });
@@ -122,11 +126,11 @@ Deno.test("identity sessions: own credential revision revokes every old token, n
       ACCOUNT_B,
     );
     await assertRejects(
-      () => sessions.login({ username: "alice", password: "password" }),
+      () => signIn(sessions, { username: "alice", password: "password" }),
       AuthenticationError,
     );
     assertEquals(
-      (await sessions.login({ username: "alice", password: "new-password" }))
+      (await signIn(sessions, { username: "alice", password: "new-password" }))
         .principal.credentialRevision,
       1,
     );
@@ -137,7 +141,7 @@ Deno.test("identity sessions: temporary password remains explicitly restricted u
     const person = sessions.accounts.create(
       await prepareAccount("recipient", "temporary", { temporary: true }),
     );
-    const first = await sessions.login({
+    const first = await signIn(sessions, {
       username: "recipient",
       password: "temporary",
     });
@@ -150,7 +154,7 @@ Deno.test("identity sessions: temporary password remains explicitly restricted u
       () => sessions.validateToken(first.access_token),
       AuthenticationError,
     );
-    const changed = await sessions.login({
+    const changed = await signIn(sessions, {
       username: "recipient",
       password: "own-password",
     });
@@ -163,7 +167,7 @@ Deno.test("identity sessions: configured expiry is enforced at the boundary", ()
     const short = new InstanceSessions(sessions.accounts, sessions.signing, {
       expirySeconds: 2,
     }, { now: () => now });
-    const result = await short.login({
+    const result = await signIn(short, {
       username: "alice",
       password: "password",
     });
@@ -223,16 +227,19 @@ Deno.test("identity sessions: HS256, required claims, subject and signing revisi
   }));
 
 Deno.test("identity sessions: credential changes during password proof cannot mint an old session", () =>
-  fixture(async (sessions) => {
+  fixture(async (sessions, root) => {
     const held = Promise.withResolvers<boolean>();
+    const accounts = new AccountRepository(root, undefined, {
+      verify: () => held.promise,
+    });
     const racing = new InstanceSessions(
-      sessions.accounts,
+      accounts,
       sessions.signing,
       settings,
-      { now: () => NOW, verify: () => held.promise },
+      { now: () => NOW },
     );
-    const pending = racing.login({ username: "alice", password: "password" });
-    sessions.accounts.changeCredentials(
+    const pending = signIn(racing, { username: "alice", password: "password" });
+    accounts.changeCredentials(
       sessions.accounts.byLogin("alice")!.id,
       0,
       { passwordChangeRequired: true },

@@ -5,7 +5,10 @@ import {
 } from "../config/publication_outcome.ts";
 import type { StoredConfigSnapshot } from "../config/file_store.ts";
 import { createOwnedPublication } from "../config/owned_publication.ts";
-import { createOperationLease } from "../operation_lease.ts";
+import {
+  createOperationLease,
+  type OperationLease,
+} from "../operation_lease.ts";
 
 export class IdentityStateError extends Error {
   constructor() {
@@ -85,6 +88,7 @@ export class IdentityFile<T> {
     next: T,
     expected: IdentitySnapshot<T> = this.capture(),
     guard: () => void = () => {},
+    parents: readonly OperationLease<"live">[] = [],
   ): T {
     if (Object.prototype.toString.call(guard) === "[object AsyncFunction]") {
       throw new TypeError("Identity guards must be synchronous.");
@@ -104,7 +108,7 @@ export class IdentityFile<T> {
         throw new TypeError("Identity guards must be synchronous.");
       }
       return undefined;
-    }]);
+    }], parents);
     try {
       const prepared = this.#publication.prepare(
         value,

@@ -46,6 +46,7 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
   modules: {
     ...RESOURCE_OWNERSHIP.modules,
     [OPERATION_LEASE_OWNER]: [
+      "server/auth/sessions.ts",
       AUTHORITY_PILOT,
       "server/auth/middleware.ts",
       GUARDED_SINK_OWNER,
@@ -54,11 +55,14 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "server/config/file_store.ts",
       "server/auth/records.ts",
       "tests/owned_publication_test.ts",
+      "server/auth/internal/account_credentials.ts",
+      "tests/credential_proof_test.ts",
     ],
     [GUARDED_SINK_OWNER]: [
       AUTHORITY_PILOT,
       "tests/operation_lease_test.ts",
       "server/config/file_store.ts",
+      "server/auth/sessions.ts",
     ],
   },
 };
@@ -160,10 +164,36 @@ export const SECRET_OWNERSHIP: OwnershipRules = {
     ...PUBLICATION_OWNERSHIP.modules,
     [SECRET_CODEC]: [
       "server/auth/accounts.ts",
-      "server/auth/sessions.ts",
       "server/auth/local.ts",
+      "server/auth/internal/account_credentials.ts",
+      "tests/credential_proof_test.ts",
       "tests/credential_secret_test.ts",
       "tests/identity_totp_test.ts",
+    ],
+  },
+};
+export const CREDENTIAL_ENGINE = "server/auth/internal/account_credentials.ts";
+export const ACCOUNT_REPOSITORY = "server/auth/accounts.ts";
+/** Whole-module ownership keeps runtime binders and transitional raw ports
+ * out of ordinary workflows; public errors/types confer no acquisition. */
+export const PROOF_OWNERSHIP: OwnershipRules = {
+  roots: SECRET_OWNERSHIP.roots,
+  modules: {
+    ...SECRET_OWNERSHIP.modules,
+    [CREDENTIAL_ENGINE]: [ACCOUNT_REPOSITORY],
+    [ACCOUNT_REPOSITORY]: [
+      "server/auth/sessions.ts",
+      "server/auth/acl.ts",
+      "tests/config_durability_test.ts",
+      "tests/credential_proof_test.ts",
+      "tests/identity_accounts_test.ts",
+      "tests/identity_acl_test.ts",
+      "tests/identity_authority_test.ts",
+      "tests/identity_declarations_test.ts",
+      "tests/identity_sessions_test.ts",
+      "tests/identity_totp_test.ts",
+      "tests/identity_totp_fixed_form_test.ts",
+      "tests/identity_totp_upgrade_test.ts",
     ],
   },
 };
@@ -174,9 +204,9 @@ export const PLUGIN_OPERATIONS = "tests/helpers/plugin_operations_fixture.ts";
 /** Private construction modules have public callback facades. Every import form
  * is checked at the resolved module, never by following the imported value. */
 export const FIXTURE_OWNERSHIP: OwnershipRules = {
-  ...SECRET_OWNERSHIP,
+  ...PROOF_OWNERSHIP,
   modules: {
-    ...SECRET_OWNERSHIP.modules,
+    ...PROOF_OWNERSHIP.modules,
     [FIXTURE_SCOPE_ENGINE]: [
       "tests/helpers/fixture_scope.ts",
       PLUGIN_FIXTURE_ENGINE,

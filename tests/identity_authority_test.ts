@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { signIn } from "./helpers/session_delivery.ts";
 import {
   assert,
   assertEquals,
@@ -334,7 +335,7 @@ async function identities(root: string) {
   const sessions = new InstanceSessions(accounts, signing, {
     expirySeconds: 1000,
   }, { now: () => now });
-  const token = await sessions.login({
+  const token = await signIn(sessions, {
     username: "alice",
     password: "password",
   });
@@ -421,7 +422,7 @@ async function scope(root: string, owner: FixtureScope) {
 Deno.test("identity authority: capabilities implement the level matrix, not method or token presence", () =>
   fixture(async (f) => {
     const bob =
-      (await f.sessions.login({ username: "bob", password: "password" }))
+      (await signIn(f.sessions, { username: "bob", password: "password" }))
         .principal;
     for (const grant of ["none", "view", "edit", "admin"] as const) {
       f.policy({ everybody: "view", grants: { [f.alice.id]: grant } });
@@ -461,9 +462,11 @@ Deno.test("identity authority: temporary accounts can only manage themselves", (
       await prepareAccount("recipient", "temporary", { temporary: true }),
     );
     f.policy({ everybody: "edit", grants: { [recipient.id]: "admin" } });
-    const principal =
-      (await f.sessions.login({ username: "recipient", password: "temporary" }))
-        .principal;
+    const principal = (await signIn(f.sessions, {
+      username: "recipient",
+      password: "temporary",
+    }))
+      .principal;
     assertEquals(f.authority.capabilities(principal), {
       canRead: false,
       canEdit: false,
@@ -644,7 +647,7 @@ Deno.test("identity authority: expiry, credential changes, ACL and bundle replac
   fixture(async (f) => {
     const lease = await f.auth.noteMutationLease(f.request());
     const bob =
-      (await f.sessions.login({ username: "bob", password: "password" }))
+      (await signIn(f.sessions, { username: "bob", password: "password" }))
         .principal;
     const otherAcl = new AclRepository(`${f.root}/other`, VAULT_B, {
       accounts: f.accounts,

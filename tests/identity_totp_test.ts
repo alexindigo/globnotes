@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assertEquals, assertRejects } from "@std/assert";
+import { signIn } from "./helpers/session_delivery.ts";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { AccountRepository, prepareAccount } from "../server/auth/accounts.ts";
 import {
@@ -43,7 +44,7 @@ for (
 
 Deno.test("identity TOTP: accepted-step replay survives concurrent logins and restart, per account", () =>
   identityFixture(async (root) => {
-    const accounts = new AccountRepository(root);
+    const accounts = new AccountRepository(root, undefined, { now: () => NOW });
     const alice = accounts.create(await prepareAccount("alice", "password"));
     const bob = accounts.create(await prepareAccount("bob", "password"));
     const raw = "short";
@@ -56,35 +57,42 @@ Deno.test("identity TOTP: accepted-step replay survives concurrent logins and re
     const code = await authenticatorCode(totpSecretFromRawKey(raw), NOW);
     const input = { username: "alice", password: "password", totp: code };
     const results = await Promise.allSettled([
-      sessions.login(input),
-      sessions.login(input),
+      signIn(sessions, input),
+      signIn(sessions, input),
     ]);
-    assertEquals(results.filter((r) => r.status === "fulfilled").length, 1);
+    assertEquals(results.map((result) => result.status).sort(), [
+      "fulfilled",
+      "rejected",
+    ]);
+    const [winner, loser] = results[0].status === "fulfilled"
+      ? results
+      : [results[1], results[0]];
+    assert(winner.status === "fulfilled");
+    assert(loser.status === "rejected");
+    assert(loser.reason instanceof AuthenticationError);
+    assertEquals(loser.reason.message, "Invalid authentication credentials.");
     assertEquals(accounts.byId(alice.id)!.credentialRevision, 1);
     const restarted = new InstanceSessions(
-      new AccountRepository(root),
+      new AccountRepository(root, undefined, { now: () => NOW }),
       new SessionRepository(root),
       settings,
       options,
     );
-    await assertRejects(() => restarted.login(input), AuthenticationError);
-    await restarted.login({ ...input, username: "bob" });
+    await assertRejects(() => signIn(restarted, input), AuthenticationError);
+    await signIn(restarted, { ...input, username: "bob" });
     const previous = await authenticatorCode(
       totpSecretFromRawKey(raw),
       NOW - 30_000,
     );
     await assertRejects(
-      () => restarted.login({ ...input, totp: previous }),
+      () => signIn(restarted, { ...input, totp: previous }),
       AuthenticationError,
     );
     const next = await authenticatorCode(
       totpSecretFromRawKey(raw),
       NOW + 30_000,
     );
-    const accepted = await restarted.login({ ...input, totp: next });
-    const winner = results.find((r) =>
-      r.status === "fulfilled"
-    ) as PromiseFulfilledResult<Awaited<ReturnType<typeof sessions.login>>>;
+    const accepted = await signIn(restarted, { ...input, totp: next });
     assertEquals(
       (await restarted.validateToken(winner.value.access_token))
         .credentialRevision,
@@ -95,7 +103,7 @@ Deno.test("identity TOTP: accepted-step replay survives concurrent logins and re
 
 Deno.test("identity TOTP: password and code are separate and failed proof never consumes a step", () =>
   identityFixture(async (root) => {
-    const accounts = new AccountRepository(root),
+    const accounts = new AccountRepository(root, undefined, { now: () => NOW }),
       person = accounts.create(await prepareAccount("alice", "password"));
     accounts.changeCredentials(person.id, 0, { totpKey: "ABCDE" }, UPDATE);
     const signing = new SessionRepository(root);
@@ -110,9 +118,9 @@ Deno.test("identity TOTP: password and code are separate and failed proof never 
         { username: "alice", password: "wrong", totp: code },
         { username: "alice", password: "password", totp: "bad" },
       ]
-    ) await assertRejects(() => sessions.login(input), AuthenticationError);
+    ) await assertRejects(() => signIn(sessions, input), AuthenticationError);
     assertEquals(accounts.byId(person.id)?.lastTotpStep, null);
-    await sessions.login({
+    await signIn(sessions, {
       username: "alice",
       password: "password",
       totp: code,
