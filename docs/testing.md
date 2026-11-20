@@ -4,7 +4,8 @@ Writing tests: see [the short guide](writing-tests.md).
 Every test and browser check runs inside the project's devcontainer,
 started by `.devcontainer/run.sh`. Nothing runs Deno, Chromium or the test
 suites directly on the host. Pre-commit provides fast feedback: whole-tree
-static checks and related tests. GitHub CI is the full gate, including the
+static checks and related tests, including explicitly mapped ownership consumers.
+GitHub CI is the full gate, including the
 browser suite, client build and cold-load (`scripts/gates.sh --all --browser`),
 plus the serial timing tests.
 
@@ -319,8 +320,9 @@ On `git commit` the hook:
 3. writes the staged paths (`git diff --cached --name-status -M -z`) and the
    tree's file list into `run/logs/`;
 4. runs `gates.sh --plan` in the container, which selects the checks into
-   `run/logs/selection.json`, then `gates.sh --select`. Pre-commit never
-   requests Chromium. Both use the snapshot's own `run.sh` and scripts;
+   `run/logs/selection.json`, then `gates.sh --select`. Explicit ownership-native
+   selections request Chromium through the existing browser-required flag.
+   Both use the snapshot's own `run.sh` and scripts;
 5. prints one line: PASS/FAIL, wall time, the gates run (and the failing one),
    the run directory; and a warning above the 300-second budget;
 6. keeps logs, selection and timings. On PASS it deletes `source/`, the
@@ -346,10 +348,10 @@ feedback, not a substitute for CI's full gate.
 | # | Changed path | Selected |
 |---|---|---|
 | 1 | Any change | Whole-tree static gates 1-9: cached install, lint, incremental cached type checks (including worker and handlers), format check, shell syntax, e2e module-load gate and contract tests |
-| 2 | Server tests | Only test files whose direct imports include a changed file, plus test files that changed themselves; `deno test --parallel`, `DENO_JOBS=4` |
+| 2 | Server tests | Direct importers and changed tests, plus the explicit ownership contract/consumer mapping below; `deno test --parallel`, `DENO_JOBS=4` |
 | 3 | `client/**`, `shared/**` (including browser-suite helpers) | `vitest related --run --passWithNoTests` on the changed files, `VITEST_MAX_WORKERS=4` |
-| 4 | Browser suite, client build, cold-load, consumer controls | Never in pre-commit; CI owns these gates |
-| 5 | Shared inputs: `deno.json`, `deno.lock`, `vite.config.js`, `vitest.config.mjs`, `.devcontainer/**`, `scripts/gates.sh`, `scripts/select-checks.ts`, `entrypoint.sh`, `Dockerfile` | Static gates only, with `deno install --frozen`; no related test expansion |
+| 4 | Ownership inputs with mapped native consumers | Build completes before the named native families; their suite retains ownership/input/result/entrypoint/unit controls. Other browser workloads and cold-load remain CI-owned |
+| 5 | Shared inputs: `deno.json`, `deno.lock`, `vite.config.js`, `vitest.config.mjs`, `.devcontainer/**`, `scripts/gates.sh`, `scripts/select-checks.ts`, `scripts/guard-modules.ts`, `entrypoint.sh`, `Dockerfile` | Static gates with frozen install; the three selection/discovery scripts additionally select selector/gate/discovery regression tests |
 | 6 | `tests/timing/**` | Only changed, surviving timing test files, serially; helper changes and deletions do not select timing tests |
 | 7 | Docs: `*.md`, `docs/**` | Row 1 |
 | 8 | Unknown paths | Static gates plus direct server-test importers and `vitest related` of the changed paths; never silently skipped |
@@ -360,12 +362,59 @@ the edges directly out of each test file. It never follows transitive edges
 or scans string literals, fixture directories or launcher arguments. In
 particular, server-boot tests do not inherit `server/main.ts`'s graph. Timing
 tests are excluded from that matching and stay CI-only unless the timing test
-file itself changed. Docs and shared-input rules take precedence for those
-paths; other paths in a mixed commit still select their related tests.
+file itself changed. Explicit ownership mapping supplements, rather than walks,
+that graph; docs/shared inputs otherwise retain their existing selection.
+
+`OWNERSHIP_SELECTION` in `scripts/select-checks.ts` names the P02 core/native
+finalizer, P03 fixture scope, P04 bound operations, P11 records, P12 child/boot,
+P13 driver startup, P14 clock, P15 layout/build and P16 contenders. Core/scope
+changes select their downstream mapped pilot contracts too. Each row lists server
+contracts/consumers, client unit inputs and exact native registry families.
+Missing consumers fail selection, including after removal/rename. Duplicate selections
+are combined. Independent selector expectations catch removed mapping entries.
+
+P02/P03/P04/P11/P12/P13/P14/P15/P16 are required mappings on this integrated line.
+Relevant changes select their contracts even if an owner file is absent from the
+inventory, preserving deletion/rename coverage instead of silently clipping it.
+No mapping is conditional. P13, P14 and P16 files must all exist. Product owners
+P05-P10 retain their separate mapping follow-up; P05's presence on main does not
+expand this fixture/native pilot.
+
+The root-reference restack also maps private engine files, the schema/values
+facades and `tests/helpers/ownership_rules.ts`. Changing a registered owner or
+its rules selects its dedicated root/import guard contract as well as runtime
+contracts and consumers. Source policies are explicit registrations, not value
+flow tracking; no ownership row is skipped for a missing owner.
+
+Always-on guard registration comes from `scripts/guard-modules.ts`, not an
+isolation-contract import list or these ownership rows. Every selection includes
+the discovered guards in its contracts gate. Changes to the discovery module
+also select its discovery and selector/gate regression tests.
+
+The phased-close line also maps cancellation-aware fixture coordination, the
+legacy/root/record/child guard inventories, the Sync status native adapter and
+the native server adapter. Exact independent selector expectations compare the
+complete contract, client-input and native-family selections, including required
+controls, without import edges. Each owner's mapped contract/consumer also has an
+ordinary missing-file rejection test.
+
+The reviewed P11 publication protocol (`tests/helpers/record_publication.ts`)
+selects record/channel and catalogue-audit contracts, affected child/layout
+consumers, and the backup native family alongside Sync driver/status. The backup
+fixture copies that portable protocol into its restricted plugin; this edge is
+explicit rather than inferred from its source-path literal. P04 bound-operation
+changes also select boot/layout consumers. P13 includes its preload, schema,
+protocol, launcher, supervisor and driver acceptance/native-acceptance families;
+P14 also maps its clock policy, bootstrap epoch, explicit/live TOTP references,
+driver clock, native authentication adapters and repair lifetime. Its consumers
+include the clock/native-TOTP and authentication contracts plus setup TOTP,
+Access, Sync driver and repair native families. Publication/cleanup failures and
+authentication/advance serialization therefore retain their reviewed contracts.
 
 A selection error (including failed import analysis, malformed JSON or a
 failed field read) fails the hook. The selection validator also rejects
-CI-only gates. `gates.sh --all` and CI's full-gate behavior are unchanged.
+inconsistent native/build/browser fields and missing mandatory native controls.
+`gates.sh --all`, `--checks`, `--native` and CI's full-gate behavior are unchanged.
 
 ## Push check: `.githooks/pre-push`
 

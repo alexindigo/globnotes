@@ -5,6 +5,8 @@ import {
   type Context,
   CONTROL_GATES,
   loadContext,
+  OWNERSHIP_NATIVE_CONTROLS,
+  OWNERSHIP_SELECTION,
   parseNameStatus,
   selectChecks,
   selectHarnessControls,
@@ -13,6 +15,7 @@ import {
   validateControlSelection,
   validateSelection,
 } from "../scripts/select-checks.ts";
+import { SELECTION } from "../client/tests/e2e/legacy-native-suite.mjs";
 
 function fixture(): Context {
   return {
@@ -29,7 +32,7 @@ function fixture(): Context {
     ],
     imports: {
       "tests/leaf_test.ts": ["server/leaf.ts"],
-      "tests/boot_test.ts": ["tests/helpers/boot.ts"],
+      "tests/boot_test.ts": ["tests/helpers/unmapped_boot.ts"],
       "tests/literal_test.ts": [],
       "tests/helper_test.ts": ["tests/leaf_test.ts"],
       "tests/shared_test.ts": ["shared/uuid.ts"],
@@ -37,7 +40,7 @@ function fixture(): Context {
       "tests/test_isolation_contract_test.ts": [],
       "tests/devcontainer_caps_test.ts": [],
       // These edges must never be followed by selection.
-      "tests/helpers/boot.ts": ["server/main.ts"],
+      "tests/helpers/unmapped_boot.ts": ["server/main.ts"],
       "server/main.ts": ["server/leaf.ts"],
       "server/leaf.ts": ["shared/uuid.ts"],
       "tests/timing/slow_test.ts": ["server/leaf.ts"],
@@ -51,6 +54,519 @@ const modified = (path: string): Change => ({
 });
 const select = (...paths: string[]) =>
   selectChecks(paths.map(modified), fixture());
+
+// Independent expectations: never derive coverage from the production map.
+const CORE_INPUTS = [
+  "shared/ownership.js",
+  "shared/ownership.d.ts",
+  "shared/ownership-engine.js",
+  "tests/helpers/ownership_rules.ts",
+  "tests/helpers/ownership_contract.ts",
+  "tests/helpers/ownership_legacy.ts",
+  "tests/helpers/ownership_legacy_sites.json",
+  "tests/helpers/ownership_root_sites.json",
+];
+const SCOPE_INPUTS = [
+  ...CORE_INPUTS,
+  "tests/helpers/fixture_scope.ts",
+  "tests/helpers/fixture_scope_engine.ts",
+  "tests/helpers/fixture_coordination.ts",
+];
+const OWNERS = [
+  {
+    path: "shared/ownership.js",
+    contract: "tests/ownership_scope_test.ts",
+    consumers: [
+      "tests/native_finalization_ownership_test.ts",
+      "tests/ownership_resource_guard_test.ts",
+      "tests/ownership_guard_test.ts",
+      "tests/ownership_coverage_test.ts",
+      "tests/ownership_erasure_test.ts",
+      "tests/ownership_review_test.ts",
+    ],
+    native: ["setup-wizard"],
+    client: ["client/tests/e2e/native-case-finalization.test.js"],
+    inputs: [
+      ...CORE_INPUTS,
+      "client/tests/e2e/native-case-finalization.mjs",
+    ],
+  },
+  {
+    path: "tests/helpers/fixture_scope.ts",
+    contract: "tests/fixture_scope_test.ts",
+    consumers: [
+      "tests/plugin_fixture_cleanup_test.ts",
+      "tests/ownership_fixture_guard_test.ts",
+      "tests/plugin_write_bases_test.ts",
+    ],
+    native: ["sync-status-native", "plugin-prefix-auth"],
+    client: [],
+    inputs: [
+      ...SCOPE_INPUTS,
+      "tests/helpers/plugin_fixture.ts",
+      "tests/helpers/plugin_fixture_engine.ts",
+      "tests/helpers/fixture_scope_engine.ts",
+      "tests/helpers/plugin_operations_fixture.ts",
+    ],
+  },
+  {
+    path: "tests/helpers/owned_operation.ts",
+    contract: "tests/owned_operation_test.ts",
+    consumers: [
+      "tests/owned_operation_guard_test.ts",
+      "tests/plugin_settings_schema_lease_test.ts",
+    ],
+    native: [],
+    client: [],
+    inputs: [
+      ...SCOPE_INPUTS,
+      "tests/helpers/owned_operation_contract.ts",
+      "tests/helpers/owned_operation_families.json",
+      "tests/helpers/owned_operation_legacy.json",
+      "tests/helpers/product_settlement.ts",
+      "tests/helpers/wait.ts",
+    ],
+  },
+  {
+    path: "tests/helpers/owned_record_channel.ts",
+    contract: "tests/owned_record_channel_test.ts",
+    consumers: [
+      "tests/process_records_test.ts",
+      "tests/ownership_record_guard_test.ts",
+      "tests/catalog_work_audit_test.ts",
+    ],
+    native: ["sync-driver-native", "sync-status-native", "backup-plugin"],
+    client: [],
+    inputs: [
+      ...SCOPE_INPUTS,
+      "tests/helpers/sync_status_control.ts",
+      "tests/helpers/sync_status_preload.ts",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+      "tests/helpers/record_schema.ts",
+      "tests/helpers/ownership_record_sites.json",
+      "client/tests/e2e/sync-status-native.mjs",
+      "client/tests/e2e/backup-plugin.mjs",
+    ],
+  },
+  {
+    path: "tests/helpers/owned_child.ts",
+    contract: "tests/owned_child_test.ts",
+    consumers: [
+      "tests/server_lifetime_test.ts",
+      "tests/ownership_child_guard_test.ts",
+    ],
+    native: ["setup-wizard", "plugin-prefix-auth"],
+    client: ["client/tests/e2e/native-server-lifetime.test.js"],
+    inputs: [
+      ...SCOPE_INPUTS,
+      "tests/helpers/boot.ts",
+      "tests/helpers/owned_operation.ts",
+      "tests/helpers/owned_operation_contract.ts",
+      "tests/helpers/process.ts",
+      "tests/helpers/process_values.ts",
+      "tests/helpers/ownership_child_sites.json",
+      "client/tests/e2e/harness-helpers.mjs",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+    ],
+  },
+  {
+    path: "tests/helpers/driver_startup.ts",
+    contract: "tests/driver_phase_ownership_test.ts",
+    consumers: [
+      "tests/driver_phase_guard_test.ts",
+      "tests/hub_driver_acceptance_test.ts",
+      "tests/hub_driver_native_acceptance_test.ts",
+      "tests/hub_driver_supervisor_test.ts",
+    ],
+    native: ["sync-settings-native", "sync-driver-native"],
+    client: [],
+    inputs: [
+      ...SCOPE_INPUTS,
+      "tests/helpers/owned_operation.ts",
+      "tests/helpers/owned_operation_contract.ts",
+      "tests/helpers/owned_child.ts",
+      "tests/helpers/boot.ts",
+      "tests/helpers/owned_record_channel.ts",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+      "tests/helpers/record_schema.ts",
+      "tests/helpers/driver_startup_preload.ts",
+      "tests/helpers/driver_startup_protocol.ts",
+      "tests/helpers/driver_startup_schema.ts",
+      "tests/helpers/driver_fixture.ts",
+      "tests/helpers/fixture_clock.ts",
+      "tests/helpers/storage.ts",
+      "server/hub/drivers/supervisor.ts",
+    ],
+  },
+  {
+    path: "tests/helpers/fixture_clock.ts",
+    contract: "tests/fixture_clock_ownership_test.ts",
+    consumers: [
+      "tests/fixture_clock_guard_test.ts",
+      "tests/totp_test.ts",
+      "tests/native_totp_fixture_test.ts",
+      "tests/access_settings_test.ts",
+      "tests/auth_test.ts",
+      "tests/local_auth_test.ts",
+    ],
+    native: [
+      "setup-totp-desktop",
+      "access-settings",
+      "sync-driver-native",
+      "plugin-review-repairs",
+    ],
+    client: [],
+    inputs: [
+      ...SCOPE_INPUTS,
+      "tests/helpers/owned_record_channel.ts",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+      "tests/helpers/fixture_clock_legacy.json",
+      "tests/helpers/fixture_clock_rules.ts",
+      "tests/helpers/fixture_epoch.ts",
+      "tests/helpers/totp.ts",
+      "tests/helpers/totp_live.ts",
+      "tests/helpers/identity.ts",
+      "tests/helpers/record_schema.ts",
+      "tests/helpers/fixture_clock.ts",
+      "client/tests/e2e/native-totp-fixture.mjs",
+      "client/tests/e2e/harness-helpers.mjs",
+      "client/tests/e2e/repair-fixture-lifetime.mjs",
+      "client/tests/e2e/plugin-review-repairs.mjs",
+      "client/tests/e2e/setup-totp-desktop.mjs",
+      "client/tests/e2e/access-settings.mjs",
+      "tests/helpers/driver_fixture.ts",
+    ],
+  },
+  {
+    path: "tests/helpers/fixture_layout.ts",
+    contract: "tests/fixture_layout_ownership_test.ts",
+    consumers: [
+      "tests/config_paths_test.ts",
+      "tests/ownership_layout_guard_test.ts",
+      "tests/config_owned_root_test.ts",
+      "tests/server_lifetime_test.ts",
+    ],
+    native: ["setup-wizard", "plugin-prefix-auth"],
+    client: [],
+    inputs: [
+      ...SCOPE_INPUTS,
+      "tests/helpers/owned_child.ts",
+      "tests/helpers/boot.ts",
+      "tests/helpers/fixture_layout.ts",
+      "tests/helpers/completed_build.ts",
+      "tests/helpers/completed_build_engine.ts",
+      "tests/helpers/owned_operation.ts",
+      "tests/helpers/owned_operation_contract.ts",
+      "tests/helpers/process_values.ts",
+      "client/tests/e2e/prefix-auth-fixture.mjs",
+      "tests/helpers/process.ts",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+    ],
+  },
+  {
+    path: "tests/helpers/owned_contenders.ts",
+    contract: "tests/owned_contenders_test.ts",
+    consumers: ["tests/owned_contenders_guard_test.ts"],
+    native: [],
+    client: [],
+    inputs: [
+      ...SCOPE_INPUTS,
+      "tests/helpers/owned_operation.ts",
+      "tests/helpers/owned_operation_contract.ts",
+    ],
+  },
+  {
+    path: "scripts/select-checks.ts",
+    contract: "tests/select_checks_test.ts",
+    consumers: [
+      "tests/gate_selection_test.ts",
+      "tests/contract_discovery_test.ts",
+      "tests/ownership_guard_test.ts",
+    ],
+    native: [],
+    client: [],
+    inputs: ["scripts/gates.sh", "scripts/guard-modules.ts"],
+  },
+];
+// Independent copy of the controls every native ownership selection requires.
+const CONTROLS = [
+  "native-consumer-controls",
+  "native-result-controls",
+  "runner-entrypoint-controls",
+  "unit-consumer-controls",
+];
+function ownershipFixture(): Context {
+  const files = [
+    ...new Set([
+      ...fixture().files,
+      ...OWNERS.flatMap((owner) => [
+        owner.path,
+        ...owner.inputs,
+        owner.contract,
+        ...owner.consumers,
+        ...owner.client,
+        ...owner.native.map((name) => `client/tests/e2e/${name}.mjs`),
+      ]),
+      ...CONTROLS.map((name) => `client/tests/e2e/${name}.mjs`),
+    ]),
+  ];
+  // No import edges: these assertions can pass only through explicit mappings.
+  return {
+    files,
+    imports: Object.fromEntries(
+      files.filter((file) => file.startsWith("tests/")).map(
+        (file) => [file, []],
+      ),
+    ),
+  };
+}
+for (const owner of OWNERS) {
+  for (const input of new Set([owner.path, ...owner.inputs])) {
+    for (const listed of [true, false]) {
+      Deno.test(`select-checks: ownership mapping ${input} selects ${owner.path} contract and consumer families (owner listed=${listed})`, () => {
+        const context = ownershipFixture();
+        if (!listed) {
+          context.files = context.files.filter((file) => file !== owner.path);
+        }
+        const selected = selectChecks([modified(input)], context);
+        const families = OWNERS.filter((family) =>
+          family.path === input || family.inputs.includes(input)
+        );
+        const server = new Set(
+          families.flatMap((family) => [family.contract, ...family.consumers]),
+        );
+        const client = new Set(families.flatMap((family) => family.client));
+        if (input.startsWith("client/") || input.startsWith("shared/")) {
+          client.add(input);
+        }
+        const native = [
+          ...new Set(families.flatMap((family) => family.native)),
+        ];
+        assertEquals(
+          selected.serverTests,
+          context.files.filter((file) => server.has(file)),
+          `Missing ownership contract or consumer mapping for ${input}`,
+        );
+        assertEquals(selected.clientTests, [...client].sort());
+        assertEquals(
+          selected.browserCases,
+          native.length
+            ? [
+              ...native,
+              "native-consumer-controls",
+              "native-result-controls",
+              "runner-entrypoint-controls",
+              "unit-consumer-controls",
+            ].sort()
+            : [],
+        );
+        assertEquals(selected.gates, [
+          ...STATIC_GATES,
+          "server",
+          ...(client.size ? ["client"] : []),
+          ...(native.length ? ["build", "native"] : []),
+        ]);
+        assertEquals(selected.browser, native.length > 0);
+        assertEquals(
+          selected.reasons.filter((reason) =>
+            reason.rule.startsWith("ownership:")
+          )
+            .map((reason) => reason.rule),
+          families.map((family) => `ownership:${family.path}`),
+        );
+        const registry = new Set(SELECTION.map(([name]) => name));
+        for (const name of selected.browserCases) {
+          assert(registry.has(name), `Unregistered native family ${name}`);
+        }
+        validateSelection(selected);
+      });
+    }
+  }
+  for (const missing of [owner.contract, ...owner.consumers]) {
+    Deno.test(`select-checks: ${owner.path} rejects missing mapped consumer ${missing}`, () => {
+      const context = ownershipFixture();
+      context.files = context.files.filter((file) => file !== missing);
+      const message =
+        `ownership selection ${owner.path}: missing consumer ${missing}`;
+      const error = assertThrows(
+        () => selectChecks([modified(owner.path)], context),
+        Error,
+        message,
+      );
+      assertEquals(error.message, message);
+    });
+  }
+}
+Deno.test("select-checks: production ownership map equals the independent expectations in both directions", () => {
+  const sorted = (values: Iterable<string>) => [...new Set(values)].sort();
+  assertEquals(
+    Object.entries(OWNERSHIP_SELECTION).map(([path, family]) => ({
+      path,
+      inputs: sorted([path, ...family.inputs]),
+      server: sorted(family.server),
+      client: sorted(family.client),
+      native: sorted(family.native),
+    })),
+    OWNERS.map((owner) => ({
+      path: owner.path,
+      inputs: sorted([owner.path, ...owner.inputs]),
+      server: sorted([owner.contract, ...owner.consumers]),
+      client: sorted(owner.client),
+      native: sorted(owner.native),
+    })),
+  );
+  assertEquals(OWNERSHIP_NATIVE_CONTROLS, CONTROLS);
+});
+Deno.test("select-checks: every production-mapped file and native control exists in the repository", async () => {
+  const root = new URL("../", import.meta.url);
+  const mapped = [
+    ...new Set([
+      ...Object.entries(OWNERSHIP_SELECTION).flatMap(([path, family]) => [
+        path,
+        ...family.inputs,
+        ...family.server,
+        ...family.client,
+        ...family.native.map((name) => `client/tests/e2e/${name}.mjs`),
+      ]),
+      ...OWNERSHIP_NATIVE_CONTROLS.map((name) =>
+        `client/tests/e2e/${name}.mjs`
+      ),
+    ]),
+  ].sort();
+  const missing: string[] = [];
+  for (const file of mapped) {
+    try {
+      if (!(await Deno.stat(new URL(file, root))).isFile) missing.push(file);
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+      missing.push(file);
+    }
+  }
+  assertEquals(missing, []);
+  assertEquals(mapped.length > 0, true);
+});
+Deno.test("select-checks: a missing required native control fails closed", () => {
+  for (const control of CONTROLS) {
+    const context = ownershipFixture();
+    context.files = context.files.filter((file) =>
+      file !== `client/tests/e2e/${control}.mjs`
+    );
+    const message = `ownership selection: missing native control ${control}`;
+    const error = assertThrows(
+      () =>
+        selectChecks([modified("tests/helpers/fixture_layout.ts")], context),
+      Error,
+      message,
+    );
+    assertEquals(error.message, message);
+  }
+});
+Deno.test("select-checks: every integrated owner, including P13/P14/P16, has a required mapping", () => {
+  assertEquals(
+    Object.keys(OWNERSHIP_SELECTION),
+    OWNERS.map((owner) => owner.path),
+  );
+});
+Deno.test("select-checks: missing installed-owner consumers fail closed, including deletion and rename", () => {
+  for (
+    const changes of [
+      [modified("tests/helpers/fixture_layout.ts")],
+      parseNameStatus("D\0tests/helpers/fixture_layout.ts\0"),
+      parseNameStatus(
+        "R100\0tests/helpers/fixture_layout.ts\0tests/helpers/replacement.ts\0",
+      ),
+    ]
+  ) {
+    const context = ownershipFixture();
+    context.files = context.files.filter((path) =>
+      path !== "tests/fixture_layout_ownership_test.ts"
+    );
+    const error = assertThrows(
+      () => selectChecks(changes, context),
+      Error,
+      "ownership selection tests/helpers/fixture_layout.ts: missing consumer tests/fixture_layout_ownership_test.ts",
+    );
+    assertEquals(
+      error.message,
+      "ownership selection tests/helpers/fixture_layout.ts: missing consumer tests/fixture_layout_ownership_test.ts",
+    );
+  }
+  const context = ownershipFixture();
+  context.files = context.files.filter((path) =>
+    path !== "client/tests/e2e/plugin-prefix-auth.mjs"
+  );
+  const error = assertThrows(
+    () => selectChecks([modified("tests/helpers/fixture_layout.ts")], context),
+    Error,
+    "ownership selection tests/helpers/fixture_layout.ts: missing native consumer plugin-prefix-auth",
+  );
+  assertEquals(
+    error.message,
+    "ownership selection tests/helpers/fixture_layout.ts: missing native consumer plugin-prefix-auth",
+  );
+});
+Deno.test("select-checks: P13, P14 and P16 owners must all be present", async () => {
+  const root = new URL("../", import.meta.url);
+  const required = [
+    "tests/helpers/driver_startup.ts",
+    "tests/helpers/fixture_clock.ts",
+    "tests/helpers/owned_contenders.ts",
+  ];
+  assertEquals(
+    await Promise.all(
+      required.map(async (
+        file,
+      ) => [file, (await Deno.stat(new URL(file, root))).isFile]),
+    ),
+    required.map((file) => [file, true]),
+  );
+});
+Deno.test("select-checks: installed ownership mappings name actual contracts and native entrypoints", async () => {
+  const root = new URL("../", import.meta.url);
+  for (const owner of OWNERS) {
+    for (
+      const file of [
+        owner.path,
+        ...new Set(owner.inputs),
+        owner.contract,
+        ...owner.consumers,
+        ...owner.client,
+        ...owner.native.map((name) => `client/tests/e2e/${name}.mjs`),
+      ]
+    ) {
+      assertEquals({
+        file,
+        isFile: (await Deno.stat(new URL(file, root))).isFile,
+      }, { file, isFile: true });
+    }
+  }
+});
+Deno.test("select-checks: selected native fields cannot drop required controls or disagree with build/browser", () => {
+  const selected = selectChecks(
+    [modified("tests/helpers/fixture_layout.ts")],
+    ownershipFixture(),
+  );
+  for (
+    const patch of [{ browser: false }, { browserCases: [] }, {
+      browserCases: selected.browserCases.filter((name) =>
+        name !== "native-result-controls"
+      ),
+    }, {
+      gates: selected.gates.filter((gate) => gate !== "build"),
+    }, { browserCases: [...selected.browserCases, "setup-wizard,theme"] }]
+  ) {
+    assertThrows(
+      () => validateSelection({ ...selected, ...patch }),
+      Error,
+      "invalid selection",
+    );
+  }
+});
 
 Deno.test("CI controls: only guarded inputs select controls; pre-commit remains separate", () => {
   const controls = (...paths: string[]) =>
@@ -141,13 +657,36 @@ Deno.test("select-checks: every change gets whole-tree static gates and contract
   }
 });
 
+Deno.test("select-checks: guard registration is discovered without isolation import edges or ownership rows", () => {
+  const context = fixture();
+  context.files.push(
+    "tests/ownership_layout_guard_test.ts",
+    "tests/new/nested_guard_test.ts",
+    "tests/ownership_coverage_test.ts",
+    "tests/access_commit_guards_test.ts",
+  );
+  for (const changes of [[], [modified("README.md")]]) {
+    const selected = selectChecks(changes, context);
+    assertEquals(selected.contractTests, [
+      "tests/test_isolation_contract_test.ts",
+      "tests/devcontainer_caps_test.ts",
+      "tests/new/nested_guard_test.ts",
+      "tests/ownership_coverage_test.ts",
+      "tests/ownership_layout_guard_test.ts",
+    ]);
+    assertEquals(selected.serverTests, []);
+    assertEquals(selected.gates, [...STATIC_GATES]);
+    validateSelection(selected);
+  }
+});
+
 Deno.test("select-checks: server tests use direct imports only, not boot or transitive graphs", () => {
   const selected = select("server/leaf.ts");
   assertEquals(selected.gates, [...STATIC_GATES, "server"]);
   assertEquals(selected.serverTests, ["tests/leaf_test.ts"]);
   assertEquals(select("server/main.ts").serverTests, []);
   assertEquals(select("server/unused.ts").gates, [...STATIC_GATES]);
-  assertEquals(select("tests/helpers/boot.ts").serverTests, [
+  assertEquals(select("tests/helpers/unmapped_boot.ts").serverTests, [
     "tests/boot_test.ts",
   ]);
   assertEquals(select("tests/leaf_test.ts").serverTests, [
@@ -199,14 +738,30 @@ Deno.test("select-checks: browser-suite helpers get related tests but never brow
   }
 });
 
-Deno.test("select-checks: shared inputs select only static gates and frozen install", () => {
+Deno.test("select-checks: shared inputs stay static except explicit selector regression coverage", () => {
   for (const input of SHARED_INPUTS) {
     const path = input.endsWith("/") ? `${input}run.sh` : input;
     const context = fixture();
+    const selectorTests = [
+      "tests/select_checks_test.ts",
+      "tests/gate_selection_test.ts",
+      "tests/contract_discovery_test.ts",
+      "tests/ownership_guard_test.ts",
+    ];
+    context.files.push("scripts/select-checks.ts", ...selectorTests);
+    for (const file of selectorTests) context.imports[file] = [];
     context.imports["tests/leaf_test.ts"] = [path];
     const selected = selectChecks([modified(path)], context);
-    assertEquals(selected.gates, [...STATIC_GATES], path);
-    assertEquals(selected.serverTests, []);
+    const mapped = [
+      "scripts/select-checks.ts",
+      "scripts/gates.sh",
+      "scripts/guard-modules.ts",
+    ].includes(path);
+    assertEquals(selected.gates, [
+      ...STATIC_GATES,
+      ...(mapped ? ["server"] : []),
+    ], path);
+    assertEquals(selected.serverTests, mapped ? selectorTests : []);
     assertEquals(selected.clientTests, []);
     assertEquals(selected.timingTests, []);
     assert(

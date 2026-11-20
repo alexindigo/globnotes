@@ -3,7 +3,8 @@
 /** Fast pre-commit feedback on the staged tree. CI owns the full gate.
  * Server selection uses only each test's direct imports, never dependency
  * closures, launcher arguments, fixture literals or dynamic-loader guesses.
- * Unknown paths still get related tests; selection errors fail the hook.
+ * Explicit ownership families supplement those direct edges. Unknown paths
+ * still get related tests; selection errors fail the hook.
  */
 import { fromFileUrl, toFileUrl } from "@std/path";
 import { guardModules } from "./guard-modules.ts";
@@ -24,12 +25,260 @@ export const GATE_ORDER = [
   "server",
   "timing",
   "client",
+  "build",
+  "native",
 ] as const;
 export type Gate = typeof GATE_ORDER[number];
 
 export const CONTRACT_TESTS = [
   "tests/test_isolation_contract_test.ts",
   "tests/devcontainer_caps_test.ts",
+];
+
+const CORE = [
+  "shared/ownership.js",
+  "shared/ownership.d.ts",
+  "shared/ownership-engine.js",
+  "tests/helpers/ownership_rules.ts",
+  "tests/helpers/ownership_contract.ts",
+  "tests/helpers/ownership_legacy.ts",
+  "tests/helpers/ownership_legacy_sites.json",
+  "tests/helpers/ownership_root_sites.json",
+];
+const SCOPE = [
+  ...CORE,
+  "tests/helpers/fixture_scope.ts",
+  "tests/helpers/fixture_scope_engine.ts",
+  "tests/helpers/fixture_coordination.ts",
+];
+/** The declared ownership pilots, not a transitive dependency walker.
+ * All mapped owners are integrated: rows never disappear because an owner is
+ * absent from the inventory.
+ * Missing contracts and consumers fail rather than silently disappear.
+ * Product owners P05-P10 retain their separate mapping follow-up. */
+export const OWNERSHIP_SELECTION = {
+  "shared/ownership.js": {
+    inputs: [...CORE, "client/tests/e2e/native-case-finalization.mjs"],
+    server: [
+      "tests/ownership_scope_test.ts",
+      "tests/ownership_resource_guard_test.ts",
+      "tests/ownership_guard_test.ts",
+      "tests/ownership_coverage_test.ts",
+      "tests/ownership_erasure_test.ts",
+      "tests/ownership_review_test.ts",
+      "tests/native_finalization_ownership_test.ts",
+    ],
+    client: ["client/tests/e2e/native-case-finalization.test.js"],
+    native: ["setup-wizard"],
+  },
+  "tests/helpers/fixture_scope.ts": {
+    inputs: [
+      ...SCOPE,
+      "tests/helpers/plugin_fixture.ts",
+      "tests/helpers/plugin_fixture_engine.ts",
+      "tests/helpers/plugin_operations_fixture.ts",
+    ],
+    server: [
+      "tests/fixture_scope_test.ts",
+      "tests/ownership_fixture_guard_test.ts",
+      "tests/plugin_fixture_cleanup_test.ts",
+      "tests/plugin_write_bases_test.ts",
+    ],
+    client: [],
+    native: ["sync-status-native", "plugin-prefix-auth"],
+  },
+  "tests/helpers/owned_operation.ts": {
+    inputs: [
+      ...SCOPE,
+      "tests/helpers/owned_operation.ts",
+      "tests/helpers/owned_operation_contract.ts",
+      "tests/helpers/owned_operation_families.json",
+      "tests/helpers/owned_operation_legacy.json",
+      "tests/helpers/product_settlement.ts",
+      "tests/helpers/wait.ts",
+    ],
+    server: [
+      "tests/owned_operation_test.ts",
+      "tests/owned_operation_guard_test.ts",
+      "tests/plugin_settings_schema_lease_test.ts",
+    ],
+    client: [],
+    native: [],
+  },
+  "tests/helpers/owned_record_channel.ts": {
+    inputs: [
+      ...SCOPE,
+      "tests/helpers/owned_record_channel.ts",
+      "tests/helpers/record_schema.ts",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+      "tests/helpers/sync_status_control.ts",
+      "tests/helpers/sync_status_preload.ts",
+      "tests/helpers/ownership_record_sites.json",
+      "client/tests/e2e/sync-status-native.mjs",
+      "client/tests/e2e/backup-plugin.mjs",
+    ],
+    server: [
+      "tests/owned_record_channel_test.ts",
+      "tests/ownership_record_guard_test.ts",
+      "tests/process_records_test.ts",
+      "tests/catalog_work_audit_test.ts",
+    ],
+    client: [],
+    native: ["sync-driver-native", "sync-status-native", "backup-plugin"],
+  },
+  "tests/helpers/owned_child.ts": {
+    inputs: [
+      ...SCOPE,
+      "tests/helpers/owned_child.ts",
+      "tests/helpers/process.ts",
+      "tests/helpers/process_values.ts",
+      "tests/helpers/boot.ts",
+      "tests/helpers/owned_operation.ts",
+      "tests/helpers/owned_operation_contract.ts",
+      "tests/helpers/ownership_child_sites.json",
+      "client/tests/e2e/harness-helpers.mjs",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+    ],
+    server: [
+      "tests/owned_child_test.ts",
+      "tests/ownership_child_guard_test.ts",
+      "tests/server_lifetime_test.ts",
+    ],
+    client: ["client/tests/e2e/native-server-lifetime.test.js"],
+    native: ["setup-wizard", "plugin-prefix-auth"],
+  },
+  "tests/helpers/driver_startup.ts": {
+    inputs: [
+      ...SCOPE,
+      "tests/helpers/owned_operation.ts",
+      "tests/helpers/owned_operation_contract.ts",
+      "tests/helpers/owned_child.ts",
+      "tests/helpers/boot.ts",
+      "tests/helpers/owned_record_channel.ts",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+      "tests/helpers/record_schema.ts",
+      "tests/helpers/driver_startup.ts",
+      "tests/helpers/driver_startup_preload.ts",
+      "tests/helpers/driver_startup_protocol.ts",
+      "tests/helpers/driver_startup_schema.ts",
+      "tests/helpers/driver_fixture.ts",
+      "tests/helpers/fixture_clock.ts",
+      "tests/helpers/storage.ts",
+      "server/hub/drivers/supervisor.ts",
+    ],
+    server: [
+      "tests/driver_phase_ownership_test.ts",
+      "tests/driver_phase_guard_test.ts",
+      "tests/hub_driver_acceptance_test.ts",
+      "tests/hub_driver_native_acceptance_test.ts",
+      "tests/hub_driver_supervisor_test.ts",
+    ],
+    client: [],
+    native: ["sync-settings-native", "sync-driver-native"],
+  },
+  "tests/helpers/fixture_clock.ts": {
+    inputs: [
+      ...SCOPE,
+      "tests/helpers/owned_record_channel.ts",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+      "tests/helpers/fixture_clock.ts",
+      "tests/helpers/fixture_clock_legacy.json",
+      "tests/helpers/fixture_clock_rules.ts",
+      "tests/helpers/fixture_epoch.ts",
+      "tests/helpers/totp.ts",
+      "tests/helpers/totp_live.ts",
+      "tests/helpers/identity.ts",
+      "tests/helpers/record_schema.ts",
+      "tests/helpers/driver_fixture.ts",
+      "client/tests/e2e/native-totp-fixture.mjs",
+      "client/tests/e2e/harness-helpers.mjs",
+      "client/tests/e2e/repair-fixture-lifetime.mjs",
+      "client/tests/e2e/plugin-review-repairs.mjs",
+      "client/tests/e2e/setup-totp-desktop.mjs",
+      "client/tests/e2e/access-settings.mjs",
+    ],
+    server: [
+      "tests/fixture_clock_ownership_test.ts",
+      "tests/fixture_clock_guard_test.ts",
+      "tests/totp_test.ts",
+      "tests/native_totp_fixture_test.ts",
+      "tests/access_settings_test.ts",
+      "tests/auth_test.ts",
+      "tests/local_auth_test.ts",
+    ],
+    client: [],
+    native: [
+      "setup-totp-desktop",
+      "access-settings",
+      "sync-driver-native",
+      "plugin-review-repairs",
+    ],
+  },
+  "tests/helpers/fixture_layout.ts": {
+    inputs: [
+      ...SCOPE,
+      "tests/helpers/owned_child.ts",
+      "tests/helpers/process.ts",
+      "tests/helpers/boot.ts",
+      "tests/helpers/fixture_layout.ts",
+      "tests/helpers/process_values.ts",
+      "tests/helpers/completed_build.ts",
+      "tests/helpers/completed_build_engine.ts",
+      "tests/helpers/owned_operation.ts",
+      "tests/helpers/owned_operation_contract.ts",
+      "client/tests/e2e/prefix-auth-fixture.mjs",
+      "tests/helpers/process_records.ts",
+      "tests/helpers/record_publication.ts",
+    ],
+    server: [
+      "tests/fixture_layout_ownership_test.ts",
+      "tests/ownership_layout_guard_test.ts",
+      "tests/config_paths_test.ts",
+      "tests/config_owned_root_test.ts",
+      "tests/server_lifetime_test.ts",
+    ],
+    client: [],
+    native: ["setup-wizard", "plugin-prefix-auth"],
+  },
+  "tests/helpers/owned_contenders.ts": {
+    inputs: [
+      ...SCOPE,
+      "tests/helpers/owned_operation.ts",
+      "tests/helpers/owned_operation_contract.ts",
+      "tests/helpers/owned_contenders.ts",
+    ],
+    server: [
+      "tests/owned_contenders_test.ts",
+      "tests/owned_contenders_guard_test.ts",
+    ],
+    client: [],
+    native: [],
+  },
+  "scripts/select-checks.ts": {
+    inputs: [
+      "scripts/select-checks.ts",
+      "scripts/gates.sh",
+      "scripts/guard-modules.ts",
+    ],
+    server: [
+      "tests/select_checks_test.ts",
+      "tests/gate_selection_test.ts",
+      "tests/contract_discovery_test.ts",
+      "tests/ownership_guard_test.ts",
+    ],
+    client: [],
+    native: [],
+  },
+};
+export const OWNERSHIP_NATIVE_CONTROLS = [
+  "native-consumer-controls",
+  "native-result-controls",
+  "runner-entrypoint-controls",
+  "unit-consumer-controls",
 ];
 
 /** Directory entries end with "/". These select static gates only. */
@@ -41,6 +290,7 @@ export const SHARED_INPUTS = [
   ".devcontainer/",
   "scripts/gates.sh",
   "scripts/select-checks.ts",
+  "scripts/guard-modules.ts",
   "entrypoint.sh",
   "Dockerfile",
 ];
@@ -176,7 +426,7 @@ export interface Reason {
 export interface Selection {
   version: 1;
   gates: Gate[];
-  browser: false;
+  browser: boolean;
   contractTests: string[];
   serverTests: string[];
   timingTests: string[];
@@ -237,6 +487,7 @@ export function selectChecks(changes: Change[], context: Context): Selection {
   const server = new Set<string>();
   const timing = new Set<string>();
   const client = new Set<string>();
+  const native = new Set<string>();
   const reasons: Reason[] = [{
     path: "*",
     status: "",
@@ -248,6 +499,33 @@ export function selectChecks(changes: Change[], context: Context): Selection {
 
   for (const change of changes) {
     const path = change.path;
+    for (const [owner, family] of Object.entries(OWNERSHIP_SELECTION)) {
+      if (!family.inputs.includes(path)) continue;
+      for (const test of [...family.server, ...family.client]) {
+        if (!tracked.has(test)) {
+          throw new Error(
+            `ownership selection ${owner}: missing consumer ${test}`,
+          );
+        }
+      }
+      for (const name of family.native) {
+        if (!tracked.has(`client/tests/e2e/${name}.mjs`)) {
+          throw new Error(
+            `ownership selection ${owner}: missing native consumer ${name}`,
+          );
+        }
+        native.add(name);
+      }
+      for (const test of family.server) server.add(test);
+      for (const test of family.client) client.add(test);
+      note(
+        change,
+        `ownership:${owner}`,
+        `server: ${family.server.join(", ")}; client: ${
+          family.client.join(", ")
+        }; native: ${family.native.join(", ")}`,
+      );
+    }
     if (isDocs(path)) {
       note(change, "docs", "static gates only");
       continue;
@@ -305,16 +583,27 @@ export function selectChecks(changes: Change[], context: Context): Selection {
     status: "",
     rule: "scope",
     selects:
-      "CI owns the browser suite, client build and cold-load; timing tests run here only when the test file changed",
+      "explicit ownership families add completed builds and selected native consumers; otherwise CI owns browser/build/cold-load; timing tests require a changed test",
   });
   const gates = new Set<Gate>(STATIC_GATES);
   if (server.size) gates.add("server");
   if (timing.size) gates.add("timing");
   if (client.size) gates.add("client");
+  if (native.size) {
+    gates.add("build");
+    gates.add("native");
+    for (const name of OWNERSHIP_NATIVE_CONTROLS) {
+      // A required control is a mapped consumer too: absence fails closed.
+      if (!tracked.has(`client/tests/e2e/${name}.mjs`)) {
+        throw new Error(`ownership selection: missing native control ${name}`);
+      }
+      native.add(name);
+    }
+  }
   return {
     version: 1,
     gates: GATE_ORDER.filter((gate) => gates.has(gate)),
-    browser: false,
+    browser: native.size > 0,
     contractTests: [
       ...CONTRACT_TESTS.filter((test) => tracked.has(test)),
       ...guardModules(context.files),
@@ -322,7 +611,7 @@ export function selectChecks(changes: Change[], context: Context): Selection {
     serverTests: serverTests.filter((test) => server.has(test)),
     timingTests: [...timing].sort(),
     clientTests: [...client].sort(),
-    browserCases: [],
+    browserCases: [...native].sort(),
     reasons,
   };
 }
@@ -412,7 +701,7 @@ export async function loadContext(
   }
 }
 
-/** Reject malformed selections and CI-only gates before any workload runs. */
+/** Reject malformed selections before any selected workload runs. */
 export function validateSelection(value: unknown): asserts value is Selection {
   const fail = (detail: string): never => {
     throw new Error(`invalid selection: ${detail}`);
@@ -438,8 +727,16 @@ export function validateSelection(value: unknown): asserts value is Selection {
     new Set(gates).size !== gates.length ||
     STATIC_GATES.some((gate) => !gates.includes(gate))
   ) fail("unknown, repeated or missing static gates");
-  if (selection.browser !== false || strings("browserCases").length) {
-    fail("browser suite is CI-only");
+  const cases = strings("browserCases"), hasNative = cases.length > 0;
+  if (
+    selection.browser !== hasNative || gates.includes("native") !== hasNative ||
+    gates.includes("build") !== hasNative ||
+    new Set(cases).size !== cases.length ||
+    cases.some((name) => !/^[a-z0-9-]+$/.test(name)) ||
+    (hasNative &&
+      OWNERSHIP_NATIVE_CONTROLS.some((name) => !cases.includes(name)))
+  ) {
+    fail("native cases, build, browser or required controls disagree");
   }
   strings("contractTests");
   for (

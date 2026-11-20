@@ -271,7 +271,7 @@ case "$mode" in
         browser_required="$(field browser)"
         failed=""
         selected() { local g; for g in "${gates[@]}"; do [[ "$g" == "$1" ]] && return 0; done; return 1; }
-        [[ "$browser_required" == false ]] || { printf 'browser suite is CI-only\n' >&2; exit 1; }
+        if [[ "$browser_required" == true ]]; then gate browser-ready cdp_ready; fi
         static_gates "${contracts[@]}"
         if selected server; then
             gate server server_tests "${server_files[@]}"
@@ -286,6 +286,11 @@ case "$mode" in
                 quoted+=" '$file'"
             done
             gate client env VITEST_MAX_WORKERS=4 deno task --eval "vitest related --run --passWithNoTests$quoted"
+        fi
+        if selected build; then gate build deno task build:client; fi
+        if selected native; then
+            export GLOBNOTES_E2E_CASES="$(IFS=,; printf '%s' "${cases[*]}")"
+            browser_gate native
         fi
         ;;
     all|checks)
