@@ -11,6 +11,8 @@ import {
 interface FixtureController {
   readonly work: OwnershipScope;
   readonly signal: AbortSignal;
+  readonly settled: OwnershipScope;
+  link(child: FixtureController, retired: () => void): void;
   cancel(): Promise<OwnershipRelease>;
   finish(): Promise<OwnershipRelease>;
 }
@@ -33,8 +35,9 @@ export function ownFixtureScope(
   let linked = children.get(owner);
   if (!linked) children.set(owner, linked = new WeakSet());
   if (linked.has(child)) return;
-  owner.onCancel(() => engine.cancel());
-  owner.defer(async () => (await engine.finish()).throwIfFailed());
+  engines.get(owner)!.link(engine, () => {
+    linked!.delete(child);
+  });
   linked.add(child);
 }
 
@@ -82,6 +85,7 @@ export function createFixtureScope() {
   const resources = createOwnershipScope();
   const work = createOwnershipScope();
   const cancellationResults = createOwnershipScope();
+  const settled = createOwnershipScope();
   const controller = new AbortController();
   let cancelled: Promise<OwnershipRelease> | undefined;
   let finished: Promise<OwnershipRelease> | undefined;
@@ -112,6 +116,7 @@ export function createFixtureScope() {
     const cancelling = cancel();
     if (!finished) {
       const phases = createOwnershipScope();
+      phases.defer(async () => (await settled.releaseAll()).throwIfFailed());
       phases.defer(async () => (await resources.releaseAll()).throwIfFailed());
       phases.defer(async () => (await work.releaseAll()).throwIfFailed());
       phases.defer(async () => (await cancelling).throwIfFailed());
@@ -119,10 +124,24 @@ export function createFixtureScope() {
     }
     return finished;
   };
+  const observeCancellation = (hook: (signal: AbortSignal) => unknown) => {
+    const pending = cancellationResults.acquire(async () => {
+      try {
+        await hook(controller.signal);
+        return { failed: false as const };
+      } catch (error) {
+        return { failed: true as const, error };
+      }
+    }, (outcome) => {
+      if (outcome.failed) throw outcome.error;
+    });
+    pending.catch(() => {});
+  };
   const scope: FixtureScope = Object.freeze({
     identity: resources.identity,
     get size() {
-      return resources.size + work.size + cancellationResults.size;
+      return resources.size + work.size + cancellationResults.size +
+        settled.size;
     },
     signal: controller.signal,
     assertCurrent: () => resources.assertCurrent(),
@@ -136,17 +155,7 @@ export function createFixtureScope() {
         // Observe each result immediately and resolve it exactly once, even if
         // another hook stays pending. The core report owns callback failures;
         // retirement of this phase's acquisition promise is expected, not lost IO.
-        const pending = cancellationResults.acquire(async () => {
-          try {
-            await cancel(signal);
-            return { failed: false as const };
-          } catch (error) {
-            return { failed: true as const, error };
-          }
-        }, (outcome) => {
-          if (outcome.failed) throw outcome.error;
-        });
-        pending.catch(() => {});
+        observeCancellation(cancel);
       };
       // Native abort dispatch is synchronous and all-attempt through invoke's
       // error capture. Listener removal is ordinary release, after IO drains.
@@ -201,7 +210,36 @@ export function createFixtureScope() {
       resources.defer(dispose);
     },
   });
-  engines.set(scope, { work, signal: controller.signal, cancel, finish });
+  engines.set(scope, {
+    work,
+    signal: controller.signal,
+    settled,
+    cancel,
+    finish,
+    link(child, retired) {
+      let joining = false, drained = false;
+      const invoke = () => observeCancellation(() => child.cancel());
+      // One owned edge includes cancellation and drain custody. Settlement of
+      // the child releases that edge, unless the root is already joining it.
+      const edge = resources.defer(async () => {
+        joining = true;
+        const cleanup = createOwnershipScope();
+        cleanup.defer(async () => {
+          if (!drained) (await child.finish()).throwIfFailed();
+        });
+        cleanup.defer(() =>
+          controller.signal.removeEventListener("abort", invoke)
+        );
+        (await cleanup.releaseAll()).throwIfFailed();
+      });
+      child.settled.defer(async () => {
+        drained = true;
+        retired();
+        if (!joining) await resources.release(edge);
+      });
+      controller.signal.addEventListener("abort", invoke, { once: true });
+    },
+  });
   const close = async (...primary: [] | [unknown]) => {
     (await finish()).throwIfFailed(...primary);
   };

@@ -11,7 +11,7 @@ import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import { remotelySaveRemote } from "./helpers/remotely_save_remote.ts";
 
 Deno.test("native export owner: matching remote bytes/sent version are not a host acknowledgement", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   const content = "# current\n", version = exportVersion(content);
   Deno.writeTextFileSync(`${f.vault}/Live.md`, content);
   f.hub.scanNow();
@@ -56,7 +56,7 @@ Deno.test("native export owner: matching remote bytes/sent version are not a hos
       ),
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 

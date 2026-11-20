@@ -232,8 +232,8 @@ Deno.test("index erasure: failed rebuild never publishes a partial new index and
   }
 });
 
-Deno.test("index erasure: the actual hub projection batches rename-away and deleted-note erasure into one checkpoint", () => {
-  const f = hubOperationsFixture();
+Deno.test("index erasure: the actual hub projection batches rename-away and deleted-note erasure into one checkpoint", async () => {
+  const f = await hubOperationsFixture();
   let db!: DatabaseSync, checkpoints = 0;
   const index = new Fts5Indexer(
     testMetadata(f.config.statePath),
@@ -293,7 +293,7 @@ Deno.test("index erasure: the actual hub projection batches rename-away and dele
     }
   } finally {
     db.close();
-    f.close();
+    await f.close();
   }
 });
 

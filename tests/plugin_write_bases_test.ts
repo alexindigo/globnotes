@@ -5,7 +5,7 @@
  * a stale base is merged (note text), kept as a conflict copy or refused per
  * `onStale`; reads return versions; render Workers cannot write files. */
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { versionOf } from "../server/hub/merge.ts";
 import { PLUGIN_CONTRACT_VERSION } from "../server/plugins/contracts.ts";
 import {
@@ -47,14 +47,17 @@ function writer(
 ) {
   const vault = b.fixture.vault;
   const receipt = async (requestId: string): Promise<ActionReceipt> => {
-    let latest: ActionReceipt | undefined;
-    await waitUntil(async () => {
-      latest = await b.command("result", requestId) as ActionReceipt;
-      return ["accepted", "running"].includes(latest.status)
-        ? pending(latest)
-        : done();
-    }, { label: `receipt ${requestId}` });
-    return latest!;
+    return (await b.fixture.admit(async (signal) => {
+      let latest: ActionReceipt | undefined;
+      await waitUntil(async () => {
+        signal.throwIfAborted();
+        latest = await b.command("result", requestId) as ActionReceipt;
+        return ["accepted", "running"].includes(latest.status)
+          ? pending(latest)
+          : done();
+      }, { label: `receipt ${requestId}` });
+      return latest!;
+    })).value;
   };
   const request = async (action: string, args: Record<string, unknown>) =>
     await receipt(
@@ -71,18 +74,52 @@ function writer(
         requestId: string;
       }).requestId,
     );
-  const version = (relative: string) =>
-    versionOf(Deno.readFileSync(`${vault}/${relative}`));
-  const read = (relative: string) =>
-    Deno.readTextFileSync(`${vault}/${relative}`);
-  const outside = (relative: string, text: string) =>
-    Deno.writeTextFileSync(`${vault}/${relative}`, text);
+  const version = b.scope.bind((relative: string) =>
+    versionOf(Deno.readFileSync(`${vault}/${relative}`))
+  );
+  const read = b.scope.bind((relative: string) =>
+    Deno.readTextFileSync(`${vault}/${relative}`)
+  );
+  const outside = async (relative: string, text: string) =>
+    (await b.fixture.admit(() =>
+      Deno.writeTextFileSync(`${vault}/${relative}`, text)
+    )).value;
   return { ...b, vault, request, file, version, read, outside };
 }
 
-function withWriter(body: (w: ReturnType<typeof writer>) => Promise<void>) {
+function withWriter(
+  body: (w: ReturnType<typeof writer>) => void | PromiseLike<void>,
+) {
   return withPluginOperationsFixture(writerOptions, (b) => body(writer(b)));
 }
+
+Deno.test("fixture writer: convenience ports cannot escape their scope", async () => {
+  let escaped: ReturnType<typeof writer> | undefined;
+  await withWriter((writer) => {
+    escaped = writer;
+  });
+  const escapedWriter = escaped!;
+  assertThrows(() => escapedWriter.read("late.md"), Error, "retired");
+  assertThrows(() => escapedWriter.version("late.md"), Error, "retired");
+  const writing = escapedWriter.outside("late.md", "late");
+  await assertRejects(() => writing, Error, "retired");
+});
+
+Deno.test("fixture writer: outside writes enter resource-owned admission", async () => {
+  await withWriter(async (writer) => {
+    const before = writer.scope.size;
+    const writing = writer.outside("External.md", "external writer");
+    writing.catch(() => {});
+    assertEquals(
+      writer.scope.size,
+      before + 1,
+      "outside write was not admitted",
+    );
+    await writing;
+    assertEquals(writer.scope.size, before);
+    assertEquals(writer.read("External.md"), "external writer");
+  });
+});
 
 for (const operation of ["save", "remove"] as const) {
   Deno.test(`fixture instances: outer ${operation} reads only its captured vault`, async () => {
@@ -200,7 +237,7 @@ Deno.test("plugin bases: a stale note write merges, keeps both or refuses", asyn
   await withWriter(async (w) => {
     await w.create("Note", "a\nb\nc\n");
     // Text base: a non-overlapping change elsewhere merges.
-    w.outside("Note.md", "a\nb\nC\n");
+    await w.outside("Note.md", "a\nb\nC\n");
     const merged = await w.request("save", {
       path: "Note",
       newContent: "A\nb\nc\n",
@@ -246,7 +283,7 @@ Deno.test("plugin bases: stale renames and deletes are refused (O4, O9)", async 
   await withWriter(async (w) => {
     await w.create("Note", "one");
     const v = w.version("Note.md");
-    w.outside("Note.md", "changed elsewhere");
+    await w.outside("Note.md", "changed elsewhere");
     const rename = await w.request("rename", {
       path: "Note",
       newPath: "Moved",
@@ -268,7 +305,7 @@ Deno.test("plugin bases: binary file writes compare versions, never merge", asyn
   await withWriter(async (w) => {
     await w.file("pic.bin", "first", { base: { kind: "absent" } });
     const v = w.version("pic.bin");
-    w.outside("pic.bin", "theirs");
+    await w.outside("pic.bin", "theirs");
     const copy = await w.file("pic.bin", "mine", {
       base: { kind: "version", version: v },
     });

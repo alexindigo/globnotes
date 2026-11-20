@@ -8,8 +8,8 @@ import {
 } from "../server/plugins/runtime.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 
-function fixture() {
-  const f = hubOperationsFixture();
+async function fixture() {
+  const f = await hubOperationsFixture();
   const guards: string[] = [];
   let cancel = false;
   const runtime = {
@@ -51,7 +51,7 @@ function fixture() {
 }
 
 Deno.test("hub saves: equal base writes and returns the recorded content version", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.ops.createNote({ path: "note", content: "base\n" }, f.api());
     const result = await f.save("base\n", "mine\n");
@@ -60,12 +60,12 @@ Deno.test("hub saves: equal base writes and returns the recorded content version
     assertEquals(result.version, f.hub.fileState("note.md")!.hash);
     assertEquals(result.version, contentVersion("mine\n"));
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub saves: independent edits merge, including rename, without persisting base bytes", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     const base = "private-request-base-token\nmiddle\nend\n";
     await f.ops.createNote({ path: "note", content: base }, f.api());
@@ -88,12 +88,12 @@ Deno.test("hub saves: independent edits merge, including rename, without persist
     }
     assert(!JSON.stringify(f.batches).includes("private-request-base-token"));
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub saves: overlap keeps original, ignores requested rename, exclusively creates numbered copies", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.ops.createNote({ path: "note", content: "base" }, f.api());
     Deno.writeTextFileSync(`${f.vault}/note.md`, "theirs");
@@ -128,12 +128,12 @@ Deno.test("hub saves: overlap keeps original, ignores requested rename, exclusiv
       ),
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub saves: deleted original is recreated through guarded creation", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.ops.createNote({ path: "note", content: "base" }, f.api());
     Deno.removeSync(`${f.vault}/note.md`);
@@ -145,12 +145,12 @@ Deno.test("hub saves: deleted original is recreated through guarded creation", a
       local: 1,
     });
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub saves: cancelled conflict-copy guard writes nothing and records no conflict", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.ops.createNote({ path: "note", content: "base" }, f.api());
     Deno.writeTextFileSync(`${f.vault}/note.md`, "theirs");
@@ -163,12 +163,12 @@ Deno.test("hub saves: cancelled conflict-copy guard writes nothing and records n
     ]);
     assertEquals(f.hub.conflicts(), []);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub saves: no writer replaces, renames or deletes without a base", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.ops.createNote({ path: "note", content: "theirs" }, f.api());
     for (
@@ -184,12 +184,12 @@ Deno.test("hub saves: no writer replaces, renames or deletes without a base", as
     assertEquals(f.notes.get("note").content, "theirs");
     assertEquals(f.notes.getPaths(), ["note"]);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub saves: a stale version base keeps both or refuses; a stale rename or delete is refused", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     const created = await f.ops.createNote(
       { path: "note", content: "one" },
@@ -230,7 +230,7 @@ Deno.test("hub saves: a stale version base keeps both or refuses; a stale rename
     assertEquals(removed.code, "base_stale");
     assertEquals(f.notes.get("note").content, "outside");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 

@@ -13,10 +13,10 @@ import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import { queryMetadata } from "../server/metadata/query.ts";
 import { metadataQuery } from "../server/metadata/contracts.ts";
 
-Deno.test("metadata read cost: warm get and bounded queries do not rescan the vault or every directory", () => {
+Deno.test("metadata read cost: warm get and bounded queries do not rescan the vault or every directory", async () => {
   const count = Number(Deno.env.get("GLOBNOTES_METADATA_COST_NOTES") ?? 128);
   assert(Number.isSafeInteger(count) && count >= 128 && count <= 20000);
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   for (let i = 0; i < count; i++) {
     Deno.writeTextFileSync(
       `${f.vault}/note-${String(i).padStart(5, "0")}.md`,
@@ -141,12 +141,12 @@ Deno.test("metadata read cost: warm get and bounded queries do not rescan the va
     Deno.lstatSync = nativeStat;
     f.hub.store.files = files;
     p.stop();
-    f.close();
+    await f.close();
   }
 });
 
-Deno.test("metadata read cost: a newly unsafe directory cannot turn one page into a vault-wide disclosure scan", () => {
-  const f = hubOperationsFixture();
+Deno.test("metadata read cost: a newly unsafe directory cannot turn one page into a vault-wide disclosure scan", async () => {
+  const f = await hubOperationsFixture();
   Deno.mkdirSync(`${f.vault}/notes`);
   for (let i = 0; i < 128; i++) {
     Deno.writeTextFileSync(`${f.vault}/notes/${i}.md`, "# note");
@@ -175,6 +175,6 @@ Deno.test("metadata read cost: a newly unsafe directory cannot turn one page int
   } finally {
     Deno.lstatSync = native;
     p.stop();
-    f.close();
+    await f.close();
   }
 });

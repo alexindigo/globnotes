@@ -135,7 +135,7 @@ Deno.test("writer registry: lists exactly the writers the code has", async () =>
 });
 
 Deno.test("writer registry: NoteOperations writers refuse a missing base and honour a stale one", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     const api = f.api();
     const disk = (name: string) => Deno.readTextFileSync(`${f.vault}/${name}`);
@@ -264,7 +264,7 @@ Deno.test("writer registry: NoteOperations writers refuse a missing base and hon
     assert(uploaded.filename !== "data.bin");
     assertEquals(Deno.readFileSync(`${f.vault}/data.bin`), new Uint8Array([9]));
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -332,7 +332,7 @@ Deno.test("writer registry: plugin actions refuse a missing base and honour a st
 });
 
 Deno.test("writer registry: every resolution action and REST writer refuses missing/stale pair bases", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     Deno.writeTextFileSync(`${f.vault}/original.md`, "keeper");
     Deno.writeTextFileSync(`${f.vault}/copy.md`, "loser");
@@ -404,6 +404,6 @@ Deno.test("writer registry: every resolution action and REST writer refuses miss
       }
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });

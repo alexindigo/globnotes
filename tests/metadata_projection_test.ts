@@ -19,7 +19,7 @@ function caught(projection: MetadataProjection) {
   );
 }
 Deno.test("metadata projection: synchronous invalidation and late parse cannot repopulate deleted/renamed current records", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   Deno.writeTextFileSync(`${f.vault}/old.md`, "# Old\nkey:: secret");
   f.hub.scanNow();
   const entered = Promise.withResolvers<void>(),
@@ -46,11 +46,11 @@ Deno.test("metadata projection: synchronous invalidation and late parse cannot r
   } finally {
     release.resolve();
     p.stop();
-    f.close();
+    await f.close();
   }
 });
 Deno.test("metadata projection: read/UTF8/size/parser failures are explicit and groups publish together", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   for (const name of ["good", "read", "utf8", "parse", "large"]) {
     Deno.writeTextFileSync(`${f.vault}/${name}.md`, name);
   }
@@ -106,11 +106,11 @@ Deno.test("metadata projection: read/UTF8/size/parser failures are explicit and 
     );
   } finally {
     p.stop();
-    f.close();
+    await f.close();
   }
 });
 Deno.test("metadata query: eligibility before filters/counts, segment prefix, equality/task AND and bounded windows", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   Deno.mkdirSync(`${f.vault}/scope`);
   Deno.mkdirSync(`${f.vault}/scope-other`);
   for (
@@ -150,12 +150,12 @@ Deno.test("metadata query: eligibility before filters/counts, segment prefix, eq
     );
   } finally {
     p.stop();
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("metadata projection: pruned-log recovery rebuilds and snapshot pages have no partially ready publication", async () => {
-  const f = hubOperationsFixture({}, { changeLimit: 3 });
+  const f = await hubOperationsFixture({}, { changeLimit: 3 });
   const scheduler = new LivenessClock(), clock = new ObservedClock(scheduler);
   const p = new MetadataProjection(f.hub, {
     clock,
@@ -213,12 +213,12 @@ Deno.test("metadata projection: pruned-log recovery rebuilds and snapshot pages 
     assertEquals(f.hub.store.pluginCursorOwners(), []);
   } finally {
     p.stop();
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("metadata projection: multipart replay publishes the entire group after its tail", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   const p = new MetadataProjection(f.hub);
   try {
     await caught(p);
@@ -242,12 +242,12 @@ Deno.test("metadata projection: multipart replay publishes the entire group afte
     assert(observations.every((n) => n === 0 || n === 130));
   } finally {
     p.stop();
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("metadata projection: changed bytes during planned read re-plan instead of labelling today's bytes as an old version", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   Deno.writeTextFileSync(`${f.vault}/note.md`, "# old");
   f.hub.scanNow();
   let changed = false;
@@ -276,12 +276,12 @@ Deno.test("metadata projection: changed bytes during planned read re-plan instea
     assertEquals(row.version, f.hub.fileState("note.md")!.hash);
   } finally {
     p.stop();
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("metadata projection: cached catalogue rechecks disclosed links and replaces namespace/collision observations on publication", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   Deno.mkdirSync(`${f.vault}/notes`);
   Deno.writeTextFileSync(`${f.vault}/notes/visible.md`, "# visible");
   f.hub.scanNow();
@@ -317,14 +317,14 @@ Deno.test("metadata projection: cached catalogue rechecks disclosed links and re
     assert(!JSON.stringify(p.records()).includes("first"));
   } finally {
     p.stop();
-    f.close();
+    await f.close();
   }
 });
 
 for (const operation of ["create", "remove"] as const) {
   for (const withFileChange of [false, true]) {
     Deno.test(`metadata namespace: ${operation} of an empty colliding directory invalidates metadata ${withFileChange ? "with an unrelated file edit" : "without file entries"}`, async () => {
-      const f = hubOperationsFixture();
+      const f = await hubOperationsFixture();
       const name = "Caf\u00e9",
         collision = "Cafe\u0301",
         note = `${name}/note.md`;
@@ -380,14 +380,14 @@ for (const operation of ["create", "remove"] as const) {
         );
       } finally {
         p.stop();
-        f.close();
+        await f.close();
       }
     });
   }
 }
 
 Deno.test("metadata namespace: directory-only change fences a held initial parse before its cursor acknowledgement", async () => {
-  const f = hubOperationsFixture(),
+  const f = await hubOperationsFixture(),
     parent = "Caf\u00e9",
     collision = "Cafe\u0301";
   Deno.mkdirSync(`${f.vault}/${parent}`);
@@ -418,12 +418,12 @@ Deno.test("metadata namespace: directory-only change fences a held initial parse
   } finally {
     release.resolve();
     p.stop();
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("metadata namespace: real directory watcher excludes and restores a cached note without file facts", async () => {
-  const f = hubOperationsFixture(),
+  const f = await hubOperationsFixture(),
     parent = "Caf\u00e9",
     collision = "Cafe\u0301",
     note = `${parent}/note.md`;
@@ -456,6 +456,6 @@ Deno.test("metadata namespace: real directory watcher excludes and restores a ca
     assertEquals(f.batches.length, batches);
   } finally {
     p.stop();
-    f.close();
+    await f.close();
   }
 });

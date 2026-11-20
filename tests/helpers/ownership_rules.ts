@@ -52,10 +52,16 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       PLUGIN_FIXTURE_ENGINE,
       PLUGIN_OPERATIONS,
       "tests/fixture_scope_test.ts",
+      "tests/helpers/hub_fixture.ts",
+      "tests/helpers/plugin_lifecycle.ts",
+      "tests/helpers/driver_inprocess.ts",
+      "tests/helpers/auxiliary_fixture.ts",
     ],
     [PLUGIN_FIXTURE_ENGINE]: [
       "tests/helpers/plugin_fixture.ts",
       PLUGIN_OPERATIONS,
+      "tests/helpers/plugin_lifecycle.ts",
+      "tests/helpers/auxiliary_fixture.ts",
     ],
   },
 };
@@ -67,6 +73,18 @@ export const FIXTURE_PILOT_FILES = [
   PLUGIN_OPERATIONS,
   "tests/plugin_write_bases_test.ts",
 ];
+const fixtureScenarios = [
+  "tests/fixture_scope_test.ts",
+  "tests/plugin_fixture_cleanup_test.ts",
+];
+/** P03 scenario coordination enters through the owned, cancellation-aware port. */
+export const FIXTURE_SCENARIO_OWNERSHIP: OwnershipRules = {
+  ...FIXTURE_OWNERSHIP,
+  roots: {
+    ...FIXTURE_OWNERSHIP.roots,
+    Promise: { members: ["all", "allSettled", "resolve", "reject"] },
+  },
+};
 /** The closed pilot's acquisitions belong to its constructor modules. Other
  * repository families keep their existing P01 root policy until they migrate. */
 export const FIXTURE_PILOT_OWNERSHIP: OwnershipRules = {
@@ -104,10 +122,13 @@ export const PRODUCT_OWNERSHIP: OwnershipRules = {
  * This selects registrations, not allowed sites; every violation is inventoried. */
 export function registeredOwnership(sources: SourceModule[]) {
   const pilot: SourceModule[] = [],
+    scenarios: SourceModule[] = [],
     remaining: SourceModule[] = [],
     product: SourceModule[] = [];
   for (const source of sources) {
-    (FIXTURE_PILOT_FILES.includes(source.file)
+    (fixtureScenarios.includes(source.file)
+      ? scenarios
+      : FIXTURE_PILOT_FILES.includes(source.file)
       ? pilot
       : source.file.startsWith("tests/") ||
           source.file.startsWith("client/tests/")
@@ -118,6 +139,9 @@ export function registeredOwnership(sources: SourceModule[]) {
   }
   return [
     ...(remaining.length ? analyzeOwnership(remaining, FIXTURE_OWNERSHIP) : []),
+    ...(scenarios.length
+      ? analyzeOwnership(scenarios, FIXTURE_SCENARIO_OWNERSHIP)
+      : []),
     ...(pilot.length ? analyzeOwnership(pilot, FIXTURE_PILOT_OWNERSHIP) : []),
     ...(product.length ? analyzeOwnership(product, PRODUCT_OWNERSHIP) : []),
   ];

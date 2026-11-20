@@ -23,7 +23,7 @@ for (
   ]] as const
 ) {
   Deno.test(`changes transport: actual ordinary Worker FIFO rechecks queued ${mode} after ${narrow ? "canonical grant narrowing" : "delete"}`, async () => {
-    const f = hubOperationsFixture();
+    const f = await hubOperationsFixture();
     const p = await pluginFixture();
     const dir = await p.install("queued", {
       runtime: { server: "service.js" },
@@ -143,13 +143,13 @@ for (
       follower?.stop();
       host.stop();
       await p.dispose();
-      f.close();
+      await f.close();
     }
   });
 }
 
 Deno.test("log example: persistence before lost host ack deduplicates replay; retention reset rebuilds current state", async () => {
-  const f = hubOperationsFixture({}, { changeLimit: 3 });
+  const f = await hubOperationsFixture({}, { changeLimit: 3 });
   const root = new URL(
     "./fixtures/plugins/globnotes-log-example/",
     import.meta.url,
@@ -252,7 +252,7 @@ Deno.test("log example: persistence before lost host ack deduplicates replay; re
   } finally {
     PluginHost.prototype.invoke = invoke;
     await runtime.close();
-    f.close();
+    await f.close();
   }
 });
 
@@ -260,7 +260,7 @@ async function multipartExample(
   forgeAcknowledgement = false,
   closed: (root: string) => void = () => {},
 ) {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   const root = new URL(
     "./fixtures/plugins/globnotes-log-example/",
     import.meta.url,
@@ -395,7 +395,7 @@ async function multipartExample(
     f.hub.store.advancePluginCursor = advance;
     PluginHost.prototype.invoke = invoke;
     await runtime.close();
-    f.close();
+    await f.close();
     closed(f.root);
   }
 }

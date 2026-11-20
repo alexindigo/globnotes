@@ -125,7 +125,7 @@ Deno.test("attachment names: raw and encoded references survive base-aware note 
 });
 
 Deno.test("attachment names: one decoded identity drives gated moves, projections and global rewrites", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     Deno.mkdirSync(`${f.vault}/old/assets`, { recursive: true });
     Deno.mkdirSync(`${f.vault}/new/assets`, { recursive: true });
@@ -243,6 +243,6 @@ Deno.test("attachment names: one decoded identity drives gated moves, projection
       assertEquals(response, null, `excluded file ${code}`);
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });

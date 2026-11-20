@@ -130,7 +130,7 @@ Deno.test("driver import: byte-identical remote revision changes adopt without c
 });
 
 Deno.test("driver import: managed metadata-only adoption preserves local bytes and acknowledges only the remote version", async () => {
-  const f = hubOperationsFixture(), peers = new DriverPeers(f.hub.store);
+  const f = await hubOperationsFixture(), peers = new DriverPeers(f.hub.store);
   try {
     const created = peers.create("test", "Metadata remote");
     const peer = peers.update(created.id, created.revision, {
@@ -195,7 +195,7 @@ Deno.test("driver import: managed metadata-only adoption preserves local bytes a
     assertEquals(held[0].status, "held");
     assertEquals(f.hub.fileState("binary.bin"), null);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -232,7 +232,7 @@ Deno.test("driver import: only complete comparable nonempty snapshots infer abse
   );
 });
 Deno.test("driver import: one group, one publish, no echo, copies and deleted-here holds", async () => {
-  const f = hubOperationsFixture(), peers = new DriverPeers(f.hub.store);
+  const f = await hubOperationsFixture(), peers = new DriverPeers(f.hub.store);
   try {
     let peer = peers.create("test", "My remote");
     peer = peers.update(peer.id, 1, { ...peer, enabled: true });
@@ -340,11 +340,11 @@ Deno.test("driver import: one group, one publish, no echo, copies and deleted-he
     }]);
     assertEquals(f.notes.get("folder/n1").content, "new remote");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 Deno.test("driver import: missing/stale bases, unsafe names, generation and read-only refuse effects", async () => {
-  const f = hubOperationsFixture(), peers = new DriverPeers(f.hub.store);
+  const f = await hubOperationsFixture(), peers = new DriverPeers(f.hub.store);
   try {
     const off = peers.create("test", "Remote"),
       peer = peers.update(off.id, 1, { ...off, enabled: true });
@@ -391,6 +391,6 @@ Deno.test("driver import: missing/stale bases, unsafe names, generation and read
     f.lifecycle.writable = original;
     assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "local");
   } finally {
-    f.close();
+    await f.close();
   }
 });

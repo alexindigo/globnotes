@@ -19,6 +19,25 @@ import { withPluginFixture } from "./helpers/plugin_fixture.ts";
 const repositoryRoot = (moduleUrl: string | URL = import.meta.url) =>
   fromFileUrl(new URL("../", moduleUrl));
 
+for (
+  const text of [
+    "Promise.withResolvers()",
+    "const Deferred = Promise; Deferred.withResolvers()",
+    "const {withResolvers: gate} = Promise; gate()",
+    'Promise["withResolvers"]()',
+    "new Promise(() => {})",
+    "const scope={admit:f=>f()}; scope.admit(()=>Promise.withResolvers())",
+  ]
+) {
+  Deno.test(`P03 coordination: bare or aliased gate is not owned: ${text}`, () => {
+    const sites = registeredOwnership([{
+      file: "tests/plugin_fixture_cleanup_test.ts",
+      text,
+    }]);
+    assert(sites.some((site) => site.capability.startsWith("Promise.")));
+  });
+}
+
 Deno.test("P03 review: encoded checkout roots reach registered fixture owners", async () => {
   await withPluginFixture(async (fixture) => {
     const link = join(fixture.root, "checkout space % #");

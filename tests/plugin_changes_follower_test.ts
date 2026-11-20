@@ -10,8 +10,8 @@ import {
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import { LivenessClock } from "./helpers/worker_liveness.ts";
 
-function fixture(limit?: number) {
-  const f = hubOperationsFixture({}, { changeLimit: limit });
+async function fixture(limit?: number) {
+  const f = await hubOperationsFixture({}, { changeLimit: limit });
   const scheduler = new LivenessClock();
   const clock = new ObservedClock(scheduler);
   const followers: LogFollower[] = [];
@@ -68,15 +68,15 @@ function fixture(limit?: number) {
     retire() {
       active = false;
     },
-    close() {
+    async close() {
       followers.forEach((follower) => follower.stop());
-      f.close();
+      await f.close();
     },
   };
 }
 
 Deno.test("log follower: acknowledged reset snapshots current metadata, then catches writes during snapshot without sync-stack dispatch", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     f.write("one.md");
     const follower = f.add();
@@ -105,12 +105,12 @@ Deno.test("log follower: acknowledged reset snapshots current metadata, then cat
       lastError: null,
     });
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("log follower: current canonical authority fences in-flight snapshot ack and starts a fresh reset", async () => {
-  const f = fixture();
+  const f = await fixture();
   const reply = Promise.withResolvers<unknown>();
   let authority = "first";
   try {
@@ -143,12 +143,12 @@ Deno.test("log follower: current canonical authority fences in-flight snapshot a
     assertEquals(f.owner.load()?.seq, 1);
   } finally {
     reply.resolve(undefined);
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("log follower: failed/forged acknowledgements retry from SQLite after scrub with observed backoff and no duplicate in-flight call", async () => {
-  const f = fixture();
+  const f = await fixture();
   let reject = true;
   try {
     const follower = f.add({
@@ -187,12 +187,12 @@ Deno.test("log follower: failed/forged acknowledgements retry from SQLite after 
       assert(!text.includes("body-marker"));
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("log follower: cursor resumes on restart; changed authority, replaced log and future cursors require explicit reset", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     f.write("one.md");
     let follower = f.add();
@@ -231,12 +231,12 @@ Deno.test("log follower: cursor resumes on restart; changed authority, replaced 
       follower.stop();
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("log follower: acknowledged future-cursor snapshot resets the real stored cursor even when writes overtake it during delivery", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     f.write("one.md");
     const old = { logId: f.hub.store.logId, seq: 0, authorityKey: "all" };
@@ -278,12 +278,12 @@ Deno.test("log follower: acknowledged future-cursor snapshot resets the real sto
       "changes",
     ]);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("log follower: held delivery cannot block independent follower or save; retirement fences its late ack", async () => {
-  const f = fixture();
+  const f = await fixture();
   const held = Promise.withResolvers<unknown>();
   try {
     const first = f.add({ deliver: () => held.promise });
@@ -314,12 +314,12 @@ Deno.test("log follower: held delivery cannot block independent follower or save
     );
   } finally {
     held.resolve({});
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("log follower: multi-page snapshot acks are nondurable; deleted/symlink/state/staging candidates are rechecked before disclosure", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     for (let i = 0; i < 130; i++) {
       Deno.writeTextFileSync(
@@ -376,12 +376,12 @@ Deno.test("log follower: multi-page snapshot acks are nondurable; deleted/symlin
     );
     fresh.stop();
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("log follower: retention during held final snapshot ack aborts recovery, and observed expiry releases inventory", async () => {
-  const f = fixture(2);
+  const f = await fixture(2);
   const held = Promise.withResolvers<unknown>();
   try {
     f.write("one.md");
@@ -413,12 +413,12 @@ Deno.test("log follower: retention during held final snapshot ack aborts recover
     assertEquals(expired.reason, "snapshot_expired");
   } finally {
     held.resolve({});
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("log follower: undefined, partial and reused acknowledgements never advance cursor; restart abandons incomplete snapshot", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     for (let i = 0; i < 129; i++) {
       Deno.writeTextFileSync(`${f.vault}/${i}.md`, "current");
@@ -455,12 +455,12 @@ Deno.test("log follower: undefined, partial and reused acknowledgements never ad
     await f.step();
     assertEquals(f.owner.load()?.seq, 129);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("log follower: transport queue rechecks SQLite names and snapshot membership at actual disclosure", async () => {
-  const f = fixture();
+  const f = await fixture();
   const queued = Promise.withResolvers<unknown>();
   let disclose: (() => ChangePacket) | undefined;
   try {
@@ -497,6 +497,6 @@ Deno.test("log follower: transport queue rechecks SQLite names and snapshot memb
     }
   } finally {
     queued.resolve({});
-    f.close();
+    await f.close();
   }
 });

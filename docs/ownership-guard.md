@@ -2,21 +2,22 @@
 
 The guard checks capability roots and resolved import sites, not the flow of
 JavaScript values. Every enumerated project module and local transitive is
-parsed, including `.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs` and `.jsx`. Syntax errors,
-incomplete source/statement spans and module-set mismatches fail before results
-can be accepted.
+parsed, including `.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs` and
+`.jsx`. Syntax errors, incomplete source/statement spans and module-set
+mismatches fail before results can be accepted.
 
 ## Rules
 
 `analyzeOwnership(sources, rules = PROCESS_OWNERSHIP)` returns violations only.
-`OwnershipSourceOwner.analyze(root, rules)` and `repositoryOwnership(root, rules)`
-accept the same explicit rules. No mutable global registration is needed.
+`OwnershipSourceOwner.analyze(root, rules)` and
+`repositoryOwnership(root, rules)` accept the same explicit rules. No mutable
+global registration is needed.
 
-| # | Registration | Meaning |
-|---|---|---|
-| 1 | `roots[name].members` | Ordinary direct, non-computed members of a global root |
+| # | Registration                       | Meaning                                                               |
+| - | ---------------------------------- | --------------------------------------------------------------------- |
+| 1 | `roots[name].members`              | Ordinary direct, non-computed members of a global root                |
 | 2 | `roots[name].ownedMembers[member]` | Exact owner modules for that member; overrides the public member list |
-| 3 | `modules[resolvedIdentity]` | Exact owner modules for every runtime import/re-export of that module |
+| 3 | `modules[resolvedIdentity]`        | Exact owner modules for every runtime import/re-export of that module |
 
 A global root in any other value position rejects: aliases, destructuring,
 object values, spreads, arguments, exports and computed access. This includes
@@ -26,8 +27,8 @@ shadows from runtime globals; erased declarations and JS expando writes do not
 create runtime shadows. Types are parsed but erased type-only dependencies do
 not acquire a runtime capability.
 
-Root occurrences are collected from the entire AST without subtree pruning.
-Each occurrence is then classified by a closed list of erased ancestor positions:
+Root occurrences are collected from the entire AST without subtree pruning. Each
+occurrence is then classified by a closed list of erased ancestor positions:
 annotations, type arguments, type parameters/aliases/interfaces, implements
 clauses, type-only import/export forms and ambient declarations. Runtime class
 heritage and internal import-equals aliases receive the ordinary root checks.
@@ -38,9 +39,9 @@ roots. Local export specifiers still reference local bindings or globals. The
 dependency check governs re-exports, and each producer's own roots are checked.
 
 Imports are classified by the graph's resolved identity, not alias spelling or
-selected export names. Empty runtime re-exports still load their module.
-Dynamic imports require a string literal and a graph edge; no string folding,
-URL evaluation or re-export member lookup occurs. Unresolved runtime dependency
+selected export names. Empty runtime re-exports still load their module. Dynamic
+imports require a string literal and a graph edge; no string folding, URL
+evaluation or re-export member lookup occurs. Unresolved runtime dependency
 edges reject rather than being presumed harmless; canonical static Node builtin
 spellings can be classified directly.
 
@@ -76,23 +77,24 @@ responsibilities, not assertions inferred from arbitrary JavaScript flow.
 `OwnershipSite` retains `file`, `capability`, `line`, `source` and `context`.
 Sites now identify the first forbidden root or import, not every downstream use
 of an alias. Import capabilities use `module:<resolvedIdentity>`; bare/computed
-roots use `<root>.*`; direct denied members use `<root>.<member>`.
-Computed imports use `dynamic-import.*`, missing edges use `unresolved-import`.
+roots use `<root>.*`; direct denied members use `<root>.<member>`. Computed
+imports use `dynamic-import.*`, missing edges use `unresolved-import`.
 Owner-authorized references produce no violation site.
 
 `inventoryErrors` consumes all supplied violations without a directory filter or
 implicit owner exemption. Exact baseline occurrences are counted, stale entries
 reject, and every entry names its migration and consumers. No new source form
 automatically gains an allowance. Root-policy expansion records newly visible
-baseline sites separately in `ownership_root_sites.json`; it does not weaken
-the reference rules or claim class closure while migrations remain.
+baseline sites separately in `ownership_root_sites.json`; it does not weaken the
+reference rules or claim class closure while migrations remain.
 
 P01 no longer classifies credential encodings or follows credential values.
 P07-P10 register their actual private module boundaries and owner-facing roots;
-the old `CREDENTIAL_IMPORTS`, `SECRET_OWNER`, `protectedSource`, value interpreter
-and export-member resolver are gone. Their former 26 credential inventory entries
-are not represented as P01 credential protection. The registration controls retain
-the old credential examples without claiming the default process policy owns them.
+the old `CREDENTIAL_IMPORTS`, `SECRET_OWNER`, `protectedSource`, value
+interpreter and export-member resolver are gone. Their former 26 credential
+inventory entries are not represented as P01 credential protection. The
+registration controls retain the old credential examples without claiming the
+default process policy owns them.
 
 The guard is a source ownership contract, not a sandbox for hostile JavaScript.
 Declared owners, permitted public APIs and external dependencies remain trusted.
@@ -102,16 +104,27 @@ Declared owners, permitted public APIs and external dependencies remain trusted.
 P03's callback facades expose no partially constructed owner. Their private
 construction engines are registered by resolved identity. The finite pilot file
 list selects an explicit stricter root/module policy for those modules; other
-families retain their P01 policy until migration. `registeredOwnership` partitions
-the enumerated modules, analyzes every module exactly once with the same analyzer,
-and supplies every violation to the inventory without owner or prefix filtering.
-These are policy contexts, not a second parser or flow-based rule mechanism.
+families retain their P01 policy until migration. `registeredOwnership`
+partitions the enumerated modules, analyzes every module exactly once with the
+same analyzer, and supplies every violation to the inventory without owner or
+prefix filtering. These are policy contexts, not a second parser or flow-based
+rule mechanism.
 
 Raw directory acquisition belongs to the private plugin constructor; the
-operations constructor owns hub/manager acquisition. Importing a facade or naming
-a callback `scope` grants no root permission. Trusted constructor behavior,
-reserve-before-allocation and partial-runtime cleanup are runtime contracts;
-the source guard does not infer callback provenance or count method calls.
+operations constructor owns hub/manager acquisition. Importing a facade or
+naming a callback `scope` grants no root permission. Trusted constructor
+behavior, reserve-before-allocation and partial-runtime cleanup are runtime
+contracts; the source guard does not infer callback provenance or count method
+calls.
+
+P03's coordination-bearing scenario modules also register `Promise` as a root:
+ordinary result aggregation is permitted, while raw constructors, deferreds and
+aliases reject. Milestones enter through `fixture_coordination.ts`, which admits
+the wait, observes the enclosing scope's cancellation and releases its listener
+when the wait settles. Runtime controls prove cancellation and prompt release;
+the registration alone does not prove those behaviors. Hub, lifecycle, auxiliary
+and in-process driver constructors use the same fixture ownership engine rather
+than implementing another cleanup loop.
 
 ## P02 resource boundary
 

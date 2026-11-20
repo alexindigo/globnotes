@@ -34,7 +34,9 @@ async function fixture(
   read = ["scope"],
   options: { changeLimit?: number; clock?: ObservedClock } = {},
 ) {
-  const f = hubOperationsFixture({}, { changeLimit: options.changeLimit });
+  const f = await hubOperationsFixture({}, {
+    changeLimit: options.changeLimit,
+  });
   Deno.mkdirSync(`${f.vault}/scope`);
   const dir = `${f.config.statePath}/plugins/meta`;
   Deno.mkdirSync(dir, { recursive: true });
@@ -80,7 +82,7 @@ async function fixture(
     async close() {
       await runtime.close();
       projection.stop();
-      f.close();
+      await f.close();
     },
   };
 }

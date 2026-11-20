@@ -117,8 +117,8 @@ Deno.test("conflicts: rename uses pre-batch identities and deletion scrubs resol
   }
 });
 
-Deno.test("conflicts: vault invalidation follows committed metadata, not file sequence", () => {
-  const f = hubOperationsFixture(), revisions: number[] = [];
+Deno.test("conflicts: vault invalidation follows committed metadata, not file sequence", async () => {
+  const f = await hubOperationsFixture(), revisions: number[] = [];
   try {
     const dispose = f.hub.subscribeConflicts((revision) =>
       revisions.push(revision)
@@ -144,12 +144,12 @@ Deno.test("conflicts: vault invalidation follows committed metadata, not file se
     f.hub.scanNow();
     assertEquals(revisions, [1, 2, 3]);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
-Deno.test("conflicts: outside renames follow both members; deletion closes only actual relationships across restart", () => {
-  const f = hubOperationsFixture();
+Deno.test("conflicts: outside renames follow both members; deletion closes only actual relationships across restart", async () => {
+  const f = await hubOperationsFixture();
   try {
     Deno.mkdirSync(`${f.vault}/nested`);
     for (const name of ["original.md", "nested/copy.md", "other-copy.md"]) {
@@ -189,12 +189,12 @@ Deno.test("conflicts: outside renames follow both members; deletion closes only 
       reopened.stop();
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
-Deno.test("conflicts: unreadable members are unknown and ambiguous renames close instead of inventing a relationship", () => {
-  const f = hubOperationsFixture();
+Deno.test("conflicts: unreadable members are unknown and ambiguous renames close instead of inventing a relationship", async () => {
+  const f = await hubOperationsFixture();
   try {
     Deno.mkdirSync(`${f.vault}/locked`);
     Deno.writeTextFileSync(`${f.vault}/original.md`, "identical");
@@ -213,6 +213,6 @@ Deno.test("conflicts: unreadable members are unknown and ambiguous renames close
     assertEquals(f.hub.conflict("one")?.state, "resolved");
     assertEquals(f.hub.conflict("one")?.path, null);
   } finally {
-    f.close();
+    await f.close();
   }
 });

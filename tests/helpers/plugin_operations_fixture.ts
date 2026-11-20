@@ -249,12 +249,11 @@ async function constructPluginOperationsFixture(
     hub,
     gate,
     filesystem,
-    command: scope.bind(async (command: string, payload: unknown = {}) =>
+    command: async (command: string, payload: unknown = {}) =>
       (await fixture.admit(
         () => runtime.invokeCommand(id, command, payload),
-      )).value
-    ),
-    save: scope.bind(async (
+      )).value,
+    save: async (
       path: string,
       content: string,
       operationId?: Parameters<NoteOperations["updateNote"]>[5],
@@ -272,8 +271,8 @@ async function constructPluginOperationsFixture(
           ),
       );
       return result.value;
-    }),
-    create: scope.bind(async (path: string, content: string) => {
+    },
+    create: async (path: string, content: string) => {
       return (await fixture.admit(
         () =>
           operations.createNote(
@@ -281,8 +280,8 @@ async function constructPluginOperationsFixture(
             fixtureApiOrigin(lifecycle),
           ),
       )).value;
-    }),
-    remove: scope.bind(async (path: string) => {
+    },
+    remove: async (path: string) => {
       return (await fixture.admit(
         () =>
           operations.deleteNote(
@@ -294,6 +293,6 @@ async function constructPluginOperationsFixture(
             currentBaseFrom(notes, path),
           ),
       )).value;
-    }),
+    },
   };
 }

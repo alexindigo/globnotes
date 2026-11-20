@@ -20,7 +20,7 @@ import { state } from "../server/state.ts";
 import { VaultHub } from "../server/hub/hub.ts";
 
 const actions = ["original", "copy", "both", "merge"] as const;
-function pair(f: ReturnType<typeof hubOperationsFixture>) {
+function pair(f: Awaited<ReturnType<typeof hubOperationsFixture>>) {
   Deno.writeTextFileSync(
     `${f.vault}/original.md`,
     "\ufeff# Original\r\n[link](asset.bin)\r\n",
@@ -52,7 +52,7 @@ function pair(f: ReturnType<typeof hubOperationsFixture>) {
 
 Deno.test("conflict resolution: each explicit choice has only its exact fixed-path effects", async () => {
   for (const action of actions) {
-    const f = hubOperationsFixture();
+    const f = await hubOperationsFixture();
     try {
       const reviewed = pair(f);
       const original = Deno.readFileSync(`${f.vault}/original.md`),
@@ -92,13 +92,13 @@ Deno.test("conflict resolution: each explicit choice has only its exact fixed-pa
         ),
       );
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
 
 function guarded(
-  f: ReturnType<typeof hubOperationsFixture>,
+  f: Awaited<ReturnType<typeof hubOperationsFixture>>,
   guard: (hook: HookName, fact: OperationFact) => unknown,
 ) {
   const runtime = {
@@ -118,7 +118,7 @@ function guarded(
 
 Deno.test("conflict resolution: cancellation of either guard leaves every member unchanged", async () => {
   for (const stopped of ["pre-save", "pre-delete"] as const) {
-    const f = hubOperationsFixture();
+    const f = await hubOperationsFixture();
     try {
       const reviewed = pair(f), hooks: HookName[] = [];
       const ops = guarded(f, (hook) => {
@@ -148,7 +148,7 @@ Deno.test("conflict resolution: cancellation of either guard leaves every member
       );
       assertEquals(f.hub.conflict("pair")!.state, "open");
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
@@ -164,7 +164,7 @@ Deno.test("conflict resolution: awaited guards cannot lend stale bytes, record i
       "symlink",
     ] as const
   ) {
-    const f = hubOperationsFixture();
+    const f = await hubOperationsFixture();
     try {
       const reviewed = pair(f);
       const entered = Promise.withResolvers<void>(),
@@ -211,13 +211,13 @@ Deno.test("conflict resolution: awaited guards cannot lend stale bytes, record i
           : "\ufeff# Original\r\n[link](asset.bin)\r\n",
       );
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
 
 Deno.test("conflict resolution: concurrent decisions settle once and closed receipts disclose no paths", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     const reviewed = pair(f);
     const results = await Promise.all(
@@ -238,13 +238,13 @@ Deno.test("conflict resolution: concurrent decisions settle once and closed rece
       "\ufeff# Copy\r\n",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("conflict resolution: exact binary/invalid UTF-8/large/extensionless copies, no merge decoding", async () => {
   for (const name of ["data.bin", "no-extension", "invalid.md", "large.md"]) {
-    const f = hubOperationsFixture();
+    const f = await hubOperationsFixture();
     try {
       const bytes = name === "large.md"
         ? new Uint8Array(16 * 1024 * 1024 + 1).fill(97)
@@ -291,13 +291,13 @@ Deno.test("conflict resolution: exact binary/invalid UTF-8/large/extensionless c
       assertEquals(Deno.readFileSync(`${f.vault}/${name}`), bytes);
       assertEquals(f.hub.fileState(name)!.hash, versionOf(bytes));
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
 
 Deno.test("conflict resolution: one selected copy closes, shared relationships close only on actual deletion", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     const reviewed = pair(f);
     Deno.writeTextFileSync(`${f.vault}/other.md`, "another copy");
@@ -328,7 +328,7 @@ Deno.test("conflict resolution: one selected copy closes, shared relationships c
     assertEquals(f.hub.conflict("nested")!.state, "resolved");
     assertEquals(Deno.readTextFileSync(`${f.vault}/other.md`), "another copy");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -345,7 +345,7 @@ Deno.test("conflict resolution: partial failures journal actual effects, retain 
       "record",
     ] as const
   ) {
-    const f = hubOperationsFixture();
+    const f = await hubOperationsFixture();
     try {
       const reviewed = pair(f),
         replace = f.notes.effects.replace.bind(f.notes.effects),
@@ -416,13 +416,13 @@ Deno.test("conflict resolution: partial failures journal actual effects, retain 
         );
       }
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
 
 Deno.test("conflict resolution: actual changes reach cache/index/facts and asynchronous displacement consumers", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   const index = new Fts5Indexer(testMetadata(f.config.statePath));
   const dispose = subscribeIndex(f.hub, index);
   try {
@@ -474,7 +474,7 @@ Deno.test("conflict resolution: actual changes reach cache/index/facts and async
     );
   } finally {
     dispose();
-    f.close();
+    await f.close();
   }
 });
 
@@ -497,7 +497,7 @@ function request(
 }
 Deno.test("conflict resolution REST: original lease precedes body preparation; read-only refuses every action", async () => {
   for (const action of actions) {
-    const f = hubOperationsFixture();
+    const f = await hubOperationsFixture();
     try {
       const reviewed = pair(f);
       let prepared = false;
@@ -509,10 +509,10 @@ Deno.test("conflict resolution REST: original lease precedes body preparation; r
       assertEquals(prepared, false);
       assertEquals(f.hub.conflict("pair")!.state, "open");
     } finally {
-      f.close();
+      await f.close();
     }
   }
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     const reviewed = pair(f);
     const response = await resolve(
@@ -532,12 +532,12 @@ Deno.test("conflict resolution REST: original lease precedes body preparation; r
     assertEquals(unauthorized.status, 401);
     assertEquals(f.hub.conflict("pair")!.state, "open");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("conflict resolution REST: stale envelope, both bases/revision, closed no-op and malformed payload", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     const reviewed = pair(f);
     for (
@@ -583,14 +583,14 @@ Deno.test("conflict resolution REST: stale envelope, both bases/revision, closed
       alreadyResolved: true,
     });
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("conflict resolution: every action requires both bases and rejects either stale member without effects", async () => {
   for (const action of actions) {
     for (const member of ["original", "copy"] as const) {
-      const f = hubOperationsFixture();
+      const f = await hubOperationsFixture();
       try {
         const reviewed = pair(f),
           content = action === "merge" ? "draft" : undefined;
@@ -624,14 +624,14 @@ Deno.test("conflict resolution: every action requires both bases and rejects eit
         );
         assertEquals(f.hub.conflict("pair")!.state, "open");
       } finally {
-        f.close();
+        await f.close();
       }
     }
   }
 });
 
 Deno.test("conflict resolution: partial binary receipts include the actual displaced file and failed copy removal", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     const reviewed = pair(f);
     Deno.renameSync(`${f.vault}/original.md`, `${f.vault}/original.bin`);
@@ -658,12 +658,12 @@ Deno.test("conflict resolution: partial binary receipts include the actual displ
     );
     assertEquals(f.hub.conflict("pair")!.state, "open");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("conflict resolution: known hidden/state/symlink/foreign ids cannot authorize effects", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     const reviewed = pair(f);
     Deno.mkdirSync(`${f.vault}/.hidden`);
@@ -711,6 +711,6 @@ Deno.test("conflict resolution: known hidden/state/symlink/foreign ids cannot au
       other.stop();
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });

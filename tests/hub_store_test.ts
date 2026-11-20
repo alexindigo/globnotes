@@ -8,6 +8,10 @@ import { CHANGE_LIMIT, HubStore } from "../server/hub/store.ts";
 import { anonymousPath } from "../server/hub/paths.ts";
 import type { Observation } from "../server/hub/types.ts";
 
+function closeStore(store: HubStore) {
+  if (store.db.isOpen) store.close();
+}
+
 const observation = (name: string, hash = "abc"): Observation => ({
   key: name.normalize("NFC"),
   diskPath: name,
@@ -18,8 +22,9 @@ const observation = (name: string, hash = "abc"): Observation => ({
 
 for (const failure of ["unsupported-schema", "initialization", "state-path"]) {
   Deno.test(`hub construction: ${failure} leaves no open database`, async () => {
-    await withPluginFixture((fixture) => {
-      const seed = new HubStore(fixture.statePath);
+    await withPluginFixture(async (fixture, scope) => {
+      const seed = (await scope.acquire(() =>
+        new HubStore(fixture.statePath), closeStore)).value;
       try {
         if (failure === "unsupported-schema") {
           seed.db.exec(
@@ -33,7 +38,9 @@ for (const failure of ["unsupported-schema", "initialization", "state-path"]) {
       const opened: DatabaseSync[] = [];
       const primary = new Error(`hub construction ${failure}`);
       DatabaseSync.prototype.exec = function (sql) {
-        if (!opened.includes(this)) opened.push(this);
+        if (!opened.includes(this)) {
+          opened.push(this);
+        }
         if (failure === "initialization" && sql.includes("BEGIN IMMEDIATE")) {
           throw primary;
         }
@@ -57,7 +64,11 @@ for (const failure of ["unsupported-schema", "initialization", "state-path"]) {
         assertEquals(opened.length, failure === "state-path" ? 0 : 1);
         // Observe the actual SQLite handle before rescue cleanup, not merely
         // a close callback or removal of an unlinkable database file.
-        for (const db of opened) assertThrows(() => db.prepare("SELECT 1"));
+        for (const db of opened) {
+          assertThrows(() =>
+            db.prepare("SELECT 1")
+          );
+        }
       } finally {
         DatabaseSync.prototype.exec = exec;
         Deno.realPathSync = realPath;
@@ -71,10 +82,11 @@ for (const failure of ["unsupported-schema", "initialization", "state-path"]) {
   });
 }
 
-Deno.test("hub store: persistent peers/secret, vectors, rename, anonymous deletion and recreation", () => {
-  const root = Deno.makeTempDirSync();
-  let store = new HubStore(root);
-  try {
+Deno.test("hub store: persistent peers/secret, vectors, rename, anonymous deletion and recreation", async () => {
+  await withPluginFixture(async (fixture, scope) => {
+    const root = fixture.root;
+    let store = (await scope.acquire(() =>
+      new HubStore(root), closeStore)).value;
     const secret = store.secret, name = "classified-private-note.md";
     assertEquals(secret.length, 64);
     assertEquals(
@@ -91,7 +103,7 @@ Deno.test("hub store: persistent peers/secret, vectors, rename, anonymous deleti
     );
     assertEquals(store.fileState(name)?.vector, { local: 1, globnotes: 1 });
     store.close();
-    store = new HubStore(root);
+    store = (await scope.acquire(() => new HubStore(root), closeStore)).value;
     assertEquals(store.secret, secret);
     assertEquals(store.fileState(name)?.hash, "changed");
     const transient = store.apply([{ path: name }], "local", null);
@@ -141,15 +153,13 @@ Deno.test("hub store: persistent peers/secret, vectors, rename, anonymous deleti
       !new TextDecoder().decode(Deno.readFileSync(`${root}/hub.sqlite`))
         .includes(name),
     );
-  } finally {
-    store.close();
-    Deno.removeSync(root, { recursive: true });
-  }
+  });
 });
 
-Deno.test("hub store: compaction keeps newest 100000 and reports cursor gaps", () => {
-  const root = Deno.makeTempDirSync(), store = new HubStore(root);
-  try {
+Deno.test("hub store: compaction keeps newest 100000 and reports cursor gaps", async () => {
+  await withPluginFixture(async (fixture, scope) => {
+    const root = fixture.root,
+      store = (await scope.acquire(() => new HubStore(root), closeStore)).value;
     store.db.exec(`WITH RECURSIVE numbers(n) AS
       (VALUES(1) UNION ALL SELECT n+1 FROM numbers WHERE n<${CHANGE_LIMIT + 1})
       INSERT INTO changes(path_key,kind,peer,at) SELECT 'anonymous','deleted','local','now' FROM numbers`);
@@ -167,15 +177,13 @@ Deno.test("hub store: compaction keeps newest 100000 and reports cursor gaps", (
     const tail = store.changesSince(CHANGE_LIMIT + 1).entries;
     assertEquals(tail.length, 1);
     assertEquals(tail[0].seq, CHANGE_LIMIT + 2);
-  } finally {
-    store.close();
-    Deno.removeSync(root, { recursive: true });
-  }
+  });
 });
 
-Deno.test("hub store: a late conflict record cannot reintroduce an already-deleted name", () => {
-  const root = Deno.makeTempDirSync(), store = new HubStore(root);
-  try {
+Deno.test("hub store: a late conflict record cannot reintroduce an already-deleted name", async () => {
+  await withPluginFixture(async (fixture, scope) => {
+    const root = fixture.root,
+      store = (await scope.acquire(() => new HubStore(root), closeStore)).value;
     const original = "late-private-original.md", copy = "live-copy.md";
     store.apply(
       [original, copy].map((name) => ({ path: name, file: observation(name) })),
@@ -204,16 +212,14 @@ Deno.test("hub store: a late conflict record cannot reintroduce an already-delet
         ).includes(original),
       );
     }
-  } finally {
-    store.close();
-    Deno.removeSync(root, { recursive: true });
-  }
+  });
 });
 
-Deno.test("hub store: migrates v1 metadata in place and scrubs conflicts on either deletion", () => {
-  const root = Deno.makeTempDirSync();
-  let store = new HubStore(root);
-  try {
+Deno.test("hub store: migrates v1 metadata in place and scrubs conflicts on either deletion", async () => {
+  await withPluginFixture(async (fixture, scope) => {
+    const root = fixture.root;
+    let store = (await scope.acquire(() =>
+      new HubStore(root), closeStore)).value;
     store.apply(
       [{ path: "secret-original.md", file: observation("secret-original.md") }],
       "local",
@@ -224,7 +230,7 @@ Deno.test("hub store: migrates v1 metadata in place and scrubs conflicts on eith
       "DROP TABLE conflicts; UPDATE meta SET value='1' WHERE key='schema_version'",
     );
     store.close();
-    store = new HubStore(root);
+    store = (await scope.acquire(() => new HubStore(root), closeStore)).value;
     assertEquals(store.secret, secret);
     assertEquals(store.fileState("secret-original.md")!.vector, { local: 1 });
     assertEquals(
@@ -271,8 +277,5 @@ Deno.test("hub store: migrates v1 metadata in place and scrubs conflicts on eith
         );
       }
     }
-  } finally {
-    store.close();
-    Deno.removeSync(root, { recursive: true });
-  }
+  });
 });

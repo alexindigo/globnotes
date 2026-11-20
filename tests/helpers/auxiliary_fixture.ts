@@ -3,10 +3,7 @@ import { testMetadata, testServices } from "./environment.ts";
 import { assertEquals } from "@std/assert";
 import { AuxiliaryFilesystem } from "../../server/plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "../../server/plugins/data.ts";
-import {
-  cleanupFailedPluginSetup,
-  createPluginManager,
-} from "./plugin_manager.ts";
+import { createPluginManager } from "./plugin_manager.ts";
 import {
   type PluginManifest,
   readManifest,
@@ -14,11 +11,16 @@ import {
 import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { PluginSettingsEnvironment } from "../../server/plugins/settings_environment.ts";
 import { validateSettingsPages } from "../../server/plugins/settings.ts";
-import { pluginFixture } from "./plugin_fixture.ts";
+import {
+  retainedPluginFixture,
+  scopedPluginFixture,
+} from "./plugin_fixture_engine.ts";
+import { createFixtureScope } from "./fixture_scope_engine.ts";
 import type { ObservedClock } from "../../server/observed_time.ts";
 import { HubGate } from "../../server/hub/gate.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
 import { testEnvironment } from "./environment.ts";
+import { pluginSettled } from "./plugin_ready.ts";
 
 export const auxiliaryPage = {
   id: "preferences",
@@ -48,23 +50,29 @@ export async function auxiliaryFixture(options: {
   /** Attach a vault hub, so facade effects go through its gate records. */
   hub?: boolean;
 } = {}) {
-  const fixture = await pluginFixture(options), id = "auxiliary";
-  const dir = await fixture.install(id, {
-    runtime: { server: "service.js" },
-    hooks: ["on-save", "pre-save"],
-    settings: [auxiliaryPage],
-    capabilities: {
-      network: false,
-      imports: false,
-      read: ["vault"],
-      write: [],
-      filesystem: {
-        read: options.read ?? ["vault"],
-        write: options.write ?? ["vault"],
+  const owner = createFixtureScope();
+  return await owner.prepare(async (scope) => {
+    const fixture = await scopedPluginFixture(scope, {
+        ...options,
+        retain: true,
+      }),
+      id = "auxiliary";
+    const dir = await fixture.install(id, {
+      runtime: { server: "service.js" },
+      hooks: ["on-save", "pre-save"],
+      settings: [auxiliaryPage],
+      capabilities: {
+        network: false,
+        imports: false,
+        read: ["vault"],
+        write: [],
+        filesystem: {
+          read: options.read ?? ["vault"],
+          write: options.write ?? ["vault"],
+        },
       },
-    },
-  }, {
-    "service.js": `let last;
+    }, {
+      "service.js": `let last;
     export function activate(ctx){
       ctx.commands.register({id:'run',label:'Run consumer',target:'server'},async(request)=>{
         if(request.method==='settings')return ctx.settings.read();
@@ -85,25 +93,25 @@ export async function auxiliaryFixture(options: {
       ctx.hooks.on('on-save',async()=>{const setting=await ctx.settings.read();await ctx.fs.writeFile('post.bin',new Uint8Array([7]),{sourceKey:setting.sourceKey,expect:{kind:'absent'}});last='post-completed'});
       ctx.hooks.on('pre-save',async()=>{try{ctx.fs.mkdir('pre')}catch(error){last={code:error.code,root:await ctx.fs.realPath('.')}}});
     }`,
-  });
-  const commit = options.commit ??
-    (async <T>(effect: () => T | Promise<T>): Promise<T> => await effect());
-  const manager = createPluginManager(
-    fixture.vault,
-    undefined,
-    0,
-    fixture.statePath,
-    {
-      internalRoot: `${fixture.root}/no-internal`,
-      settingsEnvironment: new PluginSettingsEnvironment(
-        options.environment,
-        options.pinSource,
-      ),
-      persistence: { commit },
-    },
-  );
-  let runtimeToClose: ReturnType<typeof manager.configureRuntime> | undefined;
-  try {
+    });
+    const commit = options.commit ??
+      (async <T>(effect: () => T | Promise<T>): Promise<T> => await effect());
+    const manager = (await scope.acquire(() =>
+      createPluginManager(
+        fixture.vault,
+        undefined,
+        0,
+        fixture.statePath,
+        {
+          internalRoot: `${fixture.root}/no-internal`,
+          settingsEnvironment: new PluginSettingsEnvironment(
+            options.environment,
+            options.pinSource,
+          ),
+          persistence: { commit },
+        },
+      ), (manager) => manager.stop())).value;
+    scope.onCancel(() => manager.runtime?.suspend());
     const data = new PluginDataStore(fixture.statePath, {
       commit,
       settingsSchema: (id) => manager.network.settingsSchema(id),
@@ -115,12 +123,14 @@ export async function auxiliaryFixture(options: {
         runtime.settingsChanged(id, page, revision),
     });
     const hub = options.hub
-      ? new VaultHub(
-        fixture.vault,
-        testMetadata(fixture.statePath),
-        testServices(testEnvironment({})).hub,
-      )
+      ? (await scope.acquire(() =>
+        new VaultHub(
+          fixture.vault,
+          testMetadata(fixture.statePath),
+          testServices(testEnvironment({})).hub,
+        ), (hub) => hub.stop())).value
       : undefined;
+    scope.defer(() => manager.runtime?.close());
     const filesystem = new AuxiliaryFilesystem({
       gate: hub ? new HubGate({ hub }) : undefined,
       vaultPath: fixture.vault,
@@ -134,15 +144,13 @@ export async function auxiliaryFixture(options: {
       clock: options.clock,
     });
     let writable = true, operational = true;
-    const ready = Promise.withResolvers<void>();
-    ready.promise.catch(() => undefined); // observed during reconciliation too
     const rpc = servicePluginRpc({
       vaultPath: fixture.vault,
       statePath: fixture.statePath,
       actions: () => null,
       filesystem,
     });
-    const runtime = runtimeToClose = manager.configureRuntime({
+    const runtime = manager.configureRuntime({
       operational: () => operational,
       writable: () => writable,
       commit,
@@ -150,22 +158,11 @@ export async function auxiliaryFixture(options: {
         options.observe?.(method, args);
         return rpc(manifest, method, args, authority);
       },
-      changed: () => {
-        if (runtime.status(id)?.status === "ready") ready.resolve();
-      },
     });
-    const timer = setTimeout(
-      () => ready.reject(new Error(JSON.stringify(runtime.status(id)))),
-      5000,
-    );
-    try {
-      await runtime.reconcile();
-      await ready.promise;
-    } finally {
-      clearTimeout(timer);
-    }
+    await runtime.reconcile();
+    await pluginSettled(runtime, id, "ready");
     return {
-      ...fixture,
+      ...await retainedPluginFixture(fixture),
       manager,
       runtime,
       data,
@@ -173,40 +170,36 @@ export async function auxiliaryFixture(options: {
       hub,
       dir,
       id,
-      manifest: () => readManifest(dir),
+      manifest: scope.bind(() => readManifest(dir)),
       page: validateSettingsPages([auxiliaryPage])[0],
-      settings: () =>
-        runtime.invokeCommand(id, "run", { method: "settings" }) as Promise<
-          {
-            revision: number;
-            sourceKey: string;
-            values: Record<string, Record<string, unknown>>;
-          }
-        >,
-      last: () => runtime.invokeCommand(id, "run", { method: "last" }),
-      call: (method: string, ...args: unknown[]) =>
-        runtime.invokeCommand(id, "run", { method, args }) as Promise<
-          { value?: unknown; error?: { code: string; effect: string } }
-        >,
-      writable(value: boolean) {
+      settings: async () =>
+        (await fixture.admit(() =>
+          runtime.invokeCommand(id, "run", { method: "settings" })
+        )).value as {
+          revision: number;
+          sourceKey: string;
+          values: Record<string, Record<string, unknown>>;
+        },
+      last: async () =>
+        (await fixture.admit(() =>
+          runtime.invokeCommand(id, "run", { method: "last" })
+        )).value,
+      call: async (method: string, ...args: unknown[]) =>
+        (await fixture.admit(() =>
+          runtime.invokeCommand(id, "run", { method, args })
+        )).value as {
+          value?: unknown;
+          error?: { code: string; effect: string };
+        },
+      writable: scope.bind((value: boolean) => {
         writable = value;
-      },
-      operational(value: boolean) {
+      }),
+      operational: scope.bind((value: boolean) => {
         operational = value;
-      },
-      async close() {
-        hub?.stop();
-        manager.stop();
-        await runtime.close();
-        console.log(
-          JSON.stringify({ retainedAuxiliaryContractFixture: fixture.root }),
-        );
-      },
+      }),
+      close: () => owner.close(),
     };
-  } catch (error) {
-    await cleanupFailedPluginSetup(manager, runtimeToClose);
-    throw error;
-  }
+  });
 }
 export async function assertFsCode(
   call: Promise<{ error?: { code: string; effect: string } }>,

@@ -11,7 +11,7 @@ import { VaultHub } from "../server/hub/hub.ts";
 import { bootServer } from "./helpers/boot.ts";
 
 function pair(
-  f: ReturnType<typeof hubOperationsFixture>,
+  f: Awaited<ReturnType<typeof hubOperationsFixture>>,
   id: string,
   original: string,
   copy: string,
@@ -32,7 +32,7 @@ const request = (
 ) => ({ params: { id } } as unknown as PathfinderRequest<{ id: string }>);
 
 Deno.test("conflict reads: one raw-byte pair, literal BOM/CRLF/HTML, no content in list or closed response", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     const original = "\ufeff# Original\r\n<script>never execute</script>\r\n",
       copy = "";
@@ -76,12 +76,12 @@ Deno.test("conflict reads: one raw-byte pair, literal BOM/CRLF/HTML, no content 
       ).includes("never execute"),
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
-Deno.test("conflict reads: binary, invalid UTF-8 and oversized Markdown never expose a lossy or truncated merge body", () => {
-  const f = hubOperationsFixture();
+Deno.test("conflict reads: binary, invalid UTF-8 and oversized Markdown never expose a lossy or truncated merge body", async () => {
+  const f = await hubOperationsFixture();
   try {
     for (
       const [name, bytes, preview] of [
@@ -104,12 +104,12 @@ Deno.test("conflict reads: binary, invalid UTF-8 and oversized Markdown never ex
       assertEquals(comparison.original.size, bytes.length);
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
-Deno.test("conflict reads: shared read projection hides state, reserved paths, escapes and descendant symlinks", () => {
-  const f = hubOperationsFixture();
+Deno.test("conflict reads: shared read projection hides state, reserved paths, escapes and descendant symlinks", async () => {
+  const f = await hubOperationsFixture();
   try {
     Deno.writeTextFileSync(`${f.vault}/copy.md`, "copy");
     Deno.mkdirSync(`${f.vault}/.hidden`);
@@ -161,12 +161,12 @@ Deno.test("conflict reads: shared read projection hides state, reserved paths, e
       other.stop();
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
-Deno.test("conflict reads: confirmed missing members close/scrub, equal bytes and edits do not", () => {
-  const f = hubOperationsFixture();
+Deno.test("conflict reads: confirmed missing members close/scrub, equal bytes and edits do not", async () => {
+  const f = await hubOperationsFixture();
   try {
     for (const name of ["original.md", "copy.md"]) {
       Deno.writeTextFileSync(`${f.vault}/${name}`, "same");
@@ -186,12 +186,12 @@ Deno.test("conflict reads: confirmed missing members close/scrub, equal bytes an
     assertEquals(f.hub.conflict("pair")!.path, null);
     assertEquals(Deno.readTextFileSync(`${f.vault}/original.md`), "edited");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
-Deno.test("conflict reads: an unreadable member propagates I/O failure without outside closure", () => {
-  const f = hubOperationsFixture();
+Deno.test("conflict reads: an unreadable member propagates I/O failure without outside closure", async () => {
+  const f = await hubOperationsFixture();
   try {
     Deno.mkdirSync(`${f.vault}/locked`);
     Deno.writeTextFileSync(`${f.vault}/original.md`, "original");
@@ -210,7 +210,7 @@ Deno.test("conflict reads: an unreadable member propagates I/O failure without o
       Deno.chmodSync(`${f.vault}/locked`, 0o755);
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });
 

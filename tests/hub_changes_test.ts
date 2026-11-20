@@ -40,7 +40,7 @@ async function readFrame(reader: ReadableStreamDefaultReader<Uint8Array>) {
 }
 
 Deno.test("hub changes: polling filters hidden/state paths and returns a resumable cursor", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     Deno.mkdirSync(`${f.vault}/.hidden`);
     Deno.writeTextFileSync(`${f.vault}/.hidden/secret.md`, "secret");
@@ -62,12 +62,12 @@ Deno.test("hub changes: polling filters hidden/state paths and returns a resumab
     );
     await assertRejects(() => changes(request("?since=-1&poll=1")));
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub changes: SSE emits live deletion, resumes by Last-Event-ID and releases one subscription", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   let subscriptions = 0;
   const subscribe = f.hub.subscribe.bind(f.hub);
   f.hub.subscribe = (fn) => {
@@ -123,12 +123,12 @@ Deno.test("hub changes: SSE emits live deletion, resumes by Last-Event-ID and re
       conflictRevision: 0,
     });
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub changes: retained-log gaps reset SSE and polling; normal resume replays only later entries", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     for (const path of ["one", "two", "three"]) {
       await f.operations.createNote({ path, content: path }, f.api());
@@ -157,12 +157,12 @@ Deno.test("hub changes: retained-log gaps reset SSE and polling; normal resume r
     );
     await resetReader.cancel();
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub changes: read authorization is required and revoked streams disclose no later entries", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     state.auth = {
       validateTokenMetadata: () => Promise.reject(new Error("denied")),
@@ -182,12 +182,12 @@ Deno.test("hub changes: read authorization is required and revoked streams discl
     assertEquals(await reader.read(), { value: undefined, done: true });
     abort.abort();
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub changes: metadata-only closure is emitted without a file id and both subscriptions retire", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   let subscriptions = 0;
   const subscribe = f.hub.subscribeConflicts.bind(f.hub);
   f.hub.subscribeConflicts = (callback) => {
@@ -255,12 +255,12 @@ Deno.test("hub changes: metadata-only closure is emitted without a file id and b
     assertEquals(await replay.read(), { value: undefined, done: true });
     assertEquals(subscriptions, 0);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub changes: driver metadata uses authenticated SSE/poll with independent revisions and owned cleanup", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   let revision = 17;
   const listeners = new Set<(revision: number) => void>();
   state.drivers = {
@@ -318,6 +318,6 @@ Deno.test("hub changes: driver metadata uses authenticated SSE/poll with indepen
     assertEquals(listeners.size, 0);
   } finally {
     state.drivers = null;
-    f.close();
+    await f.close();
   }
 });

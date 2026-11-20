@@ -31,7 +31,7 @@ const textOf = (result: Result) =>
 async function fixture(
   onGuard: (hook: string) => void | Promise<void> = () => {},
 ) {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   const runtime = {
     limits: { preOperationMs: 5000 },
     guard: async (hook: string) => {
@@ -82,7 +82,7 @@ async function fixture(
     async close() {
       await client.close();
       await endpoint.close();
-      f.close();
+      await f.close();
     },
   };
 }

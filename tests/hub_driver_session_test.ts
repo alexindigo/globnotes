@@ -107,8 +107,8 @@ class NativeRemote implements Driver {
   }
   close() {}
 }
-function sessionFixture() {
-  const f = hubOperationsFixture();
+async function sessionFixture() {
+  const f = await hubOperationsFixture();
   const peers = new DriverPeers(f.hub.store);
   const remote = new NativeRemote();
   const sessions: DriverSession[] = [];
@@ -139,19 +139,19 @@ function sessionFixture() {
     remote,
     instance,
     make,
-    close() {
+    async close() {
       for (const session of sessions) session.retire();
       off();
-      f.close();
+      await f.close();
     },
   };
 }
-function disk(f: ReturnType<typeof sessionFixture>, path: string) {
+function disk(f: Awaited<ReturnType<typeof sessionFixture>>, path: string) {
   return Deno.readTextFileSync(`${f.vault}/${path}`);
 }
 
 Deno.test("driver session: only real file movement emits activity, coalesced across a multi-file cycle", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   let session: DriverSession;
   const transitions: ("receiving" | "sending" | null)[] = [];
   try {
@@ -187,12 +187,12 @@ Deno.test("driver session: only real file movement emits activity, coalesced acr
       );
     }
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: grouped imports and echo-free export converge through real note operations", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     for (let i = 0; i < 13; i++) {
       f.remote.put(i === 12 ? "image.png" : `note${i}.md`, `body ${i}`);
@@ -226,13 +226,13 @@ Deno.test("driver session: grouped imports and echo-free export converge through
     assertEquals(f.hub.sequence(), seq + 1);
     assertEquals(f.remote.writes.length, 1);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: metadata-only native conflicts recover the owed local export without copies across restart", async () => {
   for (const restart of [false, true]) {
-    const f = sessionFixture();
+    const f = await sessionFixture();
     try {
       f.remote.put("A.md", "base");
       const original = f.make();
@@ -264,13 +264,13 @@ Deno.test("driver session: metadata-only native conflicts recover the owed local
       assertEquals(f.hub.sequence(), seq);
       assertEquals(f.hub.conflicts(), []);
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
 
 Deno.test("driver session: unknown incomplete and exclusions cannot infer deletions or export", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "A");
     f.remote.put("B.md", "B");
@@ -292,7 +292,7 @@ Deno.test("driver session: unknown incomplete and exclusions cannot infer deleti
     assertEquals(f.remote.writes.length, 0);
     assertEquals(f.peers.file(f.instance.id, "A.md")?.state, "excluded");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -300,7 +300,7 @@ Deno.test("driver session: empty remote requires fresh revision-bound delete or 
   for (
     const action of ["remote_empty_delete", "remote_empty_upload"] as const
   ) {
-    const f = sessionFixture();
+    const f = await sessionFixture();
     try {
       f.remote.put("A.md", "A");
       const session = f.make();
@@ -335,14 +335,14 @@ Deno.test("driver session: empty remote requires fresh revision-bound delete or 
       );
       assertEquals(session.snapshot().attention.remoteEmpty, null);
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
 
 Deno.test("driver session: deleted-here copies never resurrect, held choices restore or delete only the observed remote", async () => {
   for (const action of ["held_restore", "held_delete"] as const) {
-    const f = sessionFixture();
+    const f = await sessionFixture();
     try {
       f.remote.put("A.md", "base");
       f.remote.put("keep.md", "keep");
@@ -366,13 +366,13 @@ Deno.test("driver session: deleted-here copies never resurrect, held choices res
       }
       assertEquals(disk(f, "keep.md"), "keep");
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
 
 Deno.test("driver session: unchanged deleted-here file is removed remotely, including recovery without persisted names", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "base");
     const original = f.make();
@@ -386,13 +386,13 @@ Deno.test("driver session: unchanged deleted-here file is removed remotely, incl
     assertEquals(f.hub.fileState("A.md"), null);
     assertEquals(session.snapshot().attention.held, []);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: uncertain committed or unsent put re-observes before retry without copies", async () => {
   for (const effect of ["committed", "unsent"] as const) {
-    const f = sessionFixture();
+    const f = await sessionFixture();
     try {
       f.remote.put("A.md", "base");
       const session = f.make();
@@ -412,13 +412,13 @@ Deno.test("driver session: uncertain committed or unsent put re-observes before 
       assertEquals(f.remote.writes.length, effect === "committed" ? 1 : 2);
       assertEquals(f.hub.conflicts(), []);
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
 
 Deno.test("driver session: native conflict imports the changed remote once and preserves both versions", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "base");
     const session = f.make();
@@ -439,12 +439,12 @@ Deno.test("driver session: native conflict imports the changed remote once and p
     await session.run();
     assertEquals(f.hub.conflicts().length, 1);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: new endpoint epoch adopts equal files and never deletes on rebootstrap", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "base");
     f.remote.put("B.md", "old");
@@ -461,12 +461,12 @@ Deno.test("driver session: new endpoint epoch adopts equal files and never delet
     assertEquals(f.hub.conflicts(), []);
     assertEquals(f.remote.writes.flat().map((item) => item.path), ["B.md"]);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: per-page read locks, invalid state targets and stale attention fail safely", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     const session = f.make();
     f.remote.put("A.md", "A");
@@ -494,12 +494,12 @@ Deno.test("driver session: per-page read locks, invalid state targets and stale 
       ),
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: failed fresh empty review never authorizes cached deletions", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "A");
     const session = f.make();
@@ -520,12 +520,12 @@ Deno.test("driver session: failed fresh empty review never authorizes cached del
     assertEquals(disk(f, "A.md"), "A");
     assertEquals(f.remote.writes, []);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: held decisions bind native revision even when displayed paths do not change", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "base");
     const session = f.make();
@@ -564,12 +564,12 @@ Deno.test("driver session: held decisions bind native revision even when display
       PeerRevisionConflict,
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: cursor never advances through a failed body and read locks recover without export", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "A");
     f.remote.put("B.md", "B");
@@ -597,12 +597,12 @@ Deno.test("driver session: cursor never advances through a failed body and read 
     assertEquals(disk(f, "B.md"), "B");
     assertEquals(session.snapshot().status, "active");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: all concurrent triggers and decisions share one activity lane", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "base");
     const session = f.make();
@@ -627,12 +627,12 @@ Deno.test("driver session: all concurrent triggers and decisions share one activ
     assertEquals(disk(f, "A.md"), "held");
     assertEquals(f.hub.conflicts(), []);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: failed sends retain obligations and retry advice instead of acknowledging bytes", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "base");
     const session = f.make();
@@ -668,12 +668,12 @@ Deno.test("driver session: failed sends retain obligations and retry advice inst
     );
     assertEquals(f.hub.conflicts(), []);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: a changed export receipt cannot skip hub changes made during dispatch", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "base");
     const session = f.make();
@@ -699,12 +699,12 @@ Deno.test("driver session: a changed export receipt cannot skip hub changes made
     );
     assertEquals(f.remote.writes.length, 2);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: a complete hub batch is one native apply and an unavailable member defers its whole unit", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     const session = f.make();
     await session.run();
@@ -734,12 +734,12 @@ Deno.test("driver session: a complete hub batch is one native apply and an unava
     assertEquals(new Set(f.remote.writes[0].map((item) => item.batch)).size, 1);
     assertEquals(f.remote.files.size, 13);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: a locally recreated held path reconciles without silently overwriting either version", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "base");
     const session = f.make();
@@ -756,12 +756,12 @@ Deno.test("driver session: a locally recreated held path reconciles without sile
     assertEquals(disk(f, f.hub.conflicts()[0].copyPath!), "held");
     assertEquals(session.snapshot().attention.held, []);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: decision request authority is rechecked after remote body waits", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     f.remote.put("A.md", "base");
     const session = f.make();
@@ -795,12 +795,12 @@ Deno.test("driver session: decision request authority is rechecked after remote 
       "held",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: an unchanged oversized native file stays unsupported across repeated passes", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     const body = new Uint8Array(17 * 1024 * 1024);
     f.remote.files.set("large.bin", {
@@ -824,12 +824,12 @@ Deno.test("driver session: an unchanged oversized native file stays unsupported 
       reason: "too_large",
     }]);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("driver session: mixed native receipts cannot hide authentication failure or its stop on later packets", async () => {
-  const f = sessionFixture();
+  const f = await sessionFixture();
   try {
     for (const path of ["a.md", "b.md", "c.md"]) {
       Deno.writeTextFileSync(`${f.vault}/${path}`, path);
@@ -855,6 +855,6 @@ Deno.test("driver session: mixed native receipts cannot hide authentication fail
       false,
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });

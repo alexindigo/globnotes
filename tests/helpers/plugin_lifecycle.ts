@@ -2,6 +2,7 @@ import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import * as path from "@std/path";
+import { DatabaseSync } from "node:sqlite";
 import { GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
@@ -14,10 +15,7 @@ import { NoteOperations } from "../../server/notes/operations.ts";
 import { PluginActions } from "../../server/plugins/actions.ts";
 import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
 import type { PluginManager } from "../../server/plugins/manager.ts";
-import {
-  cleanupFailedPluginSetup,
-  createPluginManager,
-} from "./plugin_manager.ts";
+import { createPluginManager } from "./plugin_manager.ts";
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
 import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { Fts5Indexer } from "../../server/search/fts5.ts";
@@ -26,6 +24,12 @@ import { fixtureApiOrigin, pluginFixture } from "./plugin_fixture.ts";
 import { testEnvironment } from "./environment.ts";
 import { pluginSettled } from "./plugin_ready.ts";
 import { installFixtureState } from "./state.ts";
+import { createFixtureScope, fixtureScope } from "./fixture_scope_engine.ts";
+import {
+  compatibilityPluginFixture,
+  retainedPluginFixture,
+  scopedPluginFixture,
+} from "./plugin_fixture_engine.ts";
 
 export const RECORDER_SERVICE = `export function activate(ctx) {
   globalThis.__facts = [];
@@ -126,12 +130,11 @@ export async function bundle(opts: {
   scanCacheTtl?: string;
   beforeRead?(method: string, args: unknown[]): Promise<void> | void;
 } = {}): Promise<Bundle> {
-  const fixture = await pluginFixture();
-  let restoreBinding = () => {};
-  let managerToClose: PluginManager | undefined;
-  let runtimeToClose: PluginRuntime | undefined;
-  let hubToClose: VaultHub | undefined;
-  try {
+  const owner = createFixtureScope();
+  return await owner.prepare(async (scope) => {
+    const fixture = await scopedPluginFixture(scope, {
+      retain: opts.retain !== false,
+    });
     if (opts.recorder !== false) {
       await fixture.install("recorder", {
         runtime: { server: "service.js" },
@@ -156,26 +159,38 @@ export async function bundle(opts: {
     const indexer = new Fts5Indexer(
       testMetadata(fixture.statePath),
       testServices(env).index,
+      {
+        openDatabase(filename) {
+          // The indexer has no public close port. Its existing adapter lets the
+          // fixture reserve each native handle before construction can fail.
+          let db: DatabaseSync | undefined = undefined;
+          scope.defer(() => {
+            if (db?.isOpen) db.close();
+          });
+          db = new DatabaseSync(filename);
+          return db;
+        },
+      },
     );
     const files = new FileServing(fixture.vault);
-    const hub = hubToClose = new VaultHub(
-      fixture.vault,
-      testMetadata(fixture.statePath),
-      testServices(env).hub,
-    );
+    const hub = (await scope.acquire(() =>
+      new VaultHub(
+        fixture.vault,
+        testMetadata(fixture.statePath),
+        testServices(env).hub,
+      ), (hub) => hub.stop())).value;
     hub.scanNow(); // Initial inventory precedes subscriber admission, as at boot.
-    subscribeIndex(hub, indexer);
-    const manager = managerToClose = createPluginManager(
-      fixture.vault,
-      undefined,
-      opts.workers ?? 1,
-      fixture.statePath,
-      { internalRoot: path.join(fixture.root, "internal"), env },
-    );
+    scope.defer(subscribeIndex(hub, indexer));
+    const manager = (await scope.acquire(() =>
+      createPluginManager(
+        fixture.vault,
+        undefined,
+        opts.workers ?? 1,
+        fixture.statePath,
+        { internalRoot: path.join(fixture.root, "internal"), env },
+      ), (manager) => manager.stop())).value;
     installFixtureState(
-      (restore) => {
-        restoreBinding = restore;
-      },
+      scope.defer,
       config,
       null,
       notes,
@@ -184,7 +199,9 @@ export async function bundle(opts: {
       manager,
     );
     const lifecycle = new PluginLifecycle(config);
-    subscribeExternalFacts(hub, lifecycle);
+    scope.onCancel(() => manager.runtime?.suspend());
+    scope.defer(() => manager.runtime?.close());
+    scope.defer(subscribeExternalFacts(hub, lifecycle));
     const operations = new NoteOperations({
       notes,
       files,
@@ -217,24 +234,37 @@ export async function bundle(opts: {
       statePath: fixture.statePath,
       actions: () => actions,
     });
-    const runtime = runtimeToClose = manager.configureRuntime({
+    const runtime = manager.configureRuntime({
       operational: () => lifecycle.operational(),
       writable: () => lifecycle.writable(),
       commit: (effect) => lifecycle.gate.run(effect),
       sanitizeFact: (manifest, fact) =>
         lifecycle.applyReadGrants(manifest, fact as never),
       rpc: opts.beforeRead
-        ? async (...args) => {
-          const result = rpc(...args);
-          await opts.beforeRead!(args[1], args[2]);
-          return result;
-        }
+        ? (...args) =>
+          fixtureScope(async (read) => {
+            // Start the real read before the timing hook, but observe its failure
+            // immediately and join it even when the hook fails.
+            const result = rpc(...args).then(
+              (value) => ({ failed: false as const, value }),
+              (error) => ({ failed: true as const, error }),
+            );
+            read.defer(async () => {
+              const outcome = await result;
+              if (outcome.failed) throw outcome.error;
+            });
+            await opts.beforeRead!(args[1], args[2]);
+            const outcome = await result;
+            return outcome.failed ? undefined : outcome.value;
+          })
         : rpc,
     }, opts.limits);
     await runtime.reconcile();
     if (opts.recorder !== false) await pluginSettled(runtime, "recorder");
     return {
-      fixture,
+      fixture: opts.retain !== false
+        ? await retainedPluginFixture(fixture)
+        : compatibilityPluginFixture(fixture, () => owner.close()),
       lifecycle,
       operations,
       actions,
@@ -243,35 +273,20 @@ export async function bundle(opts: {
       runtime,
       manager,
       facts: async () =>
-        await runtime.invokeCommand("recorder", "facts", {}) as {
+        (await fixture.admit(() =>
+          runtime.invokeCommand("recorder", "facts", {})
+        )).value as {
           kind: string;
           fact: RecordedFact;
         }[],
-      clearFacts: () =>
-        runtime.invokeCommand("recorder", "clear", {}).then(() => undefined),
-      dispose: async () => {
-        try {
-          hub.stop();
-          await runtime.close();
-          manager.stop();
-          // Keep generated lifecycle proof vaults by default, including failures.
-          if (opts.retain === false) await fixture.dispose();
-        } finally {
-          restoreBinding();
-        }
+      clearFacts: async () => {
+        await fixture.admit(() =>
+          runtime.invokeCommand("recorder", "clear", {})
+        );
       },
+      dispose: () => owner.close(),
     };
-  } catch (e) {
-    await cleanupFailedPluginSetup(managerToClose, runtimeToClose);
-    try {
-      hubToClose?.stop();
-    } catch { /* preserve the setup failure */ }
-    restoreBinding();
-    if (opts.retain === false) {
-      await fixture.dispose().catch(() => undefined);
-    }
-    throw e;
-  }
+  });
 }
 
 export const api = () => fixtureApiOrigin(state.lifecycle!);

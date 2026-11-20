@@ -4,7 +4,7 @@ import { hubOperationsFixture } from "../helpers/hub_fixture.ts";
 import { done, pending, waitUntil } from "../helpers/wait.ts";
 
 Deno.test("conflict latency: outside deletion publishes closed metadata within 3 seconds", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   let release = () => {};
   try {
     Deno.writeTextFileSync(`${f.vault}/original.md`, "original");
@@ -41,6 +41,6 @@ Deno.test("conflict latency: outside deletion publishes closed metadata within 3
     assertEquals(Deno.readTextFileSync(`${f.vault}/original.md`), "original");
   } finally {
     release();
-    f.close();
+    await f.close();
   }
 });

@@ -197,8 +197,8 @@ Deno.test("hub facts: pre-effect reconciliation publishes the real outside creat
   }
 });
 
-Deno.test("hub projections: a vanished first entry does not drop later index values, facts or sync", () => {
-  const f = hubOperationsFixture();
+Deno.test("hub projections: a vanished first entry does not drop later index values, facts or sync", async () => {
+  const f = await hubOperationsFixture();
   const indexer = new Fts5Indexer(testMetadata(f.config.statePath));
   const facts: OperationFact[] = [], syncs: OperationFact[] = [];
   f.hub.subscribe(() => Deno.removeSync(`${f.vault}/a-gone.md`));
@@ -220,6 +220,6 @@ Deno.test("hub projections: a vanished first entry does not drop later index val
     assertEquals(syncs.length, 1);
     assert(syncs[0].changedPaths?.includes("b-kept"));
   } finally {
-    f.close();
+    await f.close();
   }
 });

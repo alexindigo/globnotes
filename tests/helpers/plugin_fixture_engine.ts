@@ -89,11 +89,10 @@ function pluginCapabilities(
   const { root, vault, statePath, metadataBase } = paths;
   const bind = <Args extends unknown[], T>(effect: (...args: Args) => T) =>
     scope.bind(rootOwner.bind(effect));
-  const admit = bind(<T>(effect: (signal: AbortSignal) => T | PromiseLike<T>) =>
-    rootOwner.admit(effect, scope)
-  );
+  const admit = <T>(effect: (signal: AbortSignal) => T | PromiseLike<T>) =>
+    rootOwner.admit(effect, scope);
   const mkdir = bind(Deno.mkdir), writeTextFile = bind(Deno.writeTextFile);
-  const install = bind(async function (
+  const install = async function (
     id: string,
     manifest: Record<string, unknown>,
     files: Record<string, string> = {},
@@ -115,7 +114,7 @@ function pluginCapabilities(
       return dir;
     });
     return installed.value;
-  });
+  };
   const fixture = Object.freeze({
     root,
     vault,
@@ -173,17 +172,19 @@ export function compatibilityPluginFixture(
 
 /** Separate evidence custody, not a live callback capability. */
 export async function retainedPluginFixture(fixture: ScopedPluginFixture) {
-  const evidence = createFixtureScope();
-  await evidence.scope.adopt(
-    fixture.root,
-    (root) => Deno.remove(root, { recursive: true }),
-  );
   const binding = rootBinding(fixture);
-  const result = compatibilityPluginFixture(
-    pluginCapabilities(binding.scope, binding.paths, evidence.scope),
-    () => evidence.close(),
-  );
-  return result;
+  const evidence = createFixtureScope();
+  return await evidence.prepare(async () => {
+    await evidence.scope.adopt(
+      fixture.root,
+      (root) => Deno.remove(root, { recursive: true }),
+    );
+    const result = compatibilityPluginFixture(
+      pluginCapabilities(binding.scope, binding.paths, evidence.scope),
+      () => evidence.close(),
+    );
+    return result;
+  });
 }
 
 export function withPluginFixture<T>(

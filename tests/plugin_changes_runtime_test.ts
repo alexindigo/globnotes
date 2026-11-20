@@ -18,7 +18,7 @@ async function fixture(
   read = ["vault"],
   policy: { writable?: boolean; operational?: boolean } = {},
 ) {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   const dir = `${f.config.statePath}/plugins/test`;
   Deno.mkdirSync(dir, { recursive: true });
   Deno.writeTextFileSync(
@@ -63,7 +63,7 @@ async function fixture(
     data,
     async close() {
       await runtime.close();
-      f.close();
+      await f.close();
     },
   };
 }

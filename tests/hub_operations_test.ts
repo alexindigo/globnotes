@@ -6,7 +6,7 @@ import { readManifest } from "../server/plugins/manifest.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 
 Deno.test("hub operations: create/save/rename/delete and uploads are globnotes with no forced-scan echo", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     await f.operations.createNote(
       { path: "note", content: "initial" },
@@ -61,12 +61,12 @@ Deno.test("hub operations: create/save/rename/delete and uploads are globnotes w
     f.hub.scanNow();
     assertEquals(f.batches.length, count);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 Deno.test("hub operations: partial storage failures record actual effects and release expectation", async () => {
   let fail = false;
-  const f = hubOperationsFixture({
+  const f = await hubOperationsFixture({
     afterWrite: () => {
       if (fail) throw new Error("after write fixture");
     },
@@ -94,11 +94,11 @@ Deno.test("hub operations: partial storage failures record actual effects and re
     f.hub.scanNow();
     assertEquals(f.batches.at(-1)![0].peer, "local");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 Deno.test("hub operations: attachment moves and reference rewrites record all actual file effects", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     await f.operations.uploadFile(
       "",
@@ -133,12 +133,12 @@ Deno.test("hub operations: attachment moves and reference rewrites record all ac
     f.hub.scanNow();
     assertEquals(f.batches.length, count);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub operations: requester identity attributes plugin notes and mediated non-note writes", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     Deno.mkdirSync(`${f.root}/writer`);
     Deno.writeTextFileSync(`${f.root}/writer/main.js`, "export default {};\n");
@@ -179,14 +179,14 @@ Deno.test("hub operations: requester identity attributes plugin notes and mediat
     f.hub.scanNow();
     assertEquals(f.batches.length, count);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 for (const failure of ["rename", "remove"] as const) {
   Deno.test(`hub operations: post-${failure} failure records completed effects without echo`, async () => {
     let armed = false;
-    const f = hubOperationsFixture({
+    const f = await hubOperationsFixture({
       afterRename() {
         if (armed && failure === "rename") {
           throw new Error("after rename fixture");
@@ -230,14 +230,14 @@ for (const failure of ["rename", "remove"] as const) {
       f.hub.scanNow();
       assertEquals(f.batches.length, count);
     } finally {
-      f.close();
+      await f.close();
     }
   });
 }
 
 Deno.test("hub operations: partial ref rewrite includes the completed write whose after-effect probe failed", async () => {
   let armed = false, writes = 0;
-  const f = hubOperationsFixture({
+  const f = await hubOperationsFixture({
     afterWrite() {
       if (armed && ++writes === 2) throw new Error("second rewrite fixture");
     },
@@ -265,12 +265,12 @@ Deno.test("hub operations: partial ref rewrite includes the completed write whos
     f.hub.scanNow();
     assertEquals(f.batches.length, count);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub operations: deleting an unscanned local file records local create then managed delete and tombstone", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     Deno.writeTextFileSync(
       `${f.vault}/unobserved.md`,
@@ -301,12 +301,12 @@ Deno.test("hub operations: deleting an unscanned local file records local create
     f.hub.scanNow();
     assertEquals(f.batches.flat().length, entries.length);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub operations: moving an attachment directory first ingests unscanned children and has no local echo", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     Deno.mkdirSync(`${f.vault}/assets`);
     Deno.writeTextFileSync(
@@ -348,12 +348,12 @@ Deno.test("hub operations: moving an attachment directory first ingests unscanne
     f.hub.scanNow();
     assertEquals(f.batches.length, count);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub operations: a save reconciles an unscanned outside modification before its managed version", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     await f.operations.createNote(
       { path: "note", content: "initial" },
@@ -384,12 +384,12 @@ Deno.test("hub operations: a save reconciles an unscanned outside modification b
     f.hub.scanNow();
     assertEquals(f.batches.length, count);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 Deno.test("hub operations: recreation reconciles an unscanned outside deletion before the new version", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   try {
     await f.operations.createNote(
       { path: "note", content: "initial" },
@@ -417,13 +417,13 @@ Deno.test("hub operations: recreation reconciles an unscanned outside deletion b
     f.hub.scanNow();
     assertEquals(f.batches.length, count);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
 for (const alias of ["sibling", "ancestor"] as const) {
   Deno.test(`hub aliases: ${alias} configured root reconciles a deletion before the watcher`, async () => {
-    const f = hubOperationsFixture({}, { alias });
+    const f = await hubOperationsFixture({}, { alias });
     try {
       Deno.writeTextFileSync(`${f.vault}/unobserved.md`, "new outside note");
       await f.operations.deleteNote(
@@ -446,12 +446,12 @@ for (const alias of ["sibling", "ancestor"] as const) {
         1,
       );
     } finally {
-      f.close();
+      await f.close();
     }
   });
 
   Deno.test(`hub aliases: ${alias} configured root journals reference rewrites and sync paths`, async () => {
-    const f = hubOperationsFixture({}, { alias });
+    const f = await hubOperationsFixture({}, { alias });
     const syncPaths: string[][] = [];
     f.lifecycle.onSync((fact) => syncPaths.push(fact.changedPaths ?? []));
     try {
@@ -484,13 +484,13 @@ for (const alias of ["sibling", "ancestor"] as const) {
         "a configured-root write has no local echo",
       );
     } finally {
-      f.close();
+      await f.close();
     }
   });
 }
 
 Deno.test("hub operations: a failed authoritative metadata commit does not acknowledge an unversioned write", async () => {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   const apply = f.hub.store.apply.bind(f.hub.store);
   f.hub.store.apply = (mutations, peer, origin) => {
     if (peer === "globnotes") {
@@ -512,6 +512,6 @@ Deno.test("hub operations: a failed authoritative metadata commit does not ackno
     assertEquals(f.hub.fileState("note.md"), null);
     assert(outcome.message.includes("could not be fully reconciled"));
   } finally {
-    f.close();
+    await f.close();
   }
 });

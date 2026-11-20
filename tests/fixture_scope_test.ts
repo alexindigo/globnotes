@@ -15,6 +15,12 @@ import {
 } from "./helpers/fixture_scope_engine.ts";
 import { OwnershipError } from "../shared/ownership.js";
 import { workMilestone } from "./helpers/product_settlement.ts";
+import {
+  fixtureGate,
+  fixtureTest,
+  isPromise,
+  waitForCancellation,
+} from "./helpers/fixture_coordination.ts";
 
 async function caught(body: () => Promise<unknown>): Promise<unknown> {
   try {
@@ -25,55 +31,154 @@ async function caught(body: () => Promise<unknown>): Promise<unknown> {
   throw new Error("Expected rejection");
 }
 
-Deno.test("fixture phases: every cancellation hook starts before drain and reverse-order release", async () => {
-  const owner = createFixtureScope(), hookGate = Promise.withResolvers<void>();
-  const events: string[] = [];
-  let active = 0;
-  owner.scope.defer(() => {
-    assertEquals(active, 0);
-    events.push("release-first");
-  });
-  owner.scope.onCancel(async (signal) => {
-    assertStrictEquals(signal, owner.scope.signal);
-    assert(signal.aborted);
-    events.push("cancel-early");
-    await hookGate.promise;
-  });
-  const running = owner.scope.admit((signal) => {
-    active++;
-    return new Promise<void>((_resolve, reject) => {
-      signal.addEventListener("abort", () => reject(signal.reason), {
-        once: true,
-      });
-    }).finally(() => {
-      active--;
-      events.push("drained");
+fixtureTest(
+  "fixture links: sequential borrowers retire every root edge",
+  async (testScope) => {
+    const root = createFixtureScope();
+    testScope.defer(() => root.close());
+    for (let i = 0; i < 100; i++) {
+      const child = createFixtureScope();
+      ownFixtureScope(root.scope, child.scope);
+      ownFixtureScope(root.scope, child.scope);
+      assertEquals(root.scope.size, 1);
+      await child.close();
+      assertEquals(child.scope.size, 0);
+      assertEquals(root.scope.size, 0, `borrower ${i} left a root edge`);
+    }
+  },
+);
+
+fixtureTest(
+  "fixture links: root close still joins a child drain already in progress",
+  async (testScope) => {
+    const root = createFixtureScope(), child = createFixtureScope();
+    const entered = fixtureGate(testScope), release = fixtureGate(testScope);
+    let released = false, drained = false;
+    root.scope.defer(() => {
+      assert(drained);
+      released = true;
     });
-  });
-  const rejected = assertRejects(() => running, OwnershipError, "retired");
-  owner.scope.defer(() => {
-    assertEquals(active, 0);
-    events.push("release-last");
-  });
-  owner.scope.onCancel(() => {
-    events.push("cancel-late");
-    hookGate.resolve();
-  });
-  const closing = owner.close();
-  assert(owner.scope.signal.aborted);
-  assertEquals(events, ["cancel-early", "cancel-late"]);
-  await Promise.all([closing, rejected]);
-  assertEquals(events, [
-    "cancel-early",
-    "cancel-late",
-    "drained",
-    "release-last",
-    "release-first",
-  ]);
-  assertEquals(owner.scope.size, 0);
-  await owner.close();
-  assertEquals(events.length, 5);
+    ownFixtureScope(root.scope, child.scope);
+    const work = child.scope.admit(async () => {
+      entered.resolve();
+      await release.promise;
+      drained = true;
+    });
+    const rejected = assertRejects(() => work, OwnershipError, "retired");
+    await entered.promise;
+    const childClose = child.close();
+    childClose.catch(() => {});
+    assert(child.scope.signal.aborted);
+    assertEquals(root.scope.size, 2);
+    const rootClose = root.close();
+    rootClose.catch(() => {});
+    assertEquals(released, false);
+    release.resolve();
+    await Promise.all([rootClose, childClose, rejected]);
+    assert(released);
+    assertEquals([root.scope.size, child.scope.size], [0, 0]);
+  },
+);
+
+Deno.test("fixture coordination: scenario failure cancels every admitted gate", async () => {
+  const primary = new Error("failed scenario");
+  let scope!: FixtureScope, gate!: ReturnType<typeof fixtureGate>;
+  const error = await caught(() =>
+    fixtureScope((owner) => {
+      scope = owner;
+      gate = fixtureGate(owner);
+      assertEquals(
+        owner.size,
+        1,
+        "a gate must be admitted before its first wait",
+      );
+      throw primary;
+    })
+  );
+  assertStrictEquals(error, primary);
+  await assertRejects(() => gate.promise, OwnershipError, "retired");
+  assertEquals(scope.size, 0);
 });
+
+Deno.test("fixture coordination: completed gates remove their signal links promptly", async () => {
+  await fixtureScope(async (scope) => {
+    const signal = scope.signal, listeners = new Set<unknown>();
+    const add = signal.addEventListener.bind(signal),
+      remove = signal.removeEventListener.bind(signal);
+    signal.addEventListener = (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) => {
+      if (type === "abort") listeners.add(listener);
+      add(type, listener, options);
+    };
+    signal.removeEventListener = (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ) => {
+      if (type === "abort") listeners.delete(listener);
+      remove(type, listener, options);
+    };
+    for (let i = 0; i < 100; i++) {
+      const gate = fixtureGate(scope);
+      gate.resolve();
+      await gate.promise;
+      assertEquals(listeners.size, 0, "completed gate retained a signal link");
+      assertEquals(scope.size, 0, "completed gate retained its admission");
+    }
+  });
+});
+
+fixtureTest(
+  "fixture phases: every cancellation hook starts before drain and reverse-order release",
+  async (testScope) => {
+    const owner = createFixtureScope(), hookGate = fixtureGate(testScope);
+    const events: string[] = [];
+    let active = 0;
+    owner.scope.defer(() => {
+      assertEquals(active, 0);
+      events.push("release-first");
+    });
+    owner.scope.onCancel(async (signal) => {
+      assertStrictEquals(signal, owner.scope.signal);
+      assert(signal.aborted);
+      events.push("cancel-early");
+      await hookGate.promise;
+    });
+    const running = owner.scope.admit((signal) => {
+      active++;
+      return waitForCancellation(signal).finally(() => {
+        active--;
+        events.push("drained");
+      });
+    });
+    const rejected = assertRejects(() => running, OwnershipError, "retired");
+    owner.scope.defer(() => {
+      assertEquals(active, 0);
+      events.push("release-last");
+    });
+    owner.scope.onCancel(() => {
+      events.push("cancel-late");
+      hookGate.resolve();
+    });
+    const closing = owner.close();
+    assert(owner.scope.signal.aborted);
+    assertEquals(events, ["cancel-early", "cancel-late"]);
+    await Promise.all([closing, rejected]);
+    assertEquals(events, [
+      "cancel-early",
+      "cancel-late",
+      "drained",
+      "release-last",
+      "release-first",
+    ]);
+    assertEquals(owner.scope.size, 0);
+    await owner.close();
+    assertEquals(events.length, 5);
+  },
+);
 
 for (const first of ["owner", "borrower"] as const) {
   for (const registration of ["before", "after"] as const) {
@@ -108,11 +213,7 @@ for (const first of ["owner", "borrower"] as const) {
       const running = owner.scope.admit((signal) => {
         ioSignal = signal;
         active++;
-        return new Promise<void>((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(signal.reason), {
-            once: true,
-          });
-        }).finally(() => {
+        return waitForCancellation(signal).finally(() => {
           active--;
           events.push("drained");
         });
@@ -144,40 +245,43 @@ for (const first of ["owner", "borrower"] as const) {
   }
 }
 
-Deno.test("fixture phases: throwing and rejected hooks cannot skip later cancellation or release", async () => {
-  const owner = createFixtureScope(), gate = Promise.withResolvers<void>();
-  const failures = [
-    new Error("sync cancellation"),
-    new Error("async cancellation"),
-  ];
-  const events: string[] = [];
-  owner.scope.onCancel(() => {
-    events.push("throw");
-    throw failures[0];
-  });
-  owner.scope.onCancel(() => {
-    events.push("reject");
-    return Promise.reject(failures[1]);
-  });
-  owner.scope.onCancel(async () => {
-    events.push("wait");
-    await gate.promise;
-  });
-  owner.scope.onCancel(() => {
-    events.push("last");
-    gate.resolve();
-  });
-  owner.scope.defer(() => {
-    events.push("released");
-  });
-  const closing = owner.close();
-  assertEquals(events, ["throw", "reject", "wait", "last"]);
-  const error = await caught(() => closing);
-  assertInstanceOf(error, AggregateError);
-  assertEquals(error.errors, failures.toReversed());
-  assertEquals(events.at(-1), "released");
-  assertEquals(owner.scope.size, 0);
-});
+fixtureTest(
+  "fixture phases: throwing and rejected hooks cannot skip later cancellation or release",
+  async (testScope) => {
+    const owner = createFixtureScope(), gate = fixtureGate(testScope);
+    const failures = [
+      new Error("sync cancellation"),
+      new Error("async cancellation"),
+    ];
+    const events: string[] = [];
+    owner.scope.onCancel(() => {
+      events.push("throw");
+      throw failures[0];
+    });
+    owner.scope.onCancel(() => {
+      events.push("reject");
+      return Promise.reject(failures[1]);
+    });
+    owner.scope.onCancel(async () => {
+      events.push("wait");
+      await gate.promise;
+    });
+    owner.scope.onCancel(() => {
+      events.push("last");
+      gate.resolve();
+    });
+    owner.scope.defer(() => {
+      events.push("released");
+    });
+    const closing = owner.close();
+    assertEquals(events, ["throw", "reject", "wait", "last"]);
+    const error = await caught(() => closing);
+    assertInstanceOf(error, AggregateError);
+    assertEquals(error.errors, failures.toReversed());
+    assertEquals(events.at(-1), "released");
+    assertEquals(owner.scope.size, 0);
+  },
+);
 
 for (const rejects of [false, true]) {
   Deno.test(`fixture phases: cancellation results resolve then exactly once (rejects=${rejects})`, async () => {
@@ -237,11 +341,7 @@ Deno.test("fixture phases: original failure survives cancellation and release fa
         throw release;
       });
       running = owner.admit((signal) =>
-        new Promise<void>((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(signal.reason), {
-            once: true,
-          });
-        }).finally(() => {
+        waitForCancellation(signal).finally(() => {
           drained = true;
         })
       );
@@ -272,13 +372,7 @@ Deno.test("fixture phases: root retirement cancels a borrowed channel before joi
   });
   const running = owner.scope.admit(() => {
     active++;
-    return new Promise<void>((_resolve, reject) => {
-      channel.signal.addEventListener(
-        "abort",
-        () => reject(channel.signal.reason),
-        { once: true },
-      );
-    }).finally(() => active--);
+    return waitForCancellation(channel.signal).finally(() => active--);
   }, borrower.scope);
   const rejected = assertRejects(() => running, OwnershipError, "retired");
   await owner.close();
@@ -289,50 +383,58 @@ Deno.test("fixture phases: root retirement cancels a borrowed channel before joi
 });
 
 for (const closing of ["resource", "borrower"] as const) {
-  Deno.test(`fixture admission: ${closing} retirement drains co-owned work`, async () => {
-    const resource = createFixtureScope(), borrower = createFixtureScope();
-    const held = Promise.withResolvers<string>();
-    const events: string[] = [];
-    resource.scope.defer(() => {
-      events.push("resource");
-    });
-    borrower.scope.defer(() => {
-      events.push("borrower");
-    });
-    const running = resource.scope.admit(() => held.promise, borrower.scope);
-    const rejected = assertRejects(() => running, OwnershipError, "retired");
-    const retiring = closing === "resource" ? resource : borrower;
-    let draining: Promise<void> | undefined;
-    try {
-      assertEquals([resource.scope.size, borrower.scope.size], [2, 2]);
-      draining = retiring.close();
-      assertEquals(events, []);
-      let effects = 0;
-      await assertRejects(
-        () =>
-          resource.scope.admit(() => {
-            effects++;
-          }, borrower.scope),
-        OwnershipError,
-        "retired",
-      );
-      assertEquals(effects, 0);
-    } finally {
-      draining ??= retiring.close();
-      held.resolve("finished");
+  fixtureTest(
+    `fixture admission: ${closing} retirement drains co-owned work`,
+    async (testScope) => {
+      const resource = createFixtureScope(), borrower = createFixtureScope();
+      const held = fixtureGate<string>(testScope);
+      const events: string[] = [];
+      resource.scope.defer(() => {
+        events.push("resource");
+      });
+      borrower.scope.defer(() => {
+        events.push("borrower");
+      });
+      const running = resource.scope.admit(() => held.promise, borrower.scope);
+      const rejected = assertRejects(() => running, OwnershipError, "retired");
+      const retiring = closing === "resource" ? resource : borrower;
+      let draining: Promise<void> | undefined;
       try {
-        await Promise.all([draining, rejected]);
+        assertEquals([resource.scope.size, borrower.scope.size], [2, 2]);
+        draining = retiring.close();
+        assertEquals(events, []);
+        let effects = 0;
+        await assertRejects(
+          () =>
+            resource.scope.admit(() => {
+              effects++;
+            }, borrower.scope),
+          OwnershipError,
+          "retired",
+        );
+        assertEquals(effects, 0);
       } finally {
+        draining ??= retiring.close();
+        held.resolve("finished");
         try {
-          await resource.close();
+          await Promise.all([draining, rejected]);
         } finally {
-          await borrower.close();
+          try {
+            await resource.close();
+          } finally {
+            await borrower.close();
+          }
         }
       }
-    }
-    assertEquals(events.toSorted(), ["borrower", "resource"]);
-    assertEquals([resource.scope.size, borrower.scope.size], [0, 0]);
-  });
+      assertEquals(
+        events,
+        closing === "resource"
+          ? ["resource", "borrower"]
+          : ["borrower", "resource"],
+      );
+      assertEquals([resource.scope.size, borrower.scope.size], [0, 0]);
+    },
+  );
 }
 
 Deno.test("fixture admission: completed work releases reservations without resolving result data again", async () => {
@@ -427,18 +529,18 @@ Deno.test("fixture scope review: invocation errors reject through the adapter", 
       ]
     ) {
       const promise = invoke();
-      assertInstanceOf(promise, Promise);
+      assert(isPromise(promise));
       await assertRejects(() => promise, TypeError);
     }
     await owner.close();
     const acquiring = owner.scope.acquire(() => "late", () => {});
-    assertInstanceOf(acquiring, Promise);
+    assert(isPromise(acquiring));
     await assertRejects(() => acquiring, OwnershipError, "retired");
     let rolledBack = false;
     const adopting = owner.scope.adopt("late", () => {
       rolledBack = true;
     });
-    assertInstanceOf(adopting, Promise);
+    assert(isPromise(adopting));
     await assertRejects(() => adopting, OwnershipError, "retired");
     assert(rolledBack);
     assertEquals(owner.scope.size, 0);
@@ -618,47 +720,53 @@ Deno.test("fixture scope: constructor rejection releases before its owner can es
   await owner.close();
 });
 
-Deno.test("fixture scope: cleanup releases a held gate before joining owned work", async () => {
-  const gate = Promise.withResolvers<void>(), primary = new Error("scenario");
-  const events: string[] = [];
-  const work = gate.promise.then(() => {
-    events.push("drained");
-  });
-  const error = await caught(() =>
-    fixtureScope((scope) => {
-      scope.defer(() => work);
-      scope.defer(() => {
-        events.push("release");
-        gate.resolve();
-      });
-      throw primary;
-    })
-  );
-  assertStrictEquals(error, primary);
-  assertEquals(events, ["release", "drained"]);
-});
+fixtureTest(
+  "fixture scope: cleanup releases a held gate before joining owned work",
+  async (testScope) => {
+    const gate = fixtureGate(testScope), primary = new Error("scenario");
+    const events: string[] = [];
+    const work = gate.promise.then(() => {
+      events.push("drained");
+    });
+    const error = await caught(() =>
+      fixtureScope((scope) => {
+        scope.defer(() => work);
+        scope.defer(() => {
+          events.push("release");
+          gate.resolve();
+        });
+        throw primary;
+      })
+    );
+    assertStrictEquals(error, primary);
+    assertEquals(events, ["release", "drained"]);
+  },
+);
 
-Deno.test("fixture scope: retirement during allocation and late adoption roll back before rejecting", async () => {
-  const owner = createFixtureScope(), gate = Promise.withResolvers<string>();
-  const events: string[] = [];
-  const pending = owner.scope.acquire(() => gate.promise, (value) => {
-    events.push(value);
-  });
-  const rejected = assertRejects(() => pending, OwnershipError, "retired");
-  const closing = owner.close();
-  gate.resolve("late allocation");
-  await Promise.all([closing, rejected]);
-  await assertRejects(
-    () =>
-      owner.scope.adopt("late adoption", (value) => {
-        events.push(value);
-      }),
-    OwnershipError,
-    "retired",
-  );
-  assertEquals(events, ["late allocation", "late adoption"]);
-  assertEquals(owner.scope.size, 0);
-});
+fixtureTest(
+  "fixture scope: retirement during allocation and late adoption roll back before rejecting",
+  async (testScope) => {
+    const owner = createFixtureScope(), gate = fixtureGate<string>(testScope);
+    const events: string[] = [];
+    const pending = owner.scope.acquire(() => gate.promise, (value) => {
+      events.push(value);
+    });
+    const rejected = assertRejects(() => pending, OwnershipError, "retired");
+    const closing = owner.close();
+    gate.resolve("late allocation");
+    await Promise.all([closing, rejected]);
+    await assertRejects(
+      () =>
+        owner.scope.adopt("late adoption", (value) => {
+          events.push(value);
+        }),
+      OwnershipError,
+      "retired",
+    );
+    assertEquals(events, ["late allocation", "late adoption"]);
+    assertEquals(owner.scope.size, 0);
+  },
+);
 
 Deno.test("fixture scope: synchronous reentrant registration remains owned", async () => {
   const owner = createFixtureScope();
@@ -679,35 +787,37 @@ Deno.test("fixture scope: synchronous reentrant registration remains owned", asy
   assertEquals(owner.scope.size, 0);
 });
 
-Deno.test("fixture scope: reporting observes retired custody but resources remain until it completes", async () => {
-  let scope!: FixtureScope;
-  const report = Promise.withResolvers<void>(),
-    entered = Promise.withResolvers<void>();
-  let closed = false;
-  const running = fixtureScope((owner) => {
-    scope = owner;
-    owner.defer(() => {
-      closed = true;
+fixtureTest(
+  "fixture scope: reporting observes retired custody but resources remain until it completes",
+  async (testScope) => {
+    let scope!: FixtureScope;
+    const report = fixtureGate(testScope), entered = fixtureGate(testScope);
+    let closed = false;
+    const running = fixtureScope((owner) => {
+      scope = owner;
+      owner.defer(() => {
+        closed = true;
+      });
+    }, {
+      report: async () => {
+        assertEquals(scope.size, 1);
+        await assertRejects(
+          () => scope.acquire(() => "late", () => {}),
+          OwnershipError,
+          "retired",
+        );
+        entered.resolve();
+        await report.promise;
+      },
     });
-  }, {
-    report: async () => {
-      assertEquals(scope.size, 1);
-      await assertRejects(
-        () => scope.acquire(() => "late", () => {}),
-        OwnershipError,
-        "retired",
-      );
-      entered.resolve();
-      await report.promise;
-    },
-  });
-  try {
-    await workMilestone(running, entered.promise, "fixture report entered");
-    assertEquals(closed, false);
-  } finally {
-    report.resolve();
-    await running;
-  }
-  assert(closed);
-  assertEquals(scope.size, 0);
-});
+    try {
+      await workMilestone(running, entered.promise, "fixture report entered");
+      assertEquals(closed, false);
+    } finally {
+      report.resolve();
+      await running;
+    }
+    assert(closed);
+    assertEquals(scope.size, 0);
+  },
+);

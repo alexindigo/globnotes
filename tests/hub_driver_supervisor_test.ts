@@ -22,12 +22,12 @@ import { memoryRemote } from "./helpers/memory_remote.ts";
 import { pluginSettled } from "./helpers/plugin_ready.ts";
 
 const guard = () => {};
-function fixture(
+async function fixture(
   source = minimalDriver,
   network: string[] | false = false,
   declaration: Record<string, unknown> = driverDeclaration,
 ) {
-  const f = hubOperationsFixture();
+  const f = await hubOperationsFixture();
   const dir = `${f.config.statePath}/plugins/test-driver`;
   Deno.mkdirSync(dir, { recursive: true });
   Deno.writeTextFileSync(
@@ -123,13 +123,13 @@ function fixture(
     async close() {
       await supervisor.close();
       manager.stop();
-      f.close();
+      await f.close();
     },
   };
 }
 
 Deno.test("driver supervisor: missing and retired slots report no scheduled retry", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.manager.catalog();
     const instance = f.supervisor.peers.create(
@@ -152,7 +152,7 @@ Deno.test("driver supervisor: missing and retired slots report no scheduled retr
 });
 
 Deno.test("driver supervisor: durable trouble survives retries and supervisor restart, clears on recovery", async () => {
-  const f = fixture();
+  const f = await fixture();
   let replacement: DriverSupervisor | undefined;
   try {
     const instance = await f.create();
@@ -265,7 +265,7 @@ Deno.test("driver supervisor: optional keys reach SDK open, lock before IO and c
       return await (await request('/identity')).json();
     },`,
   );
-  const f = fixture(source, [new URL(remote.baseUrl).host], {
+  const f = await fixture(source, [new URL(remote.baseUrl).host], {
     ...driverDeclaration,
     secrets: [
       { key: "token", label: "Access token", required: false },
@@ -419,7 +419,7 @@ Deno.test("driver supervisor: sync waits for coalesced discovery and attention a
       JSON.stringify(remote.baseUrl)
     },prefix:'',exclude:'',forbiddenCharacters:''};`,
   );
-  const f = fixture(source, [remote.authority]);
+  const f = await fixture(source, [remote.authority]);
   const entered = Promise.withResolvers<void>(),
     release = Promise.withResolvers<void>(),
     discoveryEntered = Promise.withResolvers<void>(),
@@ -712,7 +712,7 @@ Deno.test("driver supervisor: closing fences Workers before key storage closes",
 });
 
 Deno.test("driver API: original settings authority crosses a held request body", async () => {
-  const f = fixture();
+  const f = await fixture();
   const entered = Promise.withResolvers<void>();
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const stream = new ReadableStream<Uint8Array>({
@@ -754,7 +754,7 @@ Deno.test("driver API: original settings authority crosses a held request body",
 });
 
 Deno.test("driver supervisor: state-in-vault notice names the actual canonical key directory", async () => {
-  const f = fixture();
+  const f = await fixture();
   const statePath = `${f.vault}/State`;
   Deno.mkdirSync(statePath);
   const hub = new VaultHub(
@@ -794,7 +794,7 @@ Deno.test("driver supervisor: a held instance cannot block another instance's na
     },
   );
   const authority = `127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
-  const f = fixture(
+  const f = await fixture(
     `export function activate(ctx){const name=ctx.instance.label+'.md'; ctx.driver.serve({
     open:()=>({state:'ready',endpoint:{id:ctx.instance.id,epoch:'1'},scope:'all'}),
     discover:()=>({endpoint:{id:ctx.instance.id,epoch:'1'},scope:'all',mode:'snapshot',entries:[{state:'known',path:name,revision:'r1'}],completion:'complete'}),
@@ -826,7 +826,7 @@ Deno.test("driver supervisor: a held instance cannot block another instance's na
 });
 
 Deno.test("driver supervisor: failed native open retries in observed time with fresh Workers and honors advice", async () => {
-  const f = fixture(
+  const f = await fixture(
     `export function activate(ctx){ctx.driver.serve({open:()=>({state:'failed',error:{code:'rate_limited',retryAfterMs:20000,message:'retry'}}),discover(){},read(){},apply(){},close(){}})}`,
   );
   const Native = globalThis.Worker;
@@ -857,7 +857,7 @@ Deno.test("driver supervisor: failed native open retries in observed time with f
 });
 
 Deno.test("driver supervisor: settings source reduction retires the driver at commit and admits same-code narrowed recovery", async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     const manifest = JSON.parse(
       Deno.readTextFileSync(`${f.dir}/manifest.json`),
@@ -925,7 +925,7 @@ Deno.test("driver supervisor: narrowed recovery cannot borrow an unsettled servi
     },
   );
   const authority = `127.0.0.1:${(receiver.addr as Deno.NetAddr).port}`;
-  const f = fixture(`export function activate(ctx){ctx.driver.serve({
+  const f = await fixture(`export function activate(ctx){ctx.driver.serve({
     open:async()=>{try{await(await fetch('http://${authority}/')).text();return{state:'ready',endpoint:{id:'remote',epoch:'1'},scope:'all'}}catch(e){return{state:'locked',reason:e.name}}},
     discover:()=>({endpoint:{id:'remote',epoch:'1'},scope:'all',mode:'snapshot',entries:[],completion:'complete'}),read:()=>({state:'absent'}),apply:()=>[],close(){} });}`);
   const release = Promise.withResolvers<void>(),
