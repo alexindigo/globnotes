@@ -7,11 +7,16 @@ export class AuthenticationError extends Error {
 }
 export type {
   AccountCredentials,
+  AccountPreparationAuthority,
+  AccountPreparationRequest,
   AuthenticatorChange,
   CredentialAuthority,
   CredentialChangeRequest,
   CredentialOptions,
   LoginClaim,
   LoginProof,
+  OfflineAccountRequest,
+  OfflinePasswordRequest,
+  PreparedAccount,
   PreparedCredentialTransition,
 } from "./internal/account_credentials.ts";

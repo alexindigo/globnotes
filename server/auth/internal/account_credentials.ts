@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import type { Account, AccountIdentity } from "../accounts.ts";
+import type { Account, AccountIdentity, AccountSnapshot } from "../accounts.ts";
 import { hashPassword, verifyPassword } from "../../helpers.ts";
 import { AuthenticationError } from "../account_credentials.ts";
+import { createUuid } from "../../../shared/uuid.ts";
+import {
+  assertOfflineRecovery,
+  type OfflineRecoveryAuthority,
+} from "../offline_recovery.ts";
 import {
   createTotpCandidate,
   decodeStoredAuthenticator,
@@ -97,9 +102,65 @@ declare const transitionBrand: unique symbol;
 export interface PreparedCredentialTransition {
   readonly [transitionBrand]: true;
 }
+declare const preparationAuthorityBrand: unique symbol;
+export interface AccountPreparationAuthority {
+  readonly [preparationAuthorityBrand]: true;
+}
+type PreparationPurpose = "initial" | "recipient";
+const preparationAuthorities = new WeakMap<
+  AccountPreparationAuthority,
+  { owner: object; purpose: PreparationPurpose; lease: OperationLease<"live"> }
+>();
+/** Trusted bootstrap/Admin admission adapter, not a consumer-supplied flag. */
+export function bindAccountPreparationAuthority(
+  owner: AccountCredentials,
+  purpose: PreparationPurpose,
+  lease: OperationLease<"live">,
+): AccountPreparationAuthority {
+  if (!["initial", "recipient"].includes(purpose)) {
+    throw new IdentityStateError();
+  }
+  assertOperationLease(lease, "live");
+  const authority = Object.freeze({}) as AccountPreparationAuthority;
+  preparationAuthorities.set(
+    authority,
+    Object.freeze({ owner, purpose, lease }),
+  );
+  return authority;
+}
+declare const preparedAccountBrand: unique symbol;
+export interface PreparedAccount {
+  readonly [preparedAccountBrand]: true;
+}
+export interface AccountPreparationRequest {
+  readonly login: string;
+  readonly password: string;
+  readonly updateId: string;
+}
+export interface OfflineAccountRequest {
+  readonly accountId: string;
+  readonly credentialRevision: number;
+  readonly updateId: string;
+}
+export interface OfflinePasswordRequest extends OfflineAccountRequest {
+  readonly password: string;
+}
+interface PreparedAccountRecord {
+  readonly account: Account;
+  readonly snapshot: AccountSnapshot;
+  readonly updateId: string;
+  readonly guard: () => undefined;
+  readonly operation: ReturnType<typeof createOperationLease<"live">>;
+  phase: "prepared" | "publishing" | "finished";
+}
 /** Private repository integration. The parsed import contract permits only the
  * repository to bind these callbacks; workflows receive the narrow commands. */
 interface CredentialStore {
+  readonly root: string;
+  capture(): AccountSnapshot;
+  assertSnapshot(snapshot: AccountSnapshot): void;
+  normalizeLogin(login: string): string;
+  validateAccount(account: Account): Account;
   byLogin(login: string): Account | null;
   byId(id: string): Account | null;
   authenticator(account: Account): StoredAuthenticator;
@@ -112,6 +173,7 @@ interface CredentialStore {
     lease: OperationLease<"live">,
   ): Account;
   publish(transition: PreparedCredentialTransition): void;
+  create(prepared: PreparedAccount): void;
 }
 interface ProofRecord {
   readonly account: Account;
@@ -191,6 +253,10 @@ export function bindAccountCredentials(
   const transitions = new WeakMap<
     PreparedCredentialTransition,
     TransitionRecord
+  >();
+  const preparedAccounts = new WeakMap<
+    PreparedAccount,
+    PreparedAccountRecord
   >();
   const assertSnapshot = (account: Account): undefined => {
     const live = store.byId(account.id);
@@ -349,7 +415,190 @@ export function bindAccountCredentials(
     }
     return Object.freeze(next);
   };
+  const prepareAccount = async (
+    purpose: PreparationPurpose,
+    source: AccountPreparationAuthority,
+    input: AccountPreparationRequest,
+    signal?: AbortSignal,
+  ) => {
+    const request: unknown = structuredClone(input);
+    if (
+      !record(request) || !fields(request, ["login", "password", "updateId"]) ||
+      typeof request.login !== "string" ||
+      typeof request.password !== "string" || !request.password ||
+      !identity(request.updateId) ||
+      (signal !== undefined && !(signal instanceof AbortSignal))
+    ) throw new IdentityStateError();
+    const admitted = preparationAuthorities.get(source);
+    if (
+      !admitted || admitted.owner !== credentials ||
+      admitted.purpose !== purpose
+    ) throw new IdentityStateError();
+    const snapshot = store.capture();
+    const operation = createOperationLease("live", [() => {
+      if (signal?.aborted) throw new AuthenticationError();
+      store.assertSnapshot(snapshot);
+      if (
+        purpose === "initial"
+          ? snapshot.value.initialized || snapshot.value.accounts.length !== 0
+          : !snapshot.value.initialized
+      ) throw new StoredConfigConflict();
+      return undefined;
+    }], [lifetime.lease, admitted.lease]);
+    const guard = (): undefined => {
+      assertOperationLease(operation.lease, "live");
+    };
+    // The handle owns this lease only once it is returned; every earlier
+    // failure retires it here, like verifyCurrent's unadmitted operation.
+    let issued = false;
+    try {
+      guard();
+      const login = store.normalizeLogin(request.login);
+      if (snapshot.value.accounts.some((account) => account.login === login)) {
+        throw new StoredConfigConflict();
+      }
+      const id = createUuid();
+      const passwordHash = await hash(request.password);
+      guard();
+      const account: Account = Object.freeze(
+        store.validateAccount({
+          id,
+          login,
+          passwordHash,
+          totpKey: null,
+          lastTotpStep: null,
+          credentialRevision: 0,
+          passwordChangeRequired: purpose === "recipient",
+          credentialUpdateId: null,
+        }),
+      );
+      const prepared = Object.freeze({}) as PreparedAccount;
+      const result = Object.freeze({
+        prepared,
+        identity: store.identity(account),
+      });
+      preparedAccounts.set(prepared, {
+        account,
+        snapshot,
+        updateId: request.updateId,
+        guard,
+        operation,
+        phase: "prepared",
+      });
+      guard();
+      issued = true;
+      return result;
+    } finally {
+      if (!issued) operation.retire();
+    }
+  };
+  const recoverAccount = async (
+    kind: "reset" | "disable",
+    authority: OfflineRecoveryAuthority,
+    input: OfflineAccountRequest | OfflinePasswordRequest,
+    signal?: AbortSignal,
+  ): Promise<AccountIdentity> => {
+    const request: unknown = structuredClone(input);
+    if (
+      !record(request) ||
+      !fields(request, [
+        "accountId",
+        "credentialRevision",
+        "updateId",
+        ...(kind === "reset" ? ["password"] : []),
+      ]) || !identity(request.accountId) ||
+      !integer(request.credentialRevision) || !identity(request.updateId) ||
+      (kind === "reset" &&
+        (typeof request.password !== "string" || !request.password)) ||
+      (signal !== undefined && !(signal instanceof AbortSignal))
+    ) throw new IdentityStateError();
+    const recovery = assertOfflineRecovery(authority, store.root);
+    const guard = (): undefined => {
+      if (signal?.aborted) throw new AuthenticationError();
+      store.assertBound();
+      return undefined;
+    };
+    guard();
+    const account = store.byId(request.accountId);
+    if (!account || account.credentialRevision !== request.credentialRevision) {
+      throw new StoredConfigConflict();
+    }
+    const proof: ProofRecord = {
+      account,
+      operation: createOperationLease("live", [guard], [
+        lifetime.lease,
+        recovery,
+      ]),
+      phase: "claimed",
+    };
+    let token: PreparedCredentialTransition | undefined;
+    try {
+      const passwordHash = kind === "reset"
+        ? await hash(request.password as string)
+        : account.passwordHash;
+      current(proof);
+      const next = derive(
+        account,
+        kind === "disable"
+          ? Object.freeze({ kind: "none" })
+          : store.authenticator(account),
+        request.updateId,
+        passwordHash,
+        kind === "reset" ? true : account.passwordChangeRequired,
+      );
+      const result = store.identity(next);
+      token = Object.freeze({}) as PreparedCredentialTransition;
+      transitions.set(token, { next, proof, guard, phase: "publishing" });
+      store.publish(token);
+      return result;
+    } finally {
+      if (token) transitions.get(token)!.phase = "finished";
+      close(proof);
+    }
+  };
   const credentials = Object.freeze({
+    prepareInitialAccount(
+      authority: AccountPreparationAuthority,
+      request: AccountPreparationRequest,
+      signal?: AbortSignal,
+    ) {
+      return prepareAccount("initial", authority, request, signal);
+    },
+    preparePasswordOnlyRecipient(
+      authority: AccountPreparationAuthority,
+      request: AccountPreparationRequest,
+      signal?: AbortSignal,
+    ) {
+      return prepareAccount("recipient", authority, request, signal);
+    },
+    publishPreparedAccount(prepared: PreparedAccount): AccountIdentity {
+      const value = preparedAccounts.get(prepared);
+      if (!value || value.phase !== "prepared") throw new IdentityStateError();
+      value.phase = "publishing";
+      try {
+        value.guard();
+        const result = store.identity(value.account);
+        store.create(prepared);
+        return result;
+      } finally {
+        value.phase = "finished";
+        value.operation.retire();
+      }
+    },
+    resetPassword(
+      authority: OfflineRecoveryAuthority,
+      request: OfflinePasswordRequest,
+      signal?: AbortSignal,
+    ) {
+      return recoverAccount("reset", authority, request, signal);
+    },
+    disableAuthenticator(
+      authority: OfflineRecoveryAuthority,
+      request: OfflineAccountRequest,
+      signal?: AbortSignal,
+    ) {
+      return recoverAccount("disable", authority, request, signal);
+    },
     async authenticate(
       login: string,
       password: string,
@@ -556,6 +805,19 @@ export function bindAccountCredentials(
   });
   return Object.freeze({
     credentials,
+    resolvePreparedAccount(prepared: PreparedAccount) {
+      const value = preparedAccounts.get(prepared);
+      if (!value || value.phase !== "publishing") {
+        throw new IdentityStateError();
+      }
+      value.guard();
+      return Object.freeze({
+        account: value.account,
+        snapshot: value.snapshot,
+        updateId: value.updateId,
+        lease: value.operation.lease,
+      });
+    },
     // Only the repository's private binding may resolve sealed write inputs.
     resolveTransition(token: PreparedCredentialTransition) {
       const transition = transitions.get(token);

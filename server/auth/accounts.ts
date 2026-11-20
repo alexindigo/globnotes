@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { join } from "@std/path";
+import { join, resolve } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { hashPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
@@ -199,6 +199,11 @@ export class AccountRepository {
     this.capture();
     const owner: ReturnType<typeof bindAccountCredentials> =
       bindAccountCredentials({
+        root: resolve(root),
+        capture: () => this.capture(),
+        assertSnapshot: (snapshot) => this.assertUnchanged(snapshot),
+        normalizeLogin,
+        validateAccount,
         byLogin: (login) => this.byLogin(login),
         byId: (id) => this.byId(id),
         authenticator: (account) => this.#decode(account),
@@ -230,6 +235,25 @@ export class AccountRepository {
               owner.resolveTransition(transition);
             },
             [prepared.lease],
+          );
+        },
+        create: (prepared) => {
+          const value = owner.resolvePreparedAccount(prepared);
+          const account = validateAccount(value.account);
+          const expected = value.snapshot;
+          this.#file.commit(
+            {
+              ...expected.value,
+              initialized: true,
+              revision: expected.value.revision + 1,
+              updateId: value.updateId,
+              accounts: [...expected.value.accounts, account],
+            },
+            expected,
+            () => {
+              owner.resolvePreparedAccount(prepared);
+            },
+            [value.lease],
           );
         },
       }, credentialOptions);

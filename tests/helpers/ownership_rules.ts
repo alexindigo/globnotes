@@ -59,6 +59,9 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "tests/credential_proof_test.ts",
       "tests/credential_transition_test.ts",
       "tests/helpers/credential_commands.ts",
+      "server/auth/offline_recovery.ts",
+      "tests/helpers/account_preparation.ts",
+      "tests/credential_preparation_test.ts",
     ],
     [GUARDED_SINK_OWNER]: [
       AUTHORITY_PILOT,
@@ -191,6 +194,7 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
     "tests/helpers/credential_commands.ts": [
       "tests/credential_transition_test.ts",
       "tests/identity_totp_contract_test.ts",
+      "tests/credential_preparation_test.ts",
     ],
     [ACCOUNT_REPOSITORY]: [
       "server/auth/sessions.ts",
@@ -210,6 +214,25 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
     ],
   },
 };
+export const OFFLINE_RECOVERY = "server/auth/offline_recovery.ts";
+export const PREPARATION_HELPER = "tests/helpers/account_preparation.ts";
+export const PREPARATION_OWNERSHIP: OwnershipRules = {
+  roots: PROOF_OWNERSHIP.roots,
+  modules: {
+    ...PROOF_OWNERSHIP.modules,
+    [CREDENTIAL_ENGINE]: [
+      ...PROOF_OWNERSHIP.modules[CREDENTIAL_ENGINE],
+      PREPARATION_HELPER,
+    ],
+    [ACCOUNT_REPOSITORY]: [
+      ...PROOF_OWNERSHIP.modules[ACCOUNT_REPOSITORY],
+      PREPARATION_HELPER,
+      "tests/credential_preparation_test.ts",
+    ],
+    [OFFLINE_RECOVERY]: [CREDENTIAL_ENGINE, PREPARATION_HELPER],
+    [PREPARATION_HELPER]: ["tests/credential_preparation_test.ts"],
+  },
+};
 
 export const FIXTURE_SCOPE_ENGINE = "tests/helpers/fixture_scope_engine.ts";
 export const PLUGIN_FIXTURE_ENGINE = "tests/helpers/plugin_fixture_engine.ts";
@@ -217,9 +240,9 @@ export const PLUGIN_OPERATIONS = "tests/helpers/plugin_operations_fixture.ts";
 /** Private construction modules have public callback facades. Every import form
  * is checked at the resolved module, never by following the imported value. */
 export const FIXTURE_OWNERSHIP: OwnershipRules = {
-  ...PROOF_OWNERSHIP,
+  ...PREPARATION_OWNERSHIP,
   modules: {
-    ...PROOF_OWNERSHIP.modules,
+    ...PREPARATION_OWNERSHIP.modules,
     [FIXTURE_SCOPE_ENGINE]: [
       "tests/helpers/fixture_scope.ts",
       PLUGIN_FIXTURE_ENGINE,

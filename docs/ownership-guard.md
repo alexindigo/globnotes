@@ -278,6 +278,17 @@ legacy sign-in handlers are unchanged.
 Inspection returns a plain envelope; token bytes are delivered data, never a
 pending inspection result.
 
+## Credential publication dependencies (P09-P10)
+
+Credential commands pass their admitted domain/aggregate lease through the sealed
+transition and repository adapter to the identity writer. Prepared account writes
+retain the same chain; offline recovery also retains the issued recovery-lock
+lease. Storage validation runs before final fences for every ancestor, rather
+than relying on nested assertion callbacks that finish before storage checks.
+Post-commit redacted identities remain acknowledgments, not permission for a
+second write. Candidate and decoded-account maps stay local to their issuing
+aggregate; no request-only credential cache is introduced.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from
