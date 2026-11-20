@@ -1,52 +1,51 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import type { LegacySite, OwnershipFamily } from "./ownership_contract.ts";
 import sites from "./ownership_legacy_sites.json" with { type: "json" };
-import credentialSites from "./ownership_credentials_sites.json" with {
-  type: "json",
-};
+import rootSites from "./ownership_root_sites.json" with { type: "json" };
 
 /** Exact execution-base occurrences, not owner declarations/path exemptions.
  * Remove sites as their named families migrate; keep the consumer manifest.
- * P01 inventories child and credential capabilities before their migrations;
- * no resource, record, credential or coordination closure is inferred from it.
+ * P01 protects runtime roots and process acquisition. Credential privacy belongs
+ * to the P07-P10 module owners, not a TextEncoder or credential-flow heuristic.
  */
 export const INVENTORY_BASE = "4436da3d6819790f52a4d4d50969800c72ddb663";
 export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
-  "credential-stored-interpretation": {
-    replacement: "P07",
+  "native-process-control": {
+    replacement: "P12/T02/A08",
     consumers: [
-      "tests/local_auth_test.ts",
-      "tests/identity_sessions_test.ts",
-      "tests/identity_totp_test.ts",
+      "client/tests/e2e/runner-entrypoint-controls.mjs",
+      "client/tests/e2e/native-suite-results.test.js",
     ],
   },
-  "credential-legacy-enrollment": {
-    replacement: "P09/P10/A01; compatibility adoption I05/I14",
+  "native-expression-input": {
+    replacement:
+      "A11: explicit DOM-expression input ownership, no general Function constructor",
     consumers: [
-      "tests/access_settings_test.ts",
-      "tests/auth_test.ts",
-      "tests/totp_test.ts",
+      "client/tests/e2e/native-dom-snapshot.test.js",
+      "client/tests/e2e/settings-inventory-native.test.js",
+      "client/tests/e2e/sidebar-navigation-native.test.js",
     ],
   },
-  "credential-setup-preparation": {
-    replacement: "P10/A01; setup adoption I06/I14",
-    consumers: ["tests/auth_test.ts", "tests/totp_test.ts"],
+  "test-process-control": {
+    replacement: "P12/T01/A11",
+    consumers: [
+      "tests/server_lifetime_test.ts",
+      "tests/product_settlement_test.ts",
+      "tests/timing/product_settlement_stall_test.ts",
+      "tests/plugin_worker_liveness_test.ts",
+      "tests/index_pass_isolation_test.ts",
+    ],
   },
-  "credential-snapshot-encoding": {
-    replacement: "Allowed; preserve snapshot hashing through P10/A01",
-    allowed: true,
-    closed: true,
-    reason:
-      "UTF-8 input to the existing snapshot SHA-256 signature, not stored authenticator interpretation",
-    consumers: ["tests/access_snapshot_test.ts", "tests/identity_acl_test.ts"],
+  "selector-graph": {
+    replacement: "P17/A11: explicit dependency-graph command owner",
+    consumers: ["tests/select_checks_test.ts", "tests/gate_selection_test.ts"],
   },
-  "credential-jwt-encoding": {
-    replacement: "Allowed; preserve issuer signing bytes through P08/A01",
-    allowed: true,
-    closed: true,
-    reason:
-      "UTF-8 encoding of the current JWT signing key in its existing sign/verify owner, not TOTP secret decoding",
-    consumers: ["tests/local_auth_test.ts", "tests/identity_sessions_test.ts"],
+  "plugin-module-loader": {
+    replacement: "A11: explicit private product-module input ownership",
+    consumers: [
+      "tests/plugin_runtime_test.ts",
+      "tests/plugin_worker_liveness_test.ts",
+    ],
   },
   "native-account": {
     replacement: "A08",
@@ -112,7 +111,12 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
   },
   "handler-loader": {
     replacement: "A11",
-    consumers: ["tests/http_mutation_lease_test.ts"],
+    consumers: [
+      "tests/http_mutation_lease_test.ts",
+      "tests/plugin_data_test.ts",
+      "tests/plugin_render_lifecycle_test.ts",
+      "tests/plugin_settings_schema_lease_test.ts",
+    ],
   },
   // Deliberately compiled upstream reference code is a product input, not
   // another launcher owner. A11 reviews its explicit input classification;
@@ -127,7 +131,7 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
   },
 };
 
-export const LEGACY_OWNERSHIP: LegacySite[] = [...sites, ...credentialSites]
+export const LEGACY_OWNERSHIP: LegacySite[] = [...sites, ...rootSites]
   .map((site) => {
     const family = OWNERSHIP_FAMILIES[site.family];
     if (!family) throw new Error(`absent protected family: ${site.family}`);

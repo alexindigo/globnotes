@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-/** Static ownership contract, not a sandbox. The compiler owns syntax, scopes
- * and exports; this file interprets only the declared capability values. */
+/** Ownership is checked at roots and import sites, never by following values. */
 import ts from "typescript";
 import * as path from "@std/path";
 import { command, DENO } from "./process.ts";
@@ -32,22 +31,143 @@ export interface OwnershipFamily {
   allowed?: boolean;
   reason?: string;
 }
-const CREDENTIAL_IMPORTS: Record<string, Record<string, string>> = {
-  "@std/encoding/base32": {
-    encodeBase32: "credential.raw-base32",
-    decodeBase32: "credential.raw-base32",
+export interface RootRule {
+  /** Only direct, non-computed members in this list are ordinary public APIs. */
+  members: readonly string[];
+  /** Overrides members: these members require an exact owner module. */
+  ownedMembers?: Readonly<Record<string, readonly string[]>>;
+}
+export interface OwnershipRules {
+  roots: Readonly<Record<string, RootRule>>;
+  /** Resolved module identity -> exact owner modules, for every runtime form. */
+  modules: Readonly<Record<string, readonly string[]>>;
+}
+export const CHILD_OWNER = "tests/helpers/process.ts";
+const GLOBAL_MEMBERS = [
+  "Worker",
+  "crypto",
+  "addEventListener",
+  "removeEventListener",
+  "setInterval",
+  "clearInterval",
+  "setTimeout",
+  "clearTimeout",
+  "postMessage",
+  "onmessage",
+];
+export const PROCESS_OWNERSHIP: OwnershipRules = {
+  roots: {
+    Deno: {
+      members: [
+        "SeekMode",
+        "args",
+        "build",
+        "chmod",
+        "chmodSync",
+        "chownSync",
+        "connect",
+        "copyFile",
+        "copyFileSync",
+        "createHttpClient",
+        "cwd",
+        "env",
+        "errors",
+        "execPath",
+        "linkSync",
+        "listen",
+        "lstat",
+        "lstatSync",
+        "makeTempDir",
+        "makeTempDirSync",
+        "makeTempFile",
+        "makeTempFileSync",
+        "mkdir",
+        "mkdirSync",
+        "networkInterfaces",
+        "open",
+        "openSync",
+        "permissions",
+        "pid",
+        "ppid",
+        "readDir",
+        "readDirSync",
+        "readFile",
+        "readFileSync",
+        "readLink",
+        "readLinkSync",
+        "readTextFile",
+        "readTextFileSync",
+        "realPath",
+        "realPathSync",
+        "remove",
+        "removeSync",
+        "rename",
+        "renameSync",
+        "serve",
+        "stat",
+        "statSync",
+        "stderr",
+        "stdin",
+        "stdout",
+        "symlink",
+        "symlinkSync",
+        "test",
+        "utime",
+        "utimeSync",
+        "version",
+        "watchFs",
+        "writeFile",
+        "writeFileSync",
+        "writeTextFile",
+        "writeTextFileSync",
+      ],
+      ownedMembers: {
+        Command: [CHILD_OWNER],
+        run: [CHILD_OWNER],
+        kill: [CHILD_OWNER],
+        exit: [
+          "server/main.ts",
+          "server/config/cli.ts",
+          "server/auth/local.ts",
+        ],
+        addSignalListener: ["server/main.ts"],
+        removeSignalListener: ["server/main.ts"],
+      },
+    },
+    globalThis: { members: GLOBAL_MEMBERS },
+    self: { members: GLOBAL_MEMBERS },
+    window: { members: GLOBAL_MEMBERS },
+    global: { members: GLOBAL_MEMBERS },
+    module: { members: [] },
+    process: {
+      members: [
+        "cwd",
+        "env",
+        "pid",
+        "ppid",
+        "platform",
+        "versions",
+        "version",
+        "arch",
+        "argv",
+        "execPath",
+        "stdout",
+        "stderr",
+        "stdin",
+      ],
+    },
+    require: { members: [] },
+    eval: { members: [] },
+    Function: { members: [] },
   },
-  otplib: { totp: "credential.raw-verifier" },
-  "otplib/core.js": { hotpCreateHmacKey: "credential.raw-verifier" },
-  "server/auth/credentials.ts": {
-    totpSecretFromRawKey: "credential.raw-secret",
-    matchingTotpStep: "credential.raw-verifier",
-    checkTotpCode: "credential.raw-verifier",
+  modules: {
+    "node:child_process": [CHILD_OWNER],
+    "node:module": [CHILD_OWNER],
+    "node:process": [CHILD_OWNER],
   },
 };
 
-/** Independently checked before any module can enter the analyzed set. An EOF
- * wrapper alone is not evidence that the statement list consumed the source. */
+/** A full-span wrapper alone cannot authorize an omitted statement suffix. */
 export function assertOwnershipParse(
   ast: ts.SourceFile,
   text: string,
@@ -83,50 +203,48 @@ export function assertOwnershipParse(
   }
 }
 
-type Value = { path: string } | { text: string } | { module: string } | {
-  fields: Map<string, Value>;
-} | undefined;
-const cap = (name: string): Value => ({ path: name });
-const namespace = (name: string) =>
-  ["Deno", "globalThis", "module", "process", "child_process"].includes(name);
-const protectedPath = (name: string): string | undefined => {
-  if (name.startsWith("credential.")) return name;
-  if (name === "TextEncoder" || name.startsWith("TextEncoder.")) {
-    return "credential.raw-utf8";
-  }
+/** Syntax-only reference positions; lexical shadowing is supplied by the compiler. */
+function isReference(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  if (ts.isJsxClosingElement(parent)) return false;
   if (
-    [
-      "Deno.Command",
-      "Deno.run",
-      "Deno.*",
-      "globalThis.*",
-      "dynamic-import.*",
-      "module.createRequire",
-      "module.*",
-      "process.*",
-      "process.getBuiltinModule",
-      "require",
-    ].includes(name) || name.startsWith("child_process")
-  ) return name;
-};
+    (ts.isJsxOpeningElement(parent) || ts.isJsxSelfClosingElement(parent)) &&
+    parent.tagName === node && /^[a-z]/.test(node.text)
+  ) return false;
+  if (ts.isShorthandPropertyAssignment(parent)) return true;
+  if (ts.isExportSpecifier(parent)) {
+    return (parent.propertyName ?? parent.name) === node;
+  }
+  if (ts.isBindingElement(parent) && parent.propertyName === node) return false;
+  if (ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) {
+    return false;
+  }
+  return !("name" in parent && parent.name === node);
+}
+const moduleIdentity = (specifier: string) =>
+  ["child_process", "module", "process"].includes(specifier)
+    ? `node:${specifier}`
+    : specifier;
 
-export function analyzeOwnership(sources: SourceModule[]): OwnershipSite[] {
+export function analyzeOwnership(
+  sources: SourceModule[],
+  rules = PROCESS_OWNERSHIP,
+): OwnershipSite[] {
   const expected = COVERAGE.get(sources)?.files ?? sources.map((s) => s.file);
   assertModuleCoverage(expected, sources.map((s) => s.file));
-  const inputs = new Map(sources.map((s) => [s.file, s]));
-  const filename = (file: string) => `/repository/${file}`;
-  const identity = (file: string) => file.slice("/repository/".length);
+  const inputs = new Map(sources.map((s) => [`/repository/${s.file}`, s]));
   const options: ts.CompilerOptions = {
     target: ts.ScriptTarget.Latest,
     module: ts.ModuleKind.ESNext,
     moduleDetection: ts.ModuleDetectionKind.Force,
     allowJs: true,
     noLib: true,
+    noResolve: true,
     noEmit: true,
   };
   const host: ts.CompilerHost = {
     getSourceFile: (file, language) => {
-      const input = inputs.get(identity(file));
+      const input = inputs.get(file);
       return input
         ? ts.createSourceFile(file, input.text, language, true)
         : undefined;
@@ -137,496 +255,135 @@ export function analyzeOwnership(sources: SourceModule[]): OwnershipSite[] {
     getCanonicalFileName: (file) => file,
     useCaseSensitiveFileNames: () => true,
     getNewLine: () => "\n",
-    fileExists: (file) => inputs.has(identity(file)),
-    readFile: (file) => inputs.get(identity(file))?.text,
-    resolveModuleNames: (names, file) =>
-      names.map((name) => {
-        const target = inputs.get(identity(file))?.imports?.[name];
-        return target && inputs.has(target)
-          ? { resolvedFileName: filename(target) }
-          : undefined;
-      }),
+    fileExists: (file) => inputs.has(file),
+    readFile: (file) => inputs.get(file)?.text,
   };
-  const program = ts.createProgram(
-    sources.map((s) => filename(s.file)),
-    options,
-    host,
+  const program = ts.createProgram([...inputs.keys()], options, host),
+    checker = program.getTypeChecker();
+  assertModuleCoverage(
+    expected,
+    program.getSourceFiles().map((ast) => inputs.get(ast.fileName)!.file),
   );
-  const checker = program.getTypeChecker();
-  const modules = new Map(
-    program.getSourceFiles().map((ast) => [identity(ast.fileName), ast]),
-  );
-  assertModuleCoverage(expected, [...modules.keys()]);
-  for (const [file, ast] of modules) {
-    assertOwnershipParse(
-      ast,
-      inputs.get(file)!.text,
-      program.getSyntacticDiagnostics(ast),
-    );
-  }
-  const assignments = new Map<ts.Symbol, ts.Expression[]>();
-  const collectAssignments = (node: ts.Node) => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left)
-    ) {
-      const symbol = checker.getSymbolAtLocation(node.left);
-      if (symbol) {
-        assignments.set(symbol, [
-          ...(assignments.get(symbol) ?? []),
-          node.right,
-        ]);
+  const sites: OwnershipSite[] = [];
+  for (const ast of program.getSourceFiles()) {
+    const input = inputs.get(ast.fileName)!;
+    assertOwnershipParse(ast, input.text, program.getSyntacticDiagnostics(ast));
+    const report = (node: ts.Node, capability: string) => {
+      const start = node.getStart(ast),
+        line = ast.getLineAndCharacterOfPosition(start).line + 1;
+      sites.push({
+        file: input.file,
+        capability,
+        line,
+        source: input.text.slice(start, node.end),
+        context: input.text.split("\n")[line - 1].trim(),
+      });
+    };
+    const dependency = (node: ts.Expression, dynamic = false) => {
+      if (!ts.isStringLiteral(node)) {
+        report(node.parent, "dynamic-import.*");
+        return;
       }
-    }
-    ts.forEachChild(node, collectAssignments);
-  };
-  for (const ast of modules.values()) collectAssignments(ast);
-  const imported = (node: ts.Node, specifier: string): Value => {
-    if (CREDENTIAL_IMPORTS[specifier]) return { module: specifier };
-    if (
-      ["child_process", "module", "process"].includes(
-        specifier.replace(/^node:/, ""),
-      )
-    ) return cap(specifier.replace(/^node:/, ""));
-    const file = inputs.get(identity(node.getSourceFile().fileName))?.imports
-      ?.[specifier] ??
-      (specifier.startsWith("file:///repository/")
-        ? decodeURI(specifier.slice(19))
-        : specifier);
-    return CREDENTIAL_IMPORTS[file] || modules.has(file)
-      ? { module: file }
-      : undefined;
-  };
-  const resolving = new Set<ts.Node | ts.Symbol | string>();
-  const guarded = (
-    key: ts.Node | ts.Symbol | string,
-    read: () => Value,
-  ): Value => {
-    if (resolving.has(key)) return;
-    resolving.add(key);
-    try {
-      return read();
-    } finally {
-      resolving.delete(key);
-    }
-  };
-  const symbolValue = (symbol: ts.Symbol | undefined): Value =>
-    symbol && guarded(symbol, () => {
-      const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
-      if (!declaration) return;
-      const declared =
-        CREDENTIAL_IMPORTS[identity(declaration.getSourceFile().fileName)]
-          ?.[symbol.name];
-      if (declared) return cap(declared);
-      if (
-        ts.isImportSpecifier(declaration) || ts.isImportClause(declaration) ||
-        ts.isNamespaceImport(declaration)
-      ) {
-        let ancestor: ts.Node = declaration;
-        while (!ts.isImportDeclaration(ancestor)) ancestor = ancestor.parent;
-        if (
-          ancestor.importClause?.isTypeOnly ||
-          (ts.isImportSpecifier(declaration) && declaration.isTypeOnly)
-        ) return;
-        const value = imported(
-          ancestor,
-          (ancestor.moduleSpecifier as ts.StringLiteral).text,
-        );
-        if (ts.isNamespaceImport(declaration)) return value;
-        const name = ts.isImportSpecifier(declaration)
-          ? (declaration.propertyName ?? declaration.name).text
-          : "default";
-        return name === "default" && value && "path" in value
-          ? value
-          : member(value, name);
-      }
-      if (
-        ts.isImportEqualsDeclaration(declaration) &&
-        ts.isExternalModuleReference(declaration.moduleReference)
-      ) {
-        return imported(
-          declaration,
-          (declaration.moduleReference.expression as ts.StringLiteral).text,
-        );
-      }
-      if (symbol.flags & ts.SymbolFlags.Alias) {
-        return symbolValue(checker.getAliasedSymbol(symbol));
-      }
-      if (ts.isBindingElement(declaration)) return evaluate(declaration);
-      if (ts.isExportAssignment(declaration)) {
-        return evaluate(declaration.expression);
-      }
-      if (
-        ts.isVariableDeclaration(declaration) || ts.isParameter(declaration) ||
-        ts.isPropertyAssignment(declaration)
-      ) {
-        const values = [
-          declaration.initializer,
-          ...(assignments.get(symbol) ?? []),
-        ].map(evaluate);
-        const value = values.find((value) => inside(value)) ??
-          values.find(Boolean);
-        return value && "text" in value &&
-            ts.isVariableDeclaration(declaration) &&
-            !(ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const)
-          ? undefined
-          : value;
-      }
-      if (ts.isShorthandPropertyAssignment(declaration)) {
-        return symbolValue(
-          checker.getShorthandAssignmentValueSymbol(declaration),
-        );
-      }
-    });
-  const member = (value: Value, name?: string): Value => {
-    if (!value) return;
-    if ("path" in value) {
-      return cap(
-        value.path === "globalThis" &&
-          ["Deno", "process", "require", "TextEncoder"].includes(name ?? "")
-          ? name!
-          : `${value.path}.${name ?? "*"}`,
-      );
-    }
-    if ("fields" in value) {
-      return name === undefined && inside(value)
-        ? cap("dynamic-import.*")
-        : value.fields.get(name ?? "");
-    }
-    if ("module" in value) {
-      if (name === undefined) {
-        return cap(
-          CREDENTIAL_IMPORTS[value.module]
-            ? "credential.dynamic"
-            : "dynamic-import.*",
-        );
-      }
-      const declared = CREDENTIAL_IMPORTS[value.module]?.[name];
-      if (declared) return cap(declared);
-      const ast = modules.get(value.module),
-        symbol = ast && checker.getSymbolAtLocation(ast);
-      return symbolValue(
-        symbol &&
-          checker.getExportsOfModule(symbol).find((s) => s.name === name),
-      );
-    }
-  };
-  const text = (node: ts.Node | undefined): string | undefined => {
-    const value = evaluate(node);
-    return value && "text" in value ? value.text : undefined;
-  };
-  const property = (node: ts.Node): string | undefined =>
-    ts.isIdentifier(node) || ts.isStringLiteralLike(node)
-      ? node.text
-      : ts.isComputedPropertyName(node)
-      ? text(node.expression)
-      : text(node);
-  const evaluate = (node: ts.Node | undefined): Value =>
-    node && guarded(node, () => {
-      if (ts.isIdentifier(node)) {
-        const symbol = checker.getSymbolAtLocation(node);
-        // JS expando writes can give a runtime global a synthetic Identifier
-        // declaration. That is not a lexical shadow of the runtime namespace.
-        const lexical = symbol?.declarations?.some((d) => !ts.isIdentifier(d));
-        return lexical ? symbolValue(symbol) : [
-            "Deno",
-            "globalThis",
-            "window",
-            "self",
-            "process",
-            "require",
-            "TextEncoder",
-          ].includes(node.text)
-          ? cap(
-            ["window", "self"].includes(node.text) ? "globalThis" : node.text,
-          )
+      const resolved = input.imports && Object.hasOwn(input.imports, node.text)
+        ? input.imports[node.text]
+        : undefined;
+      const target = moduleIdentity(resolved ?? node.text),
+        owners = Object.hasOwn(rules.modules, target)
+          ? rules.modules[target]
           : undefined;
+      if (owners && !owners.includes(input.file)) {
+        report(node, `module:${target}`);
+      } else if (!resolved && (dynamic || !target.startsWith("node:"))) {
+        report(node.parent, "unresolved-import");
       }
-      if (ts.isStringLiteralLike(node)) return { text: node.text };
-      if (ts.isTemplateExpression(node)) {
-        let result = node.head.text;
-        for (const part of node.templateSpans) {
-          const value = text(part.expression);
-          if (value === undefined) return;
-          result += value + part.literal.text;
-        }
-        return { text: result };
+    };
+    const visit = (node: ts.Node) => {
+      if (ts.isTypeNode(node)) return;
+      if (ts.isImportDeclaration(node)) {
+        const clause = node.importClause, bindings = clause?.namedBindings;
+        const erased = clause?.isTypeOnly ||
+          (!clause?.name && bindings && ts.isNamedImports(bindings) &&
+            bindings.elements.length > 0 && bindings.elements.every((s) =>
+              s.isTypeOnly
+            ));
+        if (!erased) dependency(node.moduleSpecifier);
+        return;
       }
-      if (ts.isBinaryExpression(node)) {
-        if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-          const left = text(node.left), right = text(node.right);
-          return left !== undefined && right !== undefined
-            ? { text: left + right }
-            : undefined;
-        }
+      if (ts.isExportDeclaration(node)) {
+        const clause = node.exportClause;
+        const erased = node.isTypeOnly ||
+          (clause && ts.isNamedExports(clause) && clause.elements.length > 0 &&
+            clause.elements.every((s) => s.isTypeOnly));
+        if (!erased && node.moduleSpecifier) dependency(node.moduleSpecifier);
+        if (node.moduleSpecifier || erased) return;
+      }
+      if (ts.isImportEqualsDeclaration(node)) {
         if (
-          node.operatorToken.kind === ts.SyntaxKind.EqualsToken ||
-          node.operatorToken.kind === ts.SyntaxKind.CommaToken
-        ) return evaluate(node.right);
-      }
-      if (ts.isPropertyAccessExpression(node)) {
-        return member(evaluate(node.expression), node.name.text);
-      }
-      if (ts.isElementAccessExpression(node)) {
-        return member(evaluate(node.expression), text(node.argumentExpression));
-      }
-      if (ts.isObjectLiteralExpression(node)) {
-        return {
-          fields: new Map(
-            node.properties.flatMap((p) =>
-              ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)
-                ? [[
-                  property(p.name) ?? "",
-                  ts.isPropertyAssignment(p)
-                    ? evaluate(p.initializer)
-                    : symbolValue(checker.getShorthandAssignmentValueSymbol(p)),
-                ] as [string, Value]]
-                : []
-            ),
-          ),
-        };
-      }
-      if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
-        return evaluate(node.initializer);
-      }
-      if (ts.isBindingElement(node)) {
-        return member(
-          evaluate(node.parent.parent),
-          ts.isArrayBindingPattern(node.parent)
-            ? String(node.parent.elements.indexOf(node))
-            : property(node.propertyName ?? node.name),
-        ) ?? evaluate(node.initializer);
-      }
-      if (
-        ts.isAwaitExpression(node) || ts.isAsExpression(node) ||
-        ts.isTypeAssertionExpression(node) || ts.isNonNullExpression(node) ||
-        ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node)
-      ) return evaluate(node.expression);
-      if (
-        ts.isMetaProperty(node) &&
-        node.keywordToken === ts.SyntaxKind.ImportKeyword
-      ) {
-        return {
-          fields: new Map([["url", {
-            text: `file:///repository/${
-              identity(node.getSourceFile().fileName)
-            }`,
-          }]]),
-        };
-      }
-      if (
-        ts.isNewExpression(node) && ts.isIdentifier(node.expression) &&
-        node.expression.text === "URL" &&
-        !checker.getSymbolAtLocation(node.expression)
-      ) {
-        const relative = text(node.arguments?.[0]),
-          base = text(node.arguments?.[1]);
-        if (relative !== undefined) {
-          try {
-            return {
-              fields: new Map([["href", {
-                text: new URL(relative, base).href,
-              }]]),
-            };
-          } catch { /* Not a statically valid URL. */ }
-        }
+          !node.isTypeOnly &&
+          ts.isExternalModuleReference(node.moduleReference) &&
+          node.moduleReference.expression
+        ) dependency(node.moduleReference.expression);
+        return;
       }
       if (
         ts.isCallExpression(node) &&
         node.expression.kind === ts.SyntaxKind.ImportKeyword
+      ) dependency(node.arguments[0], true);
+      if (
+        ts.isIdentifier(node) && Object.hasOwn(rules.roots, node.text) &&
+        isReference(node)
       ) {
-        const specifier = text(node.arguments[0]);
-        return specifier === undefined
-          ? cap("dynamic-import.*")
-          : imported(node, specifier);
-      }
-    });
-  const inspecting = new Set<string>();
-  const inside = (value: Value): string | undefined => {
-    if (!value) return;
-    if ("path" in value) {
-      return protectedPath(value.path) ??
-        (namespace(value.path) ? `${value.path}.*` : undefined);
-    }
-    if ("fields" in value) {
-      return [...value.fields.values()].map(inside).find(Boolean);
-    }
-    if ("module" in value && !inspecting.has(value.module)) {
-      if (CREDENTIAL_IMPORTS[value.module]) {
-        return Object.values(CREDENTIAL_IMPORTS[value.module])[0];
-      }
-      inspecting.add(value.module);
-      try {
-        const ast = modules.get(value.module),
-          symbol = ast && checker.getSymbolAtLocation(ast);
-        return symbol &&
-          checker.getExportsOfModule(symbol).map((s) =>
-            inside(member(value, s.name))
-          ).find(Boolean);
-      } finally {
-        inspecting.delete(value.module);
-      }
-    }
-  };
-  const sites: OwnershipSite[] = [], seen = new Set<string>();
-  const report = (node: ts.Node, value: Value, escape = false) => {
-    const name = value && "path" in value && !escape
-      ? protectedPath(value.path)
-      : inside(value);
-    if (!name) return;
-    const ast = node.getSourceFile(),
-      start = node.getStart(ast),
-      file = identity(ast.fileName),
-      line = ast.getLineAndCharacterOfPosition(start).line + 1;
-    const key = `${file}:${start}:${node.end}:${name}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    sites.push({
-      file,
-      capability: name,
-      line,
-      source: ast.text.slice(start, node.end),
-      context: ast.text.split("\n")[line - 1].trim(),
-    });
-  };
-  const visit = (node: ts.Node) => {
-    // Types are parsed and validated, but are not runtime acquisitions.
-    if (ts.isTypeNode(node)) return;
-    if (ts.isImportDeclaration(node)) {
-      const clause = node.importClause;
-      if (!clause?.isTypeOnly) {
-        const value = imported(
-          node,
-          (node.moduleSpecifier as ts.StringLiteral).text,
-        );
-        const bindings = clause?.namedBindings;
-        const onlyTypes = bindings && ts.isNamedImports(bindings) &&
-          bindings.elements.length && bindings.elements.every((s) =>
-            s.isTypeOnly
+        const symbol = ts.isShorthandPropertyAssignment(node.parent)
+          ? checker.getShorthandAssignmentValueSymbol(node.parent)
+          : ts.isExportSpecifier(node.parent)
+          ? checker.getExportSpecifierLocalTargetSymbol(node.parent)
+          : checker.getSymbolAtLocation(node);
+        // JS expando writes create synthetic Identifier declarations, not lexical shadows.
+        const lexical = symbol &&
+          (symbol.flags & (ts.SymbolFlags.Value | ts.SymbolFlags.Alias)) &&
+          symbol.declarations?.some((d) =>
+            !ts.isIdentifier(d) && !d.getSourceFile().isDeclarationFile &&
+            !ts.isTypeOnlyImportOrExportDeclaration(d) &&
+            !(ts.getCombinedModifierFlags(d) & ts.ModifierFlags.Ambient)
           );
-        if (
-          !onlyTypes && value && "path" in value &&
-          value.path === "child_process"
-        ) report(node.moduleSpecifier, value);
-        if (clause?.name) report(clause.name, evaluate(clause.name));
-        if (bindings && ts.isNamespaceImport(bindings)) {
-          report(bindings.name, evaluate(bindings.name));
+        if (!lexical) {
+          const parent = node.parent, rule = rules.roots[node.text];
+          if (
+            ts.isPropertyAccessExpression(parent) &&
+            parent.expression === node && !parent.questionDotToken
+          ) {
+            const member = parent.name.text,
+              owners = rule.ownedMembers?.[member];
+            if (
+              owners
+                ? !owners.includes(input.file)
+                : !rule.members.includes(member)
+            ) report(parent, `${node.text}.${member}`);
+          } else {report(
+              ts.isElementAccessExpression(parent) && parent.expression === node
+                ? parent
+                : node,
+              `${node.text}.*`,
+            );}
         }
-        if (bindings && ts.isNamedImports(bindings)) {
-          for (const specifier of bindings.elements) {
-            if (!specifier.isTypeOnly) {
-              report(specifier.name, evaluate(specifier.name));
-            }
-          }
-        }
       }
-      return;
-    }
-    if (ts.isExportDeclaration(node)) {
-      if (
-        !node.isTypeOnly && node.moduleSpecifier &&
-        (!node.exportClause || !ts.isNamedExports(node.exportClause) ||
-          node.exportClause.elements.some((s) => !s.isTypeOnly))
-      ) {
-        report(
-          node.moduleSpecifier,
-          imported(node, (node.moduleSpecifier as ts.StringLiteral).text),
-        );
-      }
-      return;
-    }
-    if (ts.isExternalModuleReference(node) && node.expression) {
-      report(
-        node.expression,
-        imported(node, (node.expression as ts.StringLiteral).text),
-      );
-    }
-    if (
-      ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) ||
-      ts.isElementAccessExpression(node)
-    ) {
-      const parent = node.parent, value = evaluate(node);
-      const namePosition = ("name" in parent && parent.name === node) ||
-        (ts.isBindingElement(parent) && parent.propertyName === node) ||
-        (ts.isPropertyAccessExpression(parent) && parent.name === node);
-      if (!ts.isIdentifier(node) && !namePosition) {
-        report(node, value);
-      }
-      if (value && "path" in value && namespace(value.path) && !namePosition) {
-        const alias = ((ts.isPropertyAccessExpression(parent) ||
-          ts.isElementAccessExpression(parent)) &&
-          parent.expression === node) ||
-          ts.isVariableDeclaration(parent) || ts.isAsExpression(parent) ||
-          ts.isTypeAssertionExpression(parent) ||
-          ts.isNonNullExpression(parent) || ts.isSatisfiesExpression(parent) ||
-          ts.isParenthesizedExpression(parent) ||
-          (ts.isBinaryExpression(parent) &&
-            parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-            ts.isIdentifier(parent.left));
-        if (
-          !alias && !ts.isPropertyAssignment(parent) &&
-          !ts.isShorthandPropertyAssignment(parent)
-        ) report(node, value, true);
-      }
-    }
-    if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
-      report(node, evaluate(node.name));
-    }
-    if (ts.isReturnStatement(node) && node.expression) {
-      report(node.expression, evaluate(node.expression), true);
-    }
-    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      if (
-        ts.isCallExpression(node) &&
-        node.expression.kind === ts.SyntaxKind.ImportKeyword
-      ) report(node, evaluate(node));
-      else report(node.expression, evaluate(node.expression));
-      for (const argument of node.arguments ?? []) {
-        report(argument, evaluate(argument), true);
-      }
-    }
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      !ts.isIdentifier(node.left)
-    ) {
-      const value = evaluate(node.right);
-      if (!(value && "path" in value && protectedPath(value.path))) {
-        report(node.right, value, true);
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  for (const ast of modules.values()) visit(ast);
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+  }
   return sites.sort((a, b) =>
     a.file.localeCompare(b.file) || a.line - b.line ||
     a.source.localeCompare(b.source)
   );
 }
 
-export const CHILD_OWNER = "tests/helpers/process.ts";
-export const SECRET_OWNER = "server/auth/credentials.ts";
-export const protectedSource = (file: string, capability = "") =>
-  capability.startsWith("credential.")
-    ? file.startsWith("server/auth/") ||
-      file === "server/api/endpoints/_/api/setup/post.ts"
-    : OWNERSHIP_SOURCE_ROOTS.filter((root) => root !== "server").some((root) =>
-      file.startsWith(root + "/")
-    );
-
-/** Consume exact occurrences: a duplicate cannot spend one allowance twice. */
+/** Consume exact occurrences: copying a baseline site cannot spend it twice. */
 export function inventoryErrors(
   sites: OwnershipSite[],
   inventory: LegacySite[],
   files: Set<string>,
 ): string[] {
-  const remaining = sites.filter((site) =>
-    protectedSource(site.file, site.capability) &&
-    site.file !==
-      (site.capability.startsWith("credential.") ? SECRET_OWNER : CHILD_OWNER)
-  );
-  const errors: string[] = [];
+  const remaining = [...sites], errors: string[] = [];
   for (const entry of inventory) {
     if (!entry.family || !entry.replacement || !entry.consumers.length) {
       errors.push(`unclassified inventory: ${entry.file}`);
@@ -700,7 +457,7 @@ export const OWNERSHIP_SOURCE_ROOTS = [
   "tests",
   "client/tests/e2e",
 ] as const;
-const SOURCE_FILE = /\.(ts|js|mjs)$/;
+const SOURCE_FILE = /\.(?:[cm]?[tj]s|[tj]sx)$/;
 export interface OwnershipCoverage {
   root: string;
   files: readonly string[];
@@ -754,12 +511,12 @@ export function ownershipCoverage(sources: SourceModule[]): OwnershipCoverage {
   return coverage;
 }
 
-/** One owner declares and enumerates roots independently of import reachability. */
+/** Roots are enumerated independently of import reachability and spelling. */
 export class OwnershipSourceOwner {
   constructor(private readonly directory: string) {}
-  async analyze(input: string) {
+  async analyze(input: string, rules = PROCESS_OWNERSHIP) {
     const sources = await this.sources(input),
-      sites = analyzeOwnership(sources);
+      sites = analyzeOwnership(sources, rules);
     return { sources, sites, coverage: ownershipCoverage(sources) };
   }
   async sources(input: string): Promise<SourceModule[]> {
@@ -897,5 +654,5 @@ const repositoryOwner = new OwnershipSourceOwner(
 );
 export const repositorySources = (root: string): Promise<SourceModule[]> =>
   repositoryOwner.sources(root);
-export const repositoryOwnership = (root: string) =>
-  repositoryOwner.analyze(root);
+export const repositoryOwnership = (root: string, rules = PROCESS_OWNERSHIP) =>
+  repositoryOwner.analyze(root, rules);

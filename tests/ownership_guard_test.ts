@@ -7,9 +7,11 @@ import {
   familyInventoryErrors,
   inventoryErrors,
   OwnershipSourceOwner,
+  PROCESS_OWNERSHIP,
   type SourceModule,
 } from "./helpers/ownership_contract.ts";
 import { command, DENO } from "./helpers/process.ts";
+import { assertUnowned } from "./ownership_review_test.ts";
 
 // These are source inputs, not executed counterexamples. The isolation contract
 // imports this file so parser-negative controls are always selected as well.
@@ -59,6 +61,58 @@ const rejected = [
   'function factory() {return {runtime: Deno};} new factory().runtime.Command("true");',
   'let runtime; ({runtime} = {runtime: Deno}); new runtime.Command("true");',
 ];
+const expectedCapabilities = [
+  "Deno.Command",
+  "Deno.Command",
+  "module:node:child_process",
+  "Deno.Command",
+  "Deno.*",
+  "Deno.*",
+  "Deno.*",
+  "globalThis.*",
+  "globalThis.*",
+  "globalThis.Deno",
+  "module:node:child_process",
+  "module:node:child_process",
+  "module:node:child_process",
+  "Deno.*",
+  "globalThis.*",
+  "dynamic-import.*",
+  "Deno.Command",
+  "module:node:module",
+  "process.getBuiltinModule",
+  "Deno.*",
+  "Deno.*",
+  "Deno.*",
+  "Deno.*",
+  "Deno.*",
+  "Deno.*",
+  "Deno.*",
+  "Deno.*",
+  "module:node:child_process",
+  "module:node:child_process",
+  "module:node:child_process",
+  "Deno.*",
+  "Deno.Command",
+  "globalThis.Deno",
+  "globalThis.Deno",
+  "globalThis.Deno",
+  "Deno.Command",
+  "Deno.Command",
+  "globalThis.*",
+  "globalThis.*",
+  "module:node:module",
+  "module:node:process",
+  "Deno.*",
+  "Deno.*",
+  "Deno.*",
+];
+const BUILTINS = {
+  "node:child_process": "node:child_process",
+  "child_process": "node:child_process",
+  "node:module": "node:module",
+  "node:process": "node:process",
+};
 for (const extension of ["ts", "mjs"]) {
   for (const [index, source] of rejected.entries()) {
     if (
@@ -69,13 +123,9 @@ for (const extension of ["ts", "mjs"]) {
       const sites = analyzeOwnership([{
         file: `tests/control.${extension}`,
         text: source,
+        imports: BUILTINS,
       }]);
-      assert(sites.length > 0, `missed capability: ${source}`);
-      assert(
-        inventoryErrors(sites, [], new Set()).every((error) =>
-          error.startsWith("unowned capability:")
-        ),
-      );
+      assertUnowned(sites, expectedCapabilities[index]);
     });
   }
   Deno.test(`ownership guard: ${extension} permits allowed code and lexical shadowing`, () => {
@@ -92,13 +142,20 @@ for (const extension of ["ts", "mjs"]) {
       const f = (globalThis) => globalThis[unknown];
     `;
     assertEquals(
-      analyzeOwnership([{ file: `tests/allowed.${extension}`, text: source }]),
+      analyzeOwnership([{
+        file: `tests/allowed.${extension}`,
+        text: source,
+        imports: {
+          "./process.ts": "tests/helpers/process.ts",
+          "node:path": "node:path",
+        },
+      }]),
       [],
     );
   });
 }
 
-Deno.test("ownership guard: parsed import aliases and re-exports retain raw provenance", () => {
+Deno.test("ownership guard: aliases and re-exports cannot hide their root producer", () => {
   const sources: SourceModule[] = [
     { file: "tests/raw.ts", text: "export const launch = Deno.Command;" },
     {
@@ -118,16 +175,8 @@ Deno.test("ownership guard: parsed import aliases and re-exports retain raw prov
     },
   ];
   const sites = analyzeOwnership(sources);
-  assert(
-    sites.some((site) =>
-      site.file === "tests/consumer.mjs" && site.capability === "Deno.Command"
-    ),
-  );
-  assert(
-    sites.some((site) =>
-      site.file === "tests/raw.ts" && site.capability === "Deno.Command"
-    ),
-  );
+  assertUnowned(sites, "Deno.Command");
+  assertEquals(sites.map((site) => site.file), ["tests/raw.ts"]);
 });
 
 for (const extension of ["ts", "mjs"]) {
@@ -168,17 +217,8 @@ for (const extension of ["ts", "mjs"]) {
       },
     ];
     const sites = analyzeOwnership(sources);
-    assert(
-      sites.some((site) =>
-        site.file === `tests/consumer.${extension}` &&
-        site.capability === "Deno.Command"
-      ),
-    );
-    assert(
-      inventoryErrors(sites, [], new Set()).some((error) =>
-        error.startsWith("unowned capability:")
-      ),
-    );
+    assertUnowned(sites, "Deno.*");
+    assertEquals(sites.map((site) => site.file), [`shared/raw.${extension}`]);
   });
   Deno.test(`ownership completeness: ${extension} allows empty and trivia-only modules`, () => {
     for (
@@ -286,12 +326,7 @@ Deno.test("ownership bindings: JavaScript global expandos do not create lexical 
           '; import {command as owned} from "./helpers/process.ts"; const runtime = globalThis["Deno"]; new runtime["Command"]("true");',
       },
     ]);
-    assert(
-      sites.some((site) =>
-        site.file === `tests/consumer.${extension}` &&
-        site.capability === "Deno.Command"
-      ),
-    );
+    assertUnowned(sites, "globalThis.*");
   }
 });
 
@@ -329,9 +364,10 @@ Deno.test("ownership guard: namespace imports and asynchronous import callbacks 
         imports: { "./raw.js": "shared/raw.js" },
       },
     ]);
+    assertUnowned(sites, "Deno.Command");
     assert(
       sites.some((site) =>
-        site.file === "tests/consumer.mjs" && site.capability === "Deno.Command"
+        site.file === "shared/raw.js" && site.capability === "Deno.Command"
       ),
     );
   }
@@ -365,15 +401,9 @@ Deno.test("ownership guard: real Deno graph resolves native aliases through loca
       sources.some((source) => source.file === "shared/raw.js"),
       "local transitive omitted",
     );
-    const native = analyzeOwnership(sources).filter((site) =>
-      site.file === "client/tests/e2e/case.mjs"
-    );
-    assert(
-      native.some((site) =>
-        site.capability === "Deno.Command" && site.source === "Start"
-      ),
-      JSON.stringify(native),
-    );
+    const sites = analyzeOwnership(sources);
+    assertUnowned(sites, "globalThis.Deno");
+    assertEquals(sites.map((site) => site.file), ["shared/raw.js"]);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -407,7 +437,11 @@ Deno.test("ownership guard: native JS uses the same real clean launcher", async 
       if (!result.success) throw Error(new TextDecoder().decode(result.stderr));
       console.log(new TextDecoder().decode(result.stdout).trim());`;
     assertEquals(
-      analyzeOwnership([{ file: "client/tests/e2e/pilot.mjs", text: source }]),
+      analyzeOwnership([{
+        file: "client/tests/e2e/pilot.mjs",
+        text: source,
+        imports: { [launcher]: "tests/helpers/process.ts" },
+      }]),
       [],
     );
     await Deno.writeTextFile(file, source);
@@ -497,7 +531,7 @@ Deno.test("ownership guard: exact occurrences, stale entries and consumer loss r
   );
 });
 
-Deno.test("ownership guard: credential declarations reject raw aliases without a path exemption", () => {
+Deno.test("ownership guard: private-module/root registrations replace credential value tracking", () => {
   for (
     const text of [
       'import {totpSecretFromRawKey as decode} from "./credentials.ts"; decode(key);',
@@ -512,18 +546,27 @@ Deno.test("ownership guard: credential declarations reject raw aliases without a
     const sites = analyzeOwnership([{
       file: "server/auth/control.ts",
       text,
-      imports: { "./credentials.ts": "server/auth/credentials.ts" },
-    }]);
-    assert(
-      sites.some((site) => site.capability.startsWith("credential.")),
-      text,
-    );
-    assert(
-      inventoryErrors(sites, [], new Set()).some((error) =>
-        error.startsWith("unowned capability:")
-      ),
-      text,
-    );
+      imports: {
+        "./credentials.ts": "server/auth/credentials.ts",
+        "@std/encoding/base32": "@std/encoding/base32",
+      },
+    }], {
+      roots: { ...PROCESS_OWNERSHIP.roots, TextEncoder: { members: [] } },
+      modules: {
+        ...PROCESS_OWNERSHIP.modules,
+        "server/auth/credentials.ts": ["server/auth/account_credentials.ts"],
+        "@std/encoding/base32": ["server/auth/credentials.ts"],
+        "otplib": ["server/auth/credentials.ts"],
+      },
+    });
+    const expected = text.includes('"./credentials.ts"')
+      ? "module:server/auth/credentials.ts"
+      : text.includes('"@std/encoding/base32"')
+      ? "module:@std/encoding/base32"
+      : text.includes('"otplib"')
+      ? "module:otplib"
+      : "globalThis.TextEncoder";
+    assertUnowned(sites, expected);
   }
   assertEquals(
     inventoryErrors(

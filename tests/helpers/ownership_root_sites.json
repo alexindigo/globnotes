@@ -1,0 +1,530 @@
+[
+  {
+    "file": "client/tests/e2e/access-extra-states.mjs",
+    "capability": "Deno.exit",
+    "line": 11,
+    "source": "Deno.exit",
+    "context": "try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/access-extra-states.mjs",
+    "capability": "Deno.exit",
+    "line": 12,
+    "source": "Deno.exit",
+    "context": "if (options.help) { console.log(\"Usage: access-extra-states.mjs --artifacts <directory>\"); Deno.exit(0); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/access-extra-states.mjs",
+    "capability": "Deno.exit",
+    "line": 13,
+    "source": "Deno.exit",
+    "context": "if (!options.artifacts) { console.error(\"--artifacts is required\"); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/access-settings.mjs",
+    "capability": "Deno.exit",
+    "line": 19,
+    "source": "Deno.exit",
+    "context": "try { options = parseFixtureArguments(\"access-settings\", Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/access-settings.mjs",
+    "capability": "Deno.exit",
+    "line": 20,
+    "source": "Deno.exit",
+    "context": "if (options.help) { console.log(\"Usage: access-settings.mjs [--artifacts <directory>] [--help]\"); Deno.exit(0); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "capability": "Deno.exit",
+    "line": 9,
+    "source": "Deno.exit",
+    "context": "catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "capability": "Deno.exit",
+    "line": 10,
+    "source": "Deno.exit",
+    "context": "if (options.help) { console.log(\"Usage: generic-plugin-system.mjs [--artifacts <directory>] [--help]\"); Deno.exit(0); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/legacy-fixture.mjs",
+    "capability": "Deno.exit",
+    "line": 105,
+    "source": "Deno.exit",
+    "context": "if (fixture) void fixture.close().finally(() => Deno.exit(1));",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/legacy-fixture.mjs",
+    "capability": "Deno.addSignalListener",
+    "line": 107,
+    "source": "Deno.addSignalListener",
+    "context": "Deno.addSignalListener(\"SIGTERM\", terminate);",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/legacy-fixture.mjs",
+    "capability": "Deno.removeSignalListener",
+    "line": 124,
+    "source": "Deno.removeSignalListener",
+    "context": "Deno.removeSignalListener(\"SIGTERM\", terminate);",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/native-dom-snapshot.test.js",
+    "capability": "Function.*",
+    "line": 5,
+    "source": "Function",
+    "context": "const run = expression => Function(`return (${expression})`)();",
+    "family": "native-expression-input"
+  },
+  {
+    "file": "client/tests/e2e/note-save-fifo.mjs",
+    "capability": "Deno.exit",
+    "line": 11,
+    "source": "Deno.exit",
+    "context": "try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/note-save-fifo.mjs",
+    "capability": "Deno.exit",
+    "line": 12,
+    "source": "Deno.exit",
+    "context": "if (options.help) { console.log(\"Usage: note-save-fifo.mjs --artifacts <directory>\"); Deno.exit(0); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/note-save-fifo.mjs",
+    "capability": "Deno.exit",
+    "line": 13,
+    "source": "Deno.exit",
+    "context": "if (!options.artifacts) { console.error(\"--artifacts is required\"); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/note-save-owner-guards.mjs",
+    "capability": "Deno.exit",
+    "line": 9,
+    "source": "Deno.exit",
+    "context": "try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/note-save-owner-guards.mjs",
+    "capability": "Deno.exit",
+    "line": 10,
+    "source": "Deno.exit",
+    "context": "if (options.help) { console.log(\"Usage: note-save-owner-guards.mjs --artifacts <directory>\"); Deno.exit(0); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/note-save-owner-guards.mjs",
+    "capability": "Deno.exit",
+    "line": 11,
+    "source": "Deno.exit",
+    "context": "if (!options.artifacts) { console.error(\"--artifacts is required\"); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-guard-preservation.mjs",
+    "capability": "Deno.exit",
+    "line": 9,
+    "source": "Deno.exit",
+    "context": "catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-guard-preservation.mjs",
+    "capability": "Deno.exit",
+    "line": 10,
+    "source": "Deno.exit",
+    "context": "if (options.help) { console.log(\"Usage: plugin-guard-preservation.mjs --artifacts <directory>\"); Deno.exit(0); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-guard-preservation.mjs",
+    "capability": "Deno.exit",
+    "line": 11,
+    "source": "Deno.exit",
+    "context": "if (!options.artifacts) { console.error(\"--artifacts is required\"); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-permissions.mjs",
+    "capability": "Deno.exit",
+    "line": 14,
+    "source": "Deno.exit",
+    "context": "try { options = parseFixtureArguments(\"plugin-permissions\", Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-permissions.mjs",
+    "capability": "Deno.exit",
+    "line": 15,
+    "source": "Deno.exit",
+    "context": "if (options.help) { console.log(\"Usage: plugin-permissions.mjs --artifacts <directory>\"); Deno.exit(0); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-permissions.mjs",
+    "capability": "Deno.exit",
+    "line": 16,
+    "source": "Deno.exit",
+    "context": "if (!options.artifacts) { console.error(\"--artifacts is required\"); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Deno.exit",
+    "line": 10,
+    "source": "Deno.exit",
+    "context": "try { options = parsePrefixAuthArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Deno.exit",
+    "line": 11,
+    "source": "Deno.exit",
+    "context": "if (options.help) { console.log(\"Usage: plugin-prefix-auth.mjs --artifacts <directory> [--variant <fixture>]\"); Deno.exit(0); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Deno.exit",
+    "line": 13,
+    "source": "Deno.exit",
+    "context": "if (!artifacts) { console.error(\"--artifacts or GLOBNOTES_E2E_ARTIFACTS is required\"); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/plugin-review-repairs.mjs",
+    "capability": "Deno.exit",
+    "line": 14,
+    "source": "Deno.exit",
+    "context": "if (options.help) { console.log(\"Usage: plugin-review-repairs.mjs --artifacts <directory> [--variant <fixture>]\"); Deno.exit(0); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/settings-design.mjs",
+    "capability": "Deno.exit",
+    "line": 17,
+    "source": "Deno.exit",
+    "context": "catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/settings-design.mjs",
+    "capability": "Deno.exit",
+    "line": 20,
+    "source": "Deno.exit",
+    "context": "Deno.exit(0);",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/settings-foundations.mjs",
+    "capability": "Deno.exit",
+    "line": 14,
+    "source": "Deno.exit",
+    "context": "catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/settings-foundations.mjs",
+    "capability": "Deno.exit",
+    "line": 17,
+    "source": "Deno.exit",
+    "context": "Deno.exit(0);",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/settings-inventory-native.test.js",
+    "capability": "Function.*",
+    "line": 5,
+    "source": "Function",
+    "context": "const evaluate = expression => Function(`return (${expression})`)();",
+    "family": "native-expression-input"
+  },
+  {
+    "file": "client/tests/e2e/settings-ui.mjs",
+    "capability": "Deno.exit",
+    "line": 18,
+    "source": "Deno.exit",
+    "context": "catch (error) { console.error(error.message); Deno.exit(2); }",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/settings-ui.mjs",
+    "capability": "Deno.exit",
+    "line": 21,
+    "source": "Deno.exit",
+    "context": "Deno.exit(0);",
+    "family": "native-process-control"
+  },
+  {
+    "file": "client/tests/e2e/sidebar-navigation-native.test.js",
+    "capability": "Function.*",
+    "line": 4,
+    "source": "Function",
+    "context": "const run=expression=>Function(`return (${expression})`)();",
+    "family": "native-expression-input"
+  },
+  {
+    "file": "scripts/select-checks.ts",
+    "capability": "Deno.Command",
+    "line": 366,
+    "source": "Deno.Command",
+    "context": "const output = await new Deno.Command(Deno.execPath(), {",
+    "family": "selector-graph"
+  },
+  {
+    "file": "server/plugins/worker_entry.ts",
+    "capability": "dynamic-import.*",
+    "line": 572,
+    "source": "import(url.href)",
+    "context": "const module = await import(url.href);",
+    "family": "plugin-module-loader"
+  },
+  {
+    "file": "server/plugins/worker_entry.ts",
+    "capability": "dynamic-import.*",
+    "line": 670,
+    "source": "import(message.pluginUrl)",
+    "context": "plugin = message.pluginUrl ? await import(message.pluginUrl) : {};",
+    "family": "plugin-module-loader"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_client.ts",
+    "capability": "Deno.kill",
+    "line": 24,
+    "source": "Deno.kill",
+    "context": "Deno.kill(owner.child.pid, \"SIGCONT\");",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_server.ts",
+    "capability": "Deno.exit",
+    "line": 11,
+    "source": "Deno.exit",
+    "context": "clientOwner.exit.then(() => Deno.exit(1));",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_server.ts",
+    "capability": "Deno.kill",
+    "line": 82,
+    "source": "Deno.kill",
+    "context": "Deno.kill(Deno.pid, \"SIGSTOP\");",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_server.ts",
+    "capability": "Deno.exit",
+    "line": 83,
+    "source": "Deno.exit",
+    "context": "if (Deno.env.get(\"WORK_PROOF_EXIT_BEFORE_RECORD\") === \"1\") Deno.exit(17);",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "Deno.kill",
+    "line": 67,
+    "source": "Deno.kill",
+    "context": "Deno.kill(serverPid, \"SIGCONT\");",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "Deno.kill",
+    "line": 132,
+    "source": "Deno.kill",
+    "context": "Deno.kill(serverPid, \"SIGCONT\");",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "Deno.kill",
+    "line": 198,
+    "source": "Deno.kill",
+    "context": "Deno.kill(serverPid, \"SIGCONT\");",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "Deno.kill",
+    "line": 216,
+    "source": "Deno.kill",
+    "context": "Deno.kill(serverPid, \"SIGTERM\");",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/index_rebuild_child.ts",
+    "capability": "Deno.exit",
+    "line": 27,
+    "source": "Deno.exit",
+    "context": ") Deno.exit(79);",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/index_rebuild_child.ts",
+    "capability": "Deno.exit",
+    "line": 33,
+    "source": "Deno.exit",
+    "context": "Deno.exit(79);",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/index_rebuild_child.ts",
+    "capability": "Deno.exit",
+    "line": 56,
+    "source": "Deno.exit",
+    "context": ") Deno.exit(78);",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/index_rebuild_child.ts",
+    "capability": "Deno.exit",
+    "line": 65,
+    "source": "Deno.exit",
+    "context": "if (!rejected || index.search(body).length !== 0) Deno.exit(78);",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/index_rebuild_child.ts",
+    "capability": "Deno.exit",
+    "line": 67,
+    "source": "Deno.exit",
+    "context": "Deno.exit(79);",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/index_rebuild_child.ts",
+    "capability": "Deno.exit",
+    "line": 70,
+    "source": "Deno.exit",
+    "context": "Deno.exit(78); // A missed crash boundary must fail the parent's expectation.",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/plugin_stall_child.ts",
+    "capability": "Deno.exit",
+    "line": 112,
+    "source": "Deno.exit",
+    "context": "Deno.exit(0);",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/plugin_worker_liveness_child.ts",
+    "capability": "Deno.exit",
+    "line": 120,
+    "source": "Deno.exit",
+    "context": "Deno.exit(0);",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/product_settlement_stall_child.ts",
+    "capability": "Deno.kill",
+    "line": 66,
+    "source": "Deno.kill",
+    "context": "Deno.kill(Deno.pid, \"SIGSTOP\");",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/helpers/product_settlement_stall_child.ts",
+    "capability": "Deno.exit",
+    "line": 161,
+    "source": "Deno.exit",
+    "context": "Deno.exit(exit);",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/interop/generate-remotely-save.mjs",
+    "capability": "globalThis.window",
+    "line": 72,
+    "source": "globalThis.window",
+    "context": "globalThis.window = { crypto: globalThis.crypto };",
+    "family": "reference-input"
+  },
+  {
+    "file": "tests/interop/remotely_save_planner.mjs",
+    "capability": "globalThis.window",
+    "line": 87,
+    "source": "globalThis.window",
+    "context": "globalThis.window = {",
+    "family": "reference-input"
+  },
+  {
+    "file": "tests/interop/remotely_save_planner.mjs",
+    "capability": "globalThis.window",
+    "line": 88,
+    "source": "globalThis.window",
+    "context": "...globalThis.window,",
+    "family": "reference-input"
+  },
+  {
+    "file": "tests/interop/remotely_save_reference.mjs",
+    "capability": "globalThis.window",
+    "line": 75,
+    "source": "globalThis.window",
+    "context": "globalThis.window = { crypto: globalThis.crypto };",
+    "family": "reference-input"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "dynamic-import.*",
+    "line": 23,
+    "source": "import(\n  new URL(\n    \"../server/api/endpoints/_/api/plugin-host/%23id/settings/%23page/put.ts\",\n    import.meta.url,\n  ).href\n)",
+    "context": "const settingsPut = (await import(",
+    "family": "handler-loader"
+  },
+  {
+    "file": "tests/plugin_render_lifecycle_test.ts",
+    "capability": "dynamic-import.*",
+    "line": 36,
+    "source": "import(enabledUrl.href)",
+    "context": "const enabledPut = (await import(enabledUrl.href)).default;",
+    "family": "handler-loader"
+  },
+  {
+    "file": "tests/plugin_settings_schema_lease_test.ts",
+    "capability": "dynamic-import.*",
+    "line": 22,
+    "source": "import(\n  new URL(\n    \"../server/api/endpoints/_/api/plugin-host/%23id/settings/%23page/put.ts\",\n    import.meta.url,\n  ).href\n)",
+    "context": "const settingsPut = (await import(",
+    "family": "handler-loader"
+  },
+  {
+    "file": "tests/server_lifetime_test.ts",
+    "capability": "Deno.kill",
+    "line": 100,
+    "source": "Deno.kill",
+    "context": "Deno.kill(server.pid, \"SIGKILL\");",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/timing/product_settlement_stall_test.ts",
+    "capability": "Deno.kill",
+    "line": 101,
+    "source": "Deno.kill",
+    "context": "Deno.kill(child.pid, \"SIGCONT\");",
+    "family": "test-process-control"
+  },
+  {
+    "file": "tests/timing/product_settlement_stall_test.ts",
+    "capability": "Deno.kill",
+    "line": 153,
+    "source": "Deno.kill",
+    "context": "Deno.kill(child.pid, \"SIGCONT\");",
+    "family": "test-process-control"
+  }
+]

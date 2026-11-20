@@ -550,11 +550,14 @@ Deno.test("isolation contract: parsed single-child-launcher and finite legacy in
   const files = new Set(sources.map((source) => source.file));
   assertEquals(sources.map((source) => source.file), coverage.files);
   assertEquals(
-    sites.some((site) =>
-      site.file === CHILD_OWNER && site.capability === "Deno.Command"
-    ),
+    sources.some((source) => source.file === CHILD_OWNER),
     true,
-    "declared launcher must actually own acquisition",
+    "declared launcher must be covered",
+  );
+  assertEquals(
+    sites.filter((site) => site.file === CHILD_OWNER),
+    [],
+    "owner may acquire only its registered direct capabilities",
   );
   assertEquals(
     sources.some((source) => source.file.startsWith("client/tests/e2e/")),
