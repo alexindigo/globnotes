@@ -56,12 +56,17 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       "tests/helpers/plugin_lifecycle.ts",
       "tests/helpers/driver_inprocess.ts",
       "tests/helpers/auxiliary_fixture.ts",
+      "tests/helpers/sync_status_preload.ts",
+      "tests/helpers/owned_record_channel.ts",
+      "tests/owned_record_channel_test.ts",
     ],
     [PLUGIN_FIXTURE_ENGINE]: [
       "tests/helpers/plugin_fixture.ts",
       PLUGIN_OPERATIONS,
       "tests/helpers/plugin_lifecycle.ts",
       "tests/helpers/auxiliary_fixture.ts",
+      "tests/helpers/owned_record_channel.ts",
+      "tests/owned_record_channel_test.ts",
     ],
   },
 };
@@ -118,16 +123,109 @@ export const PRODUCT_OWNERSHIP: OwnershipRules = {
     [PLUGIN_OPERATIONS]: [],
   },
 };
+
+export const RECORD_CHANNEL = "tests/helpers/owned_record_channel.ts";
+export const SYNC_CONTROL = "tests/helpers/sync_status_control.ts";
+export const SYNC_NATIVE = "client/tests/e2e/sync-status-native.mjs";
+export const SYNC_PRELOAD = "tests/helpers/sync_status_preload.ts";
+export const RECORD_MODULE_RULES = {
+  "node:fs": [],
+  "node:fs/promises": [],
+  "jsr:@std/fs@^1.0.20": [],
+  "jsr:/@std/fs@^1.0.20/copy": [],
+  [RECORD_CHANNEL]: [
+    SYNC_CONTROL,
+    "tests/helpers/record_schema.ts",
+    "tests/owned_record_channel_test.ts",
+  ],
+  "tests/helpers/process_records.ts": [
+    RECORD_CHANNEL,
+    "tests/owned_record_channel_test.ts",
+    "tests/process_records_test.ts",
+  ],
+};
+export const RECORD_OWNERSHIP: OwnershipRules = {
+  ...FIXTURE_OWNERSHIP,
+  modules: { ...FIXTURE_OWNERSHIP.modules, ...RECORD_MODULE_RULES },
+};
+export const RECORD_PILOT_FILES = [SYNC_NATIVE, SYNC_PRELOAD, SYNC_CONTROL];
+const recordMembers = [
+  "readTextFile",
+  "readTextFileSync",
+  "readFile",
+  "readFileSync",
+  "writeTextFile",
+  "writeTextFileSync",
+  "writeFile",
+  "writeFileSync",
+  "copyFile",
+  "copyFileSync",
+  "rename",
+  "renameSync",
+  "linkSync",
+  "open",
+  "openSync",
+  "watchFs",
+];
+export const RECORD_PILOT_OWNERSHIP: OwnershipRules = {
+  ...RECORD_OWNERSHIP,
+  roots: {
+    ...PROCESS_OWNERSHIP.roots,
+    Deno: {
+      ...PROCESS_OWNERSHIP.roots.Deno,
+      ownedMembers: {
+        ...PROCESS_OWNERSHIP.roots.Deno.ownedMembers,
+        ...Object.fromEntries(recordMembers.map((member) => [member, []])),
+      },
+    },
+  },
+  modules: {
+    ...RECORD_OWNERSHIP.modules,
+    "node:fs": [],
+    "node:fs/promises": [],
+    "@std/fs": [],
+  },
+};
+export const RECORD_ENGINE_OWNERSHIP: OwnershipRules = {
+  ...RECORD_OWNERSHIP,
+  roots: {
+    ...PROCESS_OWNERSHIP.roots,
+    Deno: {
+      ...PROCESS_OWNERSHIP.roots.Deno,
+      ownedMembers: {
+        ...PROCESS_OWNERSHIP.roots.Deno.ownedMembers,
+        watchFs: [],
+      },
+    },
+    Promise: { members: ["resolve", "reject", "allSettled"] },
+    setTimeout: { members: [] },
+    setInterval: { members: [] },
+    globalThis: {
+      ...PROCESS_OWNERSHIP.roots.globalThis,
+      ownedMembers: { setTimeout: [], setInterval: [] },
+    },
+  },
+};
+const recordModules = (rules: OwnershipRules): OwnershipRules => ({
+  ...rules,
+  modules: { ...rules.modules, ...RECORD_MODULE_RULES },
+});
 /** Partition by explicit pilot identities, analyze every module exactly once.
  * This selects registrations, not allowed sites; every violation is inventoried. */
 export function registeredOwnership(sources: SourceModule[]) {
   const pilot: SourceModule[] = [],
     scenarios: SourceModule[] = [],
     remaining: SourceModule[] = [],
-    product: SourceModule[] = [];
+    product: SourceModule[] = [],
+    records: SourceModule[] = [],
+    engine: SourceModule[] = [];
   for (const source of sources) {
     (fixtureScenarios.includes(source.file)
       ? scenarios
+      : source.file === RECORD_CHANNEL
+      ? engine
+      : RECORD_PILOT_FILES.includes(source.file)
+      ? records
       : FIXTURE_PILOT_FILES.includes(source.file)
       ? pilot
       : source.file.startsWith("tests/") ||
@@ -138,11 +236,19 @@ export function registeredOwnership(sources: SourceModule[]) {
       );
   }
   return [
-    ...(remaining.length ? analyzeOwnership(remaining, FIXTURE_OWNERSHIP) : []),
+    ...(remaining.length ? analyzeOwnership(remaining, RECORD_OWNERSHIP) : []),
     ...(scenarios.length
-      ? analyzeOwnership(scenarios, FIXTURE_SCENARIO_OWNERSHIP)
+      ? analyzeOwnership(scenarios, recordModules(FIXTURE_SCENARIO_OWNERSHIP))
       : []),
-    ...(pilot.length ? analyzeOwnership(pilot, FIXTURE_PILOT_OWNERSHIP) : []),
-    ...(product.length ? analyzeOwnership(product, PRODUCT_OWNERSHIP) : []),
+    ...(pilot.length
+      ? analyzeOwnership(pilot, recordModules(FIXTURE_PILOT_OWNERSHIP))
+      : []),
+    ...(product.length
+      ? analyzeOwnership(product, recordModules(PRODUCT_OWNERSHIP))
+      : []),
+    ...(records.length
+      ? analyzeOwnership(records, RECORD_PILOT_OWNERSHIP)
+      : []),
+    ...(engine.length ? analyzeOwnership(engine, RECORD_ENGINE_OWNERSHIP) : []),
   ];
 }

@@ -7,9 +7,11 @@ import { applicationServer, bindAddress, httpOrigin } from "./http-origin.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { ICON_PATHS } from "../../icons.js";
-import { publishRecord } from "../../../tests/helpers/process_records.ts";
+import { fixtureScope } from "../../../tests/helpers/fixture_scope.ts";
+import { createSyncStatusDirectory, syncStatusChannel } from "../../../tests/helpers/sync_status_control.ts";
 
-const directory = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({prefix:"sync-status-"});
+await fixtureScope(async scope => {
+const directory = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? (await scope.acquire(()=>Deno.makeTempDir({prefix:"sync-status-"}),root=>console.log(JSON.stringify({retainedSyncArtifacts:root})))).value;
 const vault=`${directory}/vault`,state=`${vault}/.globnotes`,token="sync-status-native-key";
 await Deno.mkdir(`${state}/plugins/globnotes-test-driver`,{recursive:true});
 const fixture=new URL("../../../tests/fixtures/plugins/globnotes-test-driver/",import.meta.url);
@@ -17,14 +19,15 @@ const manifest=JSON.parse(await Deno.readTextFile(new URL("manifest.json",fixtur
 manifest.capabilities.network=["globnotes.test"];
 await Deno.writeTextFile(`${state}/plugins/globnotes-test-driver/manifest.json`,JSON.stringify(manifest));
 await Deno.copyFile(new URL("driver.js",fixture),`${state}/plugins/globnotes-test-driver/driver.js`);
-const remote=memoryRemote({hostname:bindAddress(),token});
-let server,s;
+const controlDirectory=await createSyncStatusDirectory(scope,state);
+const remote=(await scope.acquire(()=>memoryRemote({hostname:bindAddress(),token}),remote=>remote.close())).value;
+let server,s,control;
 const results=[],requests=[],seam={};
 async function api(route,method="GET",body) {
   const response=await fetch(`${server.baseUrl}/_/api/${route}`,{method,headers:{"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
   const value=await response.json();assert(response.ok,`${method} ${route}: ${response.status} ${JSON.stringify(value)}`);return value;
 }
-const controls=()=>publishRecord(`${state}/sync-status-test.json`,JSON.stringify(seam));
+const controls=()=>control.publish(seam);
 async function sync(id="office") {const row=(await api("drivers")).instances.find(row=>row.id===id);return api(`drivers/${id}/sync`,"POST",{revision:row.revision});}
 async function stateIs(icon,tone) {
   const token=tone==="danger"?"--theme-danger":tone==="active"?"--theme-brand":"--theme-text-muted";
@@ -52,7 +55,8 @@ async function geometry() {
   assert(value.labels.every(space=>space==="nowrap"),"A panel label can wrap");
 }
 try {
-  server=await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,fixtureAuth:{auth_type:"none"},GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},{...applicationServer(),denoArgs:["--import",fileURLToPath(new URL("../../../tests/helpers/sync_status_preload.ts",import.meta.url))]});
+   server=(await scope.acquire(()=>bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,fixtureAuth:{auth_type:"none"},GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},{...applicationServer(),denoArgs:["--import",fileURLToPath(new URL("../../../tests/helpers/sync_status_preload.ts",import.meta.url))]}),server=>server.close())).value;
+   control=syncStatusChannel(controlDirectory,{label:"Sync status server",exit:server.exited});
   const catalog=await api("plugin-host");await api("plugin-host/globnotes-test-driver/enabled","PUT",{enabled:true,revision:catalog.policy.revision,signature:catalog.policy.signature});
   const permission=await api("plugin-host/globnotes-test-driver/permissions");await api("plugin-host/globnotes-test-driver/permissions","PUT",{revision:permission.revision,signature:permission.signature,requestSourceKey:permission.requestSourceKey,requestSourceRevision:permission.requestSourceRevision,allowNetwork:true,approvedNetwork:permission.requestedNetwork,approvedImports:[]});
   await api("notes","POST",{path:"Welcome",content:"# A connected vault\n\nNotes stay together across your sync connections.\n"});
@@ -62,7 +66,7 @@ try {
     const keyed=await api(`drivers/${created.id}/secrets/token`,"PUT",{revision:created.revision,value:token});
     await api(`drivers/${created.id}`,"PUT",{revision:keyed.revision,label,settings,enabled:true});
   }
-  s=await nativeSession({port:Number(Deno.env.get("CDP_PORT")??9335),width:1280,height:1000});
+  s=(await scope.acquire(()=>nativeSession({port:Number(Deno.env.get("CDP_PORT")??9335),width:1280,height:1000}),session=>session.close())).value;
   await s.send("Emulation.setTimezoneOverride",{timezoneId:"America/Los_Angeles"});
   s.page.onEvent(event=>{if(event.method==="Network.requestWillBeSent")requests.push({url:event.params.request.url,method:event.params.request.method});});
   await s.goto(`${server.baseUrl}/Welcome`);
@@ -108,6 +112,13 @@ try {
   await Deno.writeTextFile(`${directory}/results.json`,JSON.stringify({results,requests,events:s.events},null,2));
   console.log(JSON.stringify({case:"sync-status-native",results,artifacts:directory}));
 } catch(error) {
-  if(s){await capture("failure").catch(()=>{});await Deno.writeTextFile(`${directory}/failure.json`,JSON.stringify({error:String(error),dom:await s.evaluate("document.body.innerText").catch(()=>null),server:server?.logs(),results,events:s.events,errors:s.errors},null,2));}
-  throw error;
-} finally { await s?.close();await server?.close();await remote.close(); }
+  await fixtureScope(report=>{
+    if(s){
+      const session=s;
+      report.defer(async()=>{await Deno.writeTextFile(`${directory}/failure.json`,JSON.stringify({error:String(error),dom:await session.evaluate("document.body.innerText").catch(()=>null),server:server?.logs(),results,events:session.events,errors:session.errors},null,2));});
+      report.defer(()=>capture("failure"));
+    }
+    throw error;
+  });
+}
+});

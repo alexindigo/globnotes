@@ -126,6 +126,34 @@ the registration alone does not prove those behaviors. Hub, lifecycle, auxiliary
 and in-process driver constructors use the same fixture ownership engine rather
 than implementing another cleanup loop.
 
+## Record pilot registration
+
+P11 protects the channel and raw protocol modules at resolved runtime imports.
+Ordinary schema-only callers use `record_schema.ts`. Sync's native/preload/control
+modules have explicit raw-I/O root rules, while the channel's observer primitives
+belong to the existing lower protocol owner. The seven existing product-input and
+artifact references remain exact finite inventory, not `allowed` sites. Newly
+exposed legacy protocol/Node/std filesystem imports are inventoried at their
+import references for A09/A11, rather than blessing their callers as owners.
+
+Node filesystem identities and std root/copy identities are registered explicitly;
+the latter match the actual source-owner graph, including its subpath identity.
+Bridge controls reject the import/re-export producer, not downstream aliases.
+Runtime ordering, schemas, exclusive publication and cancellation are proved by
+the channel/observer contracts, not by following method calls.
+
+The channel is a registered owner of P03's two private construction modules: it
+links borrower scopes to their directory owner and binds issued plugin fixture
+roots. Its contract test is registered the same way as the P03 scope test. The
+channel's stricter root policy still rejects bare `Promise` references.
+
+Promise-only reads and observations reject retirement through their promises;
+native readers, cancellation and native publication keep synchronous fences.
+Publication captures its options and method receivers once and observes arbitrary
+IO completions once before advancing to commit or staging cleanup. Contract-only
+directory preparation and observer construction ports avoid process-global IO
+overrides across awaits. Test milestones use P03's admitted fixture gates.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from

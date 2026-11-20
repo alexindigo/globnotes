@@ -14,6 +14,7 @@ import {
 } from "./helpers/ownership_legacy.ts";
 import {
   NATIVE_FINALIZER,
+  registeredOwnership,
   RESOURCE_CORE,
   RESOURCE_ENGINE,
   RESOURCE_ENGINE_OWNERSHIP,
@@ -209,13 +210,12 @@ Deno.test("P02 registration: actual engine, facade and native pilot retain their
   assertEquals(analyzeOwnership([engine], RESOURCE_ENGINE_OWNERSHIP), []);
   assertEquals(
     inventoryErrors(
-      analyzeOwnership(sources, RESOURCE_OWNERSHIP),
+      registeredOwnership(sources),
       LEGACY_OWNERSHIP,
       files,
     ),
     [],
   );
-  assertEquals(LEGACY_OWNERSHIP.length, 90);
   assertEquals(LEGACY_OWNERSHIP.filter((entry) => entry.allowed).length, 0);
   assertEquals(
     LEGACY_OWNERSHIP.filter((entry) =>

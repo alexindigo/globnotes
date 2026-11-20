@@ -4,25 +4,19 @@
 // normal vault stream; the fixture supplies old wall time and held activity.
 import { DriverPeers } from "../../server/hub/drivers/peers.ts";
 import { DriverSession } from "../../server/hub/drivers/session.ts";
+import { createFixtureScope } from "./fixture_scope_engine.ts";
+import { syncStatusReader } from "./sync_status_control.ts";
 
-interface Seam {
-  failureSince?: Record<string, number>;
-  activities?: Record<string, "receiving" | "sending" | null>;
-}
-function seam(): Seam {
-  try {
-    return JSON.parse(Deno.readTextFileSync(
-      `${
-        Deno.env.get("GLOBNOTES_GLOBNOTES_PATH")
-      }/.globnotes/sync-status-test.json`,
-    ));
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound || error instanceof SyntaxError) {
-      return {};
-    }
-    throw error;
-  }
-}
+// This reader's owner is the shim's actual process lifetime. It creates no
+// child, observer, deadline or asynchronous diagnostic transport.
+// The directory is borrowed and no resource is registered for disposal. Its
+// read custody ends with the process; unload cannot join asynchronous close work.
+const lifetime = createFixtureScope();
+const reader = syncStatusReader(
+  lifetime.scope,
+  `${Deno.env.get("GLOBNOTES_GLOBNOTES_PATH")}/.globnotes`,
+);
+const seam = () => reader.read()?.value ?? {};
 const observe = DriverPeers.prototype.observeStatus;
 DriverPeers.prototype.observeStatus = function (peer, status, enabled) {
   observe.call(this, peer, status, enabled);

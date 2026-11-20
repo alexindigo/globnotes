@@ -1,0 +1,178 @@
+[
+  {
+    "file": "client/tests/e2e/backup-plugin.mjs",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 10,
+    "source": "\"../../../tests/helpers/process_records.ts\"",
+    "context": "import { publishRecord, readRecord, waitForRecord } from \"../../../tests/helpers/process_records.ts\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "client/tests/e2e/harness-helpers.mjs",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 11,
+    "source": "\"../../../tests/helpers/process_records.ts\"",
+    "context": "import { publishRecord } from \"../../../tests/helpers/process_records.ts\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "client/tests/e2e/native-suite-results.test.js",
+    "capability": "module:node:fs",
+    "line": 2,
+    "source": "\"node:fs\"",
+    "context": "import { readdirSync, readFileSync } from \"node:fs\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/catalog_work_audit_test.ts",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 9,
+    "source": "\"./helpers/process_records.ts\"",
+    "context": "import { publishRecord } from \"./helpers/process_records.ts\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/config_acceptance_test.ts",
+    "capability": "module:jsr:@std/fs@^1.0.20",
+    "line": 3,
+    "source": "\"@std/fs\"",
+    "context": "import { copy } from \"@std/fs\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/helpers/boot.ts",
+    "capability": "module:jsr:@std/fs@^1.0.20",
+    "line": 16,
+    "source": "\"@std/fs\"",
+    "context": "import { copy, existsSync } from \"@std/fs\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/helpers/boot.ts",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 21,
+    "source": "\"./process_records.ts\"",
+    "context": "import { publishRecord } from \"./process_records.ts\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/helpers/catalog_work_audit.ts",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 6,
+    "source": "\"./process_records.ts\"",
+    "context": "} from \"./process_records.ts\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_client.ts",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 9,
+    "source": "\"./process_records.ts\"",
+    "context": "} from \"./process_records.ts\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_server.ts",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 8,
+    "source": "\"./process_records.ts\"",
+    "context": "import { publishRecord, watchOwnerPipe } from \"./process_records.ts\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 6,
+    "source": "\"./process_records.ts\"",
+    "context": "import { publishRecord, readRecord } from \"./process_records.ts\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/helpers/mcp.ts",
+    "capability": "module:jsr:@std/fs@^1.0.20",
+    "line": 6,
+    "source": "\"@std/fs\"",
+    "context": "import { copy } from \"@std/fs\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/hub_driver_acceptance_test.ts",
+    "capability": "module:jsr:@std/fs@^1.0.20",
+    "line": 4,
+    "source": "\"@std/fs\"",
+    "context": "import { walkSync } from \"@std/fs\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/interop/remotely_save_real.ts",
+    "capability": "module:jsr:@std/fs@^1.0.20",
+    "line": 4,
+    "source": "\"@std/fs\"",
+    "context": "import { walkSync } from \"@std/fs\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/remotely_save_acceptance_test.ts",
+    "capability": "module:jsr:@std/fs@^1.0.20",
+    "line": 9,
+    "source": "\"@std/fs\"",
+    "context": "import { walkSync } from \"@std/fs\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "client/tests/e2e/sync-status-native.mjs",
+    "capability": "Deno.readTextFile",
+    "line": 18,
+    "source": "Deno.readTextFile",
+    "context": "const manifest=JSON.parse(await Deno.readTextFile(new URL(\"manifest.json\",fixture)));",
+    "family": "sync-fixture-data-io"
+  },
+  {
+    "file": "client/tests/e2e/sync-status-native.mjs",
+    "capability": "Deno.writeTextFile",
+    "line": 20,
+    "source": "Deno.writeTextFile",
+    "context": "await Deno.writeTextFile(`${state}/plugins/globnotes-test-driver/manifest.json`,JSON.stringify(manifest));",
+    "family": "sync-fixture-data-io"
+  },
+  {
+    "file": "client/tests/e2e/sync-status-native.mjs",
+    "capability": "Deno.copyFile",
+    "line": 21,
+    "source": "Deno.copyFile",
+    "context": "await Deno.copyFile(new URL(\"driver.js\",fixture),`${state}/plugins/globnotes-test-driver/driver.js`);",
+    "family": "sync-fixture-data-io"
+  },
+  {
+    "file": "client/tests/e2e/sync-status-native.mjs",
+    "capability": "Deno.writeFile",
+    "line": 43,
+    "source": "Deno.writeFile",
+    "context": "await Deno.writeFile(`${directory}/${name}.png`,Uint8Array.from(atob(shot.data),c=>c.charCodeAt(0)));",
+    "family": "sync-fixture-data-io"
+  },
+  {
+    "file": "client/tests/e2e/sync-status-native.mjs",
+    "capability": "Deno.writeFile",
+    "line": 47,
+    "source": "Deno.writeFile",
+    "context": "for(const [region,clip]of Object.entries(regions)){const crop=await s.send(\"Page.captureScreenshot\",{format:\"png\",clip});await Deno.writeFile(`${directory}/review/${name}-${region}.png`,Uint8Array.from(atob(crop.data),c=>c.charCodeAt(0)));}",
+    "family": "sync-fixture-data-io"
+  },
+  {
+    "file": "client/tests/e2e/sync-status-native.mjs",
+    "capability": "Deno.writeTextFile",
+    "line": 112,
+    "source": "Deno.writeTextFile",
+    "context": "await Deno.writeTextFile(`${directory}/results.json`,JSON.stringify({results,requests,events:s.events},null,2));",
+    "family": "sync-fixture-data-io"
+  },
+  {
+    "file": "client/tests/e2e/sync-status-native.mjs",
+    "capability": "Deno.writeTextFile",
+    "line": 115,
+    "source": "Deno.writeTextFile",
+    "context": "report.defer(async()=>{await Deno.writeTextFile(`${directory}/failure.json`,JSON.stringify({error:String(error),dom:await session.evaluate(\"document.body.innerText\").catch(()=>null),server:server?.logs(),results,events:session.events,errors:session.errors},null,2));});",
+    "family": "sync-fixture-data-io"
+  }
+]

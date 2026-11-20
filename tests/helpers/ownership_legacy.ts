@@ -2,6 +2,7 @@
 import type { LegacySite, OwnershipFamily } from "./ownership_contract.ts";
 import sites from "./ownership_legacy_sites.json" with { type: "json" };
 import rootSites from "./ownership_root_sites.json" with { type: "json" };
+import recordSites from "./ownership_record_sites.json" with { type: "json" };
 
 /** Exact execution-base occurrences, not owner declarations/path exemptions.
  * Remove sites as their named families migrate; keep the consumer manifest.
@@ -10,6 +11,31 @@ import rootSites from "./ownership_root_sites.json" with { type: "json" };
  */
 export const INVENTORY_BASE = "4436da3d6819790f52a4d4d50969800c72ddb663";
 export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
+  "record-channel-pilot": {
+    replacement: "P11",
+    closed: true,
+    consumers: [
+      "tests/owned_record_channel_test.ts",
+      "tests/process_records_test.ts",
+      "client/tests/e2e/sync-driver-native.mjs",
+      "client/tests/e2e/sync-status-native.mjs",
+    ],
+  },
+  "sync-fixture-data-io": {
+    replacement:
+      "A09/A11: retained product fixture and artifact IO, not control records",
+    consumers: ["client/tests/e2e/sync-status-native.mjs"],
+  },
+  "legacy-record-import": {
+    replacement: "A09/A11: remaining raw protocol imports",
+    consumers: [
+      "tests/process_records_test.ts",
+      "tests/catalog_work_audit_test.ts",
+      "tests/server_lifetime_test.ts",
+      "client/tests/e2e/backup-plugin.mjs",
+      "client/tests/e2e/setup-wizard.mjs",
+    ],
+  },
   "fixture-scope-pilot": {
     replacement: "P03",
     closed: true,
@@ -156,7 +182,11 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
   },
 };
 
-export const LEGACY_OWNERSHIP: LegacySite[] = [...sites, ...rootSites]
+export const LEGACY_OWNERSHIP: LegacySite[] = [
+  ...sites,
+  ...rootSites,
+  ...recordSites,
+]
   .map((site) => {
     const family = OWNERSHIP_FAMILIES[site.family];
     if (!family) throw new Error(`absent protected family: ${site.family}`);
