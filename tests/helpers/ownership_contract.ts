@@ -363,6 +363,8 @@ function isReference(node: ts.Identifier): boolean {
   ) return false;
   if (ts.isShorthandPropertyAssignment(parent)) return true;
   if (ts.isExportSpecifier(parent)) {
+    // External specifiers name module exports, not bindings in this scope.
+    if (parent.parent.parent.moduleSpecifier) return false;
     return (parent.propertyName ?? parent.name) === node;
   }
   if (ts.isBindingElement(parent) && parent.propertyName === node) return false;

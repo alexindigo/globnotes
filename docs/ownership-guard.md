@@ -33,6 +33,9 @@ clauses, type-only import/export forms and ambient declarations. Runtime class
 heritage and internal import-equals aliases receive the ordinary root checks.
 Unknown future node kinds are not presumed erased merely because they look like
 types or have a field named `name`; known non-value names are listed explicitly.
+Names in external export specifiers name the dependency's exports, not global
+roots. Local export specifiers still reference local bindings or globals. The
+dependency check governs re-exports, and each producer's own roots are checked.
 
 Imports are classified by the graph's resolved identity, not alias spelling or
 selected export names. Empty runtime re-exports still load their module.

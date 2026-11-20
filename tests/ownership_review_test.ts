@@ -344,3 +344,93 @@ Deno.test("root references: data keys, export names and JSX intrinsic names are 
     "Deno.*",
   );
 });
+
+Deno.test("export references: alias-backed external names are not global roots", () => {
+  for (const extension of ["ts", "mjs"]) {
+    for (const root of Object.keys(PROCESS_OWNERSHIP.roots)) {
+      for (const names of [root, `${root} as X`, `label as ${root}`]) {
+        assertEquals(
+          analyzeOwnership([
+            {
+              file: `shared/safe.${extension}`,
+              text: `export const ${root} = {}; export const label = "data";`,
+            },
+            {
+              file: `tests/export.${extension}`,
+              text: `export { ${names} } from "safe";`,
+              imports: { safe: `shared/safe.${extension}` },
+            },
+          ]),
+          [],
+        );
+      }
+    }
+  }
+});
+
+Deno.test("export references: local names still refer to protected global roots", () => {
+  for (const names of ["Deno", "Deno as X"]) {
+    const sites = analyzeOwnership([source(`export { ${names} };`)]);
+    assertUnowned(sites, "Deno.*");
+    assertEquals(sites.map((site) => site.source), ["Deno"]);
+  }
+});
+
+Deno.test("export references: external names do not bypass protected dependencies", () => {
+  for (const names of ["Deno", "Deno as X"]) {
+    const sites = analyzeOwnership([
+      source(`export { ${names} } from "jobs";`, {
+        jobs: "node:child_process",
+      }),
+    ]);
+    assertUnowned(sites, "module:node:child_process");
+    assertEquals(sites.map((site) => site.capability), [
+      "module:node:child_process",
+    ]);
+  }
+});
+
+Deno.test("export references: a safe dependency cannot conceal its own global export", () => {
+  for (const names of ["Deno", "Deno as X"]) {
+    const sites = analyzeOwnership([
+      { file: "shared/safe.js", text: `export { ${names} };` },
+      source(`export { ${names === "Deno" ? "Deno" : "X"} } from "safe";`, {
+        safe: "shared/safe.js",
+      }),
+    ]);
+    assertUnowned(sites, "Deno.*");
+    assertEquals(sites.map((site) => site.file), ["shared/safe.js"]);
+  }
+});
+
+Deno.test("export references: real graph aliases preserve producer ownership checks", async () => {
+  const root = await Deno.makeTempDir({ prefix: "ownership-export-" });
+  try {
+    for (const directory of ["server", "tests", "client/tests/e2e"]) {
+      await Deno.mkdir(`${root}/${directory}`, { recursive: true });
+    }
+    for (
+      const [file, text] of Object.entries({
+        "deno.json": '{"imports":{"safe":"./server/safe.ts"}}',
+        "server/safe.ts": "export const Deno = {};",
+        "tests/export.ts":
+          'export { Deno } from "safe"; export { Deno as X } from "safe";',
+        "client/tests/e2e/entry.mjs": "export {};",
+      })
+    ) await Deno.writeTextFile(`${root}/${file}`, text);
+    const owner = new OwnershipSourceOwner(root);
+    const safe = await owner.analyze(root);
+    assertEquals(
+      safe.sources.find((module) => module.file === "tests/export.ts")?.imports
+        ?.safe,
+      "server/safe.ts",
+    );
+    assertEquals(safe.sites, []);
+    await Deno.writeTextFile(`${root}/server/safe.ts`, "export { Deno };");
+    const unsafe = await owner.analyze(root);
+    assertUnowned(unsafe.sites, "Deno.*");
+    assertEquals(unsafe.sites.map((site) => site.file), ["server/safe.ts"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
