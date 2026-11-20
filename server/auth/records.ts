@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import {
-  BoundFileStore,
+  PublicationRecoveryRequired,
   StoredConfigConflict,
-  type StoredConfigSnapshot,
-} from "../config/file_store.ts";
+} from "../config/publication_outcome.ts";
+import type { StoredConfigSnapshot } from "../config/file_store.ts";
+import { createOwnedPublication } from "../config/owned_publication.ts";
+import { createOperationLease } from "../operation_lease.ts";
 
 export class IdentityStateError extends Error {
   constructor() {
@@ -39,15 +41,21 @@ export interface IdentitySnapshot<T> {
 /** Internal validated JSON boundary, sharing configuration's bound-file CAS.
  * It never repairs invalid bytes or publishes a prospective write early. */
 export class IdentityFile<T> {
-  readonly #file: BoundFileStore;
+  readonly #publication;
   #snapshot: IdentitySnapshot<T>;
   constructor(
     filename: string,
     readonly validate: (value: unknown) => T,
     empty: T,
   ) {
-    this.#file = new BoundFileStore(filename);
-    const persistence = this.#file.capture();
+    this.#publication = createOwnedPublication<T>(
+      filename,
+      (value, persistence) => {
+        this.#snapshot = Object.freeze({ value, persistence });
+        return undefined;
+      },
+    );
+    const persistence = this.#publication.capture();
     let value: T;
     try {
       value = validate(
@@ -59,15 +67,18 @@ export class IdentityFile<T> {
     this.#snapshot = freeze({ value: structuredClone(value), persistence });
   }
   capture(): IdentitySnapshot<T> {
+    this.#publication.assertAvailable();
     return this.#snapshot;
   }
   assertUnchanged(expected: IdentitySnapshot<T> = this.capture()): void {
+    this.#publication.assertAvailable();
     if (expected !== this.#snapshot) throw new StoredConfigConflict();
-    this.#file.assertUnchanged(expected.persistence);
+    this.#publication.assertUnchanged(expected.persistence);
   }
   prepareParents(): void {
+    this.#publication.assertAvailable();
     const before = this.#snapshot;
-    const persistence = this.#file.prepareParents(before.persistence);
+    const persistence = this.#publication.prepareParents(before.persistence);
     this.#snapshot = freeze({ value: before.value, persistence });
   }
   commit(
@@ -76,15 +87,28 @@ export class IdentityFile<T> {
     guard: () => void = () => {},
   ): T {
     const value = freeze(structuredClone(this.validate(next)));
-    this.assertUnchanged(expected);
-    guard();
-    this.#file.replace(
-      JSON.stringify(value) + "\n",
-      expected.persistence,
-      (persistence) => {
-        this.#snapshot = freeze({ value, persistence });
-      },
-    );
-    return this.#snapshot.value;
+    // Compatibility caller assertions become captured witnesses, not a no-op
+    // lease default on the owned writer. This is storage authority, not HTTP.
+    const operation = createOperationLease("live", [() => {
+      this.assertUnchanged(expected);
+      if (guard() !== undefined) {
+        throw new TypeError("Identity guards must be synchronous.");
+      }
+      return undefined;
+    }]);
+    try {
+      const prepared = this.#publication.prepare(
+        value,
+        expected.persistence,
+        operation.lease,
+      );
+      const outcome = prepared.publish();
+      if (outcome.state === "recovery-required") {
+        throw new PublicationRecoveryRequired(outcome);
+      }
+      return this.#snapshot.value;
+    } finally {
+      operation.retire();
+    }
   }
 }

@@ -2,6 +2,23 @@
 import * as path from "@std/path";
 import { warnStoredDurability } from "./durability.ts";
 import {
+  assertOperationLease,
+  createOperationLease,
+  type OperationLease,
+} from "../operation_lease.ts";
+import { bindGuardedSink } from "../internal/guarded_sink.ts";
+import { registerPublicationWriter } from "./internal/publication_port.ts";
+import {
+  type PublicationOutcome,
+  PublicationRecoveryRequired,
+  StoredConfigConflict,
+} from "./publication_outcome.ts";
+export {
+  type PublicationOutcome,
+  PublicationRecoveryRequired,
+  StoredConfigConflict,
+} from "./publication_outcome.ts";
+import {
   openStateDirectory,
   physicalStateRoot,
   preflightStateRoot,
@@ -68,9 +85,24 @@ export function syncStoredDirectory(
     throw new StoredConfigDurabilityError({ cause });
   }
 }
-export class StoredConfigConflict extends Error {
-  constructor() {
-    super("Stored configuration changed before commit.");
+export interface PreparedStoredPublication {
+  publish(): PublicationOutcome;
+  discard(): void;
+}
+interface StoredCandidate {
+  readonly temporary: string;
+  readonly identity: ConfigNode["identity"];
+  readonly expected: StoredConfigSnapshot;
+  readonly snapshot: StoredConfigSnapshot;
+  readonly replace: boolean;
+  phase: "prepared" | "publishing" | "published" | "discarded";
+}
+function synchronous(callback: (...args: never[]) => unknown): void {
+  if (
+    typeof callback !== "function" ||
+    Object.prototype.toString.call(callback) === "[object AsyncFunction]"
+  ) {
+    throw new TypeError("Publication installation must be synchronous.");
   }
 }
 const below = (root: string, location: string): boolean => {
@@ -195,7 +227,8 @@ function configBinding(configured: string): StoredConfigSnapshot["binding"] {
 }
 
 /** Main's bound-file persistence, independent of serialization and config policy.
- * The owning service serializes writes and publishes its state only on success. */
+ * The owning service serializes writes. Publication is the commit point; later
+ * durability warnings cannot roll it back, and installation failure needs recovery. */
 export class BoundFileStore {
   // Ownership bindings only, never durability credit. A failed preparation can
   // retry our own mkdir effects without accepting any foreign replacement.
@@ -207,7 +240,12 @@ export class BoundFileStore {
   constructor(
     readonly filename: string,
     readonly root = path.dirname(path.resolve(filename)),
-  ) {}
+  ) {
+    registerPublicationWriter(
+      this,
+      (...args) => this.#preparePublication(...args),
+    );
+  }
 
   capture(): StoredConfigSnapshot {
     const binding = configBinding(path.resolve(this.filename));
@@ -303,13 +341,7 @@ export class BoundFileStore {
     return prepared;
   }
 
-  /** Sync and replace the resolved target, retaining configured file/directory links.
-   * Publish prepared bytes/binding at rename, without rereading the committed file. */
-  replace(
-    raw: string,
-    expected = this.capture(),
-    committed?: (snapshot: StoredConfigSnapshot) => void,
-  ): void {
+  #prepare(raw: string, expected: StoredConfigSnapshot): StoredCandidate {
     const prepared = this.prepareParents(expected);
     const target = expected.binding.target;
     const identity = expected.binding.nodes.find((node) =>
@@ -321,7 +353,7 @@ export class BoundFileStore {
       dir: path.dirname(target),
       prefix: ".config-",
     });
-    let failed = false, failure: unknown, published = false;
+    const owned = configNode(temporary).identity;
     try {
       Deno.writeTextFileSync(temporary, raw);
       if (identity) {
@@ -359,53 +391,202 @@ export class BoundFileStore {
           ),
         }),
       });
-      if (identity) Deno.openSync(target, { write: true }).close();
-      this.assertUnchanged(prepared);
-      if (identity) {
-        Deno.renameSync(temporary, target);
-      } else {
-        // An absence check cannot reserve a pathname. Publish the complete
-        // candidate without replacing an inode created by a competing writer.
-        Deno.linkSync(temporary, target);
-      }
-      published = true;
-      // Preserve the original publication point, even if later cleanup fails.
-      committed?.(snapshot);
+      return {
+        temporary,
+        identity: owned,
+        expected: prepared,
+        snapshot,
+        replace: identity !== null,
+        phase: "prepared",
+      };
     } catch (error) {
-      failed = true;
-      failure = error;
-    }
-    try {
-      Deno.removeSync(temporary);
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) {
-        failure = failed
-          ? new AggregateError(
-            [failure, error],
-            "Configuration persistence and temporary-file cleanup failed.",
-          )
-          : error;
-        failed = true;
-      }
-    }
-    if (published) {
       try {
-        // Flush the final directory state after publication and candidate cleanup,
-        // even when cleanup failed. The known snapshot was published above.
-        syncOwnedStoredDirectory(path.dirname(target), this.root);
-      } catch (error) {
-        failure = failed
-          ? new StoredConfigDurabilityError({
-            cause: new AggregateError([failure, error]),
-          })
-          : error;
-        failed = true;
+        this.#discardExact(temporary, owned);
+      } catch (cleanup) {
+        throw new AggregateError(
+          [error, cleanup],
+          "Stored preparation and cleanup failed.",
+          { cause: error },
+        );
       }
+      throw error;
     }
-    if (published) {
-      if (failed) warnStoredDurability();
-      return;
+  }
+
+  #discardExact(temporary: string, identity: ConfigNode["identity"]): void {
+    const current = configNode(temporary).identity;
+    if (!current) return;
+    if (
+      !identity || current.dev !== identity.dev || current.ino !== identity.ino
+    ) {
+      throw new StoredConfigConflict();
     }
-    if (failed) throw failure;
+    Deno.removeSync(temporary);
+  }
+
+  /** Internal owner capability. Callers bind installation while preparing; the
+   * returned single-use operation accepts no effect callback or replacement data.
+   * P01 restricts the private module port to the bound publication owners. */
+  #preparePublication(
+    raw: string,
+    expected: StoredConfigSnapshot,
+    lease: OperationLease<"live">,
+    install: (snapshot: StoredConfigSnapshot) => undefined,
+  ): PreparedStoredPublication {
+    synchronous(install);
+    assertOperationLease(lease, "live");
+    let staged: StoredCandidate | undefined;
+    const publication = createOperationLease("live", [() => {
+      const candidate = staged;
+      if (!candidate) return;
+      // Parent callbacks precede storage validation; all pure lifetime fences
+      // follow it, so reentrant validation cannot authorize a stale write.
+      const current = configNode(candidate.temporary).identity;
+      if (
+        !current || current.dev !== candidate.identity?.dev ||
+        current.ino !== candidate.identity?.ino ||
+        Deno.readTextFileSync(candidate.temporary) !== raw
+      ) throw new StoredConfigConflict();
+      const target = candidate.snapshot.binding.target,
+        identity = candidate.replace;
+      if (identity) Deno.openSync(target, { write: true }).close();
+      this.assertUnchanged(candidate.expected);
+    }], [lease]);
+    let deliver: () => void;
+    // Bind before staging so the binder's provenance check does not introduce
+    // an extra CAS between final validation and the no-clobber native write.
+    const publish = bindGuardedSink(
+      publication.lease,
+      "live",
+      () => ({ value: undefined }),
+      () => {
+        deliver();
+        return undefined;
+      },
+    );
+    let candidate: StoredCandidate;
+    try {
+      candidate = staged = this.#prepare(raw, expected);
+    } catch (error) {
+      publication.retire();
+      throw error;
+    }
+    const isPublished = () => candidate.phase === "published";
+    return Object.freeze({
+      discard: () => {
+        if (candidate.phase === "published") return;
+        this.#discardExact(candidate.temporary, candidate.identity);
+        candidate.phase = "discarded";
+        publication.retire();
+      },
+      publish: (): PublicationOutcome => {
+        if (candidate.phase !== "prepared") throw new StoredConfigConflict();
+        candidate.phase = "publishing";
+        let failed = false,
+          failure: unknown,
+          installed = false,
+          warning = false;
+        try {
+          // Bind and capture the native delivery inputs before any final checks.
+          const temporary = candidate.temporary,
+            target = candidate.snapshot.binding.target,
+            snapshot = candidate.snapshot;
+          deliver = candidate.replace
+            ? () => {
+              Deno.renameSync(temporary, target);
+            }
+            : () => {
+              Deno.linkSync(temporary, target);
+            };
+          publish(undefined);
+          // Delivery is complete. Installation/receipt handling cannot grant
+          // another write and must survive this operation's self-revocation.
+          candidate.phase = "published";
+          try {
+            installed = install(snapshot) === undefined;
+          } catch {
+            installed = false;
+          }
+        } catch (error) {
+          failed = true;
+          failure = error;
+        } finally {
+          publication.retire();
+        }
+        try {
+          this.#discardExact(candidate.temporary, candidate.identity);
+        } catch (error) {
+          warning = true;
+          failure = failed
+            ? new AggregateError(
+              [failure, error],
+              "Stored publication and cleanup failed.",
+              { cause: failure },
+            )
+            : error;
+          failed = true;
+        }
+        if (!isPublished()) {
+          candidate.phase = "discarded";
+          if (failed) throw failure;
+          throw new StoredConfigConflict();
+        }
+        try {
+          // Directory confirmation is attempted even after failed candidate cleanup.
+          syncOwnedStoredDirectory(
+            path.dirname(candidate.snapshot.binding.target),
+            this.root,
+          );
+        } catch {
+          warning = true;
+        }
+        if (warning) warnStoredDurability();
+        return Object.freeze({
+          operation: lease.identity,
+          committed: true,
+          state: installed ? "committed" : "recovery-required",
+          warning: warning ? "stored-durability-unconfirmed" : null,
+          notificationFailed: false,
+        });
+      },
+    });
+  }
+
+  /** Compatibility entry: same writer and commit point, explicit storage-only
+   * lease. It does not fabricate request authority for legacy callers. */
+  replace(
+    raw: string,
+    expected = this.capture(),
+    committed?: (snapshot: StoredConfigSnapshot) => void,
+  ): void {
+    if (committed) synchronous(committed);
+    // The legacy lane has no external authority witness. Candidate publication
+    // still performs the existing exact CAS, then atomic no-clobber link. Do not
+    // insert another capture between that CAS and link or change its error lane.
+    const owner = createOperationLease("live", [() => undefined]);
+    try {
+      const outcome = this.#preparePublication(
+        raw,
+        expected,
+        owner.lease,
+        (snapshot) => {
+          const result: unknown = committed?.(snapshot);
+          if (
+            result != null &&
+            typeof (result as { then?: unknown }).then === "function"
+          ) {
+            throw new TypeError(
+              "Publication installation must be synchronous.",
+            );
+          }
+          return undefined;
+        },
+      ).publish();
+      if (
+        outcome.state === "recovery-required"
+      ) throw new PublicationRecoveryRequired(outcome);
+    } finally {
+      owner.retire();
+    }
   }
 }

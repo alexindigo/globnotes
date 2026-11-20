@@ -103,6 +103,16 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
       "tests/plugin_write_bases_test.ts",
     ],
   },
+  "owned-publication-pilot": {
+    replacement: "P06; wider adoption A04/A05/I06/I14",
+    closed: true,
+    consumers: [
+      "tests/owned_publication_test.ts",
+      "tests/config_file_store_test.ts",
+      "tests/identity_accounts_test.ts",
+      "tests/owned_publication_guard_test.ts",
+    ],
+  },
   "operation-lease-pilot": {
     replacement: "P05; wider adoption A04-A07/I05-I14",
     closed: true,

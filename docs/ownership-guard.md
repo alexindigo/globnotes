@@ -213,6 +213,29 @@ cleanup starts reader cancellation while locked, observes its rejection, and
 releases the lock without waiting for an open tee peer or other pending
 cancellation.
 
+## Owned publication (P06)
+
+`PUBLICATION_OWNERSHIP` composes the operation policy with exact import owners
+for the publication adapter and private writer port. `BoundFileStore` registers
+its private preparation method by exact instance in that port; preparation is
+not a public instance/prototype member. Public errors and receipts live in the
+pure `publication_outcome.ts` module, with compatibility re-exports from the store.
+
+`IdentityFile` retains only the owned adapter, not the raw writer. The same
+analyzer applies `PUBLICATION_PILOT_OWNERSHIP` to the pilot and adapter: runtime
+imports of the raw store and filesystem modules, and direct filesystem mutation
+roots, require exact owners. Other existing writers are not migrated by P06.
+The ten former flow-site allowances are removed. Candidate identity/bytes, final
+lease/CAS, exact installation, committed warnings and recovery fences remain
+runtime/type contracts, including all 18 publication mutations.
+
+Publication storage validation is a child of the admitted live lease: parent
+callbacks run first, candidate bytes/CAS and permissions are validated next, then
+all lifetime fences run immediately before the bound native link/rename. The
+private sink returns no payload. Runtime installation and receipts describe the
+already-committed operation rather than granting another live effect.
+Inspection returns an envelope, not the result of the write.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from

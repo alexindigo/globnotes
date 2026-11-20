@@ -51,11 +51,84 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       GUARDED_SINK_OWNER,
       "tests/operation_lease_test.ts",
       "tests/identity_authority_test.ts",
+      "server/config/file_store.ts",
+      "server/auth/records.ts",
+      "tests/owned_publication_test.ts",
     ],
     [GUARDED_SINK_OWNER]: [
       AUTHORITY_PILOT,
       "tests/operation_lease_test.ts",
+      "server/config/file_store.ts",
     ],
+  },
+};
+
+export const PUBLICATION_STORE = "server/config/file_store.ts";
+export const PUBLICATION_OWNER = "server/config/owned_publication.ts";
+export const PUBLICATION_PILOT = "server/auth/records.ts";
+export const PUBLICATION_PORT = "server/config/internal/publication_port.ts";
+export const PUBLICATION_OWNERSHIP: OwnershipRules = {
+  roots: OPERATION_OWNERSHIP.roots,
+  modules: {
+    ...OPERATION_OWNERSHIP.modules,
+    [PUBLICATION_OWNER]: [PUBLICATION_PILOT, "tests/owned_publication_test.ts"],
+    [PUBLICATION_PORT]: [
+      PUBLICATION_STORE,
+      PUBLICATION_OWNER,
+      "tests/owned_publication_test.ts",
+    ],
+  },
+};
+
+/** The same analyzer checks the pilot and adapter's root/import boundaries.
+ * The pilot cannot acquire a raw writer, even by choosing another import form.
+ * Existing unrelated metadata/content writers retain their own migration scope. */
+export const PUBLICATION_PILOT_OWNERSHIP: OwnershipRules = {
+  ...PUBLICATION_OWNERSHIP,
+  roots: {
+    ...PUBLICATION_OWNERSHIP.roots,
+    Deno: {
+      ...PUBLICATION_OWNERSHIP.roots.Deno,
+      ownedMembers: {
+        ...PUBLICATION_OWNERSHIP.roots.Deno.ownedMembers,
+        ...Object.fromEntries(
+          [
+            "writeTextFileSync",
+            "writeTextFile",
+            "writeFileSync",
+            "writeFile",
+            "copyFileSync",
+            "copyFile",
+            "linkSync",
+            "symlinkSync",
+            "symlink",
+            "renameSync",
+            "rename",
+            "removeSync",
+            "remove",
+            "makeTempFileSync",
+            "makeTempFile",
+            "openSync",
+            "open",
+            "mkdirSync",
+            "mkdir",
+            "makeTempDirSync",
+            "makeTempDir",
+            "chmodSync",
+            "chmod",
+            "chownSync",
+            "utimeSync",
+            "utime",
+          ].map((member) => [member, [PUBLICATION_STORE]]),
+        ),
+      },
+    },
+  },
+  modules: {
+    ...PUBLICATION_OWNERSHIP.modules,
+    [PUBLICATION_STORE]: [PUBLICATION_OWNER],
+    "node:fs": [PUBLICATION_STORE],
+    "node:fs/promises": [PUBLICATION_STORE],
   },
 };
 
@@ -84,9 +157,9 @@ export const PLUGIN_OPERATIONS = "tests/helpers/plugin_operations_fixture.ts";
 /** Private construction modules have public callback facades. Every import form
  * is checked at the resolved module, never by following the imported value. */
 export const FIXTURE_OWNERSHIP: OwnershipRules = {
-  ...OPERATION_OWNERSHIP,
+  ...PUBLICATION_OWNERSHIP,
   modules: {
-    ...OPERATION_OWNERSHIP.modules,
+    ...PUBLICATION_OWNERSHIP.modules,
     [FIXTURE_SCOPE_ENGINE]: [
       "tests/helpers/fixture_scope.ts",
       PLUGIN_FIXTURE_ENGINE,
