@@ -10,6 +10,22 @@ import rootSites from "./ownership_root_sites.json" with { type: "json" };
  */
 export const INVENTORY_BASE = "4436da3d6819790f52a4d4d50969800c72ddb663";
 export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
+  "resource-core-pilot": {
+    replacement: "P02",
+    closed: true,
+    consumers: [
+      "tests/ownership_scope_test.ts",
+      "tests/ownership_resource_guard_test.ts",
+    ],
+  },
+  "native-finalizer-pilot": {
+    replacement: "P02",
+    closed: true,
+    consumers: [
+      "tests/native_finalization_ownership_test.ts",
+      "client/tests/e2e/native-case-finalization.test.js",
+    ],
+  },
   "native-process-control": {
     replacement: "P12/T02/A08",
     consumers: [

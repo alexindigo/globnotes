@@ -16,6 +16,8 @@ import * as path from "@std/path";
 // this always-on contract. No selector/facade migration is part of P01.
 import "./ownership_guard_test.ts";
 import "./ownership_coverage_test.ts";
+import "./ownership_resource_guard_test.ts";
+import { RESOURCE_OWNERSHIP } from "./helpers/ownership_rules.ts";
 import {
   CHILD_OWNER,
   familyInventoryErrors,
@@ -546,7 +548,10 @@ for (const rule of RULES) {
 }
 
 Deno.test("isolation contract: parsed single-child-launcher and finite legacy inventory", async () => {
-  const { sources, sites, coverage } = await repositoryOwnership(ROOT);
+  const { sources, sites, coverage } = await repositoryOwnership(
+    ROOT,
+    RESOURCE_OWNERSHIP,
+  );
   const files = new Set(sources.map((source) => source.file));
   assertEquals(sources.map((source) => source.file), coverage.files);
   assertEquals(

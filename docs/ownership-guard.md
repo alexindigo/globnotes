@@ -96,3 +96,18 @@ the old credential examples without claiming the default process policy owns the
 
 The guard is a source ownership contract, not a sandbox for hostile JavaScript.
 Declared owners, permitted public APIs and external dependencies remain trusted.
+
+## P02 resource boundary
+
+`tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from
+`PROCESS_OWNERSHIP`. Only the public facade `shared/ownership.js` may import or
+re-export `shared/ownership-engine.js`; ordinary consumers and the native
+finalizer use the facade. The always-selected isolation contract supplies this
+policy explicitly. No analyzer hook or value-flow interpretation is involved.
+
+The engine's platform-free contract runs the same analyzer with public runtime
+root members removed and checks its dependency manifest is empty. Resource
+identity, retirement, rollback, transfer, error preservation and exactly-once
+all-attempt finalization remain runtime/type contracts. Import permission does
+not prove arbitrary adapter logic delegates correctly. P02 migrates none of
+P01's 90 process/root sites and adds no inventory allowance.
