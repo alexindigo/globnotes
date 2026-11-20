@@ -1,0 +1,194 @@
+[
+  {
+    "file": "client/tests/e2e/access-settings.mjs",
+    "line": 34,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const child = new Deno.Command(Deno.execPath(), { args: [\"run\", \"--cached-only\", \"--frozen\", `--config=${ROOT}/deno.json`, \"--unstable-worker-options\", \"--allow-read\", \"--allow-write\", \"--allow-net\", \"--allow-env\", `${ROOT}/server/main.ts`], cwd, clearEnv: true,",
+    "family": "native-account"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "line": 20,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const child = new Deno.Command(Deno.execPath(), { args: [\"run\", ...flags, `${ROOT}/client/tests/e2e/${entry}`, \"--artifacts\", `${artifacts}/${name}`, ...(variant ? [\"--variant\", variant] : [])], cwd: ROOT, stdout: \"piped\", stderr: \"piped\" }).spawn();",
+    "family": "native-driver"
+  },
+  {
+    "file": "client/tests/e2e/generic-plugin-system.mjs",
+    "line": 27,
+    "capability": "Deno.*",
+    "source": "Deno[stream]",
+    "context": "offset = 0; while (offset < chunk.length) offset += await Deno[stream].write(chunk.subarray(offset));",
+    "family": "native-driver"
+  },
+  {
+    "file": "client/tests/e2e/http-origin.mjs",
+    "line": 8,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const output = new Deno.Command(\"getent\", { args: [\"ahostsv4\", host], stdout: \"piped\", stderr: \"null\" }).outputSync();",
+    "family": "native-origin"
+  },
+  {
+    "file": "client/tests/e2e/hub-safe-saves-native.mjs",
+    "line": 18,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const result = await new Deno.Command(\"bash\", {",
+    "family": "native-hub-safe"
+  },
+  {
+    "file": "client/tests/e2e/hub-writers-gate-native.mjs",
+    "line": 18,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const result = await new Deno.Command(\"bash\", {",
+    "family": "native-hub-writers"
+  },
+  {
+    "file": "client/tests/e2e/legacy-native-suite.mjs",
+    "line": 382,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const child = new Deno.Command(Deno.execPath(), {",
+    "family": "native-suite"
+  },
+  {
+    "file": "client/tests/e2e/native-color-picker.mjs",
+    "line": 52,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const result = await new Deno.Command(executable, { args, env, signal: AbortSignal.timeout(5000) }).output();",
+    "family": "native-picker"
+  },
+  {
+    "file": "client/tests/e2e/plugin-permissions.mjs",
+    "line": 40,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const child = new Deno.Command(Deno.execPath(), { args, cwd, stdout: \"piped\", stderr: \"piped\", clearEnv: true,",
+    "family": "native-permissions"
+  },
+  {
+    "file": "client/tests/e2e/prefix-auth-fixture.mjs",
+    "line": 38,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const child = new Deno.Command(Deno.execPath(), {",
+    "family": "native-prefix"
+  },
+  {
+    "file": "client/tests/e2e/runner-entrypoint-controls.mjs",
+    "line": 12,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const result = await new Deno.Command(\"sh\", { args: [root + \"/client/tests/e2e/run.sh\"], env: { DENO: executable }, stdout: \"piped\", stderr: \"piped\" }).output();",
+    "family": "native-entrypoint"
+  },
+  {
+    "file": "client/tests/e2e/runner-entrypoint-controls.mjs",
+    "line": 22,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const result = await new Deno.Command(\"sh\", { args: [root + \"/client/tests/e2e/run.sh\", \"--shard\", shard], env: { DENO: executable }, stdout: \"piped\", stderr: \"piped\" }).output();",
+    "family": "native-entrypoint"
+  },
+  {
+    "file": "client/tests/e2e/settings-foundations.mjs",
+    "line": 40,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const child = new Deno.Command(Deno.execPath(), { args, cwd: root, clearEnv: true, stdout: \"piped\", stderr: \"piped\", env: {",
+    "family": "native-foundations"
+  },
+  {
+    "file": "client/tests/e2e/settings-surfaces-native.mjs",
+    "line": 75,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const child=new Deno.Command(Deno.execPath(),{args:['run','--cached-only','--frozen',`--config=${ROOT}/deno.json`,'--unstable-worker-options','--allow-read','--allow-write','--allow-net','--allow-env',`${ROOT}/server/main.ts`],cwd,clearEnv:true,env:{PATH:Deno.env.get('PATH'),HOME:Deno.env.get('HOME'),TMPDIR:Deno.env.get('TMPDIR'),GLOBNOTES_GLOBNOTES_PATH:vault,GLOBNOTES__METADATA_PATH:metadataBase(vault,state),GLOBNOTES__SERVER_HOST:host,GLOBNOTES__SERVER_PORT:String(appPort),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:'false'},stdout:'piped',stderr:'piped'}).spawn();",
+    "family": "native-surfaces"
+  },
+  {
+    "file": "client/tests/e2e/unit-consumer-controls.mjs",
+    "line": 32,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const result = await new Deno.Command(Deno.execPath(), {",
+    "family": "unit-runner"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_client.ts",
+    "line": 11,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "const NativeCommand = Deno.Command;",
+    "family": "suspension-wrapper"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_client.ts",
+    "line": 28,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "Deno.Command = class extends NativeCommand {",
+    "family": "suspension-wrapper"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_client.ts",
+    "line": 125,
+    "capability": "Deno.Command",
+    "source": "Deno.Command",
+    "context": "Deno.Command = NativeCommand;",
+    "family": "suspension-wrapper"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "line": 28,
+    "capability": "dynamic-import.*",
+    "source": "import(new URL(relative, import.meta.url).href)",
+    "context": "return (await import(new URL(relative, import.meta.url).href)).default;",
+    "family": "handler-loader"
+  },
+  {
+    "file": "tests/interop/generate-remotely-save.mjs",
+    "line": 73,
+    "capability": "dynamic-import.*",
+    "source": "import(`file://${scratch}/encryptOpenSSL.ts`)",
+    "context": "const openssl = await import(`file://${scratch}/encryptOpenSSL.ts`);",
+    "family": "reference-input"
+  },
+  {
+    "file": "tests/interop/generate-remotely-save.mjs",
+    "line": 74,
+    "capability": "dynamic-import.*",
+    "source": "import(`file://${scratch}/rclone.ts`)",
+    "context": "const { Cipher } = await import(`file://${scratch}/rclone.ts`);",
+    "family": "reference-input"
+  },
+  {
+    "file": "tests/interop/remotely_save_planner.mjs",
+    "line": 91,
+    "capability": "dynamic-import.*",
+    "source": "import(`file://${dir}/sync.ts`)",
+    "context": "const planner = await import(`file://${dir}/sync.ts`);",
+    "family": "reference-input"
+  },
+  {
+    "file": "tests/interop/remotely_save_reference.mjs",
+    "line": 76,
+    "capability": "dynamic-import.*",
+    "source": "import(`file://${directory}/openssl.ts`)",
+    "context": "const openssl = await import(`file://${directory}/openssl.ts`);",
+    "family": "reference-input"
+  },
+  {
+    "file": "tests/interop/remotely_save_reference.mjs",
+    "line": 77,
+    "capability": "dynamic-import.*",
+    "source": "import(`file://${directory}/rclone.ts`)",
+    "context": "const { Cipher } = await import(`file://${directory}/rclone.ts`);",
+    "family": "reference-input"
+  }
+]

@@ -12,6 +12,21 @@
 
 import { assertEquals } from "@std/assert";
 import * as path from "@std/path";
+// Parser-negative controls must run even when related selection only selects
+// this always-on contract. No selector/facade migration is part of P01.
+import "./ownership_guard_test.ts";
+import "./ownership_coverage_test.ts";
+import {
+  CHILD_OWNER,
+  familyInventoryErrors,
+  inventoryErrors,
+  repositoryOwnership,
+} from "./helpers/ownership_contract.ts";
+import {
+  LEGACY_OWNERSHIP,
+  OWNERSHIP_FAMILIES,
+} from "./helpers/ownership_legacy.ts";
+import { SELECTION } from "../client/tests/e2e/legacy-native-suite.mjs";
 
 const ROOT = path.fromFileUrl(new URL("../", import.meta.url));
 const SELF = path.fromFileUrl(import.meta.url);
@@ -336,14 +351,6 @@ const RULES: Rule[] = [
       "tests configure in-process objects with tests/helpers/environment.ts and children through the launcher, never the shared process environment",
   },
   {
-    id: "single-child-launcher",
-    scopes: ["tests"],
-    pattern: /new Deno\.Command\s*\(/,
-    owners: ["tests/helpers/process.ts"],
-    why:
-      "children start through tests/helpers/process.ts (clearEnv plus an explicit environment), never inheriting the shared test-process environment",
-  },
-  {
     id: "scoped-plugin-manager",
     scopes: ["tests"],
     pattern: /new\s+PluginManager\s*\(/,
@@ -537,3 +544,36 @@ for (const rule of RULES) {
     assertEquals(await scan(rule), [], `${rule.id}: ${rule.why}`);
   });
 }
+
+Deno.test("isolation contract: parsed single-child-launcher and finite legacy inventory", async () => {
+  const { sources, sites, coverage } = await repositoryOwnership(ROOT);
+  const files = new Set(sources.map((source) => source.file));
+  assertEquals(sources.map((source) => source.file), coverage.files);
+  assertEquals(
+    sites.some((site) =>
+      site.file === CHILD_OWNER && site.capability === "Deno.Command"
+    ),
+    true,
+    "declared launcher must actually own acquisition",
+  );
+  assertEquals(
+    sources.some((source) => source.file.startsWith("client/tests/e2e/")),
+    true,
+    "native tree must be parsed",
+  );
+  assertEquals(inventoryErrors(sites, LEGACY_OWNERSHIP, files), []);
+  const nativeCases = new Set(
+    SELECTION.map(([name]) => `client/tests/e2e/${name}.mjs`),
+  );
+  // Consumers stay after sites migrate. Native manifest entries name runnable
+  // registry families, never a helper masquerading as an executable case.
+  assertEquals(
+    familyInventoryErrors(
+      LEGACY_OWNERSHIP,
+      OWNERSHIP_FAMILIES,
+      files,
+      nativeCases,
+    ),
+    [],
+  );
+});

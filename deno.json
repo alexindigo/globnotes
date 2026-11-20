@@ -68,6 +68,7 @@
     "prosemirror-keymap": "npm:prosemirror-keymap@^1.2.3",
     "qrcode": "npm:qrcode@^1.5.4",
     "tailwindcss": "npm:tailwindcss@3.4.19",
+    "typescript": "npm:typescript@5.9.3",
     "vite": "npm:vite@8.2.0",
     "vitest": "npm:vitest@^4.1.10",
     "vue": "npm:vue@3.5.40",
