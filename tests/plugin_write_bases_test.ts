@@ -8,9 +8,11 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { versionOf } from "../server/hub/merge.ts";
 import { PLUGIN_CONTRACT_VERSION } from "../server/plugins/contracts.ts";
-import { pluginOperationsFixture } from "./helpers/plugin_operations_fixture.ts";
-import { pluginFixture } from "./helpers/plugin_fixture.ts";
-import { createPluginManager } from "./helpers/plugin_manager.ts";
+import {
+  acquirePluginManager,
+  withPluginOperationsFixture,
+} from "./helpers/plugin_operations_fixture.ts";
+import { withPluginFixture } from "./helpers/plugin_fixture.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 import type { ActionReceipt } from "../server/plugins/contracts.ts";
 
@@ -26,20 +28,23 @@ export function activate(ctx) {
 }
 `;
 
-async function writer() {
-  const b = await pluginOperationsFixture({
-    id: "writer",
-    manifest: {
-      runtime: { server: "service.js" },
-      capabilities: {
-        network: false,
-        imports: false,
-        read: ["vault"],
-        write: ["vault"],
-      },
+const writerOptions = {
+  id: "writer",
+  manifest: {
+    runtime: { server: "service.js" },
+    capabilities: {
+      network: false,
+      imports: false,
+      read: ["vault"],
+      write: ["vault"],
     },
-    files: { "service.js": WRITER },
-  });
+  },
+  files: { "service.js": WRITER },
+};
+
+function writer(
+  b: Parameters<Parameters<typeof withPluginOperationsFixture>[1]>[0],
+) {
   const vault = b.fixture.vault;
   const receipt = async (requestId: string): Promise<ActionReceipt> => {
     let latest: ActionReceipt | undefined;
@@ -75,9 +80,12 @@ async function writer() {
   return { ...b, vault, request, file, version, read, outside };
 }
 
+function withWriter(body: (w: ReturnType<typeof writer>) => Promise<void>) {
+  return withPluginOperationsFixture(writerOptions, (b) => body(writer(b)));
+}
+
 Deno.test("plugin bases: every write without a base is refused and named contract 2", async () => {
-  const w = await writer();
-  try {
+  await withWriter(async (w) => {
     await w.create("Note", "original");
     const v = w.version("Note.md");
     for (
@@ -114,14 +122,11 @@ Deno.test("plugin bases: every write without a base is refused and named contrac
         args: { path: "Note", newContent: "x", base: { kind: "nope" } },
       })
     );
-  } finally {
-    await w.close();
-  }
+  });
 });
 
 Deno.test("plugin bases: a current base writes; reads and receipts carry versions", async () => {
-  const w = await writer();
-  try {
+  await withWriter(async (w) => {
     await w.create("Note", "one");
     const read = await w.command("read", { path: "Note" }) as {
       version: string;
@@ -161,14 +166,11 @@ Deno.test("plugin bases: a current base writes; reads and receipts carry version
       await w.command("readFile", { path: "data.bin" }),
       { version: w.version("data.bin"), size: 5 },
     );
-  } finally {
-    await w.close();
-  }
+  });
 });
 
 Deno.test("plugin bases: a stale note write merges, keeps both or refuses", async () => {
-  const w = await writer();
-  try {
+  await withWriter(async (w) => {
     await w.create("Note", "a\nb\nc\n");
     // Text base: a non-overlapping change elsewhere merges.
     w.outside("Note.md", "a\nb\nC\n");
@@ -210,14 +212,11 @@ Deno.test("plugin bases: a stale note write merges, keeps both or refuses", asyn
     });
     assertEquals(refused.error?.code, "base_stale");
     assertEquals(w.read("Note.md"), "A\nb\nC\n");
-  } finally {
-    await w.close();
-  }
+  });
 });
 
 Deno.test("plugin bases: stale renames and deletes are refused (O4, O9)", async () => {
-  const w = await writer();
-  try {
+  await withWriter(async (w) => {
     await w.create("Note", "one");
     const v = w.version("Note.md");
     w.outside("Note.md", "changed elsewhere");
@@ -235,14 +234,11 @@ Deno.test("plugin bases: stale renames and deletes are refused (O4, O9)", async 
     assertEquals(remove.error?.code, "base_stale");
     assertEquals(w.read("Note.md"), "changed elsewhere");
     await assertRejects(() => Deno.stat(`${w.vault}/Moved.md`));
-  } finally {
-    await w.close();
-  }
+  });
 });
 
 Deno.test("plugin bases: binary file writes compare versions, never merge", async () => {
-  const w = await writer();
-  try {
+  await withWriter(async (w) => {
     await w.file("pic.bin", "first", { base: { kind: "absent" } });
     const v = w.version("pic.bin");
     w.outside("pic.bin", "theirs");
@@ -276,22 +272,16 @@ Deno.test("plugin bases: binary file writes compare versions, never merge", asyn
       "conflict",
     );
     assertEquals(w.read("Doc.md"), "theirs");
-  } finally {
-    await w.close();
-  }
+  });
 });
 
 Deno.test("plugin contract 2: published everywhere; render Workers cannot write files", async () => {
   assertEquals(PLUGIN_CONTRACT_VERSION, 2);
-  const w = await writer();
-  try {
+  await withWriter(async (w) => {
     const snapshot = await w.command("snapshot") as { contractVersion: number };
     assertEquals(snapshot.contractVersion, 2);
-  } finally {
-    await w.close();
-  }
-  const fixture = await pluginFixture();
-  try {
+  });
+  await withPluginFixture(async (fixture, scope) => {
     await fixture.install("raw", {
       capabilities: { network: false, imports: false, write: ["vault"] },
     }, {
@@ -303,30 +293,25 @@ export async function parseNode(){
   catch (error) { return { parts: [error.name] }; } // Deno: NotCapable (no write permission)
 }`,
     });
-    const manager = createPluginManager(
+    const manager = await acquirePluginManager(
+      scope,
       fixture.vault,
       () => Promise.resolve(null),
       1,
       fixture.statePath,
       { internalRoot: `${fixture.root}/no-internal` },
     );
-    try {
-      const catalog = await manager.catalog();
-      assertEquals(catalog.contractVersion, 2);
-      const raw = catalog.plugins.find((p) => p.id === "raw")!;
-      assert(
-        raw.diagnostics.some((d) => d.code === "plugin_write_grants_unused"),
-      );
-      await manager.start();
-      assertEquals(
-        await manager.hosts.get("raw")!.call("parseNode", [{}]),
-        { parts: ["NotCapable"] },
-      );
-      await assertRejects(() => Deno.stat(`${fixture.vault}/raw.txt`));
-    } finally {
-      manager.stop();
-    }
-  } finally {
-    await fixture.dispose();
-  }
+    const catalog = await manager.catalog();
+    assertEquals(catalog.contractVersion, 2);
+    const raw = catalog.plugins.find((p) => p.id === "raw")!;
+    assert(
+      raw.diagnostics.some((d) => d.code === "plugin_write_grants_unused"),
+    );
+    await manager.start();
+    assertEquals(
+      await manager.hosts.get("raw")!.call("parseNode", [{}]),
+      { parts: ["NotCapable"] },
+    );
+    await assertRejects(() => Deno.stat(`${fixture.vault}/raw.txt`));
+  });
 });

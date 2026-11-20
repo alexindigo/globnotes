@@ -10,6 +10,15 @@ import rootSites from "./ownership_root_sites.json" with { type: "json" };
  */
 export const INVENTORY_BASE = "4436da3d6819790f52a4d4d50969800c72ddb663";
 export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
+  "fixture-scope-pilot": {
+    replacement: "P03",
+    closed: true,
+    consumers: [
+      "tests/fixture_scope_test.ts",
+      "tests/plugin_fixture_cleanup_test.ts",
+      "tests/plugin_write_bases_test.ts",
+    ],
+  },
   "resource-core-pilot": {
     replacement: "P02",
     closed: true,

@@ -10,6 +10,273 @@ import { bundle } from "./helpers/plugin_lifecycle.ts";
 import { pluginSettled } from "./helpers/plugin_ready.ts";
 import { restoreState } from "./helpers/state.ts";
 import { bounded, WorkerDeliveryGate } from "./helpers/worker_liveness.ts";
+import {
+  pluginOperationsFixture,
+  withPluginOperationsFixture,
+} from "./helpers/plugin_operations_fixture.ts";
+import { pluginFixture, withPluginFixture } from "./helpers/plugin_fixture.ts";
+import type { FixtureScope } from "./helpers/fixture_scope.ts";
+
+const scopePlugin = {
+  id: "scope-pilot",
+  manifest: {
+    runtime: { server: "service.js" },
+    capabilities: { network: false, imports: false },
+  },
+  files: {
+    "service.js":
+      "export function activate(ctx) { ctx.commands.register({id:'ping', label:'ping', target:'server'}, () => 'pong'); }",
+  },
+};
+
+for (
+  const failure of [
+    "root",
+    "mkdir-1",
+    "mkdir-2",
+    "install",
+    "scan",
+    "configure",
+    "reconcile",
+    "body",
+    "runtime-close",
+    "manager-stop",
+    "state-restore",
+    "hub-stop",
+    "root-remove",
+    "report",
+  ]
+) {
+  Deno.test(`fixture operations ownership: ${failure} releases preparation and every later owner`, async () => {
+    const primary = new Error(`operations ${failure}`),
+      cleanup = new Error(`close ${failure}`);
+    const previous = { ...state };
+    const roots: string[] = [], events: string[] = [];
+    const hubs: VaultHub[] = [],
+      managers: PluginManager[] = [],
+      runtimes: PluginRuntime[] = [];
+    const originals = {
+      temp: Deno.makeTempDir,
+      mkdir: Deno.mkdir,
+      remove: Deno.remove,
+      scan: VaultHub.prototype.scanNow,
+      hubStop: VaultHub.prototype.stop,
+      configure: PluginManager.prototype.configureRuntime,
+      managerStop: PluginManager.prototype.stop,
+      reconcile: PluginRuntime.prototype.reconcile,
+      runtimeClose: PluginRuntime.prototype.close,
+      assign: Object.assign,
+      log: console.log,
+    };
+    let scope: FixtureScope | undefined, mkdir = 0;
+    let restoring = false;
+    const delivery = new WorkerDeliveryGate();
+    delivery.holdHeartbeat = false;
+    Object.assign = ((target: object, ...sources: object[]) => {
+      const result = originals.assign(target, ...sources);
+      if (target === state && restoring && failure === "state-restore") {
+        throw cleanup;
+      }
+      return result;
+    }) as typeof Object.assign;
+    console.log = (...args) => {
+      if (
+        failure === "report" &&
+        String(args[0]).includes("retainedPluginFixture")
+      ) {
+        events.push("report");
+        throw cleanup;
+      }
+      originals.log(...args);
+    };
+    Deno.makeTempDir = async (options) => {
+      if (options?.prefix === "globnotes-platform-" && failure === "root") {
+        throw primary;
+      }
+      const root = await originals.temp(options);
+      if (options?.prefix === "globnotes-platform-") roots.push(root);
+      return root;
+    };
+    Deno.mkdir = async (path, options) => {
+      if (roots.some((root) => String(path).startsWith(root))) {
+        mkdir++;
+        if (
+          failure === `mkdir-${mkdir}` || (failure === "install" && mkdir === 3)
+        ) throw primary;
+      }
+      await originals.mkdir(path, options);
+    };
+    Deno.remove = async (path, options) => {
+      await originals.remove(path, options);
+      if (roots.includes(String(path))) {
+        events.push("root");
+        if (failure === "root-remove") throw cleanup;
+      }
+    };
+    VaultHub.prototype.scanNow = function (...args) {
+      hubs.push(this);
+      if (failure === "scan") throw primary;
+      return originals.scan.apply(this, args);
+    };
+    VaultHub.prototype.stop = function () {
+      originals.hubStop.call(this);
+      events.push("hub");
+      if (failure === "hub-stop") throw cleanup;
+    };
+    PluginManager.prototype.configureRuntime = function (...args) {
+      managers.push(this);
+      const runtime = originals.configure.apply(this, args);
+      runtimes.push(runtime);
+      if (failure === "configure") throw primary;
+      return runtime;
+    };
+    PluginManager.prototype.stop = function () {
+      originals.managerStop.call(this);
+      events.push("manager");
+      if (failure === "manager-stop") throw cleanup;
+    };
+    PluginRuntime.prototype.reconcile = async function () {
+      await originals.reconcile.call(this);
+      if (failure === "reconcile") throw primary;
+    };
+    PluginRuntime.prototype.close = async function () {
+      await originals.runtimeClose.call(this);
+      restoring = true;
+      events.push("runtime");
+      if (failure === "runtime-close") throw cleanup;
+    };
+    try {
+      let error: unknown;
+      try {
+        await withPluginOperationsFixture({
+          ...scopePlugin,
+          retain: failure === "report",
+        }, async (fixture) => {
+          scope = fixture.scope;
+          assertEquals(await fixture.command("ping"), "pong");
+          throw primary;
+        });
+      } catch (caught) {
+        error = caught;
+      }
+      if (
+        failure.endsWith("close") || failure.endsWith("stop") ||
+        failure === "root-remove" || failure === "state-restore" ||
+        failure === "report"
+      ) {
+        assert(error instanceof AggregateError);
+        assertEquals(error.cause, primary);
+        assertEquals(error.errors, [primary, cleanup]);
+      } else assertEquals(error, primary);
+      assertEquals({ ...state }, previous);
+      if (scope) assertEquals(scope.size, 0);
+      // Observe all outcomes before rescue cleanup: a leaked hub/root/Worker
+      // cannot be made green by the finally below.
+      for (const root of roots) {
+        if (failure === "report") assert((await Deno.stat(root)).isDirectory);
+        else await assertRejects(() => Deno.stat(root), Deno.errors.NotFound);
+      }
+      for (const hub of hubs) assertThrows(() => hub.store.files());
+      assert(delivery.workers.every((worker) => worker.terminated > 0));
+      if (runtimes.length) {
+        assertEquals(events.slice(0, 3), ["runtime", "manager", "hub"]);
+        assertEquals(runtimes[0].commands(), []);
+      }
+      if (roots.length) {
+        assertEquals(events.at(-1), failure === "report" ? "report" : "root");
+      }
+    } finally {
+      Deno.makeTempDir = originals.temp;
+      Object.assign = originals.assign;
+      console.log = originals.log;
+      Deno.mkdir = originals.mkdir;
+      Deno.remove = originals.remove;
+      VaultHub.prototype.scanNow = originals.scan;
+      VaultHub.prototype.stop = originals.hubStop;
+      PluginManager.prototype.configureRuntime = originals.configure;
+      PluginManager.prototype.stop = originals.managerStop;
+      PluginRuntime.prototype.reconcile = originals.reconcile;
+      PluginRuntime.prototype.close = originals.runtimeClose;
+      for (const runtime of runtimes) {
+        await originals.runtimeClose.call(runtime);
+      }
+      for (const manager of managers) originals.managerStop.call(manager);
+      for (const hub of hubs) {
+        try {
+          originals.hubStop.call(hub);
+        } catch { /* already closed */ }
+      }
+      restoreState(previous);
+      delivery.restore();
+      for (const root of roots) {
+        await originals.remove(root, { recursive: true }).catch((error) => {
+          if (!(error instanceof Deno.errors.NotFound)) {
+            throw error;
+          }
+        });
+      }
+    }
+  });
+}
+
+Deno.test("fixture roots: compatibility construction fails before caller try without leaking its root", async () => {
+  const mkdir = Deno.mkdir, temp = Deno.makeTempDir;
+  const roots: string[] = [], primary = new Error("root preparation");
+  Deno.makeTempDir = async (options) => {
+    const root = await temp(options);
+    roots.push(root);
+    return root;
+  };
+  Deno.mkdir = () => Promise.reject(primary);
+  try {
+    let error: unknown;
+    try {
+      await pluginFixture();
+    } catch (caught) {
+      error = caught;
+    }
+    assertEquals(error, primary);
+    assertEquals(roots.length, 1);
+    await assertRejects(() => Deno.stat(roots[0]), Deno.errors.NotFound);
+  } finally {
+    Deno.mkdir = mkdir;
+    Deno.makeTempDir = temp;
+    for (const root of roots) {
+      await Deno.remove(root, { recursive: true }).catch((error) => {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      });
+    }
+  }
+});
+
+Deno.test("fixture operations: borrowed roots survive while callback-owned work and state retire", async () => {
+  await withPluginFixture(async (fixture) => {
+    const borrowed = { ...fixture, dispose: () => Promise.resolve() };
+    let scope!: FixtureScope;
+    await withPluginOperationsFixture(
+      { ...scopePlugin, fixture: borrowed },
+      (operations) => {
+        scope = operations.scope;
+      },
+    );
+    assertEquals(scope.size, 0);
+    assert((await Deno.stat(fixture.root)).isDirectory);
+  });
+});
+
+Deno.test("fixture operations: compatibility close retains evidence explicitly and is idempotent", async () => {
+  const fixture = await pluginOperationsFixture(scopePlugin);
+  try {
+    await fixture.close();
+    await fixture.close();
+    assertEquals(fixture.scope.size, 0);
+    assert((await Deno.stat(fixture.fixture.root)).isDirectory);
+    assertThrows(() => fixture.hub.store.files());
+  } finally {
+    await fixture.close();
+    await fixture.fixture.dispose();
+  }
+});
 
 const scenarios = [
   {

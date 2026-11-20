@@ -17,7 +17,11 @@ import * as path from "@std/path";
 import "./ownership_guard_test.ts";
 import "./ownership_coverage_test.ts";
 import "./ownership_resource_guard_test.ts";
-import { RESOURCE_OWNERSHIP } from "./helpers/ownership_rules.ts";
+import "./ownership_fixture_guard_test.ts";
+import {
+  FIXTURE_OWNERSHIP,
+  registeredOwnership,
+} from "./helpers/ownership_rules.ts";
 import {
   CHILD_OWNER,
   familyInventoryErrors,
@@ -548,11 +552,12 @@ for (const rule of RULES) {
 }
 
 Deno.test("isolation contract: parsed single-child-launcher and finite legacy inventory", async () => {
-  const { sources, sites, coverage } = await repositoryOwnership(
+  const { sources, coverage } = await repositoryOwnership(
     ROOT,
-    RESOURCE_OWNERSHIP,
+    FIXTURE_OWNERSHIP,
   );
   const files = new Set(sources.map((source) => source.file));
+  const sites = registeredOwnership(sources);
   assertEquals(sources.map((source) => source.file), coverage.files);
   assertEquals(
     sources.some((source) => source.file === CHILD_OWNER),

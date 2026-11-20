@@ -97,6 +97,22 @@ the old credential examples without claiming the default process policy owns the
 The guard is a source ownership contract, not a sandbox for hostile JavaScript.
 Declared owners, permitted public APIs and external dependencies remain trusted.
 
+## Fixture pilot registration
+
+P03's callback facades expose no partially constructed owner. Their private
+construction engines are registered by resolved identity. The finite pilot file
+list selects an explicit stricter root/module policy for those modules; other
+families retain their P01 policy until migration. `registeredOwnership` partitions
+the enumerated modules, analyzes every module exactly once with the same analyzer,
+and supplies every violation to the inventory without owner or prefix filtering.
+These are policy contexts, not a second parser or flow-based rule mechanism.
+
+Raw directory acquisition belongs to the private plugin constructor; the
+operations constructor owns hub/manager acquisition. Importing a facade or naming
+a callback `scope` grants no root permission. Trusted constructor behavior,
+reserve-before-allocation and partial-runtime cleanup are runtime contracts;
+the source guard does not infer callback provenance or count method calls.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from
