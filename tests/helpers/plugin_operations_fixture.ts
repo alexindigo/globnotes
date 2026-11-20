@@ -12,8 +12,11 @@ import { createPluginManager } from "./plugin_manager.ts";
 import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { PluginSettingsEnvironment } from "../../server/plugins/settings_environment.ts";
 import {
+  bindPluginFixture,
+  compatibilityPluginFixture,
   fixtureApiOrigin,
-  pluginFixture,
+  retainedPluginFixture,
+  type ScopedPluginFixture,
   scopedPluginFixture,
 } from "./plugin_fixture_engine.ts";
 import {
@@ -24,7 +27,7 @@ import {
 import { initState, state } from "../../server/state.ts";
 import type { OperationFact } from "../../server/plugins/contracts.ts";
 import { restoreState } from "./state.ts";
-import { currentBase } from "./storage.ts";
+import { currentBaseFrom } from "./storage.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
 import { PluginActions } from "../../server/plugins/actions.ts";
 import { HubGate } from "../../server/hub/gate.ts";
@@ -55,7 +58,7 @@ export interface PluginOperationsOptions {
   manifest: Record<string, unknown>;
   files: Record<string, string>;
   environment?: string;
-  fixture?: Awaited<ReturnType<typeof pluginFixture>>;
+  fixture?: ScopedPluginFixture & { dispose?: () => Promise<void> };
   fault?: RpcFault;
   limits?: Partial<PluginLimits>;
 }
@@ -67,10 +70,19 @@ export async function pluginOperationsFixture(
   options: PluginOperationsOptions,
 ) {
   const owner = createFixtureScope();
-  return await owner.prepare(async (scope) => ({
-    ...await scopedPluginOperationsFixture(scope, options, true),
-    close: () => owner.close(),
-  }));
+  return await owner.prepare(async (scope) => {
+    const result = await scopedPluginOperationsFixture(scope, options, true);
+    return {
+      ...result,
+      fixture: options.fixture
+        ? compatibilityPluginFixture(
+          result.fixture,
+          options.fixture.dispose ?? (() => Promise.resolve()),
+        )
+        : await retainedPluginFixture(result.fixture),
+      close: () => owner.close(),
+    };
+  });
 }
 
 export function withPluginOperationsFixture<T>(
@@ -95,8 +107,9 @@ async function scopedPluginOperationsFixture(
   options: PluginOperationsOptions,
   retain: boolean,
 ) {
-  const fixture = options.fixture ??
-    await scopedPluginFixture(scope, { retain });
+  const fixture = options.fixture
+    ? bindPluginFixture(scope, options.fixture)
+    : await scopedPluginFixture(scope, { retain });
   const id = options.id;
   const dir = await fixture.install(id, options.manifest, options.files);
   const env = testEnvironment({
@@ -110,7 +123,7 @@ async function scopedPluginOperationsFixture(
   const lifecycle = new PluginLifecycle(config),
     notes = new FileSystemNotes(fixture.vault, {}, testServices(env).notes),
     fileServing = new FileServing(fixture.vault);
-  const hub = await scope.acquire(
+  const hub = (await scope.acquire(
     () =>
       new VaultHub(
         fixture.vault,
@@ -118,9 +131,9 @@ async function scopedPluginOperationsFixture(
         testServices(env).hub,
       ),
     (hub) => hub.stop(),
-  );
+  )).value;
   scope.defer(() => restoreState(previousState));
-  const manager = await scope.acquire(() =>
+  const manager = (await scope.acquire(() =>
     createPluginManager(
       fixture.vault,
       undefined,
@@ -132,7 +145,7 @@ async function scopedPluginOperationsFixture(
         persistence: { commit: (effect) => lifecycle.gate.run(effect) },
         env,
       },
-    ), (manager) => manager.stop());
+    ), (manager) => manager.stop())).value;
   // Register the manager's actual runtime slot before configureRuntime: an
   // injected configure failure can happen after allocation but before return.
   scope.defer(() => manager.runtime?.close());
@@ -216,39 +229,40 @@ async function scopedPluginOperationsFixture(
     hub,
     gate,
     filesystem,
-    command: (command: string, payload: unknown = {}) =>
-      runtime.invokeCommand(id, command, payload),
-    async save(
+    command: scope.bind((command: string, payload: unknown = {}) =>
+      runtime.invokeCommand(id, command, payload)
+    ),
+    save: scope.bind(async (
       path: string,
       content: string,
       operationId?: Parameters<NoteOperations["updateNote"]>[5],
-    ) {
+    ) => {
       // Like a client: based on the version it reads now.
       const result = await operations.updateNote(
         path,
-        { newContent: content, base: currentBase(path) },
+        { newContent: content, base: currentBaseFrom(notes, path) },
         "none",
         fixtureApiOrigin(lifecycle),
         undefined,
         operationId,
       );
       return result;
-    },
-    async create(path: string, content: string) {
+    }),
+    create: scope.bind(async (path: string, content: string) => {
       return await operations.createNote(
         { path, content },
         fixtureApiOrigin(lifecycle),
       );
-    },
-    async remove(path: string) {
+    }),
+    remove: scope.bind(async (path: string) => {
       return await operations.deleteNote(
         path,
         fixtureApiOrigin(lifecycle),
         undefined,
         undefined,
         undefined,
-        currentBase(path),
+        currentBaseFrom(notes, path),
       );
-    },
+    }),
   };
 }

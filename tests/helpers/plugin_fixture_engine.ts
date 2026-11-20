@@ -10,13 +10,19 @@ import {
   fixtureScope,
 } from "./fixture_scope_engine.ts";
 
+// Root custody can outlive one runtime only through an issued retained-evidence
+// result. Rebinding never revives the old runtime's escaped capabilities.
+const rootOwners = new WeakMap<ScopedPluginFixture, FixtureScope>();
+
 /** Task-owned plugins: no installed plugin, operator policy or real vault is edited. */
 export async function pluginFixture(options: { stateInVault?: boolean } = {}) {
   const owner = createFixtureScope();
-  return await owner.prepare(async (scope) => ({
-    ...await scopedPluginFixture(scope, options),
-    dispose: () => owner.close(),
-  }));
+  return await owner.prepare(async (scope) =>
+    compatibilityPluginFixture(
+      await scopedPluginFixture(scope, options),
+      () => owner.close(),
+    )
+  );
 }
 
 /** Internal construction port: root custody belongs to the enclosing scenario
@@ -25,13 +31,13 @@ export async function scopedPluginFixture(
   scope: FixtureScope,
   options: { stateInVault?: boolean; retain?: boolean } = {},
 ) {
-  const root = await scope.acquire(
+  const root = (await scope.acquire(
     () => Deno.makeTempDir({ prefix: "globnotes-platform-" }),
     (root) =>
       options.retain
         ? console.log(JSON.stringify({ retainedPluginFixture: root }))
         : Deno.remove(root, { recursive: true }),
-  );
+  )).value;
   const vault = path.join(root, "vault");
   const metadataBase = options.stateInVault
     ? path.join(vault, "State")
@@ -39,39 +45,114 @@ export async function scopedPluginFixture(
   const statePath = path.join(metadataBase, "globnotes");
   await Deno.mkdir(vault);
   await Deno.mkdir(statePath, { recursive: true });
-  async function install(
+  return pluginCapabilities(
+    scope,
+    { root, vault, statePath, metadataBase },
+    scope,
+  );
+}
+
+function pluginCapabilities(
+  scope: FixtureScope,
+  paths: Omit<ScopedPluginFixture, "install">,
+  rootOwner: FixtureScope,
+): ScopedPluginFixture {
+  const { root, vault, statePath, metadataBase } = paths;
+  const bind = <Args extends unknown[], T>(effect: (...args: Args) => T) =>
+    scope.bind(rootOwner.bind(effect));
+  const mkdir = bind(Deno.mkdir), writeTextFile = bind(Deno.writeTextFile);
+  const install = bind(async function (
     id: string,
     manifest: Record<string, unknown>,
     files: Record<string, string> = {},
   ) {
-    const dir = path.join(statePath, "plugins", id);
-    await Deno.mkdir(dir, { recursive: true });
-    await Deno.writeTextFile(
-      path.join(dir, "manifest.json"),
-      JSON.stringify({ id, ...manifest }),
-    );
-    for (const [name, source] of Object.entries(files)) {
-      const file = path.join(dir, name);
-      await Deno.mkdir(path.dirname(file), { recursive: true });
-      await Deno.writeTextFile(file, source);
-    }
-    return dir;
-  }
-  return {
+    // Pending installation is owned before the first filesystem await. Close
+    // joins it before deleting the older root, even if a write is in flight.
+    const installed = await scope.acquire(async () => {
+      const dir = path.join(statePath, "plugins", id);
+      await mkdir(dir, { recursive: true });
+      await writeTextFile(
+        path.join(dir, "manifest.json"),
+        JSON.stringify({ id, ...manifest }),
+      );
+      for (const [name, source] of Object.entries(files)) {
+        const file = path.join(dir, name);
+        await mkdir(path.dirname(file), { recursive: true });
+        await writeTextFile(file, source);
+      }
+      return dir;
+    }, () => {});
+    return installed.value;
+  });
+  const fixture = Object.freeze({
     root,
     vault,
     statePath,
     metadataBase,
     install,
-    // Compatibility custody for retained evidence after its runtime has closed.
-    // The ordinary callback entry does not expose this manual deletion port.
-    dispose: () => Deno.remove(root, { recursive: true }),
-  };
+  });
+  rootOwners.set(fixture, rootOwner);
+  return fixture;
+}
+
+export interface ScopedPluginFixture {
+  readonly root: string;
+  readonly vault: string;
+  readonly statePath: string;
+  readonly metadataBase: string;
+  readonly install: (
+    id: string,
+    manifest: Record<string, unknown>,
+    files?: Record<string, string>,
+  ) => Promise<string>;
+}
+
+/** Project only scoped capabilities, including when borrowing a legacy fixture. */
+export function bindPluginFixture(
+  scope: FixtureScope,
+  fixture: ScopedPluginFixture,
+): ScopedPluginFixture {
+  const rootOwner = rootOwners.get(fixture);
+  if (rootOwner) {
+    rootOwner.assertCurrent();
+    return pluginCapabilities(scope, fixture, rootOwner);
+  }
+  const { root, vault, statePath, metadataBase } = fixture;
+  return Object.freeze({
+    root,
+    vault,
+    statePath,
+    metadataBase,
+    install: scope.bind(fixture.install),
+  });
+}
+
+/** Preserve an existing root custodian while projecting a new runtime scope. */
+export function compatibilityPluginFixture(
+  fixture: ScopedPluginFixture,
+  dispose: () => Promise<void>,
+) {
+  const result = Object.freeze({ ...fixture, dispose });
+  const rootOwner = rootOwners.get(fixture);
+  if (rootOwner) rootOwners.set(result, rootOwner);
+  return result;
+}
+
+/** Separate evidence custody, not a live callback capability. */
+export async function retainedPluginFixture(fixture: ScopedPluginFixture) {
+  const evidence = createFixtureScope();
+  await evidence.scope.adopt(
+    fixture.root,
+    (root) => Deno.remove(root, { recursive: true }),
+  );
+  const result = compatibilityPluginFixture(fixture, () => evidence.close());
+  rootOwners.set(result, evidence.scope);
+  return result;
 }
 
 export function withPluginFixture<T>(
   body: (
-    fixture: Omit<Awaited<ReturnType<typeof scopedPluginFixture>>, "dispose">,
+    fixture: ScopedPluginFixture,
     scope: FixtureScope,
   ) => T | PromiseLike<T>,
   options: { stateInVault?: boolean; retain?: boolean } = {},

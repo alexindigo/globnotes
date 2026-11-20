@@ -15,7 +15,9 @@ import {
   withPluginOperationsFixture,
 } from "./helpers/plugin_operations_fixture.ts";
 import { pluginFixture, withPluginFixture } from "./helpers/plugin_fixture.ts";
-import type { FixtureScope } from "./helpers/fixture_scope.ts";
+import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
+import { OwnershipError } from "../shared/ownership.js";
+import { workMilestone } from "./helpers/product_settlement.ts";
 
 const scopePlugin = {
   id: "scope-pilot",
@@ -28,6 +30,172 @@ const scopePlugin = {
       "export function activate(ctx) { ctx.commands.register({id:'ping', label:'ping', target:'server'}, () => 'pong'); }",
   },
 };
+
+Deno.test("fixture capabilities: escaped installation cannot recreate a retired root", async () => {
+  const escaped = await withPluginFixture(async (fixture) => {
+    await fixture.install("live", {});
+    return { root: fixture.root, install: fixture.install };
+  });
+  try {
+    await assertRejects(
+      async () => await escaped.install("late", {}),
+      OwnershipError,
+      "retired",
+    );
+    await assertRejects(() => Deno.stat(escaped.root), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(escaped.root, { recursive: true }).catch((error) => {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    });
+  }
+});
+
+Deno.test("fixture capabilities: callback entries never expose root disposal", async () => {
+  await withPluginFixture(async (fixture) => {
+    // @ts-expect-error Manual deletion is not a callback capability.
+    assertEquals(fixture.dispose, undefined);
+    assertEquals(Reflect.has(fixture, "dispose"), false);
+    await withPluginOperationsFixture({
+      ...scopePlugin,
+      fixture: { ...fixture, dispose: () => Promise.resolve() },
+    }, (operations) => {
+      // @ts-expect-error Borrowed compatibility capabilities are not projected.
+      assertEquals(operations.fixture.dispose, undefined);
+      assertEquals(Reflect.has(operations.fixture, "dispose"), false);
+    });
+  });
+});
+
+Deno.test("fixture capabilities: retirement drains an in-flight installation before root deletion", async () => {
+  const entered = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>();
+  const closing = Promise.withResolvers<void>();
+  const mkdir = Deno.mkdir;
+  let root = "", rejected: Promise<unknown> = Promise.resolve();
+  Deno.mkdir = async (path, options) => {
+    if (String(path).endsWith("/inflight")) {
+      entered.resolve();
+      await release.promise;
+    }
+    await mkdir(path, options);
+  };
+  const running = withPluginFixture(async (fixture, scope) => {
+    root = fixture.root;
+    const installing = fixture.install("inflight", {});
+    rejected = assertRejects(() => installing, OwnershipError, "retired");
+    await entered.promise;
+    scope.defer(() => closing.resolve());
+  });
+  try {
+    try {
+      await workMilestone(
+        running,
+        closing.promise,
+        "fixture installation drain entered",
+      );
+      assert((await Deno.stat(root)).isDirectory);
+    } finally {
+      release.resolve();
+      try {
+        await Promise.all([running, rejected]);
+      } finally {
+        Deno.mkdir = mkdir;
+      }
+    }
+    await assertRejects(() => Deno.stat(root), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(root, { recursive: true }).catch((error) => {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    });
+  }
+});
+
+Deno.test("fixture capabilities: every escaped operation rejects before effects", async () => {
+  const escaped = await withPluginOperationsFixture(
+    scopePlugin,
+    (fixture) => fixture,
+  );
+  try {
+    for (
+      const invoke of [
+        () => escaped.fixture.install("late", {}),
+        () => escaped.command("ping"),
+        () => escaped.save("Late", "late"),
+        () => escaped.create("Late", "late"),
+        () => escaped.remove("Late"),
+      ]
+    ) {
+      await assertRejects(
+        async () => await invoke(),
+        OwnershipError,
+        "retired",
+      );
+    }
+    await assertRejects(
+      () => Deno.stat(escaped.fixture.root),
+      Deno.errors.NotFound,
+    );
+  } finally {
+    await Deno.remove(escaped.fixture.root, { recursive: true }).catch(
+      (error) => {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      },
+    );
+  }
+});
+
+Deno.test("fixture capabilities: retained evidence admits a new scope but never revives the old one", async () => {
+  const first = await pluginOperationsFixture(scopePlugin);
+  let next: Awaited<ReturnType<typeof pluginOperationsFixture>> | undefined;
+  try {
+    await first.close();
+    await assertRejects(
+      async () => await first.fixture.install("retired", {}),
+      OwnershipError,
+      "retired",
+    );
+    next = await pluginOperationsFixture({
+      ...scopePlugin,
+      fixture: first.fixture,
+    });
+    assertEquals(await next.command("ping"), "pong");
+    await next.create("Resumed", "retained root consumer");
+    assertEquals(
+      await Deno.readTextFile(`${first.fixture.vault}/Resumed.md`),
+      "retained root consumer",
+    );
+    await next.close();
+    await assertRejects(
+      async () => await next!.fixture.install("retired-next", {}),
+      OwnershipError,
+      "retired",
+    );
+    await next.fixture.dispose();
+    await assertRejects(
+      () => Deno.stat(first.fixture.root),
+      Deno.errors.NotFound,
+    );
+    await assertRejects(
+      () =>
+        withPluginOperationsFixture(
+          { ...scopePlugin, fixture: next!.fixture },
+          () => {},
+        ),
+      OwnershipError,
+      "retired",
+    );
+  } finally {
+    try {
+      await next?.close();
+    } finally {
+      try {
+        await first.close();
+      } finally {
+        await first.fixture.dispose();
+      }
+    }
+  }
+});
 
 for (
   const failure of [
@@ -197,24 +365,31 @@ for (
       PluginManager.prototype.stop = originals.managerStop;
       PluginRuntime.prototype.reconcile = originals.reconcile;
       PluginRuntime.prototype.close = originals.runtimeClose;
-      for (const runtime of runtimes) {
-        await originals.runtimeClose.call(runtime);
-      }
-      for (const manager of managers) originals.managerStop.call(manager);
-      for (const hub of hubs) {
-        try {
-          originals.hubStop.call(hub);
-        } catch { /* already closed */ }
-      }
-      restoreState(previous);
-      delivery.restore();
-      for (const root of roots) {
-        await originals.remove(root, { recursive: true }).catch((error) => {
-          if (!(error instanceof Deno.errors.NotFound)) {
-            throw error;
-          }
-        });
-      }
+      // Rescue must attempt every independent cleanup even if one close fails.
+      await fixtureScope((cleanup) => {
+        for (const root of roots) {
+          cleanup.defer(() =>
+            originals.remove(root, { recursive: true }).catch((error) => {
+              if (!(error instanceof Deno.errors.NotFound)) throw error;
+            })
+          );
+        }
+        cleanup.defer(() => delivery.restore());
+        cleanup.defer(() => restoreState(previous));
+        for (const hub of hubs) {
+          cleanup.defer(() => {
+            try {
+              originals.hubStop.call(hub);
+            } catch { /* already closed */ }
+          });
+        }
+        for (const manager of managers) {
+          cleanup.defer(() => originals.managerStop.call(manager));
+        }
+        for (const runtime of runtimes) {
+          cleanup.defer(() => originals.runtimeClose.call(runtime));
+        }
+      });
     }
   });
 }
@@ -273,8 +448,46 @@ Deno.test("fixture operations: compatibility close retains evidence explicitly a
     assert((await Deno.stat(fixture.fixture.root)).isDirectory);
     assertThrows(() => fixture.hub.store.files());
   } finally {
-    await fixture.close();
-    await fixture.fixture.dispose();
+    try {
+      await fixture.close();
+    } finally {
+      await fixture.fixture.dispose();
+    }
+  }
+});
+
+Deno.test("fixture operations: retained evidence disposal survives a rejected close", async () => {
+  const fixture = await pluginOperationsFixture(scopePlugin);
+  const primary = new Error("retained close failure");
+  fixture.scope.defer(() => {
+    throw primary;
+  });
+  try {
+    await assertRejects(
+      async () => {
+        try {
+          await fixture.close();
+        } finally {
+          try {
+            await fixture.close();
+          } finally {
+            await fixture.fixture.dispose();
+          }
+        }
+      },
+      Error,
+      primary.message,
+    );
+    await assertRejects(
+      () => Deno.stat(fixture.fixture.root),
+      Deno.errors.NotFound,
+    );
+  } finally {
+    await Deno.remove(fixture.fixture.root, { recursive: true }).catch(
+      (error) => {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      },
+    );
   }
 });
 
@@ -425,20 +638,28 @@ for (const scenario of scenarios) {
       PluginRuntime.prototype.close = close;
       PluginManager.prototype.stop = stop;
       VaultHub.prototype.scanNow = scanNow;
-      for (const runtime of runtimes) await close.call(runtime);
-      for (const manager of managers) stop.call(manager);
-      for (const hub of hubs) {
-        try {
-          hub.stop();
-        } catch { /* already closed by the failed setup owner */ }
-      }
-      restoreState(previousState);
-      gate.restore();
-      for (const root of roots) {
-        await remove(root, { recursive: true }).catch((error) => {
-          if (!(error instanceof Deno.errors.NotFound)) throw error;
-        });
-      }
+      await fixtureScope((cleanup) => {
+        for (const root of roots) {
+          cleanup.defer(() =>
+            remove(root, { recursive: true }).catch((error) => {
+              if (!(error instanceof Deno.errors.NotFound)) throw error;
+            })
+          );
+        }
+        cleanup.defer(() => gate.restore());
+        cleanup.defer(() => restoreState(previousState));
+        for (const hub of hubs) {
+          cleanup.defer(() => {
+            try {
+              hub.stop();
+            } catch { /* already closed by the failed setup owner */ }
+          });
+        }
+        for (const manager of managers) cleanup.defer(() => stop.call(manager));
+        for (const runtime of runtimes) {
+          cleanup.defer(() => close.call(runtime));
+        }
+      });
     }
   });
 }

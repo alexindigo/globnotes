@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import {
   createOwnershipScope,
+  type OwnedResource,
   type OwnerIdentity,
 } from "../../shared/ownership.js";
 
@@ -13,11 +14,16 @@ export interface FixtureScope {
   readonly identity: OwnerIdentity;
   readonly size: number;
   assertCurrent(): void;
+  /** Bind a fixture-issued effect to this exact scope, without resolving its result. */
+  bind<Args extends unknown[], T>(
+    effect: (...args: Args) => T,
+  ): (...args: Args) => T;
+  /** Keep owned values inside handles across awaits; read .value synchronously. */
   acquire<T>(
     allocate: () => T | PromiseLike<T>,
     dispose: (value: T) => unknown,
-  ): Promise<T>;
-  adopt<T>(value: T, dispose: (value: T) => unknown): Promise<T>;
+  ): Promise<OwnedResource<T>>;
+  adopt<T>(value: T, dispose: (value: T) => unknown): Promise<OwnedResource<T>>;
   defer(dispose: () => unknown): void;
 }
 
@@ -33,14 +39,20 @@ export function createFixtureScope() {
       return resources.size;
     },
     assertCurrent: () => resources.assertCurrent(),
-    async acquire<T>(
+    bind<Args extends unknown[], T>(effect: (...args: Args) => T) {
+      return (...args: Args): T => {
+        resources.assertCurrent();
+        return effect(...args);
+      };
+    },
+    acquire<T>(
       allocate: () => T | PromiseLike<T>,
       dispose: (value: T) => unknown,
     ) {
-      return (await resources.acquire(allocate, dispose)).value;
+      return resources.acquire(allocate, dispose);
     },
-    async adopt<T>(value: T, dispose: (value: T) => unknown) {
-      return (await resources.adopt(value, dispose)).value;
+    adopt<T>(value: T, dispose: (value: T) => unknown) {
+      return resources.adopt(value, dispose);
     },
     defer(dispose: () => unknown) {
       resources.defer(dispose);

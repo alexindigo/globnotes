@@ -5,6 +5,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
+  assertThrows,
 } from "@std/assert";
 import {
   createFixtureScope,
@@ -22,6 +23,56 @@ async function caught(body: () => Promise<unknown>): Promise<unknown> {
   }
   throw new Error("Expected rejection");
 }
+
+for (const mode of ["acquire", "adopt"] as const) {
+  Deno.test(`fixture values: ${mode} crosses async boundaries only as a handle`, async () => {
+    let reads = 0;
+    const resource = {
+      value: "resource payload",
+      get then(): undefined {
+        reads++;
+        if (mode === "adopt" || reads > 1) {
+          throw new Error("resource was resolved again");
+        }
+        return undefined;
+      },
+    };
+    let disposed: unknown;
+    await fixtureScope(async (scope) => {
+      const handle = mode === "acquire"
+        ? await scope.acquire(() => resource, (value) => {
+          disposed = value;
+        })
+        : await scope.adopt(resource, (value) => {
+          disposed = value;
+        });
+      assertStrictEquals(handle.value, resource);
+    });
+    assertStrictEquals(disposed, resource);
+    assertEquals(reads, mode === "acquire" ? 1 : 0);
+  });
+}
+
+Deno.test("fixture capabilities: binding checks the owner and never resolves the effect result", async () => {
+  const owner = createFixtureScope();
+  let effects = 0;
+  const result = {
+    get then(): never {
+      throw new Error("bound result resolved");
+    },
+  };
+  const invoke = owner.scope.bind(() => {
+    effects++;
+    return result;
+  });
+  try {
+    assertStrictEquals(invoke(), result);
+  } finally {
+    await owner.close();
+  }
+  assertThrows(invoke, OwnershipError);
+  assertEquals(effects, 1);
+});
 
 Deno.test("fixture scope review: invocation errors reject through the adapter", async () => {
   const owner = createFixtureScope();
@@ -146,6 +197,7 @@ for (const asynchronous of [false, true]) {
         events.filter((event) => event.startsWith("close-")),
         Array.from({ length: count }, (_, i) => `close-${count - 1 - i}`),
       );
+      assertEquals(events.filter((event) => event === "report").length, 1);
       assert(
         events.indexOf("report") <
           (events.findIndex((event) => event.startsWith("close-")) < 0

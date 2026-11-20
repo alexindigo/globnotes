@@ -57,8 +57,16 @@ export function gatedNotes(notes: FileSystemNotes): FileSystemNotes {
 /** The base a writer states after reading `notePath` now: its version, or
  * absent (server/hub/gate.ts). Reads the running state's notes. */
 export function currentBase(notePath: string): Base {
+  return currentBaseFrom(state.notes, notePath);
+}
+
+/** A captured writer's base must come from that writer's own notes instance. */
+export function currentBaseFrom(
+  notes: Pick<FileSystemNotes, "get">,
+  notePath: string,
+): Base {
   try {
-    return { kind: "version", version: noteVersion(state.notes.get(notePath)) };
+    return { kind: "version", version: noteVersion(notes.get(notePath)) };
   } catch (error) {
     if (error instanceof NoteNotFoundError) return { kind: "absent" };
     throw error;

@@ -84,6 +84,33 @@ function withWriter(body: (w: ReturnType<typeof writer>) => Promise<void>) {
   return withPluginOperationsFixture(writerOptions, (b) => body(writer(b)));
 }
 
+for (const operation of ["save", "remove"] as const) {
+  Deno.test(`fixture instances: outer ${operation} reads only its captured vault`, async () => {
+    await withWriter(async (outer) => {
+      await outer.create("Shared", "outer bytes");
+      await withWriter(async (inner) => {
+        await inner.create("Shared", "inner bytes");
+        if (operation === "save") {
+          const result = await outer.save("Shared", "outer update");
+          assertEquals(result.path, "Shared");
+          assertEquals(outer.read("Shared.md"), "outer update");
+          assertEquals(
+            [...Deno.readDirSync(outer.vault)].map((entry) => entry.name),
+            ["Shared.md"],
+          );
+        } else {
+          await outer.remove("Shared");
+          await assertRejects(
+            () => Deno.stat(`${outer.vault}/Shared.md`),
+            Deno.errors.NotFound,
+          );
+        }
+        assertEquals(inner.read("Shared.md"), "inner bytes");
+      });
+    });
+  });
+}
+
 Deno.test("plugin bases: every write without a base is refused and named contract 2", async () => {
   await withWriter(async (w) => {
     await w.create("Note", "original");
@@ -293,14 +320,14 @@ export async function parseNode(){
   catch (error) { return { parts: [error.name] }; } // Deno: NotCapable (no write permission)
 }`,
     });
-    const manager = await acquirePluginManager(
+    const manager = (await acquirePluginManager(
       scope,
       fixture.vault,
       () => Promise.resolve(null),
       1,
       fixture.statePath,
       { internalRoot: `${fixture.root}/no-internal` },
-    );
+    )).value;
     const catalog = await manager.catalog();
     assertEquals(catalog.contractVersion, 2);
     const raw = catalog.plugins.find((p) => p.id === "raw")!;
