@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertThrows } from "@std/assert";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import {
   analyzeOwnership,
   familyInventoryErrors,
@@ -19,6 +20,25 @@ import {
   RESOURCE_OWNERSHIP,
 } from "./helpers/ownership_rules.ts";
 import { assertUnowned } from "./ownership_review_test.ts";
+
+const repositoryRoot = (moduleUrl: string | URL = import.meta.url) =>
+  fromFileUrl(new URL("../", moduleUrl));
+
+Deno.test("P02 review: encoded checkout roots reach the actual source owner", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "ownership-path-" });
+  const link = join(directory, "checkout space % #");
+  try {
+    await Deno.symlink(repositoryRoot(), link, { type: "dir" });
+    const url = toFileUrl(join(link, "tests/ownership_resource_guard_test.ts"));
+    const root = repositoryRoot(url);
+    assertEquals(root, link + "/");
+    const sources = await repositorySources(root);
+    assert(sources.some((source) => source.file === RESOURCE_ENGINE));
+    assert(sources.some((source) => source.file === NATIVE_FINALIZER));
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});
 
 // Synthetic fragments can include TS-only import forms; real JS owner fixtures
 // name their actual file explicitly and must still pass compiler diagnostics.
@@ -170,9 +190,7 @@ Deno.test("P02 registration: exact inventory cannot authorize duplicated private
 });
 
 Deno.test("P02 registration: actual engine, facade and native pilot retain their exact boundaries", async () => {
-  const sources = await repositorySources(
-    new URL("../", import.meta.url).pathname,
-  );
+  const sources = await repositorySources(repositoryRoot());
   const files = new Set(sources.map((source) => source.file));
   for (const [module, owners] of Object.entries(RESOURCE_OWNERSHIP.modules)) {
     if (!module.startsWith("shared/")) continue;

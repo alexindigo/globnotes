@@ -7,6 +7,32 @@ import {
 } from "@std/assert";
 import { finalizeNativeCase } from "../client/tests/e2e/native-case-finalization.mjs";
 
+Deno.test("native review: thenable report and cleanup capture then once at the consumer", async () => {
+  const reads = [0, 0], order: string[] = [];
+  const failure = new Error("thenable close");
+  const callback = (index: number, rejects: boolean) => () => ({
+    get then() {
+      reads[index]++;
+      return reads[index] === 1
+        ? (resolve: () => void, reject: (error: unknown) => void) => {
+          order.push(String(index));
+          if (rejects) reject(failure);
+          else resolve();
+        }
+        : undefined;
+    },
+  });
+  const error = await assertRejects(() =>
+    finalizeNativeCase({
+      report: callback(0, false),
+      cleanup: [callback(1, true), () => order.push("last")],
+    })
+  );
+  assertStrictEquals(error, failure);
+  assertEquals(reads, [1, 1]);
+  assertEquals(order, ["0", "1", "last"]);
+});
+
 Deno.test("native finalization: compatibility entry reports before supplied cleanup order", async () => {
   const order: string[] = [];
   await finalizeNativeCase({

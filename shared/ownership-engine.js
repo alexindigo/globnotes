@@ -41,20 +41,14 @@ function releaseRecord(record) {
       record.owner.records.delete(record);
       complete(releaseResult(errors));
     };
-    const run = (outcome) => {
+    const run = async (outcome) => {
+      const errors = [];
       try {
-        const result = outcome.acquired
-          ? record.dispose(outcome.value)
-          : undefined;
-        if (result != null && typeof result.then === "function") {
-          Promise.resolve(result).then(
-            () => finish([]),
-            (error) => finish([error]),
-          );
-        } else finish([]);
+        if (outcome.acquired) await record.dispose(outcome.value);
       } catch (error) {
-        finish([error]);
+        errors.push(error);
       }
+      finish(errors);
     };
     if (record.outcome) run(record.outcome);
     else record.ready.then(run);
@@ -151,13 +145,13 @@ export function createOwnershipScope(
       ready({ acquired: true, value: undefined });
       return issue(state, record, undefined);
     },
-    adopt(value, dispose) {
+    async adopt(value, dispose) {
       // Already acquired: even a retired owner must roll it back before rejecting.
       const { record, ready } = reserve(dispose);
       ready({ acquired: true, value });
       return finish(record);
     },
-    acquire(allocate, dispose) {
+    async acquire(allocate, dispose) {
       assertCurrent();
       if (typeof allocate !== "function") {
         throw new TypeError("Resource allocator must be callable");
@@ -165,19 +159,15 @@ export function createOwnershipScope(
       // Reserve before allocation can reenter or fail, not after its first await.
       const { record, ready } = reserve(dispose);
       try {
-        Promise.resolve(allocate()).then(
-          (value) => ready({ acquired: true, value }),
-          (error) => ready({ acquired: false, error }),
-        );
+        ready({ acquired: true, value: await allocate() });
       } catch (error) {
         ready({ acquired: false, error });
       }
       return finish(record);
     },
-    release(handle) {
-      return releaseRecord(ownedRecord(state, handle)).then((result) =>
-        result.throwIfFailed()
-      );
+    async release(handle) {
+      const result = await releaseRecord(ownedRecord(state, handle));
+      result.throwIfFailed();
     },
     transfer(handle, target) {
       const record = ownedRecord(state, handle);

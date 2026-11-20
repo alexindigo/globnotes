@@ -17,6 +17,159 @@ import { workMilestone } from "./helpers/product_settlement.ts";
 
 // Low-level owner controls intentionally hold acquisition/disposal themselves.
 // Ordinary scenarios will use the fixture adapter (P03), not this test harness.
+for (const rejects of [false, true]) {
+  Deno.test(`ownership review: disposer then is captured once (rejects=${rejects})`, async () => {
+    const scope = createOwnershipScope();
+    const failure = new Error("thenable cleanup failed");
+    let reads = 0, runs = 0, remaining = 0;
+    scope.defer(() => remaining++);
+    scope.defer(() => ({
+      get then() {
+        reads++;
+        return reads === 1
+          ? (resolve: () => void, reject: (error: unknown) => void) => {
+            runs++;
+            if (rejects) reject(failure);
+            else resolve();
+          }
+          : undefined;
+      },
+    }));
+    const result = await scope.releaseAll();
+    assertEquals(reads, 1);
+    assertEquals(runs, 1);
+    assertEquals(remaining, 1);
+    assertEquals(result.errors, rejects ? [failure] : []);
+    assertEquals(scope.size, 0);
+  });
+}
+
+Deno.test("ownership review: then getter failures and sync/async disposer failures share one report", async () => {
+  const scope = createOwnershipScope();
+  const failures = [new Error("getter"), new Error("sync"), new Error("async")];
+  const order: string[] = [];
+  scope.defer(() => {
+    order.push("async");
+    return Promise.reject(failures[2]);
+  });
+  scope.defer(() => {
+    order.push("sync");
+    throw failures[1];
+  });
+  scope.defer(() => ({
+    get then() {
+      order.push("getter");
+      throw failures[0];
+    },
+  }));
+  const result = await scope.releaseAll();
+  assertEquals(order, ["getter", "sync", "async"]);
+  assertEquals(result.errors, failures);
+  assertEquals(scope.size, 0);
+});
+
+Deno.test("ownership review: promise input errors reject and never throw at invocation", async () => {
+  const scope = createOwnershipScope(), foreign = createOwnershipScope();
+  const retired = createOwnershipScope();
+  retired.retire();
+  const value = await scope.adopt("owned", () => {});
+  const stale = await scope.adopt("transferred", () => {});
+  const moved = scope.transfer(stale, foreign);
+  const badDisposer = undefined as unknown as () => unknown;
+  const badAllocator = undefined as unknown as () => unknown;
+  const primary = new Error("allocation rejected");
+  const cases: [
+    string,
+    () => Promise<unknown>,
+    new (message?: string) => Error,
+  ][] = [
+    [
+      "acquire retired",
+      () => retired.acquire(() => "no", () => {}),
+      OwnershipError,
+    ],
+    [
+      "acquire allocator",
+      () => scope.acquire(badAllocator, () => {}),
+      TypeError,
+    ],
+    [
+      "acquire disposer",
+      () => scope.acquire(() => "no", badDisposer),
+      TypeError,
+    ],
+    ["acquire throws", () =>
+      scope.acquire(() => {
+        throw primary;
+      }, () => {}), Error],
+    [
+      "acquire rejects",
+      () => scope.acquire(() => Promise.reject(primary), () => {}),
+      Error,
+    ],
+    ["adopt disposer", () => scope.adopt("no", badDisposer), TypeError],
+    [
+      "adopt retired",
+      () => retired.adopt("rollback", () => {}),
+      OwnershipError,
+    ],
+    [
+      "release raw",
+      () => scope.release({} as OwnedResource<unknown>),
+      OwnershipError,
+    ],
+    ["release clone", () => scope.release({ ...value }), OwnershipError],
+    ["release foreign", () => foreign.release(value), OwnershipError],
+    ["release stale", () => scope.release(stale), OwnershipError],
+    ["release transferred", () => foreign.release(stale), OwnershipError],
+  ];
+  try {
+    for (const [name, invoke, error] of cases) {
+      // Deliberately outside assertRejects: a synchronous throw fails the test.
+      const promise = invoke();
+      assertInstanceOf(promise, Promise, name);
+      await assertRejects(() => promise, error);
+    }
+  } finally {
+    await scope.releaseAll();
+    await foreign.release(moved);
+    await foreign.releaseAll();
+    await retired.releaseAll();
+  }
+});
+
+Deno.test("ownership review: releaseAll keeps its cached promise and reports disposer errors without throwing", async () => {
+  const scope = createOwnershipScope();
+  const failure = new Error("disposer input failed");
+  scope.defer(() => {
+    throw failure;
+  });
+  // releaseAll has no invalid input; its declared failure channel is result.errors.
+  const releasing = scope.releaseAll();
+  assertInstanceOf(releasing, Promise);
+  assert(scope.retired);
+  assertStrictEquals(scope.releaseAll(), releasing);
+  assertEquals((await releasing).errors, [failure]);
+  assertStrictEquals(await scope.releaseAll(), await releasing);
+});
+
+Deno.test("ownership review: allocator retires its scope and the caller owns finalization", async () => {
+  const scope = createOwnershipScope();
+  const order: string[] = [];
+  const acquiring = scope.acquire(async () => {
+    scope.defer(() => order.push("partial"));
+    await Promise.resolve();
+    assertEquals(scope.retire(), true);
+    await Promise.resolve();
+    return "allocated";
+  }, (value) => order.push(value));
+  await assertRejects(() => acquiring, OwnershipError, "retired");
+  assertEquals(order, ["allocated"]);
+  assertEquals((await scope.releaseAll()).errors, []);
+  assertEquals(order, ["allocated", "partial"]);
+  assertEquals(scope.size, 0);
+});
+
 Deno.test("ownership: opaque identities and handles reject forged/foreign/cloned use", async () => {
   const a = createOwnershipScope(), b = createOwnershipScope();
   const identity = a.identity;
@@ -28,9 +181,9 @@ Deno.test("ownership: opaque identities and handles reject forged/foreign/cloned
   const resource = await a.adopt({ bytes: "owned" }, () => released++);
   assert(Object.isFrozen(resource));
   for (const forged of [{ ...resource }, Object.create(resource), {}]) {
-    assertThrows(() => a.release(forged), OwnershipError);
+    await assertRejects(() => a.release(forged), OwnershipError);
   }
-  assertThrows(() => b.release(resource), OwnershipError);
+  await assertRejects(() => b.release(resource), OwnershipError);
   assertEquals(released, 0);
   await a.release(resource);
   await a.release(resource);
@@ -40,12 +193,12 @@ Deno.test("ownership: opaque identities and handles reject forged/foreign/cloned
 
 Deno.test("ownership: declarations prevent accidental structural handles", () => {
   // This function is never run; deno check checks the negative type contracts.
-  function checkedCaller() {
+  async function checkedCaller() {
     const scope = createOwnershipScope();
     // @ts-expect-error identity must be factory-issued
     scope.assertCurrent({});
     // @ts-expect-error a raw resource is not a custody handle
-    scope.release({ value: "raw" });
+    await scope.release({ value: "raw" });
     // @ts-expect-error arbitrary objects cannot receive custody
     scope.transfer({} as OwnedResource<string>, {});
   }
@@ -76,7 +229,10 @@ Deno.test("ownership: retirement fences in the releaseAll call turn", async () =
   const releasing = scope.releaseAll();
   assert(scope.retired);
   assertThrows(() => scope.assertCurrent(), OwnershipError, "retired");
-  assertThrows(() => scope.acquire(() => "no", () => {}), OwnershipError);
+  await assertRejects(
+    () => scope.acquire(() => "no", () => {}),
+    OwnershipError,
+  );
   assertEquals(scope.retire(), false);
   assertStrictEquals(scope.releaseAll(), releasing);
   await entered.promise;
@@ -256,8 +412,8 @@ Deno.test("ownership: explicit transfer invalidates source handles and leaves fo
   const other = await foreign.adopt("foreign", (value) => closed.push(value));
   const moved = a.transfer(first, b);
   assertStrictEquals(first.value, moved.value);
-  assertThrows(() => a.release(first), OwnershipError);
-  assertThrows(() => b.release(first), OwnershipError);
+  await assertRejects(() => a.release(first), OwnershipError);
+  await assertRejects(() => b.release(first), OwnershipError);
   assertThrows(() => a.transfer(other, b), OwnershipError);
   assertThrows(() => a.transfer(moved, b), OwnershipError);
   assertEquals((await a.releaseAll()).errors, []);
