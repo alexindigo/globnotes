@@ -21,11 +21,11 @@ import {
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
 import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { Fts5Indexer } from "../../server/search/fts5.ts";
-import { initState, state } from "../../server/state.ts";
+import { state } from "../../server/state.ts";
 import { fixtureApiOrigin, pluginFixture } from "./plugin_fixture.ts";
 import { testEnvironment } from "./environment.ts";
 import { pluginSettled } from "./plugin_ready.ts";
-import { restoreState } from "./state.ts";
+import { installFixtureState } from "./state.ts";
 
 export const RECORDER_SERVICE = `export function activate(ctx) {
   globalThis.__facts = [];
@@ -127,7 +127,7 @@ export async function bundle(opts: {
   beforeRead?(method: string, args: unknown[]): Promise<void> | void;
 } = {}): Promise<Bundle> {
   const fixture = await pluginFixture();
-  const previousState = { ...state };
+  let restoreBinding = () => {};
   let managerToClose: PluginManager | undefined;
   let runtimeToClose: PluginRuntime | undefined;
   let hubToClose: VaultHub | undefined;
@@ -172,7 +172,17 @@ export async function bundle(opts: {
       fixture.statePath,
       { internalRoot: path.join(fixture.root, "internal"), env },
     );
-    initState(config, null, notes, indexer, files, manager);
+    installFixtureState(
+      (restore) => {
+        restoreBinding = restore;
+      },
+      config,
+      null,
+      notes,
+      indexer,
+      files,
+      manager,
+    );
     const lifecycle = new PluginLifecycle(config);
     subscribeExternalFacts(hub, lifecycle);
     const operations = new NoteOperations({
@@ -240,11 +250,15 @@ export async function bundle(opts: {
       clearFacts: () =>
         runtime.invokeCommand("recorder", "clear", {}).then(() => undefined),
       dispose: async () => {
-        hub.stop();
-        await runtime.close();
-        manager.stop();
-        // Keep generated lifecycle proof vaults by default, including failures.
-        if (opts.retain === false) await fixture.dispose();
+        try {
+          hub.stop();
+          await runtime.close();
+          manager.stop();
+          // Keep generated lifecycle proof vaults by default, including failures.
+          if (opts.retain === false) await fixture.dispose();
+        } finally {
+          restoreBinding();
+        }
       },
     };
   } catch (e) {
@@ -252,7 +266,7 @@ export async function bundle(opts: {
     try {
       hubToClose?.stop();
     } catch { /* preserve the setup failure */ }
-    restoreState(previousState);
+    restoreBinding();
     if (opts.retain === false) {
       await fixture.dispose().catch(() => undefined);
     }

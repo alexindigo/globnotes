@@ -27,6 +27,44 @@ export function restoreState(previous: ServerState): void {
   Object.assign(state, previous);
 }
 
+// Binding history, not another resource registry. The registering fixture owner
+// owns one restoration callback; this adapter only preserves ambient bindings.
+const bindings: { previous: ServerState }[] = [];
+
+/** Capture, register rollback and install as one synchronous owned step.
+ * Removing a covered binding rewires its successor's predecessor snapshot,
+ * leaving the active binding untouched even when fixtures close out of order. */
+export function installFixtureState(
+  register: (restore: () => void) => void,
+  ...args: Parameters<typeof initState>
+): void {
+  const binding = { previous: { ...state } };
+  const restore = () => {
+    const index = bindings.indexOf(binding);
+    if (index < 0) return;
+    const next = bindings[index + 1];
+    bindings.splice(index, 1);
+    if (next) next.previous = binding.previous;
+    else restoreState(binding.previous);
+  };
+  register(restore);
+  bindings.push(binding);
+  try {
+    initState(...args);
+  } catch (error) {
+    try {
+      restore();
+    } catch (cleanup) {
+      throw new AggregateError(
+        [error, cleanup],
+        "Fixture state installation failed",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
 export interface UnitState {
   config: GlobalConfig;
   notes: FileSystemNotes;

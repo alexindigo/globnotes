@@ -18,6 +18,7 @@ import { pluginFixture, withPluginFixture } from "./helpers/plugin_fixture.ts";
 import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
 import { OwnershipError } from "../shared/ownership.js";
 import { workMilestone } from "./helpers/product_settlement.ts";
+import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 
 const scopePlugin = {
   id: "scope-pilot",
@@ -30,6 +31,284 @@ const scopePlugin = {
       "export function activate(ctx) { ctx.commands.register({id:'ping', label:'ping', target:'server'}, () => 'pong'); }",
   },
 };
+
+for (const source of ["original", "spread", "retained"] as const) {
+  Deno.test(`fixture admission: ${source} root disposal drains a held borrower mkdir`, async () => {
+    const retained = source === "retained"
+      ? await pluginOperationsFixture(scopePlugin)
+      : undefined;
+    await retained?.close();
+    const original = retained?.fixture ?? await pluginFixture();
+    const entered = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<void>();
+    const removed = Promise.withResolvers<void>();
+    const mkdir = Deno.mkdir, remove = Deno.remove;
+    let removalStarted = false;
+    let borrower:
+      | Awaited<ReturnType<typeof pluginOperationsFixture>>
+      | undefined;
+    Deno.mkdir = async (path, options) => {
+      if (String(path).endsWith(`/${scopePlugin.id}`)) {
+        entered.resolve();
+        await release.promise;
+      }
+      await mkdir(path, options);
+    };
+    Deno.remove = async (path, options) => {
+      if (String(path) === original.root) {
+        removalStarted = true;
+        await remove(path, options);
+        removed.resolve();
+      } else await remove(path, options);
+    };
+    const preparing = pluginOperationsFixture({
+      ...scopePlugin,
+      fixture: source === "spread" ? { ...original } : original,
+    });
+    const rejected = assertRejects(() => preparing, OwnershipError, "retired");
+    rejected.catch(() => {}); // Also observed when entry itself fails.
+    // Observe completion even if the regression unexpectedly admits a borrower.
+    preparing.then((value) => {
+      borrower = value;
+    }, () => {});
+    try {
+      await workMilestone(preparing, entered.promise, "borrower mkdir entered");
+      const deleting = original.dispose();
+      // With the old split custody, root removal starts synchronously. Finish
+      // that removal before releasing mkdir so the original recreation is exact.
+      if (removalStarted) await removed.promise;
+      release.resolve();
+      await Promise.all([deleting, rejected]);
+      await assertRejects(() => Deno.stat(original.root), Deno.errors.NotFound);
+    } finally {
+      release.resolve();
+      await preparing.catch(() => {});
+      Deno.mkdir = mkdir;
+      Deno.remove = remove;
+      try {
+        await borrower?.close();
+      } finally {
+        try {
+          await original.dispose();
+        } finally {
+          await remove(original.root, { recursive: true }).catch((error) => {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+          });
+        }
+      }
+    }
+  });
+}
+
+for (const order of ["LIFO", "non-LIFO"] as const) {
+  Deno.test(`fixture state: overlapping preparation and ${order} close preserve active bindings`, async () => {
+    const previous = { ...state };
+    const roots = await Promise.all([pluginFixture(), pluginFixture()]);
+    const installed = Promise.withResolvers<void>();
+    const write = Deno.writeTextFile;
+    let manifests = 0;
+    Deno.writeTextFile = async (path, data, options) => {
+      await write(path, data, options);
+      if (String(path).endsWith("/manifest.json")) {
+        if (++manifests === 2) installed.resolve();
+        await installed.promise;
+      }
+    };
+    const fixtures: Awaited<ReturnType<typeof pluginOperationsFixture>>[] = [];
+    try {
+      await Promise.all(
+        roots.map((fixture) =>
+          pluginOperationsFixture({ ...scopePlugin, fixture }).then((value) => {
+            fixtures.push(value);
+          })
+        ),
+      );
+      const active = fixtures.find((fixture) =>
+        fixture.config === state.config
+      )!;
+      assert(active);
+      const earlier = fixtures.find((fixture) => fixture !== active)!;
+      const first = order === "LIFO" ? active : earlier;
+      const remaining = first === active ? earlier : active;
+      await first.close();
+      assertEquals(state.config, remaining.config);
+      assertEquals(state.notes.storagePath, remaining.fixture.vault);
+      assertEquals(state.plugins, remaining.manager);
+      assertEquals(state.hub, remaining.hub);
+      await remaining.close();
+      assertEquals({ ...state }, previous);
+    } finally {
+      Deno.writeTextFile = write;
+      await fixtureScope((cleanup) => {
+        cleanup.defer(() => restoreState(previous));
+        for (const root of roots) cleanup.defer(() => root.dispose());
+        for (const fixture of fixtures) cleanup.defer(() => fixture.close());
+      });
+    }
+  });
+}
+
+Deno.test("fixture admission: root disposal closes a borrowed runtime before deleting its files", async () => {
+  const previous = { ...state };
+  const root = await pluginFixture();
+  const borrower = await pluginOperationsFixture({
+    ...scopePlugin,
+    fixture: root,
+  });
+  try {
+    assertEquals(await borrower.command("ping"), "pong");
+    await root.dispose();
+    await assertRejects(() => Deno.stat(root.root), Deno.errors.NotFound);
+    assertThrows(
+      () => borrower.scope.assertCurrent(),
+      OwnershipError,
+      "retired",
+    );
+    assertThrows(() => borrower.hub.store.files());
+    assertEquals(borrower.runtime.commands(), []);
+    assertEquals({ ...state }, previous);
+  } finally {
+    try {
+      await borrower.close();
+    } finally {
+      await root.dispose();
+    }
+  }
+});
+
+Deno.test("fixture admission: backup extension helpers share their root's currency", async () => {
+  const root = await pluginFixture();
+  const backup = await backupFixture({ fixture: root });
+  try {
+    await root.dispose();
+    for (
+      const invoke of [
+        () => backup.settings(),
+        () => backup.configure(2),
+        () => backup.status(),
+      ]
+    ) {
+      await assertRejects(invoke, OwnershipError, "retired");
+    }
+    await assertRejects(() => Deno.stat(root.root), Deno.errors.NotFound);
+  } finally {
+    try {
+      await backup.close();
+    } finally {
+      await root.dispose();
+    }
+  }
+});
+
+Deno.test("fixture state: a held acquisition cannot capture another fixture's future bindings", async () => {
+  const previous = { ...state };
+  const roots = await Promise.all([pluginFixture(), pluginFixture()]);
+  const entered = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>();
+  const descriptor = Object.getOwnPropertyDescriptor(
+    VaultHub.prototype,
+    "then",
+  );
+  let hold = true;
+  Object.defineProperty(VaultHub.prototype, "then", {
+    configurable: true,
+    get() {
+      if (!hold) return undefined;
+      hold = false;
+      return (resolve: (value: VaultHub) => void) => {
+        entered.resolve();
+        release.promise.then(() => resolve(this));
+      };
+    },
+  });
+  const fixtures: Awaited<ReturnType<typeof pluginOperationsFixture>>[] = [];
+  const preparing = pluginOperationsFixture({
+    ...scopePlugin,
+    fixture: roots[0],
+  }).then((value) => {
+    fixtures.push(value);
+    return value;
+  });
+  try {
+    await workMilestone(
+      preparing,
+      entered.promise,
+      "first hub acquisition held",
+    );
+    const second = await pluginOperationsFixture({
+      ...scopePlugin,
+      fixture: roots[1],
+    });
+    fixtures.push(second);
+    release.resolve();
+    const first = await preparing;
+    assertEquals(state.config, first.config);
+    await first.close();
+    assertEquals(state.config, second.config);
+    assertEquals(state.hub, second.hub);
+    await second.close();
+    assertEquals({ ...state }, previous);
+  } finally {
+    release.resolve();
+    await preparing.catch(() => {});
+    if (descriptor) {
+      Object.defineProperty(VaultHub.prototype, "then", descriptor);
+    } else Reflect.deleteProperty(VaultHub.prototype, "then");
+    await fixtureScope((cleanup) => {
+      cleanup.defer(() => restoreState(previous));
+      for (const root of roots) cleanup.defer(() => root.dispose());
+      for (const fixture of fixtures) cleanup.defer(() => fixture.close());
+    });
+  }
+});
+
+for (const order of ["LIFO", "non-LIFO"] as const) {
+  Deno.test(`fixture state: hub siblings handle ${order} closure`, () => {
+    const previous = { ...state };
+    const first = hubOperationsFixture(), second = hubOperationsFixture();
+    const fixtures = order === "LIFO" ? [second, first] : [first, second];
+    let closed = 0;
+    try {
+      fixtures[closed++].close();
+      assertEquals(state.hub, fixtures[1].hub);
+      assertEquals(state.operations, fixtures[1].operations);
+      fixtures[closed++].close();
+      assertEquals({ ...state }, previous);
+    } finally {
+      try {
+        while (closed < fixtures.length) fixtures[closed++].close();
+      } finally {
+        restoreState(previous);
+      }
+    }
+  });
+}
+
+Deno.test("fixture state: lifecycle bundle closure does not clobber an active operations fixture", async () => {
+  const previous = { ...state };
+  const lifecycle = await bundle({ retain: false });
+  let operations:
+    | Awaited<ReturnType<typeof pluginOperationsFixture>>
+    | undefined;
+  let closed = false;
+  try {
+    operations = await pluginOperationsFixture(scopePlugin);
+    await lifecycle.dispose();
+    closed = true;
+    assertEquals(state.config, operations.config);
+    await operations.close();
+    assertEquals({ ...state }, previous);
+  } finally {
+    await fixtureScope((cleanup) => {
+      cleanup.defer(() => restoreState(previous));
+      if (!closed) cleanup.defer(() => lifecycle.dispose());
+      if (operations) {
+        cleanup.defer(() => operations!.fixture.dispose());
+        cleanup.defer(() => operations!.close());
+      }
+    });
+  }
+});
 
 Deno.test("fixture capabilities: escaped installation cannot recreate a retired root", async () => {
   const escaped = await withPluginFixture(async (fixture) => {

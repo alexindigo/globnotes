@@ -24,9 +24,8 @@ import {
   type FixtureScope,
   fixtureScope,
 } from "./fixture_scope_engine.ts";
-import { initState, state } from "../../server/state.ts";
 import type { OperationFact } from "../../server/plugins/contracts.ts";
-import { restoreState } from "./state.ts";
+import { installFixtureState } from "./state.ts";
 import { currentBaseFrom } from "./storage.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
 import { PluginActions } from "../../server/plugins/actions.ts";
@@ -110,6 +109,17 @@ async function scopedPluginOperationsFixture(
   const fixture = options.fixture
     ? bindPluginFixture(scope, options.fixture)
     : await scopedPluginFixture(scope, { retain });
+  const prepared = await fixture.admit(() =>
+    constructPluginOperationsFixture(scope, options, fixture)
+  );
+  return prepared.value;
+}
+
+async function constructPluginOperationsFixture(
+  scope: FixtureScope,
+  options: PluginOperationsOptions,
+  fixture: ScopedPluginFixture,
+) {
   const id = options.id;
   const dir = await fixture.install(id, options.manifest, options.files);
   const env = testEnvironment({
@@ -119,7 +129,6 @@ async function scopedPluginOperationsFixture(
   });
   const config = new GlobalConfig(env);
   config.authType = AuthType.NONE;
-  const previousState = { ...state };
   const lifecycle = new PluginLifecycle(config),
     notes = new FileSystemNotes(fixture.vault, {}, testServices(env).notes),
     fileServing = new FileServing(fixture.vault);
@@ -132,7 +141,6 @@ async function scopedPluginOperationsFixture(
       ),
     (hub) => hub.stop(),
   )).value;
-  scope.defer(() => restoreState(previousState));
   const manager = (await scope.acquire(() =>
     createPluginManager(
       fixture.vault,
@@ -141,17 +149,28 @@ async function scopedPluginOperationsFixture(
       fixture.statePath,
       {
         internalRoot: `${fixture.root}/no-internal`,
-        settingsEnvironment: new PluginSettingsEnvironment(options.environment),
+        settingsEnvironment: new PluginSettingsEnvironment(
+          options.environment,
+        ),
         persistence: { commit: (effect) => lifecycle.gate.run(effect) },
         env,
       },
     ), (manager) => manager.stop())).value;
   // Register the manager's actual runtime slot before configureRuntime: an
   // injected configure failure can happen after allocation but before return.
-  scope.defer(() => manager.runtime?.close());
   hub.scanNow();
   const gate = new HubGate({ hub, versioning: () => runtime });
-  initState(config, null, notes, null, fileServing, manager, hub);
+  installFixtureState(
+    scope.defer,
+    config,
+    null,
+    notes,
+    null,
+    fileServing,
+    manager,
+    hub,
+  );
+  scope.defer(() => manager.runtime?.close());
   const data = new PluginDataStore(fixture.statePath, {
     commit: (effect) => lifecycle.gate.run(effect),
     settingsSchema: (id) => manager.network.settingsSchema(id),
@@ -229,8 +248,10 @@ async function scopedPluginOperationsFixture(
     hub,
     gate,
     filesystem,
-    command: scope.bind((command: string, payload: unknown = {}) =>
-      runtime.invokeCommand(id, command, payload)
+    command: scope.bind(async (command: string, payload: unknown = {}) =>
+      (await fixture.admit(
+        () => runtime.invokeCommand(id, command, payload),
+      )).value
     ),
     save: scope.bind(async (
       path: string,
@@ -238,31 +259,40 @@ async function scopedPluginOperationsFixture(
       operationId?: Parameters<NoteOperations["updateNote"]>[5],
     ) => {
       // Like a client: based on the version it reads now.
-      const result = await operations.updateNote(
-        path,
-        { newContent: content, base: currentBaseFrom(notes, path) },
-        "none",
-        fixtureApiOrigin(lifecycle),
-        undefined,
-        operationId,
+      const result = await fixture.admit(
+        () =>
+          operations.updateNote(
+            path,
+            { newContent: content, base: currentBaseFrom(notes, path) },
+            "none",
+            fixtureApiOrigin(lifecycle),
+            undefined,
+            operationId,
+          ),
       );
-      return result;
+      return result.value;
     }),
     create: scope.bind(async (path: string, content: string) => {
-      return await operations.createNote(
-        { path, content },
-        fixtureApiOrigin(lifecycle),
-      );
+      return (await fixture.admit(
+        () =>
+          operations.createNote(
+            { path, content },
+            fixtureApiOrigin(lifecycle),
+          ),
+      )).value;
     }),
     remove: scope.bind(async (path: string) => {
-      return await operations.deleteNote(
-        path,
-        fixtureApiOrigin(lifecycle),
-        undefined,
-        undefined,
-        undefined,
-        currentBaseFrom(notes, path),
-      );
+      return (await fixture.admit(
+        () =>
+          operations.deleteNote(
+            path,
+            fixtureApiOrigin(lifecycle),
+            undefined,
+            undefined,
+            undefined,
+            currentBaseFrom(notes, path),
+          ),
+      )).value;
     }),
   };
 }

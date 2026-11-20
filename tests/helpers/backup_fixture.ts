@@ -52,37 +52,44 @@ export async function backupFixture(options: {
   const { data, dir, runtime } = b;
   return {
     ...b,
-    settings: () => data.forPlugin(id).page(readManifest(dir).settings[0]),
+    settings: async () =>
+      (await b.fixture.admit(() =>
+        data.forPlugin(id).page(readManifest(dir).settings[0])
+      )).value,
     async configure(retention: number, basePath = "") {
-      // Sequential fixture setup must not invalidate the settings source of
-      // admitted recovery/capture work. Tests of concurrent source changes use
-      // the data store directly, as a real settings client would.
-      await runtime.settleWork(id);
-      const current = await data.forPlugin(id).page(
-        readManifest(dir).settings[0],
-      );
-      return await data.forPlugin(id).savePage(
-        readManifest(dir).settings[0],
-        { retention, basePath },
-        current.revision,
-        current.sourceKey,
-      );
+      return (await b.fixture.admit(async () => {
+        // Sequential fixture setup must not invalidate the settings source of
+        // admitted recovery/capture work. Tests of concurrent source changes use
+        // the data store directly, as a real settings client would.
+        await runtime.settleWork(id);
+        const current = await data.forPlugin(id).page(
+          readManifest(dir).settings[0],
+        );
+        return await data.forPlugin(id).savePage(
+          readManifest(dir).settings[0],
+          { retention, basePath },
+          current.revision,
+          current.sourceKey,
+        );
+      })).value;
     },
     /** Wait for host delivery as well as the plugin's own processing queue. */
     status: async (): Promise<BackupStatus> => {
-      await runtime.settleWork(id);
-      const status = await runtime.invokeCommand(id, "status", {}) as
-        & BackupStatus
-        & { pendingJobs: number };
-      const delivery = runtime.status(id)?.versioningPending ?? 0;
-      if (status.pendingJobs || delivery) {
-        throw new Error(
-          `backup owner settled without idle: ${
-            JSON.stringify({ status, delivery })
-          }`,
-        );
-      }
-      return status;
+      return (await b.fixture.admit(async () => {
+        await runtime.settleWork(id);
+        const status = await runtime.invokeCommand(id, "status", {}) as
+          & BackupStatus
+          & { pendingJobs: number };
+        const delivery = runtime.status(id)?.versioningPending ?? 0;
+        if (status.pendingJobs || delivery) {
+          throw new Error(
+            `backup owner settled without idle: ${
+              JSON.stringify({ status, delivery })
+            }`,
+          );
+        }
+        return status;
+      })).value;
     },
   };
 }

@@ -3,7 +3,31 @@ import {
   createOwnershipScope,
   type OwnedResource,
   type OwnerIdentity,
+  type OwnershipScope,
 } from "../../shared/ownership.js";
+
+const engines = new WeakMap<FixtureScope, OwnershipScope>();
+const children = new WeakMap<FixtureScope, WeakSet<FixtureScope>>();
+
+/** Private fixture construction port: a root closes its dedicated runtime
+ * borrowers before deleting the root, including autonomous product work. */
+export function ownFixtureScope(
+  owner: FixtureScope,
+  child: FixtureScope,
+): void {
+  if (owner === child) return;
+  owner.assertCurrent();
+  child.assertCurrent();
+  const engine = engines.get(child);
+  if (!engine) {
+    throw new TypeError("Borrowed runtime requires an issued fixture scope");
+  }
+  let linked = children.get(owner);
+  if (!linked) children.set(owner, linked = new WeakSet());
+  if (linked.has(child)) return;
+  owner.defer(async () => (await engine.releaseAll()).throwIfFailed());
+  linked.add(child);
+}
 
 /** Private construction implementation. Public scenarios enter via fixture_scope.ts.
  * Allocation is reserved before invocation;
@@ -24,6 +48,13 @@ export interface FixtureScope {
     dispose: (value: T) => unknown,
   ): Promise<OwnedResource<T>>;
   adopt<T>(value: T, dispose: (value: T) => unknown): Promise<OwnedResource<T>>;
+  /** Admit work in the resource owner and all borrowers before its first effect.
+   * Every owner drains it; completed work releases its reservations immediately.
+   * Results remain wrapped across awaits, including thenable resource values. */
+  admit<T>(
+    effect: () => T | PromiseLike<T>,
+    ...borrowers: FixtureScope[]
+  ): Promise<Readonly<{ value: T }>>;
   defer(dispose: () => unknown): void;
 }
 
@@ -54,10 +85,37 @@ export function createFixtureScope() {
     adopt<T>(value: T, dispose: (value: T) => unknown) {
       return resources.adopt(value, dispose);
     },
+    async admit<T>(
+      effect: () => T | PromiseLike<T>,
+      ...borrowers: FixtureScope[]
+    ) {
+      const owners = [...new Set([scope, ...borrowers])].map((owner) => {
+        const engine = engines.get(owner);
+        if (!engine) {
+          throw new TypeError(
+            "Work admission requires an issued fixture scope",
+          );
+        }
+        return engine;
+      });
+      const enter = async (index: number): Promise<Readonly<{ value: T }>> => {
+        const owner = owners[index];
+        if (index === owners.length - 1) {
+          const handle = await owner.acquire(effect, () => {});
+          await owner.release(handle);
+          return handle;
+        }
+        const handle = await owner.acquire(() => enter(index + 1), () => {});
+        await owner.release(handle);
+        return handle.value;
+      };
+      return await enter(0);
+    },
     defer(dispose: () => unknown) {
       resources.defer(dispose);
     },
   });
+  engines.set(scope, resources);
   const close = async (...primary: [] | [unknown]) => {
     (await resources.releaseAll()).throwIfFailed(...primary);
   };

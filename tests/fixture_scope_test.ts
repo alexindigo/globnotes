@@ -24,6 +24,77 @@ async function caught(body: () => Promise<unknown>): Promise<unknown> {
   throw new Error("Expected rejection");
 }
 
+for (const closing of ["resource", "borrower"] as const) {
+  Deno.test(`fixture admission: ${closing} retirement drains co-owned work`, async () => {
+    const resource = createFixtureScope(), borrower = createFixtureScope();
+    const held = Promise.withResolvers<string>();
+    const events: string[] = [];
+    resource.scope.defer(() => {
+      events.push("resource");
+    });
+    borrower.scope.defer(() => {
+      events.push("borrower");
+    });
+    const running = resource.scope.admit(() => held.promise, borrower.scope);
+    const rejected = assertRejects(() => running, OwnershipError, "retired");
+    const retiring = closing === "resource" ? resource : borrower;
+    let draining: Promise<void> | undefined;
+    try {
+      assertEquals([resource.scope.size, borrower.scope.size], [2, 2]);
+      draining = retiring.close();
+      assertEquals(events, []);
+      let effects = 0;
+      await assertRejects(
+        () =>
+          resource.scope.admit(() => {
+            effects++;
+          }, borrower.scope),
+        OwnershipError,
+        "retired",
+      );
+      assertEquals(effects, 0);
+    } finally {
+      draining ??= retiring.close();
+      held.resolve("finished");
+      try {
+        await Promise.all([draining, rejected]);
+      } finally {
+        try {
+          await resource.close();
+        } finally {
+          await borrower.close();
+        }
+      }
+    }
+    assertEquals(events.toSorted(), ["borrower", "resource"]);
+    assertEquals([resource.scope.size, borrower.scope.size], [0, 0]);
+  });
+}
+
+Deno.test("fixture admission: completed work releases reservations without resolving result data again", async () => {
+  const resource = createFixtureScope(), borrower = createFixtureScope();
+  let reads = 0;
+  const value = {
+    get then(): undefined {
+      if (++reads > 1) throw new Error("admitted data resolved again");
+      return undefined;
+    },
+  };
+  try {
+    const result = await resource.scope.admit(
+      () => value,
+      borrower.scope,
+      resource.scope,
+    );
+    assertStrictEquals(result.value, value);
+    assertEquals(reads, 1);
+    assertEquals([resource.scope.size, borrower.scope.size], [0, 0]);
+  } finally {
+    await resource.close();
+    await borrower.close();
+  }
+});
+
 for (const mode of ["acquire", "adopt"] as const) {
   Deno.test(`fixture values: ${mode} crosses async boundaries only as a handle`, async () => {
     let reads = 0;

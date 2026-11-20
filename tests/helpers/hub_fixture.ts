@@ -11,7 +11,8 @@ import {
 import { NoteOperations } from "../../server/notes/operations.ts";
 import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
-import { initState, state } from "../../server/state.ts";
+import { state } from "../../server/state.ts";
+import { installFixtureState } from "./state.ts";
 import { testEnvironment } from "./environment.ts";
 import { fixtureApiOrigin } from "./plugin_fixture.ts";
 
@@ -19,7 +20,7 @@ export function hubOperationsFixture(
   probes: StorageProbes = {},
   options: { alias?: "sibling" | "ancestor"; changeLimit?: number } = {},
 ) {
-  const previous = { ...state };
+  let restoreBinding = () => {};
   const root = Deno.makeTempDirSync();
   const realVault = `${root}/vault`;
   Deno.mkdirSync(realVault);
@@ -50,7 +51,18 @@ export function hubOperationsFixture(
         changeLimit: options.changeLimit,
       },
     );
-  initState(config, null, notes, null, files, null, hub);
+  installFixtureState(
+    (restore) => {
+      restoreBinding = restore;
+    },
+    config,
+    null,
+    notes,
+    null,
+    files,
+    null,
+    hub,
+  );
   const lifecycle = new PluginLifecycle(config);
   state.lifecycle = lifecycle;
   const runtime = {
@@ -82,9 +94,15 @@ export function hubOperationsFixture(
     batches,
     api: () => fixtureApiOrigin(lifecycle),
     close() {
-      hub.stop();
-      Object.assign(state, previous);
-      Deno.removeSync(root, { recursive: true });
+      try {
+        hub.stop();
+      } finally {
+        try {
+          restoreBinding();
+        } finally {
+          Deno.removeSync(root, { recursive: true });
+        }
+      }
     },
   };
 }

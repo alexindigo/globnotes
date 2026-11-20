@@ -8,11 +8,35 @@ import {
   createFixtureScope,
   type FixtureScope,
   fixtureScope,
+  ownFixtureScope,
 } from "./fixture_scope_engine.ts";
 
 // Root custody can outlive one runtime only through an issued retained-evidence
 // result. Rebinding never revives the old runtime's escaped capabilities.
-const rootOwners = new WeakMap<ScopedPluginFixture, FixtureScope>();
+interface RootBinding {
+  readonly owner: FixtureScope;
+  readonly scope: FixtureScope;
+  readonly paths: Pick<
+    ScopedPluginFixture,
+    "root" | "vault" | "statePath" | "metadataBase"
+  >;
+}
+const rootOwners = new WeakMap<object, RootBinding>();
+
+function rootBinding(fixture: ScopedPluginFixture): RootBinding {
+  const binding = rootOwners.get(fixture) ?? rootOwners.get(fixture.install);
+  if (
+    !binding ||
+    Object.entries(binding.paths).some(([key, value]) =>
+      Reflect.get(fixture, key) !== value
+    )
+  ) {
+    throw new TypeError(
+      "Plugin fixture has no matching issued root custody",
+    );
+  }
+  return binding;
+}
 
 /** Task-owned plugins: no installed plugin, operator policy or real vault is edited. */
 export async function pluginFixture(options: { stateInVault?: boolean } = {}) {
@@ -43,23 +67,31 @@ export async function scopedPluginFixture(
     ? path.join(vault, "State")
     : path.join(root, "relocated-state");
   const statePath = path.join(metadataBase, "globnotes");
-  await Deno.mkdir(vault);
-  await Deno.mkdir(statePath, { recursive: true });
-  return pluginCapabilities(
-    scope,
-    { root, vault, statePath, metadataBase },
-    scope,
-  );
+  const prepared = await scope.admit(async () => {
+    const mkdir = scope.bind(Deno.mkdir);
+    await mkdir(vault);
+    await mkdir(statePath, { recursive: true });
+    return pluginCapabilities(
+      scope,
+      { root, vault, statePath, metadataBase },
+      scope,
+    );
+  });
+  return prepared.value;
 }
 
 function pluginCapabilities(
   scope: FixtureScope,
-  paths: Omit<ScopedPluginFixture, "install">,
+  paths: RootBinding["paths"],
   rootOwner: FixtureScope,
 ): ScopedPluginFixture {
+  ownFixtureScope(rootOwner, scope);
   const { root, vault, statePath, metadataBase } = paths;
   const bind = <Args extends unknown[], T>(effect: (...args: Args) => T) =>
     scope.bind(rootOwner.bind(effect));
+  const admit = bind(<T>(effect: () => T | PromiseLike<T>) =>
+    rootOwner.admit(effect, scope)
+  );
   const mkdir = bind(Deno.mkdir), writeTextFile = bind(Deno.writeTextFile);
   const install = bind(async function (
     id: string,
@@ -68,7 +100,7 @@ function pluginCapabilities(
   ) {
     // Pending installation is owned before the first filesystem await. Close
     // joins it before deleting the older root, even if a write is in flight.
-    const installed = await scope.acquire(async () => {
+    const installed = await admit(async () => {
       const dir = path.join(statePath, "plugins", id);
       await mkdir(dir, { recursive: true });
       await writeTextFile(
@@ -81,7 +113,7 @@ function pluginCapabilities(
         await writeTextFile(file, source);
       }
       return dir;
-    }, () => {});
+    });
     return installed.value;
   });
   const fixture = Object.freeze({
@@ -90,8 +122,15 @@ function pluginCapabilities(
     statePath,
     metadataBase,
     install,
+    admit,
   });
-  rootOwners.set(fixture, rootOwner);
+  const binding = {
+    owner: rootOwner,
+    scope,
+    paths: { root, vault, statePath, metadataBase },
+  };
+  rootOwners.set(fixture, binding);
+  rootOwners.set(install, binding);
   return fixture;
 }
 
@@ -100,6 +139,11 @@ export interface ScopedPluginFixture {
   readonly vault: string;
   readonly statePath: string;
   readonly metadataBase: string;
+  /** One resource-owned admission port for installation, preparation and domain
+   * helper effects, co-admitted by this runtime's scope when borrowed. */
+  readonly admit: <T>(
+    effect: () => T | PromiseLike<T>,
+  ) => Promise<Readonly<{ value: T }>>;
   readonly install: (
     id: string,
     manifest: Record<string, unknown>,
@@ -112,19 +156,9 @@ export function bindPluginFixture(
   scope: FixtureScope,
   fixture: ScopedPluginFixture,
 ): ScopedPluginFixture {
-  const rootOwner = rootOwners.get(fixture);
-  if (rootOwner) {
-    rootOwner.assertCurrent();
-    return pluginCapabilities(scope, fixture, rootOwner);
-  }
-  const { root, vault, statePath, metadataBase } = fixture;
-  return Object.freeze({
-    root,
-    vault,
-    statePath,
-    metadataBase,
-    install: scope.bind(fixture.install),
-  });
+  const binding = rootBinding(fixture);
+  binding.owner.assertCurrent();
+  return pluginCapabilities(scope, binding.paths, binding.owner);
 }
 
 /** Preserve an existing root custodian while projecting a new runtime scope. */
@@ -133,8 +167,7 @@ export function compatibilityPluginFixture(
   dispose: () => Promise<void>,
 ) {
   const result = Object.freeze({ ...fixture, dispose });
-  const rootOwner = rootOwners.get(fixture);
-  if (rootOwner) rootOwners.set(result, rootOwner);
+  rootOwners.set(result, rootBinding(fixture));
   return result;
 }
 
@@ -145,8 +178,11 @@ export async function retainedPluginFixture(fixture: ScopedPluginFixture) {
     fixture.root,
     (root) => Deno.remove(root, { recursive: true }),
   );
-  const result = compatibilityPluginFixture(fixture, () => evidence.close());
-  rootOwners.set(result, evidence.scope);
+  const binding = rootBinding(fixture);
+  const result = compatibilityPluginFixture(
+    pluginCapabilities(binding.scope, binding.paths, evidence.scope),
+    () => evidence.close(),
+  );
   return result;
 }
 
