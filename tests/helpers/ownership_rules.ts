@@ -151,15 +151,32 @@ export const RESOURCE_ENGINE_OWNERSHIP: OwnershipRules = {
   ].map((root) => [root, { members: [] }])),
 };
 
+export const SECRET_CODEC = "server/auth/credentials.ts";
+/** Secret representations are acquired only at these resolved module roots.
+ * Pure encoders and aliases do not confer credential ownership. */
+export const SECRET_OWNERSHIP: OwnershipRules = {
+  roots: PUBLICATION_OWNERSHIP.roots,
+  modules: {
+    ...PUBLICATION_OWNERSHIP.modules,
+    [SECRET_CODEC]: [
+      "server/auth/accounts.ts",
+      "server/auth/sessions.ts",
+      "server/auth/local.ts",
+      "tests/credential_secret_test.ts",
+      "tests/identity_totp_test.ts",
+    ],
+  },
+};
+
 export const FIXTURE_SCOPE_ENGINE = "tests/helpers/fixture_scope_engine.ts";
 export const PLUGIN_FIXTURE_ENGINE = "tests/helpers/plugin_fixture_engine.ts";
 export const PLUGIN_OPERATIONS = "tests/helpers/plugin_operations_fixture.ts";
 /** Private construction modules have public callback facades. Every import form
  * is checked at the resolved module, never by following the imported value. */
 export const FIXTURE_OWNERSHIP: OwnershipRules = {
-  ...PUBLICATION_OWNERSHIP,
+  ...SECRET_OWNERSHIP,
   modules: {
-    ...PUBLICATION_OWNERSHIP.modules,
+    ...SECRET_OWNERSHIP.modules,
     [FIXTURE_SCOPE_ENGINE]: [
       "tests/helpers/fixture_scope.ts",
       PLUGIN_FIXTURE_ENGINE,

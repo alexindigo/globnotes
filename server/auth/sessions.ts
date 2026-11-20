@@ -2,7 +2,7 @@
 import { join } from "@std/path";
 import { jwtVerify, SignJWT } from "jose";
 import { type Account, AccountRepository, normalizeLogin } from "./accounts.ts";
-import { matchingTotpStep, totpSecretFromRawKey } from "./credentials.ts";
+import { matchingStoredTotpStep } from "./credentials.ts";
 import {
   fields,
   identity,
@@ -147,10 +147,11 @@ export class InstanceSessions {
     if (!live || live.credentialRevision !== account.credentialRevision) {
       throw new AuthenticationError();
     }
-    if (account.totpKey) {
-      const step = matchingTotpStep(
+    const authenticator = this.accounts.storedAuthenticator(account.id);
+    if (authenticator?.kind === "totp") {
+      const step = matchingStoredTotpStep(
         code ?? "",
-        totpSecretFromRawKey(account.totpKey),
+        authenticator.secret,
         this.#now(),
       );
       if (step === null) throw new AuthenticationError();

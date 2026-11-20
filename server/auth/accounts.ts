@@ -4,6 +4,12 @@ import { createUuid } from "../../shared/uuid.ts";
 import { hashPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
 import {
+  decodeStoredAuthenticator,
+  sameStoredTotpSecret,
+  type StoredAuthenticator,
+  type TotpKeyEncoding,
+} from "./credentials.ts";
+import {
   fields,
   identity,
   IdentityFile,
@@ -18,6 +24,7 @@ export interface Account {
   readonly login: string;
   readonly passwordHash: string;
   readonly totpKey: string | null;
+  readonly totpKeyEncoding?: TotpKeyEncoding;
   readonly lastTotpStep: number | null;
   readonly credentialRevision: number;
   readonly passwordChangeRequired: boolean;
@@ -69,17 +76,19 @@ export function validateAccount(value: unknown): Account {
       "credentialRevision",
       "passwordChangeRequired",
       "credentialUpdateId",
+      ...(Object.hasOwn(value, "totpKeyEncoding") ? ["totpKeyEncoding"] : []),
     ]) || !identity(value.id) || typeof value.login !== "string" ||
     normalizeLogin(value.login) !== value.login ||
     !validPasswordHash(value.passwordHash) ||
-    !(value.totpKey === null ||
-      (typeof value.totpKey === "string" && value.totpKey.length > 0)) ||
-    !(value.lastTotpStep === null || integer(value.lastTotpStep)) ||
-    (value.totpKey === null && value.lastTotpStep !== null) ||
     !integer(value.credentialRevision) ||
     typeof value.passwordChangeRequired !== "boolean" ||
     !(value.credentialUpdateId === null || identity(value.credentialUpdateId))
   ) throw new IdentityStateError();
+  decodeStoredAuthenticator(
+    value.totpKey,
+    value.totpKeyEncoding,
+    value.lastTotpStep,
+  );
   return value as unknown as Account;
 }
 function validateState(value: unknown): AccountState {
@@ -150,6 +159,8 @@ export async function prepareAccount(
  * slow proof/hash preparation happens before capture revalidation, never inside it. */
 export class AccountRepository {
   readonly #file: IdentityFile<AccountState>;
+  readonly #authenticators = new WeakMap<Account, StoredAuthenticator>();
+  #decodedSnapshot?: AccountSnapshot;
   constructor(
     root: string,
     file = new IdentityFile<AccountState>(
@@ -166,9 +177,31 @@ export class AccountRepository {
     ),
   ) {
     this.#file = file;
+    this.capture();
   }
   capture(): AccountSnapshot {
-    return this.#file.capture();
+    const snapshot = this.#file.capture();
+    if (snapshot !== this.#decodedSnapshot) {
+      for (const account of snapshot.value.accounts) this.#decode(account);
+      this.#decodedSnapshot = snapshot;
+    }
+    return snapshot;
+  }
+  #decode(account: Account): StoredAuthenticator {
+    let authenticator = this.#authenticators.get(account);
+    if (!authenticator) {
+      authenticator = decodeStoredAuthenticator(
+        account.totpKey,
+        account.totpKeyEncoding,
+        account.lastTotpStep,
+      );
+      this.#authenticators.set(account, authenticator);
+    }
+    return authenticator;
+  }
+  storedAuthenticator(id: string): StoredAuthenticator | null {
+    const account = this.byId(id);
+    return account ? this.#decode(account) : null;
   }
   assertUnchanged(expected = this.capture()): void {
     this.#file.assertUnchanged(expected);
@@ -221,7 +254,13 @@ export class AccountRepository {
     id: string,
     credentialRevision: number,
     changes: Partial<
-      Pick<Account, "passwordHash" | "totpKey" | "passwordChangeRequired">
+      Pick<
+        Account,
+        | "passwordHash"
+        | "totpKey"
+        | "totpKeyEncoding"
+        | "passwordChangeRequired"
+      >
     >,
     updateId: string,
     guard: () => void = () => {},
@@ -229,21 +268,34 @@ export class AccountRepository {
     const expected = this.capture(), account = this.byId(id);
     if (
       Object.keys(changes).some((key) =>
-        !["passwordHash", "totpKey", "passwordChangeRequired"].includes(key)
-      )
+        ![
+          "passwordHash",
+          "totpKey",
+          "totpKeyEncoding",
+          "passwordChangeRequired",
+        ].includes(key)
+      ) ||
+      (Object.hasOwn(changes, "totpKeyEncoding") &&
+        !Object.hasOwn(changes, "totpKey"))
     ) {
       throw new IdentityStateError();
     }
     if (!account || account.credentialRevision !== credentialRevision) {
       throw new StoredConfigConflict();
     }
+    const candidate = { ...account, ...changes };
+    if (changes.totpKey === null) delete candidate.totpKeyEncoding;
+    const before = this.#decode(account);
+    const after = decodeStoredAuthenticator(
+      candidate.totpKey,
+      candidate.totpKeyEncoding,
+      null,
+    );
+    const keepFloor = before.kind === "totp" && after.kind === "totp" &&
+      sameStoredTotpSecret(before.secret, after.secret);
     const next = validateAccount({
-      ...account,
-      ...changes,
-      lastTotpStep:
-        changes.totpKey !== undefined && changes.totpKey !== account.totpKey
-          ? null
-          : account.lastTotpStep,
+      ...candidate,
+      lastTotpStep: keepFloor ? account.lastTotpStep : null,
       credentialRevision: account.credentialRevision + 1,
       credentialUpdateId: updateId,
     });

@@ -8,7 +8,6 @@
  */
 
 import { jwtVerify, SignJWT } from "jose";
-import { encodeBase32 } from "@std/encoding/base32";
 import QRCode from "qrcode";
 
 import { AuthType, type GlobalConfig } from "../config.ts";
@@ -20,7 +19,12 @@ import { serviceSettings } from "../config/consumers.ts";
 
 const JWT_ALGORITHM = "HS256";
 
-import { checkTotpCode } from "./credentials.ts";
+import {
+  checkStoredTotpCode,
+  decodeStoredTotpSecret,
+  storedTotpManualSecret,
+  type StoredTotpSecret,
+} from "./credentials.ts";
 export { checkTotpCode, totpSecretFromRawKey } from "./credentials.ts";
 
 export class LocalAuth {
@@ -29,8 +33,7 @@ export class LocalAuth {
   private readonly secretKey: string;
   private readonly sessionExpirySeconds: number;
   readonly isTotpEnabled: boolean;
-  private totpSecret = "";
-  private unpaddedTotpSecret = "";
+  private totpSecret: StoredTotpSecret | null = null;
   private lastUsedTotp: string | null = null;
 
   constructor(
@@ -53,7 +56,7 @@ export class LocalAuth {
     }
     this.sessionExpirySeconds = settings.expirySeconds;
 
-    // Wizard-enrolled raw key, using the existing base32 verifier.
+    // Stored interpretation is owned by the codec, never new-enrollment syntax.
     this.isTotpEnabled = false;
     if (globalConfig.authType === AuthType.TOTP) {
       if (!this.passwordHash) {
@@ -70,10 +73,10 @@ export class LocalAuth {
         Deno.exit(1);
       }
       this.isTotpEnabled = true;
-      this.totpSecret = encodeBase32(new TextEncoder().encode(rawKey));
-      // Authenticators enrol the UNPADDED form (the QR/manual key strips
-      // padding) — check against the same string, stripped once here.
-      this.unpaddedTotpSecret = this.totpSecret.replace(/=+$/, "");
+      this.totpSecret = decodeStoredTotpSecret(
+        rawKey,
+        stored.totp_key_encoding,
+      );
     }
   }
 
@@ -93,7 +96,7 @@ export class LocalAuth {
       const submitted = data.password ?? "";
       submittedTotp = submitted.slice(-6);
       const pass = submitted.slice(0, -6);
-      const codeOk = checkTotpCode(submittedTotp, this.unpaddedTotpSecret);
+      const codeOk = checkStoredTotpCode(submittedTotp, this.totpSecret!);
       const passOk = await verifyPassword(pass, this.passwordHash!);
       passwordCorrect = passOk && codeOk;
     } else {
@@ -178,7 +181,8 @@ export class LocalAuth {
   /** Print the TOTP enrolment QR code + manual key at startup
    * (same as the Python server). Call after construction. */
   async displayTotpEnrolment(): Promise<void> {
-    const unpaddedSecret = this.unpaddedTotpSecret;
+    if (!this.totpSecret) return;
+    const unpaddedSecret = storedTotpManualSecret(this.totpSecret);
     const uri =
       `otpauth://totp/globnotes:${encodeURIComponent(this.username)}` +
       `?secret=${unpaddedSecret}&issuer=globnotes`;

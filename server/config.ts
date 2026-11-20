@@ -26,6 +26,7 @@ export interface StoredConfig {
   password_hash?: string;
   secret_key?: string;
   totp_key?: string;
+  totp_key_encoding?: "base32" | null;
   read_only_settings?: boolean;
   access_revision?: number;
   access_update_id?: string;
