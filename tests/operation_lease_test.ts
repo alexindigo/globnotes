@@ -42,7 +42,12 @@ Deno.test("operation lease: immutable issued provenance rejects missing, cloned 
   ) {
     assertThrows(
       () =>
-        bindGuardedSink(lease as OperationLease<"live">, "live", () => "leak"),
+        bindGuardedSink(
+          lease as OperationLease<"live">,
+          "live",
+          () => "leak",
+          () => undefined,
+        ),
       TypeError,
     );
   }
@@ -58,10 +63,15 @@ for (const mode of ["live", "retained", "outcome", "recovery"] as const) {
     const own = createOperationLease(mode, [() => {}]);
     const other = createOperationLease(mode, [() => {}]);
     const observed: string[] = [];
-    const consume = bindGuardedSink(own.lease, mode, (value: string) => {
-      observed.push(value);
-      return undefined;
-    });
+    const consume = bindGuardedSink(
+      own.lease,
+      mode,
+      (value: string) => value,
+      (value) => {
+        observed.push(value);
+        return undefined;
+      },
+    );
     consume("accepted");
     other.retire();
     consume("same owner");
@@ -90,10 +100,15 @@ Deno.test("operation lease: final effect checks immutable witnesses after prepar
     // Mutating a borrowed array cannot remove the captured contract.
     witnesses.splice(0);
     let effects = 0;
-    const sink = bindGuardedSink(owner.lease, "live", (_: string) => {
-      effects++;
-      return undefined;
-    });
+    const sink = bindGuardedSink(
+      owner.lease,
+      "live",
+      (value: string) => value,
+      () => {
+        effects++;
+        return undefined;
+      },
+    );
     const prepared = "private prepared value";
     await Promise.resolve();
     current[changed] = {};
@@ -105,11 +120,16 @@ Deno.test("operation lease: final effect checks immutable witnesses after prepar
 Deno.test("operation lease: reentrant consumer retirement prevents the second delivery", () => {
   const owner = createOperationLease("live", [() => {}]);
   const observed: string[] = [];
-  const deliver = bindGuardedSink(owner.lease, "live", (value: string) => {
-    observed.push(value);
-    owner.retire();
-    return undefined;
-  });
+  const deliver = bindGuardedSink(
+    owner.lease,
+    "live",
+    (value: string) => value,
+    (value) => {
+      observed.push(value);
+      owner.retire();
+      return undefined;
+    },
+  );
   deliver("first");
   assertThrows(() => deliver("second"), OwnershipError);
   assertEquals(observed, ["first"]);
@@ -122,11 +142,14 @@ Deno.test("operation lease: witness reentrancy cannot retire then permit its own
   }]);
   retire = owner.retire;
   let effects = 0;
-  assertThrows(() =>
-    bindGuardedSink(owner.lease, "live", () => {
-      effects++;
-      return undefined;
-    }), OwnershipError);
+  assertThrows(
+    () =>
+      bindGuardedSink(owner.lease, "live", () => undefined, () => {
+        effects++;
+        return undefined;
+      }),
+    OwnershipError,
+  );
   assertEquals(effects, 0);
 });
 
@@ -144,6 +167,7 @@ Deno.test("operation lease: async final callbacks reject before entry and disgui
           await Promise.resolve();
           effects++;
         }) as never,
+        () => undefined,
       ),
     TypeError,
     "synchronous",
@@ -153,14 +177,31 @@ Deno.test("operation lease: async final callbacks reject before entry and disgui
     owner.lease,
     "live",
     (() => Promise.resolve()) as never,
+    () => undefined,
   );
   assertThrows(() => disguised(undefined), TypeError, "synchronous");
   const thenable = bindGuardedSink(
     owner.lease,
     "live",
     (() => ({ then() {} })) as never,
+    () => undefined,
   );
   assertThrows(() => thenable(undefined), TypeError, "synchronous");
+  assertThrows(
+    () =>
+      bindGuardedSink(
+        owner.lease,
+        "live",
+        () => "data",
+        (async () => {
+          effects++;
+          await Promise.resolve();
+        }) as never,
+      ),
+    TypeError,
+    "synchronous",
+  );
+  assertEquals(effects, 0);
 });
 
 Deno.test("operation lease: asynchronous witnesses cannot silently validate an operation", () => {
@@ -185,20 +226,28 @@ Deno.test("operation lease: asynchronous witnesses cannot silently validate an o
 Deno.test("operation lease: exact outcome owner can survive live self-revocation without granting another effect", () => {
   const live = createOperationLease("live", [() => {}]);
   const outcome = createOperationLease("outcome", [() => {}]);
+  const receipts: string[] = [];
   const acknowledge = bindGuardedSink(
     outcome.lease,
     "outcome",
     (value: string) => value,
+    (value) => {
+      receipts.push(value);
+      return undefined;
+    },
   );
   live.retire();
-  assertEquals(
-    acknowledge("this operation committed"),
-    "this operation committed",
-  );
+  assertEquals(acknowledge("this operation committed"), undefined);
+  assertEquals(receipts, ["this operation committed"]);
   const wrongMode = "live";
   assertThrows(() => {
-    // @ts-expect-error A receipt lease does not authorize a live effect.
-    bindGuardedSink(outcome.lease, wrongMode, () => "new effect");
+    bindGuardedSink(
+      outcome.lease,
+      // @ts-expect-error A receipt lease does not authorize a live effect.
+      wrongMode,
+      () => "new effect",
+      () => undefined,
+    );
   }, TypeError);
   outcome.retire();
   assertThrows(() => acknowledge("stale receipt"), OwnershipError);
@@ -212,12 +261,72 @@ function staticContract(lease: OperationLease<"live">) {
     identity: lease.identity,
     assertCurrent() {},
   };
-  // @ts-expect-error Generic inference may not silently admit Promise effects.
-  bindGuardedSink(lease, "live", async (_: string) => await Promise.resolve(1));
-  // @ts-expect-error Explicit void must not create TypeScript's () => void async loophole.
-  bindGuardedSink<string, void, "live">(lease, "live", async () => {});
+  bindGuardedSink(
+    lease,
+    "live",
+    // @ts-expect-error Generic inference may not silently admit Promise effects.
+    async (_: string) => await Promise.resolve(1),
+    () => undefined,
+  );
+  bindGuardedSink<string, void, "live">(
+    lease,
+    "live",
+    // @ts-expect-error Explicit void must not create TypeScript's () => void async loophole.
+    async () => {},
+    () => undefined,
+  );
   // @ts-expect-error Witnesses are synchronous assertions, not async callbacks.
   createOperationLease("live", [async () => {}]);
+  bindGuardedSink(
+    lease,
+    "live",
+    () => "data", // @ts-expect-error Delivery has no async or void callback loophole.
+    async () => {},
+  );
   return forged;
 }
 void staticContract;
+
+for (const retireOwner of ["parent", "child"] as const) {
+  Deno.test(`operation lease: inspection getter cannot retire ${retireOwner} then deliver`, () => {
+    const parent = createOperationLease("live", [() => {}]);
+    const child = createOperationLease("live", [() => {}], [parent.lease]);
+    let reads = 0;
+    const value = {
+      get then() {
+        reads++;
+        (retireOwner === "parent" ? parent : child).retire();
+        return undefined;
+      },
+    };
+    const seen: unknown[] = [];
+    const sink = bindGuardedSink(child.lease, "live", () => value, (data) => {
+      seen.push(data);
+      return undefined;
+    });
+    assertThrows(() => sink(undefined), OwnershipError, "Owner is retired");
+    assertEquals([reads, seen], [1, []]);
+  });
+}
+
+Deno.test("operation lease: child witnesses cannot retire an ancestor after its validation", () => {
+  const parent = createOperationLease("live", [() => {}]);
+  let retire = false;
+  const child = createOperationLease("live", [() => {
+    if (retire) parent.retire();
+  }], [parent.lease]);
+  const seen: string[] = [];
+  const sink = bindGuardedSink(
+    child.lease,
+    "live",
+    (data: string) => data,
+    (data) => {
+      seen.push(data);
+      return undefined;
+    },
+  );
+  sink("current");
+  retire = true;
+  assertThrows(() => sink("stale"), OwnershipError, "Owner is retired");
+  assertEquals(seen, ["current"]);
+});

@@ -14,7 +14,24 @@ import { AclRepository, type AclValues } from "../server/auth/acl.ts";
 import {
   type AuthorityVault,
   InstanceAuthority,
+  type PreparedAuthorityRead,
+  type VaultAuthorityLease,
 } from "../server/auth/authority.ts";
+
+async function delivered<T>(
+  lease: VaultAuthorityLease,
+  prepared: PreparedAuthorityRead<T>,
+): Promise<T> {
+  const reader = lease.disclose(prepared).getReader();
+  try {
+    const first = await reader.read();
+    assertEquals(first.done, false);
+    assertEquals(await reader.read(), { done: true, value: undefined });
+    return first.value!;
+  } finally {
+    reader.releaseLock();
+  }
+}
 import { createInstanceAuth } from "../server/auth/middleware.ts";
 import {
   GUEST,
@@ -36,8 +53,277 @@ import {
 import { pluginOperationsFixture } from "./helpers/plugin_operations_fixture.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
 import { createOperationLease } from "../server/operation_lease.ts";
+import { OwnershipError } from "../shared/ownership.js";
+
+Deno.test("P05 selector retirement cannot authorize the same vault after retiring its parent", () =>
+  fixture(async (f) => {
+    let retire = false;
+    const authority = new InstanceAuthority(f.sessions, () => {
+      if (retire) f.lifetime.retire();
+      return f.target;
+    }, f.lifetime.lease);
+    const lease = authority.lease(f.token.principal, "readVault");
+    const prepared = lease.prepare("private");
+    assertEquals(await delivered(lease, prepared), "private");
+    const queued = lease.disclose(prepared).getReader();
+    retire = true;
+    try {
+      await assertRejects(
+        () => queued.read(),
+        OwnershipError,
+        "Owner is retired",
+      );
+    } finally {
+      queued.releaseLock();
+    }
+  }));
+
+Deno.test("P05 instance policy checks cannot retire the parent then authorize an effect", () =>
+  fixture(async (f) => {
+    const guard = await f.auth.instanceGuard(f.request(), "manageOwnAccount");
+    guard();
+    const current = f.sessions.assertCurrent.bind(f.sessions);
+    f.sessions.assertCurrent = (principal) => {
+      current(principal);
+      f.lifetime.retire();
+    };
+    assertThrows(() => guard(), OwnershipError, "Owner is retired");
+  }));
+
+Deno.test("P05 queued disclosure retains a handle until the actual consumer enqueue", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    const value = { private: "bytes" };
+    const prepared = lease.prepare(value);
+    assertStrictEquals(await delivered(lease, prepared), value);
+    const queued = lease.disclose(prepared);
+    assert(queued instanceof ReadableStream);
+    f.lifetime.retire();
+    const reader = queued.getReader();
+    try {
+      await assertRejects(
+        () => reader.read(),
+        OwnershipError,
+        "Owner is retired",
+      );
+    } finally {
+      reader.releaseLock();
+    }
+  }));
+
+Deno.test("P05 delivery inspects a mutable getter before the final parent fence", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    let retire = false, reads = 0;
+    const value = {
+      get then() {
+        reads++;
+        if (retire) f.lifetime.retire();
+        return undefined;
+      },
+    };
+    const prepared = lease.prepare(value);
+    const current = lease.disclose(prepared).getReader();
+    try {
+      const first = await current.read();
+      assertEquals(first.done, false);
+      assertStrictEquals(first.value, value);
+      assertEquals(await current.read(), { done: true, value: undefined });
+    } finally {
+      current.releaseLock();
+    }
+    assertEquals(reads, 2);
+    const queued = lease.disclose(prepared).getReader();
+    reads = 0;
+    retire = true;
+    try {
+      await assertRejects(
+        () => queued.read(),
+        OwnershipError,
+        "Owner is retired",
+      );
+      assertEquals(reads, 1);
+    } finally {
+      queued.releaseLock();
+    }
+  }));
+
+for (const path of ["vault", "instance"] as const) {
+  Deno.test(`P05 ${path} credential cache follows the admitted session owner with a reused request`, () =>
+    fixture(async (f) => {
+      const request = f.request();
+      const replacement = new InstanceSessions(
+        f.accounts,
+        new SessionRepository(`${f.root}/identity`),
+        { expirySeconds: 1000 },
+        { now: () => NOW },
+      );
+      const signing = new SessionRepository(`${f.root}/replacement-signing`);
+      signing.initialize();
+      assertEquals(
+        signing.capture().value.signingRevision,
+        f.token.principal.signingRevision,
+      );
+      const foreignKeyOwner = new InstanceSessions(f.accounts, signing, {
+        expirySeconds: 1000,
+      }, { now: () => NOW });
+      const calls = [0, 0, 0];
+      const firstResolve = f.sessions.resolve.bind(f.sessions);
+      const secondResolve = replacement.resolve.bind(replacement);
+      const foreignResolve = foreignKeyOwner.resolve.bind(foreignKeyOwner);
+      foreignKeyOwner.resolve = (token) => {
+        calls[2]++;
+        return foreignResolve(token);
+      };
+      f.sessions.resolve = (token) => {
+        calls[0]++;
+        return firstResolve(token);
+      };
+      replacement.resolve = (token) => {
+        calls[1]++;
+        return secondResolve(token);
+      };
+      const admit = () =>
+        path === "vault"
+          ? f.auth.readLease(request)
+          : f.auth.instanceGuard(request, "manageOwnAccount");
+      await Promise.all([admit(), admit()]);
+      f.authAdapters.sessions = replacement;
+      await Promise.all([admit(), admit()]);
+      f.authAdapters.sessions = foreignKeyOwner;
+      const first = admit(), second = admit();
+      first.catch(() => {});
+      second.catch(() => {});
+      await assertRejects(
+        () => first,
+        HttpError,
+        "HTTP 401",
+      );
+      await assertRejects(
+        () => second,
+        HttpError,
+        "HTTP 401",
+      );
+      assertEquals(calls, [1, 1, 1]);
+    }));
+}
+
+Deno.test("P05 cancellation starts locked and cleanup rejection preserves the original stream error", () =>
+  fixture(async (f) => {
+    const primary = new Error("original authority error"),
+      cleanup = new Error("cleanup error");
+    let fail = false;
+    const parent = createOperationLease("live", [() => {
+      if (fail) throw primary;
+    }]);
+    const authority = new InstanceAuthority(
+      f.sessions,
+      () => f.target,
+      parent.lease,
+    );
+    const lease = authority.lease(f.token.principal, "readVault");
+    const locks: boolean[] = [];
+    const source = new ReadableStream<string>({
+      cancel() {
+        locks.push(source.locked);
+        throw cleanup;
+      },
+    }, { highWaterMark: 0 });
+    const reader = lease.stream(source).getReader();
+    fail = true;
+    try {
+      const error = await assertRejects(
+        () => reader.read(),
+        Error,
+        "original authority error",
+      );
+      assertStrictEquals(error, primary);
+      assertEquals([locks, source.locked], [[true], false]);
+    } finally {
+      parent.retire();
+      reader.releaseLock();
+    }
+  }));
+
+for (const mode of ["error", "cancel"] as const) {
+  Deno.test(`P05 tee ${mode} releases the source lock while its peer stays open`, () =>
+    fixture(async (f) => {
+      const lease = await f.auth.readLease(f.request());
+      const entered = fixtureGate(f.owner), release = fixtureGate(f.owner);
+      const cleanupError = new Error("source cleanup failed");
+      let cancellations = 0;
+      const source = new ReadableStream<string>({
+        async pull(controller) {
+          entered.resolve();
+          await release.promise;
+          controller.enqueue("secret");
+        },
+        cancel() {
+          cancellations++;
+          throw cleanupError;
+        },
+      }, { highWaterMark: 0 });
+      const [branch, peer] = source.tee();
+      const reader = lease.stream(branch).getReader();
+      try {
+        if (mode === "error") {
+          const pending = reader.read();
+          pending.catch(() => {});
+          await workMilestone(
+            pending,
+            entered.promise,
+            "tee source read entered",
+          );
+          f.lifetime.retire();
+          release.resolve();
+          await assertRejects(
+            () => pending,
+            OwnershipError,
+            "Owner is retired",
+          );
+        } else {
+          await reader.cancel("stop");
+        }
+        assertEquals([branch.locked, peer.locked, cancellations], [
+          false,
+          false,
+          0,
+        ]);
+        // Closing the open peer settles the already-observed branch cancellation.
+        const error = await assertRejects(
+          () => peer.cancel("peer done"),
+          Error,
+          "source cleanup failed",
+        );
+        assertStrictEquals(error, cleanupError);
+        assertEquals(cancellations, 1);
+      } finally {
+        release.resolve();
+        reader.releaseLock();
+      }
+    }));
+}
 
 const NOW = 1_800_000_000_000;
+Deno.test("P05 response body consumes its prepared handle only while the owner is current", () =>
+  fixture(async (f) => {
+    const lease = await f.auth.readLease(f.request());
+    const prepared = lease.prepare(
+      new TextEncoder().encode("private response bytes"),
+    );
+    assertEquals(
+      await new Response(lease.disclose(prepared)).text(),
+      "private response bytes",
+    );
+    const queued = new Response(lease.disclose(prepared));
+    f.lifetime.retire();
+    await assertRejects(
+      () => queued.text(),
+      OwnershipError,
+      "Owner is retired",
+    );
+  }));
+
 async function identities(root: string) {
   const accounts = new AccountRepository(`${root}/identity`);
   const alice = accounts.create(await prepareAccount("alice", "password"));
@@ -150,7 +436,10 @@ Deno.test("identity authority: capabilities implement the level matrix, not meth
     }
     f.policy({ everybody: "none", grants: { [f.alice.id]: "view" } });
     const renderLease = await f.auth.readLease(f.request("POST"));
-    assert(renderLease.disclose(renderLease.prepare("rendered")));
+    assertEquals(
+      await delivered(renderLease, renderLease.prepare("rendered")),
+      "rendered",
+    );
     await assertRejects(
       () => f.auth.noteMutationLease(f.request("GET")),
       HttpError,
@@ -260,13 +549,14 @@ Deno.test("identity review 1: fresh projections retain the same bundle lease", (
     const lease = authority.lease(f.token.principal, "editNotes");
     lease.assertCurrent();
     assertEquals(
-      lease.disclose(
+      await delivered(
+        lease,
         await lease.read(() => Promise.resolve("same bundle bytes")),
       ),
       "same bundle bytes",
     );
     assertEquals(
-      lease.disclose(lease.prepare("same bundle response")),
+      await delivered(lease, lease.prepare("same bundle response")),
       "same bundle response",
     );
   }));
@@ -406,8 +696,8 @@ Deno.test("identity authority: late read and actual streamed disclosure stop at 
       await held.promise;
       return Deno.readTextFileSync(`${f.root}/note.md`);
     })
-      .then((value) => {
-        observed.push(lease.disclose(value));
+      .then(async (value) => {
+        observed.push(await delivered(lease, value));
       });
     reading.catch(() => {});
     f.policy({ everybody: "none", grants: {} });
@@ -583,7 +873,8 @@ for (const change of P05_CHANGES) {
       };
       let bodies = 0;
       const admitted = f.auth.readLease(request).then(async (lease) =>
-        lease.disclose(
+        delivered(
+          lease,
           await lease.read(() => {
             bodies++;
             return Promise.resolve("private body");
@@ -636,8 +927,8 @@ for (const change of P05_CHANGES) {
         entered.resolve();
         await held.promise;
         return "private prepared bytes";
-      }).then((value) => {
-        disclosed.push(lease.disclose(value));
+      }).then(async (value) => {
+        disclosed.push(await delivered(lease, value));
       });
       preparing.catch(() => {});
       try {
@@ -653,7 +944,7 @@ for (const change of P05_CHANGES) {
         held.resolve();
         if (change === "same-wrapper") {
           await preparing;
-          assertEquals(lease.disclose(next), "next bytes");
+          assertEquals(await delivered(lease, next), "next bytes");
           assertEquals(disclosed, ["private prepared bytes"]);
           assertEquals(await chunk, {
             value: "private stream bytes",
@@ -734,18 +1025,26 @@ Deno.test("P05 authority stream: first consumer retirement prevents the next sou
 Deno.test("P05 authority: public disclosure takes data, never an arbitrary final callback", () =>
   fixture(async (f) => {
     const lease = await f.auth.readLease(f.request());
+    let synchronousEntries = 0, asynchronousEntries = 0;
     assertThrows(() => {
       // @ts-expect-error The public boundary does not execute arbitrary effects.
-      lease.disclose(() => "effect");
+      lease.disclose(() => {
+        synchronousEntries++;
+        return "effect";
+      });
     }, TypeError);
     assertThrows(() => {
       // @ts-expect-error Disclosure cannot be an asynchronous preparation callback.
-      lease.disclose(async () => await Promise.resolve("effect"));
+      lease.disclose(async () => {
+        asynchronousEntries++;
+        return await Promise.resolve("effect");
+      });
     }, TypeError);
     assertThrows(() => {
       // @ts-expect-error Nor can a Promise be disclosed before it settles.
       lease.disclose(Promise.resolve("effect"));
     }, TypeError);
+    assertEquals([synchronousEntries, asynchronousEntries], [0, 0]);
   }));
 
 Deno.test("P05 authority: direct prepared binding requires issued live lifetime at admission and final consumer", () =>
@@ -849,7 +1148,7 @@ Deno.test("P05 authority read: forged, cloned and foreign prepared reads cannot 
     const lease = await f.auth.readLease(f.request());
     const foreign = await f.auth.readLease(f.request());
     const prepared = await lease.read(() => Promise.resolve("private bytes"));
-    assertEquals(lease.disclose(prepared), "private bytes");
+    assertEquals(await delivered(lease, prepared), "private bytes");
     assertThrows(() => foreign.disclose(prepared), TypeError);
     assertThrows(() => lease.disclose({ ...prepared }), TypeError);
     assertThrows(() => {

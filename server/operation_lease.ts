@@ -15,13 +15,32 @@ export interface OperationLease<M extends OperationMode = OperationMode> {
   assertCurrent(operationId?: string): void;
 }
 export type OperationWitness = (operationId?: string) => undefined;
-const issued = new WeakMap<object, OperationWitness>();
+interface IssuedLease {
+  readonly parents: readonly IssuedLease[];
+  readonly validate: OperationWitness;
+  readonly fence: OperationWitness;
+}
+const issued = new WeakMap<object, IssuedLease>();
+function check(root: IssuedLease, operationId?: string): undefined {
+  const chain = new Set<IssuedLease>();
+  const visit = (owner: IssuedLease) => {
+    if (chain.has(owner)) return;
+    for (const parent of owner.parents) visit(parent);
+    chain.add(owner);
+  };
+  visit(root);
+  for (const owner of chain) owner.fence(operationId);
+  for (const owner of chain) owner.validate(operationId);
+  // Only pure lifetime fences remain after callbacks and value inspection.
+  for (const owner of chain) owner.fence(operationId);
+}
 
 /** No effect callback is public on a lease. Only the domain owner holds retire;
  * consumers receive the opaque lease, never a resource/settlement scheduler. */
 export function createOperationLease<M extends OperationMode>(
   mode: M,
   witnesses: readonly [OperationWitness, ...OperationWitness[]],
+  parents: readonly OperationLease[] = [],
 ): Readonly<{ lease: OperationLease<M>; retire(): boolean }> {
   if (!["live", "retained", "outcome", "recovery"].includes(mode)) {
     throw new TypeError("Unknown operation lease mode");
@@ -38,24 +57,36 @@ export function createOperationLease<M extends OperationMode>(
     throw new TypeError("Operation witnesses must be synchronous");
   }
   const scope = createOwnershipScope();
-  const assertCurrent = (operationId?: string): undefined => {
-    scope.assertCurrent();
-    for (const witness of captured) {
-      if (witness(operationId) !== undefined) {
-        throw new TypeError(
-          "Operation witnesses must be synchronous assertions",
-        );
-      }
+  const dependencies = Object.freeze(parents.map((parent) => {
+    const dependency = issued.get(parent);
+    if (!dependency) {
+      throw new TypeError("Operation parent must be an issued lease");
     }
-    // Witnesses can synchronously retire their own owner.
-    scope.assertCurrent();
+    return dependency;
+  }));
+  const owner: IssuedLease = {
+    parents: dependencies,
+    fence: () => {
+      scope.assertCurrent();
+    },
+    validate: (operationId) => {
+      for (const witness of captured) {
+        if (witness(operationId) !== undefined) {
+          throw new TypeError(
+            "Operation witnesses must be synchronous assertions",
+          );
+        }
+      }
+    },
   };
+  const assertCurrent = (operationId?: string): undefined =>
+    check(owner, operationId);
   const lease = Object.freeze({
     identity: scope.identity,
     mode,
     assertCurrent,
   }) as OperationLease<M>;
-  issued.set(lease, assertCurrent);
+  issued.set(lease, owner);
   assertCurrent();
   return Object.freeze({ lease, retire: scope.retire });
 }
@@ -67,9 +98,9 @@ export function assertOperationLease<M extends OperationMode>(
   mode: NoInfer<M>,
   operationId?: string,
 ): void {
-  const check = issued.get(lease);
-  if (!check || lease.mode !== mode) {
+  const owner = issued.get(lease);
+  if (!owner || lease.mode !== mode) {
     throw new TypeError("Sink requires an issued operation lease of its mode");
   }
-  check(operationId);
+  check(owner, operationId);
 }

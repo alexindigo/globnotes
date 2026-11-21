@@ -38,7 +38,10 @@ export function createInstanceAuth(adapters: {
   /** Explicit prepared composition binding; never a silent production no-op. */
   lifetime(request: Request): OperationLease<"live">;
 }) {
-  const requests = new WeakMap<Request, Promise<Principal>>();
+  const owners = new WeakMap<
+    InstanceSessions,
+    WeakMap<Request, Promise<Principal>>
+  >();
   const invalid = () =>
     new HttpError(401, "Invalid authentication credentials.", {
       "WWW-Authenticate": "Bearer",
@@ -54,17 +57,23 @@ export function createInstanceAuth(adapters: {
       throw invalid();
     }
   };
-  const principal = async (request: Request): Promise<Principal> => {
+  const principal = async (
+    request: Request,
+    sessions = adapters.sessions,
+  ): Promise<Principal> => {
+    let requests = owners.get(sessions);
+    if (!requests) {
+      requests = new WeakMap();
+      owners.set(sessions, requests);
+    }
     let pending = requests.get(request);
     if (!pending) {
-      pending = Promise.resolve().then(() =>
-        adapters.sessions.resolve(token(request))
-      );
+      pending = Promise.resolve().then(() => sessions.resolve(token(request)));
       requests.set(request, pending);
     }
     try {
       const value = await pending;
-      if (value.kind === "account") adapters.sessions.assertCurrent(value);
+      if (value.kind === "account") sessions.assertCurrent(value);
       return value;
     } catch (error) {
       if (error instanceof AuthenticationError) throw invalid();
@@ -82,6 +91,7 @@ export function createInstanceAuth(adapters: {
     };
     check();
     return {
+      sessions,
       check,
       evaluator: new InstanceAuthority(sessions, () => {
         check();
@@ -92,12 +102,12 @@ export function createInstanceAuth(adapters: {
   const lease = async (request: Request, operation: VaultOperation) => {
     const admitted = admission(request);
     const bind = admitted.evaluator.prepareLease(operation);
-    const value = await principal(request);
+    const value = await principal(request, admitted.sessions);
     admitted.check();
     return bind(value);
   };
   return Object.freeze({
-    principal,
+    principal: (request: Request) => principal(request),
     lease,
     noteMutationLease: (request: Request) => lease(request, "editNotes"),
     readLease: (request: Request) => lease(request, "readVault"),
@@ -109,7 +119,7 @@ export function createInstanceAuth(adapters: {
       operation: InstanceOperation,
     ): Promise<() => void> {
       const admitted = admission(request);
-      const value = await principal(request);
+      const value = await principal(request, admitted.sessions);
       admitted.check();
       const guard = admitted.evaluator.instanceGuard(value, operation);
       return () => {

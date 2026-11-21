@@ -5,39 +5,39 @@ import {
   type OperationMode,
 } from "../operation_lease.ts";
 
-// Map void to undefined: TypeScript otherwise accepts async () => void.
 export type Synchronous<T> = T extends PromiseLike<unknown> ? never
   : [T] extends [void] ? undefined
   : T;
 export type Disclosure<T> = T extends (...args: never[]) => unknown ? never
   : Synchronous<T>;
 
-/** Private effect-owner adapter, not a public commit(arbitraryCallback) API.
- * Bind the real consumer once; callers can only submit its data. Preparation
- * and locks belong before this function, never inside the final consumer. */
-export function bindGuardedSink<I, O, M extends OperationMode>(
+/** Inspection may run getters. Delivery is a private synchronous native effect,
+ * bound by the owner, never supplied by a public caller. No result or value
+ * inspection is permitted after the final owner fences. */
+export function bindGuardedSink<I, V, M extends OperationMode>(
   lease: OperationLease<M>,
   mode: NoInfer<M>,
-  consume: (input: I) => Synchronous<O>,
-): (input: I) => Synchronous<O> {
+  inspect: (input: I) => Synchronous<V>,
+  deliver: (value: V) => undefined,
+): (input: I) => void {
   assertOperationLease(lease, mode);
-  if (typeof consume !== "function") {
+  if (typeof inspect !== "function" || typeof deliver !== "function") {
     throw new TypeError("Final operation sink must be callable");
   }
-  // Reject an ordinary async callback before it can even begin its effect.
-  if (Object.prototype.toString.call(consume) === "[object AsyncFunction]") {
+  if (
+    Object.prototype.toString.call(inspect) === "[object AsyncFunction]" ||
+    Object.prototype.toString.call(deliver) === "[object AsyncFunction]"
+  ) {
     throw new TypeError("Final operation sink must be synchronous");
   }
-  return (input: I): Synchronous<O> => {
-    assertOperationLease(lease, mode);
-    const value = consume(input);
-    // Also reject thenables from untyped JS or a disguised Promise callback.
-    // This detects an invalid owner implementation; it cannot undo an effect.
+  return (input) => {
+    const value = inspect(input);
     if (
       value != null && typeof (value as { then?: unknown }).then === "function"
     ) {
       throw new TypeError("Final operation sink must be synchronous");
     }
-    return value;
+    assertOperationLease(lease, mode);
+    deliver(value as V);
   };
 }

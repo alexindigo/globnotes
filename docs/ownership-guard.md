@@ -199,6 +199,20 @@ The 15 former flow-site allowances are removed. Final-effect synchrony, issued
 provenance, mode binding and actual value/chunk delivery remain runtime/type
 contracts; there is no flow hook or arbitrary callback-body scanner.
 
+Lease issuance captures explicit parent dependencies. A check evaluates all
+ancestor and child witnesses before a final pass of pure owner-lifetime fences.
+Private sinks inspect prepared values (including potentially reentrant getters)
+before that check, then invoke only the bound synchronous delivery with no
+result inspection or payload return. Public disclosure returns a lazy
+single-value stream retaining the opaque handle until pull, not unsealed data
+for a later queue. Stream chunks use the same inspection/fence/enqueue ordering.
+
+Credential verification is shared only for the same request and admitted session
+owner. Both admission paths retain that owner across verification. Stream
+cleanup starts reader cancellation while locked, observes its rejection, and
+releases the lock without waiting for an open tee peer or other pending
+cancellation.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from
