@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "@std/assert";
 import {
   bootServer,
   createServerWorkingDirectory,
@@ -132,25 +137,34 @@ for (const ignoreTerm of [false, true]) {
   Deno.test(`server lifetime: ${ignoreTerm ? "SIGKILL follows ignored SIGTERM" : "cooperative SIGTERM exits cleanly"}`, async () => {
     await fixtureScope(async (scope) => {
       const f = await fixture(ignoreTerm, scope);
-      // Shared readiness bound is only the test's safety net. The launcher
-      // must actually kill the stubborn process; this test never does so first.
-      await bounded(
-        f.server.close(),
-        "server close settled its owned child",
-        READINESS_MS,
-      );
-      assertStringIncludes(f.server.output.stdout, "TERM_RECEIVED");
-      assertEquals(f.server.status()?.signal, ignoreTerm ? "SIGKILL" : null);
-      if (!ignoreTerm) assertEquals(f.server.status()?.code, 0);
-      await assertRejects(
-        () => Deno.stat(f.cwd),
-        Deno.errors.NotFound,
-        `stat '${f.cwd}'`,
-      );
-      assertEquals(
-        await Deno.readTextFile(`${f.root}/vault/retained.md`),
-        "caller-owned vault",
-      );
+      const closing = f.server.close();
+      try {
+        assertStrictEquals(f.server.close(), closing);
+        // Shared readiness bound is only the test's safety net. The launcher
+        // must actually kill the stubborn process; this test never does so first.
+        await bounded(
+          closing,
+          "server close settled its owned child",
+          READINESS_MS,
+        );
+        assertStringIncludes(f.server.output.stdout, "TERM_RECEIVED");
+        assertEquals(f.server.status()?.signal, ignoreTerm ? "SIGKILL" : null);
+        if (!ignoreTerm) assertEquals(f.server.status()?.code, 0);
+        await assertRejects(
+          () => Deno.stat(f.cwd),
+          Deno.errors.NotFound,
+          `stat '${f.cwd}'`,
+        );
+        assertEquals(
+          await Deno.readTextFile(`${f.root}/vault/retained.md`),
+          "caller-owned vault",
+        );
+      } finally {
+        // Rescue first: a broken escalation must not block joining the original
+        // teardown, nor let the fixture finish while that teardown is pending.
+        await rescueChild(f.server.pid);
+        await closing.catch(() => {});
+      }
     });
   });
 }
@@ -219,6 +233,161 @@ console.log("partial cwd released");`,
     );
   });
 });
+
+Deno.test("server lifetime: boot captures every option and its argument list before yielding", async () => {
+  await fixtureScope(async (scope) => {
+    const root = (await scope.acquire(() =>
+      Deno.makeTempDir({ prefix: "boot-input-capture-" }), (root) =>
+      Deno.remove(root, { recursive: true }))).value;
+    const preload = `${root}/preload.mjs`, receipt = `${root}/startup.json`;
+    await Deno.writeTextFile(
+      preload,
+      `
+Deno.writeTextFileSync(${
+        JSON.stringify(receipt)
+      }, JSON.stringify({cwd:Deno.cwd(),host:Deno.env.get("GLOBNOTES__SERVER_HOST")}));
+Deno.addSignalListener("SIGTERM",()=>Deno.exit(0));
+Deno.serve({hostname:Deno.env.get("GLOBNOTES__SERVER_HOST"),port:0,onListen({port}){console.log("globnotes listening on http://127.0.0.1:"+port);}},()=>new Response("ok"));
+await new Promise(()=>{});
+`,
+    );
+    const reads: string[] = [];
+    let changed = false;
+    const extra = ["--preload", preload];
+    const options = {
+      get cwd() {
+        reads.push("cwd");
+        return changed ? Deno.cwd() : root;
+      },
+      get host() {
+        reads.push("host");
+        return changed ? "invalid.example" : "127.0.0.1";
+      },
+      get origin() {
+        reads.push("origin");
+        return changed
+          ? () => {
+            throw Error("changed origin");
+          }
+          : (port: number) =>
+            `http://127.0.0.1:${port}`;
+      },
+      get healthFetch(): typeof fetch {
+        reads.push("healthFetch");
+        return changed
+          ? () => Promise.reject(Error("changed fetch"))
+          : fetch;
+      },
+      get denoArgs() {
+        reads.push("denoArgs");
+        return extra;
+      },
+    };
+    const server = (await scope.acquire(() => {
+      const starting = bootServer({}, options);
+      changed = true;
+      extra.splice(0, extra.length, "--not-a-deno-option");
+      return starting;
+    }, (server) => server.close())).value;
+    assertEquals([
+      reads,
+      JSON.parse(await Deno.readTextFile(receipt)),
+      server.args.slice(-3),
+    ], [
+      ["cwd", "host", "origin", "healthFetch", "denoArgs"],
+      { cwd: root, host: "127.0.0.1" },
+      [
+        "--preload",
+        preload,
+        fromFileUrl(new URL("../server/main.ts", import.meta.url)),
+      ],
+    ]);
+  });
+});
+
+for (const mode of ["failure", "missing"] as const) {
+  Deno.test(`server lifetime: vault tracking survives ${mode} cleanup until successful or missing removal`, async () => {
+    await fixtureScope(async (scope) => {
+      const root = (await scope.acquire(() =>
+        Deno.makeTempDir({ prefix: "boot-vault-retry-" }), (root) =>
+        Deno.remove(root, { recursive: true }))).value;
+      const script = `${root}/check.ts`, receipt = `${root}/result.json`;
+      const boot = new URL("./helpers/boot.ts", import.meta.url).href;
+      const checkout = fromFileUrl(new URL("../", import.meta.url));
+      await Deno.writeTextFile(
+        script,
+        `
+import {assertEquals,assertRejects} from "@std/assert";
+import {bootServer} from ${JSON.stringify(boot)};
+const nativeRemove=Deno.remove;
+let vault="";
+const removal=new Error("vault removal failed");
+Deno.remove=async (file,options)=>{
+  if(String(file).includes("globnotes-test-vault-")) {
+    vault=String(file);
+    if(${
+          JSON.stringify(mode)
+        }==="missing") {await nativeRemove(file,options);throw new Deno.errors.NotFound("already removed");}
+    throw removal;
+  }
+  return nativeRemove(file,options);
+};
+const validation="test servers must not run in the checkout (cwd ${checkout}): the server rewrites the cwd-relative client/dist/index.html at boot";
+const error=await assertRejects(()=>bootServer({}, {cwd:${
+          JSON.stringify(checkout)
+        }}), ${mode === "failure" ? "AggregateError" : "Error"}, ${
+          mode === "failure" ? '"Owned resource release failed"' : "validation"
+        });
+Deno.remove=nativeRemove;
+if(${
+          JSON.stringify(mode)
+        }==="failure") assertEquals(error.errors.map(item=>item.message), [validation,removal.message]);
+let present;
+try {await Deno.stat(vault);present=true;}catch(error){if(!(error instanceof Deno.errors.NotFound))throw error;present=false;}
+assertEquals(present,${mode === "failure"});
+addEventListener("unload",()=>{
+  let remains;
+  try{Deno.statSync(vault);remains=true;}catch(error){if(!(error instanceof Deno.errors.NotFound))throw error;remains=false;}
+  Deno.writeTextFileSync(${
+          JSON.stringify(receipt)
+        },JSON.stringify({vault,present,remains}));
+});
+`,
+      );
+      const result = await bounded(
+        command(DENO, {
+          args: [
+            "run",
+            "--frozen",
+            `--config=${fromFileUrl(new URL("../deno.json", import.meta.url))}`,
+            "--allow-read",
+            "--allow-write",
+            "--allow-env",
+            script,
+          ],
+          stdout: "piped",
+          stderr: "piped",
+        }).output(),
+        "vault tracking subprocess completion",
+      );
+      assertEquals([result.code, new TextDecoder().decode(result.stderr)], [
+        0,
+        "",
+      ]);
+      const outcome = JSON.parse(await Deno.readTextFile(receipt));
+      assertEquals([outcome.present, outcome.remains], [
+        mode === "failure",
+        false,
+      ]);
+      await assertRejects(
+        () =>
+          Deno.stat(outcome.vault),
+        Deno.errors.NotFound,
+        `stat '${outcome.vault}'`,
+      );
+    });
+  });
+}
 
 for (const phase of ["startup", "receipt"] as const) {
   Deno.test(`server lifetime: ${phase} failure before a returned handle reaps and releases owned roots`, async () => {

@@ -5,6 +5,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
+  assertThrows,
 } from "@std/assert";
 import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
 import { OwnershipError } from "../shared/ownership.js";
@@ -220,6 +221,30 @@ Deno.test("child owner: a cancelled signal callback is inert while the child is 
   });
 });
 
+Deno.test("child owner: a failed timer clear remains tracked for status retirement", async () => {
+  await fixtureScope(async (scope) => {
+    const events: string[] = [];
+    const failure = new Error("timer clear failed");
+    let callback!: () => void;
+    const scheduler: ChildSignalClock = {
+      set(invoke) {
+        callback = invoke;
+        return () => {
+          events.push(events.length === 0 ? "clear failed" : "cleared");
+          if (events.length === 1) throw failure;
+        };
+      },
+    };
+    const child =
+      (await spawnOwnedChild(scope, DENO, options, scheduler)).value;
+    const cancel = child.signalAfter(5000, "SIGKILL");
+    assertStrictEquals(assertThrows(cancel, Error, failure.message), failure);
+    callback();
+    assertEquals(await finish(child), { success: true, code: 0, signal: null });
+    assertEquals(events, ["clear failed", "cleared"]);
+  });
+});
+
 Deno.test("child owner: termination owns one escalation and joins the actual child", async () => {
   await fixtureScope(async (scope) => {
     const scheduler = scheduledSignals();
@@ -366,7 +391,11 @@ Deno.test("child owner: failed status subscription closes stdin and reaps before
     const error = await assertRejects(
       () =>
         bounded(
-          spawnOwnedChild(scope, DENO, options),
+          spawnOwnedChild(scope, DENO, {
+            ...options,
+            stdout: "piped",
+            stderr: "piped",
+          }),
           "failed child status construction",
         ),
       Error,
@@ -384,6 +413,77 @@ Deno.test("child owner: failed status subscription closes stdin and reaps before
     } finally {
       writer.releaseLock();
     }
+    const readers = [child!.stdout.getReader(), child!.stderr.getReader()];
+    try {
+      assertEquals(
+        await bounded(
+          Promise.all(readers.map((reader) => reader.read())),
+          "failed construction pipes closed",
+        ),
+        [
+          { done: true, value: undefined },
+          { done: true, value: undefined },
+        ],
+      );
+    } finally {
+      for (const reader of readers) reader.releaseLock();
+    }
+  });
+});
+
+Deno.test("child owner: signalling in the native exit callback joins Deno's already-terminated status", async () => {
+  await fixtureScope(async (scope) => {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      Deno.ChildProcess.prototype,
+      "status",
+    )!;
+    const nativeKill = Deno.ChildProcess.prototype.kill;
+    scope.defer(() =>
+      Object.defineProperty(Deno.ChildProcess.prototype, "status", descriptor)
+    );
+    scope.defer(() => {
+      Deno.ChildProcess.prototype.kill = nativeKill;
+    });
+    const raced = Promise.withResolvers<unknown>();
+    let nativeFailure: unknown;
+    Deno.ChildProcess.prototype.kill = function (signal) {
+      try {
+        return nativeKill.call(this, signal);
+      } catch (error) {
+        nativeFailure = error;
+        throw error;
+      }
+    };
+    Object.defineProperty(Deno.ChildProcess.prototype, "status", {
+      ...descriptor,
+      get() {
+        const actual = descriptor.get!.call(this) as Promise<
+          Deno.CommandStatus
+        >;
+        actual.then(() => {
+          try {
+            raced.resolve(owned.signal("SIGTERM"));
+          } catch (error) {
+            raced.resolve(error);
+          }
+        });
+        return actual;
+      },
+    });
+    const owned = (await spawnOwnedChild(scope, DENO, options)).value;
+    const result = await finish(owned);
+    assertInstanceOf(nativeFailure, TypeError);
+    assertEquals([
+      await bounded(raced.promise, "native exit signal callback"),
+      nativeFailure.message,
+      result,
+      await owned.reap(),
+    ], [
+      false,
+      "Child process has already terminated",
+      { success: true, code: 0, signal: null },
+      { success: true, code: 0, signal: null },
+    ]);
   });
 });
 
@@ -415,7 +515,15 @@ Deno.test("child owner: cancellation reaps before admitted child work drains and
   });
 });
 
-for (const outcome of ["response", "error"] as const) {
+for (
+  const outcome of [
+    "response",
+    "error",
+    "pending-fetch",
+    "pending-cancel",
+    "rejected-cancel",
+  ] as const
+) {
   Deno.test(`child owner: boot discards a health ${outcome} completed after actual child exit`, async () => {
     await fixtureScope(async (scope) => {
       const root = (await scope.acquire(() =>
@@ -450,25 +558,46 @@ await new Promise(()=>{});
         },
       });
       const events: string[] = [];
+      const cancelled = Promise.withResolvers<void>();
+      let observingExit: Promise<void> | undefined;
       const healthFetch: typeof fetch = async (input, init) => {
         const response = await fetch(input, init);
         events.push("health received");
+        await response.body?.cancel();
         const url = new URL(
           input instanceof Request ? input.url : String(input),
         );
-        await fetch(new URL("/exit", url)).catch(() => {});
-        assertEquals(
-          await bounded(actualStatus, "health fixture actual exit"),
-          {
-            success: false,
-            code: 17,
-            signal: null,
-          },
-        );
-        events.push("child exited");
+        observingExit = (async () => {
+          await fetch(new URL("/exit", url)).catch(() => {});
+          assertEquals(
+            await bounded(actualStatus, "health fixture actual exit"),
+            {
+              success: false,
+              code: 17,
+              signal: null,
+            },
+          );
+          events.push("child exited");
+        })();
+        await observingExit;
         if (outcome === "error") {
-          await response.body?.cancel();
           throw new Error("stale health error");
+        }
+        if (outcome === "pending-fetch") {
+          return await new Promise<Response>(() => {});
+        }
+        if (outcome === "pending-cancel" || outcome === "rejected-cancel") {
+          return new Response(
+            new ReadableStream({
+              cancel() {
+                events.push("body cancel");
+                cancelled.resolve();
+                return outcome === "pending-cancel"
+                  ? new Promise<void>(() => {})
+                  : Promise.reject(new Error("body cancellation failed"));
+              },
+            }),
+          );
         }
         return response;
       };
@@ -491,8 +620,24 @@ await new Promise(()=>{});
         Error,
         "server exited before it was healthy",
       );
+      // Boot must not join uncooperative IO, but this test owns the injected
+      // callback's real exit observation before checking its event consumer.
+      assert(observingExit);
+      await bounded(observingExit, "health callback exit observation");
+      if (outcome === "pending-cancel" || outcome === "rejected-cancel") {
+        await bounded(
+          cancelled.promise,
+          "health response cancellation invoked",
+        );
+      }
       assertEquals([events, escaped], [
-        ["health received", "child exited"],
+        [
+          "health received",
+          "child exited",
+          ...(outcome === "pending-cancel" || outcome === "rejected-cancel"
+            ? ["body cancel"]
+            : []),
+        ],
         undefined,
       ]);
       const child = JSON.parse(await Deno.readTextFile(record));

@@ -42,11 +42,14 @@ globalThis.addEventListener?.("unload", () => {
   for (const vault of trackedVaults) {
     try {
       Deno.removeSync(vault, { recursive: true });
-    } catch {
-      // already removed (explicit cleanup) or gone
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) {
+        console.error(`Failed to remove tracked test vault ${vault}`, error);
+        continue;
+      }
     }
+    trackedVaults.delete(vault);
   }
-  trackedVaults.clear();
 });
 
 export interface TestServer {
@@ -114,12 +117,14 @@ export async function bootServer(
     healthFetch?: typeof fetch;
   } = {},
 ): Promise<TestServer> {
+  const { cwd, host = "127.0.0.1", origin, healthFetch = fetch, denoArgs } =
+    opts;
+  const extraArgs = [...(denoArgs ?? [])];
   const lifetime = createFixtureScope();
   let returned = false;
   return await lifetime.prepare(async (scope) => {
     const fixture = testEnvironment(inputs), env = fixture.values;
-    const hostname = opts.host ?? "127.0.0.1";
-    const healthFetch = opts.healthFetch ?? fetch;
+    const hostname = host;
     const ownsVault = !env.GLOBNOTES_GLOBNOTES_PATH;
     const vault = env.GLOBNOTES_GLOBNOTES_PATH ??
       (await scope.acquire(
@@ -128,8 +133,12 @@ export async function bootServer(
           // Successful callers may intentionally restart with this vault. Failed
           // constructors have no caller to take custody, so release immediately.
           if (returned) return;
+          try {
+            await Deno.remove(vault, { recursive: true });
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+          }
           trackedVaults.delete(vault);
-          await Deno.remove(vault, { recursive: true });
         },
       )).value;
     if (ownsVault) trackedVaults.add(vault);
@@ -158,15 +167,15 @@ export async function bootServer(
       });
     }
     if (
-      opts.cwd !== undefined &&
-      (await scope.admit(() => insideCheckout(opts.cwd!))).value
+      cwd !== undefined &&
+      (await scope.admit(() => insideCheckout(cwd))).value
     ) {
       throw new Error(
-        `test servers must not run in the checkout (cwd ${opts.cwd}): the ` +
+        `test servers must not run in the checkout (cwd ${cwd}): the ` +
           "server rewrites the cwd-relative client/dist/index.html at boot",
       );
     }
-    const ownedCwd = opts.cwd === undefined
+    const ownedCwd = cwd === undefined
       ? (await scope.admit(() =>
         scope.acquire(
           createServerWorkingDirectory,
@@ -181,7 +190,7 @@ export async function bootServer(
       "--allow-read",
       "--allow-write",
       "--allow-env",
-      ...(opts.denoArgs ?? []),
+      ...extraArgs,
       SERVER_MAIN,
     ];
     // Clean environment: exactly `env` plus the launcher's base, never the
@@ -192,7 +201,7 @@ export async function bootServer(
     scope.defer(() => draining);
     const child = (await spawnOwnedChild(scope, DENO, {
       args,
-      cwd: opts.cwd ?? ownedCwd!,
+      cwd: cwd ?? ownedCwd!,
       env: {
         ...env,
         GLOBNOTES_GLOBNOTES_PATH: vault,
@@ -240,25 +249,45 @@ export async function bootServer(
         if (port === null) return pending({ port: null });
         const listeningPort = port;
         try {
-          const res = (await scope.admit((scopeSignal) =>
-            healthFetch(
-              `${
-                opts.origin?.(listeningPort) ??
-                  `http://127.0.0.1:${listeningPort}`
-              }${prefix}` +
-                "/_/api/health",
-              {
-                signal: AbortSignal.any([
-                  signal,
-                  ownerGone.signal,
-                  scopeSignal,
-                ]),
-              },
-            ).then(async (res) => {
-              await res.body?.cancel();
+          const res = (await scope.admit(async (scopeSignal) => {
+            const requestSignal = AbortSignal.any([
+              signal,
+              ownerGone.signal,
+              scopeSignal,
+            ]);
+            requestSignal.throwIfAborted();
+            let onAbort!: () => void;
+            const cancelled = new Promise<never>((_resolve, reject) => {
+              onAbort = () => reject(requestSignal.reason);
+            });
+            requestSignal.addEventListener("abort", onAbort, { once: true });
+            // Native fetch honors this signal; the contract IO port may not.
+            // Observe late results for disposal without letting them hold the
+            // scope's admission drain open after its cancellation.
+            const receiving = Promise.resolve().then(() => {
+              requestSignal.throwIfAborted();
+              return healthFetch(
+                `${
+                  origin?.(listeningPort) ??
+                    `http://127.0.0.1:${listeningPort}`
+                }${prefix}` +
+                  "/_/api/health",
+                {
+                  signal: requestSignal,
+                },
+              );
+            }).then((res) => {
+              // Response disposal must not hold admission open: an injected
+              // cancel can ignore cancellation and never settle.
+              res.body?.cancel().catch(() => {});
               return res;
-            })
-          )).value;
+            });
+            try {
+              return await Promise.race([receiving, cancelled]);
+            } finally {
+              requestSignal.removeEventListener("abort", onAbort);
+            }
+          })).value;
           // The successful response may have been admitted before actual exit.
           // Readiness cannot outlive the process that supplied that response.
           ownerGone.signal.throwIfAborted();
@@ -290,9 +319,9 @@ export async function bootServer(
     }
     const boundPort: number = port!;
 
-    let closed = false;
+    let closing: Promise<void> | undefined;
     const server: TestServer = {
-      baseUrl: opts.origin?.(boundPort) ?? `http://127.0.0.1:${boundPort}`,
+      baseUrl: origin?.(boundPort) ?? `http://127.0.0.1:${boundPort}`,
       vault,
       port: boundPort,
       pid: child.pid,
@@ -301,26 +330,25 @@ export async function bootServer(
       logs: () => ({ ...output }),
       status: child.status,
       exited: status,
-      close: async () => {
-        if (closed) return;
-        closed = true;
-        try {
-          if (child.status()) {
-            throw new Error(
-              await exitDetail("server exited on its own before close()"),
-            );
+      close: () =>
+        closing ??= (async () => {
+          try {
+            if (child.status()) {
+              throw new Error(
+                await exitDetail("server exited on its own before close()"),
+              );
+            }
+            await child.terminate(SHUTDOWN_GRACE_MS);
+          } catch (error) {
+            await lifetime.close(error);
+            throw error;
           }
-          await child.terminate(SHUTDOWN_GRACE_MS);
-        } catch (error) {
-          await lifetime.close(error);
-          throw error;
-        }
-        await lifetime.close();
-        // The vault is deliberately NOT removed here: restart-style tests
-        // reuse the same vault across close()s. Auto-created vault paths
-        // are tracked instead and swept at process unload (below), so
-        // /tmp never accumulates globnotes-test-vault-* leftovers.
-      },
+          await lifetime.close();
+          // The vault is deliberately NOT removed here: restart-style tests
+          // reuse the same vault across close()s. Auto-created vault paths
+          // are tracked instead and swept at process unload (below), so
+          // /tmp never accumulates globnotes-test-vault-* leftovers.
+        })(),
     };
     ownerGone.signal.throwIfAborted();
     returned = true;

@@ -37,6 +37,7 @@ export function spawnOwnedChild(
   options: ChildOptions,
   scheduler: ChildSignalClock = clock,
 ): Promise<OwnedResource<OwnedChild>> {
+  const setSignal = scheduler.set.bind(scheduler);
   // Reserve the child before touching its status observer or cancellation hook.
   // Those setup steps can throw; no returned handle is needed for cleanup.
   let start: () => void;
@@ -58,7 +59,11 @@ export function spawnOwnedChild(
         return true;
       } catch (error) {
         // The OS can reap the child before its status reaction runs.
-        if (error instanceof Deno.errors.NotFound) return false;
+        if (
+          error instanceof Deno.errors.NotFound ||
+          error instanceof TypeError &&
+            error.message === "Child process has already terminated"
+        ) return false;
         throw error;
       }
     };
@@ -66,14 +71,14 @@ export function spawnOwnedChild(
       if (settled) return () => {};
       let active = true, clear = () => {};
       const cancel = () => {
-        if (!active) return;
+        if (!timers.has(cancel)) return;
         active = false;
-        timers.delete(cancel);
         clear();
+        timers.delete(cancel);
       };
       timers.add(cancel);
       try {
-        clear = scheduler.set(() => {
+        clear = setSignal(() => {
           if (!active || settled) return;
           cancel();
           signal(signo);
@@ -91,12 +96,23 @@ export function spawnOwnedChild(
       return await (exited ?? child.status);
     };
     let releasing: Promise<void> | undefined;
+    let started = false;
     release = () =>
       releasing ??= fixtureScope((cleanup) => {
         // stdin is a separate resource, even after actual process exit. Native
         // close may reject if the caller already used it as an explicit trigger.
         if (launchOptions.stdin === "piped") {
           cleanup.defer(() => child.stdin.close().catch(() => {}));
+        }
+        // No caller received the failed acquisition's read ends. Successful
+        // callers, including boot's existing drains, retain pipe consumption.
+        if (!started) {
+          if (launchOptions.stdout === "piped") {
+            cleanup.defer(() => child.stdout.cancel());
+          }
+          if (launchOptions.stderr === "piped") {
+            cleanup.defer(() => child.stderr.cancel());
+          }
         }
         cleanup.defer(reap);
       });
@@ -143,6 +159,7 @@ export function spawnOwnedChild(
       // Terminate before admitted child work drains. Pipe release stays in the
       // acquisition disposer, including failed observer/hook construction.
       scope.onCancel(reap);
+      started = true;
     };
     return owned;
   }, () => release());
