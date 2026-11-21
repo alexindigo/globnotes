@@ -40,22 +40,6 @@
     "family": "legacy-record-import"
   },
   {
-    "file": "tests/helpers/boot.ts",
-    "capability": "module:jsr:@std/fs@^1.0.20",
-    "line": 16,
-    "source": "\"@std/fs\"",
-    "context": "import { copy, existsSync } from \"@std/fs\";",
-    "family": "legacy-record-import"
-  },
-  {
-    "file": "tests/helpers/boot.ts",
-    "capability": "module:tests/helpers/process_records.ts",
-    "line": 21,
-    "source": "\"./process_records.ts\"",
-    "context": "import { publishRecord } from \"./process_records.ts\";",
-    "family": "legacy-record-import"
-  },
-  {
     "file": "tests/helpers/catalog_work_audit.ts",
     "capability": "module:tests/helpers/process_records.ts",
     "line": 6,
@@ -112,11 +96,27 @@
     "family": "legacy-record-import"
   },
   {
+    "file": "tests/owned_child_test.ts",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 15,
+    "source": "\"./helpers/process_records.ts\"",
+    "context": "import { publishRecord } from \"./helpers/process_records.ts\";",
+    "family": "legacy-record-import"
+  },
+  {
     "file": "tests/remotely_save_acceptance_test.ts",
     "capability": "module:jsr:@std/fs@^1.0.20",
     "line": 9,
     "source": "\"@std/fs\"",
     "context": "import { walkSync } from \"@std/fs\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/server_lifetime_test.ts",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 11,
+    "source": "\"./helpers/process_records.ts\"",
+    "context": "import { publishRecord } from \"./helpers/process_records.ts\";",
     "family": "legacy-record-import"
   },
   {
@@ -174,5 +174,21 @@
     "source": "Deno.writeTextFile",
     "context": "report.defer(async()=>{await Deno.writeTextFile(`${directory}/failure.json`,JSON.stringify({error:String(error),dom:await session.evaluate(\"document.body.innerText\").catch(()=>null),server:server?.logs(),results,events:session.events,errors:session.errors},null,2));});",
     "family": "sync-fixture-data-io"
+  },
+  {
+    "file": "tests/helpers/boot.ts",
+    "capability": "module:jsr:@std/fs@^1.0.20",
+    "line": 16,
+    "source": "\"@std/fs\"",
+    "context": "import { copy, existsSync } from \"@std/fs\";",
+    "family": "legacy-record-import"
+  },
+  {
+    "file": "tests/helpers/boot.ts",
+    "capability": "module:tests/helpers/process_records.ts",
+    "line": 23,
+    "source": "\"./process_records.ts\"",
+    "context": "import { publishRecord } from \"./process_records.ts\";",
+    "family": "legacy-record-import"
   }
 ]

@@ -504,14 +504,6 @@
     "family": "handler-loader"
   },
   {
-    "file": "tests/server_lifetime_test.ts",
-    "capability": "Deno.kill",
-    "line": 100,
-    "source": "Deno.kill",
-    "context": "Deno.kill(server.pid, \"SIGKILL\");",
-    "family": "test-process-control"
-  },
-  {
     "file": "tests/timing/product_settlement_stall_test.ts",
     "capability": "Deno.kill",
     "line": 101,

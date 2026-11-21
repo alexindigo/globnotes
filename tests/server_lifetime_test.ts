@@ -4,9 +4,33 @@ import {
   bootServer,
   createServerWorkingDirectory,
   SERVER_PORT_ENV,
-  type TestServer,
 } from "./helpers/boot.ts";
-import { done, pending, waitUntil } from "./helpers/wait.ts";
+import { done, pending, READINESS_MS, waitUntil } from "./helpers/wait.ts";
+import { bounded } from "./helpers/worker_liveness.ts";
+import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
+import { publishRecord } from "./helpers/process_records.ts";
+import { command, DENO } from "./helpers/process.ts";
+import { fromFileUrl } from "@std/path";
+
+const processProbe = (pid: number) =>
+  command("bash", {
+    args: ["-c", 'kill -0 "$1"', "boot-child-absence", String(pid)],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+// Post-verdict rescue only. The assertions must observe cleanup before this runs.
+async function rescueChild(pid: number) {
+  if (!(await processProbe(pid)).success) return;
+  try {
+    Deno.kill(pid, "SIGKILL");
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  await waitUntil(
+    async () => (await processProbe(pid)).success ? pending({ pid }) : done(),
+    { label: "post-verdict child rescue" },
+  );
+}
 
 Deno.test("server working directories isolate prefix stamping from sibling and donor assets", async () => {
   const donor = new URL("../client/dist/index.html", import.meta.url);
@@ -16,9 +40,11 @@ Deno.test("server working directories isolate prefix stamping from sibling and d
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
-  const first = await createServerWorkingDirectory();
-  const second = await createServerWorkingDirectory();
-  try {
+  await fixtureScope(async (scope) => {
+    const first = (await scope.acquire(createServerWorkingDirectory, (dir) =>
+      Deno.remove(dir, { recursive: true }))).value;
+    const second = (await scope.acquire(createServerWorkingDirectory, (dir) =>
+      Deno.remove(dir, { recursive: true }))).value;
     assertEquals(first === second, false);
     assertEquals(first.startsWith(Deno.cwd() + "/"), false);
     assertEquals(second.startsWith(Deno.cwd() + "/"), false);
@@ -35,21 +61,23 @@ Deno.test("server working directories isolate prefix stamping from sibling and d
       assertEquals(await Deno.readTextFile(donor), original);
     } else {
       await assertRejects(
-        () => Deno.stat(`${second}/client/dist/index.html`),
+        () =>
+          Deno.stat(`${second}/client/dist/index.html`),
         Deno.errors.NotFound,
       );
-      await assertRejects(() => Deno.stat(donor), Deno.errors.NotFound);
+      await assertRejects(() =>
+        Deno.stat(donor), Deno.errors.NotFound);
     }
-  } finally {
-    await Deno.remove(first, { recursive: true });
-    await Deno.remove(second, { recursive: true });
-  }
+  });
 });
 
 /** Existing preload seam runs a real owned HTTP fixture before main. Its open
  * listener keeps the unresolved preload alive; product startup never executes. */
-async function fixture(ignoreTerm: boolean) {
-  const root = await Deno.makeTempDir({ prefix: "server-lifetime-" });
+async function fixture(ignoreTerm: boolean, scope: FixtureScope) {
+  const root = (await scope.acquire(
+    () => Deno.makeTempDir({ prefix: "server-lifetime-" }),
+    (root) => Deno.remove(root, { recursive: true }),
+  )).value;
   await Deno.mkdir(`${root}/vault`);
   await Deno.writeTextFile(`${root}/vault/retained.md`, "caller-owned vault");
   const preload = `${root}/preload.mjs`;
@@ -75,15 +103,20 @@ Deno.serve({hostname:Deno.env.get('GLOBNOTES__SERVER_HOST'),port:Number(Deno.env
 await new Promise(()=>{});
 `,
   );
-  let server: TestServer;
-  try {
-    server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: `${root}/vault` }, {
-      denoArgs: ["--preload", preload],
-    });
-  } catch (error) {
-    await Deno.remove(root, { recursive: true });
-    throw error;
-  }
+  const server = (await scope.acquire(
+    () =>
+      bootServer({ GLOBNOTES_GLOBNOTES_PATH: `${root}/vault` }, {
+        denoArgs: ["--preload", preload],
+      }),
+    async (server) => {
+      // Post-verdict rescue only; construction and assertions retain custody.
+      if (!server.status()) {
+        await rescueChild(server.pid);
+        await server.exited;
+      }
+      await server.close().catch(() => {});
+    },
+  )).value;
   const startup = JSON.parse(
     await Deno.readTextFile(`${root}/startup.json`),
   ) as { cwd: string; pid: number };
@@ -92,55 +125,39 @@ await new Promise(()=>{});
     root,
     server,
     cwd: startup.cwd,
-    async cleanup() {
-      // Cleanup of a failed regression must not leave its deliberately stubborn
-      // child running. It is exactly the PID returned by this fixture's owner.
-      if (!server.status()) {
-        try {
-          Deno.kill(server.pid, "SIGKILL");
-        } catch { /* already exited */ }
-        await waitUntil(
-          () => server.status() ? done() : pending({ pid: server.pid }),
-          { label: "owned lifetime fixture exited" },
-        );
-      }
-      await server.close().catch(() => {});
-      await Deno.remove(root, { recursive: true });
-    },
   };
 }
 
 for (const ignoreTerm of [false, true]) {
   Deno.test(`server lifetime: ${ignoreTerm ? "SIGKILL follows ignored SIGTERM" : "cooperative SIGTERM exits cleanly"}`, async () => {
-    const f = await fixture(ignoreTerm);
-    let closing: Promise<void> | undefined;
-    try {
-      closing = f.server.close();
+    await fixtureScope(async (scope) => {
+      const f = await fixture(ignoreTerm, scope);
       // Shared readiness bound is only the test's safety net. The launcher
       // must actually kill the stubborn process; this test never does so first.
-      await waitUntil(
-        () => f.server.status() ? done() : pending({ pid: f.server.pid }),
-        { label: "server close settled its owned child" },
+      await bounded(
+        f.server.close(),
+        "server close settled its owned child",
+        READINESS_MS,
       );
-      await closing;
       assertStringIncludes(f.server.output.stdout, "TERM_RECEIVED");
       assertEquals(f.server.status()?.signal, ignoreTerm ? "SIGKILL" : null);
       if (!ignoreTerm) assertEquals(f.server.status()?.code, 0);
-      await assertRejects(() => Deno.stat(f.cwd), Deno.errors.NotFound);
+      await assertRejects(
+        () => Deno.stat(f.cwd),
+        Deno.errors.NotFound,
+        `stat '${f.cwd}'`,
+      );
       assertEquals(
         await Deno.readTextFile(`${f.root}/vault/retained.md`),
         "caller-owned vault",
       );
-    } finally {
-      await f.cleanup();
-      if (closing) await closing.catch(() => {});
-    }
+    });
   });
 }
 
 Deno.test("server lifetime: unexpected exit still rejects close with diagnostics", async () => {
-  const f = await fixture(false);
-  try {
+  await fixtureScope(async (scope) => {
+    const f = await fixture(false, scope);
     await fetch(`${f.server.baseUrl}/crash`).catch(() => {});
     await waitUntil(
       () => f.server.status() ? done() : pending({ pid: f.server.pid }),
@@ -153,8 +170,137 @@ Deno.test("server lifetime: unexpected exit still rejects close with diagnostics
     );
     assertStringIncludes(error.message, "exit code 17");
     assertStringIncludes(error.message, "OWNED_SERVER_DIAGNOSTIC");
-    await assertRejects(() => Deno.stat(f.cwd), Deno.errors.NotFound);
-  } finally {
-    await f.cleanup();
-  }
+    await assertRejects(
+      () => Deno.stat(f.cwd),
+      Deno.errors.NotFound,
+      `stat '${f.cwd}'`,
+    );
+  });
 });
+
+Deno.test("server lifetime: failed cwd preparation releases its partial directory before return", async () => {
+  await fixtureScope(async (scope) => {
+    const root = (await scope.acquire(
+      () => Deno.makeTempDir({ prefix: "boot-cwd-failure-" }),
+      (root) => Deno.remove(root, { recursive: true }),
+    )).value;
+    const script = `${root}/check.ts`;
+    const boot = new URL("./helpers/boot.ts", import.meta.url).href;
+    await Deno.writeTextFile(
+      script,
+      `import {createServerWorkingDirectory} from ${JSON.stringify(boot)};
+let rejected=false;
+try { await createServerWorkingDirectory(); } catch(error) { if(!(error instanceof Deno.errors.NotCapable)) throw error; rejected=true; }
+if(!rejected) throw Error("Expected donor access to reject");
+const entries=[...Deno.readDirSync(${
+        JSON.stringify(root)
+      })].map(entry=>entry.name).sort();
+if(JSON.stringify(entries)!=='["check.ts"]') throw Error("Unexpected root entries: "+JSON.stringify(entries));
+console.log("partial cwd released");`,
+    );
+    const result = await command(DENO, {
+      args: [
+        "run",
+        "--cached-only",
+        "--frozen",
+        `--config=${fromFileUrl(new URL("../deno.json", import.meta.url))}`,
+        `--allow-read=${root},${DENO}`,
+        `--allow-write=${root}`,
+        script,
+      ],
+      env: { TMPDIR: root },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+    assertEquals(
+      new TextDecoder().decode(result.stdout),
+      "partial cwd released\n",
+    );
+  });
+});
+
+for (const phase of ["startup", "receipt"] as const) {
+  Deno.test(`server lifetime: ${phase} failure before a returned handle reaps and releases owned roots`, async () => {
+    await fixtureScope(async (scope) => {
+      const root = (await scope.acquire(
+        () => Deno.makeTempDir({ prefix: "boot-failure-" }),
+        (root) => Deno.remove(root, { recursive: true }),
+      )).value;
+      const preload = `${root}/preload.mjs`, record = `${root}/child.json`;
+      scope.defer(async () => {
+        let child;
+        try {
+          child = JSON.parse(await Deno.readTextFile(record));
+        } catch (error) {
+          if (error instanceof Deno.errors.NotFound) return;
+          throw error;
+        }
+        await rescueChild(child.pid);
+        for (const directory of [child.cwd, child.vault]) {
+          try {
+            await Deno.remove(directory, { recursive: true });
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+          }
+        }
+      });
+      await Deno.writeTextFile(
+        preload,
+        `
+Deno.writeTextFileSync(${
+          JSON.stringify(record)
+        },JSON.stringify({pid:Deno.pid,cwd:Deno.cwd(),vault:Deno.env.get('GLOBNOTES_GLOBNOTES_PATH')}));
+${
+          phase === "startup" ? "throw new Error('startup sentinel');" : `
+Deno.addSignalListener('SIGTERM',()=>Deno.exit(0));
+Deno.serve({hostname:Deno.env.get('GLOBNOTES__SERVER_HOST'),port:0,onListen({port}){console.log('globnotes listening on http://127.0.0.1:'+port);}},()=>new Response('ok'));
+await new Promise(()=>{});`
+        }
+`,
+      );
+      const receipt = `${root}/receipt.json`;
+      await Deno.mkdir(receipt);
+      let origins = 0, publicationError: unknown;
+      const error = await assertRejects(
+        () =>
+          bootServer({}, {
+            denoArgs: ["--preload", preload],
+            origin(port) {
+              if (++origins === 2) {
+                try {
+                  publishRecord(receipt, "{}");
+                } catch (error) {
+                  publicationError = error;
+                  throw error;
+                }
+              }
+              return `http://127.0.0.1:${port}`;
+            },
+          }),
+        phase === "startup" ? Error : Deno.errors.IsADirectory,
+        phase === "startup" ? "startup sentinel" : receipt,
+      );
+      if (phase === "startup") {
+        assertStringIncludes(error.message, "startup sentinel");
+      } else assertEquals(error, publicationError);
+      const child = JSON.parse(await Deno.readTextFile(record));
+      const probe = await processProbe(child.pid);
+      assertEquals(probe.success, false);
+      assertStringIncludes(
+        new TextDecoder().decode(probe.stderr),
+        "No such process",
+      );
+      await assertRejects(
+        () => Deno.stat(child.cwd),
+        Deno.errors.NotFound,
+        `stat '${child.cwd}'`,
+      );
+      await assertRejects(
+        () => Deno.stat(child.vault),
+        Deno.errors.NotFound,
+        `stat '${child.vault}'`,
+      );
+    });
+  });
+}

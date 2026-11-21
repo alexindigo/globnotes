@@ -59,6 +59,7 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       "tests/helpers/sync_status_preload.ts",
       "tests/helpers/owned_record_channel.ts",
       "tests/owned_record_channel_test.ts",
+      "tests/helpers/boot.ts",
     ],
     [PLUGIN_FIXTURE_ENGINE]: [
       "tests/helpers/plugin_fixture.ts",
@@ -190,49 +191,82 @@ export const RECORD_ENGINE_OWNERSHIP: OwnershipRules = {
     },
   },
 };
-const recordModules = (rules: OwnershipRules): OwnershipRules => ({
+export const OWNED_CHILD = "tests/helpers/owned_child.ts";
+export const BOOT_OWNER = "tests/helpers/boot.ts";
+export const RAW_PROCESS = "tests/helpers/process.ts";
+export const CHILD_MODULE_RULES = {
+  [RAW_PROCESS]: [
+    OWNED_CHILD,
+    "tests/helpers/process_values.ts",
+    "tests/helpers/ownership_contract.ts",
+  ],
+};
+export const CHILD_OWNERSHIP: OwnershipRules = {
+  ...RECORD_OWNERSHIP,
+  roots: {
+    ...RECORD_OWNERSHIP.roots,
+    Deno: {
+      ...RECORD_OWNERSHIP.roots.Deno,
+      ownedMembers: {
+        ...RECORD_OWNERSHIP.roots.Deno.ownedMembers,
+        ChildProcess: ["tests/owned_child_test.ts"],
+      },
+    },
+  },
+  modules: { ...RECORD_OWNERSHIP.modules, ...CHILD_MODULE_RULES },
+};
+export const BOOT_OWNERSHIP: OwnershipRules = {
+  ...CHILD_OWNERSHIP,
+  roots: {
+    ...PROCESS_OWNERSHIP.roots,
+    Deno: {
+      members: [
+        "errors",
+        "makeTempDir",
+        "mkdir",
+        "readTextFile",
+        "realPathSync",
+        "remove",
+        "removeSync",
+      ],
+      ownedMembers: PROCESS_OWNERSHIP.roots.Deno.ownedMembers,
+    },
+    setTimeout: { members: [] },
+    setInterval: { members: [] },
+    globalThis: {
+      ...PROCESS_OWNERSHIP.roots.globalThis,
+      ownedMembers: { setTimeout: [], setInterval: [] },
+    },
+  },
+};
+const allModules = (rules: OwnershipRules): OwnershipRules => ({
   ...rules,
-  modules: { ...rules.modules, ...RECORD_MODULE_RULES },
+  modules: { ...rules.modules, ...RECORD_MODULE_RULES, ...CHILD_MODULE_RULES },
 });
 /** Partition by explicit pilot identities, analyze every module exactly once.
  * This selects registrations, not allowed sites; every violation is inventoried. */
 export function registeredOwnership(sources: SourceModule[]) {
-  const pilot: SourceModule[] = [],
-    scenarios: SourceModule[] = [],
-    remaining: SourceModule[] = [],
-    product: SourceModule[] = [],
-    records: SourceModule[] = [],
-    engine: SourceModule[] = [];
+  const groups = new Map<OwnershipRules, SourceModule[]>();
   for (const source of sources) {
-    (fixtureScenarios.includes(source.file)
-      ? scenarios
+    const rules = source.file === BOOT_OWNER
+      ? BOOT_OWNERSHIP
+      : fixtureScenarios.includes(source.file)
+      ? FIXTURE_SCENARIO_OWNERSHIP
       : source.file === RECORD_CHANNEL
-      ? engine
+      ? RECORD_ENGINE_OWNERSHIP
       : RECORD_PILOT_FILES.includes(source.file)
-      ? records
+      ? RECORD_PILOT_OWNERSHIP
       : FIXTURE_PILOT_FILES.includes(source.file)
-      ? pilot
+      ? FIXTURE_PILOT_OWNERSHIP
       : source.file.startsWith("tests/") ||
           source.file.startsWith("client/tests/")
-      ? remaining
-      : product).push(
-        source,
-      );
+      ? CHILD_OWNERSHIP
+      : PRODUCT_OWNERSHIP;
+    const group = groups.get(rules) ?? [];
+    group.push(source);
+    groups.set(rules, group);
   }
-  return [
-    ...(remaining.length ? analyzeOwnership(remaining, RECORD_OWNERSHIP) : []),
-    ...(scenarios.length
-      ? analyzeOwnership(scenarios, recordModules(FIXTURE_SCENARIO_OWNERSHIP))
-      : []),
-    ...(pilot.length
-      ? analyzeOwnership(pilot, recordModules(FIXTURE_PILOT_OWNERSHIP))
-      : []),
-    ...(product.length
-      ? analyzeOwnership(product, recordModules(PRODUCT_OWNERSHIP))
-      : []),
-    ...(records.length
-      ? analyzeOwnership(records, RECORD_PILOT_OWNERSHIP)
-      : []),
-    ...(engine.length ? analyzeOwnership(engine, RECORD_ENGINE_OWNERSHIP) : []),
-  ];
+  return [...groups].flatMap(([rules, modules]) =>
+    analyzeOwnership(modules, allModules(rules))
+  );
 }

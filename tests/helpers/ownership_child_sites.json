@@ -1,0 +1,242 @@
+[
+  {
+    "file": "tests/backup_plugin_controls_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 3,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/ci_pr_proof_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 4,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/cold_load_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 4,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/config_acceptance_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 11,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/config_consumers_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 17,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/config_launch_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 8,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/config_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 3,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/docker_latest_tag_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 4,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/gate_selection_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 3,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/generic_production_cli_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 3,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 2,
+    "source": "\"./process.ts\"",
+    "context": "import { command } from \"./process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/helpers/mcp.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 14,
+    "source": "\"./process.ts\"",
+    "context": "import { command } from \"./process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/identity_ownership_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 12,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/index_erasure_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 15,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/native_totp_fixture_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 6,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/owned_child_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 14,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/owned_record_channel_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 34,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/ownership_guard_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 13,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/plugin_data_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 19,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/plugin_render_recovery_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 5,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/plugin_settings_evolution_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 13,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 18,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/process_records_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 11,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/release_version_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 4,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/remotely_save_format_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 5,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { workerCommandDenialProbeSource } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/run_diagnostics_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 2,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/server_lifetime_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 12,
+    "source": "\"./helpers/process.ts\"",
+    "context": "import { command, DENO } from \"./helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/server_lifetime_test.ts",
+    "capability": "Deno.kill",
+    "line": 25,
+    "source": "Deno.kill",
+    "context": "Deno.kill(pid, \"SIGKILL\");",
+    "family": "child-contract-rescue"
+  },
+  {
+    "file": "tests/timing/plugin_stall_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 10,
+    "source": "\"../helpers/process.ts\"",
+    "context": "import { command } from \"../helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  },
+  {
+    "file": "tests/timing/product_settlement_stall_test.ts",
+    "capability": "module:tests/helpers/process.ts",
+    "line": 5,
+    "source": "\"../helpers/process.ts\"",
+    "context": "import { command } from \"../helpers/process.ts\";",
+    "family": "legacy-child-execution"
+  }
+]

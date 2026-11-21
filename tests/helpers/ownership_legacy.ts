@@ -3,6 +3,7 @@ import type { LegacySite, OwnershipFamily } from "./ownership_contract.ts";
 import sites from "./ownership_legacy_sites.json" with { type: "json" };
 import rootSites from "./ownership_root_sites.json" with { type: "json" };
 import recordSites from "./ownership_record_sites.json" with { type: "json" };
+import childSites from "./ownership_child_sites.json" with { type: "json" };
 
 /** Exact execution-base occurrences, not owner declarations/path exemptions.
  * Remove sites as their named families migrate; keep the consumer manifest.
@@ -11,6 +12,31 @@ import recordSites from "./ownership_record_sites.json" with { type: "json" };
  */
 export const INVENTORY_BASE = "4436da3d6819790f52a4d4d50969800c72ddb663";
 export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
+  "child-lifetime-pilot": {
+    replacement: "P12",
+    closed: true,
+    consumers: [
+      "tests/owned_child_test.ts",
+      "tests/server_lifetime_test.ts",
+      "client/tests/e2e/setup-wizard.mjs",
+    ],
+  },
+  "legacy-child-execution": {
+    replacement: "A03/A08/T01: remaining raw launcher module references",
+    consumers: [
+      "tests/backup_plugin_controls_test.ts",
+      "tests/process_records_test.ts",
+      "tests/plugin_render_recovery_test.ts",
+      "tests/plugin_worker_liveness_test.ts",
+      "tests/identity_ownership_test.ts",
+      "tests/timing/product_settlement_stall_test.ts",
+      "tests/timing/plugin_stall_test.ts",
+    ],
+  },
+  "child-contract-rescue": {
+    replacement: "A11: explicit post-verdict low-level contract rescue",
+    consumers: ["tests/server_lifetime_test.ts"],
+  },
   "record-channel-pilot": {
     replacement: "P11",
     closed: true,
@@ -186,6 +212,7 @@ export const LEGACY_OWNERSHIP: LegacySite[] = [
   ...sites,
   ...rootSites,
   ...recordSites,
+  ...childSites,
 ]
   .map((site) => {
     const family = OWNERSHIP_FAMILIES[site.family];

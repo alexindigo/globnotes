@@ -168,6 +168,27 @@ plugin fixtures copy and import that complete module, never a function's
 `toString()` body with missing lexical dependencies. Its runtime import belongs
 only to the protocol facade; the same registration rejects ordinary consumers.
 
+## Child pilot registration
+
+P12 registers `process.ts` as the raw launcher module. Its actual child-lifetime
+owner, the source graph owner and a values-only facade are exact import owners.
+Ordinary child lifetimes use `spawnOwnedChild`; callers needing only DENO or
+environment values use `process_values.ts`. Existing raw-launcher imports remain
+exact migration records, including selected-member imports: no imported alias or
+factory result is followed. Boot has no raw-launcher reference and has explicit
+no-private-timer root rules. Its real cleanup/receipt controls prove delegation.
+The one existing post-verdict rescue is counted, not a permanent owner allowance.
+
+Child acquisition returns an owned handle. Cancellation reaps the child through
+`onCancel` before admitted child work drains; LIFO release still joins reaping.
+Boot admits borrowed metadata, donor-copy and health effects through its scope,
+registering acquired roots before an admitted operation can lose authority.
+Child custody precedes status subscription and cancellation-hook setup. Its
+acquisition disposer also closes piped stdin; uncreated pipes are never touched.
+Status retirement is recorded in the first callback on the native status promise.
+Boot uses an explicit Deno allowlist and rejects health outcomes after actual
+child exit, including outcomes returned through the contract-only health IO port.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from
