@@ -86,6 +86,7 @@ export function createFixtureScope() {
   const work = createOwnershipScope();
   const cancellationResults = createOwnershipScope();
   const settled = createOwnershipScope();
+  const reporting = createOwnershipScope();
   const controller = new AbortController();
   let cancelled: Promise<OwnershipRelease> | undefined;
   let finished: Promise<OwnershipRelease> | undefined;
@@ -120,6 +121,7 @@ export function createFixtureScope() {
       phases.defer(async () => (await resources.releaseAll()).throwIfFailed());
       phases.defer(async () => (await work.releaseAll()).throwIfFailed());
       phases.defer(async () => (await cancelling).throwIfFailed());
+      phases.defer(async () => (await reporting.releaseAll()).throwIfFailed());
       finished = phases.releaseAll();
     }
     return finished;
@@ -260,6 +262,9 @@ export function createFixtureScope() {
       body: (scope: FixtureScope) => T | PromiseLike<T>,
       report?: () => unknown,
     ): Promise<T> {
+      // Register before body entry: an external close must use this same report
+      // phase even if it arrives before run() reaches its own finally block.
+      if (report) reporting.defer(report);
       let primary: [] | [unknown] = [];
       try {
         return await body(scope);
@@ -267,13 +272,7 @@ export function createFixtureScope() {
         primary = [error];
         throw error;
       } finally {
-        cancel();
-        // These are phase tasks, not a second resource registry. The common core
-        // owns report-before-release, all-attempt execution and error propagation.
-        const finalization = createOwnershipScope();
-        finalization.defer(async () => (await finish()).throwIfFailed());
-        if (report) finalization.defer(report);
-        (await finalization.releaseAll()).throwIfFailed(...primary);
+        await close(...primary);
       }
     },
   });

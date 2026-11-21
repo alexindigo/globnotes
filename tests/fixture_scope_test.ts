@@ -15,6 +15,7 @@ import {
 } from "./helpers/fixture_scope_engine.ts";
 import { OwnershipError } from "../shared/ownership.js";
 import { workMilestone } from "./helpers/product_settlement.ts";
+import { bounded } from "./helpers/worker_liveness.ts";
 import {
   fixtureGate,
   fixtureTest,
@@ -819,5 +820,148 @@ fixtureTest(
     }
     assert(closed);
     assertEquals(scope.size, 0);
+  },
+);
+
+for (const first of ["root", "child"] as const) {
+  fixtureTest(
+    `fixture report barrier: ${first} closes first and every release follows report settlement`,
+    async (testScope) => {
+      const root = createFixtureScope(), child = createFixtureScope();
+      const body = fixtureGate(testScope),
+        entered = fixtureGate(testScope),
+        report = fixtureGate(testScope);
+      const events: string[] = [];
+      root.scope.defer(() => {
+        assert(
+          events.includes("report-settled"),
+          "report must settle before root release",
+        );
+        events.push("root-release");
+      });
+      ownFixtureScope(root.scope, child.scope);
+      const running = child.run(async (scope) => {
+        scope.defer(() => {
+          assert(
+            events.includes("report-settled"),
+            "report must settle before child release",
+          );
+          events.push("child-release");
+        });
+        await body.promise;
+      }, async () => {
+        events.push("report-entered");
+        entered.resolve();
+        await report.promise;
+        events.push("report-settled");
+      });
+      running.catch(() => {});
+      let rootClosing: Promise<void> | undefined,
+        childClosing: Promise<void> | undefined;
+      try {
+        if (first === "root") {
+          rootClosing = root.close();
+          rootClosing.catch(() => {});
+        }
+        body.resolve();
+        await bounded(
+          workMilestone(running, entered.promise, "child report entered"),
+          "child report entry",
+        );
+        if (first === "child") {
+          childClosing = child.close();
+          childClosing.catch(() => {});
+        }
+        rootClosing ??= root.close();
+        rootClosing.catch(() => {});
+        childClosing ??= child.close();
+        childClosing.catch(() => {});
+      } finally {
+        body.resolve();
+        report.resolve();
+        await bounded(
+          Promise.all([
+            running,
+            rootClosing ?? root.close(),
+            childClosing ?? child.close(),
+          ]),
+          "all report-aware closes",
+        );
+      }
+      assertEquals(events, [
+        "report-entered",
+        "report-settled",
+        "child-release",
+        "root-release",
+      ]);
+      assertEquals([root.scope.size, child.scope.size], [0, 0]);
+    },
+  );
+
+  fixtureTest(
+    `fixture report barrier: ${first} closes first without a report and completes promptly`,
+    async () => {
+      const root = createFixtureScope(), child = createFixtureScope();
+      const events: string[] = [];
+      root.scope.defer(() => {
+        events.push("root-release");
+      });
+      ownFixtureScope(root.scope, child.scope);
+      child.scope.defer(() => {
+        events.push("child-release");
+      });
+      const closing = first === "root"
+        ? [root.close(), child.close()]
+        : [child.close(), root.close()];
+      await bounded(Promise.all(closing), "linked child without a report");
+      assertEquals(events, ["child-release", "root-release"]);
+      assertEquals([root.scope.size, child.scope.size], [0, 0]);
+    },
+  );
+}
+
+fixtureTest(
+  "fixture report barrier: preparation failure joins the same active report",
+  async (testScope) => {
+    const child = createFixtureScope(),
+      entered = fixtureGate(testScope),
+      report = fixtureGate(testScope);
+    const events: string[] = [],
+      primary = new Error("preparation failed during report");
+    const running = child.run((scope) => {
+      scope.defer(() => {
+        assert(
+          events.includes("report-settled"),
+          "report must settle before preparation release",
+        );
+        events.push("release");
+      });
+    }, async () => {
+      entered.resolve();
+      await report.promise;
+      events.push("report-settled");
+    });
+    running.catch(() => {});
+    let failed: Promise<unknown> | undefined;
+    try {
+      await bounded(
+        workMilestone(running, entered.promise, "preparation report entered"),
+        "preparation report entry",
+      );
+      failed = caught(() =>
+        child.prepare(() => {
+          throw primary;
+        })
+      );
+      failed.catch(() => {});
+    } finally {
+      report.resolve();
+      await bounded(
+        Promise.all([running, failed]),
+        "preparation joins active report",
+      );
+    }
+    assertStrictEquals(await failed, primary);
+    assertEquals(events, ["report-settled", "release"]);
   },
 );
