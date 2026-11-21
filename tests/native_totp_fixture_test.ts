@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals, assertRejects } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { createNativeTotpClock } from "../client/tests/e2e/native-totp-fixture.mjs";
 import { authenticatorCode, TOTP_STEP_MS } from "./helpers/totp.ts";
 import { isAbsolute, relative } from "node:path";
@@ -45,7 +46,7 @@ Deno.test("native TOTP frozen clock: rollover selects the verifier's fresh curre
         "run",
         "--cached-only",
         "--frozen",
-        `--config=${new URL("../deno.json", import.meta.url).pathname}`,
+        `--config=${fromFileUrl(new URL("../deno.json", import.meta.url))}`,
         "--allow-read",
         "--allow-env",
         ...clock.denoArgs,
@@ -339,7 +340,7 @@ Deno.test("native server fixture: relative vault/state reach the child and one l
         "run",
         "--cached-only",
         "--frozen",
-        `--config=${new URL("../deno.json", import.meta.url).pathname}`,
+        `--config=${fromFileUrl(new URL("../deno.json", import.meta.url))}`,
         "--unstable-worker-options",
         "--allow-read",
         "--allow-write",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
+import { toFileUrl } from "@std/path";
 import { readAppVersion } from "../server/version.ts";
 import { formatVersion } from "../shared/version.ts";
 import { bootServer } from "./helpers/boot.ts";
@@ -67,6 +68,25 @@ Deno.test("an invalid VERSION file is a startup error", async () => {
         "MAJOR.MINOR",
       );
     });
+  }
+});
+
+Deno.test("VERSION diagnostics decode file URLs with spaces and percent signs", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "version space % " });
+  const file = `${directory}/VERSION`;
+  try {
+    await Deno.writeTextFile(file, "invalid");
+    const error = assertThrows(
+      () => readAppVersion({ file: toFileUrl(file), env: envOf({}) }),
+      Error,
+      "Invalid release version",
+    );
+    assertEquals(
+      error.message,
+      `Invalid release version "invalid" in ${file}: expected MAJOR.MINOR or MAJOR.MINOR.PATCH digits`,
+    );
+  } finally {
+    await Deno.remove(directory, { recursive: true });
   }
 });
 

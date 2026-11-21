@@ -526,6 +526,124 @@ async function scan(rule: Rule): Promise<string[]> {
 
 const rule = (id: string) => RULES.find((entry) => entry.id === id)!.pattern;
 
+/** Only these reviewed HTTP/browser expressions may retain URL encoding. Every
+ * other pathname access needs review, including aliases of file URLs. */
+const URL_PATH_USES = [
+  {
+    name: "browser location paths",
+    pattern: /\blocation\s*\.\s*pathname\b/g,
+  },
+  {
+    name: "HTTP request and captured network response paths",
+    pattern:
+      /\bnew\s+URL\(\s*(?:(?:\w+\.)*request\.(?:_raw\.)?url|row\.url)\s*\)\s*\.\s*pathname\b/g,
+  },
+  {
+    name: "browser hyperlink and saved editor URL paths",
+    pattern:
+      /\bnew\s+URL\(\s*(?:location\.href|link\.href|window\.__gpsEditorUrl)\s*\)\s*\.\s*pathname\b/g,
+  },
+  {
+    name: "named HTTP routing and remote-provider URL variables",
+    files: [
+      "server/main.ts",
+      "tests/remotely_save_providers_test.ts",
+      "tests/helpers/remotely_save_remote.ts",
+      "tests/helpers/memory_remote.ts",
+      "tests/fixtures/plugins/globnotes-test-driver/driver.js",
+      "tests/interop/remotely_save_reference.mjs",
+      "client/tests/e2e/conflict-inbox-native.mjs",
+      "client/tests/e2e/background-connections-native.mjs",
+      "client/tests/e2e/settings-restart-fixture.mjs",
+      "client/tests/e2e/plugin-review-repairs.mjs",
+    ],
+    pattern: /\burl\s*\.\s*pathname\b/g,
+  },
+  {
+    name: "WebDAV HTTP base and response href paths",
+    files: ["tests/interop/remotely_save_reference.mjs"],
+    pattern: /\b(?:base|new\s+URL\(item\.href,\s*base\))\s*\.\s*pathname\b/g,
+  },
+  {
+    name: "HTTP-origin validator result",
+    files: ["client/tests/e2e/http-origin.test.js"],
+    pattern: /assertHttpTestUrl\(`http[^\n]+?fake\(\)\)\s*\.\s*pathname\b/g,
+  },
+];
+
+function filePathnameSites(file: string, text: string) {
+  const lines = text.split("\n");
+  for (const allowed of URL_PATH_USES) {
+    if (allowed.files && !allowed.files.includes(file)) continue;
+    // Mask only the named expression, not its whole line or file; keep lines.
+    text = text.replace(
+      allowed.pattern,
+      (expression) => expression.replace(/[^\n]/g, " "),
+    );
+  }
+  return matches(/\.\s*pathname\b/, text).map((site) => ({
+    line: site.line,
+    text: lines[site.line - 1].trim(),
+  }));
+}
+
+Deno.test("isolation contract: filesystem paths use fromFileUrl, not URL pathname", async () => {
+  for (
+    const sample of [
+      'repositorySources(new URL("../", import.meta.url).pathname);',
+      "const file = new URL(import.meta.url); read(file.pathname);",
+      'read(new URL("file:///checkout%20space/VERSION").pathname);',
+      "const url = new URL(import.meta.url); read(url.pathname);",
+    ]
+  ) {
+    assertEquals(filePathnameSites("tests/bad.ts", sample), [
+      { line: 1, text: sample },
+    ]);
+  }
+  assertEquals(
+    filePathnameSites(
+      "tests/bad.ts",
+      'read(new URL("../",\n import.meta.url)\n .pathname);',
+    ),
+    [{ line: 3, text: ".pathname);" }],
+  );
+  const besideHttp = "url.pathname; read(new URL(import.meta.url).pathname);";
+  assertEquals(filePathnameSites("server/main.ts", besideHttp), [
+    { line: 1, text: besideHttp },
+  ]);
+  assertEquals(
+    filePathnameSites(
+      "tests/good.ts",
+      'read(fromFileUrl(new URL("../", import.meta.url)));',
+    ),
+    [],
+  );
+  assertEquals(
+    filePathnameSites(
+      "tests/good.ts",
+      "new URL(request.url).pathname; location.pathname;",
+    ),
+    [],
+  );
+  const violations: string[] = [];
+  for (const scope of ["server", "tests", "client/tests", "scripts"]) {
+    for await (const file of sources(path.join(ROOT, scope))) {
+      if (file === SELF) continue;
+      const relative = path.relative(ROOT, file);
+      for (
+        const site of filePathnameSites(relative, await Deno.readTextFile(file))
+      ) {
+        violations.push(`${relative}:${site.line}: ${site.text}`);
+      }
+    }
+  }
+  assertEquals(
+    violations,
+    [],
+    "Use fromFileUrl for filesystem paths; name genuine HTTP/browser paths in URL_PATH_USES",
+  );
+});
+
 Deno.test("isolation contract: rules see constructs split across lines", () => {
   const remote = rule("unique-remote-module-urls");
   const lines = (text: string) => matches(remote, text).map((m) => m.line);

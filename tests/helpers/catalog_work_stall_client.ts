@@ -2,6 +2,7 @@
 /** Run the unmodified native backup consumer, substituting only its server entry
  * with the test-owned scheduling seam. Works against an exact main export too. */
 import { waitForAudit } from "./catalog_work_audit.ts";
+import { fromFileUrl } from "@std/path";
 import {
   publishRecord,
   readRecord,
@@ -37,7 +38,7 @@ Deno.Command = class extends NativeCommand {
         main,
         1,
         "--allow-run",
-        new URL("./catalog_work_stall_server.ts", import.meta.url).pathname,
+        fromFileUrl(new URL("./catalog_work_stall_server.ts", import.meta.url)),
       );
       options = {
         ...options,

@@ -7,6 +7,7 @@
  */
 
 import { type Environment, processEnvironment } from "./environment.ts";
+import { fromFileUrl } from "@std/path";
 
 export interface AppVersion {
   version: string;
@@ -26,7 +27,7 @@ export function readAppVersion(
     env?: Environment;
   } = {},
 ): AppVersion {
-  const location = file instanceof URL ? file.pathname : file;
+  const location = file instanceof URL ? fromFileUrl(file) : file;
   let content: string;
   try {
     content = Deno.readTextFileSync(file);
