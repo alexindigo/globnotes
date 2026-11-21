@@ -240,11 +240,14 @@ review, and a noisy heuristic would reject valid invariants or miss real reads.
 
 TOTP browser fixtures share `native-totp-fixture.mjs`. Its preload controls
 `Date.now()` only in the owned server subprocess. Before selecting login input,
-`loginCode` checks up to four future steps using the independent RFC 6238
-reference, then publishes the first unspent step and returns its current code.
+`loginCode(secret, consumed, authenticate)` checks up to four future steps using
+the independent RFC 6238 reference, publishes the first unspent step and invokes
+the required authentication callback with its current code.
 Ordinarily this advances one step; exhausting all four leaves time unchanged.
-The verifier stays frozen until authentication finishes, so input and
-verification use the same step without request interception or crossing receipts.
+The callback includes input, submission and the actual authenticated consumer.
+It shares one owned queue with every login and explicit advance; an advance waits
+until authentication settles, including rejection. Thus input and verification
+use the same step without request interception or crossing receipts.
 Current-credential proofs use a fresh current step without spending a later
 login's code. Targeted tests reproduce the old expired previous-code boundary
 failure and compare selected codes with the actual child verifier's frozen step.
@@ -485,7 +488,9 @@ runner reports). Metadata read cost already asserts I/O counts, not milliseconds
 
 `helpers/fixture_clock.ts` owns one typed P11 clock record and a local snapshot.
 `await clock.advance(milliseconds)` serializes advances, publishes first and only
-then assigns the local time. A failed stage or rename leaves both unchanged;
+then assigns the local time at the successful rename, before staging cleanup.
+A distinct `RecordPostCommitError` reports later notification/cleanup failure
+without rolling back committed time. A failed stage or rename leaves both unchanged;
 the next call derives from the last committed value. Close the clock after its
 child has stopped. The read-only child closure rejects absent/malformed records;
 it never falls back to live time. This is fixture time, not a production clock.
@@ -507,8 +512,9 @@ failure or completion cannot leave a wait for an entry that will never occur.
 Native TOTP uses this record only in the server subprocess's `Date.now` preload;
 the parent/browser retain their own clocks. The RFC reference takes explicit time
 and stays independent of otplib. Login input selection skips consumed/equal codes
-within the existing four candidates, publishes the chosen step, then returns the
-reference code. Exhaustion publishes nothing. Driver retry fixtures use the same
+within the existing four candidates and publishes the chosen step before running
+the required authentication callback in the same queue. Exhaustion publishes
+nothing. Driver retry fixtures use the same
 publisher/reader at `processClock.now`, without overriding wall time.
 
 The always-selected guard composes explicit Date/performance root rules and

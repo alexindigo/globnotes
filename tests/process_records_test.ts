@@ -10,6 +10,7 @@ import {
   nativeRecordIO,
   publishRecord,
   readRecord,
+  RecordPostCommitError,
   waitForRecord,
   watchOwnerPipe,
 } from "./helpers/process_records.ts";
@@ -495,12 +496,66 @@ for (const asynchronous of [false, true]) {
         throw failure;
       },
     };
-    const error = await assertRejects(async () =>
-      await publishRecord("record", "{}", {}, io)
+    const error = await assertRejects(
+      async () => await publishRecord("record", "{}", {}, io),
+      RecordPostCommitError,
+      "Record committed but post-commit work failed",
     );
-    assertStrictEquals(error, failure);
+    assertStrictEquals(error.cause, failure);
+    assertEquals([error.path, error.committed], ["record", true]);
     assertEquals(removes, 1);
   });
+}
+
+for (const asynchronous of [false, true]) {
+  for (const createNew of [false, true]) {
+    Deno.test(`record PR109: commit notification precedes cleanup (${asynchronous}, ${createNew})`, async () => {
+      const events: string[] = [];
+      const notification = new Error("notification failed"),
+        cleanup = new Error("cleanup failed");
+      const io: RecordIO = {
+        unique: () => "candidate",
+        write() {
+          events.push("write");
+        },
+        rename() {
+          events.push("rename");
+          return asynchronous ? Promise.resolve() : undefined;
+        },
+        link() {
+          events.push("link");
+          return asynchronous ? Promise.resolve() : undefined;
+        },
+        remove() {
+          events.push("cleanup");
+          if (asynchronous) return Promise.reject(cleanup);
+          throw cleanup;
+        },
+      };
+      const error = await assertRejects(
+        async () =>
+          await publishRecord("record", "{}", {
+            createNew,
+            onCommit() {
+              events.push("committed");
+              throw notification;
+            },
+          }, io),
+        RecordPostCommitError,
+        "Record committed but post-commit work failed",
+      );
+      assertEquals(events, [
+        "write",
+        createNew ? "link" : "rename",
+        "committed",
+        "cleanup",
+      ]);
+      assertInstanceOf(error.cause, AggregateError);
+      assertEquals(error.cause.errors, [notification, cleanup]);
+      assertStrictEquals(error.cause.errors[0], notification);
+      assertStrictEquals(error.cause.errors[1], cleanup);
+    });
+  }
 }
 
 Deno.test("record custody review: observer owns its watcher before its initial probe can fail", async () => {

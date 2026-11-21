@@ -15,7 +15,7 @@ export async function createNativeTotpClock(directory, epochMs = bootstrapFixtur
   scope.onCancel(() => published.close());
   const preload = `${directory}/authenticator-time.mjs`;
   await scope.admit(() => Deno.writeTextFile(preload, `import { fixtureClockReader } from ${JSON.stringify(new URL("../../../tests/helpers/fixture_clock.ts", import.meta.url).href)};\nDate.now = fixtureClockReader(${JSON.stringify(published.directory)});\n`, { createNew: true }));
-  // Select and publish as one owned operation; explicit advances use the same lane.
+  // Selection, publication and authentication share the lane with every advance.
   let tail = Promise.resolve();
   const enqueue = operation => {
     const previous = tail;
@@ -29,9 +29,10 @@ export async function createNativeTotpClock(directory, epochMs = bootstrapFixtur
   const clock = {
     denoArgs: ["--preload", preload], now: published.now, close: lifetime.close,
     code: (secret, offset = 0) => authenticatorCode(secret, published.now() + offset * TOTP_STEP_MS),
-    // Move before choosing input; the owned verifier then stays frozen through
-    // authentication. No request interception or adjacent-window fallback.
-    async loginCode(secret, consumed) {
+    // The callback owns verification through its actual authenticated consumer.
+    // No code escapes before that operation settles; queued advances wait for it.
+    async loginCode(secret, consumed, authenticate) {
+      if (typeof authenticate !== "function") throw new TypeError("Authentication callback required");
       const used = new Set(consumed);
       return await enqueue(async () => {
         for (let steps = 1; steps <= LOGIN_STEP_CANDIDATES; steps++) {
@@ -39,7 +40,8 @@ export async function createNativeTotpClock(directory, epochMs = bootstrapFixtur
           scope.assertCurrent();
           if (used.has(code)) continue;
           await published.advance(steps * TOTP_STEP_MS);
-          return code;
+          scope.assertCurrent();
+          return await authenticate(code, scope.signal);
         }
         throw Error("Every candidate login code was already consumed");
       });

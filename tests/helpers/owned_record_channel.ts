@@ -14,6 +14,7 @@ import {
   type RecordIO,
   waitForRecord,
 } from "./process_records.ts";
+export { RecordPostCommitError } from "./process_records.ts";
 
 declare const directoryBrand: unique symbol;
 declare const schemaBrand: unique symbol;
@@ -340,15 +341,20 @@ export function recordChannel<T>(
     read,
     publish: scope.bind((
       value: T,
-      options: { exclusive?: boolean } = {},
+      options: {
+        exclusive?: boolean;
+        onCommit?: (snapshot: RecordSnapshot<T>) => void;
+      } = {},
     ): RecordSnapshot<T> | Promise<RecordSnapshot<T>> => {
       assertPublication();
       const bytes = JSON.stringify(value);
       const snapshot = decode(bytes);
+      const { exclusive, onCommit } = options;
       const admitted = admittedEffect(state, (signal) => {
         const published = publishRecord(file, bytes, {
-          createNew: options.exclusive,
+          createNew: exclusive,
           signal: AbortSignal.any([signal, controller.signal]),
+          onCommit: () => onCommit?.(snapshot),
         }, {
           ...publication,
           rename(from, to, signal) {

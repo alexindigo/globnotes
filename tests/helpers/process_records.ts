@@ -3,8 +3,14 @@ import { fixtureScope } from "./fixture_scope.ts";
 import {
   publishRecord as publishWithIO,
   type RecordIO,
+  type RecordPublicationOptions,
 } from "./record_publication.ts";
-export { captureRecordIO, type RecordIO } from "./record_publication.ts";
+export {
+  captureRecordIO,
+  type RecordIO,
+  RecordPostCommitError,
+  type RecordPublicationOptions,
+} from "./record_publication.ts";
 export const nativeRecordIO: RecordIO = {
   unique: () => crypto.randomUUID(),
   write: (path, content) =>
@@ -30,7 +36,7 @@ export const nativeRecordIO: RecordIO = {
 export function publishRecord(
   path: string,
   content: string | Uint8Array,
-  options: { createNew?: boolean; signal?: AbortSignal } = {},
+  options: RecordPublicationOptions = {},
   io: RecordIO = nativeRecordIO,
 ): void | Promise<void> {
   return publishWithIO(path, content, options, io);

@@ -11,6 +11,7 @@ import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 import { createNativeTotpClock } from "./native-totp-fixture.mjs";
 import { fixtureScope } from "../../../tests/helpers/fixture_scope.ts";
 import { createFixtureScope } from "../../../tests/helpers/fixture_scope_engine.ts";
+import { prepareRepairFixture, repairRequestHandler } from "./repair-fixture-lifetime.mjs";
 
 await fixtureScope(async suite => {
 const options = parseReviewRepairArguments(Deno.args);
@@ -26,7 +27,7 @@ const outcomes = [], fixtures = [];
 const password = "review-fixture-current-password", username = "review-fixture";
 const cdpPort = Number(Deno.env.get("CDP_PORT"));
 assert(Number.isSafeInteger(cdpPort) && cdpPort > 0, "Verified owned CDP_PORT required");
-let current;
+let current, failureReportStarted = false;
 
 function until(predicate, detail) {
   return waitUntil(async () => await predicate() ? done() : pending({ condition: String(predicate) }), { label: detail, intervalMs: 30 });
@@ -83,6 +84,7 @@ async function togglePeer(enabled) {
   await finishPeerPolicy(`document.querySelector('${enabledSwitch}')?.getAttribute('aria-checked')===${JSON.stringify(String(enabled))}`, `document.querySelector('${enabledSwitch}')?.disabled`);
 }
 function gateResponse(method, path) {
+  current.scope.assertCurrent();
   assert(!current.nextGate, "Overlapping fixture transport admission");
   const gate = { method, path, response: null, released: false, ready: Promise.withResolvers(), release: Promise.withResolvers() };
   current.nextGate = gate; current.gates.push(gate); return gate;
@@ -91,7 +93,8 @@ async function release(gate) { gate.released = true; gate.release.resolve(); }
 async function fixture(label, { protectedAccount = false, browser = false } = {}) {
   assert(fixtures.every(value => value.closed), "Previous successful fixture not closed");
   const lifetime = (await suite.acquire(createFixtureScope, lifetime => lifetime.close())).value;
-  return await lifetime.prepare(async scope => {
+  let owner;
+  return await prepareRepairFixture(lifetime, async scope => {
   const directory = `${artifacts}/${label}`, vault = `${directory}/vault`, state = `${directory}/state/globnotes`, pluginDir = `${state}/plugins/review`;
   await Deno.mkdir(vault, { recursive: true }); await Deno.mkdir(pluginDir, { recursive: true });
   await Deno.writeTextFile(`${vault}/Seed.md`, "Review seed.\n");
@@ -103,7 +106,7 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
   await Deno.writeTextFile(`${pluginDir}/service.js`, `const owner=crypto.randomUUID();export function activate(ctx){ctx.commands.register({id:'inspect',label:'Inspect repair fixture',target:'server'},()=>({owner}));ctx.commands.register({id:'request',label:'Request repair scope',target:'server'},async()=>{const view=await ctx.permissions.status();return ctx.permissions.requestAccess({kind:'network',hosts:['127.0.0.1:9'],reason:'Repair prompt fixture'},{source:view.source});});}`);
   await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["review"], autoEnable: false }));
   current = { label, directory, vault, state, pluginDir, manifest, descriptor, config, protectedAccount, sessions: [], gates: [], browserHolds: [], requests: [], scope, close: () => lifetime.close(), closed: false };
-  const owner = current;
+   owner = current;
   scope.onCancel(() => {
     for (const gate of owner.gates) { gate.released = true; gate.release.resolve(); }
     for (const hold of owner.browserHolds) hold.resolve();
@@ -120,35 +123,37 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
   }
    if (label === "access-conflict") current.totpClock = (await scope.acquire(() => createNativeTotpClock(directory), clock => clock.close())).value;
    current.server = (await scope.acquire(() => bootServer(vault, state, { logsDir: directory, headers, denoArgs: current.totpClock?.denoArgs }), server => server.close())).value;
-   current.proxy = (await scope.acquire(() => Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, async request => {
+    current.proxy = (await scope.acquire(() => Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, repairRequestHandler(scope, async (request, signal) => {
     const url = new URL(request.url);
     if (url.pathname === "/fixture/browser-A") {
       const barrier = Promise.withResolvers(); owner.browserHolds.push(barrier); await barrier.promise;
       return new Response("release old activation");
     }
-    const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
+     const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
+     scope.assertCurrent();
     const headers = new Headers(request.headers); headers.delete("host"); headers.delete("content-length");
-    const response = await fetch(`${owner.server.baseUrl}${url.pathname}${url.search}`, { method: request.method, headers, body, redirect: "manual" });
+    const response = await fetch(`${owner.server.baseUrl}${url.pathname}${url.search}`, { method: request.method, headers, body, redirect: "manual", signal });
+    scope.assertCurrent();
     owner.requests.push({ method: request.method, path: url.pathname, status: response.status, at: Date.now() });
     const gate = owner.nextGate;
     if (gate?.method === request.method && gate.path === url.pathname) {
       owner.nextGate = null;
-      const bytes = await response.arrayBuffer(); gate.response = { status: response.status, body: new TextDecoder().decode(bytes), at: Date.now() }; gate.ready.resolve();
+      const bytes = await response.arrayBuffer(); scope.assertCurrent(); gate.response = { status: response.status, body: new TextDecoder().decode(bytes), at: Date.now() }; gate.ready.resolve();
       await gate.release.promise;
       return new Response(bytes, { status: response.status, headers: response.headers });
     }
     return new Response(response.body, { status: response.status, headers: response.headers });
-   }), proxy => proxy.shutdown())).value;
+   })), proxy => proxy.shutdown())).value;
   current.entryBase = httpOrigin(current.proxy.addr.port);
   current.session = await sessionAt(current.entryBase);
   current.peer = await sessionAt(current.server.baseUrl);
   current.peerPolicyWrites = 0;
-  current.peer.page.onEvent(event => {
-    if (event.method === "Network.requestWillBeSent" && event.params.request.method === "PUT" && /^\/_\/api\/plugin-host\/(?:policy|review\/enabled)$/.test(new URL(event.params.request.url).pathname)) current.peerPolicyWrites++;
-  });
+   current.peer.page.onEvent(event => {
+     if (event.method === "Network.requestWillBeSent" && event.params.request.method === "PUT" && /^\/_\/api\/plugin-host\/(?:policy|review\/enabled)$/.test(new URL(event.params.request.url).pathname)) current.peerPolicyWrites++;
+   });
   await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({ label, vault, state, serverPid: current.server.pid, baseUrl: current.server.baseUrl, entryBase: current.entryBase,
     contexts: current.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })) }, null, 2), { createNew: true });
-  });
+  }, error => reportFailure(error, owner));
 }
 async function browserCode(kind) {
   await Deno.writeTextFile(`${current.pluginDir}/browser.js`, `export async function activate(ctx){
@@ -164,14 +169,27 @@ async function browserCode(kind) {
     }
   }`);
 }
-async function capture(label) {
-  await captureNativeDiagnostics(current.session, {
-    imagePaths: [`${current.directory}/${label}.png`, ...(label === "failure" ? [`${artifacts}/failure.png`] : [])],
-    geometryPath: `${current.directory}/${label}.json`,
+async function capture(label, owner = current) {
+  await captureNativeDiagnostics(owner.session ?? owner.sessions[0], {
+    imagePaths: [`${owner.directory}/${label}.png`, ...(label === "failure" ? [`${artifacts}/failure.png`] : [])],
+    geometryPath: `${owner.directory}/${label}.json`,
   });
 }
 function failureDetails(error) {
-  return [error.stack ?? String(error), ...(error instanceof AggregateError ? error.errors.map(failureDetails) : [])].join("\n");
+  return [error?.stack ?? String(error), ...(error instanceof AggregateError ? error.errors.map(failureDetails) : [])].join("\n");
+}
+async function reportFailure(error, owner) {
+  // The create-new report belongs to the suite, even before a fixture exists.
+  if (failureReportStarted) return;
+  failureReportStarted = true;
+  let captureFailure;
+  if (owner && !owner.closed && owner.sessions.length) {
+    try { await capture("failure", owner); }
+    catch (diagnosticError) { captureFailure = failureDetails(diagnosticError); }
+  }
+  await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ failure: failureDetails(error), captureFailure, outcomes, current: owner && { label: owner.label, directory: owner.directory, vault: owner.vault, state: owner.state, serverPid: owner.server?.pid, entryBase: owner.entryBase,
+    sessions: owner.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })), requests: owner.requests, serverLogs: owner.server?.logs, unresolvedGates: owner.gates.filter(gate => !gate.released).map(gate => ({ method: gate.method, path: gate.path, response: gate.response })) } }, null, 2), { createNew: true });
+  console.error(`Retained native repair failure: ${error?.message ?? String(error)}; ${artifacts}/failure.json`);
 }
 async function outcome(group, consumers) {
   assert(!outcomes.some(row => row.group === group), "Duplicate repair group");
@@ -234,10 +252,12 @@ try {
   if (await current.session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width")) await current.session.click('[title="Close sidebar"]');
   await current.session.poll("!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width");
   await fill(current.session, "#username", username); await fill(current.session, "#password", "review-fixture-new-password");
-  await fill(current.session, "#one-time-code", await current.totpClock.loginCode(bundle.secret, [confirmed]));
+   await current.totpClock.loginCode(bundle.secret, [confirmed], async code => {
+   await fill(current.session, "#one-time-code", code);
   await current.session.button("Log In");
   await current.session.poll("!document.querySelector('#username')");
-  assert((await api("auth-check", "GET", undefined, current.session)).status === 200, "Confirmed proposed credentials cannot log in");
+   assert((await api("auth-check", "GET", undefined, current.session)).status === 200, "Confirmed proposed credentials cannot log in");
+   });
   // Access deliberately routes to login without a resource redirect; the real
   // login consumer returns Home. Navigate to the fixture note for its viewer.
   await current.session.goto(`${current.entryBase}/Seed`); await current.session.poll("document.querySelector('.toast-viewer')?.textContent.includes('Review seed.')");
@@ -337,21 +357,8 @@ try {
   await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ complete: true, outcomes, retainedRoots: fixtures.map(value => value.directory) }, null, 2), { createNew: true });
   console.log(`PLUGIN REVIEW REPAIRS OK (${outcomes.length} repair groups)`);
 } catch (error) {
-  let captureFailure;
-  await fixtureScope(report => {
-  report.defer(async () => {
-    await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ failure: failureDetails(error), captureFailure, outcomes, current: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server?.pid, entryBase: current.entryBase,
-      sessions: current.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })), requests: current.requests, serverLogs: current.server?.logs, unresolvedGates: current.gates.filter(gate => !gate.released).map(gate => ({ method: gate.method, path: gate.path, response: gate.response })) } }, null, 2), { createNew: true });
-    console.error(`Retained native repair failure: ${error.message}; ${artifacts}/failure.json`);
-  });
-  report.defer(async () => {
-  if (current?.session) {
-    try {
-      await capture("failure");
-    } catch (diagnosticError) { captureFailure = failureDetails(diagnosticError); }
-  }
-  });
+  try { await reportFailure(error, current); }
+  catch (reportError) { throw new AggregateError([error, reportError], "Repair failure and report failed", { cause: error }); }
   throw error;
-  });
 }
 });

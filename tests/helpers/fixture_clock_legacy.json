@@ -482,9 +482,9 @@
   {
     "file": "client/tests/e2e/plugin-review-repairs.mjs",
     "capability": "Date.now",
-    "line": 127,
+    "line": 141,
     "source": "Date.now",
-    "context": "const bytes = await response.arrayBuffer(); gate.response = { status: response.status, body: new TextDecoder().decode(bytes), at: Date.now() }; gate.ready.resolve();",
+    "context": "const bytes = await response.arrayBuffer(); scope.assertCurrent(); gate.response = { status: response.status, body: new TextDecoder().decode(bytes), at: Date.now() }; gate.ready.resolve();",
     "family": "legacy-clock-roots"
   },
   {

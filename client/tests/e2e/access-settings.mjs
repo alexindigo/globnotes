@@ -84,12 +84,15 @@ async function fixture(label, protectedMode) {
     if (totp) {
       const { totpSecretFromRawKey } = await import("../../../server/auth/local.ts");
       const secret = totpSecretFromRawKey(config.totp_key);
-      await fill("#one-time-code", await totpClock.loginCode(secret, []));
-      await session.button("Log In");
+      await totpClock.loginCode(secret, [], async code => {
+        await fill("#one-time-code", code);
+        await session.button("Log In");
+        await session.poll("!!document.querySelector('.toast-viewer')");
+        assert((await api("auth-check", "GET", undefined, await session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Initial authenticator login has no authenticated session");
+      });
     } else await session.button("Log In");
   }
   await session.poll("!!document.querySelector('.toast-viewer')");
-  if (totp) assert((await api("auth-check", "GET", undefined, await session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Initial authenticator login has no authenticated session");
 }
 async function fill(selector, value) {
   const session = owned.session;
@@ -188,10 +191,13 @@ try {
   assert(after.auth_type === "totp" && after.password_hash === owned.initial.password_hash && after.username === username && after.brand_name === owned.initial.brand_name && after.unrelated_fixture.kept, "Confirmed 2FA replaced existing credentials/config");
   assert((await api("auth-check", "GET", undefined, oldToken)).status === 401, "Confirmed 2FA left old session valid");
   await closeSidebar(session);
-  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await owned.totpClock.loginCode(bundle.secret, [confirmedCode]));
+  await fill("#username", username); await fill("#password", password);
+  await owned.totpClock.loginCode(bundle.secret, [confirmedCode], async code => {
+  await fill("#one-time-code", code);
   await session.button("Log In"); await session.poll("!document.querySelector('#username')");
   const freshToken = await session.evaluate("sessionStorage.getItem('token')");
   assert((await api("auth-check", "GET", undefined, freshToken)).status === 200, "Confirmed authenticator cannot sign in");
+  });
   dispose();
   await finishCase("native enrolment cancellation/invalid-code/confirmed-login consumer", { originalHashRetained: true, unrelatedConfigRetained: true, invalidCodeRetainedSession: true, oldSessionRevokedAfterConfirmation: true, confirmedLoginAccepted: true });
   }
@@ -267,9 +273,12 @@ try {
   assert((await api("auth-check", "GET", undefined, old)).status === 401, "Password change did not invalidate the old session");
   assert(JSON.parse(await saved()).totp_key === owned.initial.totp_key, "Password change replaced the existing authenticator");
   await closeSidebar();
-  await fill("#username", username); await fill("#password", "changed-native-password"); await fill("#one-time-code", await owned.totpClock.loginCode(currentSecret, [acceptedCode]));
+  await fill("#username", username); await fill("#password", "changed-native-password");
+  await owned.totpClock.loginCode(currentSecret, [acceptedCode], async code => {
+  await fill("#one-time-code", code);
   await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   assert((await api("auth-check", "GET", undefined, await owned.session.evaluate("sessionStorage.getItem('token')"))).status === 200, "Changed password/current authenticator cannot log in");
+  });
   await finishCase("native fresh-current-2FA rejection and password-change login", { wrongCurrentCodePreservedSession: true, passwordChangeRevokedOldSession: true, currentAuthenticatorRetained: true, newPasswordLoginAccepted: true });
   }
 
@@ -317,10 +326,13 @@ try {
   assert((await api("auth-check", "GET", undefined, replacementToken)).status === 401, "Confirmed replacement retained old session authority");
   assert((await api("token", "POST", { username, password: password + newConfirmation })).status === 401, "Replacement enrolment code can be replayed as login");
   await closeSidebar();
-  await fill("#username", username); await fill("#password", password); await fill("#one-time-code", await owned.totpClock.loginCode(replacement.secret, [newConfirmation]));
+  await fill("#username", username); await fill("#password", password);
+  await owned.totpClock.loginCode(replacement.secret, [newConfirmation], async code => {
+  await fill("#one-time-code", code);
   await owned.session.button("Log In"); await owned.session.poll("!document.querySelector('#username')");
   const freshToken = await owned.session.evaluate("sessionStorage.getItem('token')");
   assert((await api("auth-check", "GET", undefined, freshToken)).status === 200, "Replacement authenticator has no authenticated session");
+  });
   disposeReplacement(); await finishCase("native current/new authenticator proofs and replacement login", { activeKeyUnchangedDuringEnrolment: true, passwordHashRetained: true, confirmedNewKeyPersisted: true, spentNewCodeRejected: true, replacementLoginAccepted: true });
   }
 

@@ -24,7 +24,11 @@ Deno.test("native TOTP frozen clock: rollover selects the verifier's fresh curre
     const secret = "JBSWY3DPEHPK3PXP";
     const legacyPrevious = await clock.code(secret, -1),
       enrolment = await clock.code(secret);
-    const selected = await clock.loginCode(secret, [enrolment]);
+    const selected = await clock.loginCode(
+      secret,
+      [enrolment],
+      (code: string) => code,
+    );
     assertEquals(
       clock.now(),
       before + TOTP_STEP_MS,
@@ -114,7 +118,11 @@ Deno.test("native TOTP frozen clock: equal-code collision is skipped before publ
         ? Promise.resolve(consumed)
         : reference(key, offset);
     };
-    const selected = await clock.loginCode(secret, [consumed]);
+    const selected = await clock.loginCode(
+      secret,
+      [consumed],
+      (code: string) => code,
+    );
     assertEquals(
       selected,
       await authenticatorCode(secret, before + 2 * TOTP_STEP_MS),
@@ -183,7 +191,7 @@ Deno.test("native TOTP frozen clock: failed publication preserves the starting s
         failing = true;
         assertStrictEquals(
           await assertRejects(
-            () => clock.loginCode(secret, consumed),
+            () => clock.loginCode(secret, consumed, (code: string) => code),
             Error,
             cause.message,
           ),
@@ -192,7 +200,11 @@ Deno.test("native TOTP frozen clock: failed publication preserves the starting s
         failing = false;
         assertEquals(JSON.parse(await Deno.readTextFile(file)).now, before);
         assertEquals(clock.now(), before);
-        const code = await clock.loginCode(secret, consumed);
+        const code = await clock.loginCode(
+          secret,
+          consumed,
+          (code: string) => code,
+        );
         assertEquals(clock.now(), before + 4 * TOTP_STEP_MS);
         assertEquals(code, await authenticatorCode(secret, clock.now()));
         assertEquals(
@@ -216,12 +228,16 @@ Deno.test("native TOTP frozen clock: current proofs leave later login codes unsp
       1234567890_000,
     );
     const secret = "JBSWY3DPEHPK3PXP";
-    const initial = await clock.loginCode(secret, []);
+    const initial = await clock.loginCode(secret, [], (code: string) => code);
     assertEquals(initial, await clock.code(secret));
     await clock.advanceStep();
     const proof = await clock.code(secret);
     assertEquals(proof === initial, false);
-    const login = await clock.loginCode(secret, [initial, proof]);
+    const login = await clock.loginCode(
+      secret,
+      [initial, proof],
+      (code: string) => code,
+    );
     assertEquals(login, await clock.code(secret));
     assertEquals([initial, proof].includes(login), false);
     const before = clock.now();
@@ -229,7 +245,7 @@ Deno.test("native TOTP frozen clock: current proofs leave later login codes unsp
       [1, 2, 3, 4].map((offset) => clock.code(secret, offset)),
     );
     await assertRejects(
-      () => clock.loginCode(secret, reserved),
+      () => clock.loginCode(secret, reserved, (code: string) => code),
       Error,
       "Every candidate login code was already consumed",
     );

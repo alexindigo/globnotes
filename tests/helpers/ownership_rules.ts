@@ -92,6 +92,7 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       PLUGIN_FIXTURE_ENGINE,
       PLUGIN_OPERATIONS,
       "tests/fixture_scope_test.ts",
+      "tests/fixture_clock_ownership_test.ts",
       "tests/helpers/hub_fixture.ts",
       "tests/helpers/plugin_lifecycle.ts",
       "tests/helpers/driver_inprocess.ts",

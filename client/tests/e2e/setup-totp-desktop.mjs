@@ -351,7 +351,8 @@ async function fit(label) {
   );
   await page.fill("#username", "desktop-user");
   await page.fill("#password", "desktop-password");
-  await page.fill("#one-time-code", await totpClock.loginCode(bundle.secret, [confirmedCode]));
+  await totpClock.loginCode(bundle.secret, [confirmedCode], async code => {
+  await page.fill("#one-time-code", code);
   await page.clickText("Log In");
   await page.poll("!location.pathname.includes('/_/login')");
   assert(
@@ -359,6 +360,7 @@ async function fit(label) {
       200,
     "wizard TOTP setup and UI login yield authenticated access",
   );
+  });
   assert(
     page.pageErrors.length === 0,
     "completed flow has no unexpected browser exceptions",

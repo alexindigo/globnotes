@@ -23,7 +23,8 @@ const record = "time.json";
 
 /** Fixture-owned publisher, not the child process owner. P11 supplies directory,
  * schema, publication and cancellation custody. Each queued advance derives from
- * the last published value; failure leaves that value available for recovery. */
+ * the last committed value. Pre-commit failure preserves it; post-commit failure
+ * reports cleanup separately without rolling the committed snapshot back. */
 export async function createFixtureClock(
   parent: string | ScopedPluginFixture,
   name: string,
@@ -40,15 +41,22 @@ export async function createFixtureClock(
       label: name,
       exit: exit.promise,
     }, { io });
-    let now =
-      (await channel.publish({ now: initial }, { exclusive: true })).value.now;
+    let now = initial;
+    const committed = (snapshot: { value: { now: number } }) => {
+      now = snapshot.value.now;
+    };
+    await channel.publish({ now: initial }, {
+      exclusive: true,
+      onCommit: committed,
+    });
     let tail = Promise.resolve();
     const advance = (milliseconds: number) => {
       const previous = tail;
       const operation = scope.admit(() =>
         previous.then(async () => {
-          const published = await channel.publish({ now: now + milliseconds });
-          now = published.value.now;
+          await channel.publish({ now: now + milliseconds }, {
+            onCommit: committed,
+          });
         })
       ).then(() => undefined);
       tail = operation.catch(() => undefined);

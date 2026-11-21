@@ -54,6 +54,7 @@ export const NATIVE_HELPERS = {
   "prefix-auth-cases.mjs": "prefix/auth fixture identities and CLI admission",
   "remotely-save-fixture.mjs": "interoperability fixture",
   "review-repair-cases.mjs": "review repair fixture identities and CLI admission",
+  "repair-fixture-lifetime.mjs": "review repair request admission and preparation reporting",
   "settings-access-native.mjs": "Access summary helper",
   "settings-appearance-native.mjs": "Appearance scenario helper",
   "settings-cross-browser-native.mjs": "cross-browser Settings scenarios",
@@ -330,6 +331,7 @@ export const FILE_CASES = Object.fromEntries([
   ...SHARED_CASE_FILES.map(file => [file, SELECTION.map(caseName)]),
   ...["prefix-auth-fixture.mjs", "prefix-auth-cases.mjs"].map(file => [`client/tests/e2e/${file}`, prefixAuthSelection().map(caseName)]),
   ["client/tests/e2e/review-repair-cases.mjs", reviewRepairSelection().map(caseName)],
+  ["client/tests/e2e/repair-fixture-lifetime.mjs", reviewRepairSelection().map(caseName)],
   ...[...new Set(SELECTION.map(([name]) => name))].map(name => [
     `client/tests/e2e/${name}.mjs`,
     SELECTION.filter(([driver]) => driver === name).map(caseName),
