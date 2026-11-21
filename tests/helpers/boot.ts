@@ -68,8 +68,16 @@ export interface TestServer {
   status: () => Deno.CommandStatus | null;
   exited: Promise<Deno.CommandStatus>;
   /** Stops the server with a 5 s SIGTERM grace, then owned-child SIGKILL.
-   * Fails, with stderr, when the server had already exited on its own. */
+   * A cleanly released prior self-exit rejects with UnexpectedServerExitError;
+   * cleanup failures remain separate errors or aggregates, never that verdict. */
   close: () => Promise<void>;
+}
+
+/** A bare close rejection of this type certifies a self-exited process whose
+ * launcher resources were released. Failed cleanup wraps it in AggregateError,
+ * which must remain a failure even though the process is no longer running. */
+export class UnexpectedServerExitError extends Error {
+  override name = "UnexpectedServerExitError";
 }
 
 /** A scratch working directory for one server. When the checkout has a
@@ -329,7 +337,7 @@ export async function bootServer(
         closing ??= (async () => {
           try {
             if (child.status()) {
-              throw new Error(
+              throw new UnexpectedServerExitError(
                 await exitDetail("server exited on its own before close()"),
               );
             }

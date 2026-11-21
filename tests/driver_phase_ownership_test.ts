@@ -1363,90 +1363,205 @@ DriverSupervisor.prototype.sync = function (...args) {
   });
 });
 
-Deno.test("driver phase round3: a self-exited admission candidate cannot poison queued replacement", async () => {
+async function prepareDriverCandidate(
+  child: TestServer,
+  prepare: () => Promise<void>,
+) {
+  try {
+    await prepare();
+    return child;
+  } catch (primary) {
+    try {
+      await child.close();
+    } catch (cleanup) {
+      throw new AggregateError(
+        [primary, cleanup],
+        "Driver candidate preparation and shutdown failed",
+        { cause: primary },
+      );
+    }
+    throw primary;
+  }
+}
+
+Deno.test("driver phase round4: failed record preparation closes the constructed child and preserves its error", async () => {
   await fixtureScope(async (scope) => {
-    const remote = (await scope.acquire(() =>
-      memoryRemote(), (remote) => remote.close())).value;
-    const root = (await scope.acquire(() =>
-      Deno.makeTempDir({ prefix: "driver-self-exit-" }), (root) =>
-      Deno.remove(root, { recursive: true }))).value;
-    const preload = `${root}/self-exit.mjs`;
-    Deno.writeTextFileSync(
-      preload,
-      `const serve = Deno.serve;
+    const f = (await scope.acquire(() =>
+      storageServerFixture([]), (f) => f.close())).value;
+    const child = f.server();
+    const primary = Error("startup record removal failed");
+    const error = await assertRejects(
+      () =>
+        prepareDriverCandidate(child, () => Promise.reject(primary)),
+      Error,
+      primary.message,
+    );
+    assertStrictEquals(error, primary);
+    assertEquals(child.status()?.success, true);
+    const cleanup = Error("constructed child cleanup failed");
+    const rejectedChild = {
+      close: () => Promise.reject(cleanup),
+    } as TestServer;
+    const combined = await assertRejects(
+      () =>
+        prepareDriverCandidate(rejectedChild, () => Promise.reject(primary)),
+      AggregateError,
+      "Driver candidate preparation and shutdown failed",
+    );
+    assertEquals(combined.errors, [primary, cleanup]);
+    assertStrictEquals(combined.errors[0], primary);
+    assertStrictEquals(combined.errors[1], cleanup);
+    assertStrictEquals(combined.cause, primary);
+  });
+});
+
+for (const cleanupFails of [false, true]) {
+  Deno.test(
+    cleanupFails
+      ? "driver phase round4: self-exit cleanup failure stays visible through restart and disposal"
+      : "driver phase round3: a self-exited admission candidate cannot poison queued replacement",
+    async () => {
+      await fixtureScope(async (scope) => {
+        const remove = Deno.remove;
+        const cleanupFailure = Error("working-directory release failed");
+        let cwd: string | undefined, disposalFailure: unknown;
+        scope.defer(async () => {
+          Deno.remove = remove;
+          if (cleanupFails && cwd) {
+            await remove(cwd, { recursive: true }).catch((error) => {
+              if (!(error instanceof Deno.errors.NotFound)) throw error;
+            });
+          }
+        });
+        const remote = (await scope.acquire(() =>
+          memoryRemote(), (remote) =>
+          remote.close())).value;
+        const root = (await scope.acquire(() =>
+          Deno.makeTempDir({ prefix: "driver-self-exit-" }), (root) =>
+          Deno.remove(root, { recursive: true }))).value;
+        const preload = `${root}/self-exit.mjs`;
+        Deno.writeTextFileSync(
+          preload,
+          `console.log("DRIVER_SELF_EXIT_CWD " + JSON.stringify(Deno.cwd()));
+const serve = Deno.serve;
 Deno.serve = function (...args) {
   const server = serve.apply(this, args);
   fetch(${
-        JSON.stringify(`${remote.baseUrl}/exit`)
-      }, {headers: {authorization: ${
-        JSON.stringify(`Bearer ${remote.token}`)
-      }}}).then(() => Deno.exit(17));
+            JSON.stringify(`${remote.baseUrl}/exit`)
+          }, {headers: {authorization: ${
+            JSON.stringify(`Bearer ${remote.token}`)
+          }}}).then(() => Deno.exit(17));
   return server;
 };`,
-    );
-    let boots = 0;
-    const acquired = Promise.withResolvers<TestServer>();
-    const f = (await scope.acquire(() =>
-      storageServerFixture([], {
-        async serverBoot(inputs, options) {
-          const attempt = ++boots;
-          const child = await bootServer(inputs, {
-            ...options,
-            denoArgs: [
-              ...options!.denoArgs!,
-              ...(attempt === 2 ? ["--preload", preload] : []),
-            ],
-          });
-          if (attempt === 2) {
-            await Deno.remove(`${f.statePath}/driver-startup/initial.json`);
-            acquired.resolve(child);
+        );
+        let boots = 0;
+        const acquired = Promise.withResolvers<TestServer>();
+        const f = (await scope.acquire(() =>
+          storageServerFixture([], {
+            async serverBoot(inputs, options) {
+              const attempt = ++boots;
+              const child = await bootServer(inputs, {
+                ...options,
+                denoArgs: [
+                  ...options!.denoArgs!,
+                  ...(attempt === 2 ? ["--preload", preload] : []),
+                ],
+              });
+              if (attempt === 2) {
+                await prepareDriverCandidate(child, async () => {
+                  await Deno.remove(
+                    `${f.statePath}/driver-startup/initial.json`,
+                  );
+                  const line = child.output.stdout.split("\n").find((line) =>
+                    line.startsWith("DRIVER_SELF_EXIT_CWD ")
+                  )!;
+                  cwd = JSON.parse(line.slice("DRIVER_SELF_EXIT_CWD ".length));
+                  if (cleanupFails) {
+                    Deno.remove = (path, options) =>
+                      String(path) === cwd
+                        ? Promise.reject(cleanupFailure)
+                        : remove(path, options);
+                  }
+                });
+                acquired.resolve(child);
+              }
+              return child;
+            },
+          }), (f) =>
+          f.close().catch((error) => {
+            if (!Object.is(error, disposalFailure)) {
+              throw error;
+            }
+          }))).value;
+        await heldOperation({
+          label: "candidate self exit during admission",
+          progress: { kind: "controlled", clock: "external" },
+          signal: scope.signal,
+          owner: () =>
+            remote,
+        }, async (hold) => {
+          remote.faults.push({ path: "/exit", before: hold, status: 200 });
+          return await f.restart();
+        }, async (work) => {
+          await work.reached();
+          const candidate = await bounded(
+            acquired.promise,
+            "self-exit candidate healthy",
+          );
+          const queued = f.restart();
+          queued.catch(() => {});
+          const error = await assertRejects(
+            () =>
+              work.result(),
+            AggregateError,
+            "Driver startup observation and child shutdown failed",
+          );
+          assertEquals(candidate.status()?.code, 17);
+          assertStrictEquals(error.cause, error.errors[0]);
+          if (cleanupFails) {
+            const shutdown = error.errors[1] as AggregateError;
+            assertEquals(
+              error.errors.map((failure) =>
+                failure.constructor.name
+              ),
+              ["ReadinessError", "AggregateError"],
+            );
+            assertEquals(
+              shutdown.errors.map((failure) => failure.constructor.name),
+              ["UnexpectedServerExitError", "Error"],
+            );
+            assertStrictEquals(shutdown.cause, shutdown.errors[0]);
+            assertStrictEquals(shutdown.errors[1], cleanupFailure);
+            assertEquals((await Deno.stat(cwd!)).isDirectory, true);
+            const later = await queued.then(() => null, (error) => error);
+            disposalFailure = await f.close().then(
+              () => null,
+              (error) => error,
+            );
+            assertStrictEquals(later, shutdown);
+            assertStrictEquals(disposalFailure, shutdown);
+            assertEquals(boots, 2);
+            return;
           }
-          return child;
-        },
-      }), (f) =>
-      f.close())).value;
-    await heldOperation({
-      label: "candidate self exit during admission",
-      progress: { kind: "controlled", clock: "external" },
-      signal: scope.signal,
-      owner: () =>
-        remote,
-    }, async (hold) => {
-      remote.faults.push({ path: "/exit", before: hold, status: 200 });
-      return await f.restart();
-    }, async (work) => {
-      await work.reached();
-      const candidate = await bounded(
-        acquired.promise,
-        "self-exit candidate healthy",
-      );
-      const queued = f.restart();
-      queued.catch(() => {});
-      const error = await assertRejects(
-        () =>
-          work.result(),
-        AggregateError,
-        "Driver startup observation and child shutdown failed",
-      );
-      assertEquals(candidate.status()?.code, 17);
-      assertEquals(error.errors.map((failure) => failure.constructor.name), [
-        "ReadinessError",
-        "Error",
-      ]);
-      assertStrictEquals(error.cause, error.errors[0]);
-      assertEquals(
-        error.errors[1].message,
-        `server exited on its own before close() (pid ${candidate.pid}, exit code 17). stderr:\n${candidate.logs().stderr}`,
-      );
-      const replacement = await bounded(
-        queued,
-        "replacement after self-exited candidate",
-      );
-      assertEquals([boots, replacement.server.status()], [3, null]);
-      assertStrictEquals(f.server(), replacement.server);
-    });
-  });
-});
+          assertEquals(
+            error.errors.map((failure) => failure.constructor.name),
+            ["ReadinessError", "UnexpectedServerExitError"],
+          );
+          assertEquals(
+            error.errors[1].message,
+            `server exited on its own before close() (pid ${candidate.pid}, exit code 17). stderr:\n${candidate.logs().stderr}`,
+          );
+          const replacement = await bounded(
+            queued,
+            "replacement after self-exited candidate",
+          );
+          assertEquals([boots, replacement.server.status()], [3, null]);
+          assertStrictEquals(f.server(), replacement.server);
+        });
+      });
+    },
+  );
+}
 
 Deno.test("driver phase round3: settled peer result ignores later live failure while another peer is pending", async () => {
   await fixtureScope(async (scope) => {

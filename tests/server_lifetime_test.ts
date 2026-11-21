@@ -9,6 +9,7 @@ import {
   bootServer,
   createServerWorkingDirectory,
   SERVER_PORT_ENV,
+  UnexpectedServerExitError,
 } from "./helpers/boot.ts";
 import { done, pending, READINESS_MS, waitUntil } from "./helpers/wait.ts";
 import { bounded } from "./helpers/worker_liveness.ts";
@@ -179,7 +180,7 @@ Deno.test("server lifetime: unexpected exit still rejects close with diagnostics
     );
     const error = await assertRejects(
       () => f.server.close(),
-      Error,
+      UnexpectedServerExitError,
       "server exited on its own before close()",
     );
     assertStringIncludes(error.message, "exit code 17");

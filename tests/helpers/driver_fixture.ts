@@ -3,7 +3,7 @@ import type { DriverCapabilities } from "../../server/plugins/driver_contract.ts
 import { readManifest } from "../../server/plugins/manifest.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
 import { scopedPluginFixture } from "./plugin_fixture_engine.ts";
-import { bootServer } from "./boot.ts";
+import { bootServer, UnexpectedServerExitError } from "./boot.ts";
 import { assert, assertEquals } from "@std/assert";
 import { createFixtureScope } from "./fixture_scope_engine.ts";
 import { boundOperation } from "./owned_operation.ts";
@@ -152,9 +152,13 @@ export async function storageServerFixture(
       try {
         await child.close();
       } catch (error) {
-        // A prior caller already received this shutdown failure. Actual
-        // exit permits replacement; a still-live child must continue to block it.
-        if (reportedShutdownFailures.has(child) && child.status()) return;
+        // Only the exact, already-reported self-exit verdict certifies successful
+        // launcher cleanup. Process exit alone cannot discharge other resources.
+        if (
+          error instanceof UnexpectedServerExitError &&
+          Object.is(reportedShutdownFailures.get(child), error) &&
+          child.status()
+        ) return;
         if (!reportedShutdownFailures.has(child)) {
           reportedShutdownFailures.set(child, error);
         }

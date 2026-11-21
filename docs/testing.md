@@ -823,10 +823,14 @@ own their body reader before reading and cancel through that lock on retirement,
 without waiting for an uncooperative read or cancellation promise. Child
 construction admits the initial record identity before binding; read failures
 wait for the independent parsed pipe verdict under the existing readiness bound.
-A rejected acquired child is shut down before the restart queue advances. If it
-has already exited, its first admission/shutdown error is still reported, but
-the cached close rejection cannot block a later replacement or repeat at fixture
-disposal; a still-live failed candidate continues to block replacement. Failure
+A rejected acquired child is shut down before the restart queue advances. A bare
+`UnexpectedServerExitError` from the launcher certifies that a prior self-exit
+also completed resource cleanup. After that exact verdict is reported once, the
+queue may recover and fixture disposal need not repeat it. Cleanup failures,
+including aggregates containing that exit verdict, stay visible through later
+restarts and disposal; process exit alone never certifies resource release.
+Pre-handoff candidate preparation closes its constructed child on failure while
+preserving the preparation error. Failure
 frames are written in full, advancing by the actual byte count and rejecting
 zero-progress transport writes.
 
