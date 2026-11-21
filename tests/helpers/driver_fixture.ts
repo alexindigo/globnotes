@@ -11,6 +11,7 @@ import { fixtureScope } from "./fixture_scope.ts";
 import { startupFailurePrefix } from "./driver_startup_schema.ts";
 import type { TestServer } from "./boot.ts";
 import {
+  admitDriverStartup,
   bindDriverStartup,
   createDriverStartupDirectory,
 } from "./driver_startup.ts";
@@ -65,9 +66,17 @@ export async function storageServerFixture(
     native?: boolean;
     /** Low-level lifecycle contract port; ordinary scenarios use native fetch. */
     requestFetch?: typeof fetch;
+    /** Low-level child acquisition port for lifecycle/pipe contracts. */
+    serverBoot?: typeof bootServer;
   } = {},
 ) {
-  const { observedTime: initialTime, native, requestFetch = fetch } = options;
+  const {
+    observedTime: initialTime,
+    native,
+    requestFetch = fetch,
+    serverBoot = bootServer,
+  } = options;
+  const bootPort = serverBoot.bind(options);
   const network = [...authorities];
   const lifetime = createFixtureScope();
   return await lifetime.prepare(async (scope) => {
@@ -138,6 +147,9 @@ export async function storageServerFixture(
     });
     const serverOptions = { denoArgs: ["--preload", preload] };
     const observationFailures = new WeakMap<TestServer, AbortSignal>();
+    // Retain even a rejected candidate. A failed shutdown must be joined again,
+    // not bypassed by closing an already-retired predecessor on the next restart.
+    let server: TestServer;
     const boot = async (overrides: Record<string, unknown> = {}) => {
       const failure = new AbortController();
       let stderr = "";
@@ -163,7 +175,7 @@ export async function storageServerFixture(
       const admitted = await fixture.admit(() =>
         scope.acquire(
           () =>
-            bootServer({ ...env, ...overrides }, {
+            bootPort({ ...env, ...overrides }, {
               ...serverOptions,
               observeOutput,
             }),
@@ -172,10 +184,35 @@ export async function storageServerFixture(
       );
       const child = admitted.value.value;
       observationFailures.set(child, failure.signal);
-      failure.signal.throwIfAborted();
-      return child;
+      server = child;
+      try {
+        await admitDriverStartup(
+          scope,
+          startup,
+          child,
+          AbortSignal.any([scope.signal, failure.signal]),
+        );
+        const bound = bindDriverStartup(scope, startup, child, () => server, {
+          signal: failure.signal,
+        });
+        failure.signal.throwIfAborted();
+        return bound;
+      } catch (primary) {
+        // Acquisition already owns this child, but rejection must finish its
+        // shutdown before the serialized queue is allowed to construct a peer.
+        try {
+          await child.close();
+        } catch (cleanup) {
+          throw new AggregateError(
+            [primary, cleanup],
+            "Driver startup observation and child shutdown failed",
+            { cause: primary },
+          );
+        }
+        throw primary;
+      }
     };
-    let server = await boot();
+    await boot();
     const packets: string[] = [];
     async function call(route: string, method = "GET", body?: unknown) {
       return (await fixture.admit(async (signal) => {
@@ -336,10 +373,7 @@ export async function storageServerFixture(
           signal.throwIfAborted();
           await server.close();
           signal.throwIfAborted();
-          server = await boot(captured);
-          return bindDriverStartup(scope, startup, server, () => server, {
-            signal: observationFailures.get(server),
-          });
+          return await boot(captured);
         });
         replacement = next.then(() => undefined, () => undefined);
         return (await next).value;

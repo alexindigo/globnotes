@@ -807,14 +807,22 @@ pilot awaits Paused before its immediate assertion.
 
 Overlapping restarts queue the complete close/boot/bind sequence; each caller
 gets its own serialized replacement. Records carry a per-child sequence so a
-missed first record cannot admit a later supervisor. The preload captures driver
-statuses at the synchronous `DriverPeers.observeStatus` producer and copies the
-terminal snapshot in the original work's settlement callback, without a later
-async HTTP view. Observation/publication faults travel through the child's
+missed first record cannot admit a later supervisor. Each generation-scoped
+observer captures synchronous supervisor status snapshots with opaque slot and
+cycle identities; a later manual-sync or automatic cycle cannot overwrite the
+captured work's status. It copies terminal state in the original work's settlement
+callback, without a later async HTTP view, and always disposes its subscription,
+even if collection fails. Superseded callbacks cannot collect, publish or report
+for the replacement. Observation/publication faults travel through the child's
 captured stderr pipe and cancel the fixture observation even when filesystem
 writes fail; original reconcile promises and throws remain unchanged. HTTP calls
 own their body reader before reading and cancel through that lock on retirement,
-without waiting for an uncooperative read or cancellation promise.
+without waiting for an uncooperative read or cancellation promise. Child
+construction admits the initial record identity before binding; read failures
+wait for the independent parsed pipe verdict under the existing readiness bound.
+A rejected acquired child is shut down before the restart queue advances. Failure
+frames are written in full, advancing by the actual byte count and rejecting
+zero-progress transport writes.
 
 Run the targeted server acceptance through the authorized container launcher:
 

@@ -1,158 +1,265 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { DriverSupervisor } from "../../server/hub/drivers/supervisor.ts";
-import { DriverPeers } from "../../server/hub/drivers/peers.ts";
+import {
+  type DriverCycleStatus,
+  DriverSupervisor,
+} from "../../server/hub/drivers/supervisor.ts";
+import type { DriverPeers } from "../../server/hub/drivers/peers.ts";
 import {
   publishDriverStartup,
   reportDriverStartupFailure,
 } from "./driver_startup_protocol.ts";
 import { createOwnershipScope } from "../../shared/ownership.js";
 
-/** Test-only observer. Product work/throws retain their identity even when every
- * filesystem publication fails. Status is captured at its synchronous producer,
- * never through the HTTP view's asynchronous catalog/live-slot projection. */
-export function observeDriverStartup(directory: string, options: {
-  publish?: typeof publishDriverStartup;
-  report?: (error: unknown) => void;
-} = {}) {
-  const {
-    publish: publishPort = publishDriverStartup,
-    report: reportPort = reportDriverStartupFailure,
-  } = options;
-  const publish = publishPort.bind(options), report = reportPort.bind(options);
-  const reconcile = DriverSupervisor.prototype.reconcile;
-  const observeStatus = DriverPeers.prototype.observeStatus;
-  const observed = new WeakSet<DriverSupervisor>();
-  const statuses = new WeakMap<DriverPeers, Map<string, string>>();
-  const subscriptions = createOwnershipScope();
-  let generation = 0;
-  const fault = (error: unknown) => {
-    // The parent consumes this separate pipe even when the record filesystem is
-    // full. A broken report transport cannot throw into the observed operation.
+interface ObserverIdentity {
+  readonly supervisor: DriverSupervisor;
+  readonly peer: DriverPeers;
+  readonly sequence: number;
+  readonly owner: string;
+}
+interface ObserverPorts {
+  publish: typeof publishDriverStartup;
+  report: (error: unknown) => void;
+}
+
+/** A generation owns its status cache, subscription, terminal copy and faults.
+ * Nothing retained by a previous generation can collect or report for this one. */
+function createStartupObserver(
+  directory: string,
+  identity: ObserverIdentity,
+  ports: ObserverPorts,
+  current: () => boolean,
+) {
+  let active = true, pending = true, failure: string | null = null;
+  let unsubscribe: (() => void) | undefined, source: string | undefined;
+  const cycles = new Map<string, DriverCycleStatus>();
+  const sources = () =>
+    JSON.stringify([
+      identity.supervisor.adapters.lifecycle.epoch,
+      identity.peer.instances().map((instance) => [
+        instance.id,
+        instance.revision,
+        identity.supervisor.adapters.plugins.driverOwner(instance.plugin).epoch,
+      ]),
+    ]);
+  const live = () => active && current();
+  // One exit path, including failed collection. Failed listener disposal remains
+  // available for the enclosing owner's cleanup retry, never for another report.
+  const dispose = () => {
+    pending = false;
+    active = false;
+    if (unsubscribe) {
+      unsubscribe();
+      unsubscribe = undefined;
+    }
+  };
+  const report = (error: unknown) => {
+    if (!current()) return;
     try {
-      report(error);
+      ports.report(error);
     } catch { /* parent owns the pipe/child lifetime */ }
   };
-  DriverPeers.prototype.observeStatus = function (peer, status, enabled) {
-    const result = observeStatus.call(this, peer, status, enabled);
+  const fail = (error: unknown) => {
+    const admitted = live();
     try {
-      statuses.get(this)?.set(peer, status);
-    } catch (error) {
-      fault(error);
+      dispose();
+    } catch (cleanup) {
+      error = new AggregateError(
+        [error, cleanup],
+        "Driver observation and disposal failed",
+        { cause: error },
+      );
     }
-    return result;
+    if (admitted) report(error);
   };
-  DriverSupervisor.prototype.reconcile = function () {
-    if (observed.has(this)) return reconcile.call(this);
-    observed.add(this);
-    const sequence = ++generation;
-    const owner = `${Deno.pid}:${sequence}`;
-    const sources = () =>
-      JSON.stringify([
-        this.adapters.lifecycle.epoch,
-        this.peers.instances().map((instance) => [
-          instance.id,
-          instance.revision,
-          this.adapters.plugins.driverOwner(instance.plugin).epoch,
-        ]),
-      ]);
-    let source: string | undefined;
-    try {
-      statuses.set(this.peers, new Map());
-      source = sources();
-    } catch (error) {
-      fault(error);
+  const collect = () => {
+    if (!live()) return {};
+    for (const status of identity.supervisor.statusSnapshot()) {
+      if (!live()) return {};
+      const captured = cycles.get(status.peer);
+      if (
+        !captured ||
+        Object.is(captured.generation, status.generation) &&
+          captured.cycle === status.cycle
+      ) {
+        // Values are copies; a later producer cannot mutate a retained entry.
+        cycles.set(status.peer, Object.freeze({ ...status }));
+      }
     }
-
-    // Invoke the original independently of all observer construction/publication.
-    let work: Promise<void> | undefined;
-    let thrown = false, originalError: unknown;
-    try {
-      work = reconcile.call(this);
-    } catch (error) {
-      thrown = true;
-      originalError = error;
+    return Object.fromEntries(
+      identity.peer.instances().flatMap((instance) => {
+        const status = cycles.get(instance.id);
+        if (!status) {
+          if (pending) return [];
+          throw Error(`Driver status not observed: ${instance.id}`);
+        }
+        return [[instance.id, status.status]];
+      }),
+    );
+  };
+  const write = (states: Record<string, string>, terminal = false) => {
+    const mayPublish = () => current() && (terminal || active && pending);
+    if (!mayPublish()) return;
+    if (
+      !Object.is(identity.supervisor.peers, identity.peer) ||
+      sources() !== source
+    ) {
+      failure = "cycle owner replaced";
     }
+    if (!mayPublish()) return;
+    ports.publish(directory, {
+      pid: Deno.pid,
+      owner: identity.owner,
+      sequence: identity.sequence,
+      pending,
+      states,
+      failure,
+    });
+  };
+  const notify = () => {
+    if (!live() || !pending) return;
     try {
-      let pending = true, active = true, failure: string | null = null;
-      let unsubscribe: (() => unknown) | undefined;
-      const stop = () => {
-        if (unsubscribe) {
-          unsubscribe();
-          unsubscribe = undefined;
-        }
-      };
-      subscriptions.defer(() => {
-        active = false;
-        stop();
-      });
-      const collect = () =>
-        Object.fromEntries(
-          this.peers.instances().map((instance) => {
-            const status = statuses.get(this.peers)?.get(instance.id);
-            if (status === undefined) {
-              throw Error(`Driver status not observed: ${instance.id}`);
-            }
-            return [instance.id, status];
-          }),
-        );
-      const write = (states: Record<string, string>) => {
-        if (!active || sequence !== generation) return;
-        if (sources() !== source) failure = "cycle owner replaced";
-        publish(directory, {
-          pid: Deno.pid,
-          owner,
-          sequence,
-          pending,
-          states,
-          failure,
-        });
-      };
-      const safely = (effect: () => void) => {
-        if (!active) return;
-        try {
-          effect();
-        } catch (error) {
-          fault(error);
-        }
-      };
-      const complete = (failed: boolean, error?: unknown) =>
-        safely(() => {
-          // No await or live view read may sit between settlement and this copy.
-          const terminal = collect();
-          pending = false;
-          if (failed) failure = String(error);
-          try {
-            stop();
-          } catch (error) {
-            failure ??= String(error);
-          }
-          write(terminal);
-        });
-      if (thrown) complete(true, originalError);
-      else {
-        unsubscribe = this.subscribe(() => {
-          if (pending) safely(() => write(collect()));
-        });
-        const then = work!.then;
+      write(collect());
+    } catch (error) {
+      fail(error);
+    }
+  };
+  const complete = (failed: boolean, reason?: unknown) => {
+    if (!live()) {
+      try {
+        dispose();
+      } catch { /* retained for owner cleanup */ }
+      return;
+    }
+    // Clearing pending first fences reentrant notifications. The terminal copy
+    // is taken before disposal, without an async read or cleanup in between.
+    pending = false;
+    let terminal: Record<string, string> | undefined;
+    let error: { value: unknown } | undefined;
+    try {
+      terminal = collect();
+      if (failed) failure = String(reason);
+    } catch (value) {
+      error = { value };
+    } finally {
+      try {
+        dispose();
+      } catch (value) {
+        error = {
+          value: error
+            ? new AggregateError(
+              [error.value, value],
+              "Driver observation and disposal failed",
+              { cause: error.value },
+            )
+            : value,
+        };
+      }
+    }
+    if (!current()) return;
+    if (error) report(error.value);
+    else {
+      try {
+        write(terminal!, true);
+      } catch (error) {
+        report(error);
+      }
+    }
+  };
+  return {
+    dispose,
+    complete,
+    connect() {
+      if (!live()) return;
+      try {
+        source = sources();
+        unsubscribe = identity.supervisor.subscribe(notify);
+        if (!live()) dispose();
+      } catch (error) {
+        fail(error);
+      }
+    },
+    watch(work: Promise<void>) {
+      if (!live()) return;
+      try {
+        const then = work.then;
         then.call(
           work,
           () => complete(false),
           (error) => complete(true, error),
         );
-        if (pending) safely(() => write(collect()));
+        notify();
+      } catch (error) {
+        fail(error);
       }
-    } catch (error) {
-      fault(error);
-    }
-    if (thrown) throw originalError;
-    return work!;
+    },
   };
+}
+
+/** Test-only observer. Reconciliation always runs and retains its exact promise
+ * or synchronous throw, independently of observation setup/publication errors. */
+export function observeDriverStartup(
+  directory: string,
+  options: Partial<ObserverPorts> = {},
+) {
+  const {
+    publish = publishDriverStartup,
+    report = reportDriverStartupFailure,
+  } = options;
+  const ports = {
+    publish: publish.bind(options),
+    report: report.bind(options),
+  };
+  const reconcile = DriverSupervisor.prototype.reconcile;
+  const observed = new WeakSet<DriverSupervisor>();
+  const subscriptions = createOwnershipScope();
+  let generation = 0;
   let restored = false;
+  let latest: ReturnType<typeof createStartupObserver> | undefined;
+  DriverSupervisor.prototype.reconcile = function () {
+    if (restored || observed.has(this)) return reconcile.call(this);
+    observed.add(this);
+    const sequence = ++generation;
+    try {
+      latest?.dispose();
+    } catch { /* cleanup retry belongs to its owner */ }
+    let observer: ReturnType<typeof createStartupObserver> | undefined;
+    try {
+      observer = createStartupObserver(
+        directory,
+        Object.freeze({
+          supervisor: this,
+          peer: this.peers,
+          sequence,
+          owner: `${Deno.pid}:${sequence}`,
+        }),
+        ports,
+        () => !restored && sequence === generation,
+      );
+      latest = observer;
+      subscriptions.defer(observer.dispose);
+      observer.connect();
+    } catch (error) {
+      if (!restored && sequence === generation) {
+        try {
+          ports.report(error);
+        } catch { /* do not replace original work */ }
+      }
+    }
+    let work: Promise<void>;
+    try {
+      work = reconcile.call(this);
+    } catch (error) {
+      observer?.complete(true, error);
+      throw error;
+    }
+    observer?.watch(work);
+    return work;
+  };
   return () => {
     if (!restored) {
       restored = true;
+      generation++;
       DriverSupervisor.prototype.reconcile = reconcile;
-      DriverPeers.prototype.observeStatus = observeStatus;
     }
     return subscriptions.releaseAll().then((report) => report.throwIfFailed());
   };

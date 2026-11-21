@@ -46,6 +46,8 @@ import {
 } from "./session.ts";
 
 interface Slot {
+  generation: object;
+  cycle: number;
   instance: DriverInstance;
   epoch: number;
   access: number;
@@ -70,6 +72,14 @@ interface Slot {
   nextRetry: number;
   activity: "receiving" | "sending" | null;
   activityUntil: number;
+}
+/** Synchronous status at its runtime owner. Opaque generation plus cycle binds
+ * diagnostics to the work that produced them, not just a reusable peer id. */
+export interface DriverCycleStatus {
+  readonly peer: string;
+  readonly generation: object;
+  readonly cycle: number;
+  readonly status: string;
 }
 export interface SupervisorAdapters {
   hub: VaultHub;
@@ -116,13 +126,32 @@ export class DriverSupervisor implements DriverOwners {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }
+  #slotView(slot?: Slot) {
+    return slot && !slot.retired && (!slot.worker || slot.worker.current())
+      ? slot.session?.snapshot() ?? slot.view
+      : slot?.view ?? {
+        status: "off" as const,
+        reason: null,
+        error: null,
+        lastSync: null,
+        attention: null,
+      };
+  }
+  statusSnapshot(): readonly DriverCycleStatus[] {
+    return [...this.#slots.values()].map((slot) =>
+      Object.freeze({
+        peer: slot.instance.id,
+        generation: slot.generation,
+        cycle: slot.cycle,
+        status: this.#slotView(slot).status,
+      })
+    );
+  }
   #changed = (): void => {
     if (this.#closed) return;
     for (const slot of this.#slots.values()) {
       this.#projectActivity(slot);
-      const view = !slot.retired && (!slot.worker || slot.worker.current())
-        ? slot.session?.snapshot() ?? slot.view
-        : slot.view;
+      const view = this.#slotView(slot);
       // An enabled replacement's temporary Off/Starting projection is not
       // recovery. Off with a reason is a real unavailable-plugin state.
       if (view.status !== "off" || view.reason || !slot.instance.enabled) {
@@ -218,6 +247,8 @@ export class DriverSupervisor implements DriverOwners {
       ? "plugin_unavailable"
       : null;
     const slot: Slot = {
+      generation: Object.freeze({}),
+      cycle: 0,
       instance: structuredClone(instance),
       epoch: owner.epoch,
       access: this.adapters.lifecycle.epoch,
@@ -337,6 +368,7 @@ export class DriverSupervisor implements DriverOwners {
       return slot.pending;
     }
     if (!this.#current(slot)) return Promise.resolve();
+    slot.cycle++;
     slot.fullRequested = full;
     const work = (async () => {
       try {
@@ -607,17 +639,7 @@ export class DriverSupervisor implements DriverOwners {
           plugin.id === instance.plugin
         );
         const slot = this.#slots.get(instance.id);
-        const view =
-          slot && !slot.retired && (!slot.worker || slot.worker.current())
-            ? slot.session?.snapshot() ?? slot.view
-            : slot?.view ??
-              {
-                status: "off",
-                reason: null,
-                error: null,
-                lastSync: null,
-                attention: null,
-              };
+        const view = this.#slotView(slot);
         const redact = driverRedactor(this.#secrets.values(instance.id));
         // Redact the complete projection as well as session diagnostics: all native strings cross this boundary.
         const stateView = JSON.parse(

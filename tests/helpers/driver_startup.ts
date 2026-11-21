@@ -23,6 +23,43 @@ export const createDriverStartupDirectory = (
   parent: Parameters<typeof ownedRecordDirectory>[1],
 ) => ownedRecordDirectory(scope, parent, "driver-startup");
 
+/** Transport readiness is not observation admission. Retain read failures as
+ * readiness diagnostics while the independent pipe delivers its parsed verdict.
+ * A child cannot escape construction until its first identity is admitted. */
+export async function admitDriverStartup(
+  custody: FixtureScope,
+  directory: RecordDirectory,
+  server: TestServer,
+  signal: AbortSignal,
+) {
+  const { pid } = server;
+  const reader = recordReader(directory, recordName, driverStartupSchema);
+  try {
+    await waitUntil(() => {
+      custody.assertCurrent();
+      signal.throwIfAborted();
+      let snapshot: DriverStartupSnapshot | undefined;
+      try {
+        snapshot = reader.read()?.value;
+      } catch (error) {
+        return pending({ read: String(error) });
+      }
+      if (snapshot?.pid !== pid) return pending("initial cycle admission");
+      if (snapshot.sequence !== 1) {
+        throw Error("driver initial cycle: cycle owner replaced");
+      }
+      return done();
+    }, {
+      label: `driver server ${pid} startup record admitted`,
+      children: [server],
+    });
+    signal.throwIfAborted();
+  } catch (error) {
+    signal.throwIfAborted();
+    throw error;
+  }
+}
+
 /** Bind at boot/restart, not when a scenario happens to await. A retired server
  * cannot lend its successful snapshot to a replacement server or later cycle. */
 export function bindDriverStartup(
