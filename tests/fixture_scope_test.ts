@@ -32,6 +32,60 @@ async function caught(body: () => Promise<unknown>): Promise<unknown> {
   throw new Error("Expected rejection");
 }
 
+for (const length of [2, 3, 5]) {
+  Deno.test(`fixture links: reject a ${length}-scope cycle before registration`, async () => {
+    const owners = Array.from({ length }, () => createFixtureScope());
+    const events: string[] = [];
+    for (const [index, owner] of owners.entries()) {
+      owner.scope.onCancel(() => events.push(`cancel:${index}`));
+      owner.scope.defer(() => events.push(`dispose:${index}`));
+      if (index) ownFixtureScope(owners[index - 1].scope, owner.scope);
+    }
+    const before = owners.map((owner) => owner.scope.size);
+    assertThrows(
+      () => ownFixtureScope(owners[length - 1].scope, owners[0].scope),
+      OwnershipError,
+      "Fixture scope link would create a cycle",
+    );
+    assertEquals(owners.map((owner) => owner.scope.size), before);
+    await bounded(owners[0].close(), "acyclic fixture chain close");
+    await Promise.all(owners.map((owner) => owner.close()));
+    assertEquals(events, [
+      ...owners.map((_, index) => `cancel:${index}`),
+      ...owners.map((_, index) => `dispose:${length - index - 1}`),
+    ]);
+    assertEquals(owners.map((owner) => owner.scope.size), owners.map(() => 0));
+  });
+}
+
+Deno.test("fixture links: shared descendants and repeated edges remain acyclic", async () => {
+  const root = createFixtureScope(),
+    left = createFixtureScope(),
+    right = createFixtureScope(),
+    leaf = createFixtureScope();
+  ownFixtureScope(root.scope, left.scope);
+  ownFixtureScope(root.scope, right.scope);
+  ownFixtureScope(left.scope, leaf.scope);
+  ownFixtureScope(right.scope, leaf.scope);
+  ownFixtureScope(root.scope, leaf.scope);
+  const before = root.scope.size;
+  ownFixtureScope(root.scope, leaf.scope);
+  assertEquals(root.scope.size, before);
+  assertThrows(
+    () => ownFixtureScope(leaf.scope, root.scope),
+    OwnershipError,
+    "Fixture scope link would create a cycle",
+  );
+  await bounded(root.close(), "shared descendant close");
+  await Promise.all([left.close(), right.close(), leaf.close()]);
+  assertEquals([root, left, right, leaf].map((owner) => owner.scope.size), [
+    0,
+    0,
+    0,
+    0,
+  ]);
+});
+
 fixtureTest(
   "fixture links: sequential borrowers retire every root edge",
   async (testScope) => {

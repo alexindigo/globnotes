@@ -17,7 +17,7 @@ interface FixtureController {
   finish(): Promise<OwnershipRelease>;
 }
 const engines = new WeakMap<FixtureScope, FixtureController>();
-const children = new WeakMap<FixtureScope, WeakSet<FixtureScope>>();
+const children = new WeakMap<FixtureScope, Set<FixtureScope>>();
 
 /** Private fixture construction port: a root closes its dedicated runtime
  * borrowers before deleting the root, including autonomous product work. */
@@ -32,8 +32,21 @@ export function ownFixtureScope(
   if (!engine) {
     throw new TypeError("Borrowed runtime requires an issued fixture scope");
   }
+  // Cancellation joins every linked descendant. An edge back to the owner would
+  // therefore make both cancellation phases wait for each other indefinitely.
+  // Inspect only active edges and reject before reserving resources or hooks.
+  const pending = [child], visited = new Set<FixtureScope>();
+  while (pending.length) {
+    const descendant = pending.pop()!;
+    if (descendant === owner) {
+      throw new OwnershipError("Fixture scope link would create a cycle");
+    }
+    if (visited.has(descendant)) continue;
+    visited.add(descendant);
+    pending.push(...(children.get(descendant) ?? []));
+  }
   let linked = children.get(owner);
-  if (!linked) children.set(owner, linked = new WeakSet());
+  if (!linked) children.set(owner, linked = new Set());
   if (linked.has(child)) return;
   engines.get(owner)!.link(engine, () => {
     linked!.delete(child);
