@@ -791,6 +791,31 @@ malformed/oversized/unsafe messages, isolated heartbeat failure, 256-file/64-MiB
 unit splits and smaller maxBatch export packets. Native atomicity is not claimed
 for the ordinary storage provider API.
 
+`storageServerFixture.restart()` returns the transport-ready server and its
+captured `initialDriver(id, "active" | "paused")` observer. HTTP readiness is
+not driver readiness. The observer binds the actual child and first
+reconciliation cycle at restart, rejects replacement/failure and requires
+completed work with the explicit expected state. Only pre-admission uses the
+readiness bound; admitted work keeps its real Worker/RPC deadline. The preload
+does not await or delay production startup. P11 owns typed atomic snapshots,
+watcher cancellation and the final exit read. P03 owns preparation and cleanup
+before any new handle escapes. `driver_phase_ownership_test.ts` holds discovery
+while HTTP serves Starting, then checks the same cycle's Active state and
+imported bytes; it also exercises Paused, missing/wrong state, replacement,
+exit/cancel and the unchanged native heartbeat deadline. The read-only restart
+pilot awaits Paused before its immediate assertion.
+
+Overlapping restarts queue the complete close/boot/bind sequence; each caller
+gets its own serialized replacement. Records carry a per-child sequence so a
+missed first record cannot admit a later supervisor. The preload captures driver
+statuses at the synchronous `DriverPeers.observeStatus` producer and copies the
+terminal snapshot in the original work's settlement callback, without a later
+async HTTP view. Observation/publication faults travel through the child's
+captured stderr pipe and cancel the fixture observation even when filesystem
+writes fail; original reconcile promises and throws remain unchanged. HTTP calls
+own their body reader before reading and cancel through that lock on retirement,
+without waiting for an uncooperative read or cancellation promise.
+
 Run the targeted server acceptance through the authorized container launcher:
 
 ```sh
