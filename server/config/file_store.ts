@@ -388,8 +388,6 @@ export class BoundFileStore {
         }
       }
       custody.handle!.syncSync();
-      custody.handle!.close();
-      custody.handle = undefined;
       // Rename preserves the prepared file's identity. Build the committed
       // binding before effects so publication cannot fail on a later disk read.
       const replacement = Object.freeze({
@@ -458,11 +456,33 @@ export class BoundFileStore {
   }
 
   #candidateIdentity(custody: CandidateCustody): ConfigNode["identity"] {
+    // Cached dev/ino is authority only while the original descriptor pins that
+    // inode. Recheck the descriptor itself before every cleanup attempt.
+    if (!custody.handle) {
+      custody.identity = null;
+      throw new StoredConfigConflict();
+    }
+    let info: Deno.FileInfo;
+    try {
+      info = custody.handle.statSync();
+    } catch (error) {
+      if (error instanceof Deno.errors.BadResource) {
+        // A lost descriptor cannot be reacquired by name without adopting a
+        // possible replacement. Release custody without unlink authority.
+        custody.handle = undefined;
+        custody.identity = null;
+        this.#candidates.delete(custody);
+      }
+      throw error;
+    }
+    if (!info.isFile || info.ino === null) throw new StoredConfigConflict();
+    if (
+      custody.identity && (custody.identity.dev !== info.dev ||
+        custody.identity.ino !== info.ino)
+    ) throw new StoredConfigConflict();
     if (!custody.identity) {
       // A pathname stat can observe a replacement. Only the original open file
       // establishes identity, including when its first stat must be retried.
-      const info = custody.handle!.statSync();
-      if (!info.isFile || info.ino === null) throw new StoredConfigConflict();
       custody.identity = Object.freeze({
         dev: info.dev,
         ino: info.ino,
@@ -478,20 +498,18 @@ export class BoundFileStore {
 
   #cleanupCandidate(custody: CandidateCustody): void {
     custody.requested = true;
-    // If this fails, keep the original descriptor: closing it would lose the
-    // only way to establish identity safely. Never unlink by pathname alone.
-    const identity = this.#candidateIdentity(custody);
-    try {
-      if (!custody.unlinked) {
-        this.#discardExact(custody.temporary, identity);
-        custody.unlinked = true;
-      }
-    } finally {
-      if (custody.handle) {
-        custody.handle.close();
-        custody.handle = undefined;
-      }
+    // Keep the descriptor on every failed identity check or unlink. Otherwise
+    // inode reuse could turn the cached identity into authority over a new file.
+    if (!custody.unlinked) {
+      const identity = this.#candidateIdentity(custody);
+      this.#discardExact(custody.temporary, identity);
+      custody.unlinked = true;
     }
+    if (custody.handle) {
+      custody.handle.close();
+      custody.handle = undefined;
+    }
+    custody.identity = null;
     this.#candidates.delete(custody);
   }
 

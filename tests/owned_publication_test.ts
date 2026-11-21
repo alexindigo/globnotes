@@ -213,7 +213,12 @@ for (const replacement of [false, true]) {
         // Recover identity from the retained original descriptor, never the path.
         Deno.openSync = open;
         const pending = b.owner.prepare(next(2), b.persistence, live().lease);
-        assertEquals(events, ["stat", "stat", "stat", "close"]);
+        assertEquals(
+          events,
+          replacement
+            ? ["stat", "stat", "stat"]
+            : ["stat", "stat", "stat", "close"],
+        );
         assertEquals(removed, replacement ? [] : [temporary]);
         pending.discard();
         if (replacement) {
@@ -223,6 +228,12 @@ for (const replacement of [false, true]) {
           Deno.renameSync(`${root}/original`, temporary);
         }
         b.owner.prepare(next(3), b.persistence, live().lease).publish();
+        assertEquals(
+          events,
+          replacement
+            ? ["stat", "stat", "stat", "stat", "close"]
+            : ["stat", "stat", "stat", "close"],
+        );
         assertEquals(candidates(root), []);
         assertEquals(
           new IdentityFile(b.store.filename, validate, next(0)).capture().value,
@@ -235,6 +246,171 @@ for (const replacement of [false, true]) {
       }
     }));
 }
+
+for (const committed of [false, true]) {
+  Deno.test(`owned publication: live-inode custody survives failed cleanup and foreign replacement, committed=${committed}`, () =>
+    fixture((root) => {
+      const b = binding(root), open = Deno.openSync, remove = Deno.removeSync;
+      const handles: { file: string; handle: Deno.FsFile; closed: boolean }[] =
+        [];
+      const closed: string[] = [];
+      const cleanup = new Error("candidate unlink unavailable");
+      let prepared: ReturnType<typeof b.owner.prepare> | undefined;
+      let pending: ReturnType<typeof b.owner.prepare> | undefined;
+      try {
+        Deno.openSync = ((file, options) => {
+          const handle = open(file, options);
+          if (options?.createNew && String(file).includes("/.config-")) {
+            const entry = { file: String(file), handle, closed: false };
+            const close = handle.close.bind(handle);
+            handle.close = () => {
+              close();
+              entry.closed = true;
+              closed.push(entry.file);
+            };
+            handles.push(entry);
+          }
+          return handle;
+        }) as typeof open;
+        prepared = b.owner.prepare(next(1), b.persistence, live().lease);
+        const [original] = handles;
+        Deno.removeSync = () => {
+          throw cleanup;
+        };
+        if (committed) {
+          const outcome = prepared.publish();
+          assertEquals([outcome.state, outcome.warning], [
+            "committed",
+            "stored-durability-unconfirmed",
+          ]);
+        } else {
+          assertStrictEquals(
+            assertThrows(() => prepared!.discard(), Error, cleanup.message),
+            cleanup,
+          );
+        }
+        Deno.removeSync = remove;
+        // Remove the candidate's last name in the unpublished case. An open
+        // descriptor must still pin its inode while foreign bytes take its name.
+        remove(original.file);
+        Deno.writeTextFileSync(original.file, "foreign replacement");
+        assertEquals(closed, []);
+        assertEquals(original.handle.statSync().nlink, committed ? 1 : 0);
+        assertThrows(
+          () => prepared!.discard(),
+          StoredConfigConflict,
+          "Stored configuration changed before commit.",
+        );
+        assertEquals([Deno.readTextFileSync(original.file), closed], [
+          "foreign replacement",
+          [],
+        ]);
+        pending = b.owner.prepare(next(2), b.persistence, live().lease);
+        assertEquals([Deno.readTextFileSync(original.file), closed], [
+          "foreign replacement",
+          [],
+        ]);
+        const [, second] = handles;
+        pending.discard();
+        assertEquals(closed, [second.file]);
+        remove(original.file);
+        prepared.discard();
+        prepared.discard();
+        assertEquals(closed, [second.file, original.file]);
+        assertThrows(
+          () => original.handle.statSync(),
+          Deno.errors.BadResource,
+          "Bad resource ID",
+        );
+        assertEquals(candidates(root), []);
+        assertEquals(
+          [b.value, b.store.capture().raw],
+          committed
+            ? [next(1), JSON.stringify(next(1)) + "\n"]
+            : [next(0), null],
+        );
+      } finally {
+        Deno.openSync = open;
+        Deno.removeSync = remove;
+        // Test custody also covers an assertion failure before normal disposal.
+        for (const entry of handles) {
+          if (!entry.closed) entry.handle.close();
+        }
+      }
+    }));
+}
+
+Deno.test("owned publication: lost descriptor cannot authorize a cached-identity unlink after inode reuse", () =>
+  fixture((root) => {
+    const b = binding(root),
+      open = Deno.openSync,
+      remove = Deno.removeSync,
+      stat = Deno.lstatSync;
+    let original: Deno.FsFile | undefined,
+      originalInfo: Deno.FileInfo | undefined,
+      closed = false;
+    const removed: string[] = [];
+    try {
+      Deno.openSync = ((file, options) => {
+        const handle = open(file, options);
+        if (options?.createNew && String(file).includes("/.config-")) {
+          original = handle;
+          originalInfo = handle.statSync();
+          const close = handle.close.bind(handle);
+          handle.close = () => {
+            close();
+            closed = true;
+          };
+        }
+        return handle;
+      }) as typeof open;
+      const prepared = b.owner.prepare(next(1), b.persistence, live().lease);
+      const [temporary] = candidates(root),
+        cleanup = new Error("unlink unavailable");
+      Deno.removeSync = () => {
+        throw cleanup;
+      };
+      assertStrictEquals(
+        assertThrows(() => prepared.discard(), Error, cleanup.message),
+        cleanup,
+      );
+      // Simulate an unexpectedly lost descriptor, followed by reuse of its freed
+      // inode number. Never depend on the filesystem allocator to reuse it.
+      if (!closed) original!.close();
+      remove(temporary);
+      Deno.writeTextFileSync(temporary, "foreign reused-inode file");
+      Deno.lstatSync = ((file) => {
+        const info = stat(file);
+        return String(file) === temporary
+          ? { ...info, dev: originalInfo!.dev, ino: originalInfo!.ino }
+          : info;
+      }) as typeof stat;
+      Deno.removeSync = ((file, options) => {
+        removed.push(String(file));
+        remove(file, options);
+      }) as typeof remove;
+      assertThrows(
+        () => prepared.discard(),
+        Deno.errors.BadResource,
+        "Bad resource ID",
+      );
+      assertThrows(
+        () => prepared.discard(),
+        StoredConfigConflict,
+        "Stored configuration changed before commit.",
+      );
+      assertEquals([
+        removed,
+        Deno.readTextFileSync(temporary),
+        b.store.capture().raw,
+      ], [[], "foreign reused-inode file", null]);
+    } finally {
+      Deno.openSync = open;
+      Deno.removeSync = remove;
+      Deno.lstatSync = stat;
+      if (original && !closed) original.close();
+    }
+  }));
 
 for (const retry of ["handle", "store"] as const) {
   Deno.test(`owned publication: committed alias cleanup is retried by ${retry} without publication replay`, () =>
@@ -580,6 +756,10 @@ Deno.test("owned publication: foreign equal-byte candidate replacement is preser
     );
     assertEquals(b.store.capture().raw, null);
     assertEquals(b.value.revision, 0);
+    // The test owns the foreign replacement; remove it before releasing the
+    // descriptor that deliberately remained in cleanup custody after conflict.
+    Deno.removeSync(candidate);
+    prepared.discard();
   }));
 
 for (const boundary of ["write", "sync", "link"]) {

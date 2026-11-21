@@ -243,15 +243,25 @@ returns `undefined` after the guard finishes synchronously.
 
 Candidate creation exclusively opens a private file and immediately registers
 store-owned cleanup custody. Identity comes from that original descriptor, never
-an unverified pathname. If identity acquisition fails, custody retains the open
-descriptor until it can establish identity and attempt exact cleanup. Failed
-cleanup remains store-owned and is retried on the next preparation, without
-blocking unrelated mutations or replaying an already-reported warning. Active
-prepared candidates are not cleanup requests. Discard retires publication and
-marks unpublished candidates discarded before cleanup; committed candidates stay
-committed, but their temporary aliases remain cleanup-retryable through either
-the prepared handle or the store. Every unlink still checks the captured
-identity and preserves foreign replacements.
+an unverified pathname. Custody keeps the original descriptor open through
+preparation and failed cleanup, pinning its inode for every identity-based retry.
+Cleanup checks that descriptor is still live before using cached device/inode
+numbers; it closes the descriptor and clears custody only after cleanup succeeds.
+If identity acquisition fails transiently, the same descriptor remains available
+for retry. A lost descriptor releases custody without unlinking or retaining its
+cached identity. Failed cleanup remains store-owned and is retried on the next
+preparation, without blocking unrelated mutations or replaying an already-reported
+warning. Active prepared candidates are not cleanup requests. Discard retires
+publication and marks unpublished candidates discarded before cleanup; committed
+candidates stay committed, but their temporary aliases remain cleanup-retryable
+through either the prepared handle or the store.
+
+Before unlinking, cleanup compares the pathname's
+device/inode to the original descriptor's identity and rejects a mismatch. This
+check and the pathname unlink are separate operations: an external writer can
+replace the name between them, and that replacement can be removed. Deno has no
+descriptor-relative unlink; service write serialization does not exclude external
+writers or eliminate this residual window.
 
 ## P02 resource boundary
 
