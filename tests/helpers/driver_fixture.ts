@@ -7,6 +7,9 @@ import { bootServer } from "./boot.ts";
 import { assert, assertEquals } from "@std/assert";
 import { createFixtureScope } from "./fixture_scope_engine.ts";
 import { boundOperation } from "./owned_operation.ts";
+import { fixtureScope } from "./fixture_scope.ts";
+import { startupFailurePrefix } from "./driver_startup_schema.ts";
+import type { TestServer } from "./boot.ts";
 import {
   bindDriverStartup,
   createDriverStartupDirectory,
@@ -134,25 +137,55 @@ export async function storageServerFixture(
       }
     });
     const serverOptions = { denoArgs: ["--preload", preload] };
+    const observationFailures = new WeakMap<TestServer, AbortSignal>();
     const boot = async (overrides: Record<string, unknown> = {}) => {
+      const failure = new AbortController();
+      let stderr = "";
+      const observeOutput = (name: "stdout" | "stderr", chunk: string) => {
+        if (name !== "stderr") return;
+        stderr += chunk;
+        for (;;) {
+          const newline = stderr.indexOf("\n");
+          if (newline < 0) return;
+          const line = stderr.slice(0, newline);
+          stderr = stderr.slice(newline + 1);
+          if (!line.startsWith(startupFailurePrefix)) continue;
+          try {
+            const detail = JSON.parse(line.slice(startupFailurePrefix.length));
+            failure.abort(
+              Error(`driver startup observation failed: ${detail.failure}`),
+            );
+          } catch (error) {
+            failure.abort(error);
+          }
+        }
+      };
       const admitted = await fixture.admit(() =>
         scope.acquire(
-          () => bootServer({ ...env, ...overrides }, serverOptions),
+          () =>
+            bootServer({ ...env, ...overrides }, {
+              ...serverOptions,
+              observeOutput,
+            }),
           (server) => server.close(),
         )
       );
-      return admitted.value.value;
+      const child = admitted.value.value;
+      observationFailures.set(child, failure.signal);
+      failure.signal.throwIfAborted();
+      return child;
     };
     let server = await boot();
     const packets: string[] = [];
     async function call(route: string, method = "GET", body?: unknown) {
       return (await fixture.admit(async (signal) => {
-        const { response, text } = await boundOperation({
+        signal = AbortSignal.any([signal, observationFailures.get(server)!]);
+        const response = await boundOperation({
           signal,
-          dispose: ({ response }: { response: Response; text: string }) =>
-            response.body?.cancel(),
-        }, async (requestSignal) => {
-          const response = await requestFetch(
+          dispose: (response: Response) =>
+            signal.aborted ? response.body?.cancel() : undefined,
+        }, (requestSignal) =>
+          requestFetch(
             `${server.baseUrl}/_/api/${route}`,
             {
               method,
@@ -160,17 +193,38 @@ export async function storageServerFixture(
               headers: { "content-type": "application/json" },
               body: body === undefined ? undefined : JSON.stringify(body),
             },
+          ));
+        const text = await fixtureScope(async (bodyScope) => {
+          // Acquire the lock before reading: only this reader can cancel a locked
+          // body. Neither an ignored read nor ignored cancellation owns admission.
+          const reader = (await bodyScope.acquire(() =>
+            response.body?.getReader(), (reader) => {
+            if (!reader) {
+              return;
+            }
+            try {
+              reader.cancel().catch(() => {});
+            } finally {
+              reader.releaseLock();
+            }
+          })).value;
+          return await boundOperation(
+            { signal, dispose: () => {} },
+            async () => {
+              if (!reader) {
+                return "";
+              }
+              const decoder = new TextDecoder();
+              let text = "";
+              for (;;) {
+                const chunk = await reader.read();
+                if (chunk.done) {
+                  return text + decoder.decode();
+                }
+                text += decoder.decode(chunk.value, { stream: true });
+              }
+            },
           );
-          if (requestSignal.aborted) {
-            response.body?.cancel().catch(() => {});
-            requestSignal.throwIfAborted();
-          }
-          try {
-            return { response, text: await response.text() };
-          } catch (error) {
-            response.body?.cancel().catch(() => {});
-            throw error;
-          }
         });
         signal.throwIfAborted();
         packets.push(text);
@@ -234,6 +288,7 @@ export async function storageServerFixture(
     });
     await approve();
     let closing: Promise<void> | undefined;
+    let replacement: Promise<unknown> = Promise.resolve();
     return {
       ...fixture,
       clock,
@@ -274,11 +329,20 @@ export async function storageServerFixture(
       },
       async restart(overrides: Record<string, unknown> = {}) {
         const captured = { ...overrides };
-        return (await fixture.admit(async () => {
+        const previous = replacement;
+        const next = fixture.admit(async (signal) => {
+          // Reserve the whole close/boot/bind sequence before its first await.
+          await previous;
+          signal.throwIfAborted();
           await server.close();
+          signal.throwIfAborted();
           server = await boot(captured);
-          return bindDriverStartup(scope, startup, server, () => server);
-        })).value;
+          return bindDriverStartup(scope, startup, server, () => server, {
+            signal: observationFailures.get(server),
+          });
+        });
+        replacement = next.then(() => undefined, () => undefined);
+        return (await next).value;
       },
       close() {
         return closing ??= lifetime.close();

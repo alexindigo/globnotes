@@ -805,6 +805,17 @@ imported bytes; it also exercises Paused, missing/wrong state, replacement,
 exit/cancel and the unchanged native heartbeat deadline. The read-only restart
 pilot awaits Paused before its immediate assertion.
 
+Overlapping restarts queue the complete close/boot/bind sequence; each caller
+gets its own serialized replacement. Records carry a per-child sequence so a
+missed first record cannot admit a later supervisor. The preload captures driver
+statuses at the synchronous `DriverPeers.observeStatus` producer and copies the
+terminal snapshot in the original work's settlement callback, without a later
+async HTTP view. Observation/publication faults travel through the child's
+captured stderr pipe and cancel the fixture observation even when filesystem
+writes fail; original reconcile promises and throws remain unchanged. HTTP calls
+own their body reader before reading and cancel through that lock on retirement,
+without waiting for an uncooperative read or cancellation promise.
+
 Run the targeted server acceptance through the authorized container launcher:
 
 ```sh

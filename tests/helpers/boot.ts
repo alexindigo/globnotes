@@ -116,10 +116,19 @@ export async function bootServer(
     denoArgs?: string[];
     /** Low-level readiness IO port for lifecycle contracts, not another clock. */
     healthFetch?: typeof fetch;
+    /** Per-child pipe consumer for fixture protocols independent of filesystem IO.
+     * Called synchronously after captured output; must not throw. */
+    observeOutput?: (name: "stdout" | "stderr", chunk: string) => void;
   } = {},
 ): Promise<TestServer> {
-  const { cwd, host = "127.0.0.1", origin, healthFetch = fetch, denoArgs } =
-    opts;
+  const {
+    cwd,
+    host = "127.0.0.1",
+    origin,
+    healthFetch = fetch,
+    denoArgs,
+    observeOutput,
+  } = opts;
   const extraArgs = [...(denoArgs ?? [])];
   const lifetime = createFixtureScope();
   let returned = false;
@@ -222,6 +231,7 @@ export async function bootServer(
           new WritableStream({
             write(chunk) {
               output[name] += chunk;
+              observeOutput?.(name, chunk);
             },
           }),
         )

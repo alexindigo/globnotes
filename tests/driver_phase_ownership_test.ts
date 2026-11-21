@@ -6,6 +6,10 @@ import {
   assertThrows,
 } from "@std/assert";
 import { DriverSupervisor } from "../server/hub/drivers/supervisor.ts";
+import {
+  type DriverInstance,
+  DriverPeers,
+} from "../server/hub/drivers/peers.ts";
 import { OwnershipError } from "../shared/ownership.js";
 import type { TestServer } from "./helpers/boot.ts";
 import { fixtureScope } from "./helpers/fixture_scope.ts";
@@ -22,7 +26,10 @@ import { observeDriverStartup } from "./helpers/driver_startup_preload.ts";
 import { storageServerFixture } from "./helpers/driver_fixture.ts";
 import { memoryRemote } from "./helpers/memory_remote.ts";
 import { heldOperation } from "./helpers/owned_operation.ts";
-import { recordReader } from "./helpers/owned_record_channel.ts";
+import {
+  recordReader,
+  type RecordSnapshot,
+} from "./helpers/owned_record_channel.ts";
 import { publishRecord } from "./helpers/process_records.ts";
 import { done, pending, ReadinessError, waitUntil } from "./helpers/wait.ts";
 import { bounded } from "./helpers/worker_liveness.ts";
@@ -33,6 +40,7 @@ const snapshot = (
 ): DriverStartupSnapshot => ({
   pid: 123,
   owner: "123:initial",
+  sequence: 1,
   pending: true,
   states: { driver: "starting" },
   failure: null,
@@ -42,7 +50,10 @@ function withStartup(
   body: (f: {
     publish: (changes?: Partial<DriverStartupSnapshot>) => void;
     corrupt: (bytes: string) => void;
-    bind: () => ReturnType<typeof bindDriverStartup>;
+    bind: (
+      options?: Parameters<typeof bindDriverStartup>[4],
+    ) => ReturnType<typeof bindDriverStartup>;
+    read: () => RecordSnapshot<DriverStartupSnapshot> | null;
     replace: () => void;
     exit: () => void;
     server: TestServer;
@@ -68,7 +79,10 @@ function withStartup(
         publishDriverStartup(directory.path, snapshot(changes)),
       corrupt: (bytes) =>
         publishRecord(`${directory.path}/initial.json`, bytes),
-      bind: () => bindDriverStartup(scope, directory, server, () => current),
+      bind: (options) =>
+        bindDriverStartup(scope, directory, server, () => current, options),
+      read: () =>
+        recordReader(directory, "initial.json", driverStartupSchema).read(),
       replace: () => {
         current = { ...server, pid: 456 };
       },
@@ -96,6 +110,201 @@ Deno.test("driver phase: explicit Active and Paused require same initial cycle c
       );
     });
   }
+});
+
+Deno.test("driver phase PR107: pending failed projection is not a settled mismatch", () =>
+  withStartup(async (f) => {
+    f.publish({ states: { driver: "failed" } });
+    let reads = 0;
+    const bound = f.bind({
+      read() {
+        const value = f.read();
+        // The actual first completion read sees Failed while still draining.
+        if (++reads === 2) {
+          f.publish({ pending: false, states: { driver: "active" } });
+        }
+        return value;
+      },
+    });
+    const observing = bound.initialDriver("driver", "active");
+    assertEquals(await bounded(observing, "pending failure drains"), {
+      pid: 123,
+      owner: "123:initial",
+      state: "active",
+    });
+    assertEquals(reads >= 3, true);
+  }));
+
+Deno.test("driver phase PR107: missing boot record cannot admit a replacement cycle", () =>
+  withStartup(async (f) => {
+    const bound = f.bind();
+    f.publish({
+      owner: "123:2",
+      sequence: 2,
+      pending: false,
+      states: { driver: "active" },
+    });
+    await assertRejects(
+      () => bound.initialDriver("driver", "active"),
+      Error,
+      "driver 'driver' initial cycle: cycle owner replaced",
+    );
+  }));
+
+Deno.test("driver phase PR107: body lock is cancelled without awaiting stream cancellation", async () => {
+  await fixtureScope(async (scope) => {
+    const pulled = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<void>();
+    const cancellation = Promise.withResolvers<void>();
+    let held = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull() {
+        pulled.resolve();
+      },
+      cancel() {
+        cancelled.resolve();
+        return cancellation.promise;
+      },
+    }, { highWaterMark: 0 });
+    const f = (await scope.acquire(() =>
+      storageServerFixture([], {
+        requestFetch(input, init) {
+          return held
+            ? Promise.resolve(new Response(body))
+            : fetch(input, init);
+        },
+      }), (f) => f.close())).value;
+    held = true;
+    const request = f.call("drivers");
+    request.catch(() => {});
+    try {
+      await bounded(
+        workMilestone(request, pulled.promise, "locked body read"),
+        "body acquired",
+      );
+      const before = [...f.packets];
+      await bounded(f.close(), "close ignores body cancellation completion");
+      await bounded(cancelled.promise, "locked reader receives cancellation");
+      await assertRejects(
+        () => request,
+        OwnershipError,
+        "Fixture scope retired",
+      );
+      assertEquals(f.packets, before);
+      assertEquals(body.locked, false);
+    } finally {
+      cancellation.resolve();
+      await f.close();
+    }
+  });
+});
+
+Deno.test("driver phase PR107: overlapping replacement never boots two live servers", async () => {
+  await fixtureScope(async (scope) => {
+    const f = (await scope.acquire(() =>
+      storageServerFixture([]), (f) => f.close())).value;
+    const first = f.restart();
+    const second = f.restart();
+    first.catch(() => {});
+    second.catch(() => {});
+    const a = await first;
+    const b = await second;
+    assertEquals([a.server.status()?.success, b.server.status()], [true, null]);
+    assertStrictEquals(f.server(), b.server);
+    const response = await fetch(`${b.server.baseUrl}/_/api/health`);
+    assertEquals(response.status, 200);
+    await response.body?.cancel();
+  });
+});
+
+/** A real status producer with only its persistence effect stubbed. The preload
+ * must capture observeStatus synchronously, not read a fake async HTTP view. */
+function preloadPeers(
+  instances = () =>
+    [{ id: "driver", plugin: "plugin", revision: 1 }] as DriverInstance[],
+) {
+  const peers = new DriverPeers(
+    {
+      db: { prepare: () => ({ run() {} }) },
+    } as unknown as ConstructorParameters<typeof DriverPeers>[0],
+  );
+  peers.instances = instances;
+  return peers;
+}
+
+Deno.test("driver phase PR107: owned body decoding preserves bytes and read error identity", async () => {
+  await fixtureScope(async (scope) => {
+    let response: Response | undefined;
+    const f = (await scope.acquire(() =>
+      storageServerFixture([], {
+        requestFetch(input, init) {
+          return response ? Promise.resolve(response) : fetch(input, init);
+        },
+      }), (f) => f.close())).value;
+    const bytes = new TextEncoder().encode('{"label":"caf\u00e9"}');
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // Split in the middle of the multibyte character, not just JSON tokens.
+        const split = bytes.indexOf(0xc3) + 1;
+        controller.enqueue(bytes.slice(0, split));
+        controller.enqueue(bytes.slice(split));
+        controller.close();
+      },
+    });
+    response = new Response(body);
+    assertEquals(await f.call("body-contract"), { label: "caf\u00e9" });
+    assertEquals(body.locked, false);
+    response = new Response(null, { status: 204 });
+    assertEquals(await f.call("body-contract"), null);
+    const before = [...f.packets];
+    const reason = Error("body read failed");
+    const failedBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(reason);
+      },
+    });
+    response = new Response(failedBody);
+    assertStrictEquals(
+      await assertRejects(
+        () => f.call("body-contract"),
+        Error,
+        "body read failed",
+      ),
+      reason,
+    );
+    assertEquals(failedBody.locked, false);
+    assertEquals(f.packets, before);
+  });
+});
+
+Deno.test("driver phase PR107: close cancels queued replacements before another boot", async () => {
+  await fixtureScope(async (scope) => {
+    const f = (await scope.acquire(() =>
+      storageServerFixture([]), (f) => f.close())).value;
+    const original = f.server();
+    const first = f.restart(), second = f.restart();
+    first.catch(() => {});
+    second.catch(() => {});
+    await bounded(f.close(), "queued replacement retirement");
+    const a = await assertRejects(
+      () =>
+        first,
+      OwnershipError,
+      "Fixture scope retired",
+    );
+    const b = await assertRejects(
+      () => second,
+      OwnershipError,
+      "Fixture scope retired",
+    );
+    assertStrictEquals(a, b);
+    assertEquals(original.status()?.success, true);
+    assertThrows(
+      () => f.server(),
+      OwnershipError,
+      "Owner is retired",
+    );
+  });
 });
 
 Deno.test("driver phase: replaced cycle cannot supply expected state", () =>
@@ -221,7 +430,10 @@ Deno.test("driver phase review: preload records thrown undefined and retires pen
       DriverSupervisor.prototype.reconcile = original;
     });
     const work = Promise.withResolvers<void>();
-    DriverSupervisor.prototype.reconcile = () => work.promise;
+    DriverSupervisor.prototype.reconcile = function () {
+      this.peers.observeStatus("driver", "active", true);
+      return work.promise;
+    };
     const listeners = new Set<() => void>();
     const supervisor = Object.assign(
       Object.create(DriverSupervisor.prototype),
@@ -230,7 +442,7 @@ Deno.test("driver phase review: preload records thrown undefined and retires pen
           lifecycle: { epoch: 1 },
           plugins: { driverOwner: () => ({ epoch: 1 }) },
         },
-        peers: { instances: () => [] },
+        peers: preloadPeers(),
         view: () =>
           Promise.resolve({ instances: [{ id: "driver", status: "active" }] }),
         subscribe: (notify: () => void) => {
@@ -264,13 +476,17 @@ Deno.test("driver phase review: preload records thrown undefined and retires pen
     assertEquals(reader.read()!.value, {
       pid: Deno.pid,
       owner: `${Deno.pid}:1`,
+      sequence: 1,
       pending: false,
       states: { driver: "active" },
       failure: "undefined",
     });
     await restore();
     const nextWork = Promise.withResolvers<void>();
-    DriverSupervisor.prototype.reconcile = () => nextWork.promise;
+    DriverSupervisor.prototype.reconcile = function () {
+      this.peers.observeStatus("driver", "active", true);
+      return nextWork.promise;
+    };
     const retire = observeDriverStartup(directory.path);
     scope.defer(retire);
     supervisor.reconcile();
@@ -406,6 +622,7 @@ Deno.test("driver phase main2: projection failure fails observation without repl
       DriverSupervisor.prototype.reconcile = original;
     });
     const product = Promise.resolve();
+    const failure = new AbortController();
     DriverSupervisor.prototype.reconcile = () => product;
     const supervisor = Object.assign(
       Object.create(DriverSupervisor.prototype),
@@ -414,22 +631,19 @@ Deno.test("driver phase main2: projection failure fails observation without repl
           lifecycle: { epoch: 1 },
           plugins: { driverOwner: () => ({ epoch: 1 }) },
         },
-        peers: { instances: () => [] },
-        view: () => Promise.reject(Error("projection failed")),
+        peers: preloadPeers(() => {
+          throw Error("projection failed");
+        }),
         subscribe: () => () => {},
       },
     ) as DriverSupervisor;
-    scope.defer(observeDriverStartup(directory.path));
+    scope.defer(
+      observeDriverStartup(directory.path, {
+        report: (error) => failure.abort(error),
+      }),
+    );
     assertStrictEquals(supervisor.reconcile(), product);
     await product;
-    const reader = recordReader(directory, "initial.json", driverStartupSchema);
-    await waitUntil(() => {
-      const snapshot = reader.read()?.value;
-      return snapshot && !snapshot.pending &&
-          snapshot.failure === "Error: projection failed"
-        ? done()
-        : pending("projection failure");
-    }, { label: "driver projection failure publication" });
     const exited = Promise.withResolvers<Deno.CommandStatus>();
     const server = {
       pid: Deno.pid,
@@ -438,20 +652,224 @@ Deno.test("driver phase main2: projection failure fails observation without repl
     } as TestServer;
     await assertRejects(
       () =>
-        bindDriverStartup(scope, directory, server, () => server).initialDriver(
+        bindDriverStartup(scope, directory, server, () => server, {
+          signal: failure.signal,
+        }).initialDriver(
           "driver",
           "active",
         ),
       Error,
-      "driver 'driver' initial cycle: Error: projection failed",
+      "projection failed",
     );
-    assertEquals(reader.read()!.value, {
+  });
+});
+
+for (const phase of ["initial", "terminal"] as const) {
+  Deno.test(`driver phase PR107: ${phase} publication failure preserves product and fails fixture`, async () => {
+    await fixtureScope(async (scope) => {
+      const parent = await scope.acquire(
+        () => Deno.makeTempDir({ prefix: "preload-publication-" }),
+        (root) => Deno.remove(root, { recursive: true }),
+      );
+      const directory = await createDriverStartupDirectory(scope, parent.value);
+      const original = DriverSupervisor.prototype.reconcile;
+      scope.defer(() => {
+        DriverSupervisor.prototype.reconcile = original;
+      });
+      const work = Promise.withResolvers<void>();
+      let calls = 0;
+      DriverSupervisor.prototype.reconcile = function () {
+        calls++;
+        this.peers.observeStatus("driver", "active", true);
+        return work.promise;
+      };
+      const supervisor = Object.assign(
+        Object.create(DriverSupervisor.prototype),
+        {
+          adapters: {
+            lifecycle: { epoch: 1 },
+            plugins: { driverOwner: () => ({ epoch: 1 }) },
+          },
+          peers: preloadPeers(),
+          subscribe: () => () => {},
+        },
+      ) as DriverSupervisor;
+      const error = Error(`${phase} record write failed`);
+      const reports: unknown[] = [];
+      const failure = new AbortController();
+      scope.defer(observeDriverStartup(directory.path, {
+        publish(directory, snapshot) {
+          assertEquals(calls, 1);
+          if (snapshot.pending === (phase === "initial")) throw error;
+          publishDriverStartup(directory, snapshot);
+        },
+        report(error) {
+          reports.push(error);
+          failure.abort(error);
+        },
+      }));
+      assertStrictEquals(supervisor.reconcile(), work.promise);
+      assertEquals(calls, 1);
+      const exited = Promise.withResolvers<Deno.CommandStatus>();
+      const server = {
+        pid: Deno.pid,
+        exited: exited.promise,
+        status: () => null,
+      } as TestServer;
+      const observing = bindDriverStartup(
+        scope,
+        directory,
+        server,
+        () => server,
+        { signal: failure.signal },
+      ).initialDriver("driver", "active");
+      observing.catch(() => {});
+      work.resolve();
+      await work.promise;
+      assertStrictEquals(
+        await assertRejects(
+          () => bounded(observing, "publication fault transport"),
+          Error,
+          error.message,
+        ),
+        error,
+      );
+      assertEquals(reports.length, 1);
+      assertStrictEquals(reports[0], error);
+    });
+  });
+}
+
+Deno.test("driver phase PR107: observer failures cannot replace an original synchronous throw", async () => {
+  await fixtureScope((scope) => {
+    const original = DriverSupervisor.prototype.reconcile;
+    scope.defer(() => {
+      DriverSupervisor.prototype.reconcile = original;
+    });
+    const productError = Error("original reconcile throw");
+    let calls = 0;
+    DriverSupervisor.prototype.reconcile = () => {
+      calls++;
+      throw productError;
+    };
+    const supervisor = Object.assign(
+      Object.create(DriverSupervisor.prototype),
+      {
+        adapters: {
+          lifecycle: { epoch: 1 },
+          plugins: { driverOwner: () => ({ epoch: 1 }) },
+        },
+        peers: preloadPeers(() => []),
+      },
+    ) as DriverSupervisor;
+    const publications: DriverStartupSnapshot[] = [];
+    let reports = 0;
+    scope.defer(observeDriverStartup("unused", {
+      publish(_directory, snapshot) {
+        publications.push(snapshot);
+        throw Error("publication failed");
+      },
+      report() {
+        reports++;
+        throw Error("report transport failed");
+      },
+    }));
+    assertStrictEquals(
+      assertThrows(
+        () => supervisor.reconcile(),
+        Error,
+        "original reconcile throw",
+      ),
+      productError,
+    );
+    assertEquals([calls, reports, publications], [1, 1, [{
       pid: Deno.pid,
       owner: `${Deno.pid}:1`,
+      sequence: 1,
       pending: false,
       states: {},
-      failure: "Error: projection failed",
+      failure: "Error: original reconcile throw",
+    }]]);
+  });
+});
+
+Deno.test("driver phase PR107: terminal status is copied at settlement before later recovery", async () => {
+  await fixtureScope(async (scope) => {
+    const parent = await scope.acquire(
+      () => Deno.makeTempDir({ prefix: "preload-terminal-" }),
+      (root) => Deno.remove(root, { recursive: true }),
+    );
+    const directory = await createDriverStartupDirectory(scope, parent.value);
+    const original = DriverSupervisor.prototype.reconcile;
+    scope.defer(() => {
+      DriverSupervisor.prototype.reconcile = original;
     });
+    const work = Promise.withResolvers<void>();
+    DriverSupervisor.prototype.reconcile = function () {
+      this.peers.observeStatus("driver", "starting", true);
+      return work.promise;
+    };
+    const catalog = Promise.withResolvers<void>();
+    let viewReads = 0;
+    let live = "failed";
+    const peers = preloadPeers();
+    const supervisor = Object.assign(
+      Object.create(DriverSupervisor.prototype),
+      {
+        adapters: {
+          lifecycle: { epoch: 1 },
+          plugins: { driverOwner: () => ({ epoch: 1 }) },
+        },
+        peers,
+        subscribe: () => () => {},
+        async view() {
+          viewReads++;
+          await catalog.promise;
+          return { instances: [{ id: "driver", status: live }] };
+        },
+      },
+    ) as DriverSupervisor;
+    scope.defer(observeDriverStartup(directory.path));
+    assertStrictEquals(supervisor.reconcile(), work.promise);
+    peers.observeStatus("driver", "failed", true);
+    const recovery = work.promise.then(() => {
+      live = "active";
+      peers.observeStatus("driver", live, true);
+      catalog.resolve();
+    });
+    work.resolve();
+    await recovery;
+    assertEquals(
+      recordReader(directory, "initial.json", driverStartupSchema).read()!
+        .value,
+      {
+        pid: Deno.pid,
+        owner: `${Deno.pid}:1`,
+        sequence: 1,
+        pending: false,
+        states: { driver: "failed" },
+        failure: null,
+      },
+    );
+    assertEquals(viewReads, 0);
+  });
+});
+
+Deno.test("driver phase PR107: real child reports record filesystem failure through captured pipe", async () => {
+  await fixtureScope(async (scope) => {
+    const f = (await scope.acquire(() =>
+      storageServerFixture([]), (f) => f.close())).value;
+    const record = `${f.statePath}/driver-startup/initial.json`;
+    await f.admit(async () => {
+      await Deno.remove(record);
+      await Deno.mkdir(record);
+    });
+    await assertRejects(
+      () =>
+        bounded(f.restart(), "independent publication error pipe"),
+      Error,
+      "driver startup observation failed:",
+    );
   });
 });
 
@@ -579,6 +997,10 @@ Deno.test("driver phase: strict schema rejects malformed terminal snapshots", ()
         { states: { driver: true } },
         { pid: 0 },
         { owner: "" },
+        { sequence: 0 },
+        { sequence: 1.5 },
+        { sequence: "1" },
+        { sequence: undefined },
         { failure: 7 },
         { extra: true },
       ]
@@ -619,7 +1041,10 @@ Deno.test("driver phase: preload returns original work, rejects replacement and 
       DriverSupervisor.prototype.reconcile = original;
     });
     const work = Promise.withResolvers<void>();
-    DriverSupervisor.prototype.reconcile = () => work.promise;
+    DriverSupervisor.prototype.reconcile = function () {
+      this.peers.observeStatus("driver", "active", true);
+      return work.promise;
+    };
     const listeners = new Set<() => void>();
     let revision = 1;
     const supervisor = Object.assign(
@@ -629,9 +1054,9 @@ Deno.test("driver phase: preload returns original work, rejects replacement and 
           lifecycle: { epoch: 1 },
           plugins: { driverOwner: () => ({ epoch: 1 }) },
         },
-        peers: {
-          instances: () => [{ id: "driver", plugin: "plugin", revision }],
-        },
+        peers: preloadPeers(() =>
+          [{ id: "driver", plugin: "plugin", revision }] as DriverInstance[]
+        ),
         view: () =>
           Promise.resolve({ instances: [{ id: "driver", status: "active" }] }),
         subscribe: (callback: () => void) => {
@@ -657,6 +1082,7 @@ Deno.test("driver phase: preload returns original work, rejects replacement and 
     assertEquals(captured, {
       pid: Deno.pid,
       owner: `${Deno.pid}:1`,
+      sequence: 1,
       pending: true,
       states: { driver: "active" },
       failure: "cycle owner replaced",
@@ -740,6 +1166,7 @@ Deno.test("driver phase: an old supervisor completion cannot overwrite its repla
     assertEquals(reader.read()!.value, {
       pid: Deno.pid,
       owner: retained,
+      sequence: 2,
       pending: false,
       states: {},
       failure: null,
@@ -830,5 +1257,10 @@ Deno.test("driver phase: native Worker deadline settles the original startup cyc
     remote.native.hang = false;
     await f.sync(id);
     assertEquals((await f.one(id)).status, "active");
+    await assertRejects(
+      () => restarted.initialDriver(id, "active"),
+      Error,
+      `driver '${id}' initial cycle: failed, expected active`,
+    );
   });
 });

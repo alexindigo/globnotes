@@ -4,6 +4,7 @@ import {
   decodeDriverStartup,
   type DriverStartupSnapshot,
   recordName,
+  startupFailurePrefix,
 } from "./driver_startup_schema.ts";
 /** Private child publisher; fixture construction cannot import this module. */
 export function publishDriverStartup(
@@ -16,4 +17,16 @@ export function publishDriverStartup(
       decodeDriverStartup(snapshot as unknown as Record<string, unknown>),
     ),
   );
+}
+
+export function reportDriverStartupFailure(error: unknown) {
+  let failure: string;
+  try {
+    failure = String(error);
+  } catch {
+    failure = "Unprintable driver startup observation failure";
+  }
+  Deno.stderr.writeSync(new TextEncoder().encode(
+    startupFailurePrefix + JSON.stringify({ failure }) + "\n",
+  ));
 }

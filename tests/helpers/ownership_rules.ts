@@ -310,7 +310,7 @@ const allModules = (rules: OwnershipRules): OwnershipRules => ({
 const driverDenoMembers: Record<string, readonly string[]> = {
   [DRIVER_STARTUP]: [],
   [DRIVER_PRELOAD]: ["pid"],
-  [DRIVER_PROTOCOL]: [],
+  [DRIVER_PROTOCOL]: ["stderr"],
   [DRIVER_FIXTURE]: ["readTextFile", "writeTextFileSync", "renameSync"],
 };
 const DRIVER_OWNERSHIP = Object.fromEntries(
