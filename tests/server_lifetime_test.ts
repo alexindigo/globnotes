@@ -313,7 +313,14 @@ for (const mode of ["failure", "missing"] as const) {
         Deno.remove(root, { recursive: true }))).value;
       const script = `${root}/check.ts`, receipt = `${root}/result.json`;
       const boot = new URL("./helpers/boot.ts", import.meta.url).href;
-      const checkout = fromFileUrl(new URL("../", import.meta.url));
+      const checkout = `${root}/checkout-"quoted"\\path\nline`;
+      await Deno.symlink(
+        fromFileUrl(new URL("../", import.meta.url)),
+        checkout,
+        { type: "dir" },
+      );
+      const validation =
+        `test servers must not run in the checkout (cwd ${checkout}): the server rewrites the cwd-relative client/dist/index.html at boot`;
       await Deno.writeTextFile(
         script,
         `
@@ -332,7 +339,7 @@ Deno.remove=async (file,options)=>{
   }
   return nativeRemove(file,options);
 };
-const validation="test servers must not run in the checkout (cwd ${checkout}): the server rewrites the cwd-relative client/dist/index.html at boot";
+const validation=${JSON.stringify(validation)};
 const error=await assertRejects(()=>bootServer({}, {cwd:${
           JSON.stringify(checkout)
         }}), ${mode === "failure" ? "AggregateError" : "Error"}, ${

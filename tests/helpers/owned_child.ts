@@ -37,13 +37,15 @@ export function spawnOwnedChild(
   options: ChildOptions,
   scheduler: ChildSignalClock = clock,
 ): Promise<OwnedResource<OwnedChild>> {
-  const setSignal = scheduler.set.bind(scheduler);
   // Reserve the child before touching its status observer or cancellation hook.
   // Those setup steps can throw; no returned handle is needed for cleanup.
   let start: () => void;
   let release: () => Promise<void>;
   const acquired = scope.acquire(() => {
     const launchOptions = { ...options };
+    // Admission must fence caller getters before they run, and acquisition
+    // keeps their failures on the same rejection channel as spawn failures.
+    const setSignal = scheduler.set.bind(scheduler);
     const child = command(program, launchOptions).spawn();
     const timers = new Set<() => void>();
     let settled = false, status: Deno.CommandStatus | null = null;
@@ -69,12 +71,19 @@ export function spawnOwnedChild(
     };
     const signalAfter = (milliseconds: number, signo: Deno.Signal) => {
       if (settled) return () => {};
-      let active = true, clear = () => {};
+      let active = true, clearing = false, clear = () => {};
       const cancel = () => {
-        if (!timers.has(cancel)) return;
+        if (clearing || !timers.has(cancel)) return;
         active = false;
-        clear();
-        timers.delete(cancel);
+        clearing = true;
+        try {
+          clear();
+          timers.delete(cancel);
+        } finally {
+          // Reentrant cancellation joins this clear; a failed clear remains
+          // tracked so a later independent cancellation can retry it.
+          clearing = false;
+        }
       };
       timers.add(cancel);
       try {

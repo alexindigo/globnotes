@@ -86,6 +86,103 @@ Deno.test("child owner review: retired and failed acquisition reject without esc
   assertEquals(scope.size, 0);
 });
 
+for (const port of ["options", "scheduler"] as const) {
+  Deno.test(`child owner review: throwing ${port} getter rejects only after acquisition admission`, async () => {
+    const failure = new Error(`${port} getter failed`);
+    const reads: string[] = [];
+    const launchOptions = {
+      ...options,
+      get args() {
+        reads.push("options");
+        if (port === "options") throw failure;
+        return waitingArgs;
+      },
+    };
+    const scheduler: ChildSignalClock = {
+      get set(): ChildSignalClock["set"] {
+        reads.push("scheduler");
+        throw failure;
+      },
+    };
+    let retired!: FixtureScope;
+    await fixtureScope(async (scope) => {
+      retired = scope;
+      const acquisition = spawnOwnedChild(
+        scope,
+        DENO,
+        launchOptions,
+        scheduler,
+      );
+      assertInstanceOf(acquisition, Promise);
+      assertStrictEquals(
+        await assertRejects(() => acquisition, Error, failure.message),
+        failure,
+      );
+      assertEquals([reads, scope.size], [
+        port === "options" ? ["options"] : ["options", "scheduler"],
+        0,
+      ]);
+    });
+    reads.length = 0;
+    const acquisition = spawnOwnedChild(
+      retired,
+      DENO,
+      launchOptions,
+      scheduler,
+    );
+    assertInstanceOf(acquisition, Promise);
+    await assertRejects(() => acquisition, OwnershipError, "retired");
+    assertEquals([reads, retired.size], [[], 0]);
+  });
+}
+
+Deno.test("child owner review: scheduler is captured once with its original receiver", async () => {
+  await fixtureScope(async (scope) => {
+    let reads = 0;
+    const receivers: unknown[] = [];
+    const scheduler: ChildSignalClock = {
+      get set() {
+        reads++;
+        return function (this: ChildSignalClock) {
+          receivers.push(this);
+          return () => {};
+        };
+      },
+    };
+    const child =
+      (await spawnOwnedChild(scope, DENO, options, scheduler)).value;
+    child.signalAfter(5000, "SIGKILL")();
+    child.signalAfter(5000, "SIGKILL")();
+    assertEquals(reads, 1);
+    assertEquals(receivers.length, 2);
+    assertStrictEquals(receivers[0], scheduler);
+    assertStrictEquals(receivers[1], scheduler);
+    assertEquals(await finish(child), { success: true, code: 0, signal: null });
+  });
+});
+
+for (
+  const option of ["cwd", "host", "origin", "healthFetch", "denoArgs"] as const
+) {
+  Deno.test(`child owner review: boot ${option} getter errors use the async rejection channel`, async () => {
+    const failure = new Error(`boot ${option} getter failed`);
+    let reads = 0;
+    const options = Object.defineProperty({}, option, {
+      get() {
+        reads++;
+        throw failure;
+      },
+    });
+    const starting = bootServer({}, options);
+    assertInstanceOf(starting, Promise);
+    assertStrictEquals(
+      await assertRejects(() => starting, Error, failure.message),
+      failure,
+    );
+    assertEquals(reads, 1);
+  });
+}
+
 Deno.test("child owner review: boot joins rejected actual status without an unhandled readiness rejection", async () => {
   await fixtureScope(async (scope) => {
     const root = (await scope.acquire(
@@ -231,6 +328,7 @@ Deno.test("child owner: a failed timer clear remains tracked for status retireme
         callback = invoke;
         return () => {
           events.push(events.length === 0 ? "clear failed" : "cleared");
+          cancel();
           if (events.length === 1) throw failure;
         };
       },
@@ -242,6 +340,31 @@ Deno.test("child owner: a failed timer clear remains tracked for status retireme
     callback();
     assertEquals(await finish(child), { success: true, code: 0, signal: null });
     assertEquals(events, ["clear failed", "cleared"]);
+  });
+});
+
+Deno.test("child owner: successful timer clearing joins reentrant cancellation", async () => {
+  await fixtureScope(async (scope) => {
+    const events: string[] = [];
+    let callback!: () => void;
+    const scheduler: ChildSignalClock = {
+      set(invoke) {
+        callback = invoke;
+        return () => {
+          events.push("clear entered");
+          cancel();
+          events.push("clear returned");
+        };
+      },
+    };
+    const child =
+      (await spawnOwnedChild(scope, DENO, options, scheduler)).value;
+    const cancel = child.signalAfter(5000, "SIGKILL");
+    cancel();
+    cancel();
+    callback();
+    assertEquals(await finish(child), { success: true, code: 0, signal: null });
+    assertEquals(events, ["clear entered", "clear returned"]);
   });
 });
 
@@ -377,12 +500,27 @@ Deno.test("child owner: failed status subscription closes stdin and reaps before
       Object.defineProperty(Deno.ChildProcess.prototype, "status", descriptor)
     );
     let child: Deno.ChildProcess | undefined;
+    const cancellations: string[] = [];
+    scope.defer(async () => {
+      // Rescue only after the verdict, without reading and closing pipes for
+      // the implementation under test.
+      if (child) {
+        await Promise.all([child.stdout.cancel(), child.stderr.cancel()]);
+      }
+    });
     const failure = new Error("child status construction failed");
     Object.defineProperty(Deno.ChildProcess.prototype, "status", {
       ...descriptor,
       get() {
         if (!child) {
           child = this;
+          for (const name of ["stdout", "stderr"] as const) {
+            const stream = child![name], cancel = stream.cancel;
+            stream.cancel = function (reason) {
+              cancellations.push(name);
+              return cancel.call(this, reason);
+            };
+          }
           throw failure;
         }
         return descriptor.get!.call(this);
@@ -413,17 +551,15 @@ Deno.test("child owner: failed status subscription closes stdin and reaps before
     } finally {
       writer.releaseLock();
     }
+    assertEquals(cancellations, ["stderr", "stdout"]);
     const readers = [child!.stdout.getReader(), child!.stderr.getReader()];
     try {
       assertEquals(
         await bounded(
-          Promise.all(readers.map((reader) => reader.read())),
+          Promise.all(readers.map((reader) => reader.closed)),
           "failed construction pipes closed",
         ),
-        [
-          { done: true, value: undefined },
-          { done: true, value: undefined },
-        ],
+        [undefined, undefined],
       );
     } finally {
       for (const reader of readers) reader.releaseLock();
