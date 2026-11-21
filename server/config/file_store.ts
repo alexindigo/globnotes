@@ -7,6 +7,7 @@ import {
   type OperationLease,
 } from "../operation_lease.ts";
 import { bindGuardedSink } from "../internal/guarded_sink.ts";
+import { createUuid } from "../../shared/uuid.ts";
 import { registerPublicationWriter } from "./internal/publication_port.ts";
 import {
   type PublicationOutcome,
@@ -92,10 +93,19 @@ export interface PreparedStoredPublication {
 interface StoredCandidate {
   readonly temporary: string;
   readonly identity: ConfigNode["identity"];
+  readonly custody: CandidateCustody;
   readonly expected: StoredConfigSnapshot;
   readonly snapshot: StoredConfigSnapshot;
   readonly replace: boolean;
   phase: "prepared" | "publishing" | "published" | "discarded";
+}
+/** Cleanup responsibility is independent of single-use publication authority. */
+interface CandidateCustody {
+  readonly temporary: string;
+  handle: Deno.FsFile | undefined;
+  identity: ConfigNode["identity"];
+  requested: boolean;
+  unlinked: boolean;
 }
 function synchronous(callback: (...args: never[]) => unknown): void {
   if (
@@ -233,6 +243,7 @@ export class BoundFileStore {
   // Ownership bindings only, never durability credit. A failed preparation can
   // retry our own mkdir effects without accepting any foreign replacement.
   readonly #parents = new WeakMap<StoredConfigSnapshot, StoredConfigSnapshot>();
+  readonly #candidates = new Set<CandidateCustody>();
   #bound(snapshot: StoredConfigSnapshot): StoredConfigSnapshot {
     while (this.#parents.has(snapshot)) snapshot = this.#parents.get(snapshot)!;
     return snapshot;
@@ -342,6 +353,16 @@ export class BoundFileStore {
   }
 
   #prepare(raw: string, expected: StoredConfigSnapshot): StoredCandidate {
+    // Previous failures were already reported to their caller. Retry cleanup,
+    // never publication, without blocking unrelated mutations or active handles.
+    for (const custody of this.#candidates) {
+      if (!custody.requested) continue;
+      try {
+        this.#cleanupCandidate(custody);
+      } catch {
+        // Retain exact custody for the next attempt; do not repeat diagnostics.
+      }
+    }
     const prepared = this.prepareParents(expected);
     const target = expected.binding.target;
     const identity = expected.binding.nodes.find((node) =>
@@ -349,12 +370,10 @@ export class BoundFileStore {
     )?.identity;
     // Replacement authority on the directory must not bypass target write access.
     if (identity) Deno.openSync(target, { write: true }).close();
-    const temporary = Deno.makeTempFileSync({
-      dir: path.dirname(target),
-      prefix: ".config-",
-    });
-    const owned = configNode(temporary).identity;
+    const custody = this.#createCandidate(path.dirname(target));
+    const temporary = custody.temporary;
     try {
+      const owned = this.#candidateIdentity(custody);
       Deno.writeTextFileSync(temporary, raw);
       if (identity) {
         const temporaryInfo = Deno.statSync(temporary);
@@ -368,12 +387,9 @@ export class BoundFileStore {
           Deno.chmodSync(temporary, identity.mode & 0o7777);
         }
       }
-      const handle = Deno.openSync(temporary, { write: true });
-      try {
-        handle.syncSync();
-      } finally {
-        handle.close();
-      }
+      custody.handle!.syncSync();
+      custody.handle!.close();
+      custody.handle = undefined;
       // Rename preserves the prepared file's identity. Build the committed
       // binding before effects so publication cannot fail on a later disk read.
       const replacement = Object.freeze({
@@ -394,6 +410,7 @@ export class BoundFileStore {
       return {
         temporary,
         identity: owned,
+        custody,
         expected: prepared,
         snapshot,
         replace: identity !== null,
@@ -401,7 +418,7 @@ export class BoundFileStore {
       };
     } catch (error) {
       try {
-        this.#discardExact(temporary, owned);
+        this.#cleanupCandidate(custody);
       } catch (cleanup) {
         throw new AggregateError(
           [error, cleanup],
@@ -411,6 +428,71 @@ export class BoundFileStore {
       }
       throw error;
     }
+  }
+
+  #createCandidate(directory: string): CandidateCustody {
+    while (true) {
+      const temporary = path.join(directory, `.config-${createUuid()}`);
+      const custody: CandidateCustody = {
+        temporary,
+        handle: undefined,
+        identity: null,
+        requested: false,
+        unlinked: false,
+      };
+      try {
+        custody.handle = Deno.openSync(temporary, {
+          read: true,
+          write: true,
+          createNew: true,
+          mode: 0o600,
+        });
+      } catch (error) {
+        if (error instanceof Deno.errors.AlreadyExists) continue;
+        throw error;
+      }
+      // No filesystem inspection can throw between creation and store custody.
+      this.#candidates.add(custody);
+      return custody;
+    }
+  }
+
+  #candidateIdentity(custody: CandidateCustody): ConfigNode["identity"] {
+    if (!custody.identity) {
+      // A pathname stat can observe a replacement. Only the original open file
+      // establishes identity, including when its first stat must be retried.
+      const info = custody.handle!.statSync();
+      if (!info.isFile || info.ino === null) throw new StoredConfigConflict();
+      custody.identity = Object.freeze({
+        dev: info.dev,
+        ino: info.ino,
+        mode: info.mode,
+        uid: info.uid,
+        gid: info.gid,
+        kind: "file",
+        link: null,
+      });
+    }
+    return custody.identity;
+  }
+
+  #cleanupCandidate(custody: CandidateCustody): void {
+    custody.requested = true;
+    // If this fails, keep the original descriptor: closing it would lose the
+    // only way to establish identity safely. Never unlink by pathname alone.
+    const identity = this.#candidateIdentity(custody);
+    try {
+      if (!custody.unlinked) {
+        this.#discardExact(custody.temporary, identity);
+        custody.unlinked = true;
+      }
+    } finally {
+      if (custody.handle) {
+        custody.handle.close();
+        custody.handle = undefined;
+      }
+    }
+    this.#candidates.delete(custody);
   }
 
   #discardExact(temporary: string, identity: ConfigNode["identity"]): void {
@@ -474,10 +556,9 @@ export class BoundFileStore {
     const isPublished = () => candidate.phase === "published";
     return Object.freeze({
       discard: () => {
-        if (candidate.phase === "published") return;
-        this.#discardExact(candidate.temporary, candidate.identity);
-        candidate.phase = "discarded";
+        if (candidate.phase !== "published") candidate.phase = "discarded";
         publication.retire();
+        this.#cleanupCandidate(candidate.custody);
       },
       publish: (): PublicationOutcome => {
         if (candidate.phase !== "prepared") throw new StoredConfigConflict();
@@ -514,7 +595,7 @@ export class BoundFileStore {
           publication.retire();
         }
         try {
-          this.#discardExact(candidate.temporary, candidate.identity);
+          this.#cleanupCandidate(candidate.custody);
         } catch (error) {
           warning = true;
           failure = failed

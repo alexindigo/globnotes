@@ -249,8 +249,9 @@ const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
   },
   {
     file: "server/config/file_store.ts",
-    line: "const temporary = Deno.makeTempFileSync({",
-    reason: "stored configuration in the state directory",
+    line: "custody.handle = Deno.openSync(temporary, {",
+    reason:
+      "exclusively create the stored configuration candidate with immediate store-owned cleanup custody",
   },
   {
     file: "server/config/file_store.ts",
@@ -265,11 +266,6 @@ const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
   {
     file: "server/config/file_store.ts",
     line: "Deno.chmodSync(temporary, identity.mode & 0o7777);",
-    reason: "stored configuration in the state directory",
-  },
-  {
-    file: "server/config/file_store.ts",
-    line: "const handle = Deno.openSync(temporary, { write: true });",
     reason: "stored configuration in the state directory",
   },
   {

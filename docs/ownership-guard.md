@@ -236,6 +236,23 @@ private sink returns no payload. Runtime installation and receipts describe the
 already-committed operation rather than granting another live effect.
 Inspection returns an envelope, not the result of the write.
 
+The compatibility `IdentityFile.commit` guard keeps its `() => void` contract:
+ordinary synchronous return values are ignored. Async functions reject before
+entry; returned thenables reject before staging. The lease witness itself always
+returns `undefined` after the guard finishes synchronously.
+
+Candidate creation exclusively opens a private file and immediately registers
+store-owned cleanup custody. Identity comes from that original descriptor, never
+an unverified pathname. If identity acquisition fails, custody retains the open
+descriptor until it can establish identity and attempt exact cleanup. Failed
+cleanup remains store-owned and is retried on the next preparation, without
+blocking unrelated mutations or replaying an already-reported warning. Active
+prepared candidates are not cleanup requests. Discard retires publication and
+marks unpublished candidates discarded before cleanup; committed candidates stay
+committed, but their temporary aliases remain cleanup-retryable through either
+the prepared handle or the store. Every unlink still checks the captured
+identity and preserves foreign replacements.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from

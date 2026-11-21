@@ -86,12 +86,21 @@ export class IdentityFile<T> {
     expected: IdentitySnapshot<T> = this.capture(),
     guard: () => void = () => {},
   ): T {
+    if (Object.prototype.toString.call(guard) === "[object AsyncFunction]") {
+      throw new TypeError("Identity guards must be synchronous.");
+    }
     const value = freeze(structuredClone(this.validate(next)));
     // Compatibility caller assertions become captured witnesses, not a no-op
     // lease default on the owned writer. This is storage authority, not HTTP.
     const operation = createOperationLease("live", [() => {
       this.assertUnchanged(expected);
-      if (guard() !== undefined) {
+      // void callers may return ordinary values. Only pending completion is
+      // forbidden: the witness must finish before the writer's final fences.
+      const result: unknown = guard();
+      if (
+        result != null &&
+        typeof (result as { then?: unknown }).then === "function"
+      ) {
         throw new TypeError("Identity guards must be synchronous.");
       }
       return undefined;

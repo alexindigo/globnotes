@@ -79,6 +79,271 @@ const validate = (input: unknown): Value => {
   return v;
 };
 
+Deno.test("owned publication pilot: synchronous guard values preserve the void compatibility contract", () =>
+  fixture((root) => {
+    const file = new IdentityFile(`${root}/record.json`, validate, next(0));
+    const checked = new Set<number>();
+    for (const revision of [1, 2]) {
+      assertEquals(
+        file.commit(
+          next(revision),
+          file.capture(),
+          () => checked.add(revision),
+        ),
+        next(revision),
+      );
+    }
+    assertEquals([...checked], [1, 2]);
+    assertEquals(
+      new IdentityFile(`${root}/record.json`, validate, next(0)).capture()
+        .value,
+      next(2),
+    );
+    assertEquals(candidates(root), []);
+  }));
+
+for (const kind of ["async", "thenable"] as const) {
+  Deno.test(`owned publication pilot: ${kind} guard rejects before staging`, () =>
+    fixture((root) => {
+      const file = new IdentityFile(`${root}/record.json`, validate, next(0));
+      const before = file.capture();
+      let entered = 0;
+      const guard = kind === "async"
+        ? async () => {
+          entered++;
+          await Promise.resolve();
+        }
+        : () => {
+          entered++;
+          return { then() {} };
+        };
+      assertThrows(
+        () => file.commit(next(1), before, guard),
+        TypeError,
+        "Identity guards must be synchronous.",
+      );
+      assertEquals(entered, kind === "async" ? 0 : 1);
+      assertStrictEquals(file.capture(), before);
+      assertEquals([...Deno.readDirSync(root)], []);
+    }));
+}
+
+Deno.test("owned publication: first candidate pathname stat failure releases its owned file", () =>
+  fixture((root) => {
+    const b = binding(root), stat = Deno.lstatSync;
+    const primary = new Error("first candidate stat");
+    let failed = false;
+    try {
+      Deno.lstatSync = ((file) => {
+        if (!failed && String(file).includes("/.config-")) {
+          failed = true;
+          throw primary;
+        }
+        return stat(file);
+      }) as typeof stat;
+      const error = assertThrows(
+        () => b.owner.prepare(next(1), b.persistence, live().lease),
+        Error,
+        primary.message,
+      );
+      assertStrictEquals(error, primary);
+    } finally {
+      Deno.lstatSync = stat;
+    }
+    assertEquals(failed, true);
+    assertEquals(candidates(root), []);
+    assertEquals([b.value, b.store.capture().raw], [next(0), null]);
+  }));
+
+for (const replacement of [false, true]) {
+  Deno.test(`owned publication: failed original-handle identity acquisition retains custody, foreign replacement=${replacement}`, () =>
+    fixture((root) => {
+      const b = binding(root), open = Deno.openSync, remove = Deno.removeSync;
+      const primary = new Error("original handle identity unavailable");
+      const cleanup = new Error("cleanup identity unavailable");
+      const events: string[] = [], removed: string[] = [];
+      let temporary = "", blocked = true, attempts = 0;
+      try {
+        Deno.openSync = ((file, options) => {
+          const handle = open(file, options);
+          if (options?.createNew && String(file).includes("/.config-")) {
+            temporary = String(file);
+            const stat = handle.statSync.bind(handle),
+              close = handle.close.bind(handle);
+            handle.statSync = () => {
+              events.push("stat");
+              attempts++;
+              if (blocked) {
+                if (replacement && attempts === 1) {
+                  Deno.renameSync(temporary, `${root}/original`);
+                  Deno.writeTextFileSync(temporary, "foreign bytes");
+                }
+                throw attempts === 1 ? primary : cleanup;
+              }
+              return stat();
+            };
+            handle.close = () => {
+              events.push("close");
+              close();
+            };
+          }
+          return handle;
+        }) as typeof open;
+        Deno.removeSync = ((file, options) => {
+          removed.push(String(file));
+          remove(file, options);
+        }) as typeof remove;
+        const error = assertThrows(
+          () => b.owner.prepare(next(1), b.persistence, live().lease),
+          AggregateError,
+          "Stored preparation and cleanup failed.",
+        );
+        assertStrictEquals(error.cause, primary);
+        assertEquals(error.errors, [primary, cleanup]);
+        assertStrictEquals(error.errors[0], primary);
+        assertStrictEquals(error.errors[1], cleanup);
+        assertEquals([
+          events,
+          removed,
+          candidates(root),
+          b.value,
+          b.store.capture().raw,
+        ], [["stat", "stat"], [], [temporary], next(0), null]);
+        blocked = false;
+        // Recover identity from the retained original descriptor, never the path.
+        Deno.openSync = open;
+        const pending = b.owner.prepare(next(2), b.persistence, live().lease);
+        assertEquals(events, ["stat", "stat", "stat", "close"]);
+        assertEquals(removed, replacement ? [] : [temporary]);
+        pending.discard();
+        if (replacement) {
+          assertEquals(candidates(root), [temporary]);
+          assertEquals(Deno.readTextFileSync(temporary), "foreign bytes");
+          remove(temporary);
+          Deno.renameSync(`${root}/original`, temporary);
+        }
+        b.owner.prepare(next(3), b.persistence, live().lease).publish();
+        assertEquals(candidates(root), []);
+        assertEquals(
+          new IdentityFile(b.store.filename, validate, next(0)).capture().value,
+          next(3),
+        );
+      } finally {
+        blocked = false;
+        Deno.openSync = open;
+        Deno.removeSync = remove;
+      }
+    }));
+}
+
+for (const retry of ["handle", "store"] as const) {
+  Deno.test(`owned publication: committed alias cleanup is retried by ${retry} without publication replay`, () =>
+    fixture((root) => {
+      const b = binding(root),
+        remove = Deno.removeSync,
+        link = Deno.linkSync,
+        rename = Deno.renameSync;
+      const effects: string[] = [];
+      let retained: string[] = [];
+      try {
+        Deno.linkSync = (from, to) => {
+          effects.push("link");
+          link(from, to);
+        };
+        Deno.renameSync = (from, to) => {
+          effects.push("rename");
+          rename(from, to);
+        };
+        Deno.removeSync = ((file, options) => {
+          if (String(file).includes("/.config-")) {
+            throw new Error("alias cleanup");
+          }
+          remove(file, options);
+        }) as typeof remove;
+        {
+          const prepared = b.owner.prepare(
+            next(1),
+            b.persistence,
+            live().lease,
+          );
+          retained = candidates(root);
+          const outcome = prepared.publish();
+          assertEquals([outcome.state, outcome.warning, b.value], [
+            "committed",
+            "stored-durability-unconfirmed",
+            next(1),
+          ]);
+          assertEquals(candidates(root), retained);
+          Deno.removeSync = remove;
+          if (retry === "handle") {
+            prepared.discard();
+            assertThrows(
+              () => prepared.publish(),
+              StoredConfigConflict,
+              "Stored configuration changed before commit.",
+            );
+            assertEquals(candidates(root), []);
+          }
+        }
+        // The store case drops the prepared handle at this boundary.
+        b.owner.prepare(next(2), b.persistence, live().lease).publish();
+        assertEquals(candidates(root), []);
+        assertEquals(effects, ["link", "rename"]);
+        assertEquals(
+          new IdentityFile(b.store.filename, validate, next(0)).capture().value,
+          next(2),
+        );
+      } finally {
+        Deno.removeSync = remove;
+        Deno.linkSync = link;
+        Deno.renameSync = rename;
+      }
+    }));
+}
+
+for (const reenter of [false, true]) {
+  Deno.test(`owned publication: failed discard revokes authority before cleanup and remains cleanup-only, reenter=${reenter}`, () =>
+    fixture((root) => {
+      const b = binding(root),
+        prepared = b.owner.prepare(next(1), b.persistence, live().lease);
+      const retained = candidates(root), remove = Deno.removeSync;
+      const cleanup = new Error("discard cleanup");
+      let reentered: unknown;
+      try {
+        Deno.removeSync = () => {
+          if (reenter) {
+            try {
+              prepared.publish();
+            } catch (error) {
+              reentered = error;
+            }
+          }
+          throw cleanup;
+        };
+        assertStrictEquals(
+          assertThrows(() => prepared.discard(), Error, cleanup.message),
+          cleanup,
+        );
+      } finally {
+        Deno.removeSync = remove;
+      }
+      assertEquals(reentered instanceof StoredConfigConflict, reenter);
+      assertEquals([b.value, b.store.capture().raw, candidates(root)], [
+        next(0),
+        null,
+        retained,
+      ]);
+      assertThrows(
+        () => prepared.publish(),
+        StoredConfigConflict,
+        "Stored configuration changed before commit.",
+      );
+      prepared.discard();
+      assertEquals(candidates(root), []);
+      assertEquals([b.value, b.store.capture().raw], [next(0), null]);
+    }));
+}
+
 function staticContract() {
   const b = binding("/unexecuted"), operation = live();
   // @ts-expect-error The private preparation port is not a public store method.
