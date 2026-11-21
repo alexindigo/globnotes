@@ -1126,6 +1126,10 @@ for (const superseded of [false, true]) {
 
 Deno.test("driver phase round2: manual-sync replacement cannot overwrite the first cycle while a peer is held", async () => {
   await fixtureScope(async (scope) => {
+    const acquired = Promise.withResolvers<TestServer>();
+    const handoff = Promise.withResolvers<void>();
+    scope.onCancel(() => handoff.resolve());
+    let boots = 0;
     const a = (await scope.acquire(() =>
       memoryRemote(), (remote) => remote.close())).value;
     const b = (await scope.acquire(() =>
@@ -1135,12 +1139,26 @@ Deno.test("driver phase round2: manual-sync replacement cannot overwrite the fir
     b.put("second.md", "held peer bytes");
     const f = (await scope.acquire(
       () =>
-        storageServerFixture([a.authority, b.authority], { observedTime: 0 }),
+        storageServerFixture([a.authority, b.authority], {
+          observedTime: 0,
+          async serverBoot(inputs, options) {
+            const child = await bootServer(inputs, options);
+            if (++boots === 2) {
+              // Discovery can reach its remote before the transport owner has
+              // returned. Force that ordering rather than rely on host load.
+              acquired.resolve(child);
+              await handoff.promise;
+            }
+            return child;
+          },
+        }),
       (f) =>
         f.close(),
     )).value;
     const first = await f.add(a.baseUrl, a.token, "First"),
       second = await f.add(b.baseUrl, b.token, "Second");
+    const predecessor = f.server();
+    let booting!: ReturnType<typeof f.restart>;
     a.faults.push({
       path: "/list",
       status: 503,
@@ -1153,7 +1171,8 @@ Deno.test("driver phase round2: manual-sync replacement cannot overwrite the fir
       owner: () => b,
     }, async (hold) => {
       b.faults.push({ path: "/list", before: hold });
-      const restarted = await f.restart();
+      booting = f.restart();
+      const restarted = await booting;
       await assertRejects(
         () => restarted.initialDriver(first, "active"),
         Error,
@@ -1162,6 +1181,28 @@ Deno.test("driver phase round2: manual-sync replacement cannot overwrite the fir
       return restarted;
     }, async (work) => {
       await work.reached();
+      let candidate: TestServer;
+      try {
+        candidate = await bounded(
+          workMilestone(booting, acquired.promise, "replacement acquisition"),
+          "replacement health before transport handoff",
+        );
+        assertStrictEquals(f.server(), predecessor);
+        assertEquals([predecessor.status()?.code, candidate.status()], [
+          0,
+          null,
+        ]);
+      } finally {
+        handoff.resolve();
+      }
+      // The held remote is not the transport owner. Join the actual restart
+      // before HTTP can sample a retired predecessor, even when discovery wins.
+      const transport = await bounded(
+        booting,
+        "replacement transport admission",
+      );
+      assertStrictEquals(transport.server, candidate);
+      assertStrictEquals(f.server(), candidate);
       await waitUntil(
         async () =>
           (await f.one(first)).status === "failed"
@@ -1169,6 +1210,7 @@ Deno.test("driver phase round2: manual-sync replacement cannot overwrite the fir
             : pending("first cycle failure"),
         {
           label: "first peer failed before manual replacement",
+          children: [transport.server],
         },
       );
       await f.sync(first);
