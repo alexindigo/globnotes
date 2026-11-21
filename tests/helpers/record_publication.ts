@@ -57,6 +57,7 @@ export function publishRecord(
 ): void | Promise<void> {
   // One publication retains its decision and IO ports across asynchronous stages.
   options = { createNew: options.createNew, signal: options.signal };
+  options.signal?.throwIfAborted();
   io = captureRecordIO(io);
   if (options.createNew && !io.link) {
     throw new TypeError("Record IO has no atomic exclusive publication");
@@ -93,8 +94,10 @@ export function publishRecord(
     throw primary;
   };
   let renaming: void | Promise<void>;
+  // No candidate belongs to this publication until the write is attempted.
+  // Capability/identifier capture can itself retire an initially live signal.
+  options.signal?.throwIfAborted();
   try {
-    options.signal?.throwIfAborted();
     const writing = completion(io.write(temporary, content, options.signal));
     if (writing instanceof Promise) {
       return writing.then(commit).then(cleanup, failed);

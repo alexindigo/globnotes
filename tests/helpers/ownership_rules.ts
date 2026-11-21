@@ -151,34 +151,16 @@ export const RECORD_OWNERSHIP: OwnershipRules = {
   modules: { ...FIXTURE_OWNERSHIP.modules, ...RECORD_MODULE_RULES },
 };
 export const RECORD_PILOT_FILES = [SYNC_NATIVE, SYNC_PRELOAD, SYNC_CONTROL];
-const recordMembers = [
-  "readTextFile",
-  "readTextFileSync",
-  "readFile",
-  "readFileSync",
-  "writeTextFile",
-  "writeTextFileSync",
-  "writeFile",
-  "writeFileSync",
-  "copyFile",
-  "copyFileSync",
-  "rename",
-  "renameSync",
-  "linkSync",
-  "open",
-  "openSync",
-  "watchFs",
-];
 export const RECORD_PILOT_OWNERSHIP: OwnershipRules = {
   ...RECORD_OWNERSHIP,
   roots: {
     ...PROCESS_OWNERSHIP.roots,
     Deno: {
-      ...PROCESS_OWNERSHIP.roots.Deno,
-      ownedMembers: {
-        ...PROCESS_OWNERSHIP.roots.Deno.ownedMembers,
-        ...Object.fromEntries(recordMembers.map((member) => [member, []])),
-      },
+      // Only environment/error APIs and the pilot's existing fixture-directory
+      // construction are public. Record IO, including unlisted future members,
+      // fails closed; the finite artifact/input inventory remains unchanged.
+      members: ["env", "errors", "makeTempDir", "mkdir"],
+      ownedMembers: PROCESS_OWNERSHIP.roots.Deno.ownedMembers,
     },
   },
   modules: {

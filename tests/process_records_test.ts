@@ -19,6 +19,8 @@ import { done, pending, waitUntil } from "./helpers/wait.ts";
 import { command } from "./helpers/process.ts";
 import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
 import { fixtureGate, fixtureTest } from "./helpers/fixture_coordination.ts";
+import { workMilestone } from "./helpers/product_settlement.ts";
+import { bounded } from "./helpers/worker_liveness.ts";
 
 function withDirectory<T>(
   body: (directory: string, scope: FixtureScope) => T | Promise<T>,
@@ -30,6 +32,216 @@ function withDirectory<T>(
     return body(directory, scope);
   });
 }
+
+async function closeRecordChild(child: Deno.ChildProcess) {
+  // The pipe is a separate resource, owned from the same acquisition as the
+  // process. Closing an explicitly closed trigger pipe is idempotent cleanup.
+  await child.stdin.close().catch(() => {});
+  try {
+    child.kill("SIGKILL");
+  } catch { /* already exited */ }
+  await child.status;
+}
+
+Deno.test("record review: failed sibling construction closes the first child's stdin and process", async () => {
+  const failure = new Error("second child construction failed");
+  let child: Deno.ChildProcess | undefined;
+  const error = await assertRejects(
+    () =>
+      withDirectory(async (_directory, scope) => {
+        child = (await scope.acquire(() =>
+          command(Deno.execPath(), {
+            args: ["eval", "await Deno.stdin.readable.getReader().read();"],
+            stdin: "piped",
+            stdout: "null",
+            stderr: "null",
+          }).spawn(), closeRecordChild)).value;
+        await scope.acquire(() => {
+          throw failure;
+        }, () => {});
+      }),
+    Error,
+    failure.message,
+  );
+  assertStrictEquals(error, failure);
+  const writer = child!.stdin.getWriter();
+  try {
+    await bounded(
+      writer.closed,
+      "first child's stdin closed after sibling failure",
+    );
+  } finally {
+    writer.releaseLock();
+  }
+  await bounded(child!.status, "first child reaped after sibling failure");
+});
+
+for (const createNew of [false, true]) {
+  Deno.test(`record review: already-aborted ${createNew ? "exclusive" : "replacement"} publication has no staging effects`, () => {
+    const controller = new AbortController(),
+      failure = new Error("publication cancelled before staging");
+    controller.abort(failure);
+    const effects: string[] = [];
+    const io: RecordIO = {
+      unique() {
+        effects.push("unique");
+        return "candidate";
+      },
+      write() {
+        effects.push("write");
+      },
+      rename() {
+        effects.push("rename");
+      },
+      link() {
+        effects.push("link");
+      },
+      remove() {
+        effects.push("remove");
+        throw new Error("unowned staging cleanup");
+      },
+    };
+    const error = assertThrows(
+      () =>
+        publishRecord(
+          "record",
+          "{}",
+          { createNew, signal: controller.signal },
+          io,
+        ),
+      Error,
+      failure.message,
+    );
+    assertStrictEquals(error, failure);
+    assertEquals(effects, []);
+  });
+}
+
+Deno.test("record review: cancellation during identifier capture never cleans an unstarted candidate", () => {
+  const controller = new AbortController(),
+    failure = new Error("cancelled during capture");
+  const effects: string[] = [];
+  const io: RecordIO = {
+    unique() {
+      effects.push("unique");
+      controller.abort(failure);
+      return "candidate";
+    },
+    write() {
+      effects.push("write");
+    },
+    rename() {
+      effects.push("rename");
+    },
+    remove() {
+      effects.push("remove");
+      throw new Error("unowned staging cleanup");
+    },
+  };
+  const error = assertThrows(
+    () => publishRecord("record", "{}", { signal: controller.signal }, io),
+    Error,
+    failure.message,
+  );
+  assertStrictEquals(error, failure);
+  assertEquals(effects, ["unique"]);
+});
+
+fixtureTest(
+  "record review: owner exit discards a positive pre-exit snapshot and reads the final record",
+  async (testScope) => {
+    await withDirectory(async (directory, scope) => {
+      const entered = fixtureGate(testScope), release = fixtureGate(testScope);
+      const owner = Promise.withResolvers<{ code: number }>();
+      scope.onCancel(() => release.resolve());
+      scope.onCancel(() => owner.resolve({ code: 0 }));
+      let revision = 1, active = 0;
+      const events: string[] = [];
+      const waiting = waitForRecord(directory, "latest revision", async () => {
+        const observed = revision;
+        events.push(`read:${observed}`);
+        active++;
+        try {
+          if (observed === 1) {
+            entered.resolve();
+            await release.promise;
+          }
+          return { revision: observed };
+        } finally {
+          active--;
+        }
+      }, [{ label: "producer", exit: owner.promise }]);
+      waiting.catch(() => undefined);
+      scope.defer(() => waiting.catch(() => undefined));
+      await workMilestone(waiting, entered.promise, "positive pre-exit probe");
+      revision = 2;
+      owner.resolve({ code: 0 });
+      await owner.promise;
+      release.resolve();
+      assertEquals(await waiting, { revision: 2 });
+      assertEquals({ events, active }, {
+        events: ["read:1", "read:2"],
+        active: 0,
+      });
+    });
+  },
+);
+
+fixtureTest(
+  "record review: a later owner exit invalidates a held final read",
+  async (testScope) => {
+    await withDirectory(async (directory, scope) => {
+      const initial = fixtureGate(testScope),
+        final = fixtureGate(testScope),
+        release = fixtureGate(testScope);
+      const first = Promise.withResolvers<{ code: number }>(),
+        second = Promise.withResolvers<{ code: number }>();
+      scope.onCancel(() => release.resolve());
+      scope.onCancel(() => first.resolve({ code: 0 }));
+      scope.onCancel(() => second.resolve({ code: 0 }));
+      let revision = 0, active = 0, peak = 0;
+      const events: string[] = [];
+      const waiting = waitForRecord(directory, "latest owners", async () => {
+        const observed = revision;
+        events.push(`read:${observed}`);
+        active++;
+        peak = Math.max(peak, active);
+        try {
+          if (observed === 0) {
+            initial.resolve();
+            return null;
+          }
+          if (observed === 1) {
+            final.resolve();
+            await release.promise;
+          }
+          return { revision: observed };
+        } finally {
+          active--;
+        }
+      }, [{ label: "first", exit: first.promise }, {
+        label: "second",
+        exit: second.promise,
+      }]);
+      waiting.catch(() => undefined);
+      scope.defer(() => waiting.catch(() => undefined));
+      await workMilestone(waiting, initial.promise, "initial owners probe");
+      revision = 1;
+      first.resolve({ code: 0 });
+      await workMilestone(waiting, final.promise, "first owner's final probe");
+      revision = 2;
+      second.resolve({ code: 0 });
+      await second.promise;
+      release.resolve();
+      assertEquals(await waiting, { revision: 2 });
+      assertEquals({ events, active, peak }, {
+        events: ["read:0", "read:1", "read:2"],
+        active: 0,
+        peak: 1,
+      });
+    });
+  },
+);
 
 Deno.test("process records: copied publication module carries its complete protocol into an isolated child", async () => {
   await withDirectory(async (directory, scope) => {
@@ -164,7 +376,11 @@ fixtureTest(
         publishRecord(file, '{"loser":true}', options, io),
       );
       const rejected = assertRejects(() => writing, Deno.errors.AlreadyExists);
-      await entered.promise;
+      await workMilestone(
+        writing,
+        entered.promise,
+        "exclusive publication staged",
+      );
       options.createNew = false;
       io.link = nativeRecordIO.rename;
       io.remove = () => {
@@ -337,12 +553,7 @@ Deno.test("process records: real server exit wakes audit before a live client ex
         stdin: "piped",
         stdout: "null",
         stderr: "null",
-      }).spawn(), async (child) => {
-      try {
-        child.kill("SIGKILL");
-      } catch { /* already exited */ }
-      await child.status;
-    })).value;
+      }).spawn(), closeRecordChild)).value;
     const server = (await scope.acquire(() =>
       command(Deno.execPath(), {
         args: [
@@ -352,13 +563,7 @@ Deno.test("process records: real server exit wakes audit before a live client ex
         stdin: "piped",
         stdout: "null",
         stderr: "null",
-      }).spawn(), async (child) => {
-      try {
-        child.kill("SIGKILL");
-      } catch { /* already exited */ }
-      await child.status;
-    })).value;
-    scope.defer(() => client.stdin.close().catch(() => {}));
+      }).spawn(), closeRecordChild)).value;
     let clientExited = false;
     const clientExit = client.status.then((status) => {
       clientExited = true;

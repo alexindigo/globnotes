@@ -145,6 +145,47 @@ Deno.test("record custody r3: captured prototype IO methods retain their actual 
   });
 });
 
+for (const exclusive of [false, true]) {
+  Deno.test(`record review: awaiting owner exit fences immediate ${exclusive ? "exclusive" : "replacement"} publication`, async () => {
+    await withRecords(async (f) => {
+      const effects: string[] = [];
+      const channel = recordChannel(
+        f.directory,
+        "value.json",
+        schema,
+        f.owner,
+        {
+          io: {
+            ...nativeRecordChannelIO,
+            publication: {
+              ...nativeRecordIO,
+              write(file, content) {
+                effects.push("write");
+                return nativeRecordIO.write(file, content);
+              },
+            },
+          },
+        },
+      );
+      assertEquals(channel.publish({ revision: 1 }), {
+        bytes: '{"revision":1}',
+        value: { revision: 1 },
+      });
+      effects.length = 0;
+      f.exit.resolve({ code: 17 });
+      await f.owner.exit;
+      assertThrows(
+        () => channel.publish({ revision: 2 }, { exclusive }),
+        Error,
+        "actual record owner exited before record publication",
+      );
+      assertEquals(effects, []);
+      assertEquals(Deno.readTextFileSync(f.file), '{"revision":1}');
+      assertEquals(entries(f.directory), ["value.json"]);
+    });
+  });
+}
+
 for (const fixtureRoot of [false, true]) {
   for (const first of ["owner", "borrower"] as const) {
     for (const effect of ["read", "write", "rename", "link"] as const) {
@@ -241,7 +282,11 @@ for (const fixtureRoot of [false, true]) {
                 }),
               );
             const outcome = caught(() => operation);
-            await entered.promise;
+            await workMilestone(
+              operation,
+              entered.promise,
+              "cancellation-dependent IO entered",
+            );
             const retiring = first === "owner" ? owner : borrower;
             const close = retiring.close();
             assert(
@@ -353,7 +398,11 @@ for (const closing of ["owner", "borrower"] as const) {
             ? channel.read()
             : Promise.resolve(channel.publish({ revision: 1 }));
           const outcome = caught(() => operation);
-          await entered.promise;
+          await workMilestone(
+            operation,
+            entered.promise,
+            "borrowed IO entered",
+          );
           assert(
             owner.scope.size > ownerSize,
             "resource owner did not admit borrowed work",
@@ -365,7 +414,11 @@ for (const closing of ["owner", "borrower"] as const) {
           const retiring = closing === "owner" ? owner : borrower;
           retiring.scope.onCancel(() => closeEntered.resolve());
           const close = retiring.close();
-          await closeEntered.promise;
+          await workMilestone(
+            close,
+            closeEntered.promise,
+            "borrowed owner close started",
+          );
           await fixtureScope((checking) => {
             checking.onCancel(() => release.resolve());
             checking.defer(() => outcome);
@@ -510,7 +563,11 @@ for (const effect of ["read", "publish"] as const) {
           ? channel.read()
           : Promise.resolve(channel.publish({ revision: 1 }));
         const outcome = caught(() => operation);
-        await entered.promise;
+        await workMilestone(
+          operation,
+          entered.promise,
+          "three-custodian IO entered",
+        );
         for (const [index, scope] of scopes.entries()) {
           assert(
             scope.size > sizes[index],
@@ -519,7 +576,11 @@ for (const effect of ["read", "publish"] as const) {
         }
         root.scope.onCancel(() => cancelled.resolve());
         const close = root.close();
-        await cancelled.promise;
+        await workMilestone(
+          close,
+          cancelled.promise,
+          "fixture root cancellation started",
+        );
         await fixtureScope((checking) => {
           checking.onCancel(() => release.resolve());
           checking.defer(() => outcome);
@@ -571,14 +632,22 @@ fixtureTest(
         },
       );
       const outcome = caught(() => creating);
-      await entered.promise;
+      await workMilestone(
+        creating,
+        entered.promise,
+        "root-bound directory preparation entered",
+      );
       assert(
         owner.scope.size > ownerSize,
         "fixture root did not admit directory construction",
       );
       owner.scope.onCancel(() => closeEntered.resolve());
       const close = owner.close();
-      await closeEntered.promise;
+      await workMilestone(
+        close,
+        closeEntered.promise,
+        "root-bound owner close started",
+      );
       await fixtureScope((checking) => {
         checking.onCancel(() => release.resolve());
         checking.defer(() => outcome);
@@ -841,7 +910,11 @@ fixtureTest(
       work = channel.read();
       work.catch(() => undefined);
       f.scope.onCancel(() => joined.resolve());
-      await entered.promise;
+      await workMilestone(
+        work,
+        entered.promise,
+        "read entered before failing cleanup",
+      );
     });
     const outcome = caught(() => closing);
     await fixtureScope(async (checking) => {
@@ -1188,59 +1261,64 @@ Deno.test("record channel: arrays are an explicit schema, not a globally invalid
   });
 });
 
-fixtureTest(
-  "record channel: an in-flight pre-exit miss is joined, then a fresh serialized read sees the final record",
-  async (testScope) => {
-    await withRecords(async (f) => {
-      const entered = fixtureGate(testScope),
-        release = fixtureGate(testScope);
-      let probes = 0, pending = 0, peak = 0;
-      const channel = recordChannel(
-        f.directory,
-        "value.json",
-        schema,
-        f.owner,
-        {
-          io: {
-            ...nativeRecordChannelIO,
-            async read(file, signal) {
-              probes++;
-              pending++;
-              peak = Math.max(peak, pending);
-              const bytes = await nativeRecordChannelIO.read(file, signal);
-              try {
-                if (probes === 1) {
-                  entered.resolve();
-                  await release.promise;
+for (const beforeExit of [null, '{"revision":1}']) {
+  fixtureTest(
+    `record channel: an in-flight pre-exit ${
+      beforeExit === null ? "miss" : "snapshot"
+    } is joined, then a fresh serialized read sees the final record`,
+    async (testScope) => {
+      await withRecords(async (f) => {
+        if (beforeExit !== null) publishRecord(f.file, beforeExit);
+        const entered = fixtureGate(testScope),
+          release = fixtureGate(testScope);
+        let probes = 0, pending = 0, peak = 0;
+        const channel = recordChannel(
+          f.directory,
+          "value.json",
+          schema,
+          f.owner,
+          {
+            io: {
+              ...nativeRecordChannelIO,
+              async read(file, signal) {
+                probes++;
+                pending++;
+                peak = Math.max(peak, pending);
+                const bytes = await nativeRecordChannelIO.read(file, signal);
+                try {
+                  if (probes === 1) {
+                    entered.resolve();
+                    await release.promise;
+                  }
+                  return bytes;
+                } finally {
+                  pending--;
                 }
-                return bytes;
-              } finally {
-                pending--;
-              }
+              },
             },
           },
-        },
-      );
-      f.scope.onCancel(() => release.resolve());
-      const waiting = channel.wait();
-      assertStrictEquals(channel.wait(), waiting);
-      await workMilestone(waiting, entered.promise, "pre-exit read started");
-      publishRecord(f.file, '{"revision":42}');
-      f.exit.resolve({ code: 17 });
-      await f.exit.promise;
-      release.resolve();
-      assertEquals(await waiting, {
-        bytes: '{"revision":42}',
-        value: { revision: 42 },
+        );
+        f.scope.onCancel(() => release.resolve());
+        const waiting = channel.wait();
+        assertStrictEquals(channel.wait(), waiting);
+        await workMilestone(waiting, entered.promise, "pre-exit read started");
+        publishRecord(f.file, '{"revision":42}');
+        f.exit.resolve({ code: 17 });
+        await f.exit.promise;
+        release.resolve();
+        assertEquals(await waiting, {
+          bytes: '{"revision":42}',
+          value: { revision: 42 },
+        });
+        assertEquals({ probes, pending, peak }, {
+          probes: 2,
+          pending: 0,
+          peak: 1,
+        });
       });
-      assertEquals({ probes, pending, peak }, {
-        probes: 2,
-        pending: 0,
-        peak: 1,
-      });
-    });
-  },
-);
+    },
+  );
+}
 
 fixtureTest(
   "record channel: owner exit without a final record rejects after its final read",
@@ -1314,7 +1392,6 @@ fixtureTest(
       assertEquals(pending, 0);
       f.exit.resolve({ code: 0 });
       await f.exit.promise;
-      await Promise.resolve();
       assertEquals(probes, 1);
       await assertRejects(() => channel.read(), Error, "record cancelled");
     });
@@ -1349,7 +1426,6 @@ fixtureTest(
       await rejected;
       f.exit.resolve({ code: 0 });
       await f.exit.promise;
-      await Promise.resolve();
       assertEquals(probes, 1);
     });
   },
@@ -1376,7 +1452,6 @@ Deno.test("record channel: a completed observation starts no later read after ow
   });
   exit.resolve({ code: 0 });
   await exit.promise;
-  await Promise.resolve();
   assertEquals(probes, 1);
 });
 
@@ -1615,7 +1690,11 @@ for (const operation of ["read", "publish"] as const) {
           workSettled = true;
         });
         work.catch(() => undefined);
-        await entered.promise;
+        await workMilestone(
+          work,
+          entered.promise,
+          `direct ${operation} entered`,
+        );
       }).then(() => {
         settled = true;
       });
@@ -1628,7 +1707,6 @@ for (const operation of ["read", "publish"] as const) {
           cancelled.promise,
           `direct ${operation} cancelled`,
         );
-        await Promise.resolve();
         assertEquals(settled, false);
         assert(Deno.statSync(root).isDirectory);
       });

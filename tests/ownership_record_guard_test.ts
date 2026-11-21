@@ -11,6 +11,7 @@ import {
   RECORD_CHANNEL,
   RECORD_ENGINE_OWNERSHIP,
   RECORD_OWNERSHIP,
+  RECORD_PILOT_FILES,
   RECORD_PILOT_OWNERSHIP,
   RECORD_PUBLICATION,
   registeredOwnership,
@@ -23,6 +24,27 @@ import { withPluginFixture } from "./helpers/plugin_fixture.ts";
 
 const repositoryRoot = (moduleUrl: string | URL = import.meta.url) =>
   fromFileUrl(new URL("../", moduleUrl));
+
+for (const file of RECORD_PILOT_FILES) {
+  for (
+    const member of [
+      "remove",
+      "removeSync",
+      "truncate",
+      "futureFilesystemOperation",
+    ]
+  ) {
+    Deno.test(`P11 review: ${file} denies Deno.${member} by default`, () => {
+      const text = `Deno.${member}("record");`;
+      assertEquals(
+        analyzeOwnership([{ file, text }], RECORD_PILOT_OWNERSHIP).map(
+          ({ capability, source }) => ({ capability, source }),
+        ),
+        [{ capability: `Deno.${member}`, source: `Deno.${member}` }],
+      );
+    });
+  }
+}
 
 Deno.test("P11 publication: portable module has no imports or ambient platform capabilities", async () => {
   const sources = await repositorySources(repositoryRoot());

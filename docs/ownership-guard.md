@@ -154,6 +154,14 @@ IO completions once before advancing to commit or staging cleanup. Contract-only
 directory preparation and observer construction ports avoid process-global IO
 overrides across awaits. Test milestones use P03's admitted fixture gates.
 
+The Sync pilot's Deno surface is an explicit allowlist of environment/error APIs
+and existing fixture-directory construction, not an enumerated record-IO denylist.
+Unlisted members, including remove/removeSync and future filesystem APIs, reject
+by default; the finite artifact/input inventory is unchanged. Owner exit is
+recorded in the first subscribed fulfillment callback. Observation joins any
+pre-exit read but accepts its final snapshot only from a post-exit probe, and
+publication checks cancellation before staging custody begins.
+
 The raw protocol facade delegates publication to the import-free
 `record_publication.ts` module with explicit IO capabilities. Restricted native
 plugin fixtures copy and import that complete module, never a function's

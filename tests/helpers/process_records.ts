@@ -96,7 +96,7 @@ export async function waitForRecord<T>(
   return await fixtureScope(async (scope) => {
     let active = true;
     let exited = false;
-    let terminal: T | null = null;
+    let exitEpoch = 0;
     let inFlight: Promise<T | null> | undefined;
     // LIFO closes the watcher before joining the last read, and attempts every
     // phase even when listener removal or native watcher close rejects.
@@ -115,17 +115,18 @@ export async function waitForRecord<T>(
     const probeActive = (final = false): Promise<T | null> => {
       signal?.throwIfAborted();
       if (!active) return Promise.reject(Error(`${label} observation closed`));
-      if (terminal !== null) return Promise.resolve(terminal);
       if (exited && !final) return Promise.resolve(null);
       if (!inFlight) {
+        const startedEpoch = exitEpoch;
         inFlight = Promise.resolve().then(() => {
           signal?.throwIfAborted();
           if (!active) throw Error(`${label} observation closed`);
           if (exited && !final) return null;
           return probe();
         }).then((value) => {
-          if (value !== null) terminal = value;
-          return value;
+          // A positive pre-exit snapshot is no more final than a pre-exit miss.
+          // The exit path joins it, then starts a read after that exit barrier.
+          return startedEpoch !== exitEpoch || exited && !final ? null : value;
         }).finally(() => {
           inFlight = undefined;
         });
@@ -140,10 +141,10 @@ export async function waitForRecord<T>(
     if (signal?.aborted) cancel();
     const observed = (async () => {
       let value = await probeActive();
-      if (value !== null) return value;
+      if (!exited && value !== null) return value;
       for await (const _event of watcher) {
         value = await probeActive();
-        if (value !== null) return value;
+        if (!exited && value !== null) return value;
       }
       throw Error(`Record watcher closed before ${label}`);
     })();
@@ -153,14 +154,21 @@ export async function waitForRecord<T>(
       cancelled.promise,
       ...owners.map((owner) =>
         owner.exit.then(async (status) => {
-          // An in-flight read may have observed absence BEFORE this exit.
-          // Join it, retain a positive terminal result, otherwise read anew.
           exited = true;
+          exitEpoch++;
           if (!active) throw Error(`${label} observation closed`);
-          await inFlight;
-          const value = await probeActive(true);
-          if (value !== null) return value;
-          throw Error(`${owner.label} exited before ${label}: ${status.code}`);
+          for (;;) {
+            await inFlight;
+            const epoch = exitEpoch;
+            const value = await probeActive(true);
+            // Another actual owner exit can invalidate even this final read.
+            // Only that new barrier requires another probe, never a timer/retry.
+            if (epoch !== exitEpoch) continue;
+            if (value !== null) return value;
+            throw Error(
+              `${owner.label} exited before ${label}: ${status.code}`,
+            );
+          }
         })
       ),
     ]);

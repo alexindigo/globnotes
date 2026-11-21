@@ -287,13 +287,13 @@ export function recordChannel<T>(
     return retained;
   };
   let exited = false, waiting: Promise<RecordSnapshot<T>> | undefined;
-  // Capture a potentially adversarial then once, then let native assimilation
-  // invoke that exact method. Never probe and resolve the owner's value twice.
-  const exit = Promise.resolve({ then: then.bind(ownerExit) }).then(
-    (status) => {
+  // Subscribe with the captured method now. Recording retirement in that first
+  // callback must precede a caller resuming from await owner.exit.
+  const exit = Promise.resolve(
+    then.bind(ownerExit)((status) => {
       exited = true;
       return status;
-    },
+    }),
   );
   exit.catch(() => undefined);
   const cancel = (
