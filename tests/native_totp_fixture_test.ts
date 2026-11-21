@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { createNativeTotpClock } from "../client/tests/e2e/native-totp-fixture.mjs";
 import { authenticatorCode, TOTP_STEP_MS } from "./helpers/totp.ts";
 import { isAbsolute, relative } from "node:path";
 import { command, DENO } from "./helpers/process.ts";
 import { captureNativeDiagnostics } from "../client/tests/e2e/harness-helpers.mjs";
+import { nativeRecordChannelIO } from "./helpers/owned_record_channel.ts";
 
 Deno.test("native TOTP frozen clock: rollover selects the verifier's fresh current step before input", async () => {
   const directory = await Deno.makeTempDir({
     prefix: "native-frozen-boundary-",
   });
   const originalNow = Date.now;
+  let ownedClock: Awaited<ReturnType<typeof createNativeTotpClock>> | undefined;
   try {
-    const clock = await createNativeTotpClock(directory, 1234567890_000),
-      before = clock.now();
+    const clock = ownedClock = await createNativeTotpClock(
+      directory,
+      1234567890_000,
+    );
+    const before = clock.now();
     assertEquals(before % TOTP_STEP_MS, TOTP_STEP_MS - 1);
     const secret = "JBSWY3DPEHPK3PXP";
     const legacyPrevious = await clock.code(secret, -1),
@@ -62,11 +67,11 @@ Deno.test("native TOTP frozen clock: rollover selects the verifier's fresh curre
       legacyAccepted: false,
       currentAccepted: true,
     });
-    assertEquals(Date.now, originalNow);
+    assertStrictEquals(Date.now, originalNow);
     assertEquals(
       JSON.parse(
-        await Deno.readTextFile(`${directory}/authenticator-time.json`),
-      ),
+        await Deno.readTextFile(`${directory}/authenticator-clock/time.json`),
+      ).now,
       clock.now(),
     );
     console.log(
@@ -76,6 +81,7 @@ Deno.test("native TOTP frozen clock: rollover selects the verifier's fresh curre
       }),
     );
   } finally {
+    await ownedClock?.close();
     await Deno.remove(directory, { recursive: true });
   }
 });
@@ -84,9 +90,13 @@ Deno.test("native TOTP frozen clock: equal-code collision is skipped before publ
   const directory = await Deno.makeTempDir({
     prefix: "native-frozen-collision-",
   });
+  let ownedClock: Awaited<ReturnType<typeof createNativeTotpClock>> | undefined;
   try {
-    const clock = await createNativeTotpClock(directory, 1234567890_000),
-      before = clock.now();
+    const clock = ownedClock = await createNativeTotpClock(
+      directory,
+      1234567890_000,
+    );
+    const before = clock.now();
     const secret = "JBSWY3DPEHPK3PXP",
       consumed = await clock.code(secret),
       reference = clock.code;
@@ -97,8 +107,8 @@ Deno.test("native TOTP frozen clock: equal-code collision is skipped before publ
       candidates.push({
         at,
         published: JSON.parse(
-          Deno.readTextFileSync(`${directory}/authenticator-time.json`),
-        ),
+          Deno.readTextFileSync(`${directory}/authenticator-clock/time.json`),
+        ).now,
       });
       return at === before + TOTP_STEP_MS
         ? Promise.resolve(consumed)
@@ -117,11 +127,12 @@ Deno.test("native TOTP frozen clock: equal-code collision is skipped before publ
     assertEquals(clock.now(), before + 2 * TOTP_STEP_MS);
     assertEquals(
       JSON.parse(
-        await Deno.readTextFile(`${directory}/authenticator-time.json`),
-      ),
+        await Deno.readTextFile(`${directory}/authenticator-clock/time.json`),
+      ).now,
       clock.now(),
     );
   } finally {
+    await ownedClock?.close();
     await Deno.remove(directory, { recursive: true });
   }
 });
@@ -132,45 +143,64 @@ Deno.test("native TOTP frozen clock: failed publication preserves the starting s
       const directory = await Deno.makeTempDir({
         prefix: "native-frozen-publication-",
       });
+      let ownedClock:
+        | Awaited<ReturnType<typeof createNativeTotpClock>>
+        | undefined;
+      let failing = false;
+      const cause = new Error(`injected ${boundary} failure`);
       try {
-        const clock = await createNativeTotpClock(directory, 1234567890_000),
-          before = clock.now();
+        const clock = ownedClock = await createNativeTotpClock(
+          directory,
+          1234567890_000,
+          {
+            io: {
+              ...nativeRecordChannelIO,
+              publication: {
+                ...nativeRecordChannelIO.publication,
+                [boundary]: (
+                  ...args: [string, string | Uint8Array, AbortSignal?]
+                ) => {
+                  if (failing) throw cause;
+                  // This port is selected by the fixture, before publication captures it.
+                  return boundary === "write"
+                    ? nativeRecordChannelIO.publication.write(...args)
+                    : nativeRecordChannelIO.publication.rename(
+                      args[0],
+                      args[1] as string,
+                      args[2],
+                    );
+                },
+              },
+            },
+          },
+        );
+        const before = clock.now();
         const secret = "JBSWY3DPEHPK3PXP",
-          file = `${directory}/authenticator-time.json`;
+          file = `${directory}/authenticator-clock/time.json`;
         const consumed = await Promise.all(
           [1, 2, 3].map((offset) => clock.code(secret, offset)),
         );
-        const write = Deno.writeTextFileSync, rename = Deno.renameSync;
-        try {
-          if (boundary === "write") {
-            Deno.writeTextFileSync = ((path, data, options) => {
-              if (String(path) === `${file}.next`) {
-                throw Error("injected staging write failure");
-              }
-              write(path, data, options);
-            }) as typeof write;
-          } else {
-            Deno.renameSync = ((from, to) => {
-              if (String(to) === file) throw Error("injected rename failure");
-              rename(from, to);
-            }) as typeof rename;
-          }
+        failing = true;
+        assertStrictEquals(
           await assertRejects(
             () => clock.loginCode(secret, consumed),
             Error,
-            "injected",
-          );
-        } finally {
-          Deno.writeTextFileSync = write;
-          Deno.renameSync = rename;
-        }
-        assertEquals(JSON.parse(await Deno.readTextFile(file)), before);
+            cause.message,
+          ),
+          cause,
+        );
+        failing = false;
+        assertEquals(JSON.parse(await Deno.readTextFile(file)).now, before);
         assertEquals(clock.now(), before);
         const code = await clock.loginCode(secret, consumed);
         assertEquals(clock.now(), before + 4 * TOTP_STEP_MS);
         assertEquals(code, await authenticatorCode(secret, clock.now()));
-        assertEquals(JSON.parse(await Deno.readTextFile(file)), clock.now());
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(file)).now,
+          clock.now(),
+        );
       } finally {
+        await ownedClock?.close();
         await Deno.remove(directory, { recursive: true });
       }
     });
@@ -179,12 +209,16 @@ Deno.test("native TOTP frozen clock: failed publication preserves the starting s
 
 Deno.test("native TOTP frozen clock: current proofs leave later login codes unspent without adjacent-step fallback", async () => {
   const directory = await Deno.makeTempDir({ prefix: "native-frozen-proof-" });
+  let ownedClock: Awaited<ReturnType<typeof createNativeTotpClock>> | undefined;
   try {
-    const clock = await createNativeTotpClock(directory, 1234567890_000),
-      secret = "JBSWY3DPEHPK3PXP";
+    const clock = ownedClock = await createNativeTotpClock(
+      directory,
+      1234567890_000,
+    );
+    const secret = "JBSWY3DPEHPK3PXP";
     const initial = await clock.loginCode(secret, []);
     assertEquals(initial, await clock.code(secret));
-    clock.advanceStep();
+    await clock.advanceStep();
     const proof = await clock.code(secret);
     assertEquals(proof === initial, false);
     const login = await clock.loginCode(secret, [initial, proof]);
@@ -197,16 +231,17 @@ Deno.test("native TOTP frozen clock: current proofs leave later login codes unsp
     await assertRejects(
       () => clock.loginCode(secret, reserved),
       Error,
-      "already consumed",
+      "Every candidate login code was already consumed",
     );
     assertEquals(clock.now(), before);
     assertEquals(
       JSON.parse(
-        await Deno.readTextFile(`${directory}/authenticator-time.json`),
-      ),
+        await Deno.readTextFile(`${directory}/authenticator-clock/time.json`),
+      ).now,
       before,
     );
   } finally {
+    await ownedClock?.close();
     await Deno.remove(directory, { recursive: true });
   }
 });
@@ -215,8 +250,9 @@ Deno.test("native TOTP fixture: relative artifacts produce absolute child paths 
   const directory = await Deno.makeTempDir({
     prefix: "native-relative-clock-",
   });
+  let ownedClock: Awaited<ReturnType<typeof createNativeTotpClock>> | undefined;
   try {
-    const clock = await createNativeTotpClock(
+    const clock = ownedClock = await createNativeTotpClock(
       relative(Deno.cwd(), directory),
       1234567890_000,
     );
@@ -226,13 +262,20 @@ Deno.test("native TOTP fixture: relative artifacts produce absolute child paths 
     await Deno.mkdir(`${directory}/other-cwd`);
     const child = await command(DENO, {
       cwd: `${directory}/other-cwd`,
-      args: ["run", "--allow-read", ...clock.denoArgs, reader],
+      args: [
+        "run",
+        `--config=${fromFileUrl(new URL("../deno.json", import.meta.url))}`,
+        "--allow-read",
+        ...clock.denoArgs,
+        reader,
+      ],
       stdout: "piped",
       stderr: "piped",
     }).output();
     assertEquals(child.success, true, new TextDecoder().decode(child.stderr));
     assertEquals(Number(new TextDecoder().decode(child.stdout)), clock.now());
   } finally {
+    await ownedClock?.close();
     await Deno.remove(directory, { recursive: true });
   }
 });
@@ -309,28 +352,32 @@ Deno.test("native server fixture: relative vault/state reach the child and one l
     await Deno.writeTextFile(
       probe,
       `
+      import { assertRejects, assertStrictEquals } from "@std/assert";
       import { bootServer } from ${
         JSON.stringify(
           new URL("../client/tests/e2e/harness-helpers.mjs", import.meta.url)
             .href,
         )
       };
-      const server = await bootServer(${
+      const env = { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false", GLOBNOTES__SERVER_PATHPREFIX: "/captured" };
+      const constructing = bootServer(${
         JSON.stringify(relative(Deno.cwd(), vault))
       }, ${JSON.stringify(relative(Deno.cwd(), state))}, {
-        env: { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }, logsDir: ${
-        JSON.stringify(directory)
-      }
+        env, logsDir: ${JSON.stringify(directory)}
       });
+      env.GLOBNOTES__SERVER_PATHPREFIX = "/mutated";
+      const server = await constructing;
       try {
-        const note = await (await fetch(server.baseUrl + '/_/api/notes/Seed')).json();
+        const note = await (await fetch(server.baseUrl + '/captured/_/api/notes/Seed')).json();
         await Deno.mkdir(${JSON.stringify(`${directory}/server-stdout.log`)});
-        let rejected = false;
-        try { await server.close(); } catch { rejected = true; }
-        console.log(JSON.stringify({ content: note.content, rejected, stderr: (await Deno.stat(${
+         const first = server.close(), second = server.close();
+         assertStrictEquals(second, first);
+         const error = await assertRejects(() => first, Deno.errors.AlreadyExists, "File exists");
+         assertStrictEquals(await assertRejects(() => second, Deno.errors.AlreadyExists, error.message), error);
+         console.log(JSON.stringify({ content: note.content, rejected: true, stderr: (await Deno.stat(${
         JSON.stringify(`${directory}/server-stderr.log`)
       })).isFile, code: server.status()?.code }));
-      } finally { await server.close(); }
+       } finally { await server.close().catch(() => {}); }
     `,
     );
     const child = await command(DENO, {

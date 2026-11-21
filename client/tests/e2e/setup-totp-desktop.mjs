@@ -8,12 +8,14 @@ import { join } from "node:path";
 import { createNativeTotpClock } from "./native-totp-fixture.mjs";
 import { captureClipboard, prepareClipboardWitness, restoreClipboard, writeClipboardText } from "./native-clipboard.mjs";
 import { assertToggleGeometry } from "./settings-frame-native.mjs";
+import { fixtureScope } from "../../../tests/helpers/fixture_scope.ts";
 
+await fixtureScope(async scope => {
 const externalBrowser = Deno.env.get("CDP_PORT");
 const port = Number(externalBrowser || 9398);
 const artifacts = await Deno.makeTempDir({ prefix: "totp-desktop-shots-" });
-const totpClock = await createNativeTotpClock(artifacts);
-const server = await bootServer({}, { ...applicationServer(), denoArgs: totpClock.denoArgs });
+const totpClock = (await scope.acquire(() => createNativeTotpClock(artifacts), clock => clock.close())).value;
+const server = (await scope.acquire(() => bootServer({}, { ...applicationServer(), denoArgs: totpClock.denoArgs }), server => server.close())).value;
 let browser;
 let page;
 let priorClipboard;
@@ -131,9 +133,9 @@ async function fit(label) {
   console.log(JSON.stringify({ label, measured }));
 }
 
-try {
-  if (!externalBrowser) browser = await launchBrowser({ port });
-  page = await connect({ port, binding: browser });
+  if (!externalBrowser) browser = (await scope.acquire(() => launchBrowser({ port }), browser => stopBrowser(browser))).value;
+  page = (await scope.acquire(() => connect({ port, binding: browser }), page => page.close())).value;
+  scope.defer(async () => { if (priorClipboard !== undefined) await restoreClipboard(page, priorClipboard); });
   // Open the clipboard witness before the app flow; it never takes app focus later.
   await prepareClipboardWitness(page);
   await page.send("Network.enable");
@@ -363,12 +365,5 @@ try {
   );
   console.log(`artifacts: ${artifacts}`);
   console.log("TOTP DESKTOP OK");
-} finally {
-  try { if (priorClipboard !== undefined) await restoreClipboard(page, priorClipboard); }
-  finally {
-    await page?.close();
-    if (browser) await stopBrowser(browser);
-    await server.close();
-    console.log("Retained TOTP fixture", server.vault);
-  }
-}
+  console.log("Retained TOTP fixture", server.vault);
+});

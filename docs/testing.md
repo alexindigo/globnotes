@@ -481,6 +481,45 @@ polls), virtual/observed clock deadline tests, timestamp/expiry fixtures or
 diagnostic-only timing (`metadata_read_cost_test.ts`, worker startup and native
 runner reports). Metadata read cost already asserts I/O counts, not milliseconds.
 
+## Published fixture clocks
+
+`helpers/fixture_clock.ts` owns one typed P11 clock record and a local snapshot.
+`await clock.advance(milliseconds)` serializes advances, publishes first and only
+then assigns the local time. A failed stage or rename leaves both unchanged;
+the next call derives from the last committed value. Close the clock after its
+child has stopped. The read-only child closure rejects absent/malformed records;
+it never falls back to live time. This is fixture time, not a production clock.
+
+The clock retains its own P03 scope. Its owner exit resolves in `onCancel`, and
+queued advances are admitted before waiting for prior publication. Close cancels
+publication, drains admitted work, then releases the record directory. Pass an
+issued plugin fixture rather than its path when borrowing that fixture's root;
+P11 co-admits effects and links clock cancellation to that root's lifetime.
+
+Native clock and driver composition reserve P03 custody before constructing
+their clock, server or browser resources. Failed preparation closes admitted
+resources while preserving the original error; successful close attempts every
+release. Native repair failures retain files and report before closing live
+children and browser targets, rather than parking those resources indefinitely.
+Entry gates race their actual publication through `workMilestone`, so an early
+failure or completion cannot leave a wait for an entry that will never occur.
+
+Native TOTP uses this record only in the server subprocess's `Date.now` preload;
+the parent/browser retain their own clocks. The RFC reference takes explicit time
+and stays independent of otplib. Login input selection skips consumed/equal codes
+within the existing four candidates, publishes the chosen step, then returns the
+reference code. Exhaustion publishes nothing. Driver retry fixtures use the same
+publisher/reader at `processClock.now`, without overriding wall time.
+
+The always-selected guard composes explicit Date/performance root rules and
+resolved private-module rules with P01. It rejects acquisition at the root or
+import, not at a later alias call. The public RFC facade requires explicit numeric
+time in both TypeScript and unchecked JavaScript; it has no live fallback. The
+old live conveniences live in private `totp_live.ts`, with three existing import
+sites inventoried for A09. One private bootstrap sampler supplies the native
+clock's initial epoch. Other existing clock/diagnostic roots remain exact A09/A11
+migrations, with no permanent allowances or claim that those families are closed.
+
 ## Product settlement versus readiness
 
 An in-process wait for admitted plugin work uses the existing owner, not a

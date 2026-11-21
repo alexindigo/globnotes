@@ -1,15 +1,36 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { totp } from "otplib";
 import { checkTotpCode } from "../server/auth/local.ts";
 import {
   authenticatorCode,
-  settledTotpNow,
   TOTP_STEP_MS,
+  totpStep,
   unusedWindowCode,
 } from "./helpers/totp.ts";
+
+Deno.test("fixture clock reference: missing and nullish time cannot reach a live fallback", async () => {
+  const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  for (const epoch of [null, undefined, void 0]) {
+    await assertRejects(
+      () => authenticatorCode(secret, epoch as unknown as number),
+      TypeError,
+      "Explicit fixture time required",
+    );
+    await assertRejects(
+      () => unusedWindowCode(secret, [], epoch as unknown as number),
+      TypeError,
+      "Explicit fixture time required",
+    );
+    assertThrows(
+      () => totpStep(epoch as unknown as number),
+      TypeError,
+      "Explicit fixture time required",
+    );
+  }
+});
 
 Deno.test("TOTP reference: RFC 6238 SHA1 test vectors", async () => {
   const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
@@ -86,16 +107,20 @@ Deno.test("TOTP verification: authenticator key bytes, window and preset isolati
 
 Deno.test("totp helper: an unused window code avoids every consumed code", async () => {
   const secret = "JBSWY3DPEHPK3PXP";
-  const now = await settledTotpNow();
+  const now = 1234567890_000;
   const window = await Promise.all(
     [0, 1, -1].map((offset) =>
       authenticatorCode(secret, now + offset * TOTP_STEP_MS)
     ),
   );
-  const fresh = await unusedWindowCode(secret, [window[0]]);
+  const fresh = await unusedWindowCode(secret, [window[0]], now);
   assert(fresh !== window[0]);
   assert(window.includes(fresh));
-  await assertRejects(() => unusedWindowCode(secret, window));
+  await assertRejects(
+    () => unusedWindowCode(secret, window, now),
+    Error,
+    "Every code in the verifier window was already consumed",
+  );
 });
 
 Deno.test("totp helper: held token admission crosses a step without using an expired or consumed code", async () => {

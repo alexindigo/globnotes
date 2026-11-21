@@ -12,6 +12,7 @@ const deferredOwners = [
   "tests/helpers/product_settlement.ts",
   "tests/helpers/process_records.ts",
   "tests/helpers/fixture_coordination.ts",
+  "tests/helpers/fixture_clock.ts",
   "tests/owned_operation_test.ts",
   "tests/fixture_scope_test.ts",
   "tests/owned_record_channel_test.ts",

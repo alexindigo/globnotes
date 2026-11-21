@@ -10,6 +10,7 @@ import operationSites from "./owned_operation_legacy.json" with {
 import operationFamilies from "./owned_operation_families.json" with {
   type: "json",
 };
+import clockSites from "./fixture_clock_legacy.json" with { type: "json" };
 
 /** Exact execution-base occurrences, not owner declarations/path exemptions.
  * Remove sites as their named families migrate; keep the consumer manifest.
@@ -51,6 +52,22 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
   "child-contract-rescue": {
     replacement: "A11: explicit post-verdict low-level contract rescue",
     consumers: ["tests/server_lifetime_test.ts"],
+  },
+  "legacy-clock-roots": {
+    replacement: "A09/A11",
+    consumers: [
+      "tests/fixture_clock_guard_test.ts",
+      "tests/totp_test.ts",
+      "tests/native_totp_fixture_test.ts",
+    ],
+  },
+  "legacy-live-totp-import": {
+    replacement: "A09",
+    consumers: [
+      "tests/access_settings_test.ts",
+      "tests/auth_test.ts",
+      "tests/local_auth_test.ts",
+    ],
   },
   "record-channel-pilot": {
     replacement: "P11",
@@ -239,6 +256,7 @@ export const LEGACY_OWNERSHIP: LegacySite[] = [
   ...recordSites,
   ...childSites,
   ...operationSites,
+  ...clockSites,
 ]
   .map((site) => {
     const family = OWNERSHIP_FAMILIES[site.family];

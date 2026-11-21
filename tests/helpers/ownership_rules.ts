@@ -16,6 +16,11 @@ const DRIVER_MODULE_RULES = {
   [DRIVER_PROTOCOL]: [DRIVER_PRELOAD, DRIVER_CONTRACT],
   [DRIVER_PRELOAD]: [DRIVER_CONTRACT],
 };
+import {
+  CLOCK_MODULE_RULES,
+  FIXTURE_CLOCK,
+  fixtureClockRules,
+} from "./fixture_clock_rules.ts";
 
 export const RESOURCE_CORE = "shared/ownership.js";
 export const RESOURCE_ENGINE = "shared/ownership-engine.js";
@@ -96,6 +101,10 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       "tests/owned_record_channel_test.ts",
       "tests/helpers/boot.ts",
       DRIVER_FIXTURE,
+      FIXTURE_CLOCK,
+      "client/tests/e2e/native-totp-fixture.mjs",
+      "client/tests/e2e/access-settings.mjs",
+      "client/tests/e2e/plugin-review-repairs.mjs",
     ],
     [PLUGIN_FIXTURE_ENGINE]: [
       "tests/helpers/plugin_fixture.ts",
@@ -119,6 +128,7 @@ export const FIXTURE_PILOT_FILES = [
 const fixtureScenarios = [
   "tests/fixture_scope_test.ts",
   "tests/plugin_fixture_cleanup_test.ts",
+  "tests/fixture_clock_ownership_test.ts",
 ];
 /** P03 scenario coordination enters through the owned, cancellation-aware port. */
 export const FIXTURE_SCENARIO_OWNERSHIP: OwnershipRules = {
@@ -178,6 +188,9 @@ export const RECORD_MODULE_RULES = {
     "tests/owned_record_channel_test.ts",
     DRIVER_STARTUP,
     DRIVER_CONTRACT,
+    FIXTURE_CLOCK,
+    "tests/fixture_clock_ownership_test.ts",
+    "tests/native_totp_fixture_test.ts",
   ],
   "tests/helpers/process_records.ts": [
     RECORD_CHANNEL,
@@ -329,13 +342,14 @@ const allModules = (rules: OwnershipRules): OwnershipRules => ({
     ...RECORD_MODULE_RULES,
     ...CHILD_MODULE_RULES,
     ...DRIVER_MODULE_RULES,
+    ...CLOCK_MODULE_RULES,
   },
 });
 const driverDenoMembers: Record<string, readonly string[]> = {
   [DRIVER_STARTUP]: [],
   [DRIVER_PRELOAD]: ["pid"],
   [DRIVER_PROTOCOL]: ["stderr"],
-  [DRIVER_FIXTURE]: ["readTextFile", "writeTextFileSync", "renameSync"],
+  [DRIVER_FIXTURE]: ["readTextFile", "writeTextFileSync"],
 };
 const DRIVER_OWNERSHIP = Object.fromEntries(
   Object.entries(driverDenoMembers).map(([file, members]) => [file, {
@@ -384,7 +398,7 @@ export function registeredOwnership(sources: SourceModule[]) {
     let pair = policies.get(rules);
     if (!pair) {
       const ordinary = allModules(rules);
-      pair = [ordinary, coordinationRules(ordinary)];
+      pair = [ordinary, fixtureClockRules(coordinationRules(ordinary))];
       policies.set(rules, pair);
     }
     // Server work and the private resource engine retain their own contracts.

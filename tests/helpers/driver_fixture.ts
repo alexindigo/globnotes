@@ -5,6 +5,7 @@ import { pluginFixture } from "./plugin_fixture.ts";
 import { scopedPluginFixture } from "./plugin_fixture_engine.ts";
 import { bootServer, UnexpectedServerExitError } from "./boot.ts";
 import { assert, assertEquals } from "@std/assert";
+import { createFixtureClock } from "./fixture_clock.ts";
 import { createFixtureScope } from "./fixture_scope_engine.ts";
 import { boundOperation } from "./owned_operation.ts";
 import { fixtureScope } from "./fixture_scope.ts";
@@ -49,12 +50,23 @@ export async function driverFixture(
   source = minimalDriver,
   declaration: Record<string, unknown> = {},
 ) {
-  const fixture = await pluginFixture();
-  const dir = await fixture.install("test-driver", {
-    driver: { ...driverDeclaration, ...declaration },
-    capabilities: { network: false, imports: false },
-  }, { "driver.js": source });
-  return { ...fixture, dir, manifest: readManifest(dir) };
+  const capturedDeclaration = { ...driverDeclaration, ...declaration };
+  const lifetime = createFixtureScope();
+  return await lifetime.prepare(async (scope) => {
+    const fixture = (await scope.acquire(pluginFixture, (fixture) =>
+      fixture.dispose())).value;
+    const dir = await fixture.install("test-driver", {
+      driver: capturedDeclaration,
+      capabilities: { network: false, imports: false },
+    }, { "driver.js": source });
+    return {
+      ...fixture,
+      dir,
+      manifest: readManifest(dir),
+      dispose: () =>
+        lifetime.close(),
+    };
+  });
 }
 
 /** Installs only the test-owned fixture plugin; uses actual server controls and
@@ -111,19 +123,12 @@ export async function storageServerFixture(
     };
     // Control only this owned subprocess's observed-time seam. No process env,
     // product route or production clock implementation is changed by the fixture.
-    let observedTime = initialTime ?? 0;
-    const clockFile = `${fixture.root}/observed-time.json`;
     const preload = `${fixture.root}/observed-time.mjs`;
-    const clock = initialTime === undefined ? null : {
-      now: () =>
-        observedTime,
-      advance: scope.bind((milliseconds: number) => {
-        observedTime += milliseconds;
-        const next = `${clockFile}.next`;
-        Deno.writeTextFileSync(next, JSON.stringify(observedTime));
-        Deno.renameSync(next, clockFile);
-      }),
-    };
+    const clock = initialTime === undefined ? null : (await scope.acquire(
+      () =>
+        createFixtureClock(fixture, "observed-clock", initialTime),
+      (clock) => clock.close(),
+    )).value;
     const observe = `import { observeDriverStartup } from ${
       JSON.stringify(
         new URL("./driver_startup_preload.ts", import.meta.url).href,
@@ -132,16 +137,20 @@ export async function storageServerFixture(
     await fixture.admit(() => {
       Deno.writeTextFileSync(preload, observe);
       if (clock) {
-        Deno.writeTextFileSync(clockFile, JSON.stringify(observedTime));
         Deno.writeTextFileSync(
           preload,
-          observe + `import { processClock } from ${
-            JSON.stringify(
-              new URL("../../server/observed_time.ts", import.meta.url).href,
-            )
-          };\nprocessClock.now = () => JSON.parse(Deno.readTextFileSync(${
-            JSON.stringify(clockFile)
-          }));\n`,
+          observe +
+            `import { fixtureClockReader } from ${
+              JSON.stringify(
+                new URL("./fixture_clock.ts", import.meta.url).href,
+              )
+            };\nimport { processClock } from ${
+              JSON.stringify(
+                new URL("../../server/observed_time.ts", import.meta.url).href,
+              )
+            };\nprocessClock.now = fixtureClockReader(${
+              JSON.stringify(clock.directory)
+            });\n`,
         );
       }
     });
@@ -291,13 +300,14 @@ export async function storageServerFixture(
     const one = async (id: string) =>
       (await view()).instances.find((row: { id: string }) => row.id === id);
     const configure = async (id: string, changes: Record<string, unknown>) => {
+      const capturedChanges = { ...changes };
       const before = await one(id);
       return await call(`drivers/${id}`, "PUT", {
         revision: before.revision,
         label: before.label,
         settings: before.settings,
         enabled: before.enabled,
-        ...changes,
+        ...capturedChanges,
       });
     };
     const key = async (id: string, token: string) =>
@@ -312,12 +322,13 @@ export async function storageServerFixture(
       return await one(id);
     };
     const decide = async (id: string, action: string, paths?: string[]) => {
+      const capturedPaths = paths && [...paths];
       const row = await one(id);
       await call(`drivers/${id}/decisions`, "POST", {
         instanceRevision: row.revision,
         attentionRevision: row.attention.revision,
         action,
-        ...(paths ? { paths } : {}),
+        ...(capturedPaths ? { paths: capturedPaths } : {}),
       });
       return await one(id);
     };
@@ -399,6 +410,7 @@ export async function storageServerFixture(
       close() {
         return closing ??= lifetime.close();
       },
+      dispose: () => lifetime.close(),
     };
   });
 }

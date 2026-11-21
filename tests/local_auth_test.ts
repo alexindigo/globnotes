@@ -9,7 +9,8 @@ import { SignJWT } from "jose";
 import { LocalAuth, totpSecretFromRawKey } from "../server/auth/local.ts";
 import { GlobalConfig } from "./helpers/config.ts";
 import { testEnvironment } from "./helpers/environment.ts";
-import { authenticatorCode, settledTotpNow } from "./helpers/totp.ts";
+import { authenticatorCode } from "./helpers/totp.ts";
+import { settledTotpNow } from "./helpers/totp_live.ts";
 
 async function makeConfig(
   env: Record<string, unknown>,

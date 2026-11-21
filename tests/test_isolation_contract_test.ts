@@ -28,6 +28,7 @@ import {
 import "./owned_operation_guard_test.ts";
 import "./owned_contenders_guard_test.ts";
 import "./driver_phase_guard_test.ts";
+import "./fixture_clock_guard_test.ts";
 import {
   CHILD_OWNER,
   familyInventoryErrors,

@@ -896,17 +896,17 @@
     "family": "coordination:tests/helpers/render_recovery_child.ts"
   },
   {
-    "file": "tests/helpers/totp.ts",
+    "file": "tests/helpers/totp_live.ts",
     "capability": "Promise.*",
-    "line": 37,
+    "line": 9,
     "source": "Promise",
     "context": "const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));",
     "family": "coordination:tests/helpers/totp.ts"
   },
   {
-    "file": "tests/helpers/totp.ts",
+    "file": "tests/helpers/totp_live.ts",
     "capability": "setTimeout.*",
-    "line": 37,
+    "line": 9,
     "source": "setTimeout",
     "context": "const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));",
     "family": "coordination:tests/helpers/totp.ts"

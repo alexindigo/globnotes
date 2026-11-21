@@ -14,6 +14,7 @@ import { showSidebar } from './sidebar-navigation-native.mjs';
 import { exerciseLockedControls } from "./access-lock-controls-native.mjs";
 import { metadataBase, metadataDirectory } from "./config-fixture.mjs";
 import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
+import { createFixtureScope } from "../../../tests/helpers/fixture_scope_engine.ts";
 
 let options;
 try { options = parseFixtureArguments("access-settings", Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -44,6 +45,8 @@ async function bootFirstRun(vault, state, directory, prefix) {
 }
 async function fixture(label, protectedMode) {
   assert(fixtures.every(item => item.closed), "Previous successful fixture not closed");
+  const lifetime = createFixtureScope();
+  await lifetime.prepare(async scope => {
   const directory = `${artifacts}/${label}`; await Deno.mkdir(directory);
   const vault = await Deno.makeTempDir({ prefix: `access-native-${label}-vault-` }), state = await metadataDirectory({ prefix: `access-native-${label}-state-` });
   await Deno.writeTextFile(`${vault}/Seed.md`, label === "locked-controls" ? "Seed content.\n\n```text\nfirst code line\nsecond code line\n```\n" : "Seed content.\n");
@@ -60,16 +63,19 @@ async function fixture(label, protectedMode) {
     await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["access-workflow"], autoEnable: false }));
   }
   const token = protectedAccount ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  const totpClock = totp || label === "totp-in-place" ? await createNativeTotpClock(directory) : null;
-  let server = setup ? await bootFirstRun(vault, state, directory, prefix) : await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), ...(label === "locked-controls" ? {} : { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }), GLOBNOTES__SERVER_PATHPREFIX: prefix }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {}, denoArgs: totpClock?.denoArgs });
-  if (label === "peer-policy") server = createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
+  const totpClock = totp || label === "totp-in-place" ? (await scope.acquire(() => createNativeTotpClock(directory), clock => clock.close())).value : null;
+  let server = (await scope.acquire(() => setup ? bootFirstRun(vault, state, directory, prefix) : bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), ...(label === "locked-controls" ? {} : { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }), GLOBNOTES__SERVER_PATHPREFIX: prefix }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {}, denoArgs: totpClock?.denoArgs }), server => server.close())).value;
+  if (label === "peer-policy") server = (await scope.acquire(() => createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
     const logsDir = `${directory}/backend-${count}`; await Deno.mkdir(logsDir);
     return bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }, logsDir });
-  } });
-  const session = await nativeSession({ port });
-  owned = { label, directory, vault, state, server, session, prefix, totpClock, closed: false, initial: config };
+  } }), server => server.close())).value;
+  const session = (await scope.acquire(() => nativeSession({ port }), session => session.close())).value;
+  owned = { label, directory, vault, state, server, session, prefix, totpClock, close: () => lifetime.close(), closed: false, initial: config };
   fixtures.push(owned);
   await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({ label, vault, state, pid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
+  });
+  const { session, server, prefix, totpClock, initial: config } = owned;
+  const setup = protectedMode === "setup", totp = protectedMode === "totp", protectedAccount = !setup && !!protectedMode;
   await session.goto(`${server.baseUrl}${prefix}/Seed`);
   if (setup) { await session.poll("!!document.querySelector('#setup-title')"); return; }
   if (protectedAccount) {
@@ -123,7 +129,7 @@ async function screenshot(name) {
 async function finishCase(name, consumers) {
   assert(owned.session.errors.length === 0, "Browser page exception");
   await Deno.writeTextFile(`${owned.directory}/consumers.json`, JSON.stringify({ name, ...consumers, pageErrors: owned.session.errors }, null, 2), { createNew: true });
-  await owned.session.close(); await owned.server.close(); owned.closed = true;
+  await owned.close(); owned.closed = true;
   const targets = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(5000) }).then(r => r.json());
   assert(!targets.some(target => target.id === owned.session.targetId), "Successful target still live");
   let stopped = false;
@@ -255,7 +261,7 @@ try {
   assert(await saved() === original && (await api("auth-check", "GET", undefined, old)).status === 200, "Wrong current TOTP changed credentials/session");
   // The initial login spent the current code. Advance for a fresh current
   // proof, leaving the next login's step unspent.
-  owned.totpClock.advanceStep();
+  await owned.totpClock.advanceStep();
   const acceptedCode = await owned.totpClock.code(currentSecret);
   await fill("#access-current-totp", acceptedCode); await owned.session.button("Save access settings"); await owned.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
   assert((await api("auth-check", "GET", undefined, old)).status === 401, "Password change did not invalidate the old session");
@@ -302,7 +308,7 @@ try {
   const replacementResponse = await owned.session.send("Network.getResponseBody", { requestId: replacementRequests[0] });
   const replacement = JSON.parse(replacementResponse.base64Encoded ? atob(replacementResponse.body) : replacementResponse.body);
   assert(await saved() === replacementBefore && (await api("auth-check", "GET", undefined, replacementToken)).status === 200, "Opening replacement changed the existing account/session");
-  owned.totpClock.advanceStep();
+  await owned.totpClock.advanceStep();
   await fill("#access-current-password", password); await fill("#access-current-totp", await owned.totpClock.code(originalSecret));
   const newConfirmation = await owned.totpClock.code(replacement.secret); await fill("#setup-totp-code", newConfirmation);
   await owned.session.button("Save access settings"); await owned.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
@@ -494,7 +500,7 @@ finally {
       ...(failure && owned && !owned.closed ? [() => screenshot("failure")] : []),
     ] }),
     cleanup: failure && owned && !owned.closed ? [async () => {
-      await finalizeNativeCase({ cleanup: [() => owned.peer?.close(), () => owned.session.close(), () => owned.server.close()] });
+      await finalizeNativeCase({ cleanup: [() => owned.peer?.close(), () => owned.close()] });
       owned.closed = true;
       await Deno.writeTextFile(`${owned.directory}/failed-fixture-closure.json`, JSON.stringify({ targetClosed: true, serverClosed: true, failureCapturedBeforeClosure: true, filesRetained: true }), { createNew: true });
     }] : [],

@@ -9,12 +9,8 @@ import { fixturePasswordHash } from "./helpers/config.ts";
  */
 
 import { assert, assertEquals } from "@std/assert";
-import {
-  authenticatorCode,
-  settledTotpNow,
-  TOTP_STEP_MS,
-  totpStep,
-} from "./helpers/totp.ts";
+import { authenticatorCode, TOTP_STEP_MS, totpStep } from "./helpers/totp.ts";
+import { settledTotpNow } from "./helpers/totp_live.ts";
 import { totpSecretFromRawKey } from "../server/auth/local.ts";
 import { bootServer } from "./helpers/boot.ts";
 

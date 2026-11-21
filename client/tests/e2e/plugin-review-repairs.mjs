@@ -9,7 +9,10 @@ import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { hashPassword } from "../../../server/helpers.ts";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 import { createNativeTotpClock } from "./native-totp-fixture.mjs";
+import { fixtureScope } from "../../../tests/helpers/fixture_scope.ts";
+import { createFixtureScope } from "../../../tests/helpers/fixture_scope_engine.ts";
 
+await fixtureScope(async suite => {
 const options = parseReviewRepairArguments(Deno.args);
 if (options.help) { console.log("Usage: plugin-review-repairs.mjs --artifacts <directory> [--variant <fixture>]"); Deno.exit(0); }
 const selectedCases = REVIEW_REPAIR_CASES.filter(item => !options.variant || item.label === options.variant);
@@ -29,7 +32,7 @@ function until(predicate, detail) {
   return waitUntil(async () => await predicate() ? done() : pending({ condition: String(predicate) }), { label: detail, intervalMs: 30 });
 }
 async function sessionAt(base) {
-  const session = await nativeSession({ port: cdpPort }); current.sessions.push(session);
+  const session = (await current.scope.acquire(() => nativeSession({ port: cdpPort }), session => session.close())).value; current.sessions.push(session);
   await session.goto(`${base}/Seed`);
   if (current.protectedAccount) {
     await session.poll("!!document.querySelector('#username')");
@@ -87,6 +90,8 @@ function gateResponse(method, path) {
 async function release(gate) { gate.released = true; gate.release.resolve(); }
 async function fixture(label, { protectedAccount = false, browser = false } = {}) {
   assert(fixtures.every(value => value.closed), "Previous successful fixture not closed");
+  const lifetime = (await suite.acquire(createFixtureScope, lifetime => lifetime.close())).value;
+  return await lifetime.prepare(async scope => {
   const directory = `${artifacts}/${label}`, vault = `${directory}/vault`, state = `${directory}/state/globnotes`, pluginDir = `${state}/plugins/review`;
   await Deno.mkdir(vault, { recursive: true }); await Deno.mkdir(pluginDir, { recursive: true });
   await Deno.writeTextFile(`${vault}/Seed.md`, "Review seed.\n");
@@ -97,7 +102,12 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
   await Deno.writeTextFile(`${pluginDir}/manifest.json`, JSON.stringify(manifest));
   await Deno.writeTextFile(`${pluginDir}/service.js`, `const owner=crypto.randomUUID();export function activate(ctx){ctx.commands.register({id:'inspect',label:'Inspect repair fixture',target:'server'},()=>({owner}));ctx.commands.register({id:'request',label:'Request repair scope',target:'server'},async()=>{const view=await ctx.permissions.status();return ctx.permissions.requestAccess({kind:'network',hosts:['127.0.0.1:9'],reason:'Repair prompt fixture'},{source:view.source});});}`);
   await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["review"], autoEnable: false }));
-  current = { label, directory, vault, state, pluginDir, manifest, descriptor, config, protectedAccount, sessions: [], gates: [], browserHolds: [], requests: [], closed: false };
+  current = { label, directory, vault, state, pluginDir, manifest, descriptor, config, protectedAccount, sessions: [], gates: [], browserHolds: [], requests: [], scope, close: () => lifetime.close(), closed: false };
+  const owner = current;
+  scope.onCancel(() => {
+    for (const gate of owner.gates) { gate.released = true; gate.release.resolve(); }
+    for (const hold of owner.browserHolds) hold.resolve();
+  });
   fixtures.push(current);
   if (browser) await browserCode("seed");
   // A real login token is acquired by the browser; boot readiness can use a
@@ -108,10 +118,9 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
     const token = await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(config.secret_key));
     headers = { authorization: `Bearer ${token}` };
   }
-  if (label === "access-conflict") current.totpClock = await createNativeTotpClock(directory);
-  current.server = await bootServer(vault, state, { logsDir: directory, headers, denoArgs: current.totpClock?.denoArgs });
-  const owner = current;
-  current.proxy = Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, async request => {
+   if (label === "access-conflict") current.totpClock = (await scope.acquire(() => createNativeTotpClock(directory), clock => clock.close())).value;
+   current.server = (await scope.acquire(() => bootServer(vault, state, { logsDir: directory, headers, denoArgs: current.totpClock?.denoArgs }), server => server.close())).value;
+   current.proxy = (await scope.acquire(() => Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, async request => {
     const url = new URL(request.url);
     if (url.pathname === "/fixture/browser-A") {
       const barrier = Promise.withResolvers(); owner.browserHolds.push(barrier); await barrier.promise;
@@ -129,7 +138,7 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
       return new Response(bytes, { status: response.status, headers: response.headers });
     }
     return new Response(response.body, { status: response.status, headers: response.headers });
-  });
+   }), proxy => proxy.shutdown())).value;
   current.entryBase = httpOrigin(current.proxy.addr.port);
   current.session = await sessionAt(current.entryBase);
   current.peer = await sessionAt(current.server.baseUrl);
@@ -139,6 +148,7 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
   });
   await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({ label, vault, state, serverPid: current.server.pid, baseUrl: current.server.baseUrl, entryBase: current.entryBase,
     contexts: current.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })) }, null, 2), { createNew: true });
+  });
 }
 async function browserCode(kind) {
   await Deno.writeTextFile(`${current.pluginDir}/browser.js`, `export async function activate(ctx){
@@ -170,8 +180,8 @@ async function outcome(group, consumers) {
 }
 async function finish() {
   assert(current.gates.every(gate => gate.released), "Successful fixture has an unresolved transport gate");
-  for (const session of current.sessions) { assert(!session.errors.length, "Unexpected production page exception"); await session.close(); }
-  await current.proxy.shutdown(); await current.server.close(); current.closed = true;
+  for (const session of current.sessions) assert(!session.errors.length, "Unexpected production page exception");
+  await current.close(); current.closed = true;
   await Deno.writeTextFile(`${current.directory}/closure.json`, JSON.stringify({ serverClosed: true, ownedContextsClosed: true, rootsRetained: true, requests: current.requests }, null, 2), { createNew: true });
 }
 
@@ -328,14 +338,20 @@ try {
   console.log(`PLUGIN REVIEW REPAIRS OK (${outcomes.length} repair groups)`);
 } catch (error) {
   let captureFailure;
+  await fixtureScope(report => {
+  report.defer(async () => {
+    await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ failure: failureDetails(error), captureFailure, outcomes, current: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server?.pid, entryBase: current.entryBase,
+      sessions: current.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })), requests: current.requests, serverLogs: current.server?.logs, unresolvedGates: current.gates.filter(gate => !gate.released).map(gate => ({ method: gate.method, path: gate.path, response: gate.response })) } }, null, 2), { createNew: true });
+    console.error(`Retained native repair failure: ${error.message}; ${artifacts}/failure.json`);
+  });
+  report.defer(async () => {
   if (current?.session) {
     try {
       await capture("failure");
     } catch (diagnosticError) { captureFailure = failureDetails(diagnosticError); }
   }
-  await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ failure: failureDetails(error), captureFailure, outcomes, current: current && { label: current.label, directory: current.directory, vault: current.vault, state: current.state, serverPid: current.server?.pid, entryBase: current.entryBase,
-    sessions: current.sessions.map(session => ({ targetId: session.targetId, browserContextId: session.browserContextId })), requests: current.requests, serverLogs: current.server?.logs, unresolvedGates: current.gates.filter(gate => !gate.released).map(gate => ({ method: gate.method, path: gate.path, response: gate.response })) } }, null, 2), { createNew: true });
-  console.error(`Retained native repair failure: ${error.message}; ${artifacts}/failure.json`);
-  // Preserve original wires, children and targets for evidence-backed recovery.
-  for (;;) await delay(1000);
+  });
+  throw error;
+  });
 }
+});

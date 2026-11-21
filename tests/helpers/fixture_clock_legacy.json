@@ -1,0 +1,1506 @@
+[
+  {
+    "file": "tests/owned_operation_test.ts",
+    "capability": "Date.now",
+    "line": 447,
+    "source": "Date.now",
+    "context": "const realNow = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_operation_test.ts",
+    "capability": "Date.now",
+    "line": 448,
+    "source": "Date.now",
+    "context": "Date.now = () => {",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_operation_test.ts",
+    "capability": "Date.now",
+    "line": 463,
+    "source": "Date.now",
+    "context": "Date.now = realNow;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_operation_test.ts",
+    "capability": "Date.now",
+    "line": 468,
+    "source": "Date.now",
+    "context": "const realNow = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_operation_test.ts",
+    "capability": "Date.now",
+    "line": 471,
+    "source": "Date.now",
+    "context": "Date.now = () => ++reads === 1 ? 0 : READINESS_MS;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_operation_test.ts",
+    "capability": "Date.now",
+    "line": 523,
+    "source": "Date.now",
+    "context": "Date.now = realNow;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_operation_test.ts",
+    "capability": "Date.now",
+    "line": 529,
+    "source": "Date.now",
+    "context": "const realNow = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_operation_test.ts",
+    "capability": "Date.now",
+    "line": 531,
+    "source": "Date.now",
+    "context": "Date.now = () => {",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_operation_test.ts",
+    "capability": "Date.now",
+    "line": 557,
+    "source": "Date.now",
+    "context": "Date.now = realNow;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_contenders_test.ts",
+    "capability": "Date.now",
+    "line": 888,
+    "source": "Date.now",
+    "context": "const realNow = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_contenders_test.ts",
+    "capability": "Date.now",
+    "line": 894,
+    "source": "Date.now",
+    "context": "Date.now = () => expiring ? READINESS_MS : 0;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/owned_contenders_test.ts",
+    "capability": "Date.now",
+    "line": 931,
+    "source": "Date.now",
+    "context": "Date.now = realNow;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 14,
+    "source": "Date.now",
+    "context": "const start = Date.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 18,
+    "source": "Date.now",
+    "context": "if (content === expected) return { path, content, elapsed: Date.now() - start };",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 21,
+    "source": "Date.now",
+    "context": "} while (Date.now() - start < timeout);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 68,
+    "source": "Date.now",
+    "context": "const waiting = Date.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 70,
+    "source": "Date.now",
+    "context": "const moduleRequestWaitMs = Date.now() - waiting;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 261,
+    "source": "Date.now",
+    "context": "if (event.method === \"Network.requestWillBeSent\" && event.params.request.method === \"PATCH\") times.set(event.params.requestId, Date.now());",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 338,
+    "source": "Date.now",
+    "context": "const pauseCount = mutations(\"readme\").length, pauseStart = Date.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 342,
+    "source": "Date.now",
+    "context": "assert(mutations(\"readme\").length === pauseCount + 1 && Date.now() - pauseStart < 5000, \"Pause autosave did not complete once within 5s\");",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 347,
+    "source": "Date.now",
+    "context": "const continuousStart = Date.now(), continuousCount = mutations(\"readme\").length;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 349,
+    "source": "Date.now",
+    "context": "while (Date.now() - continuousStart < 6000) {",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 358,
+    "source": "Date.now",
+    "context": "results.push({ case: \"continuous-pause\", typingMs: Date.now() - continuousStart - continuous.elapsed, ...continuous });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 362,
+    "source": "Date.now",
+    "context": "const intervalCount = mutations(\"readme\").length, intervalStart = Date.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/autosave-timer.mjs",
+    "capability": "Date.now",
+    "line": 366,
+    "source": "Date.now",
+    "context": "while (Date.now() - intervalStart < 11500) {",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/background-connections-native.mjs",
+    "capability": "Date.now",
+    "line": 20,
+    "source": "Date.now",
+    "context": "if (counted) { counted = false; live.set(path, live.get(path) - 1); history.push({ path, action: \"close\", at: Date.now() }); }",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/background-connections-native.mjs",
+    "capability": "Date.now",
+    "line": 30,
+    "source": "Date.now",
+    "context": "history.push({ path, action: \"open\", at: Date.now() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/background-connections-native.mjs",
+    "capability": "Date.now",
+    "line": 49,
+    "source": "Date.now",
+    "context": "const hiddenAt = Date.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/background-connections-native.mjs",
+    "capability": "Date.now",
+    "line": 51,
+    "source": "Date.now",
+    "context": "assert(Date.now() - hiddenAt >= 9000, \"Hidden grace was skipped\");",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/backup-plugin.mjs",
+    "capability": "Date.now",
+    "line": 158,
+    "source": "Date.now",
+    "context": "if (response.ok) { const catalog = await response.json(); samples.push({ time: Date.now(), plugins: catalog.plugins.map(plugin => ({ id: plugin.id, status: plugin.status, diagnostics: plugin.diagnostics })) }); }",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/backup-plugin.mjs",
+    "capability": "Date.now",
+    "line": 160,
+    "source": "Date.now",
+    "context": "} catch (error) { samples.push({ time: Date.now(), unavailable: error.name }); }",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/button-icons.mjs",
+    "capability": "Date.now",
+    "line": 30,
+    "source": "Date.now",
+    "context": "const started = Date.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/button-icons.mjs",
+    "capability": "Date.now",
+    "line": 43,
+    "source": "Date.now",
+    "context": "stages.push({ phase, label, status: \"done\", ms: Date.now() - started });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/button-icons.mjs",
+    "capability": "Date.now",
+    "line": 50,
+    "source": "Date.now",
+    "context": "ms: Date.now() - started,",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/conflict-inbox-native.mjs",
+    "capability": "performance.now",
+    "line": 56,
+    "source": "performance.now",
+    "context": "const began = performance.now(); await Deno.remove(`${f.vault}/${row.copyPath}`);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/conflict-inbox-native.mjs",
+    "capability": "performance.now",
+    "line": 59,
+    "source": "performance.now",
+    "context": "f.results.push({ editorOverlap: true, nativeReview: true, prefix: f.prefix, geometry, narrow, outsideClosureMs: performance.now() - began });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/ctrl-f-search.mjs",
+    "capability": "performance.now",
+    "line": 14,
+    "source": "performance.now",
+    "context": "const started = performance.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/ctrl-f-search.mjs",
+    "capability": "performance.now",
+    "line": 43,
+    "source": "performance.now",
+    "context": "const data = event.params, at = performance.now() - started;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/ctrl-f-search.mjs",
+    "capability": "performance.now",
+    "line": 74,
+    "source": "performance.now",
+    "context": "const viewerStarted = performance.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/ctrl-f-search.mjs",
+    "capability": "performance.now",
+    "line": 76,
+    "source": "performance.now",
+    "context": "initialViewerMs = performance.now() - viewerStarted;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/ctrl-f-search.mjs",
+    "capability": "performance.now",
+    "line": 176,
+    "source": "performance.now",
+    "context": "await Deno.writeTextFile(`${artifacts}/failure.json`, JSON.stringify({ error: String(failure), initialViewerMs, elapsedMs: performance.now() - started, snapshot, pageErrors: page.pageErrors, events: page.events, observations, requests: [...requests.values()], server: server.logs() }, null, 2));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/ctrl-f-search.mjs",
+    "capability": "performance.now",
+    "line": 179,
+    "source": "performance.now",
+    "context": "await Deno.writeTextFile(`${artifacts}/observations.json`, JSON.stringify({ failed: !!failure, initialViewerMs, elapsedMs: performance.now() - started, observations, requests: [...requests.values()], pageErrors: page?.pageErrors, events: page?.events }, null, 2));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/hub-safe-saves-native.mjs",
+    "capability": "performance.now",
+    "line": 58,
+    "source": "performance.now",
+    "context": "const began = performance.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/hub-safe-saves-native.mjs",
+    "capability": "performance.now",
+    "line": 61,
+    "source": "performance.now",
+    "context": "results.push({ case: \"viewing-shell-update\", elapsedMs: performance.now() - began,",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/legacy-fixture.mjs",
+    "capability": "Date.*",
+    "line": 40,
+    "source": "Date",
+    "context": "await Deno.utime(file, new Date(\"2025-01-01T00:00:00Z\"), new Date(Date.UTC(2025, 0, 1, 0, 0, index)));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/legacy-fixture.mjs",
+    "capability": "Date.*",
+    "line": 40,
+    "source": "Date",
+    "context": "await Deno.utime(file, new Date(\"2025-01-01T00:00:00Z\"), new Date(Date.UTC(2025, 0, 1, 0, 0, index)));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/legacy-native-suite.mjs",
+    "capability": "performance.now",
+    "line": 381,
+    "source": "performance.now",
+    "context": "const started = performance.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/legacy-native-suite.mjs",
+    "capability": "performance.now",
+    "line": 399,
+    "source": "performance.now",
+    "context": "await Deno.writeTextFile(artifacts + \"/\" + label + \".exit.json\", JSON.stringify({ code: result.code, success: result.success, signal: result.signal, timedOut, durationMs: performance.now() - started }), { createNew: true });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-guard-preservation.mjs",
+    "capability": "Date.now",
+    "line": 55,
+    "source": "Date.now",
+    "context": "if (event.method === \"Page.navigatedWithinDocument\") current.navigation.push({ ...event.params, observedAt: Date.now() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-guard-preservation.mjs",
+    "capability": "Date.now",
+    "line": 91,
+    "source": "Date.now",
+    "context": "await Deno.writeTextFile(`${current.directory}/before-native-operation.json`, JSON.stringify({ ...current.before, observedAt: Date.now(), navigation: current.navigation }, null, 2), { createNew: true });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-guard-preservation.mjs",
+    "capability": "Date.now",
+    "line": 106,
+    "source": "Date.now",
+    "context": "await Deno.writeTextFile(`${current.directory}/retention-comparison.json`, JSON.stringify({ before, after, equal: Object.fromEntries(Object.keys(before).map(key => [key, before[key] === after[key]])), observedAt: Date.now(), navigation: current.navigation }, null, 2), { createNew: true });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-permissions.mjs",
+    "capability": "Date.now",
+    "line": 113,
+    "source": "Date.now",
+    "context": "await Deno.writeTextFile(`${directory}/response-gate-deadline.json`, JSON.stringify({ detail: \"Owned dirty-note response deadline\", observedAt: Date.now(), completedWrites: value.noteWrites.length }, null, 2));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Date.now",
+    "line": 124,
+    "source": "Date.now",
+    "context": "current.wire.push({ method: event.method, requestId: event.params.requestId, url: request.url, httpMethod: request.method, bearerPresent: !!headers.authorization, cookiePresent: !!headers.cookie, observedAt: Date.now() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Date.now",
+    "line": 127,
+    "source": "Date.now",
+    "context": "current.wire.push({ method: event.method, requestId: event.params.requestId, bearerPresent: !!headers.authorization, cookiePresent: !!headers.cookie, observedAt: Date.now() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Date.now",
+    "line": 128,
+    "source": "Date.now",
+    "context": "} else if (event.method === \"Network.responseReceived\") current.wire.push({ method: event.method, requestId: event.params.requestId, url: event.params.response.url, status: event.params.response.status, observedAt: Date.now() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Date.now",
+    "line": 129,
+    "source": "Date.now",
+    "context": "else if (event.method === \"Page.navigatedWithinDocument\") current.wire.push({ method: event.method, url: event.params.url, observedAt: Date.now() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Date.now",
+    "line": 217,
+    "source": "Date.now",
+    "context": "const expiry = Math.floor(Date.now() / 1000) + 2, short = await signed(current.secret, expiry), expired = await stream(short);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Date.now",
+    "line": 219,
+    "source": "Date.now",
+    "context": "for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, \"Prefix/auth consumer observation deadline\"); await new Promise(resolve => setTimeout(resolve, 25)); }",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
+    "capability": "Date.now",
+    "line": 219,
+    "source": "Date.now",
+    "context": "for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, \"Prefix/auth consumer observation deadline\"); await new Promise(resolve => setTimeout(resolve, 25)); }",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-review-repairs.mjs",
+    "capability": "Date.now",
+    "line": 123,
+    "source": "Date.now",
+    "context": "owner.requests.push({ method: request.method, path: url.pathname, status: response.status, at: Date.now() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/plugin-review-repairs.mjs",
+    "capability": "Date.now",
+    "line": 127,
+    "source": "Date.now",
+    "context": "const bytes = await response.arrayBuffer(); gate.response = { status: response.status, body: new TextDecoder().decode(bytes), at: Date.now() }; gate.ready.resolve();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/settings-design.mjs",
+    "capability": "performance.now",
+    "line": 171,
+    "source": "performance.now",
+    "context": "settingsReads.set(requestId, { requestId, url: request.url, started: performance.now() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/settings-design.mjs",
+    "capability": "performance.now",
+    "line": 174,
+    "source": "performance.now",
+    "context": "if (read && event.method === \"Network.responseReceived\") Object.assign(read, { status: response.status, responseMs: performance.now() - read.started, timing: response.timing });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/settings-design.mjs",
+    "capability": "performance.now",
+    "line": 175,
+    "source": "performance.now",
+    "context": "if (read && event.method === \"Network.loadingFinished\") read.completedMs = performance.now() - read.started;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/settings-design.mjs",
+    "capability": "performance.now",
+    "line": 176,
+    "source": "performance.now",
+    "context": "if (read && event.method === \"Network.loadingFailed\") Object.assign(read, { failedMs: performance.now() - read.started, error: event.params.errorText });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/settings-pending-native.mjs",
+    "capability": "Date.now",
+    "line": 10,
+    "source": "Date.now",
+    "context": "gate.writes.push({ requestId: event.params.requestId, at: Date.now() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/settings-pending-native.mjs",
+    "capability": "Date.now",
+    "line": 16,
+    "source": "Date.now",
+    "context": "gate.response = { requestId: response.requestId, status: response.responseStatusCode, at: Date.now() };",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/settings-pending-native.mjs",
+    "capability": "Date.now",
+    "line": 20,
+    "source": "Date.now",
+    "context": "const deadline = Date.now() + 15000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/settings-pending-native.mjs",
+    "capability": "Date.now",
+    "line": 22,
+    "source": "Date.now",
+    "context": "assert(Date.now() < deadline, \"Response-gate observation deadline\");",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/settings-pending-native.mjs",
+    "capability": "Date.now",
+    "line": 60,
+    "source": "Date.now",
+    "context": "await pollGate(() => Date.now() - gate.response.at > 11000);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/access_settings_test.ts",
+    "capability": "module:tests/helpers/totp_live.ts",
+    "line": 10,
+    "source": "\"./helpers/totp_live.ts\"",
+    "context": "import { settledTotpNow, unusedWindowCode } from \"./helpers/totp_live.ts\";",
+    "family": "legacy-live-totp-import"
+  },
+  {
+    "file": "tests/access_settings_test.ts",
+    "capability": "Date.now",
+    "line": 167,
+    "source": "Date.now",
+    "context": "Date.now() - 300_000,",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/auth_test.ts",
+    "capability": "module:tests/helpers/totp_live.ts",
+    "line": 13,
+    "source": "\"./helpers/totp_live.ts\"",
+    "context": "import { settledTotpNow } from \"./helpers/totp_live.ts\";",
+    "family": "legacy-live-totp-import"
+  },
+  {
+    "file": "tests/auth_test.ts",
+    "capability": "Date.now",
+    "line": 446,
+    "source": "Date.now",
+    "context": "const far = await codeFor(secret, Date.now() - 10 * stepMs);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/auth_test.ts",
+    "capability": "Date.now",
+    "line": 485,
+    "source": "Date.now",
+    "context": "password: `secret${await codeFor(code, Date.now())}`,",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/config_consumers_test.ts",
+    "capability": "performance.now",
+    "line": 58,
+    "source": "performance.now",
+    "context": "const original = performance.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/config_consumers_test.ts",
+    "capability": "performance.now",
+    "line": 61,
+    "source": "performance.now",
+    "context": "performance.now = () => clock;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/config_consumers_test.ts",
+    "capability": "performance.now",
+    "line": 75,
+    "source": "performance.now",
+    "context": "performance.now = original;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/config_consumers_test.ts",
+    "capability": "Date.now",
+    "line": 160,
+    "source": "Date.now",
+    "context": "const before = Math.floor(Date.now() / 1000);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/config_consumers_test.ts",
+    "capability": "Date.now",
+    "line": 166,
+    "source": "Date.now",
+    "context": "const after = Math.floor(Date.now() / 1000);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_server.ts",
+    "capability": "Date.now",
+    "line": 41,
+    "source": "Date.now",
+    "context": "wall: Date.now(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall_server.ts",
+    "capability": "Date.now",
+    "line": 74,
+    "source": "Date.now",
+    "context": "wall: Date.now(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "Date.now",
+    "line": 66,
+    "source": "Date.now",
+    "context": "const resumed = Date.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "Date.now",
+    "line": 101,
+    "source": "Date.now",
+    "context": "elapsedMs: Date.now() - resumed,",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/catalog_work_stall.mjs",
+    "capability": "Date.now",
+    "line": 131,
+    "source": "Date.now",
+    "context": "const stalledWallMs = Date.now() - before.wall;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/failure_report.ts",
+    "capability": "Date.*",
+    "line": 35,
+    "source": "Date",
+    "context": "const stamp = new Date().toISOString().replaceAll(\":\", \"-\");",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/failure_report.ts",
+    "capability": "Date.*",
+    "line": 42,
+    "source": "Date",
+    "context": "`time: ${new Date().toISOString()}`,",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/plugin_stall_child.ts",
+    "capability": "performance.now",
+    "line": 95,
+    "source": "performance.now",
+    "context": "const began = performance.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/plugin_stall_child.ts",
+    "capability": "performance.now",
+    "line": 102,
+    "source": "performance.now",
+    "context": "detectedAfterMs: performance.now() - began,",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/product_settlement_stall_child.ts",
+    "capability": "Date.now",
+    "line": 55,
+    "source": "Date.now",
+    "context": "wall: Date.now(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/product_settlement_stall_child.ts",
+    "capability": "Date.now",
+    "line": 68,
+    "source": "Date.now",
+    "context": "wall: Date.now(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/remotely_save_remote.ts",
+    "capability": "Date.now",
+    "line": 24,
+    "source": "Date.now",
+    "context": "let counter = 0, tick = Math.floor(Date.now() / 1000) * 1000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/remotely_save_remote.ts",
+    "capability": "Date.*",
+    "line": 78,
+    "source": "Date",
+    "context": "const headers = new Headers({ date: new Date(tick).toUTCString() });",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/remotely_save_remote.ts",
+    "capability": "Date.*",
+    "line": 101,
+    "source": "Date",
+    "context": "new Date(object.modified).toISOString()",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/remotely_save_remote.ts",
+    "capability": "Date.*",
+    "line": 147,
+    "source": "Date",
+    "context": "new Date(object.modified).toUTCString()",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/remotely_save_remote.ts",
+    "capability": "Date.*",
+    "line": 163,
+    "source": "Date",
+    "context": "headers.set(\"last-modified\", new Date(object.modified).toUTCString());",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/wait.ts",
+    "capability": "Date.now",
+    "line": 116,
+    "source": "Date.now",
+    "context": "const started = Date.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/wait.ts",
+    "capability": "Date.now",
+    "line": 132,
+    "source": "Date.now",
+    "context": "Date.now() - started,",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/helpers/wait.ts",
+    "capability": "Date.now",
+    "line": 181,
+    "source": "Date.now",
+    "context": "if (Date.now() >= deadline) exceeded();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 516,
+    "source": "Date.now",
+    "context": "const clock = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 534,
+    "source": "Date.now",
+    "context": "Date.now = () => now + 120000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 537,
+    "source": "Date.now",
+    "context": "Date.now = clock;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 581,
+    "source": "Date.now",
+    "context": "Date.now = clock;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 592,
+    "source": "Date.now",
+    "context": "const clock = Date.now, now = clock();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 601,
+    "source": "Date.now",
+    "context": "if (transition === \"expiry\") Date.now = () => now + 120000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 647,
+    "source": "Date.now",
+    "context": "Date.now = clock;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 662,
+    "source": "Date.now",
+    "context": "Date.now = clock;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 674,
+    "source": "Date.now",
+    "context": "const clock = Date.now, now = clock();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 726,
+    "source": "Date.now",
+    "context": "else Date.now = () => now + 120000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 730,
+    "source": "Date.now",
+    "context": "Date.now = clock;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/http_mutation_lease_test.ts",
+    "capability": "Date.now",
+    "line": 747,
+    "source": "Date.now",
+    "context": "Date.now = clock;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/hub_driver_session_test.ts",
+    "capability": "Date.*",
+    "line": 175,
+    "source": "Date",
+    "context": "const mtime = new Date(f.hub.fileState(`remote${i}.md`)!.mtimeMs);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/hub_driver_session_test.ts",
+    "capability": "Date.*",
+    "line": 685,
+    "source": "Date",
+    "context": "const mtime = new Date(f.hub.fileState(\"A.md\")!.mtimeMs);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/index_pass_isolation_test.ts",
+    "capability": "Date.*",
+    "line": 97,
+    "source": "Date",
+    "context": "const changedAt = new Date(",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/hub_gate_test.ts",
+    "capability": "Date.*",
+    "line": 187,
+    "source": "Date",
+    "context": "const now = new Date(\"2026-11-05T07:15:00Z\");",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/hub_saves_test.ts",
+    "capability": "Date.*",
+    "line": 33,
+    "source": "Date",
+    "context": "now: () => new Date(\"2026-10-29T12:00:00Z\"),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/hub_scanner_test.ts",
+    "capability": "Date.now",
+    "line": 252,
+    "source": "Date.now",
+    "context": "const deadline = Date.now() + 1500;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/hub_scanner_test.ts",
+    "capability": "Date.now",
+    "line": 253,
+    "source": "Date.now",
+    "context": "while (!f.hub.fileState(\"periodic.md\") && Date.now() < deadline) {",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/hub_scanner_test.ts",
+    "capability": "Date.now",
+    "line": 360,
+    "source": "Date.now",
+    "context": "const deadline = Date.now() + 2500;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/hub_scanner_test.ts",
+    "capability": "Date.now",
+    "line": 361,
+    "source": "Date.now",
+    "context": "while (!f.hub.fileState(\"nested/live.md\") && Date.now() < deadline) {",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/index_sync_work_test.ts",
+    "capability": "Date.*",
+    "line": 95,
+    "source": "Date",
+    "context": "Deno.utimeSync(filename, mtime, new Date(mtime.getTime() + 2000));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/interop/remotely_save_reference.mjs",
+    "capability": "Date.*",
+    "line": 148,
+    "source": "Date",
+    "context": "const date = new Date().toISOString().replace(/[:-]|\\.\\d{3}/g, \"\");",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/layered_config_test.ts",
+    "capability": "Date.*",
+    "line": 44,
+    "source": "Date",
+    "context": "new Date(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/local_auth_test.ts",
+    "capability": "module:tests/helpers/totp_live.ts",
+    "line": 13,
+    "source": "\"./helpers/totp_live.ts\"",
+    "context": "import { settledTotpNow } from \"./helpers/totp_live.ts\";",
+    "family": "legacy-live-totp-import"
+  },
+  {
+    "file": "tests/local_auth_test.ts",
+    "capability": "Date.now",
+    "line": 101,
+    "source": "Date.now",
+    "context": "const expected = Math.floor(Date.now() / 1000) + 7 * 86400;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/local_auth_test.ts",
+    "capability": "Date.now",
+    "line": 115,
+    "source": "Date.now",
+    "context": "const expiry = Math.floor(Date.now() / 1000) + 60;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/local_auth_test.ts",
+    "capability": "Date.now",
+    "line": 141,
+    "source": "Date.now",
+    "context": "await sign(\"alice\", Math.floor(Date.now() / 1000) - 1),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/local_auth_test.ts",
+    "capability": "Date.now",
+    "line": 266,
+    "source": "Date.now",
+    "context": "const currentCode = await codeAt(Date.now());",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/local_auth_test.ts",
+    "capability": "Date.now",
+    "line": 267,
+    "source": "Date.now",
+    "context": "const farCode = await codeAt(Date.now() - 10 * stepMs);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/mcp_stale_write_test.ts",
+    "capability": "Date.*",
+    "line": 98,
+    "source": "Date",
+    "context": "const past = new Date(\"2026-01-01T00:00:00Z\");",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/metadata_read_cost_test.ts",
+    "capability": "performance.now",
+    "line": 59,
+    "source": "performance.now",
+    "context": "const warmStart = performance.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/metadata_read_cost_test.ts",
+    "capability": "performance.now",
+    "line": 61,
+    "source": "performance.now",
+    "context": "const warmMs = performance.now() - warmStart;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/metadata_read_cost_test.ts",
+    "capability": "performance.now",
+    "line": 91,
+    "source": "performance.now",
+    "context": "const start = performance.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/metadata_read_cost_test.ts",
+    "capability": "performance.now",
+    "line": 93,
+    "source": "performance.now",
+    "context": "return { value, ms: performance.now() - start, io: { ...io } };",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/metadata_runtime_test.ts",
+    "capability": "Date.*",
+    "line": 169,
+    "source": "Date",
+    "context": "new Date(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Date.*",
+    "line": 1136,
+    "source": "Date",
+    "context": "timestamp: new Date().toISOString(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Date.now",
+    "line": 1256,
+    "source": "Date.now",
+    "context": "const realNow = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Date.now",
+    "line": 1278,
+    "source": "Date.now",
+    "context": "Date.now = () => shifted;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Date.now",
+    "line": 1285,
+    "source": "Date.now",
+    "context": "Date.now = realNow;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Date.*",
+    "line": 1467,
+    "source": "Date",
+    "context": "timestamp: new Date().toISOString(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_authority_test.ts",
+    "capability": "Date.*",
+    "line": 1637,
+    "source": "Date",
+    "context": "timestamp: new Date().toISOString(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Date.*",
+    "line": 485,
+    "source": "Date",
+    "context": "Deno.utimeSync(extFile, new Date(), new Date(Date.now() + 2000));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Date.*",
+    "line": 485,
+    "source": "Date",
+    "context": "Deno.utimeSync(extFile, new Date(), new Date(Date.now() + 2000));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 485,
+    "source": "Date.now",
+    "context": "Deno.utimeSync(extFile, new Date(), new Date(Date.now() + 2000));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Date.*",
+    "line": 488,
+    "source": "Date",
+    "context": "Deno.utimeSync(extFile, new Date(), new Date(Date.now() + 4000));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Date.*",
+    "line": 488,
+    "source": "Date",
+    "context": "Deno.utimeSync(extFile, new Date(), new Date(Date.now() + 4000));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 488,
+    "source": "Date.now",
+    "context": "Deno.utimeSync(extFile, new Date(), new Date(Date.now() + 4000));",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_lifecycle_test.ts",
+    "capability": "Date.*",
+    "line": 895,
+    "source": "Date",
+    "context": "timestamp: new Date().toISOString(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_runtime_test.ts",
+    "capability": "Date.*",
+    "line": 477,
+    "source": "Date",
+    "context": "timestamp: new Date().toISOString(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "performance.now",
+    "line": 71,
+    "source": "performance.now",
+    "context": "const origin = performance.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "performance.now",
+    "line": 77,
+    "source": "performance.now",
+    "context": "elapsedAfterReadyMs: performance.now() - origin,",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Date.now",
+    "line": 399,
+    "source": "Date.now",
+    "context": "const c = await controlled(), original = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Date.now",
+    "line": 403,
+    "source": "Date.now",
+    "context": "Date.now = () => original() + 86400000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Date.now",
+    "line": 410,
+    "source": "Date.now",
+    "context": "Date.now = () => original() - 86400000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Date.now",
+    "line": 413,
+    "source": "Date.now",
+    "context": "Date.now = () => original() + 86400000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/plugin_worker_liveness_test.ts",
+    "capability": "Date.now",
+    "line": 417,
+    "source": "Date.now",
+    "context": "Date.now = original;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/readiness_wait_test.ts",
+    "capability": "Date.now",
+    "line": 91,
+    "source": "Date.now",
+    "context": "const realNow = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/readiness_wait_test.ts",
+    "capability": "Date.now",
+    "line": 100,
+    "source": "Date.now",
+    "context": "Date.now = () => shifted;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/readiness_wait_test.ts",
+    "capability": "Date.now",
+    "line": 110,
+    "source": "Date.now",
+    "context": "Date.now = realNow;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/remotely_save_providers_test.ts",
+    "capability": "Date.*",
+    "line": 732,
+    "source": "Date",
+    "context": "new Date(\"2026-11-07T00:00:00Z\"),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/remotely_save_providers_test.ts",
+    "capability": "Date.*",
+    "line": 1166,
+    "source": "Date",
+    "context": "date: new Date(oldTime + 10000).toUTCString(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/hub_conflict_invalidation_test.ts",
+    "capability": "performance.now",
+    "line": 25,
+    "source": "performance.now",
+    "context": "const started = performance.now();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/hub_conflict_invalidation_test.ts",
+    "capability": "performance.now",
+    "line": 28,
+    "source": "performance.now",
+    "context": "elapsedMs = performance.now() - started;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 141,
+    "source": "Date.now",
+    "context": "const readyUntil = Date.now() + 5000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 144,
+    "source": "Date.now",
+    "context": "Date.now() < readyUntil",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 147,
+    "source": "Date.now",
+    "context": "const narrowUntil = Date.now() + 5000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 150,
+    "source": "Date.now",
+    "context": "Date.now() < narrowUntil",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 153,
+    "source": "Date.now",
+    "context": "const targetedUntil = Date.now() + 5000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 156,
+    "source": "Date.now",
+    "context": "Date.now() < targetedUntil",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 170,
+    "source": "Date.now",
+    "context": "const initialUntil = Date.now() + 5000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 171,
+    "source": "Date.now",
+    "context": "while (b.indexer.indexStatus.syncing && Date.now() < initialUntil) {",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 291,
+    "source": "Date.now",
+    "context": "const until = Date.now() + 5000;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_lifecycle_test.ts",
+    "capability": "Date.now",
+    "line": 294,
+    "source": "Date.now",
+    "context": "[\"accepted\", \"running\"].includes(receipt.status) && Date.now() < until",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_stream_expiry_test.ts",
+    "capability": "Date.now",
+    "line": 36,
+    "source": "Date.now",
+    "context": "const durable = await token(Math.floor(Date.now() / 1000) + 120);",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_stream_expiry_test.ts",
+    "capability": "Date.now",
+    "line": 53,
+    "source": "Date.now",
+    "context": "const expiry = Math.floor(Date.now() / 1000) + 2;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/plugin_stream_expiry_test.ts",
+    "capability": "Date.now",
+    "line": 74,
+    "source": "Date.now",
+    "context": "setTimeout(resolve, Math.max(0, expiry * 1000 - Date.now() + 25))",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/timing/product_settlement_stall_test.ts",
+    "capability": "Date.now",
+    "line": 100,
+    "source": "Date.now",
+    "context": "const stoppedWallMs = Date.now() - before.wall;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/totp_test.ts",
+    "capability": "Date.now",
+    "line": 55,
+    "source": "Date.now",
+    "context": "const originalNow = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/totp_test.ts",
+    "capability": "Date.now",
+    "line": 58,
+    "source": "Date.now",
+    "context": "Date.now = () => epoch;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/totp_test.ts",
+    "capability": "Date.now",
+    "line": 104,
+    "source": "Date.now",
+    "context": "Date.now = originalNow;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/totp_test.ts",
+    "capability": "Date.now",
+    "line": 134,
+    "source": "Date.now",
+    "context": "const originalNow = Date.now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/totp_test.ts",
+    "capability": "Date.now",
+    "line": 138,
+    "source": "Date.now",
+    "context": "Date.now = () => now;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/totp_test.ts",
+    "capability": "Date.now",
+    "line": 149,
+    "source": "Date.now",
+    "context": "Date.now = () => verifiedAt;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "tests/totp_test.ts",
+    "capability": "Date.now",
+    "line": 157,
+    "source": "Date.now",
+    "context": "Date.now = originalNow;",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "plugins/globnotes-remotely-save/http.js",
+    "capability": "Date.now",
+    "line": 160,
+    "source": "Date.now",
+    "context": ": Math.max(0, Date.parse(advice) - Date.now());",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "plugins/globnotes-remotely-save/s3.js",
+    "capability": "Date.*",
+    "line": 38,
+    "source": "Date",
+    "context": "now = new Date(),",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/sync-status-native.mjs",
+    "capability": "Date.now",
+    "line": 78,
+    "source": "Date.now",
+    "context": "seam.failureSince={home:Date.now()-180_000};seam.activities.home=null;await controls();",
+    "family": "legacy-clock-roots"
+  },
+  {
+    "file": "client/tests/e2e/sync-status-native.mjs",
+    "capability": "Date.now",
+    "line": 81,
+    "source": "Date.now",
+    "context": "const failed=(await api(\"drivers\")).instances.find(row=>row.id===\"home\");assert(failed.status===\"failed\"&&failed.failingSince<=Date.now()-120_000,\"Failure seam did not reach the real server projection\");",
+    "family": "legacy-clock-roots"
+  }
+]

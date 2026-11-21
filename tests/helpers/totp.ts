@@ -2,13 +2,21 @@
 
 import { decodeBase32 } from "@std/encoding/base32";
 
+const requireFixtureTime = (value: unknown): number => {
+  if (typeof value !== "number") {
+    throw new TypeError("Explicit fixture time required");
+  }
+  return value;
+};
+
 /** Test-side RFC 6238 reference, independent of otplib and the verifier.
  * The input is the base32 secret a real authenticator reads from the QR. */
 export async function authenticatorCode(
   secret: string,
-  epochMs = Date.now(),
+  epochMs: number,
   digits = 6,
 ): Promise<string> {
+  epochMs = requireFixtureTime(epochMs);
   const padded = secret.padEnd(Math.ceil(secret.length / 8) * 8, "=");
   const key = await crypto.subtle.importKey(
     "raw",
@@ -31,35 +39,8 @@ export async function authenticatorCode(
 export const TOTP_STEP_MS = 30_000;
 
 /** The 30-second step a time falls in. */
-export const totpStep = (epochMs = Date.now()): number =>
-  Math.floor(epochMs / TOTP_STEP_MS);
-
-const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
-
-/** Returns a "now" a test can derive window codes from without racing the
- * wall clock. The verifier accepts the current step ±1 and rejects a replay of
- * the last accepted code, so a test that assumes "the previous step" is still
- * valid, or differs from a code it already consumed, fails whenever a step
- * boundary passes mid-test. This waits out (at most one step):
- * - the last `marginMs` of a step, so steps −1..+1 stay valid while the
- *   request is in flight;
- * - the step right after `consumedAtStep`, where the previous step's code is
- *   the consumed one. */
-export async function settledTotpNow(
-  { consumedAtStep, marginMs = 5_000 }: {
-    consumedAtStep?: number;
-    marginMs?: number;
-  } = {},
-): Promise<number> {
-  for (;;) {
-    const now = Date.now(), step = totpStep(now);
-    const remaining = (step + 1) * TOTP_STEP_MS - now;
-    if (remaining > marginMs && step !== (consumedAtStep ?? NaN) + 1) {
-      return now;
-    }
-    await sleep(remaining + 50);
-  }
-}
+export const totpStep = (epochMs: number): number =>
+  Math.floor(requireFixtureTime(epochMs) / TOTP_STEP_MS);
 
 /** A code the verifier accepts that is not already consumed. Prefer current,
  * then next, then previous. An owned fixture clock can supply both generation
@@ -68,10 +49,10 @@ export async function settledTotpNow(
 export async function unusedWindowCode(
   secret: string,
   consumed: Iterable<string>,
-  epochMs?: number,
+  epochMs: number,
   verifiedAtMs?: number,
 ): Promise<string> {
-  const used = new Set(consumed), now = epochMs ?? await settledTotpNow();
+  const used = new Set(consumed), now = requireFixtureTime(epochMs);
   const verificationStep = totpStep(verifiedAtMs ?? now);
   for (const offset of [0, 1, -1]) {
     if (Math.abs(totpStep(now) + offset - verificationStep) > 1) continue;

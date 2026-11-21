@@ -492,7 +492,7 @@ Deno.test("driver acceptance: discovery rate-limit advice reaches instance retry
     assertEquals(row.error.retryAfterMs, 23000);
     const scheduledRetry = clock.now() + 23000;
     assertEquals(clock.now() + row.nextRetry, scheduledRetry);
-    clock.advance(1500);
+    await clock.advance(1500);
     const later = await f.one(id);
     assertEquals(later.nextRetry, 21500);
     assertEquals(clock.now() + later.nextRetry, scheduledRetry);
@@ -528,7 +528,7 @@ Deno.test("driver acceptance: GET retry advice survives Worker transport; denied
     assertEquals(failed.error.retryAfterMs, 27000);
     const scheduledRetry = clock.now() + 27000;
     assertEquals(clock.now() + failed.nextRetry, scheduledRetry);
-    clock.advance(1500);
+    await clock.advance(1500);
     const later = await f.one(id);
     assertEquals(later.nextRetry, 25500);
     assertEquals(clock.now() + later.nextRetry, scheduledRetry);

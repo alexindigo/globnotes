@@ -14,24 +14,23 @@ import { finalizeNativeCase } from "./native-case-finalization.mjs";
 const configFile = resolve(dirname(fileURLToPath(import.meta.url)), "../../../deno.json");
 
 export async function bootServer(vault, stateDir, { env = {}, logsDir = "", allowFailed = false, headers = {}, onServer = () => {}, denoArgs = [] } = {}) {
+  const environment = { ...env }, requestHeaders = { ...headers };
+  const prefix = environment.GLOBNOTES__SERVER_PATHPREFIX ?? "";
   const hostname = bindAddress();
   // Reuse the owner of port-0 binding, private build/cwd and clean child env.
   const server = await launchServer({
-      ...env,
+      ...environment,
         GLOBNOTES_GLOBNOTES_PATH: resolve(vault),
         GLOBNOTES__METADATA_PATH: metadataBase(resolve(vault), resolve(stateDir)),
   }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${configFile}`, ...denoArgs] });
   const logs = server.output;
-  let closed = false;
-  async function close() {
-    if (closed) return;
-    closed = true;
-    await finalizeNativeCase({ cleanup: [() => server.close(),
+  let closing;
+  function close() {
+    return closing ??= finalizeNativeCase({ cleanup: [() => server.close(),
       ...(logsDir ? ["stdout", "stderr"].map(name => () => publishRecord(`${logsDir}/server-${name}.log`, logs[name], { createNew: true })) : []),
     ] });
   }
   const baseUrl = server.baseUrl;
-   const prefix = env.GLOBNOTES__SERVER_PATHPREFIX ?? "";
   const children = [{ pid: server.pid, status: server.status, logs: server.logs }];
   const ownerGone = new AbortController();
   server.exited.then(status => ownerGone.abort(Error(`e2e server exited: ${status.code}`)));
@@ -40,11 +39,11 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir = "", allo
     onServer(server);
     // Wait for plugin runtime readiness through the catalog.
      const servers = await waitUntil(async signal => {
-       const response = await fetch(`${baseUrl}${prefix}/_/api/plugin-host`, { headers, signal: AbortSignal.any([signal, ownerGone.signal]) });
+       const response = await fetch(`${baseUrl}${prefix}/_/api/plugin-host`, { headers: requestHeaders, signal: AbortSignal.any([signal, ownerGone.signal]) });
        if (!response.ok) throw Error(`catalog rejected: ${response.status}`);
        return done((await response.json()).plugins.filter(p => p.enabled && p.runtime?.server));
      }, { label: "e2e server plugins ready", children });
-     readiness = servers.map(plugin => catalogPluginReady({ baseUrl, ...children[0], exited: server.exited }, plugin.id, { prefix, headers, allowFailed, label: "e2e server plugins ready" }));
+     readiness = servers.map(plugin => catalogPluginReady({ baseUrl, ...children[0], exited: server.exited }, plugin.id, { prefix, headers: requestHeaders, allowFailed, label: "e2e server plugins ready" }));
      await Promise.all(readiness);
   } catch (error) {
     try { await close(); }

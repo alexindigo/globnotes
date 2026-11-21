@@ -6,11 +6,8 @@ import { hashPassword } from "../server/helpers.ts";
 import { bootServer, type TestServer } from "./helpers/boot.ts";
 import { writeFailureReport } from "./helpers/failure_report.ts";
 import { testEnvironment } from "./helpers/environment.ts";
-import {
-  authenticatorCode,
-  settledTotpNow,
-  unusedWindowCode,
-} from "./helpers/totp.ts";
+import { authenticatorCode } from "./helpers/totp.ts";
+import { settledTotpNow, unusedWindowCode } from "./helpers/totp_live.ts";
 import { HttpError } from "@pathfinder/pathfinder";
 import { settingsWriteGuard } from "../server/auth/middleware.ts";
 import { state } from "../server/state.ts";
