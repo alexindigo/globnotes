@@ -154,6 +154,12 @@ IO completions once before advancing to commit or staging cleanup. Contract-only
 directory preparation and observer construction ports avoid process-global IO
 overrides across awaits. Test milestones use P03's admitted fixture gates.
 
+The raw protocol facade delegates publication to the import-free
+`record_publication.ts` module with explicit IO capabilities. Restricted native
+plugin fixtures copy and import that complete module, never a function's
+`toString()` body with missing lexical dependencies. Its runtime import belongs
+only to the protocol facade; the same registration rejects ordinary consumers.
+
 ## P02 resource boundary
 
 `tests/helpers/ownership_rules.ts` composes `RESOURCE_OWNERSHIP` from

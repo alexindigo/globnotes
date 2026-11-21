@@ -10,10 +10,10 @@ import {
   nativeRecordIO,
   publishRecord,
   readRecord,
-  type RecordIO,
   waitForRecord,
   watchOwnerPipe,
 } from "./helpers/process_records.ts";
+import type { RecordIO } from "./helpers/record_publication.ts";
 import { waitForAudit } from "./helpers/catalog_work_audit.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 import { command } from "./helpers/process.ts";
@@ -30,6 +30,72 @@ function withDirectory<T>(
     return body(directory, scope);
   });
 }
+
+Deno.test("process records: copied publication module carries its complete protocol into an isolated child", async () => {
+  await withDirectory(async (directory, scope) => {
+    await Deno.copyFile(
+      new URL("./helpers/record_publication.ts", import.meta.url),
+      `${directory}/publication.ts`,
+    );
+    await Deno.writeTextFile(
+      `${directory}/consumer.mjs`,
+      `
+      import { publishRecord } from "./publication.ts";
+      const outcomes = [];
+      for (const mode of ["sync", "promise", "thenable"]) {
+        for (const createNew of [false, true]) {
+          const files = new Map(), events = [];
+          const complete = phase => {
+            if (mode === "sync") return;
+            const then = resolve => { events.push(phase + ":settled"); resolve(); };
+            return mode === "promise" ? new Promise(then) : { then };
+          };
+          const io = {
+            files,
+            unique() { return "candidate"; },
+            write(path, bytes) { events.push("write"); this.files.set(path, bytes); return complete("write"); },
+            rename(from, to) { events.push("rename"); this.files.set(to, this.files.get(from)); this.files.delete(from); return complete("rename"); },
+            link(from, to) { events.push("link"); this.files.set(to, this.files.get(from)); return complete("link"); },
+            remove(path) { events.push("remove"); this.files.delete(path); return complete("remove"); },
+          };
+          const pending = publishRecord("record.json", '{"ready":true}', { createNew }, io);
+          const synchronous = pending === undefined;
+          await pending;
+          outcomes.push({ mode, createNew, synchronous, events, files: [...files] });
+        }
+      }
+      console.log(JSON.stringify(outcomes));
+    `,
+    );
+    const child = (await scope.acquire(() =>
+      command(Deno.execPath(), {
+        args: ["run", "--no-config", `${directory}/consumer.mjs`],
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn(), async (child) => {
+      try {
+        child.kill("SIGKILL");
+      } catch { /* already exited */ }
+      await child.status;
+    })).value;
+    const result = await child.output();
+    assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+    assertEquals(
+      JSON.parse(new TextDecoder().decode(result.stdout)),
+      ["sync", "promise", "thenable"].flatMap((mode) =>
+        [false, true].map((createNew) => ({
+          mode,
+          createNew,
+          synchronous: mode === "sync",
+          events: ["write", createNew ? "link" : "rename", "remove"].flatMap(
+            (phase) => mode === "sync" ? [phase] : [phase, `${phase}:settled`],
+          ),
+          files: [["record.json", '{"ready":true}']],
+        }))
+      ),
+    );
+  });
+});
 
 for (const phase of ["write", "rename", "link", "remove"] as const) {
   Deno.test(`record custody r3: ${phase} completion is captured once before the next effect`, async () => {

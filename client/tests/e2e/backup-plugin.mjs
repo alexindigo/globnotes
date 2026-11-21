@@ -183,10 +183,10 @@ if (options.controls) {
       const plugin = `${current.state}/plugins/globnotes-backup`; await copyTree(`${ROOT}/plugins/globnotes-backup`, plugin);
       const file = `${plugin}/backup.js`, text = await Deno.readTextFile(file), target = label !== "retarget" ? "metadata = await writeRecord(fs, metadataPath, next, metadata, options);" : "const completed = [];";
       equal(text.split(target).length - 1, 1, "fault/barrier seam");
+      if (label === "retarget") await publishRecord(`${plugin}/native-record-publication.ts`, await Deno.readFile(new URL("../../../tests/helpers/record_publication.ts", import.meta.url)), { createNew: true });
       const injection = label !== "retarget" ? `${target}\n      if(!globalThis.__backupNativeInterrupted){globalThis.__backupNativeInterrupted=true;throw new BackupError('native_recorded_interruption');}`
         : `${target}\n      if((globalThis.__backupNativePublications=(globalThis.__backupNativePublications??0)+1)===2){
-          const publish = (${publishRecord.toString()});
-          await publish(join(workspace.location,'retarget-ready'),'{"ready":true}',{}, {
+          await publishNativeRecord(join(workspace.location,'retarget-ready'),'{"ready":true}',{}, {
             unique:()=>this.ctx.createUuid(),
             write:async(path,text)=>{await fs.writeFile(path,new TextEncoder().encode(text),{...options,expect:{kind:'absent'}});},
             rename:async(from,to)=>{const stat=await fs.stat(from,options);await fs.rename(from,to,{...options,sourceToken:stat.token,destination:{kind:'absent'}});},
@@ -194,7 +194,7 @@ if (options.controls) {
           });
           await new Promise((resolve,reject)=>{const release=this.ctx.timers.setInterval(async()=>{try{const path=join(workspace.location,'retarget-release');if(await fs.stat(path,options) && JSON.parse(new TextDecoder().decode(await fs.readFile(path,options))).release===true){release();resolve();}}catch(error){release();reject(error);}},10);});
         }`;
-      const mutated = text.replace(target, injection);
+      const mutated = (label === "retarget" ? 'import { publishRecord as publishNativeRecord } from "./native-record-publication.ts";\n' : '') + text.replace(target, injection);
       await publishRecord(file, mutated);
       await publishRecord(`${directory}/fault-source.json`, JSON.stringify({ file, before: text, after: mutated }), { createNew: true });
     }

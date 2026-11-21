@@ -12,7 +12,9 @@ import {
   RECORD_ENGINE_OWNERSHIP,
   RECORD_OWNERSHIP,
   RECORD_PILOT_OWNERSHIP,
+  RECORD_PUBLICATION,
   registeredOwnership,
+  RESOURCE_ENGINE_OWNERSHIP,
   SYNC_NATIVE,
   SYNC_PRELOAD,
 } from "./helpers/ownership_rules.ts";
@@ -21,6 +23,14 @@ import { withPluginFixture } from "./helpers/plugin_fixture.ts";
 
 const repositoryRoot = (moduleUrl: string | URL = import.meta.url) =>
   fromFileUrl(new URL("../", moduleUrl));
+
+Deno.test("P11 publication: portable module has no imports or ambient platform capabilities", async () => {
+  const sources = await repositorySources(repositoryRoot());
+  const source = sources.find((source) => source.file === RECORD_PUBLICATION)!;
+  assert(source);
+  assertEquals(source.imports, {});
+  assertEquals(analyzeOwnership([source], RESOURCE_ENGINE_OWNERSHIP), []);
+});
 
 Deno.test("P11 review: encoded checkout roots reach actual record owners", async () => {
   await withPluginFixture(async (fixture) => {
@@ -92,7 +102,13 @@ for (const file of [SYNC_NATIVE, SYNC_PRELOAD]) {
     });
   }
 }
-for (const module of [RECORD_CHANNEL, "tests/helpers/process_records.ts"]) {
+for (
+  const module of [
+    RECORD_CHANNEL,
+    "tests/helpers/process_records.ts",
+    RECORD_PUBLICATION,
+  ]
+) {
   for (
     const text of [
       'import * as owner from "private";',

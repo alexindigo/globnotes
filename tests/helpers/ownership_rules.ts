@@ -125,6 +125,7 @@ export const PRODUCT_OWNERSHIP: OwnershipRules = {
 };
 
 export const RECORD_CHANNEL = "tests/helpers/owned_record_channel.ts";
+export const RECORD_PUBLICATION = "tests/helpers/record_publication.ts";
 export const SYNC_CONTROL = "tests/helpers/sync_status_control.ts";
 export const SYNC_NATIVE = "client/tests/e2e/sync-status-native.mjs";
 export const SYNC_PRELOAD = "tests/helpers/sync_status_preload.ts";
@@ -143,6 +144,7 @@ export const RECORD_MODULE_RULES = {
     "tests/owned_record_channel_test.ts",
     "tests/process_records_test.ts",
   ],
+  [RECORD_PUBLICATION]: ["tests/helpers/process_records.ts"],
 };
 export const RECORD_OWNERSHIP: OwnershipRules = {
   ...FIXTURE_OWNERSHIP,
