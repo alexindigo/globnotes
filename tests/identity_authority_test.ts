@@ -975,6 +975,39 @@ for (const change of P05_CHANGES) {
     }));
 }
 
+for (const kind of ["Promise", "thenable"] as const) {
+  Deno.test(`P05 authority stream: ${kind} chunks retain their identity without inspection`, () =>
+    fixture(async (f) => {
+      const lease = await f.auth.readLease(f.request());
+      let thenReads = 0;
+      const chunk = kind === "Promise" ? Promise.resolve("private bytes") : {
+        get then() {
+          thenReads++;
+          return () => {
+            throw new Error("A stream chunk must not be awaited");
+          };
+        },
+      };
+      const source = new ReadableStream<typeof chunk>({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+      const reader = lease.stream(source).getReader();
+      try {
+        const first = await reader.read();
+        assertEquals(first.done, false);
+        assertStrictEquals(first.value, chunk);
+        assertEquals(await reader.read(), { done: true, value: undefined });
+        assertEquals(thenReads, 0);
+      } finally {
+        reader.releaseLock();
+      }
+      assertEquals(source.locked, false);
+    }));
+}
+
 Deno.test("P05 authority stream: reentrant source retirement cannot enqueue a prepared chunk", () =>
   fixture(async (f) => {
     const lease = await f.auth.readLease(f.request());

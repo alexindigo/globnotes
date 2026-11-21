@@ -7,11 +7,7 @@ import {
   createOperationLease,
   type OperationLease,
 } from "../operation_lease.ts";
-import {
-  bindGuardedSink,
-  type Disclosure,
-  type Synchronous,
-} from "../internal/guarded_sink.ts";
+import { bindGuardedSink, type Disclosure } from "../internal/guarded_sink.ts";
 import type {
   NoteMutationLease,
   PluginLifecycle,
@@ -209,17 +205,16 @@ export class InstanceAuthority {
       };
       const { lease } = createOperationLease("live", [guard], [lifetime]);
       const assertCurrent = lease.assertCurrent;
-      const preparedValue = (prepared: PreparedAuthorityRead<unknown>) => {
+      const preparedValue = <T>(prepared: PreparedAuthorityRead<T>): T => {
         const issued = preparedReads.get(prepared);
         if (!issued || issued.lease !== lease) {
           throw new TypeError(
             "Disclosure requires this operation's prepared read",
           );
         }
-        return issued.value;
+        return issued.value as T;
       };
-      const prepareValue = <T>(value: T): PreparedAuthorityRead<T> => {
-        assertCurrent();
+      const inspectDisclosure = <T>(value: T): T => {
         if (
           typeof value === "function" ||
           (value != null &&
@@ -229,6 +224,11 @@ export class InstanceAuthority {
             "Disclosure requires prepared data, not a callback or Promise",
           );
         }
+        return value;
+      };
+      const prepareValue = <T>(value: T): PreparedAuthorityRead<T> => {
+        assertCurrent();
+        inspectDisclosure(value);
         assertCurrent();
         const prepared = Object.freeze({}) as PreparedAuthorityRead<T>;
         preparedReads.set(prepared, { lease, value });
@@ -247,9 +247,11 @@ export class InstanceAuthority {
             const valueSink = bindGuardedSink(
               lease,
               "live",
-              (handle: PreparedAuthorityRead<T>) => preparedValue(handle),
-              (value) => {
-                enqueue(value as T);
+              (handle: PreparedAuthorityRead<T>) => ({
+                value: inspectDisclosure(preparedValue(handle)),
+              }),
+              ({ value }) => {
+                enqueue(value);
                 close();
                 return undefined;
               },
@@ -308,10 +310,15 @@ export class InstanceAuthority {
                 if (result.done) {
                   release();
                   const close = controller.close.bind(controller);
-                  bindGuardedSink(lease, "live", () => undefined, () => {
-                    close();
-                    return undefined;
-                  })(
+                  bindGuardedSink(
+                    lease,
+                    "live",
+                    () => ({ value: undefined }),
+                    () => {
+                      close();
+                      return undefined;
+                    },
+                  )(
                     undefined,
                   );
                 } else {
@@ -319,8 +326,8 @@ export class InstanceAuthority {
                   bindGuardedSink(
                     lease,
                     "live",
-                    (value: T) => value as Synchronous<T>,
-                    (value) => {
+                    (value: T) => ({ value }),
+                    ({ value }) => {
                       enqueue(value);
                       return undefined;
                     },

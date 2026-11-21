@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import {
   assertOperationLease,
   createOperationLease,
@@ -45,7 +50,7 @@ Deno.test("operation lease: immutable issued provenance rejects missing, cloned 
         bindGuardedSink(
           lease as OperationLease<"live">,
           "live",
-          () => "leak",
+          () => ({ value: "leak" }),
           () => undefined,
         ),
       TypeError,
@@ -66,8 +71,8 @@ for (const mode of ["live", "retained", "outcome", "recovery"] as const) {
     const consume = bindGuardedSink(
       own.lease,
       mode,
-      (value: string) => value,
-      (value) => {
+      (value: string) => ({ value }),
+      ({ value }) => {
         observed.push(value);
         return undefined;
       },
@@ -103,7 +108,7 @@ Deno.test("operation lease: final effect checks immutable witnesses after prepar
     const sink = bindGuardedSink(
       owner.lease,
       "live",
-      (value: string) => value,
+      (value: string) => ({ value }),
       () => {
         effects++;
         return undefined;
@@ -123,8 +128,8 @@ Deno.test("operation lease: reentrant consumer retirement prevents the second de
   const deliver = bindGuardedSink(
     owner.lease,
     "live",
-    (value: string) => value,
-    (value) => {
+    (value: string) => ({ value }),
+    ({ value }) => {
       observed.push(value);
       owner.retire();
       return undefined;
@@ -133,6 +138,31 @@ Deno.test("operation lease: reentrant consumer retirement prevents the second de
   deliver("first");
   assertThrows(() => deliver("second"), OwnershipError);
   assertEquals(observed, ["first"]);
+});
+
+Deno.test("operation lease: inspection envelopes preserve thenable payloads without inspecting them", () => {
+  const owner = createOperationLease("live", [() => {}]);
+  let thenReads = 0;
+  const chunks = [Promise.resolve("bytes"), {
+    get then() {
+      thenReads++;
+      return () => {};
+    },
+  }];
+  const seen: unknown[] = [];
+  const sink = bindGuardedSink(
+    owner.lease,
+    "live",
+    (value: typeof chunks[number]) => ({ value }),
+    ({ value }) => {
+      seen.push(value);
+      return undefined;
+    },
+  );
+  for (const chunk of chunks) sink(chunk);
+  assertEquals([seen.length, thenReads], [2, 0]);
+  assertStrictEquals(seen[0], chunks[0]);
+  assertStrictEquals(seen[1], chunks[1]);
 });
 
 Deno.test("operation lease: witness reentrancy cannot retire then permit its own effect", () => {
@@ -144,7 +174,7 @@ Deno.test("operation lease: witness reentrancy cannot retire then permit its own
   let effects = 0;
   assertThrows(
     () =>
-      bindGuardedSink(owner.lease, "live", () => undefined, () => {
+      bindGuardedSink(owner.lease, "live", () => ({ value: undefined }), () => {
         effects++;
         return undefined;
       }),
@@ -192,7 +222,7 @@ Deno.test("operation lease: async final callbacks reject before entry and disgui
       bindGuardedSink(
         owner.lease,
         "live",
-        () => "data",
+        () => ({ value: "data" }),
         (async () => {
           effects++;
           await Promise.resolve();
@@ -230,8 +260,8 @@ Deno.test("operation lease: exact outcome owner can survive live self-revocation
   const acknowledge = bindGuardedSink(
     outcome.lease,
     "outcome",
-    (value: string) => value,
-    (value) => {
+    (value: string) => ({ value }),
+    ({ value }) => {
       receipts.push(value);
       return undefined;
     },
@@ -245,7 +275,7 @@ Deno.test("operation lease: exact outcome owner can survive live self-revocation
       outcome.lease,
       // @ts-expect-error A receipt lease does not authorize a live effect.
       wrongMode,
-      () => "new effect",
+      () => ({ value: "new effect" }),
       () => undefined,
     );
   }, TypeError);
@@ -265,7 +295,7 @@ function staticContract(lease: OperationLease<"live">) {
     lease,
     "live",
     // @ts-expect-error Generic inference may not silently admit Promise effects.
-    async (_: string) => await Promise.resolve(1),
+    async (_: string) => await Promise.resolve({ value: 1 }),
     () => undefined,
   );
   bindGuardedSink<string, void, "live">(
@@ -280,8 +310,22 @@ function staticContract(lease: OperationLease<"live">) {
   bindGuardedSink(
     lease,
     "live",
-    () => "data", // @ts-expect-error Delivery has no async or void callback loophole.
+    () => ({ value: "data" }), // @ts-expect-error Delivery has no async or void callback loophole.
     async () => {},
+  );
+  bindGuardedSink(
+    lease,
+    "live",
+    // @ts-expect-error Inspectors return envelopes, never the delivered payload itself.
+    (value: string) => value,
+    () => undefined,
+  );
+  bindGuardedSink(
+    lease,
+    "live",
+    // @ts-expect-error Inspection envelopes cannot themselves be thenable.
+    () => ({ value: "data", then() {} }),
+    () => undefined,
   );
   return forged;
 }
@@ -292,7 +336,8 @@ for (const retireOwner of ["parent", "child"] as const) {
     const parent = createOperationLease("live", [() => {}]);
     const child = createOperationLease("live", [() => {}], [parent.lease]);
     let reads = 0;
-    const value = {
+    const prepared = {
+      value: "private bytes",
       get then() {
         reads++;
         (retireOwner === "parent" ? parent : child).retire();
@@ -300,10 +345,15 @@ for (const retireOwner of ["parent", "child"] as const) {
       },
     };
     const seen: unknown[] = [];
-    const sink = bindGuardedSink(child.lease, "live", () => value, (data) => {
-      seen.push(data);
-      return undefined;
-    });
+    const sink = bindGuardedSink(
+      child.lease,
+      "live",
+      () => prepared,
+      ({ value }) => {
+        seen.push(value);
+        return undefined;
+      },
+    );
     assertThrows(() => sink(undefined), OwnershipError, "Owner is retired");
     assertEquals([reads, seen], [1, []]);
   });
@@ -319,9 +369,9 @@ Deno.test("operation lease: child witnesses cannot retire an ancestor after its 
   const sink = bindGuardedSink(
     child.lease,
     "live",
-    (data: string) => data,
-    (data) => {
-      seen.push(data);
+    (value: string) => ({ value }),
+    ({ value }) => {
+      seen.push(value);
       return undefined;
     },
   );
