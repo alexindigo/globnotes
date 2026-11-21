@@ -503,9 +503,9 @@ for (const asynchronous of [false, true]) {
   });
 }
 
-Deno.test("record custody review: observer owns its watcher before listener construction can fail", async () => {
+Deno.test("record custody review: observer owns its watcher before its initial probe can fail", async () => {
   await withDirectory(async (directory, scope) => {
-    const failure = new Error("observer listener setup failed");
+    const failure = new Error("observer initial probe failed");
     let closes = 0;
     const watch = (directory: string) => {
       const watcher = Deno.watchFs(directory),
@@ -524,13 +524,23 @@ Deno.test("record custody review: observer owns its watcher before listener cons
       return watcher;
     };
     const signal = new AbortController().signal;
-    const add = signal.addEventListener.bind(signal);
-    signal.addEventListener = ((...args: Parameters<typeof add>) => {
-      add(...args);
-      throw failure;
-    }) as typeof signal.addEventListener;
-    const error = await assertRejects(() =>
-      waitForRecord(directory, "setup", () => null, [], signal, watch)
+    signal.addEventListener = () => {
+      throw new Error("caller listener port read");
+    };
+    const error = await assertRejects(
+      () =>
+        waitForRecord(
+          directory,
+          "setup",
+          () => {
+            throw failure;
+          },
+          [],
+          signal,
+          watch,
+        ),
+      Error,
+      failure.message,
     );
     assertStrictEquals(error, failure);
     assertEquals(closes, 1);

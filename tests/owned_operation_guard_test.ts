@@ -19,6 +19,57 @@ import { SELECTION } from "../client/tests/e2e/legacy-native-suite.mjs";
 import { registeredOwnership } from "./helpers/ownership_rules.ts";
 import { LEGACY_OWNERSHIP } from "./helpers/ownership_legacy.ts";
 
+const promiseContexts = [
+  ["tests/helpers/fixture_scope_engine.ts", true, false],
+  ["tests/helpers/fixture_coordination.ts", true, true],
+  ["tests/helpers/process_records.ts", false, false],
+  ["tests/helpers/record_publication.ts", false, true],
+  ["tests/ownership_scope_test.ts", false, false],
+  ["tests/owned_child_test.ts", true, false],
+  ["tests/owned_record_channel_test.ts", true, false],
+] as const;
+for (const [file, constructs, checks] of promiseContexts) {
+  for (
+    const text of [
+      "const P = Promise; P.race([]);",
+      "const {race} = Promise; race([]);",
+      "consume(Promise);",
+      "Promise(() => {});",
+      "class Captured extends Promise {}",
+    ]
+  ) {
+    Deno.test(`operation reference review: ${file} rejects ${text}`, () => {
+      assertEquals(
+        registeredOwnership([{ file, text }]).map(({ capability, source }) => ({
+          capability,
+          source,
+        })),
+        [
+          { capability: "Promise.*", source: "Promise" },
+        ],
+      );
+    });
+  }
+  for (
+    const [text, permitted] of [["new Promise(() => {});", constructs], [
+      "value instanceof Promise;",
+      checks,
+    ]] as const
+  ) {
+    Deno.test(`operation reference review: ${file} checks the exact context ${text}`, () => {
+      assertEquals(
+        registeredOwnership([{ file, text }]).map(({ capability, source }) => ({
+          capability,
+          source,
+        })),
+        permitted ? [] : [
+          { capability: "Promise.*", source: "Promise" },
+        ],
+      );
+    });
+  }
+}
+
 Deno.test("bound operation guard: boot cannot own a raw constructor or cancellation race", () => {
   const file = "tests/helpers/boot.ts";
   const sites = registeredOwnership([{

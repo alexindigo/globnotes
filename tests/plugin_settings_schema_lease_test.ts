@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import { GlobalConfig } from "./helpers/config.ts";
 import {
@@ -431,7 +436,7 @@ for (const phase of ["before", "after", "missing"] as const) {
         assertEquals(saved.revision, 2);
         assertEquals(saved.values.preferences, { limit: 8 });
       } else {
-        assertEquals(error, cause);
+        assertStrictEquals(error, cause);
         assertEquals(await Deno.readTextFile(b.file), b.before);
       }
     });

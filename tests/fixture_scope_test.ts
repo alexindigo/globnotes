@@ -32,6 +32,48 @@ async function caught(body: () => Promise<unknown>): Promise<unknown> {
   throw new Error("Expected rejection");
 }
 
+Deno.test("fixture cancellation review: stopped public events cannot block hooks or child links", async () => {
+  const parent = createFixtureScope(), child = createFixtureScope();
+  const hooks = { parent: 0, child: 0 };
+  const releases: string[] = [];
+  let stopped = 0;
+  for (const owner of [parent, child]) {
+    owner.scope.signal.addEventListener("abort", (event) => {
+      stopped++;
+      event.stopImmediatePropagation();
+    });
+  }
+  parent.scope.defer(() => releases.push("parent released"));
+  child.scope.defer(() => releases.push("child released"));
+  parent.scope.onCancel((signal) => {
+    assertStrictEquals(signal, parent.scope.signal);
+    hooks.parent++;
+  });
+  child.scope.onCancel((signal) => {
+    assertStrictEquals(signal, child.scope.signal);
+    hooks.child++;
+  });
+  ownFixtureScope(parent.scope, child.scope);
+  const work = child.scope.admit((signal) => waitForCancellation(signal));
+  const checked = assertRejects(
+    () => work,
+    OwnershipError,
+    "Fixture scope retired",
+  );
+  await bounded(parent.close(), "private scope cancellation hooks and links");
+  assertStrictEquals(await checked, child.scope.signal.reason);
+  assertEquals(
+    [hooks, stopped, releases, parent.scope.size, child.scope.size],
+    [
+      { parent: 1, child: 1 },
+      2,
+      ["child released", "parent released"],
+      0,
+      0,
+    ],
+  );
+});
+
 for (const length of [2, 3, 5]) {
   Deno.test(`fixture links: reject a ${length}-scope cycle before registration`, async () => {
     const owners = Array.from({ length }, () => createFixtureScope());
@@ -155,9 +197,10 @@ Deno.test("fixture coordination: scenario failure cancels every admitted gate", 
   assertEquals(scope.size, 0);
 });
 
-Deno.test("fixture coordination: completed gates remove their signal links promptly", async () => {
+Deno.test("fixture coordination: completed gates retire admission without public listener registration", async () => {
   await fixtureScope(async (scope) => {
     const signal = scope.signal, listeners = new Set<unknown>();
+    let registrations = 0;
     const add = signal.addEventListener.bind(signal),
       remove = signal.removeEventListener.bind(signal);
     signal.addEventListener = (
@@ -165,7 +208,10 @@ Deno.test("fixture coordination: completed gates remove their signal links promp
       listener: EventListenerOrEventListenerObject,
       options?: boolean | AddEventListenerOptions,
     ) => {
-      if (type === "abort") listeners.add(listener);
+      if (type === "abort") {
+        listeners.add(listener);
+        registrations++;
+      }
       add(type, listener, options);
     };
     signal.removeEventListener = (
@@ -183,6 +229,11 @@ Deno.test("fixture coordination: completed gates remove their signal links promp
       assertEquals(listeners.size, 0, "completed gate retained a signal link");
       assertEquals(scope.size, 0, "completed gate retained its admission");
     }
+    assertEquals(
+      registrations,
+      0,
+      "gate used the caller's public listener port",
+    );
   });
 });
 

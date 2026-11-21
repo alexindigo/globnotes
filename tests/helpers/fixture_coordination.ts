@@ -14,7 +14,8 @@ export function fixtureTest(
 }
 
 /** Deliberately held IO has exactly one settlement: its actual owner's abort. */
-export function waitForCancellation(signal: AbortSignal): Promise<never> {
+export function waitForCancellation(parentSignal: AbortSignal): Promise<never> {
+  const signal = AbortSignal.any([parentSignal]);
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise((_resolve, reject) => {
     signal.addEventListener("abort", () => reject(signal.reason), {
@@ -29,8 +30,9 @@ export function fixtureGate<T extends string | number | boolean | void = void>(
   scope: FixtureScope,
 ) {
   const pending = Promise.withResolvers<T>();
-  const admitted = scope.admit((signal) =>
+  const admitted = scope.admit((parentSignal) =>
     fixtureScope((listeners) => {
+      const signal = AbortSignal.any([parentSignal]);
       const abort = () => pending.reject(signal.reason);
       listeners.defer(() => signal.removeEventListener("abort", abort));
       signal.addEventListener("abort", abort, { once: true });

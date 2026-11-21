@@ -18,6 +18,7 @@ import {
 import { command, DENO } from "./helpers/process.ts";
 import { publishRecord } from "./helpers/process_records.ts";
 import { bounded } from "./helpers/worker_liveness.ts";
+import { isPromise } from "./helpers/fixture_coordination.ts";
 
 function scheduledSignals() {
   const tasks: {
@@ -72,7 +73,7 @@ Deno.test("child owner review: retired and failed acquisition reject without esc
       "/nonexistent/p12-review-child",
       options,
     );
-    assertInstanceOf(failed, Promise);
+    assertEquals(isPromise(failed), true);
     await assertRejects(
       () => failed,
       Deno.errors.NotFound,
@@ -81,7 +82,7 @@ Deno.test("child owner review: retired and failed acquisition reject without esc
     assertEquals(scope.size, before);
   });
   const retired = spawnOwnedChild(scope, DENO, options);
-  assertInstanceOf(retired, Promise);
+  assertEquals(isPromise(retired), true);
   await assertRejects(() => retired, OwnershipError, "retired");
   assertEquals(scope.size, 0);
 });
@@ -113,7 +114,7 @@ for (const port of ["options", "scheduler"] as const) {
         launchOptions,
         scheduler,
       );
-      assertInstanceOf(acquisition, Promise);
+      assertEquals(isPromise(acquisition), true);
       assertStrictEquals(
         await assertRejects(() => acquisition, Error, failure.message),
         failure,
@@ -130,7 +131,7 @@ for (const port of ["options", "scheduler"] as const) {
       launchOptions,
       scheduler,
     );
-    assertInstanceOf(acquisition, Promise);
+    assertEquals(isPromise(acquisition), true);
     await assertRejects(() => acquisition, OwnershipError, "retired");
     assertEquals([reads, retired.size], [[], 0]);
   });
@@ -174,7 +175,7 @@ for (
       },
     });
     const starting = bootServer({}, options);
-    assertInstanceOf(starting, Promise);
+    assertEquals(isPromise(starting), true);
     assertStrictEquals(
       await assertRejects(() => starting, Error, failure.message),
       failure,

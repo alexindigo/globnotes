@@ -12,6 +12,7 @@ order, duplicates and failures. Derive expected pages from the fixture, not a
 second call to the search being tested. Counts and disjointness alone do not
 prove the requested result. Do not use `.every`, `.some` or `indexOf` as the
 proof: they can accept missing or empty outcomes.
+When the contract promises the same object, assert identity with `assertStrictEquals`, not deep equality.
 
 ```ts
 assertEquals(events, ["admitted", "revoked", "persistence"]);

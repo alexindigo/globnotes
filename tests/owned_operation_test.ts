@@ -22,7 +22,10 @@ import {
   type OperationProgress,
 } from "./helpers/owned_operation.ts";
 import { READINESS_MS, ReadinessError } from "./helpers/wait.ts";
-import { waitForCancellation } from "./helpers/fixture_coordination.ts";
+import {
+  fixtureGate,
+  waitForCancellation,
+} from "./helpers/fixture_coordination.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
 
 for (const timing of ["live", "late"] as const) {
@@ -37,6 +40,7 @@ for (const timing of ["live", "late"] as const) {
       const pendingDisposal = Promise.withResolvers<void>();
       const value = { id: "actual response" };
       const events: string[] = [];
+      let requestSignal: AbortSignal | undefined;
       const running = boundOperation({
         signal: controller.signal,
         dispose(response: typeof value) {
@@ -58,7 +62,9 @@ for (const timing of ["live", "late"] as const) {
           }
         },
       }, (signal) => {
-        assertStrictEquals(signal, controller.signal);
+        requestSignal = signal;
+        assertEquals(signal === controller.signal, false);
+        assertEquals(signal.aborted, false);
         events.push("started");
         entered.resolve();
         return request.promise;
@@ -88,6 +94,8 @@ for (const timing of ["live", "late"] as const) {
           value,
         );
         events.push("live observation returned");
+      } else {
+        assertStrictEquals(requestSignal!.reason, cancelled);
       }
       assertEquals(events, [
         "started",
@@ -195,7 +203,7 @@ async function caught(work: () => Promise<unknown>, expected: Error) {
     expected.constructor as ErrorConstructor,
     expected.message,
   );
-  assertEquals(error, expected);
+  assertStrictEquals(error, expected);
   return error;
 }
 
@@ -217,7 +225,7 @@ for (
         }, async (operation) => {
           await operation.reached();
         }), cause);
-      assertEquals(error, cause);
+      assertStrictEquals(error, cause);
     });
   }
   Deno.test(`owned operation: ${mode} fulfillment without a marker cannot pass or await later work`, async () => {
@@ -249,12 +257,12 @@ for (
         }),
       cause,
     );
-    assertEquals(error, cause);
+    assertStrictEquals(error, cause);
     assertEquals(events, ["callback", "released", "drained"]);
   });
   Deno.test(`owned operation: ${mode} unconsumed failure after entry cannot disappear in cleanup`, async () => {
     const cause = new Error("operation failed after entry");
-    assertEquals(
+    assertStrictEquals(
       await caught(() =>
         heldOperation(options(progress), async (hold) => {
           await hold();
@@ -277,7 +285,7 @@ for (
       }
     }, async (operation) => {
       await operation.reached();
-      assertEquals(await caught(() => operation.result(), cause), cause);
+      assertStrictEquals(await caught(() => operation.result(), cause), cause);
       return "expected rejection consumed";
     });
     assertEquals(result, "expected rejection consumed");
@@ -301,8 +309,10 @@ Deno.test("owned operation: preserves primary plus distinct drain rejection thro
     "Owned resource release failed",
   );
   assert(error instanceof AggregateError);
-  assertEquals(error.cause, primary);
+  assertStrictEquals(error.cause, primary);
   assertEquals(error.errors, [primary, terminal]);
+  assertStrictEquals(error.errors[0], primary);
+  assertStrictEquals(error.errors[1], terminal);
 });
 
 Deno.test("owned operation: owner replacement rejects but still drains the original, never a replacement", async () => {
@@ -371,17 +381,19 @@ Deno.test("owned operation: an issued handle and hold callback retire when their
 
 Deno.test("owned operation: original result is fixed and release is idempotent", async () => {
   let starts = 0, releases = 0;
+  const original = { consumer: "original" };
   await heldOperation(options(), async (hold) => {
     starts++;
     await hold();
     releases++;
-    return { consumer: "original" };
+    return original;
   }, async (operation) => {
     await operation.reached();
     operation.release();
     operation.release();
     const result = await operation.result();
-    assertEquals(await operation.result(), result);
+    assertStrictEquals(await operation.result(), result);
+    assertStrictEquals(result, original);
     assertEquals(result, { consumer: "original" });
   });
   assertEquals(starts, 1);
@@ -506,7 +518,7 @@ Deno.test("owned operation: manual progress can advance while the exact held req
 Deno.test("owned operation: release/drain registration precedes synchronous start and callback failure", async () => {
   let started = false, drained = false;
   const cause = new Error("callback before any await");
-  assertEquals(
+  assertStrictEquals(
     await caught(() =>
       heldOperation(options(), async (hold) => {
         started = true;
@@ -581,7 +593,10 @@ async function manualDeadlineControl(callbackFails: boolean) {
         const expire = wake!;
         wake = undefined;
         expire();
-        assertEquals(await caught(() => operation.result(), cause), cause);
+        assertStrictEquals(
+          await caught(() => operation.result(), cause),
+          cause,
+        );
       },
     );
   if (callbackFails) {
@@ -590,7 +605,8 @@ async function manualDeadlineControl(callbackFails: boolean) {
       AggregateError,
       "Owned resource release failed",
     );
-    assertEquals(error.cause, primary);
+    assertStrictEquals(error.cause, primary);
+    assertStrictEquals(error.errors[0], primary);
     assertEquals(
       error.errors.map((error) => [error.constructor, error.message]),
       [
@@ -623,7 +639,7 @@ Deno.test("owned operation: thrown undefined from the callback remains a primary
     });
   } catch (error) {
     rejected = true;
-    assertEquals(error, undefined);
+    assertStrictEquals(error, undefined);
   }
   assertEquals(rejected, true);
 });
@@ -675,6 +691,7 @@ Deno.test("owned operation: cancellation precedes borrowed-work drain and resour
 });
 
 Deno.test("owned operation review: options and original request subscription are captured once", async () => {
+  const original = { consumer: "original" };
   const reads = { label: 0, owner: 0, progress: 0, kind: 0, clock: 0 };
   let subscriptions = 0;
   const progress = {
@@ -703,7 +720,7 @@ Deno.test("owned operation review: options and original request subscription are
   };
   await bounded(
     heldOperation(input, (hold) => {
-      const request = hold().then(() => ({ consumer: "original" }));
+      const request = hold().then(() => original);
       const then = request.then.bind(request);
       Object.defineProperty(request, "then", {
         get() {
@@ -715,8 +732,9 @@ Deno.test("owned operation review: options and original request subscription are
       return request;
     }, async (operation) => {
       await operation.reached();
-      assertEquals(await operation.result(), { consumer: "original" });
-      assertEquals(await operation.result(), { consumer: "original" });
+      assertStrictEquals(await operation.result(), original);
+      assertStrictEquals(await operation.result(), original);
+      assertEquals(original, { consumer: "original" });
     }),
     "single captured original request",
   );
@@ -748,28 +766,30 @@ Deno.test("owned operation review: the captured owner port retains its actual re
 
 Deno.test("owned operation review: cancellation listener cleanup retains its captured ports", async () => {
   const parent = new AbortController();
-  const add = parent.signal.addEventListener.bind(parent.signal);
-  const remove = parent.signal.removeEventListener.bind(parent.signal);
   const events: string[] = [];
-  parent.signal.addEventListener = (...args: Parameters<typeof add>) => {
-    events.push("added");
-    return add(...args);
+  parent.signal.addEventListener = () => {
+    throw new Error("caller listener port read");
   };
-  parent.signal.removeEventListener = (...args: Parameters<typeof remove>) => {
-    events.push("removed");
-    return remove(...args);
+  parent.signal.removeEventListener = () => {
+    throw new Error("caller cleanup port read");
   };
-  await heldOperation({ ...options(), signal: parent.signal }, async (hold) => {
-    await hold();
-    return 7;
-  }, async (operation) => {
-    await operation.reached();
-    parent.signal.removeEventListener = () => {
-      throw new Error("mutated listener cleanup port reread");
-    };
-    assertEquals(await operation.result(), 7);
-  });
-  assertEquals(events, ["added", "removed"]);
+  await heldOperation(
+    { ...options(), signal: parent.signal },
+    async (hold, signal) => {
+      signal.removeEventListener = () => {
+        throw new Error("mutated private cleanup port reread");
+      };
+      events.push("started");
+      await hold();
+      return 7;
+    },
+    async (operation) => {
+      await operation.reached();
+      assertEquals(await operation.result(), 7);
+      events.push("result observed");
+    },
+  );
+  assertEquals(events, ["started", "result observed"]);
 });
 
 for (const observation of ["reached", "result"] as const) {
@@ -800,7 +820,7 @@ for (const observation of ["reached", "result"] as const) {
           Error,
           failure.message,
         );
-        assertEquals(error, failure);
+        assertStrictEquals(error, failure);
       } else {
         await bounded(running, "stale success cleanup");
       }
@@ -882,7 +902,7 @@ Deno.test("owned operation review: a pre-aborted resource starts no operation or
     Error,
     cause.message,
   );
-  assertEquals(error, cause);
+  assertStrictEquals(error, cause);
   assertEquals(effects, []);
 });
 
@@ -930,4 +950,161 @@ Deno.test("owned operation review: resource cancellation releases a hold before 
     "callback complete",
     "resource released",
   ]);
+});
+
+for (const reason of [NaN, 0, -0, undefined]) {
+  Deno.test(`operation outcome review: an explicitly consumed ${Object.is(reason, -0) ? "negative zero" : String(reason)} rejection stays consumed`, async () => {
+    const result = await heldOperation(options(), async (hold) => {
+      await hold();
+      throw reason;
+    }, async (operation) => {
+      await operation.reached();
+      let rejected = false;
+      try {
+        await operation.result();
+      } catch (error) {
+        rejected = true;
+        assertStrictEquals(error, reason);
+      }
+      assertEquals(rejected, true);
+      return "consumed";
+    });
+    assertStrictEquals(result, "consumed");
+  });
+}
+
+Deno.test("operation cancellation review: a stopped caller event cannot block bound observation", async () => {
+  const parent = new AbortController();
+  const cause = new Error("caller cancelled bound observation");
+  const transport = Promise.withResolvers<number>();
+  const entered = Promise.withResolvers<void>(),
+    disposed = Promise.withResolvers<void>();
+  const events: string[] = [];
+  parent.signal.addEventListener("abort", (event) => {
+    events.push("caller listener");
+    event.stopImmediatePropagation();
+  });
+  const running = boundOperation({
+    signal: parent.signal,
+    dispose(value: number) {
+      assertStrictEquals(value, 7);
+      events.push("disposed");
+      disposed.resolve();
+    },
+  }, () => {
+    events.push("started");
+    entered.resolve();
+    return transport.promise;
+  });
+  await workMilestone(
+    running,
+    entered.promise,
+    "intercepted bound request started",
+  );
+  const checked = assertRejects(
+    () => bounded(running, "private bound cancellation"),
+    Error,
+    cause.message,
+  );
+  parent.abort(cause);
+  try {
+    assertStrictEquals(await checked, cause);
+    events.push("observation rejected");
+  } finally {
+    transport.resolve(7);
+  }
+  await bounded(disposed.promise, "late intercepted response disposal");
+  assertEquals(events, [
+    "started",
+    "caller listener",
+    "observation rejected",
+    "disposed",
+  ]);
+});
+
+Deno.test("operation cancellation review: a stopped caller event cannot block held release", async () => {
+  const events: string[] = [];
+  const entered = Promise.withResolvers<void>();
+  let checked!: Promise<Error>;
+  await bounded(
+    fixtureScope(async (scope) => {
+      scope.signal.addEventListener("abort", (event) => {
+        events.push("caller listener");
+        event.stopImmediatePropagation();
+      });
+      scope.defer(() => events.push("resource released"));
+      let original!: Promise<number>;
+      const running = scope.admit((signal) =>
+        heldOperation({ ...options(), signal }, (hold) => {
+          original = hold().then(() => {
+            events.push("hold released");
+            return 7;
+          });
+          return original;
+        }, async (operation) => {
+          await operation.reached();
+          entered.resolve();
+          assertStrictEquals(await original, 7);
+        })
+      );
+      checked = assertRejects(
+        () => running,
+        OwnershipError,
+        "Owner is retired",
+      );
+      await workMilestone(
+        running,
+        entered.promise,
+        "intercepted held callback entered",
+      );
+    }),
+    "private dependent signal releases held work",
+  );
+  await checked;
+  assertEquals(events, [
+    "caller listener",
+    "hold released",
+    "resource released",
+  ]);
+});
+
+Deno.test("operation cancellation review: the cancellation waiter ignores a stopped caller event", async () => {
+  const parent = new AbortController();
+  const reason = new Error("caller cancelled waiter");
+  parent.signal.addEventListener(
+    "abort",
+    (event) => event.stopImmediatePropagation(),
+  );
+  const waiting = waitForCancellation(parent.signal);
+  const checked = assertRejects(
+    () => bounded(waiting, "private cancellation waiter"),
+    Error,
+    reason.message,
+  );
+  parent.abort(reason);
+  assertStrictEquals(await checked, reason);
+});
+
+Deno.test("operation cancellation review: a fixture gate drains despite a stopped scope event", async () => {
+  let signal!: AbortSignal, checked!: Promise<Error>;
+  const events: string[] = [];
+  await bounded(
+    fixtureScope((scope) => {
+      signal = scope.signal;
+      signal.addEventListener("abort", (event) => {
+        events.push("caller listener");
+        event.stopImmediatePropagation();
+      });
+      scope.defer(() => events.push("resource released"));
+      const gate = fixtureGate(scope);
+      checked = assertRejects(
+        () => gate.promise,
+        OwnershipError,
+        "Fixture scope retired",
+      );
+    }),
+    "private fixture gate cancellation",
+  );
+  assertStrictEquals(await checked, signal.reason);
+  assertEquals(events, ["caller listener", "resource released"]);
 });

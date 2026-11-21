@@ -21,11 +21,12 @@ const timerOwners = ["tests/helpers/wait.ts", "tests/helpers/owned_child.ts"];
 const constructorOwners = [
   "tests/helpers/fixture_scope_engine.ts",
   "tests/helpers/fixture_coordination.ts",
-  "tests/helpers/process_records.ts",
-  "tests/helpers/record_publication.ts",
-  "tests/ownership_scope_test.ts",
   "tests/owned_child_test.ts",
   "tests/owned_record_channel_test.ts",
+];
+const instanceCheckOwners = [
+  "tests/helpers/fixture_coordination.ts",
+  "tests/helpers/record_publication.ts",
 ];
 /** Raw coordination is a root/module acquisition, not an inferred alias call.
  * Ordinary Promise results stay public. Constructors/namespace captures reject;
@@ -35,9 +36,12 @@ export function coordinationRules(base: OwnershipRules): OwnershipRules {
     roots: {
       ...base.roots,
       Promise: {
-        ownedReferences: base.roots.Promise
-          ? base.roots.Promise.ownedReferences ?? []
+        ownedConstructors: base.roots.Promise
+          ? base.roots.Promise.ownedConstructors ?? []
           : constructorOwners,
+        ownedInstanceChecks: base.roots.Promise
+          ? base.roots.Promise.ownedInstanceChecks ?? []
+          : instanceCheckOwners,
         members: ["resolve", "reject", "all", "allSettled"].filter((member) =>
           !base.roots.Promise || base.roots.Promise.members.includes(member)
         ),

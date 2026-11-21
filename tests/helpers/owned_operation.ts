@@ -67,8 +67,9 @@ export async function boundOperation<T>(
   options: BoundOperationOptions<T>,
   start: (signal: AbortSignal) => T | Promise<T>,
 ): Promise<T> {
-  const signal = options.signal;
-  signal.throwIfAborted();
+  const parentSignal = options.signal;
+  parentSignal.throwIfAborted();
+  const signal = AbortSignal.any([parentSignal]);
   const dispose = options.dispose.bind(options);
   const { addEventListener, removeEventListener } = signal;
   return await fixtureScope(async (scope) => {
@@ -138,7 +139,7 @@ export async function heldOperation<T, R>(
     const assertOwner = () => {
       scope.assertCurrent();
       signal.throwIfAborted();
-      if (owner() !== identity) {
+      if (!Object.is(owner(), identity)) {
         throw new Error(`${label}: operation owner replaced`);
       }
     };
@@ -184,12 +185,10 @@ export async function heldOperation<T, R>(
     // work drains. Removing this listener is owned before installation.
     if (parentSignal) {
       const release = () => gate.resolve();
-      const { addEventListener, removeEventListener } = parentSignal;
-      scope.defer(() =>
-        removeEventListener.call(parentSignal, "abort", release)
-      );
-      addEventListener.call(parentSignal, "abort", release, { once: true });
-      if (parentSignal.aborted) release();
+      const { addEventListener, removeEventListener } = signal;
+      scope.defer(() => removeEventListener.call(signal, "abort", release));
+      addEventListener.call(signal, "abort", release, { once: true });
+      if (signal.aborted) release();
     }
     scope.defer(async () => {
       // Observe the same original work, even after rejection or owner replacement.
@@ -237,7 +236,9 @@ export async function heldOperation<T, R>(
           // Only consuming the actual terminal error claims it; a containment
           // failure still leaves disposal responsible for the original work.
           assertOwner();
-          if (outcome && !outcome.ok && outcome.error === error) claimed = true;
+          if (outcome && !outcome.ok && Object.is(outcome.error, error)) {
+            claimed = true;
+          }
           throw error;
         }
       },

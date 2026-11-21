@@ -14,6 +14,7 @@ import {
   OwnershipError,
 } from "../shared/ownership.js";
 import { workMilestone } from "./helpers/product_settlement.ts";
+import { isPromise } from "./helpers/fixture_coordination.ts";
 
 // Low-level owner controls intentionally hold acquisition/disposal themselves.
 // Ordinary scenarios will use the fixture adapter (P03), not this test harness.
@@ -127,7 +128,7 @@ Deno.test("ownership review: promise input errors reject and never throw at invo
     for (const [name, invoke, error] of cases) {
       // Deliberately outside assertRejects: a synchronous throw fails the test.
       const promise = invoke();
-      assertInstanceOf(promise, Promise, name);
+      assertEquals(isPromise(promise), true, name);
       await assertRejects(() => promise, error);
     }
   } finally {
@@ -146,7 +147,7 @@ Deno.test("ownership review: releaseAll keeps its cached promise and reports dis
   });
   // releaseAll has no invalid input; its declared failure channel is result.errors.
   const releasing = scope.releaseAll();
-  assertInstanceOf(releasing, Promise);
+  assertEquals(isPromise(releasing), true);
   assert(scope.retired);
   assertStrictEquals(scope.releaseAll(), releasing);
   assertEquals((await releasing).errors, [failure]);

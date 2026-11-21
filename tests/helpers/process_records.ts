@@ -92,6 +92,7 @@ export async function waitForRecord<T>(
   signal?: AbortSignal,
   watch: (directory: string) => Deno.FsWatcher = Deno.watchFs,
 ) {
+  signal = signal ? AbortSignal.any([signal]) : undefined;
   signal?.throwIfAborted();
   return await fixtureScope(async (scope) => {
     let active = true;

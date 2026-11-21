@@ -36,8 +36,10 @@ export interface RootRule {
   members: readonly string[];
   /** Overrides members: these members require an exact owner module. */
   ownedMembers?: Readonly<Record<string, readonly string[]>>;
-  /** Exact low-level modules that own a direct root reference/constructor. */
-  ownedReferences?: readonly string[];
+  /** Exact low-level modules allowed to construct the root directly. */
+  ownedConstructors?: readonly string[];
+  /** Exact low-level modules allowed a non-escaping instanceof RHS. */
+  ownedInstanceChecks?: readonly string[];
 }
 export interface OwnershipRules {
   roots: Readonly<Record<string, RootRule>>;
@@ -537,8 +539,13 @@ export function analyzeOwnership(
                 : !rule.members.includes(member)
             ) report(parent, `${node.text}.${member}`);
           } else if (
-            ts.isElementAccessExpression(parent) ||
-            !rule.ownedReferences?.includes(input.file)
+            !(
+              ts.isNewExpression(parent) && parent.expression === node &&
+                rule.ownedConstructors?.includes(input.file) ||
+              ts.isBinaryExpression(parent) && parent.right === node &&
+                parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+                rule.ownedInstanceChecks?.includes(input.file)
+            )
           ) {
             report(
               ts.isElementAccessExpression(parent) && parent.expression === node

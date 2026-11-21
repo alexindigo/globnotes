@@ -165,7 +165,7 @@ export function createFixtureScope() {
       if (typeof cancel !== "function") {
         throw new TypeError("Cancellation hook must be callable");
       }
-      const signal = controller.signal;
+      const signal = AbortSignal.any([controller.signal]);
       const invoke = () => {
         // Observe each result immediately and resolve it exactly once, even if
         // another hook stays pending. The core report owns callback failures;
@@ -233,6 +233,7 @@ export function createFixtureScope() {
     finish,
     link(child, retired) {
       let joining = false, drained = false;
+      const signal = AbortSignal.any([controller.signal]);
       const invoke = () => observeCancellation(() => child.cancel());
       // One owned edge includes cancellation and drain custody. Settlement of
       // the child releases that edge, unless the root is already joining it.
@@ -242,9 +243,7 @@ export function createFixtureScope() {
         cleanup.defer(async () => {
           if (!drained) (await child.finish()).throwIfFailed();
         });
-        cleanup.defer(() =>
-          controller.signal.removeEventListener("abort", invoke)
-        );
+        cleanup.defer(() => signal.removeEventListener("abort", invoke));
         (await cleanup.releaseAll()).throwIfFailed();
       });
       child.settled.defer(async () => {
@@ -252,7 +251,7 @@ export function createFixtureScope() {
         retired();
         if (!joining) await resources.release(edge);
       });
-      controller.signal.addEventListener("abort", invoke, { once: true });
+      signal.addEventListener("abort", invoke, { once: true });
     },
   });
   const close = async (...primary: [] | [unknown]) => {

@@ -277,7 +277,8 @@ export function recordChannel<T>(
   const readBytes = scope.bind((file: string, signal: AbortSignal) =>
     readIO.call(io, file, signal)
   );
-  const signal = options.signal;
+  const parentSignal = options.signal;
+  const signal = parentSignal ? AbortSignal.any([parentSignal]) : undefined;
   const controller = new AbortController();
   const operations = new Set<Promise<unknown>>();
   const retain = <V>(operation: Promise<V>): Promise<V> => {

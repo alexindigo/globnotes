@@ -33,7 +33,12 @@ import {
   syncStatusReader,
 } from "./helpers/sync_status_control.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
-import { fixtureGate, fixtureTest } from "./helpers/fixture_coordination.ts";
+import { bounded } from "./helpers/worker_liveness.ts";
+import {
+  fixtureGate,
+  fixtureTest,
+  isPromise,
+} from "./helpers/fixture_coordination.ts";
 import { command, DENO } from "./helpers/process.ts";
 import { OwnershipError } from "../shared/ownership.js";
 import { createFixtureScope } from "./helpers/fixture_scope_engine.ts";
@@ -85,6 +90,68 @@ async function caught(body: () => unknown | Promise<unknown>) {
 const entries = (directory: RecordDirectory) =>
   [...Deno.readDirSync(directory.path)].map((entry) => entry.name).sort();
 
+for (const kind of ["raw", "channel"] as const) {
+  fixtureTest(
+    `record cancellation review: ${kind} ignores a stopped caller abort event`,
+    async (testScope) => {
+      let root = "";
+      await withRecords(async (f) => {
+        root = f.directory.path;
+        const parent = new AbortController();
+        const reason = new Error("caller cancelled record observation");
+        const entered = fixtureGate(testScope);
+        const events: string[] = [];
+        parent.signal.addEventListener("abort", (event) => {
+          events.push("caller listener");
+          event.stopImmediatePropagation();
+        });
+        const waiting = kind === "raw"
+          ? waitForRecord(
+            root,
+            "private record observer",
+            () => {
+              events.push("probe");
+              entered.resolve();
+              return null;
+            },
+            [f.owner],
+            parent.signal,
+          )
+          : recordChannel(f.directory, "value.json", schema, f.owner, {
+            signal: parent.signal,
+            io: {
+              ...nativeRecordChannelIO,
+              read() {
+                events.push("probe");
+                entered.resolve();
+                return null;
+              },
+            },
+          }).wait();
+        const checked = assertRejects(
+          () => bounded(waiting, "private record cancellation"),
+          Error,
+          reason.message,
+        );
+        await workMilestone(
+          waiting,
+          entered.promise,
+          "record cancellation probe entered",
+        );
+        parent.abort(reason);
+        assertStrictEquals(await checked, reason);
+        assertEquals(events, ["probe", "caller listener"]);
+        assertEquals(Deno.statSync(root).isDirectory, true);
+      });
+      await assertRejects(
+        () => Deno.stat(root),
+        Deno.errors.NotFound,
+        `stat '${root}'`,
+      );
+    },
+  );
+}
+
 Deno.test("record custody r3: settled directory borrowers retire their root links", async () => {
   await withRecords(async (f) => {
     const baseline = f.scope.size;
@@ -115,7 +182,7 @@ Deno.test("record custody r3: rejected directory preparation has no escaped reso
         throw failure;
       },
     });
-    assertInstanceOf(pending, Promise);
+    assertEquals(isPromise(pending), true);
     assertStrictEquals(await caught(() => pending), failure);
     assertEquals(f.scope.size, before);
     assertEquals(entries(f.directory), []);
@@ -137,7 +204,7 @@ Deno.test("record custody r3: captured prototype IO methods retain their actual 
     });
     const result = channel.publish({ revision: 9 });
     assert(
-      !(result instanceof Promise),
+      !isPromise(result),
       "native publication became asynchronous",
     );
     assertStrictEquals(receiver, publication);
@@ -477,7 +544,7 @@ Deno.test("record admission: completed borrowed effects release both reservation
     const ownerSize = owner.scope.size, borrowerSize = borrower.scope.size;
     const publication = channel.publish(value);
     assert(
-      !(publication instanceof Promise),
+      !isPromise(publication),
       "native publication became asynchronous",
     );
     assertStrictEquals(publication.value, value);
@@ -697,7 +764,7 @@ Deno.test("record admission: fixture root retires borrowed idle observers and fe
     }
     for (const effect of [channel.read, channel.wait]) {
       const pending = effect();
-      assertInstanceOf(pending, Promise);
+      assertEquals(isPromise(pending), true);
       await assertRejects(() => pending, OwnershipError, "retired");
     }
     await assertRejects(() => Deno.stat(fixture.root), Deno.errors.NotFound);
@@ -750,7 +817,7 @@ Deno.test("record custody review: every escaped reader and channel effect reject
   for (const effect of effects) assertThrows(effect, OwnershipError, "retired");
   for (const effect of asynchronous) {
     const pending = effect();
-    assertInstanceOf(pending, Promise);
+    assertEquals(isPromise(pending), true);
     await assertRejects(() => pending, OwnershipError, "retired");
   }
   assertThrows(
@@ -809,10 +876,10 @@ Deno.test("record custody review: owner promise and constructor options are capt
   });
   assertEquals(ownerReads, 1);
   assertEquals(thenReads, 1);
-  assertEquals(removals, 1);
+  assertEquals(removals, 0);
 });
 
-Deno.test("record custody review: failed listener construction retains cleanup custody", async () => {
+Deno.test("record custody review: caller listener methods cannot control construction or cleanup", async () => {
   const failure = new Error("listener construction failed");
   let installed = 0, removed = 0, root = "";
   const controller = new AbortController();
@@ -828,17 +895,16 @@ Deno.test("record custody review: failed listener construction retains cleanup c
       remove(...args);
       removed++;
     }) as typeof controller.signal.removeEventListener;
-  const error = await caught(() =>
-    withRecords((f) => {
-      root = f.directory.path;
-      recordChannel(f.directory, "value.json", schema, f.owner, {
-        signal: controller.signal,
-      });
-    })
-  );
-  assertStrictEquals(error, failure);
-  assertEquals(installed, 1);
-  assertEquals(removed, 1);
+  await withRecords(async (f) => {
+    root = f.directory.path;
+    const channel = recordChannel(f.directory, "value.json", schema, f.owner, {
+      signal: controller.signal,
+    });
+    await channel.publish({ revision: 3 });
+    assertEquals((await channel.read())?.value, { revision: 3 });
+  });
+  assertEquals(installed, 0);
+  assertEquals(removed, 0);
   await assertRejects(() => Deno.stat(root), Deno.errors.NotFound);
 });
 
@@ -863,9 +929,9 @@ Deno.test("record custody review: issued IO capabilities do not reread mutable p
 });
 
 fixtureTest(
-  "record custody review: rejecting listener cleanup still joins held IO before root release",
+  "record custody review: rejecting resource cleanup still joins held IO before root release",
   async (testScope) => {
-    const failure = new Error("listener cleanup failed");
+    const failure = new Error("resource cleanup failed");
     const entered = fixtureGate(testScope),
       joined = fixtureGate(testScope),
       release = fixtureGate(testScope);
@@ -875,22 +941,15 @@ fixtureTest(
       f.scope.defer(() =>
         assertEquals(active, 0, "read outlived failing channel cleanup")
       );
-      const controller = new AbortController();
-      const remove = controller.signal.removeEventListener.bind(
-        controller.signal,
-      );
-      controller.signal.removeEventListener =
-        ((...args: Parameters<typeof remove>) => {
-          remove(...args);
-          throw failure;
-        }) as typeof controller.signal.removeEventListener;
+      f.scope.defer(() => {
+        throw failure;
+      });
       const channel = recordChannel(
         f.directory,
         "value.json",
         schema,
         f.owner,
         {
-          signal: controller.signal,
           io: {
             ...nativeRecordChannelIO,
             async read(_file, signal) {
@@ -965,13 +1024,13 @@ Deno.test("record channel review: invalid and retired acquisition reject without
     parent = f.directory.path;
     const before = scope.size;
     const invalid = ownedRecordDirectory(scope, parent, "../escape");
-    assertInstanceOf(invalid, Promise);
+    assertEquals(isPromise(invalid), true);
     await assertRejects(() => invalid, TypeError, "single path component");
     assertEquals(scope.size, before);
     assertEquals(entries(f.directory), []);
   });
   const retired = ownedRecordDirectory(scope, parent, "late");
-  assertInstanceOf(retired, Promise);
+  assertEquals(isPromise(retired), true);
   await assertRejects(() => retired, OwnershipError, "retired");
   assertEquals(scope.size, 0);
   await assertRejects(() => Deno.stat(parent), Deno.errors.NotFound);
