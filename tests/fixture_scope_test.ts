@@ -396,7 +396,11 @@ for (const closing of ["resource", "borrower"] as const) {
       borrower.scope.defer(() => {
         events.push("borrower");
       });
-      const running = resource.scope.admit(() => held.promise, borrower.scope);
+      const running = resource.scope.admit(async () => {
+        const value = await held.promise;
+        events.push("settled");
+        return value;
+      }, borrower.scope);
       const rejected = assertRejects(() => running, OwnershipError, "retired");
       const retiring = closing === "resource" ? resource : borrower;
       let draining: Promise<void> | undefined;
@@ -430,8 +434,8 @@ for (const closing of ["resource", "borrower"] as const) {
       assertEquals(
         events,
         closing === "resource"
-          ? ["resource", "borrower"]
-          : ["borrower", "resource"],
+          ? ["settled", "resource", "borrower"]
+          : ["settled", "borrower", "resource"],
       );
       assertEquals([resource.scope.size, borrower.scope.size], [0, 0]);
     },

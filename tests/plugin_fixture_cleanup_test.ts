@@ -440,9 +440,12 @@ for (const operation of ["read", "publish"] as const) {
         closed = true;
       });
       try {
-        await workMilestone(
-          closing,
-          cancelled.promise,
+        await bounded(
+          workMilestone(
+            closing,
+            cancelled.promise,
+            `P11 direct ${operation} cancellation`,
+          ),
           `P11 direct ${operation} cancellation`,
         );
         assertEquals(closed, false);
@@ -476,7 +479,6 @@ for (const first of ["owner", "borrower"] as const) {
         const entered = fixtureGate(testScope);
         let workSettled = false, active = 0;
         borrower.scope.defer(() => {
-          assert(workSettled);
           assertEquals(active, 0);
         });
         const running = borrower.fixture.admit(async (signal) => {
@@ -510,7 +512,7 @@ for (const first of ["owner", "borrower"] as const) {
           if (first === "owner") await root.dispose();
           else await borrower.close();
           await rejected;
-          assertEquals(active, 0);
+          assertEquals([workSettled, active], [true, 0]);
           if (first === "borrower") {
             assert((await Deno.stat(root.root)).isDirectory);
           }
@@ -1276,21 +1278,12 @@ fixtureTest(
       throw primary;
     });
     try {
-      await assertRejects(
-        async () => {
-          try {
-            await fixture.close();
-          } finally {
-            try {
-              await fixture.close();
-            } finally {
-              await fixture.fixture.dispose();
-            }
-          }
-        },
-        Error,
-        primary.message,
-      );
+      try {
+        assertStrictEquals(await assertRejects(() => fixture.close()), primary);
+        assertStrictEquals(await assertRejects(() => fixture.close()), primary);
+      } finally {
+        await fixture.fixture.dispose();
+      }
       await assertRejects(
         () => Deno.stat(fixture.fixture.root),
         Deno.errors.NotFound,
