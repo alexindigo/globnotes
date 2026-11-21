@@ -373,7 +373,7 @@ export class BoundFileStore {
     const custody = this.#createCandidate(path.dirname(target));
     const temporary = custody.temporary;
     try {
-      const owned = this.#candidateIdentity(custody);
+      const owned = this.#inspectCandidate(custody).identity;
       Deno.writeTextFileSync(temporary, raw);
       if (identity) {
         const temporaryInfo = Deno.statSync(temporary);
@@ -455,7 +455,10 @@ export class BoundFileStore {
     }
   }
 
-  #candidateIdentity(custody: CandidateCustody): ConfigNode["identity"] {
+  #inspectCandidate(custody: CandidateCustody): {
+    identity: ConfigNode["identity"];
+    nlink: Deno.FileInfo["nlink"];
+  } {
     // Cached dev/ino is authority only while the original descriptor pins that
     // inode. Recheck the descriptor itself before every cleanup attempt.
     if (!custody.handle) {
@@ -493,23 +496,24 @@ export class BoundFileStore {
         link: null,
       });
     }
-    return custody.identity;
+    return { identity: custody.identity, nlink: info.nlink };
   }
 
   #cleanupCandidate(custody: CandidateCustody): void {
     custody.requested = true;
-    // Keep the descriptor on every failed identity check or unlink. Otherwise
-    // inode reuse could turn the cached identity into authority over a new file.
+    // Keep a linked inode pinned across failed cleanup. A positive zero-link
+    // observation means the owned file is gone, regardless of this pathname.
     if (!custody.unlinked) {
-      const identity = this.#candidateIdentity(custody);
-      this.#discardExact(custody.temporary, identity);
+      const { identity, nlink } = this.#inspectCandidate(custody);
+      if (nlink !== 0) this.#discardExact(custody.temporary, identity);
       custody.unlinked = true;
     }
+    // Revoke pathname unlink authority before releasing the original inode.
+    custody.identity = null;
     if (custody.handle) {
       custody.handle.close();
       custody.handle = undefined;
     }
-    custody.identity = null;
     this.#candidates.delete(custody);
   }
 

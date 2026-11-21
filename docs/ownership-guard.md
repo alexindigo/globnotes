@@ -246,7 +246,10 @@ store-owned cleanup custody. Identity comes from that original descriptor, never
 an unverified pathname. Custody keeps the original descriptor open through
 preparation and failed cleanup, pinning its inode for every identity-based retry.
 Cleanup checks that descriptor is still live before using cached device/inode
-numbers; it closes the descriptor and clears custody only after cleanup succeeds.
+numbers. A positive zero-link count means the owned file is already gone: cleanup
+revokes unlink authority and closes the descriptor without touching its old path.
+Otherwise it keeps the descriptor pinned across transient failures until cleanup
+succeeds, then closes it and clears custody.
 If identity acquisition fails transiently, the same descriptor remains available
 for retry. A lost descriptor releases custody without unlinking or retaining its
 cached identity. Failed cleanup remains store-owned and is retried on the next

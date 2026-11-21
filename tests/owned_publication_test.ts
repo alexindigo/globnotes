@@ -247,12 +247,22 @@ for (const replacement of [false, true]) {
     }));
 }
 
-for (const committed of [false, true]) {
-  Deno.test(`owned publication: live-inode custody survives failed cleanup and foreign replacement, committed=${committed}`, () =>
+for (
+  const [committed, retry] of [
+    [false, "handle"],
+    [true, "handle"],
+    [false, "store"],
+    [true, "store"],
+  ] as const
+) {
+  Deno.test(`owned publication: live-inode custody releases zero-link originals but pins linked originals, committed=${committed}, retry=${retry}`, () =>
     fixture((root) => {
       const b = binding(root), open = Deno.openSync, remove = Deno.removeSync;
-      const handles: { file: string; handle: Deno.FsFile; closed: boolean }[] =
-        [];
+      const handles: {
+        file: string;
+        handle: Deno.FsFile;
+        closed: boolean;
+      }[] = [];
       const closed: string[] = [];
       const cleanup = new Error("candidate unlink unavailable");
       let prepared: ReturnType<typeof b.owner.prepare> | undefined;
@@ -290,39 +300,54 @@ for (const committed of [false, true]) {
           );
         }
         Deno.removeSync = remove;
-        // Remove the candidate's last name in the unpublished case. An open
-        // descriptor must still pin its inode while foreign bytes take its name.
+        // The unpublished file loses its last name; the committed file still
+        // has the target link. Both foreign replacements must remain untouched.
         remove(original.file);
         Deno.writeTextFileSync(original.file, "foreign replacement");
         assertEquals(closed, []);
         assertEquals(original.handle.statSync().nlink, committed ? 1 : 0);
-        assertThrows(
-          () => prepared!.discard(),
-          StoredConfigConflict,
-          "Stored configuration changed before commit.",
-        );
-        assertEquals([Deno.readTextFileSync(original.file), closed], [
-          "foreign replacement",
-          [],
-        ]);
+        if (retry === "handle") {
+          if (committed) {
+            assertThrows(
+              () => prepared!.discard(),
+              StoredConfigConflict,
+              "Stored configuration changed before commit.",
+            );
+          } else prepared.discard();
+        }
         pending = b.owner.prepare(next(2), b.persistence, live().lease);
         assertEquals([Deno.readTextFileSync(original.file), closed], [
           "foreign replacement",
-          [],
+          committed ? [] : [original.file],
         ]);
         const [, second] = handles;
         pending.discard();
-        assertEquals(closed, [second.file]);
-        remove(original.file);
+        assertEquals(
+          closed,
+          committed ? [second.file] : [original.file, second.file],
+        );
+        if (committed) remove(original.file);
         prepared.discard();
         prepared.discard();
-        assertEquals(closed, [second.file, original.file]);
+        assertEquals(
+          closed,
+          committed
+            ? [second.file, original.file]
+            : [original.file, second.file],
+        );
         assertThrows(
           () => original.handle.statSync(),
           Deno.errors.BadResource,
           "Bad resource ID",
         );
-        assertEquals(candidates(root), []);
+        assertEquals(candidates(root), committed ? [] : [original.file]);
+        if (!committed) {
+          assertEquals(
+            Deno.readTextFileSync(original.file),
+            "foreign replacement",
+          );
+          remove(original.file);
+        }
         assertEquals(
           [b.value, b.store.capture().raw],
           committed
