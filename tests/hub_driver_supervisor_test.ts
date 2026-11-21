@@ -1,7 +1,12 @@
 import { serviceSettings } from "../server/config/consumers.ts";
 import { testMetadata } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
 import { AuthType } from "./helpers/config.ts";
 import { driverControl } from "../server/hub/drivers/api.ts";
 import { VaultHub } from "../server/hub/hub.ts";
@@ -15,7 +20,9 @@ import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { state } from "../server/state.ts";
 import { driverDeclaration, minimalDriver } from "./helpers/driver_fixture.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
-import { LivenessClock } from "./helpers/worker_liveness.ts";
+import { bounded, LivenessClock } from "./helpers/worker_liveness.ts";
+import { heldOperation } from "./helpers/owned_operation.ts";
+import { fixtureScope } from "./helpers/fixture_scope.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 import { fixturePage } from "./helpers/plugin_fixture.ts";
 import { memoryRemote } from "./helpers/memory_remote.ts";
@@ -127,6 +134,64 @@ async function fixture(
     },
   };
 }
+
+Deno.test("driver supervisor round3: pass result remains active after its real Worker crashes", async () => {
+  await fixtureScope(async (scope) => {
+    const remote = (await scope.acquire(() =>
+      memoryRemote(), (remote) => remote.close())).value;
+    const source = minimalDriver.replace(
+      "discover: () =>",
+      `discover: () => { fetch(${
+        JSON.stringify(`${remote.baseUrl}/crash`)
+      }, {headers: {authorization: ${
+        JSON.stringify(`Bearer ${remote.token}`)
+      }}}).then(() => { throw new Error("late Worker crash"); }); return`,
+    ).replace("completion:'complete' }),", "completion:'complete' }); },");
+    const f = (await scope.acquire(() =>
+      fixture(source, [remote.authority]), (f) =>
+      f.close())).value;
+    await f.approve();
+    const instance = await f.create();
+    await f.key(instance.id);
+    let enabling!: ReturnType<typeof f.enable>;
+    await heldOperation({
+      label: "late Worker crash after settled discovery",
+      progress: { kind: "controlled", clock: "external" },
+      signal: scope.signal,
+      owner: () =>
+        f.supervisor,
+    }, async (hold) => {
+      remote.faults.push({ path: "/crash", status: 200, before: hold });
+      enabling = f.enable(instance.id);
+      await enabling;
+      return await waitUntil(() => {
+        const snapshot = f.supervisor.statusSnapshot().find((status) =>
+          status.peer === instance.id
+        )!;
+        return snapshot.status === "failed"
+          ? done(snapshot)
+          : pending(snapshot);
+      }, { label: "actual Worker failure callback" });
+    }, async (work) => {
+      await work.reached();
+      await bounded(enabling, "actual discovery pass completion");
+      const before = f.supervisor.statusSnapshot().find((status) =>
+        status.peer === instance.id
+      )!;
+      assertEquals({ ...before, generation: null }, {
+        peer: instance.id,
+        generation: null,
+        cycle: 1,
+        status: "active",
+        result: "active",
+      });
+      const after = await work.result();
+      assertStrictEquals(after.generation, before.generation);
+      assertEquals(after, { ...before, status: "failed" });
+      assertEquals((await f.one(instance.id)).status, "failed");
+    });
+  });
+});
 
 Deno.test("driver supervisor: missing and retired slots report no scheduled retry", async () => {
   const f = await fixture();

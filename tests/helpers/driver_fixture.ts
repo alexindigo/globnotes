@@ -147,6 +147,20 @@ export async function storageServerFixture(
     });
     const serverOptions = { denoArgs: ["--preload", preload] };
     const observationFailures = new WeakMap<TestServer, AbortSignal>();
+    const reportedShutdownFailures = new WeakMap<TestServer, unknown>();
+    const closeCandidate = async (child: TestServer) => {
+      try {
+        await child.close();
+      } catch (error) {
+        // A prior caller already received this shutdown failure. Actual
+        // exit permits replacement; a still-live child must continue to block it.
+        if (reportedShutdownFailures.has(child) && child.status()) return;
+        if (!reportedShutdownFailures.has(child)) {
+          reportedShutdownFailures.set(child, error);
+        }
+        throw error;
+      }
+    };
     // Retain even a rejected candidate. A failed shutdown must be joined again,
     // not bypassed by closing an already-retired predecessor on the next restart.
     let server: TestServer;
@@ -179,7 +193,7 @@ export async function storageServerFixture(
               ...serverOptions,
               observeOutput,
             }),
-          (server) => server.close(),
+          closeCandidate,
         )
       );
       const child = admitted.value.value;
@@ -201,7 +215,7 @@ export async function storageServerFixture(
         // Acquisition already owns this child, but rejection must finish its
         // shutdown before the serialized queue is allowed to construct a peer.
         try {
-          await child.close();
+          await closeCandidate(child);
         } catch (cleanup) {
           throw new AggregateError(
             [primary, cleanup],
@@ -371,7 +385,7 @@ export async function storageServerFixture(
           // Reserve the whole close/boot/bind sequence before its first await.
           await previous;
           signal.throwIfAborted();
-          await server.close();
+          await closeCandidate(server);
           signal.throwIfAborted();
           return await boot(captured);
         });

@@ -78,7 +78,8 @@ function createStartupObserver(
       const captured = cycles.get(status.peer);
       if (
         !captured ||
-        Object.is(captured.generation, status.generation) &&
+        captured.result === null &&
+          Object.is(captured.generation, status.generation) &&
           captured.cycle === status.cycle
       ) {
         // Values are copies; a later producer cannot mutate a retained entry.
@@ -92,7 +93,7 @@ function createStartupObserver(
           if (pending) return [];
           throw Error(`Driver status not observed: ${instance.id}`);
         }
-        return [[instance.id, status.status]];
+        return [[instance.id, status.result ?? status.status]];
       }),
     );
   };

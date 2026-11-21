@@ -809,8 +809,11 @@ Overlapping restarts queue the complete close/boot/bind sequence; each caller
 gets its own serialized replacement. Records carry a per-child sequence so a
 missed first record cannot admit a later supervisor. Each generation-scoped
 observer captures synchronous supervisor status snapshots with opaque slot and
-cycle identities; a later manual-sync or automatic cycle cannot overwrite the
-captured work's status. It copies terminal state in the original work's settlement
+cycle identities; each queued follow-up pass gets its own cycle identity without
+changing the drain's shared completion. Snapshots carry a pass result captured at
+settlement separately from live Worker status. An observer retains that result
+immutably, so neither a later pass nor a later Worker crash can rewrite the first
+pass's outcome. It copies terminal state in the original work's settlement
 callback, without a later async HTTP view, and always disposes its subscription,
 even if collection fails. Superseded callbacks cannot collect, publish or report
 for the replacement. Observation/publication faults travel through the child's
@@ -820,7 +823,10 @@ own their body reader before reading and cancel through that lock on retirement,
 without waiting for an uncooperative read or cancellation promise. Child
 construction admits the initial record identity before binding; read failures
 wait for the independent parsed pipe verdict under the existing readiness bound.
-A rejected acquired child is shut down before the restart queue advances. Failure
+A rejected acquired child is shut down before the restart queue advances. If it
+has already exited, its first admission/shutdown error is still reported, but
+the cached close rejection cannot block a later replacement or repeat at fixture
+disposal; a still-live failed candidate continues to block replacement. Failure
 frames are written in full, advancing by the actual byte count and rejecting
 zero-progress transport writes.
 

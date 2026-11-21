@@ -48,6 +48,7 @@ import {
 interface Slot {
   generation: object;
   cycle: number;
+  result: string | null;
   instance: DriverInstance;
   epoch: number;
   access: number;
@@ -80,6 +81,8 @@ export interface DriverCycleStatus {
   readonly generation: object;
   readonly cycle: number;
   readonly status: string;
+  /** Captured at pass settlement, independent of subsequent live Worker status. */
+  readonly result: string | null;
 }
 export interface SupervisorAdapters {
   hub: VaultHub;
@@ -144,6 +147,7 @@ export class DriverSupervisor implements DriverOwners {
         generation: slot.generation,
         cycle: slot.cycle,
         status: this.#slotView(slot).status,
+        result: slot.result,
       })
     );
   }
@@ -249,6 +253,7 @@ export class DriverSupervisor implements DriverOwners {
     const slot: Slot = {
       generation: Object.freeze({}),
       cycle: 0,
+      result: null,
       instance: structuredClone(instance),
       epoch: owner.epoch,
       access: this.adapters.lifecycle.epoch,
@@ -368,11 +373,13 @@ export class DriverSupervisor implements DriverOwners {
       return slot.pending;
     }
     if (!this.#current(slot)) return Promise.resolve();
-    slot.cycle++;
     slot.fullRequested = full;
     const work = (async () => {
       try {
         do {
+          // Queued requests still join this drain, but each pass owns its result.
+          slot.cycle++;
+          slot.result = null;
           const discover = slot.fullRequested;
           slot.fullRequested = false;
           if (discover) slot.nextFull = Infinity;
@@ -388,6 +395,7 @@ export class DriverSupervisor implements DriverOwners {
             ? slot.view
             : slot.session?.snapshot() ?? slot.view;
           slot.view = view;
+          slot.result = view.status;
           if (view.status === "failed") {
             slot.nextRetry = this.#clock.now() +
               Math.max(

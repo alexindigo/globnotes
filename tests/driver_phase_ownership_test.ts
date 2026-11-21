@@ -262,6 +262,7 @@ function preloadSupervisor(): DriverSupervisor {
         generation: captured!.generation,
         cycle: 1,
         status: captured!.states.get(peer.id)!,
+        result: null,
       }));
     },
   });
@@ -1235,6 +1236,304 @@ Deno.test("driver phase round2: manual-sync replacement cannot overwrite the fir
   });
 });
 
+Deno.test("driver phase round3: queued startup discovery cannot replace the first pass failure", async () => {
+  await fixtureScope(async (scope) => {
+    const remote = (await scope.acquire(() =>
+      memoryRemote(), (remote) => remote.close())).value;
+    remote.put("first.md", "queued pass bytes");
+    const root = (await scope.acquire(() =>
+      Deno.makeTempDir({ prefix: "driver-queued-pass-" }), (root) =>
+      Deno.remove(root, { recursive: true }))).value;
+    const preload = `${root}/queued-sync.mjs`;
+    Deno.writeTextFileSync(
+      preload,
+      `import { DriverSupervisor } from ${
+        JSON.stringify(
+          new URL("../server/hub/drivers/supervisor.ts", import.meta.url).href,
+        )
+      };
+const sync = DriverSupervisor.prototype.sync;
+DriverSupervisor.prototype.sync = function (...args) {
+  const stop = this.subscribe(() => {
+    for (const snapshot of this.statusSnapshot()) {
+      if (snapshot.result !== null) console.log("DRIVER_PASS_RESULT " + JSON.stringify({cycle: snapshot.cycle, result: snapshot.result}));
+    }
+  });
+  const work = sync.apply(this, args);
+  work.then(stop, stop);
+  console.log("DRIVER_MANUAL_SYNC_ADMITTED");
+  return work;
+};`,
+    );
+    const queued = Promise.withResolvers<void>();
+    const results = new Map<number, string>();
+    const resultsReported = Promise.withResolvers<void>();
+    const f = (await scope.acquire(() =>
+      storageServerFixture([remote.authority], {
+        observedTime: 0,
+        serverBoot(inputs, options) {
+          let stdout = "";
+          return bootServer(inputs, {
+            ...options,
+            denoArgs: [...options!.denoArgs!, "--preload", preload],
+            observeOutput(name, chunk) {
+              options!.observeOutput!(name, chunk);
+              if (name === "stdout") {
+                stdout += chunk;
+                if (stdout.includes("DRIVER_MANUAL_SYNC_ADMITTED\n")) {
+                  queued.resolve();
+                }
+                for (const line of stdout.split("\n").slice(0, -1)) {
+                  if (!line.startsWith("DRIVER_PASS_RESULT ")) {
+                    continue;
+                  }
+                  const snapshot = JSON.parse(
+                    line.slice("DRIVER_PASS_RESULT ".length),
+                  );
+                  results.set(snapshot.cycle, snapshot.result);
+                }
+                if (results.get(2) === "active") {
+                  resultsReported.resolve();
+                }
+              }
+            },
+          });
+        },
+      }), (f) =>
+      f.close())).value;
+    const id = await f.add(remote.baseUrl, remote.token);
+    let booting!: ReturnType<typeof f.restart>;
+    await heldOperation({
+      label: "first discovery before queued manual pass",
+      progress: { kind: "controlled", clock: "external" },
+      signal: scope.signal,
+      owner: () =>
+        remote,
+    }, async (hold) => {
+      remote.faults.push({
+        path: "/list",
+        status: 503,
+        message: "first pass failed",
+        before: hold,
+      });
+      booting = f.restart();
+      const restarted = await booting;
+      await assertRejects(
+        () =>
+          restarted.initialDriver(id, "active"),
+        Error,
+        `driver '${id}' initial cycle: failed, expected active`,
+      );
+      return restarted;
+    }, async (work) => {
+      await work.reached();
+      const transport = await bounded(
+        booting,
+        "queued pass transport admission",
+      );
+      const syncing = f.sync(id);
+      await bounded(
+        workMilestone(
+          syncing,
+          queued.promise,
+          "manual sync queued behind startup",
+        ),
+        "queued manual sync admission",
+      );
+      work.release();
+      assertEquals(
+        (await bounded(syncing, "queued discovery completion")).status,
+        "active",
+      );
+      await work.result();
+      await bounded(
+        workMilestone(
+          transport.server.exited,
+          resultsReported.promise,
+          "both pass results delivered",
+        ),
+        "queued pass result pipe",
+      );
+      assertEquals([...results], [[1, "failed"], [2, "active"]]);
+      assertEquals(
+        Deno.readTextFileSync(`${f.vault}/first.md`),
+        "queued pass bytes",
+      );
+    });
+  });
+});
+
+Deno.test("driver phase round3: a self-exited admission candidate cannot poison queued replacement", async () => {
+  await fixtureScope(async (scope) => {
+    const remote = (await scope.acquire(() =>
+      memoryRemote(), (remote) => remote.close())).value;
+    const root = (await scope.acquire(() =>
+      Deno.makeTempDir({ prefix: "driver-self-exit-" }), (root) =>
+      Deno.remove(root, { recursive: true }))).value;
+    const preload = `${root}/self-exit.mjs`;
+    Deno.writeTextFileSync(
+      preload,
+      `const serve = Deno.serve;
+Deno.serve = function (...args) {
+  const server = serve.apply(this, args);
+  fetch(${
+        JSON.stringify(`${remote.baseUrl}/exit`)
+      }, {headers: {authorization: ${
+        JSON.stringify(`Bearer ${remote.token}`)
+      }}}).then(() => Deno.exit(17));
+  return server;
+};`,
+    );
+    let boots = 0;
+    const acquired = Promise.withResolvers<TestServer>();
+    const f = (await scope.acquire(() =>
+      storageServerFixture([], {
+        async serverBoot(inputs, options) {
+          const attempt = ++boots;
+          const child = await bootServer(inputs, {
+            ...options,
+            denoArgs: [
+              ...options!.denoArgs!,
+              ...(attempt === 2 ? ["--preload", preload] : []),
+            ],
+          });
+          if (attempt === 2) {
+            await Deno.remove(`${f.statePath}/driver-startup/initial.json`);
+            acquired.resolve(child);
+          }
+          return child;
+        },
+      }), (f) =>
+      f.close())).value;
+    await heldOperation({
+      label: "candidate self exit during admission",
+      progress: { kind: "controlled", clock: "external" },
+      signal: scope.signal,
+      owner: () =>
+        remote,
+    }, async (hold) => {
+      remote.faults.push({ path: "/exit", before: hold, status: 200 });
+      return await f.restart();
+    }, async (work) => {
+      await work.reached();
+      const candidate = await bounded(
+        acquired.promise,
+        "self-exit candidate healthy",
+      );
+      const queued = f.restart();
+      queued.catch(() => {});
+      const error = await assertRejects(
+        () =>
+          work.result(),
+        AggregateError,
+        "Driver startup observation and child shutdown failed",
+      );
+      assertEquals(candidate.status()?.code, 17);
+      assertEquals(error.errors.map((failure) => failure.constructor.name), [
+        "ReadinessError",
+        "Error",
+      ]);
+      assertStrictEquals(error.cause, error.errors[0]);
+      assertEquals(
+        error.errors[1].message,
+        `server exited on its own before close() (pid ${candidate.pid}, exit code 17). stderr:\n${candidate.logs().stderr}`,
+      );
+      const replacement = await bounded(
+        queued,
+        "replacement after self-exited candidate",
+      );
+      assertEquals([boots, replacement.server.status()], [3, null]);
+      assertStrictEquals(f.server(), replacement.server);
+    });
+  });
+});
+
+Deno.test("driver phase round3: settled peer result ignores later live failure while another peer is pending", async () => {
+  await fixtureScope(async (scope) => {
+    const root = (await scope.acquire(() =>
+      Deno.makeTempDir({ prefix: "driver-settled-result-" }), (root) =>
+      Deno.remove(root, { recursive: true }))).value;
+    const directory = await createDriverStartupDirectory(scope, root);
+    const original = DriverSupervisor.prototype.reconcile;
+    scope.defer(() => {
+      DriverSupervisor.prototype.reconcile = original;
+    });
+    const work = Promise.withResolvers<void>();
+    DriverSupervisor.prototype.reconcile = () =>
+      work.promise;
+    const generation = Object.freeze({});
+    let statuses: readonly DriverCycleStatus[] = [
+      {
+        peer: "first",
+        generation,
+        cycle: 1,
+        status: "active",
+        result: "active",
+      },
+      { peer: "held", generation, cycle: 1, status: "starting", result: null },
+    ];
+    const listeners = new Set<() => void>();
+    const supervisor = Object.assign(preloadSupervisor(), {
+      adapters: {
+        lifecycle: { epoch: 1 },
+        plugins: { driverOwner: () => ({ epoch: 1 }) },
+      },
+      peers: preloadPeers(() =>
+        ["first", "held"].map((id) => ({
+          id,
+          plugin: "plugin",
+          revision: 1,
+        })) as DriverInstance[]
+      ),
+      statusSnapshot: () =>
+        statuses,
+      subscribe(notify: () => void) {
+        listeners.add(notify);
+        return () => {
+          listeners.delete(notify);
+        };
+      },
+    });
+    scope.defer(observeDriverStartup(directory.path));
+    assertStrictEquals(supervisor.reconcile(), work.promise);
+    const server = {
+      pid: Deno.pid,
+      exited: Promise.withResolvers<Deno.CommandStatus>().promise,
+      status: () => null,
+    } as TestServer;
+    const bound = bindDriverStartup(scope, directory, server, () => server);
+    statuses = [
+      {
+        peer: "first",
+        generation,
+        cycle: 1,
+        status: "failed",
+        result: "active",
+      },
+      {
+        peer: "held",
+        generation,
+        cycle: 1,
+        status: "active",
+        result: "active",
+      },
+    ];
+    for (const notify of listeners) notify();
+    work.resolve();
+    await work.promise;
+    assertEquals(await bound.initialDriver("first", "active"), {
+      pid: Deno.pid,
+      owner: `${Deno.pid}:1`,
+      state: "active",
+    });
+    assertEquals(
+      recordReader(directory, "initial.json", driverStartupSchema).read()!.value
+        .states,
+      { first: "active", held: "active" },
+    );
+  });
+});
+
 Deno.test("driver phase round2: status cache keys include peer, slot generation and cycle sequence", async () => {
   await fixtureScope(async (scope) => {
     const parent = await scope.acquire(
@@ -1250,8 +1549,8 @@ Deno.test("driver phase round2: status cache keys include peer, slot generation 
     DriverSupervisor.prototype.reconcile = () => work.promise;
     const generation = Object.freeze({});
     let statuses: readonly DriverCycleStatus[] = [
-      { peer: "driver", generation, cycle: 1, status: "failed" },
-      { peer: "held", generation, cycle: 1, status: "starting" },
+      { peer: "driver", generation, cycle: 1, status: "failed", result: null },
+      { peer: "held", generation, cycle: 1, status: "starting", result: null },
     ];
     const listeners = new Set<() => void>();
     const supervisor = Object.assign(preloadSupervisor(), {
@@ -1282,8 +1581,20 @@ Deno.test("driver phase round2: status cache keys include peer, slot generation 
     }));
     assertStrictEquals(supervisor.reconcile(), work.promise);
     statuses = [
-      { peer: "driver", generation, cycle: 2, status: "active" },
-      { peer: "held", generation, cycle: 1, status: "active" },
+      {
+        peer: "driver",
+        generation,
+        cycle: 2,
+        status: "active",
+        result: "active",
+      },
+      {
+        peer: "held",
+        generation,
+        cycle: 1,
+        status: "active",
+        result: "active",
+      },
     ];
     for (const notify of listeners) notify();
     work.resolve();
