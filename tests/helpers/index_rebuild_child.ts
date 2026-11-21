@@ -44,7 +44,7 @@ initState(
   null,
 );
 if (boundary === "pending-erasure") {
-  const name = "pendingerasurenamecanary", body = "pendingerasurebodycanary";
+  const name = "namependingerasurecanary", body = "pendingerasurebodycanary";
   index.reindexNote(name);
   const reader = new DatabaseSync(`${storage}/index.sqlite`, {
     readOnly: true,

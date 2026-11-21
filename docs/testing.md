@@ -1,4 +1,5 @@
 # Testing
+Writing tests: see [the short guide](writing-tests.md).
 
 Every test and browser check runs inside the project's devcontainer,
 started by `.devcontainer/run.sh`. Nothing runs Deno, Chromium or the test

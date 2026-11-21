@@ -413,30 +413,64 @@ Deno.test("identity authority: late read and actual streamed disclosure stop at 
     assertEquals(cancelled, true);
   }));
 
-Deno.test("identity authority: settings guard is rechecked after preparation at real TOML persistence", () =>
-  fixture(async (f) => {
-    const guard = await f.auth.settingsWriteGuard(f.request());
-    const settings = new VaultConfigStore(
-      "globnotes",
-      `${f.metadata}/config.toml`,
-    );
-    const before = settings.capture(),
-      raw = new BoundFileStore(`${f.metadata}/config.toml`).capture().raw;
-    const held = Promise.withResolvers<void>();
-    const saving = (async () => {
-      await held.promise;
-      return settings.save({ brand: { name: "forbidden" } }, before, guard);
-    })();
-    saving.catch(() => {});
-    f.policy({ everybody: "none", grants: { [f.alice.id]: "edit" } });
-    held.resolve();
-    await assertRejects(() => saving, OperationError);
-    assertEquals(settings.capture(), before);
-    assertEquals(
-      new BoundFileStore(`${f.metadata}/config.toml`).capture().raw,
-      raw,
-    );
-  }));
+for (const revoke of [false, true]) {
+  Deno.test(`identity authority: settings guard ${revoke ? "rejects revoked" : "permits unchanged"} authority at real TOML persistence`, () =>
+    fixture(async (f) => {
+      const guard = await f.auth.settingsWriteGuard(f.request());
+      const settings = new VaultConfigStore(
+        "globnotes",
+        `${f.metadata}/config.toml`,
+      );
+      const before = settings.capture(),
+        raw = new BoundFileStore(`${f.metadata}/config.toml`).capture().raw;
+      const events: string[] = [];
+      const saving = () =>
+        settings.save({ brand: { name: "updated" } }, before, () => {
+          events.push(events.length === 0 ? "admission" : "persistence");
+          guard();
+          if (events.length === 1) {
+            events.push("admitted");
+            if (revoke) {
+              f.policy({ everybody: "none", grants: { [f.alice.id]: "edit" } });
+              events.push("revoked");
+            }
+          }
+        });
+      if (revoke) {
+        const error = assertThrows(
+          saving,
+          OperationError,
+          "Access policy changed while this operation was pending; it was not applied.",
+        );
+        assertEquals([error.status, error.code, error.message], [
+          409,
+          "operation_conflict",
+          "Access policy changed while this operation was pending; it was not applied.",
+        ]);
+        assertEquals(events, [
+          "admission",
+          "admitted",
+          "revoked",
+          "persistence",
+        ]);
+        assertEquals(settings.capture(), before);
+        assertEquals(new BoundFileStore(settings.filename).capture().raw, raw);
+      } else {
+        const expected = {
+          ...before.resolved.config,
+          brand: { ...before.resolved.config.brand, name: "updated" },
+        };
+        assertEquals(saving(), expected);
+        assertEquals(settings.settings, expected);
+        assertEquals(events, ["admission", "admitted", "persistence"]);
+        assertEquals(settings.capture().saved, { brand: { name: "updated" } });
+        assertEquals(
+          new VaultConfigStore("globnotes", settings.filename).settings,
+          expected,
+        );
+      }
+    }));
+}
 
 for (const kind of ["note", "file"] as const) {
   for (const change of ["acl", "credentials", "expiry", "unchanged"] as const) {

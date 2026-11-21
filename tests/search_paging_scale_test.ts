@@ -28,6 +28,7 @@ Deno.test("search paging: first and deep scoped pages materialize only their row
   const vault = await Deno.makeTempDir({ prefix: "globnotes-paging-scale-" });
   const work = indexWork();
   try {
+    const fixture: { path: string; modified: number }[] = [];
     for (let i = 0; i < NOTES; i++) {
       const folder = path.join(vault, `F${i % 10}`);
       await Deno.mkdir(folder, { recursive: true });
@@ -35,6 +36,9 @@ Deno.test("search paging: first and deep scoped pages materialize only their row
         path.join(folder, `Note ${i}.md`),
         `# Note ${i}\n\nmarker word${i % 50} ${"filler ".repeat(40)}\n`,
       );
+      const modified = 1_700_000_000 + i % 7;
+      await Deno.utime(path.join(folder, `Note ${i}.md`), modified, modified);
+      fixture.push({ path: `F${i % 10}/Note ${i}`, modified });
     }
     const env = testEnvironment({
       GLOBNOTES_GLOBNOTES_PATH: vault,
@@ -47,10 +51,14 @@ Deno.test("search paging: first and deep scoped pages materialize only their row
       testServices(env).index,
       work.adapters,
     );
+    const notes = new FileSystemNotes(vault, {}, testServices(env).notes);
+    // All documents have equal token counts and marker frequency, hence tied
+    // relevance. Fix inventory order so rowid ties follow fixture order.
+    notes.listAllNoteFilenames = () => fixture.map((note) => `${note.path}.md`);
     initState(
       new GlobalConfig(env),
       null,
-      new FileSystemNotes(vault, {}, testServices(env).notes),
+      notes,
       indexer,
       new FileServing(vault),
       null,
@@ -92,12 +100,22 @@ Deno.test("search paging: first and deep scoped pages materialize only their row
         ? NOTES / 10 - LIMIT
         : NOTES - LIMIT;
       const deep = read(term, { ...query, offset: deepOffset });
+      const expected = fixture.filter((note) =>
+        query.folder === undefined || note.path.startsWith(`${query.folder}/`)
+      ).sort((a, b) => {
+        if (query.sort === "path") {
+          return a.path < b.path ? 1 : a.path > b.path ? -1 : 0;
+        }
+        if (query.sort === "last_modified") return b.modified - a.modified;
+        return 0;
+      }).map((note) => note.path);
+      assertEquals(first.paths, expected.slice(0, LIMIT));
+      assertEquals(deep.paths, expected.slice(deepOffset, deepOffset + LIMIT));
       assertEquals(
         deep.rows,
         first.rows,
         "offset must not grow materialized work",
       );
-      assert(deep.paths.every((p) => !first.paths.includes(p)));
       report.push(
         `${term} ${JSON.stringify(query)}: first ${first.rows} rows, ` +
           `offset ${deepOffset} ${deep.rows} rows`,

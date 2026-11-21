@@ -83,16 +83,42 @@ function fixture() {
   };
 }
 
-function absentFromIndexFiles(storage: string, markers: string[]) {
+function indexFileTraces(storage: string, markers: string[]) {
+  // Ask the real FTS5 tokenizer for the stored forms, not the original text.
+  // Fixture canaries have distinct prefixes so FTS prefix compression cannot
+  // hide a full token from the positive byte-presence control.
+  const tokenizer = new DatabaseSync(":memory:");
+  let tokens: string[];
+  try {
+    tokenizer.exec(
+      `CREATE VIRTUAL TABLE probe USING fts5(content, tokenize='porter unicode61 remove_diacritics 2');
+      CREATE VIRTUAL TABLE vocabulary USING fts5vocab(probe, 'row');`,
+    );
+    tokenizer.prepare("INSERT INTO probe(content) VALUES (?)").run(
+      markers.filter((marker) => marker.endsWith("canary")).join(" "),
+    );
+    tokens = tokenizer.prepare("SELECT term FROM vocabulary ORDER BY term")
+      .all()
+      .map((row) => String(row.term));
+    assertEquals(
+      tokens,
+      markers.filter((marker) => marker.endsWith("canary"))
+        .map((marker) => marker.slice(0, -1) + "i").sort(),
+    );
+  } finally {
+    tokenizer.close();
+  }
+  const traces = new Set<string>();
   for (const entry of Deno.readDirSync(storage)) {
-    if (!entry.name.includes("sqlite")) continue;
+    if (!entry.name.startsWith("index.sqlite")) continue;
     const text = new TextDecoder().decode(
       Deno.readFileSync(`${storage}/${entry.name}`),
     );
-    for (const marker of markers) {
-      assert(!text.includes(marker), `${marker} retained in ${entry.name}`);
+    for (const marker of [...markers, ...tokens]) {
+      if (text.includes(marker)) traces.add(marker);
     }
   }
+  return [...traces].sort();
 }
 
 function legacyIndex(storage: string) {
@@ -105,11 +131,23 @@ function legacyIndex(storage: string) {
   db.prepare(
     "INSERT INTO notes_fts(title,content,tags,filename,last_modified) VALUES(?,?,?,?,?)",
   ).run(
-    "legacydeletednamecanary",
-    "legacydeletedbodycanary",
+    "namelegacydeletedcanary",
+    "bodylegacydeletedcanary",
     "",
-    "legacydeletednamecanary.md",
+    "namelegacydeletedcanary.md",
     1,
+  );
+  assertEquals(
+    indexFileTraces(storage, [
+      "namelegacydeletedcanary",
+      "bodylegacydeletedcanary",
+    ]),
+    [
+      "bodylegacydeletedcanari",
+      "bodylegacydeletedcanary",
+      "namelegacydeletedcanari",
+      "namelegacydeletedcanary",
+    ],
   );
   db.exec("DELETE FROM notes_fts");
   db.prepare(
@@ -127,18 +165,28 @@ Deno.test("index erasure: replaced and deleted names/content leave no SQLite or 
       current = "currentuniquebodycanary";
     Deno.writeTextFileSync(`${f.vault}/${filename}.md`, old);
     index.reindexNote(filename);
-    assertEquals(index.search(old).length, 1);
+    assertEquals(index.search(old).map((row) => row.path), [filename]);
+    assertEquals(indexFileTraces(f.storage, [filename, old]), [
+      "deleteduniquenamecanari",
+      filename,
+      "olduniquebodycanari",
+      old,
+    ]);
     Deno.writeTextFileSync(`${f.vault}/${filename}.md`, current);
     index.reindexNote(filename);
     assertEquals(index.search(old), []);
-    absentFromIndexFiles(f.storage, [old]);
+    assertEquals(indexFileTraces(f.storage, [old]), []);
+    assertEquals(indexFileTraces(f.storage, [current]), [
+      "currentuniquebodycanari",
+      current,
+    ]);
     Deno.removeSync(`${f.vault}/${filename}.md`);
     index.deleteFromIndex(filename);
     assertEquals(index.search(current), []);
-    absentFromIndexFiles(f.storage, [filename, old, current]);
+    assertEquals(indexFileTraces(f.storage, [filename, old, current]), []);
     f.closeDatabases();
     f.make();
-    absentFromIndexFiles(f.storage, [filename, old, current]);
+    assertEquals(indexFileTraces(f.storage, [filename, old, current]), []);
   } finally {
     f.close();
   }
@@ -172,11 +220,14 @@ Deno.test("index erasure: old-format upgrade preserves old usable index until co
     );
     after.close();
     assertEquals(index.search("current").length, 2);
-    absentFromIndexFiles(f.storage, [
-      "legacydeletednamecanary",
-      "legacydeletedbodycanary",
-      "stale index content",
-    ]);
+    assertEquals(
+      indexFileTraces(f.storage, [
+        "namelegacydeletedcanary",
+        "bodylegacydeletedcanary",
+        "stale index content",
+      ]),
+      [],
+    );
     assertEquals(
       [...Deno.readDirSync(f.storage)].filter((entry) =>
         entry.name.includes("rebuild")
@@ -186,10 +237,13 @@ Deno.test("index erasure: old-format upgrade preserves old usable index until co
     f.closeDatabases();
     const reopened = f.make();
     assertEquals(reopened.search("current").length, 2);
-    absentFromIndexFiles(f.storage, [
-      "legacydeletednamecanary",
-      "legacydeletedbodycanary",
-    ]);
+    assertEquals(
+      indexFileTraces(f.storage, [
+        "namelegacydeletedcanary",
+        "bodylegacydeletedcanary",
+      ]),
+      [],
+    );
   } finally {
     f.close();
   }
@@ -223,10 +277,13 @@ Deno.test("index erasure: failed rebuild never publishes a partial new index and
     await awaitIndexReady(retry);
     assertEquals(retry.indexStatus.failed, 0);
     assertEquals(retry.search("*").length, 2);
-    absentFromIndexFiles(f.storage, [
-      "legacydeletednamecanary",
-      "legacydeletedbodycanary",
-    ]);
+    assertEquals(
+      indexFileTraces(f.storage, [
+        "namelegacydeletedcanary",
+        "bodylegacydeletedcanary",
+      ]),
+      [],
+    );
   } finally {
     f.close();
   }
@@ -258,14 +315,35 @@ Deno.test("index erasure: the actual hub projection batches rename-away and dele
     );
     Deno.writeTextFileSync(
       `${f.vault}/firstdeletedcanary.md`,
-      "firstdeletedbodycanary",
+      "afirstdeletedbodycanary",
     );
     Deno.writeTextFileSync(
       `${f.vault}/seconddeletedcanary.md`,
-      "seconddeletedbodycanary",
+      "bseconddeletedbodycanary",
     );
     f.hub.scanNow();
     assertEquals(index.search("*").length, 3);
+    assertEquals(
+      indexFileTraces(f.config.statePath, [
+        "renameduniquenamecanary",
+        "firstdeletedcanary",
+        "seconddeletedcanary",
+        "afirstdeletedbodycanary",
+        "bseconddeletedbodycanary",
+      ]),
+      [
+        "afirstdeletedbodycanari",
+        "afirstdeletedbodycanary",
+        "bseconddeletedbodycanari",
+        "bseconddeletedbodycanary",
+        "firstdeletedcanari",
+        "firstdeletedcanary",
+        "renameduniquenamecanari",
+        "renameduniquenamecanary",
+        "seconddeletedcanari",
+        "seconddeletedcanary",
+      ],
+    );
     Deno.renameSync(
       `${f.vault}/renameduniquenamecanary.md`,
       `${f.vault}/survivor.md`,
@@ -276,21 +354,16 @@ Deno.test("index erasure: the actual hub projection batches rename-away and dele
     f.hub.scanNow();
     assertEquals(checkpoints - before, 1);
     assertEquals(index.search("*").map((row) => row.path), ["survivor"]);
-    for (const entry of Deno.readDirSync(f.config.statePath)) {
-      if (!entry.name.startsWith("index.sqlite")) continue;
-      const bytes = new TextDecoder().decode(
-        Deno.readFileSync(`${f.config.statePath}/${entry.name}`),
-      );
-      for (
-        const marker of [
-          "renameduniquenamecanary",
-          "firstdeletedcanary",
-          "seconddeletedcanary",
-          "firstdeletedbodycanary",
-          "seconddeletedbodycanary",
-        ]
-      ) assert(!bytes.includes(marker), `${marker} in ${entry.name}`);
-    }
+    assertEquals(
+      indexFileTraces(f.config.statePath, [
+        "renameduniquenamecanary",
+        "firstdeletedcanary",
+        "seconddeletedcanary",
+        "afirstdeletedbodycanary",
+        "bseconddeletedbodycanary",
+      ]),
+      [],
+    );
   } finally {
     db.close();
     await f.close();
@@ -332,10 +405,13 @@ for (const boundary of ["before-swap", "after-swap"]) {
       retry.startBackgroundSync();
       await awaitIndexReady(retry);
       assertEquals(retry.search("current").length, 2);
-      absentFromIndexFiles(f.storage, [
-        "legacydeletednamecanary",
-        "legacydeletedbodycanary",
-      ]);
+      assertEquals(
+        indexFileTraces(f.storage, [
+          "namelegacydeletedcanary",
+          "bodylegacydeletedcanary",
+        ]),
+        [],
+      );
     } finally {
       f.close();
     }
@@ -364,11 +440,17 @@ Deno.test("index erasure: fresh installs and current-format restarts never creat
 Deno.test("index erasure: a lost index deletion transaction is recovered from the folder and physically erased after restart", async () => {
   const f = fixture();
   try {
-    const name = "lostdeletenamecanary", body = "lostdeletebodycanary";
+    const name = "lostdeletenamecanary", body = "bodylostdeletecanary";
     Deno.writeTextFileSync(`${f.vault}/${name}.md`, body);
     const index = f.make();
     index.reindexNote(name);
     assertEquals(index.search(body).map((row) => row.path), [name]);
+    assertEquals(indexFileTraces(f.storage, [name, body]), [
+      "bodylostdeletecanari",
+      body,
+      "lostdeletenamecanari",
+      name,
+    ]);
     // Restore an exact pre-delete file set after closing the old connection:
     // the folder delete survives while the derived index transaction is lost.
     const snapshot = new Map(
@@ -380,7 +462,7 @@ Deno.test("index erasure: a lost index deletion transaction is recovered from th
     );
     Deno.removeSync(`${f.vault}/${name}.md`);
     index.deleteFromIndex(name);
-    absentFromIndexFiles(f.storage, [name, body]);
+    assertEquals(indexFileTraces(f.storage, [name, body]), []);
     f.closeDatabases();
     for (const entry of Deno.readDirSync(f.storage)) {
       if (entry.name.startsWith("index.sqlite")) {
@@ -396,14 +478,20 @@ Deno.test("index erasure: a lost index deletion transaction is recovered from th
       [name],
       "the fixture must actually restore the stale index transaction",
     );
+    assertEquals(indexFileTraces(f.storage, [name, body]), [
+      "bodylostdeletecanari",
+      body,
+      "lostdeletenamecanari",
+      name,
+    ]);
     restarted.startBackgroundSync();
     await awaitIndexReady(restarted);
     assertEquals(restarted.search(body), []);
-    absentFromIndexFiles(f.storage, [name, body]);
+    assertEquals(indexFileTraces(f.storage, [name, body]), []);
     f.closeDatabases();
     const again = f.make();
     assertEquals(again.search(body), []);
-    absentFromIndexFiles(f.storage, [name, body]);
+    assertEquals(indexFileTraces(f.storage, [name, body]), []);
   } finally {
     f.close();
   }
@@ -415,9 +503,15 @@ Deno.test("index erasure: a pinned WAL reader makes erasure fail explicitly afte
   try {
     const index = f.make(),
       name = "pinnedreadernamecanary",
-      body = "pinnedreaderbodycanary";
+      body = "bodypinnedreadercanary";
     Deno.writeTextFileSync(`${f.vault}/${name}.md`, body);
     index.reindexNote(name);
+    assertEquals(indexFileTraces(f.storage, [name, body]), [
+      "bodypinnedreadercanari",
+      body,
+      "pinnedreadernamecanari",
+      name,
+    ]);
     reader = new DatabaseSync(`${f.storage}/index.sqlite`, { readOnly: true });
     reader.exec("BEGIN");
     assertEquals(
@@ -439,7 +533,7 @@ Deno.test("index erasure: a pinned WAL reader makes erasure fail explicitly afte
     reader.close();
     reader = undefined;
     index.batch(() => {});
-    absentFromIndexFiles(f.storage, [name, body]);
+    assertEquals(indexFileTraces(f.storage, [name, body]), []);
   } finally {
     reader?.close();
     f.close();
@@ -451,10 +545,16 @@ Deno.test("index erasure: a pinned startup WAL does not skip new notes or comple
   let reader: DatabaseSync | undefined;
   const errors: string[] = [], facts: OperationFact[] = [];
   try {
-    const name = "startupdeletednamecanary", body = "startupdeletedbodycanary";
+    const name = "startupdeletednamecanary", body = "bodystartupdeletedcanary";
     Deno.writeTextFileSync(`${f.vault}/${name}.md`, body);
     const original = f.make();
     original.reindexNote(name);
+    assertEquals(indexFileTraces(f.storage, [name, body]), [
+      "bodystartupdeletedcanari",
+      body,
+      "startupdeletednamecanari",
+      name,
+    ]);
     reader = new DatabaseSync(`${f.storage}/index.sqlite`, { readOnly: true });
     reader.exec("BEGIN");
     assertEquals(
@@ -524,7 +624,7 @@ Deno.test("index erasure: a pinned startup WAL does not skip new notes or comple
     reader = undefined;
     restarted.batch(() => {});
     assertEquals(Deno.statSync(`${f.storage}/index.sqlite-wal`).size, 0);
-    absentFromIndexFiles(f.storage, [name, body]);
+    assertEquals(indexFileTraces(f.storage, [name, body]), []);
     assertEquals(restarted.search("newsearchable").length, 3);
   } finally {
     Object.assign(logger, originalLogger);
@@ -536,7 +636,7 @@ Deno.test("index erasure: a pinned startup WAL does not skip new notes or comple
 Deno.test("index erasure: a committed deletion surviving a crash retries its lost pending checkpoint on reopen", async () => {
   const f = fixture();
   try {
-    const name = "pendingerasurenamecanary", body = "pendingerasurebodycanary";
+    const name = "namependingerasurecanary", body = "pendingerasurebodycanary";
     Deno.writeTextFileSync(`${f.vault}/${name}.md`, body);
     const result = await command(DENO, {
       args: [
@@ -560,6 +660,12 @@ Deno.test("index erasure: a committed deletion surviving a crash retries its los
       wal.includes(name) && wal.includes(body),
       "Crash fixture must retain actual pre-delete WAL bytes",
     );
+    assertEquals(indexFileTraces(f.storage, [name, body]), [
+      "namependingerasurecanari",
+      name,
+      "pendingerasurebodycanari",
+      body,
+    ]);
     const restarted = f.make();
     assertEquals(
       restarted.search(body),
@@ -569,11 +675,11 @@ Deno.test("index erasure: a committed deletion surviving a crash retries its los
     restarted.startBackgroundSync();
     await awaitIndexReady(restarted);
     assertEquals(restarted.search(body), []);
-    absentFromIndexFiles(f.storage, [name, body]);
+    assertEquals(indexFileTraces(f.storage, [name, body]), []);
     f.closeDatabases();
     const again = f.make();
     assertEquals(again.search(body), []);
-    absentFromIndexFiles(f.storage, [name, body]);
+    assertEquals(indexFileTraces(f.storage, [name, body]), []);
   } finally {
     f.close();
   }
@@ -619,10 +725,13 @@ for (const boundary of ["during-stage", "before-swap", "after-swap"]) {
       restarted.startBackgroundSync();
       await awaitIndexReady(restarted);
       assertEquals(restarted.search("current").length, 2);
-      absentFromIndexFiles(f.storage, [
-        "legacydeletednamecanary",
-        "legacydeletedbodycanary",
-      ]);
+      assertEquals(
+        indexFileTraces(f.storage, [
+          "namelegacydeletedcanary",
+          "bodylegacydeletedcanary",
+        ]),
+        [],
+      );
     } finally {
       f.close();
     }
