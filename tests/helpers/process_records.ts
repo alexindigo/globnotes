@@ -123,10 +123,15 @@ export async function waitForRecord<T>(
           if (!active) throw Error(`${label} observation closed`);
           if (exited && !final) return null;
           return probe();
-        }).then((value) => {
-          // A positive pre-exit snapshot is no more final than a pre-exit miss.
-          // The exit path joins it, then starts a read after that exit barrier.
-          return startedEpoch !== exitEpoch || exited && !final ? null : value;
+        }).then(
+          (value) => ({ ok: true as const, value }),
+          (error: unknown) => ({ ok: false as const, error }),
+        ).then((outcome) => {
+          // Values and errors belong to the barrier under which the read began.
+          // Join stale work without exposing either outcome to any observer.
+          if (startedEpoch !== exitEpoch || exited && !final) return null;
+          if (!outcome.ok) throw outcome.error;
+          return outcome.value;
         }).finally(() => {
           inFlight = undefined;
         });

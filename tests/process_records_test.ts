@@ -147,101 +147,157 @@ Deno.test("record review: cancellation during identifier capture never cleans an
   assertEquals(effects, ["unique"]);
 });
 
-fixtureTest(
-  "record review: owner exit discards a positive pre-exit snapshot and reads the final record",
-  async (testScope) => {
-    await withDirectory(async (directory, scope) => {
-      const entered = fixtureGate(testScope), release = fixtureGate(testScope);
-      const owner = Promise.withResolvers<{ code: number }>();
-      scope.onCancel(() => release.resolve());
-      scope.onCancel(() => owner.resolve({ code: 0 }));
-      let revision = 1, active = 0;
-      const events: string[] = [];
-      const waiting = waitForRecord(directory, "latest revision", async () => {
-        const observed = revision;
-        events.push(`read:${observed}`);
-        active++;
-        try {
-          if (observed === 1) {
-            entered.resolve();
-            await release.promise;
-          }
-          return { revision: observed };
-        } finally {
-          active--;
-        }
-      }, [{ label: "producer", exit: owner.promise }]);
-      waiting.catch(() => undefined);
-      scope.defer(() => waiting.catch(() => undefined));
-      await workMilestone(waiting, entered.promise, "positive pre-exit probe");
-      revision = 2;
-      owner.resolve({ code: 0 });
-      await owner.promise;
-      release.resolve();
-      assertEquals(await waiting, { revision: 2 });
-      assertEquals({ events, active }, {
-        events: ["read:1", "read:2"],
-        active: 0,
+for (const outcome of ["value", "error"] as const) {
+  fixtureTest(
+    `record barrier: owner exit discards a pre-exit ${outcome} and reads the final record`,
+    async (testScope) => {
+      await withDirectory(async (directory, scope) => {
+        const entered = fixtureGate(testScope),
+          release = fixtureGate(testScope);
+        const owner = Promise.withResolvers<{ code: number }>();
+        scope.onCancel(() => release.resolve());
+        scope.onCancel(() => owner.resolve({ code: 0 }));
+        let revision = 1, active = 0;
+        const events: string[] = [];
+        const waiting = waitForRecord(
+          directory,
+          "latest revision",
+          async () => {
+            const observed = revision;
+            events.push(`read:${observed}`);
+            active++;
+            try {
+              if (observed === 1) {
+                entered.resolve();
+                await release.promise;
+                if (outcome === "error") throw new Error("stale pre-exit read");
+              }
+              return { revision: observed };
+            } finally {
+              active--;
+            }
+          },
+          [{ label: "producer", exit: owner.promise }],
+        );
+        waiting.catch(() => undefined);
+        scope.defer(() => waiting.catch(() => undefined));
+        await workMilestone(waiting, entered.promise, "pre-exit probe");
+        revision = 2;
+        owner.resolve({ code: 0 });
+        await owner.promise;
+        release.resolve();
+        assertEquals(await waiting, { revision: 2 });
+        assertEquals({ events, active }, {
+          events: ["read:1", "read:2"],
+          active: 0,
+        });
       });
-    });
-  },
-);
+    },
+  );
 
-fixtureTest(
-  "record review: a later owner exit invalidates a held final read",
-  async (testScope) => {
-    await withDirectory(async (directory, scope) => {
-      const initial = fixtureGate(testScope),
-        final = fixtureGate(testScope),
-        release = fixtureGate(testScope);
-      const first = Promise.withResolvers<{ code: number }>(),
-        second = Promise.withResolvers<{ code: number }>();
-      scope.onCancel(() => release.resolve());
-      scope.onCancel(() => first.resolve({ code: 0 }));
-      scope.onCancel(() => second.resolve({ code: 0 }));
-      let revision = 0, active = 0, peak = 0;
-      const events: string[] = [];
-      const waiting = waitForRecord(directory, "latest owners", async () => {
-        const observed = revision;
-        events.push(`read:${observed}`);
-        active++;
-        peak = Math.max(peak, active);
-        try {
-          if (observed === 0) {
+  fixtureTest(
+    `record barrier: a later owner exit invalidates a held final ${outcome}`,
+    async (testScope) => {
+      await withDirectory(async (directory, scope) => {
+        const initial = fixtureGate(testScope),
+          final = fixtureGate(testScope),
+          release = fixtureGate(testScope);
+        const first = Promise.withResolvers<{ code: number }>(),
+          second = Promise.withResolvers<{ code: number }>();
+        scope.onCancel(() => release.resolve());
+        scope.onCancel(() => first.resolve({ code: 0 }));
+        scope.onCancel(() => second.resolve({ code: 0 }));
+        let revision = 0, active = 0, peak = 0;
+        const events: string[] = [];
+        const waiting = waitForRecord(directory, "latest owners", async () => {
+          const observed = revision;
+          events.push(`read:${observed}`);
+          active++;
+          peak = Math.max(peak, active);
+          try {
+            if (observed === 0) {
+              initial.resolve();
+              return null;
+            }
+            if (observed === 1) {
+              final.resolve();
+              await release.promise;
+              if (outcome === "error") throw new Error("stale final read");
+            }
+            return { revision: observed };
+          } finally {
+            active--;
+          }
+        }, [{ label: "first", exit: first.promise }, {
+          label: "second",
+          exit: second.promise,
+        }]);
+        waiting.catch(() => undefined);
+        scope.defer(() => waiting.catch(() => undefined));
+        await workMilestone(waiting, initial.promise, "initial owners probe");
+        revision = 1;
+        first.resolve({ code: 0 });
+        await workMilestone(
+          waiting,
+          final.promise,
+          "first owner's final probe",
+        );
+        revision = 2;
+        second.resolve({ code: 0 });
+        await second.promise;
+        release.resolve();
+        assertEquals(await waiting, { revision: 2 });
+        assertEquals({ events, active, peak }, {
+          events: ["read:0", "read:1", "read:2"],
+          active: 0,
+          peak: 1,
+        });
+      });
+    },
+  );
+}
+
+for (const phase of ["live", "final"] as const) {
+  fixtureTest(
+    `record barrier: a current ${phase} probe error still rejects`,
+    async (testScope) => {
+      await withDirectory(async (directory, scope) => {
+        const initial = fixtureGate(testScope);
+        const owner = Promise.withResolvers<{ code: number }>();
+        scope.onCancel(() => owner.resolve({ code: 0 }));
+        const failure = new Error(`current ${phase} probe failed`);
+        const events: string[] = [];
+        let exited = false;
+        const waiting = waitForRecord(directory, "current probe", () => {
+          events.push(exited ? "final" : "live");
+          if (phase === "final" && !exited) {
             initial.resolve();
             return null;
           }
-          if (observed === 1) {
-            final.resolve();
-            await release.promise;
-          }
-          return { revision: observed };
-        } finally {
-          active--;
+          throw failure;
+        }, [{ label: "producer", exit: owner.promise }]);
+        waiting.catch(() => undefined);
+        scope.defer(() => waiting.catch(() => undefined));
+        if (phase === "final") {
+          await workMilestone(
+            waiting,
+            initial.promise,
+            "initial probe before current final error",
+          );
+          exited = true;
+          owner.resolve({ code: 0 });
         }
-      }, [{ label: "first", exit: first.promise }, {
-        label: "second",
-        exit: second.promise,
-      }]);
-      waiting.catch(() => undefined);
-      scope.defer(() => waiting.catch(() => undefined));
-      await workMilestone(waiting, initial.promise, "initial owners probe");
-      revision = 1;
-      first.resolve({ code: 0 });
-      await workMilestone(waiting, final.promise, "first owner's final probe");
-      revision = 2;
-      second.resolve({ code: 0 });
-      await second.promise;
-      release.resolve();
-      assertEquals(await waiting, { revision: 2 });
-      assertEquals({ events, active, peak }, {
-        events: ["read:0", "read:1", "read:2"],
-        active: 0,
-        peak: 1,
+        const error = await assertRejects(
+          () => waiting,
+          Error,
+          failure.message,
+        );
+        assertStrictEquals(error, failure);
+        assertEquals(events, phase === "final" ? ["live", "final"] : ["live"]);
       });
-    });
-  },
-);
+    },
+  );
+}
 
 Deno.test("process records: copied publication module carries its complete protocol into an isolated child", async () => {
   await withDirectory(async (directory, scope) => {

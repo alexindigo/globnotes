@@ -1261,11 +1261,15 @@ Deno.test("record channel: arrays are an explicit schema, not a globally invalid
   });
 });
 
-for (const beforeExit of [null, '{"revision":1}']) {
+for (
+  const { label, bytes: beforeExit } of [
+    { label: "miss", bytes: null },
+    { label: "snapshot", bytes: '{"revision":1}' },
+    { label: "decode error", bytes: '{"revision":' },
+  ]
+) {
   fixtureTest(
-    `record channel: an in-flight pre-exit ${
-      beforeExit === null ? "miss" : "snapshot"
-    } is joined, then a fresh serialized read sees the final record`,
+    `record channel: an in-flight pre-exit ${label} is joined, then a fresh serialized read sees the final record`,
     async (testScope) => {
       await withRecords(async (f) => {
         if (beforeExit !== null) publishRecord(f.file, beforeExit);
