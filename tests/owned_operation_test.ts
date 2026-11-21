@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import { fixtureScope } from "./helpers/fixture_scope.ts";
 import { bounded } from "./helpers/worker_liveness.ts";
 import { OwnershipError } from "../shared/ownership.js";
@@ -10,6 +16,7 @@ import {
 } from "../server/observed_time.ts";
 import { PLUGIN_LIMITS } from "../server/plugins/contracts.ts";
 import {
+  boundOperation,
   type HeldOperation,
   heldOperation,
   type OperationProgress,
@@ -17,6 +24,164 @@ import {
 import { READINESS_MS, ReadinessError } from "./helpers/wait.ts";
 import { waitForCancellation } from "./helpers/fixture_coordination.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
+
+for (const timing of ["live", "late"] as const) {
+  for (const disposal of ["complete", "pending", "rejected"] as const) {
+    Deno.test(`bound operation: ${timing} response has ${disposal} disposal without retaining admission`, async () => {
+      const controller = new AbortController();
+      const cancelled = new Error("request lifetime cancelled");
+      const request = Promise.withResolvers<{ id: string }>();
+      const entered = Promise.withResolvers<void>();
+      const disposed = Promise.withResolvers<void>();
+      const disposalObserved = Promise.withResolvers<void>();
+      const pendingDisposal = Promise.withResolvers<void>();
+      const value = { id: "actual response" };
+      const events: string[] = [];
+      const running = boundOperation({
+        signal: controller.signal,
+        dispose(response: typeof value) {
+          assertStrictEquals(response, value);
+          events.push("disposed");
+          disposed.resolve();
+          if (disposal === "pending") return pendingDisposal.promise;
+          if (disposal === "rejected") {
+            const releasing = Promise.reject(new Error("disposal failed"));
+            const then = releasing.then.bind(releasing);
+            Object.defineProperty(releasing, "then", {
+              get() {
+                events.push("disposal rejection observed");
+                disposalObserved.resolve();
+                return then;
+              },
+            });
+            return releasing;
+          }
+        },
+      }, (signal) => {
+        assertStrictEquals(signal, controller.signal);
+        events.push("started");
+        entered.resolve();
+        return request.promise;
+      });
+      await workMilestone(running, entered.promise, "bound request started");
+      if (timing === "late") {
+        controller.abort(cancelled);
+        const error = await assertRejects(
+          () => bounded(running, "cancelled bound observation"),
+          Error,
+          cancelled.message,
+        );
+        assertStrictEquals(error, cancelled);
+        events.push("cancelled observation returned");
+      }
+      request.resolve(value);
+      await bounded(disposed.promise, "actual response disposal invoked");
+      if (disposal === "rejected") {
+        await bounded(
+          disposalObserved.promise,
+          "actual disposal rejection observed",
+        );
+      }
+      if (timing === "live") {
+        assertStrictEquals(
+          await bounded(running, "bound observation ignores pending disposal"),
+          value,
+        );
+        events.push("live observation returned");
+      }
+      assertEquals(events, [
+        "started",
+        ...(timing === "late" ? ["cancelled observation returned"] : []),
+        "disposed",
+        ...(disposal === "rejected" ? ["disposal rejection observed"] : []),
+        ...(timing === "live" ? ["live observation returned"] : []),
+      ]);
+    });
+  }
+}
+
+for (const timing of ["live", "late"] as const) {
+  Deno.test(`bound operation: ${timing} transport rejection remains observed on the original request`, async () => {
+    const controller = new AbortController();
+    const cancellation = new Error("bound lifetime cancelled");
+    const failure = new Error("actual transport failure");
+    const request = Promise.withResolvers<number>();
+    const entered = Promise.withResolvers<void>();
+    const observed = Promise.withResolvers<void>();
+    const then = request.promise.then.bind(request.promise);
+    const events: string[] = [];
+    let reads = 0;
+    Object.defineProperty(request.promise, "then", {
+      get() {
+        reads++;
+        return (
+          success: (value: number) => unknown,
+          rejected: (error: unknown) => unknown,
+        ) =>
+          then(success, (error) => {
+            events.push("transport rejection observed");
+            const result = rejected(error);
+            observed.resolve();
+            return result;
+          });
+      },
+    });
+    const running = boundOperation({
+      signal: controller.signal,
+      dispose() {
+        events.push("unexpected disposal");
+      },
+    }, () => {
+      entered.resolve();
+      return request.promise;
+    });
+    await workMilestone(
+      running,
+      entered.promise,
+      "rejecting bound request started",
+    );
+    if (timing === "late") controller.abort(cancellation);
+    const checked = assertRejects(
+      () => bounded(running, "bound transport rejection"),
+      Error,
+      timing === "late" ? cancellation.message : failure.message,
+    );
+    if (timing === "late") {
+      await checked;
+      events.push("cancelled observation returned");
+    }
+    request.reject(failure);
+    await bounded(observed.promise, "original transport rejection callback");
+    const error = await checked;
+    assertStrictEquals(error, timing === "late" ? cancellation : failure);
+    assertEquals([events, reads], [[
+      ...(timing === "late" ? ["cancelled observation returned"] : []),
+      "transport rejection observed",
+    ], 1]);
+  });
+}
+
+for (const preAborted of [false, true]) {
+  Deno.test(`bound operation: ${preAborted ? "pre-aborted" : "immediate cancellation"} starts no request`, async () => {
+    const controller = new AbortController();
+    const cause = new Error("cancelled before effects");
+    const effects: string[] = [];
+    if (preAborted) controller.abort(cause);
+    const running = boundOperation({
+      signal: controller.signal,
+      dispose() {
+        effects.push("disposed");
+      },
+    }, () => {
+      effects.push("started");
+      return 7;
+    });
+    if (!preAborted) controller.abort(cause);
+    const error = await assertRejects(() => running, Error, cause.message);
+    assertStrictEquals(error, cause);
+    assertEquals(effects, []);
+  });
+}
 
 const identity = {};
 const options = (progress: OperationProgress = { kind: "product" }) => ({

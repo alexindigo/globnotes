@@ -19,6 +19,21 @@ import { SELECTION } from "../client/tests/e2e/legacy-native-suite.mjs";
 import { registeredOwnership } from "./helpers/ownership_rules.ts";
 import { LEGACY_OWNERSHIP } from "./helpers/ownership_legacy.ts";
 
+Deno.test("bound operation guard: boot cannot own a raw constructor or cancellation race", () => {
+  const file = "tests/helpers/boot.ts";
+  const sites = registeredOwnership([{
+    file,
+    text: "new Promise(() => {});\nPromise.race([]);",
+  }]);
+  assertEquals(
+    sites.map(({ capability, source }) => ({ capability, source })),
+    [
+      { capability: "Promise.*", source: "Promise" },
+      { capability: "Promise.race", source: "Promise.race" },
+    ],
+  );
+});
+
 for (
   const file of [
     "tests/helpers/owned_operation.ts",

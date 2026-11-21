@@ -21,6 +21,7 @@ import { createFixtureScope } from "./fixture_scope_engine.ts";
 import { done, pending, waitUntil } from "./wait.ts";
 import { testEnvironment } from "./environment.ts";
 import { publishRecord } from "./process_records.ts";
+import { boundOperation } from "./owned_operation.ts";
 import type { StoredConfig } from "../../server/config.ts";
 
 const SERVER_MAIN = path.fromFileUrl(
@@ -255,38 +256,22 @@ export async function bootServer(
               ownerGone.signal,
               scopeSignal,
             ]);
-            requestSignal.throwIfAborted();
-            let onAbort!: () => void;
-            const cancelled = new Promise<never>((_resolve, reject) => {
-              onAbort = () => reject(requestSignal.reason);
-            });
-            requestSignal.addEventListener("abort", onAbort, { once: true });
-            // Native fetch honors this signal; the contract IO port may not.
-            // Observe late results for disposal without letting them hold the
-            // scope's admission drain open after its cancellation.
-            const receiving = Promise.resolve().then(() => {
-              requestSignal.throwIfAborted();
-              return healthFetch(
+            return await boundOperation<Response>({
+              signal: requestSignal,
+              // Cancellation-ignoring disposal must not retain health admission.
+              // P04 observes its rejection and disposes late responses as well.
+              dispose: (response) => response.body?.cancel(),
+            }, (signal) =>
+              healthFetch(
                 `${
                   origin?.(listeningPort) ??
                     `http://127.0.0.1:${listeningPort}`
                 }${prefix}` +
                   "/_/api/health",
                 {
-                  signal: requestSignal,
+                  signal,
                 },
-              );
-            }).then((res) => {
-              // Response disposal must not hold admission open: an injected
-              // cancel can ignore cancellation and never settle.
-              res.body?.cancel().catch(() => {});
-              return res;
-            });
-            try {
-              return await Promise.race([receiving, cancelled]);
-            } finally {
-              requestSignal.removeEventListener("abort", onAbort);
-            }
+              ));
           })).value;
           // The successful response may have been admitted before actual exit.
           // Readiness cannot outlive the process that supplied that response.

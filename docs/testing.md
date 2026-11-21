@@ -511,6 +511,18 @@ Neither adds a timer around admitted work.
 
 ### Held operations
 
+`helpers/owned_operation.ts` also exposes `boundOperation({ signal, dispose },
+start)` for transport observations that must release admission on cancellation
+even when injected I/O ignores its signal. It binds one actual start to its
+captured completion and the caller's existing cancellation lifetime. Every
+received result is passed to its captured disposer, including late results;
+asynchronous disposal rejection is observed without awaiting disposal. This
+does not assert that cancellation-ignoring I/O has stopped. Disposal belongs to
+the returned transport result, not to resources already released by the caller.
+Boot's health admission uses this surface with response-body cancellation;
+its existing readiness deadline and child-exit barriers remain the owners of
+startup timing and process liveness.
+
 `helpers/owned_operation.ts` binds a held boundary to the operation that starts
 it. Use `heldOperation(options, start, use)`: `start(hold, signal)` installs the
 injected boundary and starts the real request; the callback uses `reached()`,

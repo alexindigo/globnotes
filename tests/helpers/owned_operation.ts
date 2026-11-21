@@ -31,6 +31,76 @@ export interface HeldOperation<T> {
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
 
+/** One captured subscription to the actual request, shared by both surfaces. */
+function subscribeStarted<T>(
+  start: () => T | Promise<T>,
+  record: (outcome: Outcome<T>) => void,
+) {
+  try {
+    const started = start();
+    const source = isPromise(started)
+      ? started as Promise<T>
+      : Promise.resolve(started);
+    const then = source.then;
+    then.call(
+      source,
+      (value) => record({ ok: true, value }),
+      (error) => record({ ok: false, error }),
+    );
+  } catch (error) {
+    record({ ok: false, error });
+  }
+}
+
+export interface BoundOperationOptions<T> {
+  signal: AbortSignal;
+  /** Invoked for every received result, including after cancellation. Disposal
+   * rejection is observed, but its completion cannot delay the observation. */
+  dispose(value: T): unknown;
+}
+
+/** Observe one started IO operation within its caller's cancellation lifetime.
+ * Unlike heldOperation, this does not join cancellation-ignoring IO or disposal.
+ * Late completions retain their response disposer, not the caller's admission.
+ * The caller supplies its existing readiness bound; no clock or retry is added. */
+export async function boundOperation<T>(
+  options: BoundOperationOptions<T>,
+  start: (signal: AbortSignal) => T | Promise<T>,
+): Promise<T> {
+  const signal = options.signal;
+  signal.throwIfAborted();
+  const dispose = options.dispose.bind(options);
+  const { addEventListener, removeEventListener } = signal;
+  return await fixtureScope(async (scope) => {
+    const observation = Promise.withResolvers<Outcome<T>>();
+    const cancel = () =>
+      observation.resolve({ ok: false, error: signal.reason });
+    scope.defer(() => removeEventListener.call(signal, "abort", cancel));
+    addEventListener.call(signal, "abort", cancel, { once: true });
+    if (signal.aborted) cancel();
+    // Preserve deferred start and the pre-effect cancellation fence. This task
+    // subscribes without waiting for the request, so it cannot retain admission.
+    Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      subscribeStarted(() => start(signal), (outcome) => {
+        if (outcome.ok) {
+          try {
+            Promise.resolve(dispose(outcome.value)).catch(() => {});
+          } catch (error) {
+            observation.resolve({ ok: false, error });
+            return;
+          }
+        }
+        observation.resolve(outcome);
+      });
+    }).catch((error) => observation.resolve({ ok: false, error }));
+    const outcome = await observation.promise;
+    signal.throwIfAborted();
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
+  });
+}
+
 /** Start and hold together, registering release/drain before invoking start.
  * The callback receives no bare entry promise or caller-selected completion.
  * This owns only the held boundary, not arbitrary uncooperative I/O: start must
@@ -129,28 +199,14 @@ export async function heldOperation<T, R>(
     });
     // Register first, then start before the scenario callback can run. A sync
     // rejection becomes the actual operation's rejection, not an orphan marker.
-    try {
+    subscribeStarted(() => {
       assertOwner();
-      const started = start(() => {
+      return start(() => {
         assertOwner();
         entry.resolve();
         return gate.promise;
       }, signal);
-      // Subscribe to the real native request directly, recording its outcome in
-      // that first callback. All later observers use our captured completion,
-      // never reread the request's mutable then method across awaits.
-      const source = isPromise(started)
-        ? started as Promise<T>
-        : Promise.resolve(started);
-      const then = source.then;
-      then.call(
-        source,
-        (value) => record({ ok: true, value }),
-        (error) => record({ ok: false, error }),
-      );
-    } catch (error) {
-      record({ ok: false, error });
-    }
+    }, record);
     const operation: HeldOperation<T> = Object.freeze({
       async reached() {
         assertOwner();
