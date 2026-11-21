@@ -27,6 +27,9 @@ export interface HeldOperation<T> {
   release(): void;
   /** Release the held boundary and observe this exact operation's result. */
   result(): Promise<T>;
+  /** Whether this exact reason is a recorded terminal product rejection, not
+   * a failure of observing the operation. Does not claim or settle the work. */
+  isProductRejection(reason: unknown): boolean;
 }
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
@@ -148,6 +151,8 @@ export async function heldOperation<T, R>(
     const recorded = Promise.withResolvers<Outcome<T>>();
     let outcome: Outcome<T> | undefined;
     let claimed = false;
+    const isProductRejection = (reason: unknown) =>
+      !!outcome && !outcome.ok && Object.is(outcome.error, reason);
     const record = (value: Outcome<T>) => {
       if (outcome) return;
       outcome = value;
@@ -236,11 +241,15 @@ export async function heldOperation<T, R>(
           // Only consuming the actual terminal error claims it; a containment
           // failure still leaves disposal responsible for the original work.
           assertOwner();
-          if (outcome && !outcome.ok && Object.is(outcome.error, error)) {
+          if (isProductRejection(error)) {
             claimed = true;
           }
           throw error;
         }
+      },
+      isProductRejection(reason: unknown) {
+        assertOwner();
+        return isProductRejection(reason);
       },
     });
     return await use(operation);

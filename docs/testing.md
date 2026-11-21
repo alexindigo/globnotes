@@ -531,6 +531,10 @@ the original result. No bare entry promise or unrelated completion is exposed.
 Cleanup is registered before `start`, always releases before draining, and the
 common resource core preserves the callback failure plus any distinct drain
 failure. An explicitly asserted operation rejection is not reported twice.
+`isProductRejection(reason)` checks the existing recorded terminal failure by
+identity without claiming it; it is false for a readiness observation failure,
+even if the original operation later fulfills. The query retains the handle's
+normal current-owner and lifetime guards.
 The adapter keeps its own fixture scope: `onCancel` releases the hold and the
 scope's signal cancels cooperative I/O before ordinary cleanup drains it.
 Effects on another fixture's resources enter through that fixture's `admit`
@@ -579,6 +583,8 @@ consumer coverage, not a helper-directory exemption or a claim of full closure.
 its own `owner`, `progress` and `start(hold, signal)`; the injected hold belongs
 inside that operation's actual admission. There is no caller-supplied entry or
 completion promise. Numeric positions, array inputs and unknown names reject.
+Inherited contender definitions reject before any definition getter or start;
+own non-enumerable definitions and null-prototype maps remain supported.
 
 All contenders must reach admission before release. The named `completeFirst`
 operation is released and awaited to actual settlement before the remaining
@@ -595,8 +601,11 @@ Definition ports and nested progress mode are captured before any sibling starts
 owner/start methods retain their original receiver. Each optional `signal` reaches
 P04. Failed admission, revoked results and failed release cancel the live group
 before nested drain, so dependent peer IO cannot remain behind an unopened gate.
-Only actual product rejections become keyed outcomes; authority failures reject
-the exercise. The adapter has no Deno APIs, and its runtime/guard contracts permit
+Only P04-recorded product rejections become keyed outcomes. Observation failures
+cancel the group and reject with the original error; authority failures also
+reject the exercise, retaining distinct guard failures. A product may itself
+reject with a readiness-shaped error: identity, not error type, distinguishes
+that outcome. The adapter has no Deno APIs, and its runtime/guard contracts permit
 only `Deno.test`, through the same explicit ownership registration as other pilots.
 
 The contract pilot exercises both completion orders and reversed submission,

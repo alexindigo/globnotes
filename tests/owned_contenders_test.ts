@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
 import { type Contender, ownedContenders } from "./helpers/owned_contenders.ts";
 import { fixtureScope } from "./helpers/fixture_scope.ts";
 import { bounded } from "./helpers/worker_liveness.ts";
@@ -8,6 +13,7 @@ import {
   waitForCancellation,
 } from "./helpers/fixture_coordination.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
+import { READINESS_MS, ReadinessError } from "./helpers/wait.ts";
 
 const contender = <T>(start: Contender<T>["start"]): Contender<T> => {
   const owner = {};
@@ -355,7 +361,7 @@ Deno.test("owned contenders: positional, foreign and malformed inputs reject bef
   await assertRejects(
     () => ownedContenders(Object.create({ inherited: operation }), "inherited"),
     TypeError,
-    "completeFirst must name an own contender",
+    "Contender definitions must be own properties",
   );
   await assertRejects(
     () =>
@@ -799,3 +805,161 @@ Deno.test("owned contenders review: release-time revocation rejects after exact 
   );
   assertEquals(events, ["first completed", "second completed"]);
 });
+
+for (
+  const inheritance of [
+    "class getter",
+    "enumerable",
+    "non-enumerable",
+    "symbol",
+  ]
+) {
+  Deno.test(`owned contenders PR106: rejects inherited definitions (${inheritance}) before reading or starting work`, async () => {
+    const effects: string[] = [];
+    const selected = contender(async (hold) => {
+      effects.push("selected started");
+      await hold();
+      return 1;
+    });
+    const peer = contender(async (hold) => {
+      effects.push("peer started");
+      await hold();
+      return 2;
+    });
+    class Definitions {
+      selected = selected;
+      get peer() {
+        effects.push("inherited getter read");
+        return peer;
+      }
+    }
+    const inheritedKey = inheritance === "symbol" ? Symbol("peer") : "peer";
+    const definitions: {
+      selected: Contender<number>;
+      peer: Contender<number>;
+    } = inheritance === "class getter" ? new Definitions() : Object.create(
+      Object.create(null, {
+        [inheritedKey]: {
+          value: peer,
+          enumerable: inheritance === "enumerable",
+        },
+      }),
+      { selected: { value: selected } },
+    );
+    await assertRejects(
+      () => ownedContenders(definitions, "selected"),
+      TypeError,
+      "Contender definitions must be own properties",
+    );
+    assertEquals(effects, []);
+  });
+}
+
+for (const nullPrototype of [false, true]) {
+  Deno.test(`owned contenders PR106: accepts own non-enumerable definitions (null prototype=${nullPrototype})`, async () => {
+    const definitions: {
+      selected: Contender<number>;
+      peer: Contender<string>;
+    } = Object.create(
+      nullPrototype ? null : Object.prototype,
+      {
+        selected: {
+          value: contender(async (hold) => {
+            await hold();
+            return 7;
+          }),
+        },
+        peer: {
+          value: contender(async (hold) => {
+            await hold();
+            return "peer";
+          }),
+        },
+      },
+    );
+    assertEquals({ ...await ownedContenders(definitions, "selected") }, {
+      selected: { status: "fulfilled", value: 7 },
+      peer: { status: "fulfilled", value: "peer" },
+    });
+  });
+}
+
+Deno.test("owned contenders PR106: readiness expiry followed by product fulfillment rejects the observation", async () => {
+  const realNow = Date.now;
+  let expiring = false;
+  let abortReason: unknown;
+  const events: string[] = [];
+  // Advance only the existing readiness clock after the result wait starts.
+  // Completion is an owned IO gate, released by either group abort or the peer.
+  Date.now = () => expiring ? READINESS_MS : 0;
+  try {
+    await fixtureScope(async (scope) => {
+      const completed = fixtureGate(scope);
+      const running = ownedContenders({
+        selected: {
+          ...contender(async (hold, signal) => {
+            const onAbort = () => {
+              abortReason = signal.reason;
+              completed.resolve();
+            };
+            scope.defer(() => signal.removeEventListener("abort", onAbort));
+            signal.addEventListener("abort", onAbort, { once: true });
+            await hold();
+            expiring = true;
+            events.push("product waiting");
+            await completed.promise;
+            events.push("product fulfilled");
+            return 42;
+          }),
+          progress: { kind: "controlled", clock: "external" },
+        },
+        peer: contender(async (hold) => {
+          await hold();
+          completed.resolve();
+          return 7;
+        }),
+      }, "selected");
+      const error = await assertRejects(
+        () => bounded(running, "readiness failure drains fulfilled contender"),
+        ReadinessError,
+        `contender selected: result: readiness bound exceeded after ${READINESS_MS} ms (readiness bound ${READINESS_MS} ms); last observed state: {"phase":"result","clock":{"kind":"controlled","clock":"external"}}`,
+      );
+      assertStrictEquals(abortReason, error);
+      assertEquals(events, ["product waiting", "product fulfilled"]);
+    });
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+for (const readinessError of [false, true]) {
+  Deno.test(`owned contenders PR106: a recorded product rejection keeps its original reason (readiness-shaped=${readinessError})`, async () => {
+    const cause = readinessError
+      ? new ReadinessError(
+        "actual product",
+        "product failed",
+        { revision: 1 },
+        0,
+      )
+      : new Error("actual product rejected");
+    const outcomes = await ownedContenders({
+      selected: {
+        ...contender(async (hold) => {
+          await hold();
+          throw cause;
+        }),
+        progress: { kind: "controlled", clock: "external" },
+      },
+      peer: contender(async (hold) => {
+        await hold();
+        return 7;
+      }),
+    }, "selected");
+    assertEquals({ ...outcomes }, {
+      selected: { status: "rejected", reason: cause },
+      peer: { status: "fulfilled", value: 7 },
+    });
+    assert(outcomes.selected.status === "rejected");
+    assertStrictEquals(outcomes.selected.reason, cause);
+  });
+}

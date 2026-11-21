@@ -29,6 +29,23 @@ export async function ownedContenders<T extends Record<string, unknown>>(
   ) {
     throw new TypeError("Contenders require a named operation map");
   }
+  // Inspect descriptors, never inherited getters. Only own definitions can have
+  // corresponding own outcomes; retain ordinary Object.prototype conveniences.
+  for (
+    let prototype = Object.getPrototypeOf(contenders);
+    prototype && prototype !== Object.prototype;
+    prototype = Object.getPrototypeOf(prototype)
+  ) {
+    for (const key of Reflect.ownKeys(prototype)) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, key)!;
+      if (key === "constructor" && typeof descriptor.value === "function") {
+        continue;
+      }
+      if (!Object.hasOwn(contenders, key)) {
+        throw new TypeError("Contender definitions must be own properties");
+      }
+    }
+  }
   const named: Record<string, Contender<unknown>> = contenders;
   const entries = Object.getOwnPropertyNames(named).map(
     (name) => {
@@ -85,21 +102,25 @@ export async function ownedContenders<T extends Record<string, unknown>>(
     try {
       return { status: "fulfilled", value: await operation.result() } as const;
     } catch (reason) {
-      // A rejected product result is an outcome only while its P04 handle is
-      // still current. Its idempotent release port checks that same authority;
-      // revocation must cancel peers now, not wait for a dependent result first.
+      // P04 alone records the terminal product outcome. A current handle can
+      // also fail observation while its actual work remains pending or succeeds.
       try {
-        operation.release();
+        if (operation.isProductRejection(reason)) {
+          return { status: "rejected", reason } as const;
+        }
       } catch (guardError) {
-        const failure = guardError === reason ? reason : new AggregateError(
-          [reason, guardError],
-          "Contender result authority failed",
-          { cause: reason },
-        );
+        const failure = Object.is(guardError, reason)
+          ? reason
+          : new AggregateError(
+            [reason, guardError],
+            "Contender result authority failed",
+            { cause: reason },
+          );
         cancellation.abort(failure);
         throw failure;
       }
-      return { status: "rejected", reason } as const;
+      cancellation.abort(reason);
+      throw reason;
     }
   };
   const enter = async (index: number): Promise<ContenderOutcomes<T>> => {

@@ -370,6 +370,11 @@ Deno.test("owned operation: an issued handle and hold callback retire when their
   );
   await assertRejects(() => saved.result(), OwnershipError, "Owner is retired");
   assertThrows(() => saved.release(), OwnershipError, "Owner is retired");
+  assertThrows(
+    () => saved.isProductRejection(new Error("late observation")),
+    OwnershipError,
+    "Owner is retired",
+  );
   await assertRejects(
     async () => {
       await held();
@@ -389,15 +394,53 @@ Deno.test("owned operation: original result is fixed and release is idempotent",
     return original;
   }, async (operation) => {
     await operation.reached();
+    assertEquals(
+      operation.isProductRejection(new Error("not a rejection")),
+      false,
+    );
     operation.release();
     operation.release();
     const result = await operation.result();
     assertStrictEquals(await operation.result(), result);
     assertStrictEquals(result, original);
     assertEquals(result, { consumer: "original" });
+    assertEquals(operation.isProductRejection(original), false);
   });
   assertEquals(starts, 1);
   assertEquals(releases, 1);
+});
+
+Deno.test("owned operation PR106: terminal rejection identity queries are read-only", async () => {
+  const cause = new Error("unclaimed terminal product failure");
+  let original!: Promise<never>;
+  const error = await assertRejects(
+    () =>
+      heldOperation(options(), (hold) => {
+        original = (async () => {
+          await hold();
+          throw cause;
+        })();
+        return original;
+      }, async (operation) => {
+        assertEquals(operation.isProductRejection(cause), false);
+        await operation.reached();
+        operation.release();
+        const outcome = await original.then(
+          (value) => ({ status: "fulfilled", value } as const),
+          (reason) => ({ status: "rejected", reason } as const),
+        );
+        assertEquals(outcome, { status: "rejected", reason: cause });
+        assertEquals([
+          operation.isProductRejection(cause),
+          operation.isProductRejection(new Error(cause.message)),
+          operation.isProductRejection(undefined),
+        ], [true, false, false]);
+        // Querying must not claim this rejection; disposal must still report it.
+      }),
+    Error,
+    cause.message,
+  );
+  assertStrictEquals(error, cause);
 });
 
 Deno.test("owned operation: product-bounded work adds no readiness clock or deadline", async () => {
