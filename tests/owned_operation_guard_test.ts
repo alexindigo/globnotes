@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import {
   familyInventoryErrors,
   inventoryErrors,
@@ -390,7 +391,7 @@ Deno.test("owned operation guard: exact inventory cannot bless another occurrenc
 
 Deno.test("isolation contract: P04 parsed coordination pilot and finite legacy inventory", async () => {
   const sources = await repositorySources(
-    new URL("../", import.meta.url).pathname,
+    fromFileUrl(new URL("../", import.meta.url)),
   );
   const files = new Set(sources.map((source) => source.file));
   const sites = registeredOwnership(sources);
