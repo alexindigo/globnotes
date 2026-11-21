@@ -531,7 +531,7 @@ const rule = (id: string) => RULES.find((entry) => entry.id === id)!.pattern;
 const URL_PATH_USES = [
   {
     name: "browser location paths",
-    pattern: /\blocation\s*\.\s*pathname\b/g,
+    pattern: /\b(?:window\s*\.\s*)?location\s*\.\s*pathname\b/g,
   },
   {
     name: "HTTP request and captured network response paths",
@@ -575,9 +575,15 @@ function filePathnameSites(file: string, text: string) {
   const lines = text.split("\n");
   for (const allowed of URL_PATH_USES) {
     if (allowed.files && !allowed.files.includes(file)) continue;
+    // An exception owns the complete receiver, never a suffix of another
+    // object's member (including whitespace and optional chaining).
+    const complete = new RegExp(
+      `(?<![\\w$]|\\.\\s*)(?:${allowed.pattern.source})`,
+      allowed.pattern.flags,
+    );
     // Mask only the named expression, not its whole line or file; keep lines.
     text = text.replace(
-      allowed.pattern,
+      complete,
       (expression) => expression.replace(/[^\n]/g, " "),
     );
   }
@@ -594,6 +600,12 @@ Deno.test("isolation contract: filesystem paths use fromFileUrl, not URL pathnam
       "const file = new URL(import.meta.url); read(file.pathname);",
       'read(new URL("file:///checkout%20space/VERSION").pathname);',
       "const url = new URL(import.meta.url); read(url.pathname);",
+      "const holder = { location: new URL(import.meta.url) }; read(holder.location.pathname);",
+      "read(holder.window.location.pathname);",
+      "read(holder . location.pathname);",
+      "read(holder . window . location.pathname);",
+      "read(holder?.location.pathname);",
+      "read($location.pathname);",
     ]
   ) {
     assertEquals(filePathnameSites("tests/bad.ts", sample), [
@@ -611,6 +623,17 @@ Deno.test("isolation contract: filesystem paths use fromFileUrl, not URL pathnam
   assertEquals(filePathnameSites("server/main.ts", besideHttp), [
     { line: 1, text: besideHttp },
   ]);
+  for (
+    const [file, sample] of [
+      ["server/main.ts", "read(holder.url.pathname);"],
+      [
+        "tests/interop/remotely_save_reference.mjs",
+        "read(holder.base.pathname);",
+      ],
+    ]
+  ) {
+    assertEquals(filePathnameSites(file, sample), [{ line: 1, text: sample }]);
+  }
   assertEquals(
     filePathnameSites(
       "tests/good.ts",
@@ -621,7 +644,7 @@ Deno.test("isolation contract: filesystem paths use fromFileUrl, not URL pathnam
   assertEquals(
     filePathnameSites(
       "tests/good.ts",
-      "new URL(request.url).pathname; location.pathname;",
+      "new URL(request.url).pathname; location.pathname; window.location.pathname; window . location . pathname;",
     ),
     [],
   );
