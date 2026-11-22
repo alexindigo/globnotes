@@ -17,6 +17,29 @@ interface Inspection<T> {
   readonly then?: never;
 }
 
+/** Seal a synchronous data transform before it can hide a Promise in an envelope.
+ * Stream chunks use their separate plain-envelope path and remain arbitrary data. */
+export function synchronousTransform<I, V>(
+  inspect: (input: I) => V,
+): (input: I) => Inspection<V> {
+  if (
+    typeof inspect !== "function" ||
+    Object.prototype.toString.call(inspect) === "[object AsyncFunction]"
+  ) {
+    throw new TypeError("Disclosure transform must be synchronous");
+  }
+  return (input) => {
+    const value = inspect(input);
+    if (
+      value != null &&
+      typeof (value as { then?: unknown }).then === "function"
+    ) {
+      throw new TypeError("Disclosure transform must be synchronous");
+    }
+    return { value };
+  };
+}
+
 /** Inspection may run getters. Delivery is a private synchronous native effect,
  * bound by the owner, never supplied by a public caller. No result or value
  * inspection is permitted after the final owner fences. Inspectors return plain

@@ -12,8 +12,91 @@ import {
   type OperationMode,
   type OperationWitness,
 } from "../server/operation_lease.ts";
-import { bindGuardedSink } from "../server/internal/guarded_sink.ts";
+import {
+  bindGuardedSink,
+  synchronousTransform,
+} from "../server/internal/guarded_sink.ts";
 import { OwnershipError } from "../shared/ownership.js";
+
+Deno.test("G3 disclosure: async transforms reject at binding without entering or delivering", () => {
+  const owner = createOperationLease("live", [() => {}]);
+  const events: string[] = [];
+  assertThrows(
+    () =>
+      bindGuardedSink(
+        owner.lease,
+        "live",
+        synchronousTransform(async () => {
+          events.push("inspect");
+          return await Promise.resolve("private");
+        }),
+        () => {
+          events.push("deliver");
+          return undefined;
+        },
+      ),
+    TypeError,
+    "Disclosure transform must be synchronous",
+  );
+  assertEquals(events, []);
+});
+
+for (const kind of ["promise", "thenable"] as const) {
+  Deno.test(`G3 disclosure: ${kind} transform results reject before delivery`, () => {
+    const owner = createOperationLease("live", [() => {}]);
+    const events: string[] = [];
+    const deliver = bindGuardedSink(
+      owner.lease,
+      "live",
+      synchronousTransform(() => {
+        events.push("inspect");
+        return kind === "promise" ? Promise.resolve("private") : {
+          get then() {
+            events.push("then");
+            return () => {
+              events.push("assimilate");
+            };
+          },
+        };
+      }),
+      () => {
+        events.push("deliver");
+        return undefined;
+      },
+    );
+    assertThrows(
+      () => deliver(undefined),
+      TypeError,
+      "Disclosure transform must be synchronous",
+    );
+    assertEquals(
+      events,
+      kind === "promise" ? ["inspect"] : ["inspect", "then"],
+    );
+  });
+}
+
+Deno.test("G3 disclosure: transform then getter retirement precedes the final delivery fence", () => {
+  const owner = createOperationLease("live", [() => {}]);
+  const events: string[] = [];
+  const deliver = bindGuardedSink(
+    owner.lease,
+    "live",
+    synchronousTransform(() => ({
+      get then() {
+        events.push("then");
+        owner.retire();
+        return undefined;
+      },
+    })),
+    () => {
+      events.push("deliver");
+      return undefined;
+    },
+  );
+  assertThrows(() => deliver(undefined), OwnershipError, "Owner is retired");
+  assertEquals(events, ["then"]);
+});
 
 Deno.test("operation lease: witness inputs are captured once before validation", () => {
   let reads = 0;

@@ -36,6 +36,7 @@ import { heldOperation } from "./helpers/owned_operation.ts";
 import { PluginHost, type RpcAuthority } from "../server/plugins/host.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
 import { type HostMessage } from "../server/plugins/contracts.ts";
+import { workMilestone } from "./helpers/product_settlement.ts";
 
 async function fixture(
   run: (f: Awaited<ReturnType<typeof prepare>>) => Promise<void>,
@@ -447,7 +448,17 @@ for (const mode of ["error", "cancel"] as const) {
 
 const service =
   `let messages=[];addEventListener('message',({data})=>{if(data.type==='rpcResponse')messages.push(data);});
-export function activate(ctx){ctx.commands.register({id:'read',label:'Read',target:'server'},async()=>await ctx.readNote('private'));ctx.commands.register({id:'detach',label:'Detach',target:'server'},()=>{ctx.readNote('private').catch(()=>{});return 'detached';});ctx.commands.register({id:'seen',label:'Seen',target:'server'},()=>messages);}`;
+export function activate(ctx){ctx.commands.register({id:'read',label:'Read',target:'server'},async()=>await ctx.readNote('private'));ctx.commands.register({id:'detach',label:'Detach',target:'server'},()=>{ctx.readNote('private').catch(()=>{});return 'detached';});ctx.commands.register({id:'fail',label:'Fail',target:'server'},()=>{throw new Error('before RPC preparation');});ctx.commands.register({id:'seen',label:'Seen',target:'server'},()=>messages);}`;
+
+function rpcPreparation(running: Promise<unknown>, prepared: Promise<void>) {
+  // A detached handler may finish before its RPC. Rejection must still win
+  // over a preparation milestone that can no longer be reached.
+  return workMilestone(
+    running.then(() => prepared),
+    prepared,
+    "G3 RPC preparation",
+  );
+}
 for (
   const change of [
     "unchanged",
@@ -557,8 +568,7 @@ for (
               handler(change === "context" ? "detach" : "read"),
               [],
             );
-            running.catch(() => {});
-            await prepared.promise;
+            await rpcPreparation(running, prepared.promise);
             if (change === "context") assertEquals(await running, "detached");
             await hold();
             released.resolve();
@@ -622,6 +632,56 @@ for (
       }
     }));
 }
+
+Deno.test("G3 RPC: invocation failure before preparation reaches the held operation", () =>
+  withPluginFixture(async (fixture, scope) => {
+    const dir = await fixture.install("g3-early-failure", {
+      runtime: { server: "service.js" },
+    }, { "service.js": service });
+    const prepared = fixtureGate(scope);
+    const calls: string[] = [];
+    const host = new PluginHost(
+      readManifest(dir),
+      fixture.vault,
+      () => {
+        calls.push("RPC preparation");
+        prepared.resolve();
+        return Promise.resolve(null);
+      },
+      1,
+      { role: "service" },
+    );
+    scope.defer(() => host.stop());
+    await host.start();
+    const handler = [...host.registrations].find(([, item]) =>
+      item.id === "fail"
+    )![0];
+    await assertRejects(
+      () =>
+        heldOperation({
+          label: "G3 failed RPC preparation",
+          progress: { kind: "product" },
+          owner: () => host,
+        }, (hold) =>
+          fixture.admit(async () => {
+            const running = host.invoke(handler, []);
+            await rpcPreparation(running, prepared.promise);
+            calls.push("held");
+            await hold();
+            return await running;
+          }), (operation) => operation.reached()),
+      Error,
+      "plugin handler failed",
+    );
+    assertEquals(calls, []);
+    assertEquals(
+      await host.invoke(
+        [...host.registrations].find(([, item]) => item.id === "seen")![0],
+        [],
+      ),
+      [],
+    );
+  }));
 
 Deno.test("G3 RPC: handle provenance rejects callbacks, null, clones and foreign children without invoking them", () =>
   withPluginFixture(async (fixture, scope) => {
@@ -729,3 +789,57 @@ Deno.test("G3 instance: credential facts are captured before the validation micr
       { login: "alice" },
     );
   }));
+
+for (const malformed of ["authorization", "cookie"] as const) {
+  Deno.test(`G3 instance: ${malformed} parse failures share the request outcome under its session owner`, () =>
+    fixture(async (f) => {
+      const request = f.request();
+      request.headers.delete("authorization");
+      request.headers.set(
+        malformed,
+        malformed === "authorization" ? "Basic bad" : "token=%",
+      );
+      const reads: string[] = [];
+      const get = request.headers.get.bind(request.headers);
+      request.headers.get = (name) => {
+        reads.push(name);
+        return get(name);
+      };
+      const first = f.auth.principal(request);
+      request.headers.delete(malformed);
+      request.headers.set("authorization", `Bearer ${f.signed.access_token}`);
+      const concurrent = f.auth.principal(request);
+      concurrent.catch(() => {});
+      const error = await assertRejects(() => first, HttpError, "HTTP 401");
+      const shared = await assertRejects(
+        () => concurrent,
+        HttpError,
+        "HTTP 401",
+      );
+      const repeated = await assertRejects(
+        () => f.auth.principal(request),
+        HttpError,
+        "HTTP 401",
+      );
+      assertStrictEquals(shared, error);
+      assertStrictEquals(repeated, error);
+      assertEquals(reads, ["authorization", "cookie"]);
+      f.adapters.sessions = new InstanceSessions(
+        f.accounts,
+        f.sessions.signing,
+        { expirySeconds: 1000 },
+      );
+      const [one, two] = await Promise.all([
+        f.auth.principal(request),
+        f.auth.principal(request),
+      ]);
+      assertStrictEquals(one, two);
+      assertEquals(one, f.signed.principal);
+      assertEquals(reads, [
+        "authorization",
+        "cookie",
+        "authorization",
+        "cookie",
+      ]);
+    }));
+}

@@ -69,8 +69,13 @@ export function createInstanceAuth(adapters: {
     }
     let pending = requests.get(request);
     if (!pending) {
-      const credential = token(request);
-      pending = Promise.resolve().then(() => sessions.resolve(credential));
+      try {
+        // Capture credentials synchronously, including failure, before yielding.
+        const credential = token(request);
+        pending = Promise.resolve().then(() => sessions.resolve(credential));
+      } catch (error) {
+        pending = Promise.reject(error);
+      }
       requests.set(request, pending);
     }
     try {

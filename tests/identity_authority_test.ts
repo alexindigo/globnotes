@@ -138,7 +138,7 @@ Deno.test("P05 delivery inspects a mutable getter before the final parent fence"
     } finally {
       current.releaseLock();
     }
-    assertEquals(reads, 2);
+    assertEquals(reads, 3);
     const queued = lease.disclose(prepared).getReader();
     reads = 0;
     retire = true;
@@ -148,7 +148,7 @@ Deno.test("P05 delivery inspects a mutable getter before the final parent fence"
         OwnershipError,
         "Owner is retired",
       );
-      assertEquals(reads, 1);
+      assertEquals(reads, 2);
     } finally {
       queued.releaseLock();
     }

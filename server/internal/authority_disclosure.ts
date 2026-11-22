@@ -3,7 +3,11 @@ import {
   assertOperationLease,
   type OperationLease,
 } from "../operation_lease.ts";
-import { bindGuardedSink, type Disclosure } from "./guarded_sink.ts";
+import {
+  bindGuardedSink,
+  type Disclosure,
+  synchronousTransform,
+} from "./guarded_sink.ts";
 
 declare const preparedReadBrand: unique symbol;
 /** No payload or authority is exposed on a queued handle. */
@@ -78,12 +82,12 @@ export function bindPreparedDisclosure<I, M extends DisclosureMode>(
   inspect: (value: I) => unknown,
   deliver: (prepared: { readonly value: unknown }) => undefined,
 ): (handle: PreparedAuthorityRead<I>) => void {
+  const transform = synchronousTransform(inspect);
   return bindGuardedSink(
     lease,
     mode,
-    (handle: PreparedAuthorityRead<I>) => ({
-      value: inspect(preparedValue(lease, handle)),
-    }),
+    (handle: PreparedAuthorityRead<I>) =>
+      transform(preparedValue(lease, handle)),
     deliver,
   );
 }
