@@ -14,8 +14,8 @@ import { command, DENO } from "./helpers/process.ts";
 import { assertUnowned } from "./ownership_review_test.ts";
 import "./ownership_erasure_test.ts";
 
-// These are source inputs, not executed counterexamples. The isolation contract
-// imports this file so parser-negative controls are always selected as well.
+// These are source inputs, not executed counterexamples. The contracts gate
+// discovers this file so parser-negative controls are always selected as well.
 const rejected = [
   '; new Deno.Command("true");',
   'function local() {}; new Deno.Command("true");',

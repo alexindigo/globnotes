@@ -151,7 +151,7 @@ One gate list serves the hook and full runs. Each gate logs to
 | 6 | handlers | `deno check` of every `server/api/endpoints/**/*.ts`, which main loads only at run time; pre-commit batches the same endpoints into one cached check, full runs check each endpoint separately |
 | 7 | shell | `bash -n` / `sh -n` of every `*.sh` file and `.githooks/*` |
 | 8 | e2e-modules | `deno bundle` (esbuild) of every `client/tests/e2e/*.mjs` and `*.js` into a scratch directory: links each module graph without running it, so a duplicate binding, a missing module or a missing named export fails even in a script the native suite doesn't select |
-| 9 | contracts | `tests/test_isolation_contract_test.ts`, `tests/devcontainer_caps_test.ts` |
+| 9 | contracts | `tests/test_isolation_contract_test.ts`, `tests/devcontainer_caps_test.ts`, discovered `tests/**/*_guard_test.ts` and the existing `tests/ownership_coverage_test.ts` |
 | 10 | server | `deno test --parallel` (`DENO_JOBS=4`) of the server tests, not `tests/timing/` |
 | 11 | timing | `deno test` of `tests/timing/`, serially |
 | 12 | client | Vitest with `VITEST_MAX_WORKERS=4`: the whole suite, or `vitest related` of changed files |

@@ -161,6 +161,16 @@ static_gates() {
     else
         gate install deno install
     fi
+    if [[ "$mode" != select ]]; then
+        # Install first; failed discovery must not silently omit guards.
+        local guard_modules
+        local guards=()
+        guard_modules="$(deno run --cached-only --frozen --config=deno.json --allow-read scripts/guard-modules.ts)"
+        if [[ -n "$guard_modules" ]]; then
+            mapfile -t guards <<< "$guard_modules"
+            set -- "$@" "${guards[@]}"
+        fi
+    fi
     gate lint deno lint server/ tests/
     gate check deno check server/main.ts tests/**/*.ts
     gate format deno fmt --check server/ tests/

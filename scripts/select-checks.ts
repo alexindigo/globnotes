@@ -6,6 +6,7 @@
  * Unknown paths still get related tests; selection errors fail the hook.
  */
 import { fromFileUrl, toFileUrl } from "@std/path";
+import { guardModules } from "./guard-modules.ts";
 
 export const STATIC_GATES = [
   "install",
@@ -314,7 +315,10 @@ export function selectChecks(changes: Change[], context: Context): Selection {
     version: 1,
     gates: GATE_ORDER.filter((gate) => gates.has(gate)),
     browser: false,
-    contractTests: CONTRACT_TESTS.filter((test) => tracked.has(test)),
+    contractTests: [
+      ...CONTRACT_TESTS.filter((test) => tracked.has(test)),
+      ...guardModules(context.files),
+    ],
     serverTests: serverTests.filter((test) => server.has(test)),
     timingTests: [...timing].sort(),
     clientTests: [...client].sort(),

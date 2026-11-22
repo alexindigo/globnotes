@@ -12,28 +12,12 @@
 
 import { assertEquals } from "@std/assert";
 import * as path from "@std/path";
-// Parser-negative controls must run even when related selection only selects
-// this always-on contract. No selector/facade migration is part of P01.
-import "./ownership_guard_test.ts";
-import "./ownership_coverage_test.ts";
-import "./ownership_resource_guard_test.ts";
-import "./ownership_fixture_guard_test.ts";
-import "./ownership_record_guard_test.ts";
-import "./ownership_child_guard_test.ts";
-import "./operation_lease_guard_test.ts";
-import "./owned_publication_guard_test.ts";
-import "./credential_secret_guard_test.ts";
-import "./credential_proof_guard_test.ts";
-import "./credential_transition_guard_test.ts";
-import "./credential_preparation_guard_test.ts";
+// The contracts gate discovers parser-negative controls by filename alongside
+// this always-on contract (scripts/guard-modules.ts).
 import {
   FIXTURE_OWNERSHIP,
   registeredOwnership,
 } from "./helpers/ownership_rules.ts";
-import "./owned_operation_guard_test.ts";
-import "./owned_contenders_guard_test.ts";
-import "./driver_phase_guard_test.ts";
-import "./fixture_clock_guard_test.ts";
 import {
   CHILD_OWNER,
   familyInventoryErrors,

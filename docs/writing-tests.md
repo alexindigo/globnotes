@@ -5,6 +5,16 @@ directly on the host. The tracked signed commit hook uses the same runner.
 Commands, gate selection and browser setup are in the
 [infrastructure reference](testing.md).
 
+## Always-on source guards
+
+Name source-guard modules `tests/**/*_guard_test.ts`. The contracts gate and
+commit selector discover them through `scripts/guard-modules.ts`; do not add
+imports to the isolation contract. Names with a separate `guard` segment but
+another suffix are reported rather than silently omitted. Runtime tests of
+guarded operations (such as `access_commit_guards_test.ts`) remain ordinary
+tests. The pre-existing `ownership_coverage_test.ts` is also always-on without
+renaming it.
+
 ## Compare the whole outcome
 
 Use `assertEquals` on the complete result or event list, including identities,

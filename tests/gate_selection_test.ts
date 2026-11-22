@@ -2,6 +2,80 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { command } from "./helpers/process.ts";
 
+for (const broken of [false, true]) {
+  Deno.test(`gates: contract discovery ${broken ? "fails closed" : "runs every guard"}`, async () => {
+    const root = await Deno.makeTempDir({ prefix: "gate-discovery-" });
+    try {
+      for (
+        const directory of ["bin", "logs", "tests", "server/api/endpoints"]
+      ) {
+        await Deno.mkdir(`${root}/${directory}`, { recursive: true });
+      }
+      await Deno.writeTextFile(
+        `${root}/tests/test_isolation_contract_test.ts`,
+        "",
+      );
+      await Deno.writeTextFile(`${root}/tests/devcontainer_caps_test.ts`, "");
+      await Deno.writeTextFile(
+        `${root}/bin/deno`,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *scripts/guard-modules.ts* ]]; then
+  ${
+          broken
+            ? "exit 42"
+            : "printf 'tests/a_guard_test.ts\\ntests/nested/b_guard_test.ts\\n'"
+        }
+elif [[ "$1" == test && "$*" == *test_isolation_contract_test.ts* ]]; then
+  printf '%s\\n' "$@" > "$GATE_FIXTURE/contracts"
+fi
+`,
+        { mode: 0o755 },
+      );
+      const script = (await Deno.readTextFile(
+        new URL("../scripts/gates.sh", import.meta.url),
+      ))
+        .replace("cd /workspace", 'cd "$GATE_FIXTURE"')
+        .replace("logs=/run-logs", 'logs="$GATE_FIXTURE/logs"')
+        .replace("artifacts=/artifacts", 'artifacts="$GATE_FIXTURE/artifacts"');
+      await Deno.writeTextFile(`${root}/gates.sh`, script);
+      const result = await command("bash", {
+        args: [`${root}/gates.sh`, "--checks"],
+        env: {
+          PATH: `${root}/bin:${Deno.env.get("PATH")}`,
+          GATE_FIXTURE: root,
+          GLOBNOTES_TEST_HOST: "globnotes.test",
+        },
+      }).output();
+      assertEquals(
+        result.code,
+        broken ? 42 : 0,
+        new TextDecoder().decode(result.stderr),
+      );
+      if (!broken) {
+        assertEquals(
+          (await Deno.readTextFile(`${root}/contracts`)).trim().split("\n"),
+          [
+            "test",
+            "--unstable-worker-options",
+            "--allow-read",
+            "--allow-write",
+            "--allow-env",
+            "--allow-run",
+            "--allow-net",
+            "tests/test_isolation_contract_test.ts",
+            "tests/devcontainer_caps_test.ts",
+            "tests/a_guard_test.ts",
+            "tests/nested/b_guard_test.ts",
+          ],
+        );
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+}
+
 for (const mode of ["checks", "native"]) {
   Deno.test(`gates: ${mode} keeps CI workloads separate and forwards its shard`, async () => {
     const root = await Deno.makeTempDir({ prefix: "gate-shard-" });
