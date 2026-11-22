@@ -87,3 +87,14 @@ and `context.signing(sessions.signing).initialized`; its lifecycle adapter must
 forward that same context. Ordinary/background evaluation can use
 `readAuthorityState(service.operational)`, which always issues an ordinary scoped
 context and cannot borrow publication authority from an enclosing callback.
+
+Initial setup can request an authenticator candidate before an account exists.
+The aggregate binds it to the current initial owner, normalized login and issuance
+attempt. A newer issuance retires the prior attempt, including late QR completion.
+Confirmation accepts only the current issued key and persists its marked secret
+and accepted step in the prepared initial account. Preparation alone activates
+nothing; confirmed enrollment publishes only with the matching creator ACL.
+Recorded pair replay requires both recovered participants and uses the exact
+prepared account/ACL state under the exclusive offline root owner. It does not
+require an in-memory candidate or check a new wall-clock code. Setup screens
+and HTTP requests are still inactive here.

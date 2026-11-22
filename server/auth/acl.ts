@@ -26,7 +26,11 @@ import {
 import type { AccountDirectorySnapshot } from "./accounts.ts";
 import type { AuthorityReadContext } from "./authority_context.ts";
 import { assertAuthorityContext } from "./internal/authority_context.ts";
-import { registerAccountAclParticipant } from "./internal/account_participation.ts";
+import {
+  registerAccountAclParticipant,
+  registerRecoveredAclParticipant,
+} from "./internal/account_participation.ts";
+import type { OfflineRecoveryAuthority } from "./offline_recovery.ts";
 
 export const ACCESS_LEVELS = ["none", "view", "edit", "admin"] as const;
 export type AccessLevel = typeof ACCESS_LEVELS[number];
@@ -338,6 +342,23 @@ export class AclRepository {
       updateId,
       actorId,
     });
+    return participant;
+  }
+  /** Offline replay of the exact recorded ACL, under its instance root owner. */
+  recoverParticipant(
+    record: unknown,
+    authority: OfflineRecoveryAuthority,
+    setId: string,
+    decision: "prepared" | "decided",
+  ) {
+    const participant = this.#file.recoverParticipant(
+      record,
+      authority,
+      setId,
+      "access",
+      decision,
+    );
+    registerRecoveredAclParticipant(participant, this.#accounts.credentials);
     return participant;
   }
   /** Import writes a validated bound record; it never reads v2 files or publishes a vault. */

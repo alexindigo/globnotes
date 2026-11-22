@@ -14,6 +14,7 @@ export type {
   CredentialAuthority,
   CredentialChangeRequest,
   CredentialOptions,
+  InitialAccountPreparationRequest,
   LoginClaim,
   LoginProof,
   OfflineAccountRequest,

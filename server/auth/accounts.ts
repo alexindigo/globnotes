@@ -8,6 +8,12 @@ import {
   type CredentialOptions,
 } from "./account_credentials.ts";
 import { bindAccountCredentials } from "./internal/account_credentials.ts";
+import type { OfflineRecoveryAuthority } from "./offline_recovery.ts";
+import type { PublicationParticipant } from "../config/owned_publication.ts";
+import {
+  assertRecoveredAclOwner,
+  registerRecoveredAccountParticipant,
+} from "./internal/account_participation.ts";
 import {
   authorityRead,
   registerAuthorityReader,
@@ -191,6 +197,25 @@ export class AccountRepository {
   }
   retireCredentials(): void {
     this.#retireCredentials();
+  }
+  /** Offline journal replay only; no candidate or wall-clock code is reissued. */
+  recoverParticipant(
+    record: unknown,
+    authority: OfflineRecoveryAuthority,
+    setId: string,
+    decision: "prepared" | "decided",
+    acl: PublicationParticipant,
+  ): PublicationParticipant {
+    assertRecoveredAclOwner(acl, this.#credentials);
+    const participant = this.#file.recoverParticipant(
+      record,
+      authority,
+      setId,
+      "accounts",
+      decision,
+    );
+    registerRecoveredAccountParticipant(participant, acl);
+    return participant;
   }
   get credentials(): AccountCredentials {
     return this.#credentials;

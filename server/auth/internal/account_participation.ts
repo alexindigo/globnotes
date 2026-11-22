@@ -14,6 +14,7 @@ interface AclParticipantBinding {
   readonly actorId: string;
 }
 const issued = new WeakMap<object, AclParticipantBinding>();
+const recoveredOwners = new WeakMap<object, object>();
 
 type CreatorBinding = Readonly<{ credentials: object; accountId: string }>;
 const setupPair = definePublicationPeerPair(
@@ -27,6 +28,10 @@ const grantPair = definePublicationPeerPair(
 );
 export const registerInitialAccountParticipant = setupPair.left;
 export const registerRecipientAccountParticipant = grantPair.left;
+const recoveryPair = definePublicationPeerPair(
+  (expectedAcl: object, actualAcl: object) => expectedAcl === actualAcl,
+);
+export const registerRecoveredAccountParticipant = recoveryPair.left;
 
 /** Only the actual ACL repository registers these domain facts, after native
  * participant preparation. Workflows cannot certify an arbitrary grant. */
@@ -44,6 +49,24 @@ export function registerAccountAclParticipant(
     grantPair.right(participant, participant);
   }
   issued.set(participant, Object.freeze({ ...binding }));
+}
+/** Recovery validates the exact recorded ACL through its repository, not an
+ * in-memory enrollment. It cannot be used as a new setup-proof ACL. */
+export function registerRecoveredAclParticipant(
+  participant: object,
+  credentials: object,
+): void {
+  if (recoveredOwners.has(participant)) throw new IdentityStateError();
+  recoveryPair.right(participant, participant);
+  recoveredOwners.set(participant, credentials);
+}
+export function assertRecoveredAclOwner(
+  participant: object,
+  credentials: object,
+): void {
+  if (recoveredOwners.get(participant) !== credentials) {
+    throw new IdentityStateError();
+  }
 }
 export function accountAclParticipant(
   participant: object,

@@ -24,6 +24,7 @@ import {
   createTotpCandidate,
   matchingStoredTotpStep,
   sameStoredTotpSecret,
+  serializeStoredTotpSecret,
   type StoredAuthenticator,
   type StoredTotpSecret,
 } from "../credentials.ts";
@@ -148,6 +149,10 @@ export interface AccountPreparationRequest {
   readonly password: string;
   readonly updateId: string;
 }
+export interface InitialAccountPreparationRequest
+  extends AccountPreparationRequest {
+  readonly authenticator?: Readonly<{ key: string; code: string }>;
+}
 export interface OfflineAccountRequest {
   readonly accountId: string;
   readonly credentialRevision: number;
@@ -171,6 +176,7 @@ interface PreparedAccountRecord {
   readonly purpose: PreparationPurpose | "import";
   readonly validation: { transferred: boolean };
   receipt?: ProvisioningReceipt;
+  enrollment?: InitialEnrollmentAttempt;
   phase: "prepared" | "publishing" | "participating" | "finished";
 }
 /** Private repository integration. The parsed import contract permits only the
@@ -220,6 +226,14 @@ interface TransitionRecord {
   readonly proof: ProofRecord;
   readonly guard: () => undefined;
   phase: "publishing" | "finished";
+}
+interface InitialEnrollmentAttempt {
+  readonly source: AccountPreparationAuthority;
+  readonly login: string;
+  readonly secret: StoredTotpSecret;
+  readonly operation: ReturnType<typeof createOperationLease<"live">>;
+  key?: string;
+  phase: "rendering" | "ready" | "retired";
 }
 function captureChange(
   input: CredentialChangeRequest,
@@ -277,6 +291,12 @@ export function bindAccountCredentials(
   const proofs = new WeakMap<LoginProof, ProofRecord>();
   const claims = new WeakMap<LoginClaim, ProofRecord>();
   const enrollments = new Map<string, EnrollmentAttempt>();
+  let initialEnrollment: InitialEnrollmentAttempt | undefined;
+  const retireInitialEnrollment = (attempt: InitialEnrollmentAttempt) => {
+    attempt.phase = "retired";
+    attempt.operation.retire();
+    if (initialEnrollment === attempt) initialEnrollment = undefined;
+  };
   const transitions = new WeakMap<
     PreparedCredentialTransition,
     TransitionRecord
@@ -442,7 +462,15 @@ export function bindAccountCredentials(
   ) => {
     const request: unknown = structuredClone(input);
     if (
-      !record(request) || !fields(request, ["login", "password", "updateId"]) ||
+      !record(request) ||
+      !fields(request, [
+        "login",
+        "password",
+        "updateId",
+        ...(purpose === "initial" && Object.hasOwn(request, "authenticator")
+          ? ["authenticator"]
+          : []),
+      ]) ||
       typeof request.login !== "string" ||
       typeof request.password !== "string" || !request.password ||
       !identity(request.updateId) ||
@@ -455,11 +483,23 @@ export function bindAccountCredentials(
     ) throw new IdentityStateError();
     const snapshot = store.capture();
     const validation = { transferred: false };
+    let enrollment: InitialEnrollmentAttempt | undefined;
+    const enrollmentGuard = () => {
+      if (!enrollment) return;
+      if (
+        initialEnrollment !== enrollment || enrollment.phase !== "ready" ||
+        enrollment.source !== source
+      ) {
+        throw new StoredConfigConflict();
+      }
+      assertOperationLease(enrollment.operation.lease, "live");
+    };
     const operation = createOperationLease("live", [() => {
       if (signal?.aborted) throw new AuthenticationError();
       // Once transferred, the native candidate owns exact snapshot/CAS checks.
       // Public repository reads are intentionally fenced during set assembly.
       if (!validation.transferred) store.assertSnapshot(snapshot);
+      enrollmentGuard();
       if (
         purpose === "initial"
           ? snapshot.value.initialized || snapshot.value.accounts.length !== 0
@@ -479,6 +519,27 @@ export function bindAccountCredentials(
       if (snapshot.value.accounts.some((account) => account.login === login)) {
         throw new StoredConfigConflict();
       }
+      let confirmed:
+        | { key: string; encoding?: "base32" | null; step: number }
+        | undefined;
+      if (Object.hasOwn(request, "authenticator")) {
+        const input = request.authenticator;
+        if (
+          !record(input) || !fields(input, ["key", "code"]) ||
+          typeof input.key !== "string" || typeof input.code !== "string"
+        ) throw new IdentityStateError();
+        const attempt = initialEnrollment;
+        if (
+          !attempt || attempt.source !== source || attempt.login !== login ||
+          attempt.phase !== "ready" || attempt.key !== input.key
+        ) throw new IdentityStateError();
+        enrollment = attempt;
+        enrollmentGuard();
+        const step = matchingStoredTotpStep(input.code, attempt.secret, now());
+        enrollmentGuard();
+        if (step === null) throw new IdentityStateError();
+        confirmed = { ...serializeStoredTotpSecret(attempt.secret), step };
+      }
       const id = createUuid();
       const passwordHash = await hash(request.password);
       guard();
@@ -487,8 +548,9 @@ export function bindAccountCredentials(
           id,
           login,
           passwordHash,
-          totpKey: null,
-          lastTotpStep: null,
+          totpKey: confirmed?.key ?? null,
+          ...(confirmed ? { totpKeyEncoding: confirmed.encoding } : {}),
+          lastTotpStep: confirmed?.step ?? null,
           credentialRevision: 0,
           passwordChangeRequired: purpose === "recipient",
           credentialUpdateId: null,
@@ -507,6 +569,7 @@ export function bindAccountCredentials(
         operation,
         purpose,
         validation,
+        enrollment,
         phase: "prepared",
       });
       guard();
@@ -588,6 +651,54 @@ export function bindAccountCredentials(
     }
   };
   const credentials = Object.freeze({
+    async beginInitialEnrollment(
+      source: AccountPreparationAuthority,
+      inputLogin: string,
+      signal?: AbortSignal,
+    ) {
+      const admitted = preparationAuthorities.get(source);
+      if (
+        !admitted || admitted.owner !== credentials ||
+        admitted.purpose !== "initial" ||
+        typeof inputLogin !== "string" ||
+        (signal !== undefined && !(signal instanceof AbortSignal))
+      ) throw new IdentityStateError();
+      const login = store.normalizeLogin(inputLogin);
+      const snapshot = store.capture();
+      if (snapshot.value.initialized || snapshot.value.accounts.length !== 0) {
+        throw new StoredConfigConflict();
+      }
+      const operation = createOperationLease("live", [() => {
+        if (signal?.aborted) throw new AuthenticationError();
+        return undefined;
+      }], [lifetime.lease, admitted.lease]);
+      let attempt: InitialEnrollmentAttempt | undefined;
+      try {
+        store.assertSnapshot(snapshot);
+        const secret = createTotpCandidate();
+        if (initialEnrollment) retireInitialEnrollment(initialEnrollment);
+        attempt = { source, login, secret, operation, phase: "rendering" };
+        initialEnrollment = attempt;
+        const bundle = await renderAccountTotpEnrollment(
+          login,
+          secret,
+          renderQr,
+        );
+        assertOperationLease(operation.lease, "live");
+        store.assertSnapshot(snapshot);
+        if (initialEnrollment !== attempt || attempt.phase !== "rendering") {
+          throw new StoredConfigConflict();
+        }
+        attempt.key = bundle.key;
+        attempt.phase = "ready";
+        assertOperationLease(operation.lease, "live");
+        return bundle;
+      } catch (error) {
+        if (attempt) retireInitialEnrollment(attempt);
+        else operation.retire();
+        throw error;
+      }
+    },
     /** Privileged append-only historical import, never ordinary account creation. */
     importAccount(
       authority: OfflineRecoveryAuthority,
@@ -632,7 +743,7 @@ export function bindAccountCredentials(
     },
     prepareInitialAccount(
       authority: AccountPreparationAuthority,
-      request: AccountPreparationRequest,
+      request: InitialAccountPreparationRequest,
       signal?: AbortSignal,
     ) {
       return prepareAccount("initial", authority, request, signal);
@@ -646,7 +757,11 @@ export function bindAccountCredentials(
     },
     publishPreparedAccount(prepared: PreparedAccount): AccountIdentity {
       const value = preparedAccounts.get(prepared);
-      if (!value || value.phase !== "prepared") throw new IdentityStateError();
+      // Confirmed setup credentials are published with the creator ACL, never
+      // through the pre-existing credential-only path.
+      if (!value || value.phase !== "prepared" || value.enrollment) {
+        throw new IdentityStateError();
+      }
       value.phase = "publishing";
       try {
         value.guard();
@@ -1009,6 +1124,7 @@ export function bindAccountCredentials(
     },
     retire(): boolean {
       const retired = lifetime.retire();
+      if (initialEnrollment) retireInitialEnrollment(initialEnrollment);
       for (const attempt of enrollments.values()) attempt.phase = "retired";
       enrollments.clear();
       return retired;

@@ -130,6 +130,7 @@ export const PUBLICATION_OWNERSHIP: OwnershipRules = {
     ],
     [ACCOUNT_PARTICIPATION]: [
       "server/auth/acl.ts",
+      "server/auth/accounts.ts",
       "server/auth/internal/account_credentials.ts",
     ],
     [PUBLICATION_OWNER]: [

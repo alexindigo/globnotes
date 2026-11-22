@@ -27,6 +27,10 @@ import { preparationFixture } from "./helpers/account_preparation.ts";
 import { storedState, UPDATE, VAULT_A, VAULT_B } from "./helpers/identity.ts";
 import { signIn } from "./helpers/session_delivery.ts";
 import { OwnershipError } from "../shared/ownership.js";
+import { heldOperation } from "./helpers/owned_operation.ts";
+import { authenticatorCode } from "./helpers/totp.ts";
+import { fixturePasswordHash } from "./helpers/config.ts";
+import type { AccountPreparationAuthority } from "../server/auth/account_credentials.ts";
 
 const SET = "00000000-0000-4000-8000-000000000020";
 const NEXT = "00000000-0000-4000-8000-000000000021";
@@ -768,3 +772,591 @@ Deno.test("account participation: malformed committed receipts retain the exact 
       assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), raw);
     }
   }));
+
+const SETUP_NOW = 1_800_000_000_000;
+const setupOptions = {
+  now: () => SETUP_NOW,
+  renderQr: (uri: string) => Promise.resolve(`qr:${uri}`),
+};
+
+function withEnrolledSetupPair(
+  accounts: AccountRepository,
+  prepared: Awaited<
+    ReturnType<typeof accounts.credentials.prepareInitialAccount>
+  >,
+  run: (set: ReturnType<typeof createPublicationSet>) => void,
+) {
+  const acl = new AclRepository(`${accounts.root}/vault`, VAULT_A, {
+    accounts,
+  });
+  acl.prepareParents();
+  const lifetime = createOperationLease("live", [() => undefined]);
+  const parts: PublicationParticipant[] = [];
+  let set: ReturnType<typeof createPublicationSet> | undefined;
+  try {
+    parts.push(acl.prepareInitialParticipant(
+      prepared.identity,
+      "none",
+      acl.capture(),
+      lifetime.lease,
+      SET,
+    ));
+    parts.push(
+      accounts.credentials.prepareAccountParticipant(prepared.prepared, SET),
+    );
+    set = createPublicationSet(SET, parts, journalPath(accounts.root));
+    run(set);
+  } finally {
+    set?.discard();
+    for (const part of parts) part.discard();
+    lifetime.retire();
+  }
+  return acl.capture().value;
+}
+
+function publishEnrolledSetup(
+  accounts: AccountRepository,
+  prepared: Awaited<
+    ReturnType<typeof accounts.credentials.prepareInitialAccount>
+  >,
+) {
+  const acl = withEnrolledSetupPair(accounts, prepared, (pair) => {
+    pair.decide();
+    assertEquals(pair.publish().state, "committed");
+    assertEquals(pair.release().state, "committed");
+  });
+  assertEquals(acl.grants, { [prepared.identity.id]: "admin" });
+}
+
+Deno.test("setup enrollment: candidate retirement after transfer rejects decision without activating TOTP", () =>
+  preparationFixture(async (f) => {
+    const source = f.authority("initial");
+    const abort = new AbortController();
+    const bundle = await f.accounts.credentials.beginInitialEnrollment(
+      source,
+      "alice",
+      abort.signal,
+    );
+    const prepared = await f.accounts.credentials.prepareInitialAccount(
+      source,
+      {
+        ...f.request(),
+        authenticator: {
+          key: bundle.key,
+          code: await authenticatorCode(bundle.secret, SETUP_NOW),
+        },
+      },
+    );
+    const acl = withEnrolledSetupPair(f.accounts, prepared, (publication) => {
+      abort.abort();
+      assertThrows(
+        () => publication.decide(),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+      assertThrows(
+        () => publication.publish(),
+        PublicationSetUnavailable,
+        UNAVAILABLE,
+      );
+    });
+    assertEquals([
+      f.accounts.capture().value.accounts,
+      acl.grants,
+      [...Deno.readDirSync(f.root)].map((entry) => entry.name),
+      [...Deno.readDirSync(`${f.root}/vault`)],
+    ], [[], {}, ["vault"], []]);
+  }, setupOptions));
+
+Deno.test("setup enrollment: a newer issuance retires already prepared confirmation before transfer", () =>
+  preparationFixture(async (f) => {
+    const source = f.authority("initial");
+    const first = await f.accounts.credentials.beginInitialEnrollment(
+      source,
+      "alice",
+    );
+    const prepared = await f.accounts.credentials.prepareInitialAccount(
+      source,
+      {
+        ...f.request(),
+        authenticator: {
+          key: first.key,
+          code: await authenticatorCode(first.secret, SETUP_NOW),
+        },
+      },
+    );
+    const current = await f.accounts.credentials.beginInitialEnrollment(
+      source,
+      "alice",
+    );
+    assertThrows(
+      () =>
+        f.accounts.credentials.prepareAccountParticipant(
+          prepared.prepared,
+          SET,
+        ),
+      StoredConfigConflict,
+      CONFLICT,
+    );
+    assertEquals(f.accounts.capture().value.accounts, []);
+    const accepted = await f.accounts.credentials.prepareInitialAccount(
+      source,
+      {
+        ...f.request(),
+        authenticator: {
+          key: current.key,
+          code: await authenticatorCode(current.secret, SETUP_NOW),
+        },
+      },
+    );
+    publishEnrolledSetup(f.accounts, accepted);
+    assertEquals(storedState(f.accounts).accounts[0].totpKey, current.key);
+  }, setupOptions));
+
+for (
+  const bad of [
+    "unissued",
+    "retired",
+    "login",
+    "authority",
+    "code",
+    "wrong-purpose",
+  ] as const
+) {
+  Deno.test(`setup enrollment: ${bad} confirmation rejects before hashing or active changes`, () => {
+    let hashes = 0;
+    return preparationFixture(async (f) => {
+      const authority = f.authority("initial");
+      const bundle = await f.accounts.credentials.beginInitialEnrollment(
+        authority,
+        "alice",
+      );
+      const code = await authenticatorCode(bundle.secret, SETUP_NOW);
+      if (bad === "retired") {
+        await f.accounts.credentials.beginInitialEnrollment(authority, "alice");
+      }
+      const source = bad === "authority"
+        ? f.authority("initial")
+        : bad === "wrong-purpose"
+        ? f.authority("recipient")
+        : authority;
+      const before = f.accounts.capture();
+      await assertRejects(
+        () =>
+          f.accounts.credentials.prepareInitialAccount(source, {
+            ...f.request({ login: bad === "login" ? "bob" : "alice" }),
+            authenticator: {
+              key: bad === "unissued" ? "A".repeat(32) : bundle.key,
+              code: bad === "code" ? "bad-code" : code,
+            },
+          }),
+        IdentityStateError,
+        INVALID,
+      );
+      assertEquals(hashes, 0);
+      assertStrictEquals(f.accounts.capture(), before);
+      assertEquals([...Deno.readDirSync(f.root)], []);
+    }, {
+      ...setupOptions,
+      hash: (password) => {
+        hashes++;
+        return Promise.resolve(fixturePasswordHash(password));
+      },
+    });
+  });
+}
+
+Deno.test("setup enrollment: forged, cloned, foreign and recipient authorities cannot issue candidates", () =>
+  preparationFixture(async (f) => {
+    const authority = f.authority("initial");
+    for (
+      const source of [
+        {},
+        { ...authority },
+        structuredClone(authority),
+        f.authority("recipient"),
+        null,
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          f.accounts.credentials.beginInitialEnrollment(
+            source as AccountPreparationAuthority,
+            "alice",
+          ),
+        IdentityStateError,
+        INVALID,
+      );
+    }
+    await preparationFixture(async (other) => {
+      await assertRejects(
+        () =>
+          other.accounts.credentials.beginInitialEnrollment(authority, "alice"),
+        IdentityStateError,
+        INVALID,
+      );
+    }, setupOptions);
+    const candidate = await f.accounts.credentials.beginInitialEnrollment(
+      authority,
+      "alice",
+    );
+    assertEquals(candidate.key.length, 32);
+    await f.createInitial();
+    await assertRejects(
+      () => f.accounts.credentials.beginInitialEnrollment(authority, "alice"),
+      StoredConfigConflict,
+      CONFLICT,
+    );
+  }, setupOptions));
+
+for (
+  const boundary of ["replacement", "abort", "authority", "aggregate"] as const
+) {
+  Deno.test(`setup enrollment: held QR ${boundary} cannot publish a stale candidate`, () => {
+    let renderHold: (() => Promise<void>) | undefined;
+    let renders = 0;
+    return preparationFixture(async (f) => {
+      const source = f.authority("initial");
+      const abort = new AbortController();
+      await heldOperation({
+        label: `initial QR ${boundary}`,
+        owner: () => f.accounts,
+        progress: { kind: "controlled", clock: "external" },
+      }, (hold) => {
+        renderHold = hold;
+        return f.accounts.credentials.beginInitialEnrollment(
+          source,
+          "alice",
+          abort.signal,
+        );
+      }, async (operation) => {
+        await operation.reached();
+        let replacement:
+          | Awaited<
+            ReturnType<typeof f.accounts.credentials.beginInitialEnrollment>
+          >
+          | undefined;
+        if (boundary === "replacement") {
+          replacement = await f.accounts.credentials.beginInitialEnrollment(
+            source,
+            "bob",
+          );
+        }
+        if (boundary === "abort") abort.abort();
+        if (boundary === "authority") f.retire();
+        if (boundary === "aggregate") f.accounts.retireCredentials();
+        if (boundary === "abort") {
+          await assertRejects(
+            () => operation.result(),
+            AuthenticationError,
+            "Invalid authentication credentials.",
+          );
+        } else {
+          await assertRejects(
+            () => operation.result(),
+            OwnershipError,
+            "Owner is retired",
+          );
+        }
+        assertEquals(f.accounts.capture().value.accounts, []);
+        if (replacement) {
+          const prepared = await f.accounts.credentials.prepareInitialAccount(
+            source,
+            {
+              ...f.request({ login: "bob" }),
+              authenticator: {
+                key: replacement.key,
+                code: await authenticatorCode(replacement.secret, SETUP_NOW),
+              },
+            },
+          );
+          publishEnrolledSetup(f.accounts, prepared);
+          assertEquals(f.accounts.byLogin("bob"), prepared.identity);
+        }
+      });
+    }, {
+      ...setupOptions,
+      renderQr: async (uri) => {
+        if (++renders === 1) await renderHold!();
+        return `qr:${uri}`;
+      },
+    });
+  });
+}
+
+for (
+  const boundary of ["replacement", "abort", "authority", "aggregate"] as const
+) {
+  Deno.test(`setup enrollment: held hash ${boundary} cannot install a stale secret`, () => {
+    let hashHold: (() => Promise<void>) | undefined;
+    return preparationFixture(async (f) => {
+      const source = f.authority("initial");
+      const bundle = await f.accounts.credentials.beginInitialEnrollment(
+        source,
+        "alice",
+      );
+      const code = await authenticatorCode(bundle.secret, SETUP_NOW);
+      const abort = new AbortController();
+      await heldOperation({
+        label: `initial hash ${boundary}`,
+        owner: () => f.accounts,
+        progress: { kind: "controlled", clock: "external" },
+      }, (hold) => {
+        hashHold = hold;
+        return f.accounts.credentials.prepareInitialAccount(source, {
+          ...f.request(),
+          authenticator: { key: bundle.key, code },
+        }, abort.signal);
+      }, async (operation) => {
+        await operation.reached();
+        if (boundary === "replacement") {
+          await f.accounts.credentials.beginInitialEnrollment(source, "alice");
+        }
+        if (boundary === "abort") abort.abort();
+        if (boundary === "authority") f.retire();
+        if (boundary === "aggregate") f.accounts.retireCredentials();
+        if (boundary === "replacement") {
+          await assertRejects(
+            () => operation.result(),
+            StoredConfigConflict,
+            CONFLICT,
+          );
+        } else if (boundary === "abort") {
+          await assertRejects(
+            () => operation.result(),
+            AuthenticationError,
+            "Invalid authentication credentials.",
+          );
+        } else {await assertRejects(
+            () => operation.result(),
+            OwnershipError,
+            "Owner is retired",
+          );}
+        assertEquals([f.accounts.capture().value.accounts, [
+          ...Deno.readDirSync(f.root),
+        ]], [[], []]);
+      });
+    }, {
+      ...setupOptions,
+      hash: async (password) => {
+        await hashHold!();
+        return fixturePasswordHash(password);
+      },
+    });
+  });
+}
+
+Deno.test("setup enrollment: prepared confirmed step survives clock movement and decided pair replay without a candidate", () => {
+  let now = SETUP_NOW;
+  return preparationFixture(async (f) => {
+    const source = f.authority("initial");
+    const bundle = await f.accounts.credentials.beginInitialEnrollment(
+      source,
+      "alice",
+    );
+    const code = await authenticatorCode(bundle.secret, now);
+    const prepared = await f.accounts.credentials.prepareInitialAccount(
+      source,
+      { ...f.request(), authenticator: { key: bundle.key, code } },
+    );
+    const acl = new AclRepository(`${f.root}/vault`, VAULT_A, {
+      accounts: f.accounts,
+    });
+    acl.prepareParents();
+    const lifetime = createOperationLease("live", [() => undefined]);
+    const access = acl.prepareInitialParticipant(
+      prepared.identity,
+      "edit",
+      acl.capture(),
+      lifetime.lease,
+      SET,
+    );
+    const journal = journalPath(f.root);
+    let account: PublicationParticipant | undefined;
+    let set: ReturnType<typeof createPublicationSet> | undefined;
+    try {
+      account = f.accounts.credentials.prepareAccountParticipant(
+        prepared.prepared,
+        SET,
+      );
+      const publication = set = createPublicationSet(
+        SET,
+        [account, access],
+        journal,
+      );
+      now += 3_000_000;
+      publication.decide();
+      Deno.writeTextFileSync(
+        journal,
+        JSON.stringify({
+          setId: SET,
+          phase: "decided",
+          records: publication.records,
+        }),
+      );
+      assertEquals(publication.publish().state, "committed");
+      assertThrows(
+        () => publication.release(),
+        PublicationSetUnavailable,
+        UNAVAILABLE,
+      );
+      const before = [
+        Deno.readTextFileSync(`${f.root}/accounts.json`),
+        Deno.readTextFileSync(`${f.root}/vault/access.json`),
+      ];
+      f.accounts.retireCredentials();
+      const recovery = f.offline();
+      try {
+        const reopened = new AccountRepository(f.root, undefined, {
+          now: () => SETUP_NOW,
+        });
+        const reopenedAcl = new AclRepository(`${f.root}/vault`, VAULT_A, {
+          accounts: reopened,
+        });
+        const aclPart = reopenedAcl.recoverParticipant(
+          publication.records[1],
+          recovery.authority,
+          SET,
+          "decided",
+        );
+        assertMissingPeer(f.root, [aclPart]);
+        for (const invalid of [{}, { ...aclPart }, access]) {
+          assertThrows(
+            () =>
+              reopened.recoverParticipant(
+                publication.records[0],
+                recovery.authority,
+                SET,
+                "decided",
+                invalid as PublicationParticipant,
+              ),
+            IdentityStateError,
+            INVALID,
+          );
+        }
+        const accountPart = reopened.recoverParticipant(
+          publication.records[0],
+          recovery.authority,
+          SET,
+          "decided",
+          aclPart,
+        );
+        assertMissingPeer(f.root, [accountPart]);
+        const replay = createPublicationSet(
+          SET,
+          [accountPart, aclPart],
+          journal,
+        );
+        replay.decide();
+        assertEquals(replay.publish().state, "committed");
+        Deno.removeSync(journal);
+        assertEquals(replay.release().state, "committed");
+        assertEquals([
+          Deno.readTextFileSync(`${f.root}/accounts.json`),
+          Deno.readTextFileSync(`${f.root}/vault/access.json`),
+        ], before);
+        assertEquals(
+          storedState(reopened).accounts.map((
+            a,
+          ) => [a.totpKey, a.totpKeyEncoding, a.lastTotpStep]),
+          [[bundle.key, "base32", SETUP_NOW / 30_000]],
+        );
+        await assertRejects(
+          () => reopened.credentials.authenticate("alice", "password", code),
+          AuthenticationError,
+          "Invalid authentication credentials.",
+        );
+        assertEquals(reopenedAcl.capture().value.everybody, "edit");
+      } finally {
+        recovery.close();
+      }
+      now = SETUP_NOW + 30_000;
+      const restarted = new AccountRepository(f.root, undefined, {
+        now: () => now,
+      });
+      await restarted.credentials.authenticate(
+        "alice",
+        "password",
+        await authenticatorCode(bundle.secret, now),
+      );
+      assertEquals(
+        storedState(restarted).accounts[0].lastTotpStep,
+        now / 30_000,
+      );
+    } finally {
+      set?.discard();
+      account?.discard();
+      access.discard();
+      lifetime.retire();
+    }
+  }, { ...setupOptions, now: () => now });
+});
+
+for (const login of [" Alice ", "surrogate\ud800", "colon:name@example.home"]) {
+  Deno.test(`setup enrollment: current server-issued candidate persists its exact interpretation and accepted step (${JSON.stringify(login)})`, () =>
+    preparationFixture(async (f) => {
+      const authority = f.authority("initial");
+      const before = f.accounts.capture();
+      const bundle = await f.accounts.credentials.beginInitialEnrollment(
+        authority,
+        login,
+      );
+      assertEquals(Object.keys(bundle).sort(), ["key", "qr", "secret", "uri"]);
+      assertEquals([bundle.key, bundle.qr], [
+        bundle.secret,
+        `qr:${bundle.uri}`,
+      ]);
+      assertStrictEquals(f.accounts.capture(), before);
+      assertEquals([...Deno.readDirSync(f.root)], []);
+      const code = await authenticatorCode(bundle.secret, SETUP_NOW);
+      const prepared = await f.accounts.credentials.prepareInitialAccount(
+        authority,
+        {
+          ...f.request({ login }),
+          authenticator: { key: bundle.key, code },
+        },
+      );
+      assertEquals([
+        prepared.identity.totpEnabled,
+        prepared.identity.passwordChangeRequired,
+      ], [true, false]);
+      assertStrictEquals(f.accounts.capture(), before);
+      assertThrows(
+        () => f.accounts.credentials.publishPreparedAccount(prepared.prepared),
+        IdentityStateError,
+        INVALID,
+      );
+      assertStrictEquals(f.accounts.capture(), before);
+      publishEnrolledSetup(f.accounts, prepared);
+      const stored = storedState(f.accounts);
+      assertEquals(
+        stored.accounts.map((a) => ({
+          login: a.login,
+          totpKey: a.totpKey,
+          totpKeyEncoding: a.totpKeyEncoding,
+          lastTotpStep: a.lastTotpStep,
+          restricted: a.passwordChangeRequired,
+        })),
+        [{
+          login: login.trim().toLowerCase(),
+          totpKey: bundle.key,
+          totpKeyEncoding: "base32",
+          lastTotpStep: SETUP_NOW / 30_000,
+          restricted: false,
+        }],
+      );
+      const reopened = new AccountRepository(f.root, undefined, {
+        now: () => SETUP_NOW,
+      });
+      await assertRejects(
+        () => reopened.credentials.authenticate(login, "password", undefined),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+      await assertRejects(
+        () => reopened.credentials.authenticate(login, "password", code),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+    }, setupOptions));
+}
