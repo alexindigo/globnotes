@@ -592,6 +592,7 @@ export class BoundFileStore {
       version: 1,
       setId,
       role,
+      root: path.resolve(this.root),
       before: candidate.expected,
       after: candidate.snapshot,
       candidate: path.basename(candidate.temporary),
@@ -639,7 +640,21 @@ export class BoundFileStore {
     );
     return Object.freeze({
       record,
+      authority: lease,
+      validateStorage,
       validate,
+      detach: () => {
+        candidate.phase = "discarded";
+        operation.retire();
+        candidate.custody.requested = true;
+        // A rejected reconstruction releases only its descriptor. Even a failed
+        // close retry must never turn into deletion of a decided candidate.
+        candidate.custody.unlinked = true;
+        candidate.custody.identity = null;
+        candidate.custody.handle?.close();
+        candidate.custody.handle = undefined;
+        this.#candidates.delete(candidate.custody);
+      },
       apply: () => {
         if (busy) throw new StoredConfigConflict();
         busy = true;
@@ -704,11 +719,13 @@ export class BoundFileStore {
         "version",
         "setId",
         "role",
+        "root",
         "before",
         "after",
         "candidate",
       ]) ||
       data.version !== 1 || data.setId !== setId || data.role !== role ||
+      data.root !== path.resolve(this.root) ||
       typeof data.candidate !== "string" ||
       !/^\.config-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
         data.candidate,

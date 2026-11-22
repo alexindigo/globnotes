@@ -370,6 +370,50 @@ retryable cleanup. Existing single-file commit remains unchanged, with an
 optional synchronous IdentityFile observer after installation. Set settlement and
 domain journal/decision ownership are separate from this storage capability.
 
+### Sealed publication sets (G1b)
+
+IdentityFile participant acquisition immediately fences capture, unchanged checks,
+parent preparation and ordinary writes, including during construction of sibling
+participants. A participant exposes only discard; it is an issued WeakMap handle,
+not a record/file/installer bundle. Set assembly accepts each exact owner, role,
+destination and set identity once. Standalone discard or undecided set discard
+revokes publication before all-attempt cleanup; a failed cleanup keeps admission
+closed until retry succeeds. Transferred participants cannot discard themselves.
+
+The private set protocol is: acquire sealed participants; assemble; validate;
+durably record the prepared set; decide; attempt the durable logical decision;
+publish all files; install all exact snapshots; retire the exact journal; release
+admission and notify all observers. The transaction, not this storage owner,
+provides the journal, exclusion and logical decision. `decide` validates again
+and transfers custody before an uncertain journal decision attempt. Ordinary
+cleanup never discards a decided set. All authority witnesses run before all
+set storage checks, followed by the lease engine's final pure lifetime fences.
+Authority witnesses must use their captured/private validation capabilities,
+not reenter a participant's deliberately fenced public read API.
+
+Publication/apply or required installation failure leaves the whole set
+recovery-required. Successful installation alone does not release admission:
+journal retirement failure must leave it fenced. Only after the transaction
+retires the exact journal does it call release. Optional observer failures are
+reported separately after every observer has been attempted; post-publication
+durability/alias warnings remain committed. Reopen reconstructs participants
+under actual exclusive authority, validates recorded domain values without
+normalizing their bytes, and follows the same set protocol. Rejected recovery
+admission releases its descriptor without unlinking a decided candidate. The
+recovery adapter requires the validated journal's prepared/decided phase before
+set assembly; ordinary cleanup of a partly admitted recovery releases descriptor
+custody only, never journal files. A recovered decided set is already protected
+against discard before its next validation or publication call.
+
+The optional construction-time publication root binds a participant to its
+already configured recovery/durability owner even when its configured file is in
+a different directory. The durable record includes that exact root and rejects
+replay under a different configured owner. Journal data cannot replace it. The
+two-file scoped-journal and owned-child tests are contract pilots, not a product
+IdentityTransaction or production account activation. The later domain owner
+must keep startup unavailable while inspecting its journal and bind every
+registered participant before serving repository reads.
+
 ## Sign-in delivery (P08)
 
 The preparatory instance sign-in API returns an issued principal and a lazy

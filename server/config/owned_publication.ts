@@ -5,8 +5,26 @@ import {
   PublicationRecoveryRequired,
   type StoredConfigSnapshot,
 } from "./file_store.ts";
-import type { OperationLease } from "../operation_lease.ts";
-import { prepareStoredPublication } from "./internal/publication_port.ts";
+import {
+  createOperationLease,
+  type OperationLease,
+} from "../operation_lease.ts";
+import {
+  prepareStoredPublication,
+  type RecordedCandidate,
+  recordedWriter,
+} from "./internal/publication_port.ts";
+import {
+  PublicationSetUnavailable,
+  StoredConfigConflict,
+} from "./publication_outcome.ts";
+import { createOwnershipScope } from "../../shared/ownership.js";
+import {
+  matchesPublicationValidation,
+  publicationValidation,
+  setValidation,
+  withPublicationValidation,
+} from "../internal/publication_validation.ts";
 
 function immutable<T>(value: T): T {
   if (value && typeof value === "object") {
@@ -14,6 +32,194 @@ function immutable<T>(value: T): T {
     Object.freeze(value);
   }
   return value;
+}
+
+/** Inspect pending results once and observe rejection without awaiting work that
+ * cannot be part of synchronous installation or notification. */
+function synchronousResult(value: unknown): void {
+  if (value === undefined) return;
+  if (
+    value !== null && (typeof value === "object" || typeof value === "function")
+  ) {
+    const then = (value as { then?: unknown }).then;
+    if (typeof then === "function") {
+      Reflect.apply(then, value, [() => undefined, () => undefined]);
+    }
+  }
+  throw new TypeError("Publication callbacks must finish synchronously.");
+}
+
+declare const participantBrand: unique symbol;
+export interface PublicationParticipant {
+  readonly [participantBrand]: true;
+  discard(): void;
+}
+type SetPhase =
+  | "prepared"
+  | "decided"
+  | "publishing"
+  | "installed"
+  | "settled"
+  | "discarded"
+  | "recovery-required";
+interface SetFence {
+  root?: string;
+  setId?: string;
+  phase: SetPhase;
+  decided: boolean;
+}
+interface ParticipantState {
+  readonly owner: object;
+  readonly decided: boolean;
+  readonly candidate: RecordedCandidate;
+  readonly install: () => undefined;
+  readonly notify: () => undefined;
+  available(): void;
+  hold(fence: SetFence): void;
+  fence?: SetFence;
+}
+const participants = new WeakMap<PublicationParticipant, ParticipantState>();
+
+/** Storage set protocol only. Its trusted caller owns journal publication,
+ * logical decision, registration/exclusion and journal retirement. */
+export function createPublicationSet(
+  setId: string,
+  handles: readonly PublicationParticipant[],
+) {
+  if (!Array.isArray(handles)) {
+    throw new TypeError("Publication set requires an array.");
+  }
+  const entries = Array.from(handles, (handle) => participants.get(handle));
+  if (!entries.length || entries.some((entry) => !entry || entry.fence)) {
+    throw new TypeError("Publication set requires unused issued participants.");
+  }
+  const members = entries as ParticipantState[];
+  for (const member of members) member.available();
+  const records = members.map((m) => m.candidate.record);
+  if (
+    records.some((r) => r.setId !== setId) ||
+    new Set(records.map((r) => r.role)).size !== members.length ||
+    new Set(records.map((r) => r.after.binding.target)).size !==
+      members.length ||
+    new Set(members.map((m) => m.owner)).size !== members.length ||
+    members.some((m) => m.decided !== members[0].decided)
+  ) {
+    throw new StoredConfigConflict();
+  }
+  const lifetime = createOwnershipScope();
+  const fence: SetFence = { phase: "prepared", decided: members[0].decided };
+  const validation = setValidation(fence);
+  for (const member of members) {
+    member.fence = fence;
+    member.hold(fence);
+  }
+  let warning = false, notificationFailed = false;
+  const receipt = (
+    state: "committed" | "recovery-required",
+  ): PublicationOutcome =>
+    Object.freeze({
+      operation: lifetime.identity,
+      committed: true,
+      state,
+      warning: warning ? "stored-durability-unconfirmed" : null,
+      notificationFailed,
+    });
+  let validating = false;
+  let cleaning = false;
+  const validate = () => {
+    if (fence.phase !== "prepared" || validating) {
+      throw new PublicationSetUnavailable();
+    }
+    validating = true;
+    try {
+      // All authority callbacks precede ALL set storage checks, followed by the
+      // shared lease engine's final pure lifetime fences. Per-member lease checks
+      // here would allow a later parent's witness to alter an earlier member.
+      const check = withPublicationValidation(
+        validation,
+        () =>
+          createOperationLease("live", [() => {
+            for (const member of members) member.candidate.validateStorage();
+            return undefined;
+          }], members.map((member) => member.candidate.authority)),
+      );
+      check.retire();
+    } finally {
+      validating = false;
+    }
+    if (fence.phase !== "prepared") throw new PublicationSetUnavailable();
+  };
+  return Object.freeze({
+    records: Object.freeze(records),
+    validate,
+    decide() {
+      validate();
+      // Transfer before attempting the domain's durable decision. An uncertain
+      // decision is resolved from its journal, never by ordinary scope cleanup.
+      fence.decided = true;
+      fence.phase = "decided";
+    },
+    publish(): PublicationOutcome {
+      if (fence.phase !== "decided") throw new PublicationSetUnavailable();
+      fence.phase = "publishing";
+      try {
+        for (const member of members) {
+          warning = withPublicationValidation(validation, () =>
+            member.candidate.apply()).warning || warning;
+        }
+        for (const member of members) {
+          synchronousResult(member.install());
+        }
+        fence.phase = "installed";
+        return receipt("committed");
+      } catch {
+        fence.phase = "recovery-required";
+        return receipt("recovery-required");
+      }
+    },
+    release(): PublicationOutcome {
+      if (fence.phase !== "installed") throw new PublicationSetUnavailable();
+      // The transaction calls this only after exact journal retirement. Required
+      // runtime installation is complete; observers now see a consistent set.
+      fence.phase = "settled";
+      lifetime.retire();
+      for (const member of members) {
+        try {
+          synchronousResult(member.notify());
+        } catch {
+          notificationFailed = true;
+        }
+      }
+      return receipt("committed");
+    },
+    discard() {
+      if (fence.decided) return;
+      if (validating) {
+        // Revocation is synchronous even when a validation witness reenters.
+        fence.phase = "discarded";
+      }
+      const errors: unknown[] = [];
+      fence.phase = "recovery-required";
+      if (cleaning) return;
+      cleaning = true;
+      try {
+        for (const member of members) {
+          try {
+            member.candidate.discard();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+      } finally {
+        cleaning = false;
+      }
+      if (errors.length) {
+        throw new AggregateError(errors, "Publication set cleanup failed.");
+      }
+      fence.phase = "discarded";
+      lifetime.retire();
+    },
+  });
 }
 
 /** Internal metadata owner binding. Installation is bound once, never supplied
@@ -25,6 +231,7 @@ export function createOwnedPublication<T>(
   file: BoundFileStore | string,
   install: (value: T, persistence: StoredConfigSnapshot) => undefined,
   notify: () => undefined = () => undefined,
+  root?: string,
 ) {
   for (const callback of [install, notify]) {
     if (
@@ -35,12 +242,172 @@ export function createOwnedPublication<T>(
     }
   }
   let unavailable: PublicationOutcome | undefined;
-  const store = typeof file === "string" ? new BoundFileStore(file) : file;
+  let held: SetFence | undefined;
+  const ownerIdentity = {};
+  const store = typeof file === "string"
+    ? new BoundFileStore(file, root)
+    : file;
   const assertAvailable = () => {
     if (unavailable) throw new PublicationRecoveryRequired(unavailable);
+    if (held && held.phase !== "settled" && held.phase !== "discarded") {
+      throw new PublicationSetUnavailable();
+    }
+  };
+  const participant = (
+    candidate: RecordedCandidate,
+    captured: T,
+    reservation: SetFence,
+    recovered = false,
+  ): PublicationParticipant => {
+    const state: ParticipantState = {
+      owner: ownerIdentity,
+      decided: reservation.decided,
+      candidate,
+      install: () => install(captured, candidate.record.after),
+      notify,
+      available: () => {
+        if (
+          unavailable || held !== reservation ||
+          reservation.phase !== "prepared"
+        ) throw new PublicationSetUnavailable();
+      },
+      hold: (fence) => {
+        held = fence;
+      },
+    };
+    const handle = Object.freeze({
+      discard() {
+        if (state.fence) return; // Set custody is no longer ordinary scratch.
+        reservation.phase = "recovery-required";
+        // Before the whole recovery set is admitted, release read custody only.
+        // A sibling's failed recovery must never delete a journal participant.
+        if (recovered) candidate.detach();
+        else candidate.discard();
+        if (!recovered) reservation.phase = "discarded";
+      },
+    }) as PublicationParticipant;
+    participants.set(handle, state);
+    return handle;
   };
   return Object.freeze({
     assertAvailable,
+    assertValidationAvailable(context: object | undefined) {
+      if (unavailable) throw new PublicationRecoveryRequired(unavailable);
+      if (held && held.phase !== "settled" && held.phase !== "discarded") {
+        if (
+          !matchesPublicationValidation(context, held, held.root, held.setId) ||
+          !["prepared", "decided", "publishing"].includes(held.phase)
+        ) throw new PublicationSetUnavailable();
+        return true;
+      }
+      return false;
+    },
+    prepareParticipant(
+      value: T,
+      expected: StoredConfigSnapshot,
+      lease: OperationLease<"live">,
+      setId: string,
+      role: string,
+    ) {
+      assertAvailable();
+      const captured = immutable(structuredClone(value));
+      assertAvailable();
+      const reservation: SetFence = {
+        phase: "prepared",
+        decided: false,
+        root: store.root,
+        setId,
+      };
+      const validation = publicationValidation(store.root, setId);
+      held = reservation;
+      let candidate: RecordedCandidate;
+      try {
+        candidate = withPublicationValidation(
+          validation,
+          () =>
+            recordedWriter(store).prepare(
+              JSON.stringify(captured) + "\n",
+              expected,
+              lease,
+              setId,
+              role,
+            ),
+        );
+      } catch (error) {
+        held = undefined;
+        throw error;
+      }
+      try {
+        return participant(candidate, captured, reservation);
+      } catch (error) {
+        held = undefined;
+        try {
+          candidate.discard();
+        } catch (cleanup) {
+          throw new AggregateError(
+            [error, cleanup],
+            "Participant preparation and cleanup failed.",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+    },
+    recoverParticipant(
+      input: unknown,
+      authority: object,
+      setId: string,
+      role: string,
+      validate: (value: unknown) => T,
+      decision: "prepared" | "decided",
+    ) {
+      assertAvailable();
+      if (decision !== "prepared" && decision !== "decided") {
+        throw new TypeError("Recovery requires the recorded decision phase.");
+      }
+      const reservation: SetFence = {
+        phase: "prepared",
+        decided: decision === "decided",
+      };
+      held = reservation;
+      let candidate: RecordedCandidate;
+      try {
+        candidate = recordedWriter(store).recover(
+          input,
+          authority,
+          setId,
+          role,
+        );
+      } catch (error) {
+        reservation.phase = "recovery-required";
+        throw error;
+      }
+      try {
+        const captured = immutable(
+          structuredClone(validate(JSON.parse(candidate.record.after.raw!))),
+        );
+        // Validation must not silently normalize recorded bytes into a different
+        // runtime value. Recovery installs the exact recorded representation.
+        if (JSON.stringify(captured) + "\n" !== candidate.record.after.raw) {
+          throw new StoredConfigConflict();
+        }
+        return participant(candidate, captured, reservation, true);
+      } catch (error) {
+        reservation.phase = "recovery-required";
+        // Recovery owns a descriptor but an unaccepted record must not be
+        // discarded: a decided journal may still need its exact candidate.
+        try {
+          candidate.detach();
+        } catch (cleanup) {
+          throw new AggregateError(
+            [error, cleanup],
+            "Recovery admission and descriptor release failed.",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+    },
     capture() {
       assertAvailable();
       return store.capture();

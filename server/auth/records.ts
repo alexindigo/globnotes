@@ -9,6 +9,7 @@ import {
   createOperationLease,
   type OperationLease,
 } from "../operation_lease.ts";
+import { registerAuthorityReader } from "./internal/authority_read.ts";
 
 export class IdentityStateError extends Error {
   constructor() {
@@ -51,6 +52,7 @@ export class IdentityFile<T> {
     readonly validate: (value: unknown) => T,
     empty: T,
     notify: () => undefined = () => undefined,
+    publicationRoot?: string,
   ) {
     this.#publication = createOwnedPublication<T>(
       filename,
@@ -59,6 +61,7 @@ export class IdentityFile<T> {
         return undefined;
       },
       notify,
+      publicationRoot,
     );
     const persistence = this.#publication.capture();
     let value: T;
@@ -70,6 +73,12 @@ export class IdentityFile<T> {
       throw new IdentityStateError();
     }
     this.#snapshot = freeze({ value: structuredClone(value), persistence });
+    registerAuthorityReader(this, (context) => {
+      if (!this.#publication.assertValidationAvailable(context)) {
+        this.#publication.assertUnchanged(this.#snapshot.persistence);
+      }
+      return this.#snapshot;
+    });
   }
   capture(): IdentitySnapshot<T> {
     this.#publication.assertAvailable();
@@ -85,6 +94,39 @@ export class IdentityFile<T> {
     const before = this.#snapshot;
     const persistence = this.#publication.prepareParents(before.persistence);
     this.#snapshot = freeze({ value: before.value, persistence });
+  }
+  prepareParticipant(
+    next: T,
+    expected: IdentitySnapshot<T>,
+    lease: OperationLease<"live">,
+    setId: string,
+    role: string,
+  ) {
+    const value = freeze(structuredClone(this.validate(next)));
+    this.assertUnchanged(expected);
+    return this.#publication.prepareParticipant(
+      value,
+      expected.persistence,
+      lease,
+      setId,
+      role,
+    );
+  }
+  recoverParticipant(
+    input: unknown,
+    authority: object,
+    setId: string,
+    role: string,
+    decision: "prepared" | "decided",
+  ) {
+    return this.#publication.recoverParticipant(
+      input,
+      authority,
+      setId,
+      role,
+      this.validate,
+      decision,
+    );
   }
   commit(
     next: T,

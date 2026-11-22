@@ -11,18 +11,22 @@ export interface RecordedCandidateData {
   readonly version: 1;
   readonly setId: string;
   readonly role: string;
+  readonly root: string;
   readonly before: StoredConfigSnapshot;
   readonly after: StoredConfigSnapshot;
   readonly candidate: string;
 }
 export interface RecordedCandidate {
   readonly record: RecordedCandidateData;
+  readonly authority: OperationLease<"live"> | OperationLease<"recovery">;
+  validateStorage(): void;
   validate(): void;
   apply(): {
     readonly snapshot: StoredConfigSnapshot;
     readonly warning: boolean;
   };
   discard(): void;
+  detach(): void;
 }
 interface NativeRecordedWriter {
   prepare(

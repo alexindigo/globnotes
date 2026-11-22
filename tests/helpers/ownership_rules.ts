@@ -57,9 +57,12 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "tests/operation_lease_test.ts",
       "tests/identity_authority_test.ts",
       "server/config/file_store.ts",
+      "server/config/owned_publication.ts",
       "server/auth/records.ts",
       "tests/owned_publication_test.ts",
       "tests/recorded_publication_test.ts",
+      "tests/helpers/recorded_publication_child.ts",
+      "tests/recorded_publication_set_test.ts",
       "server/auth/internal/account_credentials.ts",
       "tests/credential_proof_test.ts",
       "tests/credential_transition_test.ts",
@@ -67,6 +70,8 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "server/auth/offline_recovery.ts",
       "tests/helpers/account_preparation.ts",
       "tests/credential_preparation_test.ts",
+      "server/internal/publication_validation.ts",
+      "tests/participant_validation_test.ts",
     ],
     [GUARDED_SINK_OWNER]: [
       AUTHORITY_DISCLOSURE,
@@ -82,11 +87,29 @@ export const PUBLICATION_STORE = "server/config/file_store.ts";
 export const PUBLICATION_OWNER = "server/config/owned_publication.ts";
 export const PUBLICATION_PILOT = "server/auth/records.ts";
 export const PUBLICATION_PORT = "server/config/internal/publication_port.ts";
+export const PUBLICATION_VALIDATION =
+  "server/internal/publication_validation.ts";
+export const AUTHORITY_READ = "server/auth/internal/authority_read.ts";
 export const PUBLICATION_OWNERSHIP: OwnershipRules = {
   roots: OPERATION_OWNERSHIP.roots,
   modules: {
+    [PUBLICATION_VALIDATION]: [PUBLICATION_OWNER],
+    ["server/internal/operation_validation.ts"]: [
+      "server/operation_lease.ts",
+      PUBLICATION_VALIDATION,
+    ],
+    [AUTHORITY_READ]: [
+      PUBLICATION_PILOT,
+      "tests/participant_validation_test.ts",
+    ],
     ...OPERATION_OWNERSHIP.modules,
-    [PUBLICATION_OWNER]: [PUBLICATION_PILOT, "tests/owned_publication_test.ts"],
+    [PUBLICATION_OWNER]: [
+      PUBLICATION_PILOT,
+      "tests/owned_publication_test.ts",
+      "tests/helpers/recorded_publication_child.ts",
+      "tests/recorded_publication_set_test.ts",
+      "tests/participant_validation_test.ts",
+    ],
     [PUBLICATION_PORT]: [
       PUBLICATION_STORE,
       PUBLICATION_OWNER,
@@ -249,6 +272,7 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
       CREDENTIAL_ENGINE,
       PREPARATION_HELPER,
       "tests/recorded_publication_test.ts",
+      "tests/recorded_publication_set_test.ts",
     ],
     [PREPARATION_HELPER]: [
       "tests/credential_preparation_test.ts",
@@ -455,6 +479,7 @@ export const RECORD_MODULE_RULES = {
   "jsr:@std/fs@^1.0.20": [],
   "jsr:/@std/fs@^1.0.20/copy": [],
   [RECORD_CHANNEL]: [
+    "tests/recorded_publication_set_test.ts",
     SYNC_CONTROL,
     "tests/helpers/record_schema.ts",
     "tests/owned_record_channel_test.ts",

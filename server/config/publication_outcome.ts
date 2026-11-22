@@ -19,3 +19,11 @@ export class StoredConfigConflict extends Error {
     super("Stored configuration changed before commit.");
   }
 }
+/** A participant is deliberately unreadable while its complete set settles. */
+export class PublicationSetUnavailable extends Error {
+  constructor() {
+    super(
+      "Publication set is unavailable; settlement or recovery is required.",
+    );
+  }
+}

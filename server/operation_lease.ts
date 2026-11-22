@@ -3,6 +3,10 @@ import {
   createOwnershipScope,
   type OwnerIdentity,
 } from "../shared/ownership.js";
+import {
+  operationValidation,
+  withOperationValidation,
+} from "./internal/operation_validation.ts";
 
 /** The domain owner chooses witnesses. Modes do not evaluate authority or share
  * cancellation: an outcome/recovery owner is not permission for another write. */
@@ -14,7 +18,10 @@ export interface OperationLease<M extends OperationMode = OperationMode> {
   readonly mode: M;
   assertCurrent(operationId?: string): void;
 }
-export type OperationWitness = (operationId?: string) => undefined;
+export type OperationWitness = (
+  operationId?: string,
+  validation?: object,
+) => undefined;
 interface IssuedLease {
   readonly parents: readonly IssuedLease[];
   readonly validate: OperationWitness;
@@ -22,17 +29,20 @@ interface IssuedLease {
 }
 const issued = new WeakMap<object, IssuedLease>();
 function check(root: IssuedLease, operationId?: string): undefined {
-  const chain = new Set<IssuedLease>();
-  const visit = (owner: IssuedLease) => {
-    if (chain.has(owner)) return;
-    for (const parent of owner.parents) visit(parent);
-    chain.add(owner);
-  };
-  visit(root);
-  for (const owner of chain) owner.fence(operationId);
-  for (const owner of chain) owner.validate(operationId);
-  // Only pure lifetime fences remain after callbacks and value inspection.
-  for (const owner of chain) owner.fence(operationId);
+  return operationValidation((validation) => {
+    const chain = new Set<IssuedLease>();
+    const visit = (owner: IssuedLease) => {
+      if (chain.has(owner)) return;
+      for (const parent of owner.parents) visit(parent);
+      chain.add(owner);
+    };
+    visit(root);
+    for (const owner of chain) owner.fence(operationId);
+    for (const owner of chain) owner.validate(operationId, validation);
+    // Only pure lifetime fences remain after callbacks and value inspection.
+    for (const owner of chain) owner.fence(operationId);
+    return undefined;
+  });
 }
 
 /** No effect callback is public on a lease. Only the domain owner holds retire;
@@ -69,9 +79,9 @@ export function createOperationLease<M extends OperationMode>(
     fence: () => {
       scope.assertCurrent();
     },
-    validate: (operationId) => {
+    validate: (operationId, validation) => {
       for (const witness of captured) {
-        if (witness(operationId) !== undefined) {
+        if (witness(operationId, validation) !== undefined) {
           throw new TypeError(
             "Operation witnesses must be synchronous assertions",
           );
@@ -80,14 +90,14 @@ export function createOperationLease<M extends OperationMode>(
     },
   };
   const assertCurrent = (operationId?: string): undefined =>
-    check(owner, operationId);
+    withOperationValidation(undefined, () => check(owner, operationId));
   const lease = Object.freeze({
     identity: scope.identity,
     mode,
     assertCurrent,
   }) as OperationLease<M>;
   issued.set(lease, owner);
-  assertCurrent();
+  check(owner);
   return Object.freeze({ lease, retire: scope.retire });
 }
 
