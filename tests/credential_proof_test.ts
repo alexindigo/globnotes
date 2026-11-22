@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { issueSession, signIn } from "./helpers/session_delivery.ts";
+import {
+  issueSession,
+  receiveSession,
+  signIn,
+} from "./helpers/session_delivery.ts";
 import {
   assert,
   assertEquals,
@@ -29,6 +33,7 @@ import {
 import { AclRepository } from "../server/auth/acl.ts";
 import { InstanceAuthority } from "../server/auth/authority.ts";
 import { createOperationLease } from "../server/operation_lease.ts";
+import { OwnershipError } from "../shared/ownership.js";
 import { logger } from "../server/logger.ts";
 import { fixturePasswordHash } from "./helpers/config.ts";
 import {
@@ -125,20 +130,132 @@ for (
 }
 
 Deno.test("sign-in delivery: cancellation closes the claimed proof without releasing token bytes", () =>
-  proofFixture(async (accounts, sessions) => {
+  identityFixture(async (root, scope) => {
+    const claims: LoginClaim[] = [];
+    class ObservedAccounts extends AccountRepository {
+      override get credentials() {
+        const commands = super.credentials;
+        return Object.freeze({
+          ...commands,
+          beginLogin(proof: LoginProof) {
+            const claim = commands.beginLogin(proof);
+            claims.push(claim);
+            return claim;
+          },
+        });
+      }
+    }
+    const accounts = new ObservedAccounts(root, undefined, { now: () => NOW });
+    scope.onCancel(() => accounts.retireCredentials());
+    accounts.importAccount(
+      identityAccount({
+        passwordHash: fixturePasswordHash("password"),
+        totpKey: "key",
+      }),
+    );
+    const signing = new SessionRepository(root);
+    signing.initialize();
+    const sessions = new InstanceSessions(accounts, signing, {
+      expirySeconds: 1000,
+    }, { now: () => NOW });
     const proof = await accounts.credentials.authenticate(
       "alice",
       "password",
       await codeAt(),
     );
     const issued = await sessions.issue(proof);
+    assertEquals(claims.length, 1);
+    const [claim] = claims;
+    claim.lease.assertCurrent();
     await issued.body.cancel();
+    assertThrows(
+      () => claim.lease.assertCurrent(),
+      OwnershipError,
+      "Owner is retired",
+    );
     await assertRejects(
       () => sessions.issue(proof),
       AuthenticationError,
       "Invalid authentication credentials.",
     );
   }));
+
+for (const mutation of ["same account", "abort", "other account"] as const) {
+  Deno.test(`sign-in delivery: final clock callback ${mutation} is checked before enqueue`, () =>
+    proofFixture(async (accounts, sessions) => {
+      const abort = new AbortController();
+      accounts.importAccount(
+        identityAccount({
+          id: ACCOUNT_B,
+          login: "bob",
+          passwordHash: fixturePasswordHash("password"),
+          totpKey: "key",
+        }),
+      );
+      const events: string[] = [];
+      let delivering = false, checks = 0;
+      const owner = new InstanceSessions(accounts, sessions.signing, {
+        expirySeconds: 1000,
+      }, {
+        now: () => {
+          if (delivering) {
+            // The sink's construction check precedes its actual delivery check.
+            events.push(++checks === 1 ? "binder clock" : "delivery clock");
+            if (checks === 2) {
+              delivering = false;
+              if (mutation === "abort") {
+                abort.abort();
+                events.push("aborted");
+              } else {
+                const login = mutation === "same account" ? "alice" : "bob";
+                const account = accounts.byLogin(login)!;
+                accounts.consumeTotp(
+                  account.id,
+                  account.credentialRevision,
+                  NOW / 30_000 + (mutation === "same account" ? 1 : 0),
+                );
+                events.push(`advanced ${login}`);
+              }
+            }
+          }
+          return NOW;
+        },
+      });
+      const issued = await owner.login({
+        username: "alice",
+        password: "password",
+        totp: await codeAt(),
+      }, abort.signal);
+      delivering = true;
+      if (mutation === "other account") {
+        const result = await receiveSession(issued);
+        assertEquals(
+          (await owner.validateToken(result.access_token)).accountId,
+          issued.principal.accountId,
+        );
+      } else {
+        await assertRejects(
+          () => new Response(issued.body).text(),
+          AuthenticationError,
+          "Invalid authentication credentials.",
+        );
+      }
+      assertEquals(events, [
+        "binder clock",
+        "delivery clock",
+        mutation === "abort"
+          ? "aborted"
+          : `advanced ${mutation === "same account" ? "alice" : "bob"}`,
+      ]);
+      assertEquals([
+        accounts.byLogin("alice")!.lastTotpStep,
+        accounts.byLogin("bob")!.lastTotpStep,
+      ], [
+        NOW / 30_000 + (mutation === "same account" ? 1 : 0),
+        mutation === "other account" ? NOW / 30_000 : null,
+      ]);
+    }));
+}
 
 Deno.test("sign-in proof: storage validation retirement cannot spend the code after its parent check", () =>
   proofFixture(async (accounts, sessions, root) => {
@@ -528,19 +645,20 @@ for (
       const entered = fixtureGate(scope),
         release = fixtureGate(scope);
       const sign = SignJWT.prototype.sign;
-      SignJWT.prototype.sign = async function (...args) {
-        entered.resolve();
-        await release.promise;
-        return await sign.apply(this, args);
-      };
-      const abort = new AbortController();
-      const pending = signIn(sessions, {
-        username: "alice",
-        password: "password",
-        totp: await codeAt(),
-      }, abort.signal);
-      pending.catch(() => {});
+      const abort = new AbortController(), code = await codeAt();
+      let pending: ReturnType<typeof sessions.login> | undefined;
       try {
+        SignJWT.prototype.sign = async function (...args) {
+          entered.resolve();
+          await release.promise;
+          return await sign.apply(this, args);
+        };
+        pending = sessions.login({
+          username: "alice",
+          password: "password",
+          totp: code,
+        }, abort.signal);
+        pending.catch(() => {});
         await workMilestone(
           pending,
           entered.promise,
@@ -569,12 +687,16 @@ for (
           );
         }
         release.resolve();
-        await assertRejects(() => pending, AuthenticationError);
+        await assertRejects(
+          () => pending!,
+          AuthenticationError,
+          "Invalid authentication credentials.",
+        );
         assertEquals(accounts.byLogin("alice")?.lastTotpStep, NOW / 30_000);
       } finally {
-        release.resolve();
-        await pending.catch(() => {});
         SignJWT.prototype.sign = sign;
+        release.resolve();
+        await pending?.catch(() => {});
       }
     }));
 }
@@ -593,20 +715,22 @@ Deno.test("sign-in proof: another account's code progress does not cancel this a
       release = fixtureGate(scope);
     const sign = SignJWT.prototype.sign;
     let count = 0;
-    SignJWT.prototype.sign = async function (...args) {
-      if (++count === 1) {
-        entered.resolve();
-        await release.promise;
-      }
-      return await sign.apply(this, args);
-    };
-    const pending = signIn(sessions, {
-      username: "alice",
-      password: "password",
-      totp: await codeAt(),
-    });
-    pending.catch(() => {});
+    const code = await codeAt();
+    let pending: ReturnType<typeof signIn> | undefined;
     try {
+      SignJWT.prototype.sign = async function (...args) {
+        if (++count === 1) {
+          entered.resolve();
+          await release.promise;
+        }
+        return await sign.apply(this, args);
+      };
+      pending = signIn(sessions, {
+        username: "alice",
+        password: "password",
+        totp: code,
+      });
+      pending.catch(() => {});
       await workMilestone(pending, entered.promise, "first signature entered");
       const other = await signIn(sessions, {
         username: "bob",
@@ -618,9 +742,9 @@ Deno.test("sign-in proof: another account's code progress does not cancel this a
       await sessions.validateToken(first.access_token);
       await sessions.validateToken(other.access_token);
     } finally {
-      release.resolve();
-      await pending.catch(() => {});
       SignJWT.prototype.sign = sign;
+      release.resolve();
+      await pending?.catch(() => {});
     }
   }));
 

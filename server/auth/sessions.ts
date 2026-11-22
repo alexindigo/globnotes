@@ -194,6 +194,10 @@ export class InstanceSessions {
       const delivery = createOperationLease("live", [() => {
         this.assertCurrent(principal);
         this.signing.assertUnchanged(signingSnapshot);
+        // assertCurrent samples the injected clock. Recheck cancellation and the
+        // exact account snapshot after that callback, before the native enqueue.
+        // The parent check still rejects an already-aborted sign-in early.
+        assertOperationLease(claim.lease, "live");
       }], [claim.lease]);
       const close = () => {
         delivery.retire();
