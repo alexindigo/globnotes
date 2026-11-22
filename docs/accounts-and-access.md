@@ -108,3 +108,13 @@ body consumption. Both proof kinds use the same session signer and guarded body.
 The settled set verifies every member's native binding. Bootstrap never verifies
 or spends another authenticator code. Single-file,
 partial, unreleased or caller-certified publication cannot mint this proof.
+
+Offline account creation has a separate aggregate purpose requiring the real
+exclusive recovery authority for its canonical instance root. It prepares a
+temporary-password account on a fresh root, a ready root or the approved
+signing-only first-account interruption; it never creates or grants a vault.
+A persisted uninitialized account record is not that interruption. This purpose
+cannot transfer into setup/create-and-add participants or mint a bootstrap proof.
+The later CLI adapter still owns paired-state classification, legacy refusal,
+configured roots, stdin and signing initialization before account publication.
+Reset-password and disable-authenticator keep their existing distinct behavior.

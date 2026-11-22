@@ -39,7 +39,14 @@ import type {
   LoginProof,
 } from "../server/auth/account_credentials.ts";
 import type { AccountIdentity } from "../server/auth/accounts.ts";
-import { InstanceSessions } from "../server/auth/sessions.ts";
+import {
+  InstanceSessions,
+  SessionRepository,
+} from "../server/auth/sessions.ts";
+import { InstanceAuthority } from "../server/auth/authority.ts";
+import { HttpError } from "@pathfinder/pathfinder";
+import { withCredentialAuthority } from "./helpers/credential_commands.ts";
+import type { OfflineRecoveryAuthority } from "../server/auth/offline_recovery.ts";
 import type { AccountPreparationAuthority } from "../server/auth/account_credentials.ts";
 
 const SET = "00000000-0000-4000-8000-000000000020";
@@ -868,6 +875,433 @@ function publishEnrolledSetup(
   });
   assertEquals(acl.grants, { [prepared.identity.id]: "admin" });
 }
+
+for (const state of ["fresh", "ready", "interrupted first account"] as const) {
+  Deno.test(`offline create: ${state} yields an exact temporary account, no vault and restricted restart sign-in`, () =>
+    preparationFixture(async (f) => {
+      let actor: AccountIdentity | undefined;
+      if (state === "ready") actor = await f.createInitial();
+      if (state !== "fresh") f.signing.initialize();
+      const beforeSigning = f.signing.capture();
+      const before = f.accounts.capture();
+      const owner = f.offline();
+      const lifetime = createOperationLease("live", [() => undefined]);
+      try {
+        const prepared = await f.accounts.credentials.prepareOfflineAccount(
+          owner.authority,
+          f.request({ login: " Operator " }),
+        );
+        assertStrictEquals(f.accounts.capture(), before);
+        assertEquals([
+          prepared.identity.login,
+          prepared.identity.passwordChangeRequired,
+          prepared.identity.totpEnabled,
+        ], ["operator", true, false]);
+        assertThrows(
+          () =>
+            f.accounts.credentials.prepareAccountParticipant(
+              prepared.prepared,
+              SET,
+            ),
+          IdentityStateError,
+          INVALID,
+        );
+        if (state === "fresh") f.signing.initialize();
+        else assertStrictEquals(f.signing.capture(), beforeSigning);
+        const account = f.accounts.credentials.publishPreparedAccount(
+          prepared.prepared,
+        );
+        assertEquals(account, prepared.identity);
+        const stored = storedState(f.accounts);
+        assertEquals([
+          stored.initialized,
+          stored.accounts.map((
+            a,
+          ) => [
+            a.id,
+            a.login,
+            a.passwordChangeRequired,
+            a.totpKey,
+            a.lastTotpStep,
+          ]),
+          stored.provisioning,
+        ], [true, [
+          ...(actor ? [[actor.id, "alice", false, null, null]] : []),
+          [account.id, "operator", true, null, null],
+        ], []]);
+        assertEquals([...Deno.readDirSync(f.root)].map((e) => e.name).sort(), [
+          "accounts.json",
+          "identity.lock",
+          "sessions.json",
+        ]);
+        const reopened = new AccountRepository(f.root);
+        const sessions = new InstanceSessions(
+          reopened,
+          new SessionRepository(f.root),
+          { expirySeconds: 86400 },
+        );
+        const session = await signIn(sessions, {
+          username: "operator",
+          password: "password",
+        });
+        const principal = await sessions.validateToken(session.access_token);
+        assertEquals([principal.accountId, principal.passwordChangeRequired], [
+          account.id,
+          true,
+        ]);
+        const authority = new InstanceAuthority(
+          sessions,
+          () => null,
+          lifetime.lease,
+        );
+        assertEquals(authority.capabilities(principal), {
+          canRead: false,
+          canEdit: false,
+          canManageVault: false,
+          canManageOwnAccount: true,
+          canCreateVault: false,
+        });
+        const refusal = assertThrows(
+          () => authority.instanceGuard(principal, "createVault"),
+          HttpError,
+          "HTTP 403",
+        );
+        assertEquals(refusal.status, 403);
+        authority.instanceGuard(principal, "manageOwnAccount")();
+        await withCredentialAuthority(reopened, account.id, async (own) => {
+          await assertRejects(
+            () =>
+              reopened.credentials.changeOwn(own, {
+                credentialRevision: 0,
+                updateId: NEXT,
+                current: { password: "password" },
+                newPassword: "password",
+                authenticator: { kind: "keep" },
+              }),
+            IdentityStateError,
+            INVALID,
+          );
+          const changed = await reopened.credentials.changeOwn(own, {
+            credentialRevision: 0,
+            updateId: NEXT,
+            current: { password: "password" },
+            newPassword: "private password",
+            authenticator: { kind: "keep" },
+          });
+          assertEquals([
+            changed.id,
+            changed.credentialRevision,
+            changed.passwordChangeRequired,
+          ], [account.id, 1, false]);
+        });
+        await assertRejects(
+          () => sessions.validateToken(session.access_token),
+          AuthenticationError,
+          "Invalid authentication credentials.",
+        );
+        const privateSession = await signIn(sessions, {
+          username: "operator",
+          password: "private password",
+        });
+        assertEquals(privateSession.principal.passwordChangeRequired, false);
+        assertEquals([...Deno.readDirSync(f.root)].map((e) => e.name).sort(), [
+          "accounts.json",
+          "identity.lock",
+          "sessions.json",
+        ]);
+      } finally {
+        owner.close();
+        lifetime.retire();
+      }
+    }));
+}
+
+Deno.test("offline create: credential material, purpose flags and duplicate normalized login are refused before hashing", () => {
+  let hashes = 0;
+  return preparationFixture(async (f) => {
+    const owner = f.offline();
+    try {
+      for (
+        const extra of [
+          { passwordHash: "raw hash" },
+          { totpKey: "key" },
+          { lastTotpStep: 0 },
+          { authenticator: { key: "A".repeat(32), code: "123456" } },
+          { passwordChangeRequired: false },
+          { temporary: false },
+          { committed: true },
+          { provisioning: [] },
+        ]
+      ) {
+        await assertRejects(
+          () =>
+            f.accounts.credentials.prepareOfflineAccount(owner.authority, {
+              ...f.request(),
+              ...extra,
+            }),
+          IdentityStateError,
+          INVALID,
+        );
+      }
+      assertEquals(hashes, 0);
+      const prepared = await f.accounts.credentials.prepareOfflineAccount(
+        owner.authority,
+        f.request(),
+      );
+      f.signing.initialize();
+      f.accounts.credentials.publishPreparedAccount(prepared.prepared);
+      const before = Deno.readTextFileSync(`${f.root}/accounts.json`);
+      await assertRejects(
+        () =>
+          f.accounts.credentials.prepareOfflineAccount(
+            owner.authority,
+            f.request({ login: " ALICE ", password: "replacement" }),
+          ),
+        StoredConfigConflict,
+        CONFLICT,
+      );
+      assertEquals(hashes, 1);
+      assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), before);
+    } finally {
+      owner.close();
+    }
+  }, {
+    hash: (password) => {
+      hashes++;
+      return Promise.resolve(fixturePasswordHash(password));
+    },
+  });
+});
+
+Deno.test("offline create: actual root authority is required, not initial, recipient, cloned or foreign authority", () =>
+  preparationFixture(async (f) => {
+    const owner = f.offline();
+    try {
+      for (
+        const source of [
+          {},
+          { ...owner.authority },
+          structuredClone(owner.authority),
+          f.authority("initial"),
+          f.authority("recipient"),
+          null,
+        ]
+      ) {
+        await assertRejects(
+          () =>
+            f.accounts.credentials.prepareOfflineAccount(
+              source as OfflineRecoveryAuthority,
+              f.request(),
+            ),
+          IdentityStateError,
+          INVALID,
+        );
+      }
+      await preparationFixture(async (foreign) => {
+        await assertRejects(
+          () =>
+            foreign.accounts.credentials.prepareOfflineAccount(
+              owner.authority,
+              foreign.request(),
+            ),
+          IdentityStateError,
+          INVALID,
+        );
+        assertEquals(foreign.accounts.capture().value.accounts, []);
+      });
+      await assertRejects(
+        () =>
+          f.accounts.credentials.preparePasswordOnlyRecipient(
+            f.authority("recipient"),
+            f.request(),
+          ),
+        StoredConfigConflict,
+        CONFLICT,
+      );
+      assertEquals(f.accounts.capture().value.accounts, []);
+    } finally {
+      owner.close();
+    }
+  }));
+
+for (
+  const boundary of [
+    "released owner",
+    "lock replacement",
+    "abort",
+    "aggregate",
+    "competing account",
+  ] as const
+) {
+  Deno.test(`offline create: ${boundary} during hashing publishes no account`, () => {
+    let hashHold: (() => Promise<void>) | undefined;
+    let hashes = 0;
+    return preparationFixture(async (f) => {
+      const owner = f.offline();
+      const abort = new AbortController();
+      try {
+        await heldOperation({
+          label: `offline create ${boundary}`,
+          owner: () => f.accounts,
+          progress: { kind: "controlled", clock: "external" },
+        }, (hold) => {
+          hashHold = hold;
+          return f.accounts.credentials.prepareOfflineAccount(
+            owner.authority,
+            f.request({ login: "operator" }),
+            abort.signal,
+          );
+        }, async (operation) => {
+          await operation.reached();
+          if (boundary === "released owner") owner.close();
+          if (boundary === "lock replacement") {
+            Deno.writeTextFileSync(`${f.root}/replacement`, "foreign lock");
+            Deno.renameSync(`${f.root}/replacement`, `${f.root}/identity.lock`);
+          }
+          if (boundary === "abort") abort.abort();
+          if (boundary === "aggregate") f.accounts.retireCredentials();
+          if (boundary === "competing account") await f.createInitial();
+          if (boundary === "abort") {
+            await assertRejects(
+              () => operation.result(),
+              AuthenticationError,
+              "Invalid authentication credentials.",
+            );
+          } else if (
+            boundary === "released owner" || boundary === "aggregate"
+          ) {
+            await assertRejects(
+              () => operation.result(),
+              OwnershipError,
+              "Owner is retired",
+            );
+          } else {await assertRejects(
+              () => operation.result(),
+              StoredConfigConflict,
+              CONFLICT,
+            );}
+          assertEquals(f.accounts.byLogin("operator"), null);
+          assertEquals(
+            f.accounts.capture().value.accounts.map((a) => a.login),
+            boundary === "competing account" ? ["alice"] : [],
+          );
+        });
+      } finally {
+        owner.close();
+      }
+    }, {
+      hash: async (password) => {
+        if (++hashes === 1) await hashHold!();
+        return fixturePasswordHash(password);
+      },
+    });
+  });
+}
+
+Deno.test("offline create: retired ownership during native staging prevents publication and closes preparation", () =>
+  preparationFixture(async (f) => {
+    const owner = f.offline();
+    const prepared = await f.accounts.credentials.prepareOfflineAccount(
+      owner.authority,
+      f.request(),
+    );
+    const read = Deno.readTextFileSync;
+    const events: string[] = [];
+    Deno.readTextFileSync = (path) => {
+      const result = read(path);
+      if (String(path).startsWith(`${f.root}/.config-`)) {
+        events.push("candidate read");
+        owner.close();
+      }
+      return result;
+    };
+    try {
+      assertThrows(
+        () => f.accounts.credentials.publishPreparedAccount(prepared.prepared),
+        OwnershipError,
+        "Owner is retired",
+      );
+      assertThrows(
+        () => f.accounts.credentials.publishPreparedAccount(prepared.prepared),
+        IdentityStateError,
+        INVALID,
+      );
+    } finally {
+      Deno.readTextFileSync = read;
+      owner.close();
+    }
+    assertEquals(events, ["candidate read"]);
+    assertEquals(f.accounts.capture().value.accounts, []);
+    assertEquals([...Deno.readDirSync(f.root)].map((e) => e.name), [
+      "identity.lock",
+    ]);
+  }));
+
+Deno.test("offline create: persisted uninitialized account state is not the permitted signing-only interruption", () =>
+  preparationFixture(async (f) => {
+    const raw = JSON.stringify({
+      version: 1,
+      revision: 0,
+      initialized: false,
+      updateId: null,
+      accounts: [],
+      provisioning: [],
+    });
+    Deno.writeTextFileSync(`${f.root}/accounts.json`, raw);
+    f.signing.initialize();
+    const accounts = new AccountRepository(f.root);
+    const owner = f.offline();
+    try {
+      await assertRejects(
+        () =>
+          accounts.credentials.prepareOfflineAccount(
+            owner.authority,
+            f.request(),
+          ),
+        StoredConfigConflict,
+        CONFLICT,
+      );
+      assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), raw);
+    } finally {
+      owner.close();
+    }
+  }));
+
+Deno.test("offline create: corrupt account and signing owner inputs retain original bytes without repair", () =>
+  preparationFixture(async (f) => {
+    const owner = f.offline();
+    try {
+      for (const file of ["accounts.json", "sessions.json"]) {
+        const raw = "{unreadable credential state";
+        Deno.writeTextFileSync(`${f.root}/${file}`, raw);
+        if (file === "accounts.json") {
+          assertThrows(
+            () => new AccountRepository(f.root),
+            IdentityStateError,
+            INVALID,
+          );
+          await assertRejects(
+            () =>
+              f.accounts.credentials.prepareOfflineAccount(
+                owner.authority,
+                f.request(),
+              ),
+            StoredConfigConflict,
+            CONFLICT,
+          );
+        } else {
+          assertThrows(
+            () => new SessionRepository(f.root),
+            IdentityStateError,
+            INVALID,
+          );
+        }
+        assertEquals(Deno.readTextFileSync(`${f.root}/${file}`), raw);
+      }
+    } finally {
+      owner.close();
+    }
+  }));
 
 type PreparationFixture = Parameters<
   Parameters<typeof preparationFixture>[0]

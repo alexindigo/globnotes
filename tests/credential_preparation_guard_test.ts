@@ -78,3 +78,16 @@ Deno.test("bootstrap registration: erased initial proof and issued commands conf
     assertPrivateModule(module, PREPARATION_OWNERSHIP);
   }
 });
+Deno.test("offline create registration: the public command does not confer recovery acquisition", () => {
+  assertEquals(
+    analyzeOwnership([{
+      file: "server/api/controller.ts",
+      text:
+        'import type {OfflineRecoveryAuthority} from "recovery"; await credentials.prepareOfflineAccount(authority,request);',
+      imports: { recovery: OFFLINE_RECOVERY },
+    }], PREPARATION_OWNERSHIP),
+    [],
+  );
+  assertPrivateModule(OFFLINE_RECOVERY, PREPARATION_OWNERSHIP);
+  assertPrivateModule(CREDENTIAL_ENGINE, PREPARATION_OWNERSHIP);
+});

@@ -123,12 +123,13 @@ declare const preparationAuthorityBrand: unique symbol;
 export interface AccountPreparationAuthority {
   readonly [preparationAuthorityBrand]: true;
 }
-type PreparationPurpose = "initial" | "recipient";
+type DomainPreparationPurpose = "initial" | "recipient";
+type PreparationPurpose = DomainPreparationPurpose | "offline";
 const preparationAuthorities = new WeakMap<
   AccountPreparationAuthority,
   {
     owner: object;
-    purpose: PreparationPurpose;
+    purpose: DomainPreparationPurpose;
     lease: OperationLease<"live">;
     completion?: OperationLease<"live">;
   }
@@ -136,7 +137,7 @@ const preparationAuthorities = new WeakMap<
 /** Trusted bootstrap/Admin admission adapter, not a consumer-supplied flag. */
 export function bindAccountPreparationAuthority(
   owner: AccountCredentials,
-  purpose: PreparationPurpose,
+  purpose: DomainPreparationPurpose,
   lease: OperationLease<"live">,
   completion?: OperationLease<"live">,
 ): AccountPreparationAuthority {
@@ -482,7 +483,7 @@ export function bindAccountCredentials(
   };
   const prepareAccount = async (
     purpose: PreparationPurpose,
-    source: AccountPreparationAuthority,
+    source: AccountPreparationAuthority | OfflineRecoveryAuthority,
     input: AccountPreparationRequest,
     signal?: AbortSignal,
   ) => {
@@ -502,7 +503,17 @@ export function bindAccountCredentials(
       !identity(request.updateId) ||
       (signal !== undefined && !(signal instanceof AbortSignal))
     ) throw new IdentityStateError();
-    const admitted = preparationAuthorities.get(source);
+    const admitted = purpose === "offline"
+      ? {
+        owner: credentials,
+        purpose,
+        lease: assertOfflineRecovery(
+          source as OfflineRecoveryAuthority,
+          store.root,
+        ),
+        completion: undefined,
+      }
+      : preparationAuthorities.get(source as AccountPreparationAuthority);
     if (
       !admitted || admitted.owner !== credentials ||
       admitted.purpose !== purpose
@@ -529,7 +540,9 @@ export function bindAccountCredentials(
       if (
         purpose === "initial"
           ? snapshot.value.initialized || snapshot.value.accounts.length !== 0
-          : !snapshot.value.initialized
+          : purpose === "recipient"
+          ? !snapshot.value.initialized
+          : !snapshot.value.initialized && snapshot.persistence.raw !== null
       ) throw new StoredConfigConflict();
       return undefined;
     }], [lifetime.lease, admitted.lease]);
@@ -578,7 +591,7 @@ export function bindAccountCredentials(
           ...(confirmed ? { totpKeyEncoding: confirmed.encoding } : {}),
           lastTotpStep: confirmed?.step ?? null,
           credentialRevision: 0,
-          passwordChangeRequired: purpose === "recipient",
+          passwordChangeRequired: purpose !== "initial",
           credentialUpdateId: null,
         }),
       );
@@ -783,6 +796,16 @@ export function bindAccountCredentials(
     ) {
       return prepareAccount("recipient", authority, request, signal);
     },
+    /** Explicit offline creation is its own purpose, never web initial admission
+     * or Admin recipient authority. The CLI still classifies signing/legacy state
+     * and initializes signing first before publishing this prepared account. */
+    prepareOfflineAccount(
+      authority: OfflineRecoveryAuthority,
+      request: AccountPreparationRequest,
+      signal?: AbortSignal,
+    ) {
+      return prepareAccount("offline", authority, request, signal);
+    },
     publishPreparedAccount(prepared: PreparedAccount): AccountIdentity {
       const value = preparedAccounts.get(prepared);
       // Confirmed setup credentials are published with the creator ACL, never
@@ -810,6 +833,7 @@ export function bindAccountCredentials(
       if (!value || value.phase !== "prepared" || !identity(setId)) {
         throw new IdentityStateError();
       }
+      if (value.purpose === "offline") throw new IdentityStateError();
       value.phase = "publishing";
       let issued = false;
       try {

@@ -259,6 +259,7 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
       "tests/helpers/credential_commands.ts",
     ],
     "tests/helpers/credential_commands.ts": [
+      "tests/credential_bootstrap_preparation_test.ts",
       "tests/credential_login_step_test.ts",
       "tests/credential_transition_test.ts",
       "tests/identity_totp_contract_test.ts",
