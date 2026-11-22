@@ -37,6 +37,7 @@ export const RESOURCE_OWNERSHIP: OwnershipRules = {
 
 export const OPERATION_LEASE_OWNER = "server/operation_lease.ts";
 export const GUARDED_SINK_OWNER = "server/internal/guarded_sink.ts";
+export const AUTHORITY_DISCLOSURE = "server/internal/authority_disclosure.ts";
 export const AUTHORITY_PILOT = "server/auth/authority.ts";
 
 /** P05 protects capability acquisition at resolved private module imports.
@@ -50,6 +51,9 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       AUTHORITY_PILOT,
       "server/auth/middleware.ts",
       GUARDED_SINK_OWNER,
+      AUTHORITY_DISCLOSURE,
+      "server/plugins/host.ts",
+      "tests/instance_disclosure_test.ts",
       "tests/operation_lease_test.ts",
       "tests/identity_authority_test.ts",
       "server/config/file_store.ts",
@@ -64,11 +68,12 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "tests/credential_preparation_test.ts",
     ],
     [GUARDED_SINK_OWNER]: [
-      AUTHORITY_PILOT,
+      AUTHORITY_DISCLOSURE,
       "tests/operation_lease_test.ts",
       "server/config/file_store.ts",
       "server/auth/sessions.ts",
     ],
+    [AUTHORITY_DISCLOSURE]: [AUTHORITY_PILOT, "server/plugins/host.ts"],
   },
 };
 
@@ -213,6 +218,7 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
       "tests/identity_acl_test.ts",
       "tests/identity_authority_test.ts",
       "tests/identity_declarations_test.ts",
+      "tests/instance_disclosure_test.ts",
       "tests/identity_sessions_test.ts",
       "tests/identity_totp_test.ts",
       "tests/identity_totp_fixed_form_test.ts",
@@ -248,6 +254,7 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
       "tests/identity_acl_test.ts",
       "tests/identity_authority_test.ts",
       "tests/identity_declarations_test.ts",
+      "tests/instance_disclosure_test.ts",
       "tests/identity_sessions_test.ts",
       "tests/identity_totp_fixed_form_test.ts",
       "tests/identity_totp_test.ts",
@@ -296,6 +303,7 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
       "tests/identity_authority_test.ts",
       "tests/identity_declarations_test.ts",
       "tests/identity_ownership_test.ts",
+      "tests/instance_disclosure_test.ts",
       "tests/identity_sessions_test.ts",
       "tests/identity_totp_contract_test.ts",
       "tests/identity_totp_fixed_form_test.ts",

@@ -13,7 +13,7 @@ import {
   OWNERSHIP_FAMILIES,
 } from "./helpers/ownership_legacy.ts";
 import {
-  AUTHORITY_PILOT,
+  AUTHORITY_DISCLOSURE,
   GUARDED_SINK_OWNER,
   OPERATION_LEASE_OWNER,
   OPERATION_OWNERSHIP,
@@ -23,13 +23,17 @@ import {
 const input = (text: string, file = "server/bypass.cts"): SourceModule => ({
   file,
   text,
-  imports: { private: GUARDED_SINK_OWNER, lease: OPERATION_LEASE_OWNER },
+  imports: {
+    private: GUARDED_SINK_OWNER,
+    lease: OPERATION_LEASE_OWNER,
+    disclosure: AUTHORITY_DISCLOSURE,
+  },
 });
 for (
   const [specifier, module] of [["private", GUARDED_SINK_OWNER], [
     "lease",
     OPERATION_LEASE_OWNER,
-  ]]
+  ], ["disclosure", AUTHORITY_DISCLOSURE]]
 ) {
   Deno.test(`P05 registration: every runtime import of ${module} rejects at its root import site`, () => {
     for (
@@ -52,7 +56,14 @@ for (
       assertEquals(sites.map((s) => s.source), [`"${specifier}"`]);
       assert(inventoryErrors(sites, [], new Set()).length > 0);
       assertEquals(
-        analyzeOwnership([input(code, AUTHORITY_PILOT)], OPERATION_OWNERSHIP),
+        analyzeOwnership([
+          input(
+            code,
+            module === AUTHORITY_DISCLOSURE
+              ? "server/plugins/host.ts"
+              : AUTHORITY_DISCLOSURE,
+          ),
+        ], OPERATION_OWNERSHIP),
         [],
       );
     }
@@ -130,7 +141,13 @@ Deno.test("P05 registration: actual private modules and exact owners exist, with
     fromFileUrl(new URL("../", import.meta.url)),
   );
   const files = new Set(sources.map((s) => s.file));
-  for (const module of [OPERATION_LEASE_OWNER, GUARDED_SINK_OWNER]) {
+  for (
+    const module of [
+      OPERATION_LEASE_OWNER,
+      GUARDED_SINK_OWNER,
+      AUTHORITY_DISCLOSURE,
+    ]
+  ) {
     assert(files.has(module));
     for (const owner of OPERATION_OWNERSHIP.modules[module]) {
       assert(files.has(owner), `lost owner: ${owner}`);

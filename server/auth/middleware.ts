@@ -26,6 +26,7 @@ import {
 } from "./sessions.ts";
 import {
   assertOperationLease,
+  createOperationLease,
   type OperationLease,
 } from "../operation_lease.ts";
 
@@ -68,7 +69,8 @@ export function createInstanceAuth(adapters: {
     }
     let pending = requests.get(request);
     if (!pending) {
-      pending = Promise.resolve().then(() => sessions.resolve(token(request)));
+      const credential = token(request);
+      pending = Promise.resolve().then(() => sessions.resolve(credential));
       requests.set(request, pending);
     }
     try {
@@ -81,14 +83,14 @@ export function createInstanceAuth(adapters: {
     }
   };
   const admission = (request: Request) => {
+    const sessions = adapters.sessions;
     const lifetime = adapters.lifetime(request);
     assertOperationLease(lifetime, "live");
-    const sessions = adapters.sessions;
-    const check = () => {
-      assertOperationLease(lifetime, "live");
+    const { lease: requestLifetime } = createOperationLease("live", [() => {
       request.signal.throwIfAborted();
       if (adapters.sessions !== sessions) throw invalid();
-    };
+    }], [lifetime]);
+    const check = requestLifetime.assertCurrent;
     check();
     return {
       sessions,
@@ -96,7 +98,7 @@ export function createInstanceAuth(adapters: {
       evaluator: new InstanceAuthority(sessions, () => {
         check();
         return adapters.vault(request);
-      }, lifetime),
+      }, requestLifetime),
     };
   };
   const lease = async (request: Request, operation: VaultOperation) => {
@@ -106,9 +108,19 @@ export function createInstanceAuth(adapters: {
     admitted.check();
     return bind(value);
   };
+  const instanceLease = async (
+    request: Request,
+    operation: InstanceOperation,
+  ) => {
+    const admitted = admission(request);
+    const value = await principal(request, admitted.sessions);
+    admitted.check();
+    return admitted.evaluator.instanceLease(value, operation);
+  };
   return Object.freeze({
     principal: (request: Request) => principal(request),
     lease,
+    instanceLease,
     noteMutationLease: (request: Request) => lease(request, "editNotes"),
     readLease: (request: Request) => lease(request, "readVault"),
     async settingsWriteGuard(request: Request): Promise<() => void> {
@@ -118,14 +130,7 @@ export function createInstanceAuth(adapters: {
       request: Request,
       operation: InstanceOperation,
     ): Promise<() => void> {
-      const admitted = admission(request);
-      const value = await principal(request, admitted.sessions);
-      admitted.check();
-      const guard = admitted.evaluator.instanceGuard(value, operation);
-      return () => {
-        admitted.check();
-        guard();
-      };
+      return (await instanceLease(request, operation)).assertCurrent;
     },
   });
 }

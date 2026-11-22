@@ -205,8 +205,8 @@ export function servicePluginRpc(
             args,
             authority.current,
           );
-        if (authority.disclose) {
-          authority.disclose(prepare);
+        if (authority.disclose && authority.prepareDisclosure) {
+          authority.disclose(authority.prepareDisclosure(prepare));
           return Promise.resolve(null);
         }
         return Promise.resolve(prepare());

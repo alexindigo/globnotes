@@ -7,7 +7,14 @@ import {
   createOperationLease,
   type OperationLease,
 } from "../operation_lease.ts";
-import { bindGuardedSink, type Disclosure } from "../internal/guarded_sink.ts";
+import {
+  type AuthorityDisclosure,
+  createAuthorityDisclosure,
+} from "../internal/authority_disclosure.ts";
+export type {
+  AuthorityDisclosure,
+  PreparedAuthorityRead,
+} from "../internal/authority_disclosure.ts";
 import type {
   NoteMutationLease,
   PluginLifecycle,
@@ -25,7 +32,10 @@ const REQUIREMENTS = {
   manageVault: "admin",
 } as const;
 export type VaultOperation = keyof typeof REQUIREMENTS;
-export type InstanceOperation = "manageOwnAccount" | "createVault";
+export type InstanceOperation =
+  | "readInstance"
+  | "manageOwnAccount"
+  | "createVault";
 export interface AuthorityVault {
   /** Retained host bundle identity, shared by projections; replace on rebind. */
   readonly identity: object;
@@ -42,28 +52,19 @@ export function sameAuthorityVault(
     current.id === captured.id && current.acl === captured.acl &&
     current.lifecycle === captured.lifecycle;
 }
-declare const preparedReadBrand: unique symbol;
-/** Inert across promises/queues: only this operation's disclosure sink can read
- * the value. Neither credentials nor private read bytes live on the handle. */
-export interface PreparedAuthorityRead<T> {
-  readonly [preparedReadBrand]: T;
-}
-const preparedReads = new WeakMap<PreparedAuthorityRead<unknown>, {
+export interface InstanceAuthorityLease extends AuthorityDisclosure {
   readonly lease: OperationLease<"live">;
-  readonly value: unknown;
-}>();
-export interface VaultAuthorityLease extends NoteMutationLease {
+  readonly operation: InstanceOperation;
+  readonly principal: Principal;
+  assertCurrent(operationId?: string): void;
+}
+export interface VaultAuthorityLease
+  extends NoteMutationLease, AuthorityDisclosure {
   readonly lease: OperationLease<"live">;
   readonly vaultId: string;
   readonly aclRevision: number;
   readonly operation: VaultOperation;
   readonly principal: Principal;
-  /** Seal already-prepared data without disclosing it to queued consumers. */
-  prepare<T>(value: Disclosure<T>): PreparedAuthorityRead<T>;
-  /** The lazy stream queues the handle, not raw data; pull fences actual enqueue. */
-  disclose<T>(prepared: PreparedAuthorityRead<T>): ReadableStream<T>;
-  read<T>(prepare: () => Promise<T>): Promise<PreparedAuthorityRead<T>>;
-  stream<T>(source: ReadableStream<T>): ReadableStream<T>;
 }
 function unauthorized(): never {
   throw new HttpError(401, "Invalid authentication credentials.", {
@@ -104,8 +105,18 @@ export class InstanceAuthority {
     principal: Principal,
     operation: InstanceOperation,
   ): () => void {
+    return this.instanceLease(principal, operation).assertCurrent;
+  }
+  instanceLease(
+    admittedPrincipal: Principal,
+    operation: InstanceOperation,
+  ): InstanceAuthorityLease {
+    const lifetime = this.lifetime;
+    assertOperationLease(lifetime, "live");
+    const principal = Object.freeze({ ...admittedPrincipal });
     const guard = () => {
       this.#principal(principal);
+      if (operation === "readInstance") return;
       if (principal.kind !== "account") unauthorized();
       if (operation === "createVault" && principal.passwordChangeRequired) {
         forbidden();
@@ -114,8 +125,25 @@ export class InstanceAuthority {
     };
     const { lease } = createOperationLease("live", [() => {
       guard();
-    }], [this.lifetime]);
-    return lease.assertCurrent;
+    }], [lifetime]);
+    return Object.freeze({
+      ...createAuthorityDisclosure(lease, "live"),
+      lease,
+      principal,
+      operation,
+      assertCurrent: lease.assertCurrent,
+    });
+  }
+  /** Domain-issued exact acknowledgment only; no session exception or new write.
+   * Composition remains a parent even if the domain outcome survives self-change. */
+  acknowledgment(outcome: OperationLease<"outcome">): AuthorityDisclosure {
+    assertOperationLease(this.lifetime, "live");
+    assertOperationLease(outcome, "outcome");
+    const { lease } = createOperationLease("outcome", [() => {}], [
+      this.lifetime,
+      outcome,
+    ]);
+    return createAuthorityDisclosure(lease, "outcome");
   }
   capabilities(
     principal: Principal,
@@ -205,63 +233,9 @@ export class InstanceAuthority {
       };
       const { lease } = createOperationLease("live", [guard], [lifetime]);
       const assertCurrent = lease.assertCurrent;
-      const preparedValue = <T>(prepared: PreparedAuthorityRead<T>): T => {
-        const issued = preparedReads.get(prepared);
-        if (!issued || issued.lease !== lease) {
-          throw new TypeError(
-            "Disclosure requires this operation's prepared read",
-          );
-        }
-        return issued.value as T;
-      };
-      const inspectDisclosure = <T>(value: T): T => {
-        if (
-          typeof value === "function" ||
-          (value != null &&
-            typeof (value as { then?: unknown }).then === "function")
-        ) {
-          throw new TypeError(
-            "Disclosure requires prepared data, not a callback or Promise",
-          );
-        }
-        return value;
-      };
-      const prepareValue = <T>(value: T): PreparedAuthorityRead<T> => {
-        assertCurrent();
-        inspectDisclosure(value);
-        assertCurrent();
-        const prepared = Object.freeze({}) as PreparedAuthorityRead<T>;
-        preparedReads.set(prepared, { lease, value });
-        return prepared;
-      };
-      const disclose = <T>(
-        prepared: PreparedAuthorityRead<T>,
-      ): ReadableStream<T> => {
-        // Validate provenance now, but retain only the opaque handle in the queue.
-        preparedValue(prepared);
-        assertCurrent();
-        return new ReadableStream<T>({
-          pull(controller) {
-            const enqueue = controller.enqueue.bind(controller);
-            const close = controller.close.bind(controller);
-            const valueSink = bindGuardedSink(
-              lease,
-              "live",
-              (handle: PreparedAuthorityRead<T>) => ({
-                value: inspectDisclosure(preparedValue(handle)),
-              }),
-              ({ value }) => {
-                enqueue(value);
-                close();
-                return undefined;
-              },
-            );
-            valueSink(prepared);
-          },
-        }, { highWaterMark: 0 });
-      };
       assertCurrent();
       return Object.freeze({
+        ...createAuthorityDisclosure(lease, "live"),
         lease,
         vaultId: vault.id,
         aclRevision: snapshot.value.revision,
@@ -269,78 +243,6 @@ export class InstanceAuthority {
         principal: Object.freeze({ ...principal }),
         epoch,
         assertCurrent,
-        prepare<T>(value: Disclosure<T>): PreparedAuthorityRead<T> {
-          return prepareValue(value) as PreparedAuthorityRead<T>;
-        },
-        disclose,
-        async read<T>(
-          prepare: () => Promise<T>,
-        ): Promise<PreparedAuthorityRead<T>> {
-          assertCurrent();
-          const value = await prepare();
-          return prepareValue(value);
-        },
-        stream<T>(source: ReadableStream<T>): ReadableStream<T> {
-          assertCurrent();
-          const reader = source.getReader();
-          let finished = false;
-          const release = () => {
-            if (!finished) {
-              finished = true;
-              reader.releaseLock();
-            }
-          };
-          const cancel = (reason: unknown) => {
-            try {
-              // Tee cancellation can await its open peer indefinitely.
-              // Start while locked, observe rejection, then release immediately.
-              reader.cancel(reason).catch(() => {});
-            } catch {
-              // Cleanup must not replace the original stream error.
-            } finally {
-              release();
-            }
-          };
-          return new ReadableStream<T>({
-            async pull(controller) {
-              try {
-                assertCurrent();
-                const result = await reader.read();
-                assertCurrent();
-                if (result.done) {
-                  release();
-                  const close = controller.close.bind(controller);
-                  bindGuardedSink(
-                    lease,
-                    "live",
-                    () => ({ value: undefined }),
-                    () => {
-                      close();
-                      return undefined;
-                    },
-                  )(
-                    undefined,
-                  );
-                } else {
-                  const enqueue = controller.enqueue.bind(controller);
-                  bindGuardedSink(
-                    lease,
-                    "live",
-                    (value: T) => ({ value }),
-                    ({ value }) => {
-                      enqueue(value);
-                      return undefined;
-                    },
-                  )(result.value);
-                }
-              } catch (error) {
-                controller.error(error);
-                cancel(error);
-              }
-            },
-            cancel,
-          }, { highWaterMark: 0 });
-        },
       });
     };
   }

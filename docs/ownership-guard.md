@@ -252,6 +252,31 @@ cleanup starts reader cancellation while locked, observes its rejection, and
 releases the lock without waiting for an open tee peer or other pending
 cancellation.
 
+The authority family shares its prepared-handle and stream engine in private
+`server/internal/authority_disclosure.ts`. Instance leases expose the same
+`prepare`, `read`, `disclose`, `body` and `stream` ports without selecting a
+vault; `body` serializes JSON before the last enqueue fence. `readInstance`
+permits a guest status projection, not own-account access. Compatibility
+`instanceGuard` uses the same live instance lease. Both prepared constructors
+still require an issued live composition lifetime; request cancellation and the
+captured session owner are explicit parent dependencies, not nested assertion
+callbacks.
+
+An `acknowledgment` surface requires a domain-issued outcome lease and retains
+the composition as a parent. It supplies no live authority or credential-change
+policy. The later domain workflow binds its exact historical receipt.
+
+Plugin RPC's host-only `prepareDisclosure` issues a handle whose synchronous
+read selector runs at posting. `disclose(handle)` queues only that operation's
+handle. The captured native Worker post receives a structured-cloned response
+envelope, after selector, payload getter, error projection and source inspection
+complete. Generation, source binding and live child context are checked at the
+final sink. Only correlation fields and the existing RPC payload cross IPC; the
+lease and principal never enter the envelope. Metadata get/query is the bounded
+pilot; viewer continuation and production instance activation remain later
+adoptions. The private engine is importable only by authority and the trusted
+plugin host.
+
 ## Owned publication (P06)
 
 `PUBLICATION_OWNERSHIP` composes the operation policy with exact import owners

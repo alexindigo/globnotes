@@ -3,6 +3,13 @@
 import * as path from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { logger } from "../logger.ts";
+import { createOperationLease } from "../operation_lease.ts";
+import {
+  assertPreparedDisclosure,
+  bindPreparedDisclosure,
+  type PreparedAuthorityRead,
+  prepareDisclosure,
+} from "../internal/authority_disclosure.ts";
 import {
   type MonotonicScheduler,
   ObservedClock,
@@ -74,8 +81,10 @@ export interface RpcAuthority {
   /** Private transport receipt plus activation/initial-sync settlement. */
   receipt?: Promise<ReleaseOutcome>;
   readiness?: Promise<ReleaseOutcome>;
-  /** Host-only synchronous result rebuild immediately before RPC disclosure. */
-  disclose?(prepare: () => unknown): void;
+  /** Host-only read preparation; selector runs before the final transport fence. */
+  prepareDisclosure?(prepare: () => unknown): PreparedAuthorityRead<unknown>;
+  /** Queues only an opaque handle for this RPC's captured Worker destination. */
+  disclose?(prepared: PreparedAuthorityRead<unknown>): void;
 }
 export interface InvocationOptions {
   generation?: string;
@@ -838,22 +847,98 @@ export class PluginHost {
               timer,
             });
           }
-          let prepareResult: (() => unknown) | undefined;
+          const generation = slot.generation, source = slot.source;
+          const sourceBinding = source ? { ...source } : undefined;
+          const current = () => {
+            // Source properties may be reentrant. All such inspection precedes
+            // the final pure generation/context/destination checks.
+            const sourceCurrent = !source ||
+              (source.key === sourceBinding!.key &&
+                source.revision === sourceBinding!.revision &&
+                source.codeFingerprint === sourceBinding!.codeFingerprint &&
+                source.settingsRevision === sourceBinding!.settingsRevision);
+            return sourceCurrent && generationCurrent() && context.open &&
+              slot.generation === generation && slot.source === source;
+          };
+          const { lease: disclosureLease } = createOperationLease("live", [
+            () => {
+              if (!current()) {
+                throw new Error("plugin generation authority revoked");
+              }
+            },
+          ]);
+          const post = worker.postMessage.bind(worker);
+          let preparedResult: PreparedAuthorityRead<unknown> | undefined;
+          const postResult = bindPreparedDisclosure(
+            disclosureLease,
+            "live",
+            (value) =>
+              structuredClone(
+                {
+                  type: "rpcResponse",
+                  generation,
+                  id: data.id,
+                  ok: true,
+                  value,
+                  receiptRequired,
+                } satisfies HostMessage,
+              ),
+            ({ value }) => {
+              post(value);
+              return undefined;
+            },
+          );
+          const postFailure = bindPreparedDisclosure(
+            disclosureLease,
+            "live",
+            (error) =>
+              structuredClone(
+                {
+                  type: "rpcResponse",
+                  generation,
+                  id: data.id,
+                  ok: false,
+                  value: error instanceof Error
+                    ? error.message
+                    : "host service failed",
+                  ...(error instanceof PluginContractError
+                    ? {
+                      error: {
+                        status: error.status,
+                        code: error.code,
+                        ...(error instanceof FsError
+                          ? { effect: error.effect }
+                          : {}),
+                      },
+                    }
+                    : {}),
+                  receiptRequired,
+                } satisfies HostMessage,
+              ),
+            ({ value }) => {
+              post(value);
+              return undefined;
+            },
+          );
           const authority: RpcAuthority = {
             generation: slot.generation,
             role: this.role,
             // The host's current job determines protection, never a worker flag.
             pre: context.reference.pre,
             causal: context.causal,
-            current: () => generationCurrent() && context.open,
+            current,
             generationCurrent,
             release: context.release,
             generationRetired: slot.generationRetired,
             source: slot.source,
             receipt: receipt?.release,
             readiness: slot.background.release,
-            disclose: (prepare) => {
-              prepareResult = prepare;
+            prepareDisclosure: (prepare) =>
+              prepareDisclosure(disclosureLease, prepare),
+            disclose: (prepared) => {
+              assertPreparedDisclosure(disclosureLease, prepared);
+              // Validation never unseals the value for this queue.
+              preparedResult = prepared;
             },
           };
           if (!authority.current()) {
@@ -887,19 +972,10 @@ export class PluginHost {
             return this.rpc(data.method, data.args, authority);
           }).then(
             (value) => {
-              if (authority.current()) {
-                // Rebuild and post in the same synchronous turn. A separate
-                // promise transform would reopen a check/disclosure microtask gap.
-                const disclosed = prepareResult ? prepareResult() : value;
-                worker.postMessage(
-                  {
-                    type: "rpcResponse",
-                    generation: slot.generation,
-                    id: data.id,
-                    ok: true,
-                    value: disclosed,
-                    receiptRequired,
-                  } satisfies HostMessage,
+              if (current()) {
+                postResult(
+                  preparedResult ??
+                    prepareDisclosure(disclosureLease, () => value),
                 );
                 const receipt = slot.receipts.get(data.id);
                 if (receipt) receipt.sent = true;
@@ -907,30 +983,15 @@ export class PluginHost {
             },
           ).catch(
             (error) => {
-              if (authority.current()) {
-                worker.postMessage(
-                  {
-                    type: "rpcResponse",
-                    generation: slot.generation,
-                    id: data.id,
-                    ok: false,
-                    value: error instanceof Error
-                      ? error.message
-                      : "host service failed",
-                    ...(error instanceof PluginContractError
-                      ? {
-                        error: {
-                          status: error.status,
-                          code: error.code,
-                          ...(error instanceof FsError
-                            ? { effect: error.effect }
-                            : {}),
-                        },
-                      }
-                      : {}),
-                    receiptRequired,
-                  } satisfies HostMessage,
-                );
+              if (current()) {
+                try {
+                  postFailure(prepareDisclosure(disclosureLease, () => error));
+                } catch {
+                  if (current()) {
+                    this.fail(slot, "plugin RPC response transport failed");
+                  }
+                  return;
+                }
                 const receipt = slot.receipts.get(data.id);
                 if (receipt) receipt.sent = true;
               }

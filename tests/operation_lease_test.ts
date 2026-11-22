@@ -380,3 +380,45 @@ Deno.test("operation lease: child witnesses cannot retire an ancestor after its 
   assertThrows(() => sink("stale"), OwnershipError, "Owner is retired");
   assertEquals(seen, ["current"]);
 });
+
+Deno.test("operation lease: envelope value access is captured before the final fence", () => {
+  const owner = createOperationLease("live", [() => {}]);
+  const seen: string[] = [];
+  let armed = false, reads = 0;
+  const sink = bindGuardedSink(owner.lease, "live", () => ({
+    get value() {
+      reads++;
+      if (armed) owner.retire();
+      return "private";
+    },
+  }), ({ value }) => {
+    seen.push(value);
+    return undefined;
+  });
+  sink(undefined);
+  armed = true;
+  assertThrows(() => sink(undefined), OwnershipError, "Owner is retired");
+  assertEquals([reads, seen], [2, ["private"]]);
+});
+
+Deno.test("operation lease: malformed inspection envelopes cannot reach delivery", () => {
+  const owner = createOperationLease("live", [() => {}]);
+  const seen: unknown[] = [];
+  for (const envelope of [null, undefined, "data", {}, () => "data"]) {
+    const sink = bindGuardedSink(
+      owner.lease,
+      "live",
+      (() => envelope) as never,
+      ({ value }) => {
+        seen.push(value);
+        return undefined;
+      },
+    );
+    assertThrows(
+      () => sink(undefined),
+      TypeError,
+      "Final operation sink must be synchronous",
+    );
+  }
+  assertEquals(seen, []);
+});

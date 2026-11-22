@@ -40,11 +40,15 @@ export function bindGuardedSink<I, V, M extends OperationMode>(
   return (input) => {
     const prepared = inspect(input);
     if (
-      prepared != null && typeof prepared.then === "function"
+      !prepared || typeof prepared !== "object" ||
+      typeof prepared.then === "function" || !("value" in prepared)
     ) {
       throw new TypeError("Final operation sink must be synchronous");
     }
+    // A caller-owned envelope can have a getter too. Capture it before checking;
+    // delivery sees only this inert own data property, never a reentrant accessor.
+    const inspected = Object.freeze({ value: prepared.value });
     assertOperationLease(lease, mode);
-    deliver(prepared);
+    deliver(inspected);
   };
 }

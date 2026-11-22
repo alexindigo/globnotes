@@ -486,9 +486,9 @@ Deno.test("metadata RPC: preparation and actual Worker post have no intervening 
     f.manifest,
     f.vault,
     (method, args, authority) => {
-      const disclose = authority!.disclose!;
-      authority!.disclose = (prepare) =>
-        disclose(() => {
+      const prepareDisclosure = authority!.prepareDisclosure!;
+      authority!.prepareDisclosure = (prepare) =>
+        prepareDisclosure(() => {
           const value = prepare();
           queueMicrotask(() => {
             Deno.removeSync(`${f.vault}/read-alias`);
