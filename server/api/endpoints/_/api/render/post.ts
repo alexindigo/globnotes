@@ -3,6 +3,30 @@ export const operation = "readVault";
 
 import { renderMarkdown } from "@server/render/pipeline.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
+import type { createInstanceAuth } from "@server/auth/middleware.ts";
+import { createHttpPolicy } from "@server/auth/http_policy.ts";
+
+export function createIdentityRender(
+  auth: ReturnType<typeof createInstanceAuth>,
+) {
+  const policy = createHttpPolicy(auth);
+  return async (request: PathfinderRequest) => {
+    return await policy.read(request._raw, "readVault", async () => {
+      const viewer = await auth.viewer(request._raw);
+      const content = await request.body.text();
+      const html = await renderMarkdown(content, {
+        viewer,
+        disabled: (request.query.get("disabled") ?? "").split(",").filter(
+          Boolean,
+        ),
+        lineNumbers: request.query.get("lineNumbers") === "true",
+      });
+      return new Response(html, {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    });
+  };
+}
 
 /** POST /_/api/render — render an unsaved markdown buffer through the
  * plugin pipeline (markdown-it + sandboxed worker plugins). The Preview

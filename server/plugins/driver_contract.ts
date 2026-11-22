@@ -550,11 +550,12 @@ export function validateDriverEnvelope(
     object(
       raw,
       raw.type === "register"
-        ? ["type", "generation", "handlerId", "registration"]
+        ? ["type", "generation", "handlerId", "registration", "contextId"]
         : ["type", "generation", "handlerId"],
     );
     boundedText(raw.handlerId, 128);
     if (raw.type === "register") {
+      boundedText(raw.contextId, 128);
       const registration = object(raw.registration, ["kind", "id"]);
       if (registration.kind !== "driver") invalid();
       oneOf(registration.id, DRIVER_METHODS);

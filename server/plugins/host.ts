@@ -3,6 +3,12 @@
 import * as path from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { logger } from "../logger.ts";
+import type { VaultOperation, ViewerAuthority } from "../auth/authority.ts";
+import {
+  createOwnershipScope,
+  type OwnedResource,
+  type OwnershipScope,
+} from "../../shared/ownership.js";
 import { createOperationLease } from "../operation_lease.ts";
 import {
   assertPreparedDisclosure,
@@ -61,10 +67,49 @@ import {
 } from "./network_contracts.ts";
 
 const HEARTBEAT_MS = 250;
+export const VIEWER_CONTINUATION_LIMIT = 128;
+function rpcOperation(method: string): VaultOperation {
+  if (method === "data.save" || method.startsWith("permissions.")) {
+    return "manageVault";
+  }
+  if (
+    [
+      "actions.request",
+      "files.requestWrite",
+      "fs.writeFile",
+      "fs.rename",
+      "fs.remove",
+      "fs.mkdir",
+    ].includes(method)
+  ) return "editNotes";
+  if (
+    [
+      "search",
+      "readNote",
+      "listPaths",
+      "readFile",
+      "files.read",
+      "pathPrefix",
+      "resolvePath",
+      "settings.read",
+      "data.load",
+      "actions.result",
+      "metadata.get",
+      "metadata.query",
+      "fs.stat",
+      "fs.realPath",
+      "fs.readFile",
+      "diagnostic",
+    ].includes(method)
+  ) return "readVault";
+  throw new Error("unclassified viewer RPC");
+}
 /** A ready worker silent for longer than this (observed time) has failed. */
 const HEARTBEAT_SILENCE_MS = 12 * HEARTBEAT_MS;
 const WORKER_URL = new URL("./worker_entry.ts", import.meta.url);
 export interface RpcAuthority {
+  viewer?: ViewerAuthority;
+  retain?(): { current(): boolean; release(): void };
   generation: string;
   role: "render" | "service" | "driver";
   pre: boolean;
@@ -87,6 +132,7 @@ export interface RpcAuthority {
   disclose?(prepared: PreparedAuthorityRead<unknown>): void;
 }
 export interface InvocationOptions {
+  viewer?: ViewerAuthority;
   generation?: string;
   causal?: { parentId?: string; depth: number };
   /** Best-effort post-commit offers: an independent bounded lane, not a
@@ -230,6 +276,12 @@ interface Slot {
   startupSettlement: Promise<void>;
   background: ExecutionContext;
   contexts: Map<string, ExecutionContext>;
+  resources: OwnershipScope;
+  handlerContexts: Map<string, ExecutionContext>;
+  custody: WeakMap<
+    ExecutionContext,
+    { owner: OwnershipScope; handle: OwnedResource<undefined> }
+  >;
   permissions: PermissionDeclaration;
   receipts: Map<
     number,
@@ -373,6 +425,94 @@ export class PluginHost {
   }
   get generation(): string | null {
     return this.slots[0]?.generation ?? null;
+  }
+  /** Host-only bounded ownership observation, not an SDK capability. */
+  get continuationCount(): number {
+    return this.slots.reduce(
+      (count, slot) =>
+        count +
+        [...slot.contexts.values()].filter((context) => context.retained)
+          .length,
+      0,
+    );
+  }
+  private retainContext(
+    slot: Slot,
+    parent: ExecutionContext,
+  ): ExecutionContext {
+    if (!parent.open || !this.valid(slot) || this.stopping) {
+      throw new Error("context closed");
+    }
+    if (!parent.viewer) return slot.background;
+    parent.viewer.assertCurrent();
+    if (
+      [...slot.contexts.values()].filter((context) => context.retained)
+        .length >= VIEWER_CONTINUATION_LIMIT
+    ) throw new Error("viewer continuation capacity exhausted");
+    const child = executionContext(
+      "continuation",
+      parent.reference.pre,
+      parent.causal,
+      parent.viewer,
+    );
+    child.retained = true;
+    this.ownContext(slot, parent, child, true);
+    return child;
+  }
+  private ownContext(
+    slot: Slot,
+    parent: ExecutionContext,
+    child: ExecutionContext,
+    retained: boolean,
+  ): void {
+    // Reserve cleanup before publishing the child. Adoption into the generation
+    // transfers custody: ordinary parent return must not retire a managed child.
+    const handle = parent.resources.defer(() => {
+      child.close({ status: "aborted" });
+      return child.resources.releaseAll().then((report) =>
+        report.throwIfFailed()
+      );
+    });
+    const owner = retained ? slot.resources : parent.resources;
+    const adopted = retained
+      ? parent.resources.transfer(handle, owner)
+      : handle;
+    slot.custody.set(child, { owner, handle: adopted });
+    child.resources.defer(() => {
+      slot.contexts.delete(child.reference.id);
+      slot.custody.delete(child);
+      const registrations: string[] = [];
+      for (const [id, context] of slot.handlerContexts) {
+        if (context === child) {
+          slot.handlerContexts.delete(id);
+          this.registry.delete(id);
+          registrations.push(id);
+        }
+      }
+      slot.worker.postMessage(
+        {
+          type: "contextRetired",
+          generation: slot.generation,
+          contextId: child.reference.id,
+        } satisfies HostMessage,
+      );
+      if (registrations.length) this.options.registrationChanged?.();
+    });
+    slot.contexts.set(child.reference.id, child);
+  }
+  private releaseContext(
+    slot: Slot,
+    context: ExecutionContext,
+    aborted = false,
+  ): void {
+    context.close({ status: aborted ? "aborted" : "settled" });
+    const custody = slot.custody.get(context);
+    const releasing = custody
+      ? custody.owner.release(custody.handle)
+      : context.resources.releaseAll().then((report) => report.throwIfFailed());
+    releasing.catch((error) =>
+      logger.error(`plugin context cleanup failed: ${error}`)
+    );
   }
   get generations(): readonly string[] {
     return this.slots.map((slot) => slot.generation);
@@ -532,6 +672,9 @@ export class PluginHost {
         startupSettlement: readyPromise.then(() => undefined, () => undefined),
         background: executionContext("background", false),
         contexts: new Map(),
+        resources: createOwnershipScope(),
+        handlerContexts: new Map(),
+        custody: new WeakMap(),
         permissions: {
           network: canonicalScopes(permissions.net ?? false),
           imports: canonicalScopes(permissions.import ?? false),
@@ -710,6 +853,33 @@ export class PluginHost {
               registrationDependencies(data.registration).length &&
               slot.initialization !== "pending"
             ) throw new Error("job dependencies are sealed");
+            if (typeof data.contextId !== "string") {
+              throw new Error("invalid registration context");
+            }
+            const context = data.contextId === slot.background.reference.id
+              ? slot.background
+              : slot.contexts.get(data.contextId);
+            if (context === slot.background && !context.open) {
+              throw new Error("registration context is closed");
+            }
+            if (context !== slot.background) {
+              // A continuation can retire after admission but before its
+              // registration arrives. Refuse only that registration: the
+              // Worker already has, or now receives, contextRetired.
+              if (!context?.open) return;
+              if (!context.retained) {
+                throw new Error("registration context is not retained");
+              }
+              try {
+                context.viewer?.assertCurrent();
+              } catch {
+                this.releaseContext(slot, context, true);
+                return;
+              }
+            }
+            if (context.retained) {
+              slot.handlerContexts.set(data.handlerId, context);
+            }
             this.registry.set(
               data.handlerId,
               structuredClone(data.registration),
@@ -729,6 +899,9 @@ export class PluginHost {
             slot.initialization !== "pending" &&
             this.serviceJobs.required(removed.id);
           this.registry.delete(data.handlerId);
+          const context = slot.handlerContexts.get(data.handlerId);
+          if (context) this.releaseContext(slot, context);
+          slot.handlerContexts.delete(data.handlerId);
           if (removed?.kind === "job" && !requiredJob && !this.stopping) {
             this.serviceJobs.remove(removed.id);
             this.cancelServiceWork(removed.id);
@@ -765,14 +938,25 @@ export class PluginHost {
             return;
           }
           job.context.close({ status: "settled" });
+          job.context.resources.releaseAll().then((report) =>
+            report.throwIfFailed()
+          ).catch((error) =>
+            logger.error(`plugin invocation cleanup failed: ${error}`)
+          );
           slot.contexts.delete(job.context.reference.id);
           job.timer();
           if (slot.activeGuard?.id === data.id) slot.activeGuard = null;
           else if (slot.activeVersioning?.id === data.id) {
             slot.activeVersioning = null;
           } else slot.active = null;
-          if (data.ok) job.resolve(data.value);
-          else {job.reject(
+          if (data.ok) {
+            try {
+              job.context.viewer?.assertCurrent();
+              job.resolve(data.value);
+            } catch (error) {
+              job.reject(error as Error);
+            }
+          } else {job.reject(
               new Error(
                 this.role === "driver"
                   ? "driver handler failed"
@@ -795,6 +979,63 @@ export class PluginHost {
             ? slot.background
             : slot.contexts.get(data.contextId);
           const generationCurrent = () => this.valid(slot) && !this.stopping;
+          if (data.method.startsWith("context.")) {
+            try {
+              if (!context?.open || !generationCurrent()) {
+                throw new Error("context closed");
+              }
+              let value: unknown = null;
+              if (data.method === "context.derive") {
+                value = this.retainContext(slot, context).reference;
+              } else if (data.method === "context.begin") {
+                if (
+                  !context.retained || !context.viewer?.sessionCurrent() ||
+                  [...slot.contexts.values()].some((child) =>
+                    child.parentId === context.reference.id
+                  )
+                ) {
+                  throw new Error(
+                    "continuation is unavailable or already running",
+                  );
+                }
+                context.viewer.assertCurrent();
+                const child = executionContext(
+                  "invocation",
+                  context.reference.pre,
+                  context.causal,
+                  context.viewer,
+                );
+                child.parentId = context.reference.id;
+                this.ownContext(slot, context, child, false);
+                value = child.reference;
+              } else if (data.method === "context.release") {
+                if (!context.retained && !context.parentId) {
+                  throw new Error("not a continuation");
+                }
+                this.releaseContext(slot, context);
+              } else throw new Error("unknown context operation");
+              worker.postMessage(
+                {
+                  type: "rpcResponse",
+                  generation: slot.generation,
+                  id: data.id,
+                  ok: true,
+                  value,
+                } satisfies HostMessage,
+              );
+            } catch {
+              worker.postMessage(
+                {
+                  type: "rpcResponse",
+                  generation: slot.generation,
+                  id: data.id,
+                  ok: false,
+                  value: "continuation admission refused",
+                } satisfies HostMessage,
+              );
+            }
+            return;
+          }
           if (!context?.open || !generationCurrent()) {
             worker.postMessage(
               {
@@ -857,146 +1098,199 @@ export class PluginHost {
                 source.revision === sourceBinding!.revision &&
                 source.codeFingerprint === sourceBinding!.codeFingerprint &&
                 source.settingsRevision === sourceBinding!.settingsRevision);
-            return sourceCurrent && generationCurrent() && context.open &&
-              slot.generation === generation && slot.source === source;
+            if (
+              !sourceCurrent || !generationCurrent() || !context.open ||
+              slot.generation !== generation || slot.source !== source
+            ) return false;
+            try {
+              context.viewer?.assertCurrent(rpcOperation(data.method));
+              return true;
+            } catch {
+              return false;
+            }
           };
-          const { lease: disclosureLease } = createOperationLease("live", [
-            () => {
-              if (!current()) {
-                throw new Error("plugin generation authority revoked");
-              }
-            },
-          ]);
-          const post = worker.postMessage.bind(worker);
-          let preparedResult: PreparedAuthorityRead<unknown> | undefined;
-          const postResult = bindPreparedDisclosure(
-            disclosureLease,
-            "live",
-            (value) =>
-              structuredClone(
+          // Failure delivery retains only the transport/context, never private
+          // data. A denied viewer must receive rejection rather than hang.
+          const transportCurrent = () =>
+            generationCurrent() && context.open &&
+            slot.generation === generation && slot.source === source;
+          // Issuance itself validates its witnesses. Admission refusal belongs
+          // to this RPC too, not an uncaught Worker message-handler exception.
+          try {
+            const { lease: disclosureLease } = createOperationLease("live", [
+              () => {
+                if (!current()) {
+                  throw new Error("plugin generation authority revoked");
+                }
+              },
+            ], context.viewer ? [context.viewer.retained] : []);
+            const post = worker.postMessage.bind(worker);
+            const { lease: failureLease } = createOperationLease("live", [
+              () => {
+                if (!transportCurrent()) {
+                  throw new Error("plugin generation authority revoked");
+                }
+              },
+            ]);
+            let preparedResult: PreparedAuthorityRead<unknown> | undefined;
+            const postResult = bindPreparedDisclosure(
+              disclosureLease,
+              "live",
+              (value) =>
+                structuredClone(
+                  {
+                    type: "rpcResponse",
+                    generation,
+                    id: data.id,
+                    ok: true,
+                    value,
+                    receiptRequired,
+                  } satisfies HostMessage,
+                ),
+              ({ value }) => {
+                post(value);
+                return undefined;
+              },
+            );
+            const postFailure = bindPreparedDisclosure(
+              failureLease,
+              "live",
+              (error) =>
+                structuredClone(
+                  {
+                    type: "rpcResponse",
+                    generation,
+                    id: data.id,
+                    ok: false,
+                    value: context.viewer
+                      ? "plugin operation denied"
+                      : error instanceof Error
+                      ? error.message
+                      : "host service failed",
+                    ...(error instanceof PluginContractError
+                      ? {
+                        error: {
+                          status: error.status,
+                          code: error.code,
+                          ...(error instanceof FsError
+                            ? { effect: error.effect }
+                            : {}),
+                        },
+                      }
+                      : {}),
+                    receiptRequired,
+                  } satisfies HostMessage,
+                ),
+              ({ value }) => {
+                post(value);
+                return undefined;
+              },
+            );
+            const authority: RpcAuthority = {
+              viewer: context.viewer,
+              retain: () => {
+                const child = this.retainContext(slot, context);
+                return {
+                  current: () => generationCurrent() && child.open,
+                  release: () => {
+                    if (child !== slot.background) {
+                      this.releaseContext(slot, child);
+                    }
+                  },
+                };
+              },
+              generation: slot.generation,
+              role: this.role,
+              // The host's current job determines protection, never a worker flag.
+              pre: context.reference.pre,
+              causal: context.causal,
+              current,
+              generationCurrent,
+              release: context.release,
+              generationRetired: slot.generationRetired,
+              source: slot.source,
+              receipt: receipt?.release,
+              readiness: slot.background.release,
+              prepareDisclosure: (prepare) =>
+                prepareDisclosure(disclosureLease, prepare),
+              disclose: (prepared) => {
+                assertPreparedDisclosure(disclosureLease, prepared);
+                // Validation never unseals the value for this queue.
+                preparedResult = prepared;
+              },
+            };
+            if (!authority.current()) {
+              worker.postMessage(
                 {
                   type: "rpcResponse",
-                  generation,
+                  generation: slot.generation,
                   id: data.id,
-                  ok: true,
-                  value,
-                  receiptRequired,
+                  ok: false,
+                  value: "plugin generation authority revoked",
+                  ...(data.method.startsWith("fs.")
+                    ? {
+                      error: {
+                        status: 409,
+                        code: "fs_generation_revoked",
+                        effect: "none" as const,
+                      },
+                    }
+                    : {}),
                 } satisfies HostMessage,
-              ),
-            ({ value }) => {
-              post(value);
-              return undefined;
-            },
-          );
-          const postFailure = bindPreparedDisclosure(
-            disclosureLease,
-            "live",
-            (error) =>
-              structuredClone(
+              );
+              return;
+            }
+            Promise.resolve().then(() => {
+              if (!current()) {
+                throw new Error("plugin operation denied");
+              }
+              if (
+                this.role === "driver" &&
+                !["driver.secret", "driver.hint"].includes(data.method)
+              ) {
+                throw new Error("driver RPC is not available");
+              }
+              return this.rpc(data.method, data.args, authority);
+            }).then(
+              (value) => {
+                if (transportCurrent()) {
+                  postResult(
+                    preparedResult ??
+                      prepareDisclosure(disclosureLease, () => value),
+                  );
+                  const receipt = slot.receipts.get(data.id);
+                  if (receipt) receipt.sent = true;
+                }
+              },
+            ).catch(
+              (error) => {
+                if (transportCurrent()) {
+                  try {
+                    postFailure(prepareDisclosure(failureLease, () => error));
+                  } catch {
+                    if (current()) {
+                      this.fail(slot, "plugin RPC response transport failed");
+                    }
+                    return;
+                  }
+                  const receipt = slot.receipts.get(data.id);
+                  if (receipt) receipt.sent = true;
+                }
+              },
+            );
+          } catch {
+            if (transportCurrent()) {
+              worker.postMessage(
                 {
                   type: "rpcResponse",
                   generation,
                   id: data.id,
                   ok: false,
-                  value: error instanceof Error
-                    ? error.message
-                    : "host service failed",
-                  ...(error instanceof PluginContractError
-                    ? {
-                      error: {
-                        status: error.status,
-                        code: error.code,
-                        ...(error instanceof FsError
-                          ? { effect: error.effect }
-                          : {}),
-                      },
-                    }
-                    : {}),
-                  receiptRequired,
+                  value: "plugin operation denied",
                 } satisfies HostMessage,
-              ),
-            ({ value }) => {
-              post(value);
-              return undefined;
-            },
-          );
-          const authority: RpcAuthority = {
-            generation: slot.generation,
-            role: this.role,
-            // The host's current job determines protection, never a worker flag.
-            pre: context.reference.pre,
-            causal: context.causal,
-            current,
-            generationCurrent,
-            release: context.release,
-            generationRetired: slot.generationRetired,
-            source: slot.source,
-            receipt: receipt?.release,
-            readiness: slot.background.release,
-            prepareDisclosure: (prepare) =>
-              prepareDisclosure(disclosureLease, prepare),
-            disclose: (prepared) => {
-              assertPreparedDisclosure(disclosureLease, prepared);
-              // Validation never unseals the value for this queue.
-              preparedResult = prepared;
-            },
-          };
-          if (!authority.current()) {
-            worker.postMessage(
-              {
-                type: "rpcResponse",
-                generation: slot.generation,
-                id: data.id,
-                ok: false,
-                value: "plugin generation authority revoked",
-                ...(data.method.startsWith("fs.")
-                  ? {
-                    error: {
-                      status: 409,
-                      code: "fs_generation_revoked",
-                      effect: "none" as const,
-                    },
-                  }
-                  : {}),
-              } satisfies HostMessage,
-            );
-            return;
-          }
-          Promise.resolve().then(() => {
-            if (
-              this.role === "driver" &&
-              !["driver.secret", "driver.hint"].includes(data.method)
-            ) {
-              throw new Error("driver RPC is not available");
+              );
             }
-            return this.rpc(data.method, data.args, authority);
-          }).then(
-            (value) => {
-              if (current()) {
-                postResult(
-                  preparedResult ??
-                    prepareDisclosure(disclosureLease, () => value),
-                );
-                const receipt = slot.receipts.get(data.id);
-                if (receipt) receipt.sent = true;
-              }
-            },
-          ).catch(
-            (error) => {
-              if (current()) {
-                try {
-                  postFailure(prepareDisclosure(disclosureLease, () => error));
-                } catch {
-                  if (current()) {
-                    this.fail(slot, "plugin RPC response transport failed");
-                  }
-                  return;
-                }
-                const receipt = slot.receipts.get(data.id);
-                if (receipt) receipt.sent = true;
-              }
-            },
-          );
+          }
         }
       };
       worker.onerror = (error) => {
@@ -1147,7 +1441,11 @@ export class PluginHost {
       )
     ) throw new Error("unsupported registration property");
   }
-  call(fn: string, args: unknown[]): Promise<unknown> {
+  call(
+    fn: string,
+    args: unknown[],
+    invocation: InvocationOptions = {},
+  ): Promise<unknown> {
     if (this.role !== "render") {
       return Promise.reject(
         new Error(
@@ -1155,7 +1453,16 @@ export class PluginHost {
         ),
       );
     }
-    return this.enqueue("call", fn, args, false, this.limits.serviceCallMs);
+    return this.enqueue(
+      "call",
+      fn,
+      args,
+      false,
+      this.limits.serviceCallMs,
+      undefined,
+      false,
+      invocation,
+    );
   }
   /** Runtime calls once after source/delegation validation, before publishing ready. */
   admitServiceJobs(): void {
@@ -1479,8 +1786,31 @@ export class PluginHost {
     // A retired owner or scrubbed candidate must never enter a Worker merely
     // because it was admitted while an earlier ordinary job was still running.
     let args: unknown[];
+    const owner = slot.handlerContexts.get(job.name);
+    const registered = owner?.viewer, incoming = job.invocation?.viewer;
+    const viewer: ViewerAuthority | undefined = registered && incoming
+      ? {
+        retained: registered.retained,
+        operation: (operation) =>
+          createOperationLease("live", [() => {}], [
+            registered.operation(operation),
+            incoming.operation(operation),
+          ]).lease,
+        assertCurrent: (operation) => {
+          registered.assertCurrent(operation);
+          incoming.assertCurrent(operation);
+        },
+        sessionCurrent: () =>
+          registered.sessionCurrent() && incoming.sessionCurrent(),
+      }
+      : registered ?? incoming;
     try {
+      if (owner && !owner.open) throw new Error("handler context retired");
+      viewer?.assertCurrent();
       args = job.invocation?.prepareArgs?.() ?? job.args;
+      // Inspect argument getters/clone before the final viewer fence and post.
+      args = structuredClone(args);
+      viewer?.assertCurrent();
     } catch (error) {
       job.timer();
       job.reject(
@@ -1492,6 +1822,7 @@ export class PluginHost {
       job.kind === "dispose" ? "disposal" : "invocation",
       job.pre,
       job.invocation?.causal,
+      viewer,
     );
     slot.contexts.set(job.context.reference.id, job.context);
     // pump owns lane eligibility; an admitted guard never supersedes another.
@@ -1527,11 +1858,20 @@ export class PluginHost {
     slot.worker.postMessage(message);
   }
   /** FIFO broadcast reserves every replica's sync boundary before later renders. */
-  async syncAll(): Promise<void> {
+  async syncAll(viewer?: ViewerAuthority): Promise<void> {
     const jobs = this.slots.filter((slot) => slot.exports.has("onSync")).map((
       slot,
     ) =>
-      this.enqueue("call", "onSync", [], false, this.limits.serviceCallMs, slot)
+      this.enqueue(
+        "call",
+        "onSync",
+        [],
+        false,
+        this.limits.serviceCallMs,
+        slot,
+        false,
+        { viewer },
+      )
         .then(() => {
           slot.usable = true;
         }, () => {
@@ -1563,6 +1903,11 @@ export class PluginHost {
       context.close({ status: "aborted" });
     }
     slot.contexts.clear();
+    slot.resources.retire();
+    slot.resources.releaseAll().then((report) => report.throwIfFailed()).catch(
+      (error) => logger.error(`plugin generation cleanup failed: ${error}`),
+    );
+    slot.handlerContexts.clear();
     for (const receipt of slot.receipts.values()) {
       receipt.timer();
       receipt.context.close({ status: "aborted" });
@@ -1736,6 +2081,11 @@ export class PluginHost {
   }
   private checkHeartbeats() {
     for (const slot of [...this.slots]) {
+      for (const context of [...slot.contexts.values()]) {
+        if (
+          context.retained && context.open && !context.viewer?.sessionCurrent()
+        ) this.releaseContext(slot, context, true);
+      }
       if (this.role !== "render" && this.failedDetail) return;
       if (!this.livenessCurrent(slot, slot.startIdentity)) continue;
       if (!slot.ready) {

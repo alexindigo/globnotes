@@ -610,6 +610,25 @@ not a durable receipt, rollback, exactly-once delivery or backup guarantee.
 
 ## Deferred actions and invocation lifetime
 
+Preparatory identity callers retain a host-only viewer and concrete vault through
+render, command, endpoint, hook and action work. Managed registrations are admitted
+before arming and keep that viewer after normal handler return. Every mediated
+effect and disclosure checks fresh live authority, intersected with plugin grants,
+source and generation. Workers receive correlation IDs, never leases or identity.
+Edit permits note/file effects, not private plugin-data or permission writes.
+The old production identity adapter remains active until coordinated cutover.
+
+At most 128 live derived viewer scopes exist per generation. Overflow refuses the
+registration and its originating invocation; it never substitutes background
+work. A registration arriving after its scope retired is refused without failing
+the generation. One-shots release after callback settlement or cancellation;
+repeating resources end on cancellation, credential revision/expiry or generation
+retirement. Timer firings do not overlap. Retirement releases every derived
+resource, even when an earlier cleanup fails. Deferred actions retain the
+handler-settlement barrier and truthful partial receipts. Independently
+host-started work remains background work; browser logout does not revoke
+copied JWTs.
+
 A saved server `ctx` belongs to its owning vault and Worker generation. It remains
 usable after `activate()` returns: startup network continuations and managed
 timeouts/intervals can use it without a note/file event or a logged-in browser.
@@ -618,9 +637,9 @@ Manifest grants, current writable policy and generation authority still apply.
 Host-dispatched commands, endpoints and hook/result callbacks each have their own
 internal invocation context. Awaiting a delay or RPC preserves that invocation;
 resolving its promise from a managed timer does not turn its continuation into
-background work. Managed timer callbacks are separate generation-background
-executions, including timers registered by a handler. An unrelated slow observer
-or pre-hook cannot lend its protection flag or causal parent to background work.
+background work. Without a viewer, managed timer callbacks remain separate
+generation-background executions. An unrelated slow observer or pre-hook cannot
+lend its protection flag or causal parent to background work.
 Detached native timers/continuations from a completed invocation cannot issue new
 RPCs by borrowing a later job or silently becoming background work.
 

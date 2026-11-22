@@ -9,15 +9,18 @@ import { AuthType, type GlobalConfig } from "../config.ts";
 import type { ActionReceipt, OperationFact } from "./contracts.ts";
 import type { PluginManifest } from "./manifest.ts";
 import { OperationError } from "./errors.ts";
+import type { ViewerAuthority } from "../auth/authority.ts";
 
 /** Host-only HTTP authority, captured before body/preparation/queue awaits.
  * Credentials and assertion closures never enter facts or Worker envelopes. */
 export interface NoteMutationLease {
+  readonly viewer?: ViewerAuthority;
   readonly epoch: number;
   assertCurrent(operationId?: string): void;
 }
 
 export interface RequesterAuthority {
+  readonly viewer?: ViewerAuthority;
   readonly pluginId: string;
   readonly generation: string;
   current(): boolean;
@@ -33,6 +36,7 @@ export function requesterAuthority(
   statePath: string,
   generation: string,
   current: () => boolean,
+  viewer?: ViewerAuthority,
 ): RequesterAuthority {
   const grants = structuredClone(manifest.capabilities.write);
   const covers = (target: string) => {
@@ -44,12 +48,14 @@ export function requesterAuthority(
   return Object.freeze({
     pluginId: manifest.id,
     generation,
+    viewer,
     current,
     resolve(target: string) {
       covers(target);
       return resolveGrantedPath(vaultPath, target, grants);
     },
     authorize(paths: readonly string[], operationId?: string) {
+      viewer?.assertCurrent("editNotes");
       if (!current()) {
         throw new OperationError(
           409,
@@ -72,6 +78,7 @@ export function requesterAuthority(
     canPrune(target: string) {
       try {
         covers(target);
+        viewer?.assertCurrent("editNotes");
         return current();
       } catch {
         return false;
@@ -152,8 +159,20 @@ export class PluginLifecycle {
    * operations as external observations. Value: post-commit mtime (s) for
    * writes, or {deletedAt} epoch-ms for removals. */
   readonly managedWrites = new Map<string, number | { deletedAt: number }>();
-  #factObserver: ((fact: OperationFact) => void) | null = null;
-  #syncObserver: ((fact: OperationFact) => void) | null = null;
+  #factObserver:
+    | ((fact: OperationFact, viewer?: ViewerAuthority) => void)
+    | null = null;
+  #syncObserver:
+    | ((fact: OperationFact, viewer?: ViewerAuthority) => void)
+    | null = null;
+  readonly #viewers = new WeakMap<OperationFact, ViewerAuthority>();
+  bindViewer(fact: OperationFact, viewer?: ViewerAuthority): OperationFact {
+    if (viewer) this.#viewers.set(fact, viewer);
+    return fact;
+  }
+  viewerForFact(fact: OperationFact): ViewerAuthority | undefined {
+    return this.#viewers.get(fact);
+  }
   readonly #invalidateListeners = new Set<() => void>();
 
   /** Catalog/settings-revision/status invalidation stream subscribers.
@@ -200,17 +219,21 @@ export class PluginLifecycle {
     return this.operational() && this.config.authType !== AuthType.READ_ONLY;
   }
 
-  onFact(observer: (fact: OperationFact) => void): void {
+  onFact(
+    observer: (fact: OperationFact, viewer?: ViewerAuthority) => void,
+  ): void {
     this.#factObserver = observer;
   }
-  onSync(observer: (fact: OperationFact) => void): void {
+  onSync(
+    observer: (fact: OperationFact, viewer?: ViewerAuthority) => void,
+  ): void {
     this.#syncObserver = observer;
   }
   /** Post-commit fact admission. Delivery is delegated; admission failures
    * here never change the committed operation's response. */
   observe(fact: OperationFact): void {
     try {
-      this.#factObserver?.(fact);
+      this.#factObserver?.(fact, this.viewerForFact(fact));
     } catch {
       // Observer admission failure is recorded by the runtime, never thrown
       // back into a completed host operation.
@@ -218,7 +241,7 @@ export class PluginLifecycle {
   }
   syncCompleted(fact: OperationFact): void {
     try {
-      this.#syncObserver?.(fact);
+      this.#syncObserver?.(fact, this.viewerForFact(fact));
     } catch { /* same admission contract */ }
   }
 

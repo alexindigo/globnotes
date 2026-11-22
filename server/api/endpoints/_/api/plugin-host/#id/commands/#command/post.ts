@@ -4,6 +4,29 @@ import type { PathfinderRequest } from "@pathfinder/pathfinder";
 
 import { HttpError } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
+import type { createInstanceAuth } from "@server/auth/middleware.ts";
+import type { PluginRuntime } from "@server/plugins/runtime.ts";
+import { createHttpPolicy } from "@server/auth/http_policy.ts";
+
+export function createIdentityPluginCommand(
+  auth: ReturnType<typeof createInstanceAuth>,
+  runtime: PluginRuntime,
+) {
+  const policy = createHttpPolicy(auth);
+  return async (request: PathfinderRequest) => {
+    return await policy.json(request._raw, "readVault", async () => {
+      const viewer = await auth.viewer(request._raw);
+      const payload = await request.body.json();
+      const result = await runtime.invokeCommand(
+        String(request.params.id),
+        String(request.params.command),
+        payload,
+        viewer,
+      );
+      return { result };
+    });
+  };
+}
 
 /** POST /_/api/plugin-host/<id>/commands/<command> — invoke a registered
  * server command; the result is the command's actual return value. */

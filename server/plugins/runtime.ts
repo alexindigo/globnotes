@@ -39,6 +39,7 @@ import {
   type Source,
 } from "./network_contracts.ts";
 import { permissionFingerprint } from "./network_permissions.ts";
+import type { ViewerAuthority } from "../auth/authority.ts";
 import type { PluginSettingsEnvironment } from "./settings_environment.ts";
 import {
   type DiscoverRequest,
@@ -376,6 +377,7 @@ export class PluginRuntime implements Versioning {
             );
           }
           if (method.startsWith("permissions.")) {
+            authority.viewer?.assertCurrent("manageVault");
             return this.adapters.network?.rpc(
               manifest.id,
               method,
@@ -387,6 +389,7 @@ export class PluginRuntime implements Versioning {
               );
           }
           const assertWriteCurrent = () => {
+            authority.viewer?.assertCurrent("manageVault");
             if (
               !current() || !this.adapters.operational() ||
               !this.adapters.writable()
@@ -417,6 +420,7 @@ export class PluginRuntime implements Versioning {
             },
             commit: (effect) =>
               this.adapters.commit(async () => {
+                authority.viewer?.assertCurrent("manageVault");
                 if (
                   !current() || !this.adapters.operational() ||
                   !this.adapters.writable()
@@ -877,6 +881,7 @@ export class PluginRuntime implements Versioning {
     id: string,
     command: string,
     payload: unknown,
+    viewer?: ViewerAuthority,
   ): Promise<unknown> {
     const entry = this.entries.get(id);
     if (
@@ -884,7 +889,13 @@ export class PluginRuntime implements Versioning {
     ) throw new Error("plugin command unavailable");
     const handler = this.handlerIds(entry, "command", command)[0];
     if (!handler) throw new Error("plugin command is not registered");
-    return await entry.host.invoke(handler, [payload]);
+    return await entry.host.invoke(
+      handler,
+      [payload],
+      false,
+      entry.host.limits.serviceCallMs,
+      { viewer },
+    );
   }
 
   /** Endpoint descriptors reported by the owning worker (handlerId +
@@ -908,12 +919,19 @@ export class PluginRuntime implements Versioning {
     id: string,
     handlerId: string,
     args: unknown[],
+    viewer?: ViewerAuthority,
   ): Promise<unknown> {
     const entry = this.entries.get(id);
     if (
       !entry || !entry.source.enabled || entry.status !== "ready" || !entry.host
     ) throw new Error("plugin handler unavailable");
-    return await entry.host.invoke(handlerId, args);
+    return await entry.host.invoke(
+      handlerId,
+      args,
+      false,
+      entry.host.limits.serviceCallMs,
+      { viewer },
+    );
   }
   private async readyGuard(
     entry: RuntimeEntry,
@@ -949,13 +967,14 @@ export class PluginRuntime implements Versioning {
     hook: HookName,
     payload: unknown,
     operationDeadline = processClock.now() + this.limits.preOperationMs,
+    viewer?: ViewerAuthority,
   ): Promise<GuardLease[]> {
     if (!hook.startsWith("pre-")) {
       throw new Error("guard requires a cancellable pre-hook");
     }
     const holding = processClock.hold();
     try {
-      return await this.guardAll(hook, payload, operationDeadline);
+      return await this.guardAll(hook, payload, operationDeadline, viewer);
     } finally {
       holding();
     }
@@ -964,6 +983,7 @@ export class PluginRuntime implements Versioning {
     hook: HookName,
     payload: unknown,
     operationDeadline: number,
+    viewer?: ViewerAuthority,
   ): Promise<GuardLease[]> {
     const leases: GuardLease[] = [];
     for (const id of this.order) {
@@ -989,7 +1009,11 @@ export class PluginRuntime implements Versioning {
             [disclosed],
             true,
             remaining,
-            { generation: host.generation!, causal: operationCause(payload) },
+            {
+              generation: host.generation!,
+              causal: operationCause(payload),
+              viewer,
+            },
           ) as { cancel?: boolean; reason?: unknown } | undefined;
           if (processClock.now() > deadline) {
             throw new Error("guard deadline exceeded before result delivery");
@@ -1012,6 +1036,7 @@ export class PluginRuntime implements Versioning {
           handlers,
         });
       } catch (error) {
+        viewer?.assertCurrent();
         if (error instanceof PluginGuardError) throw error;
         throw new PluginGuardError(
           id,
@@ -1137,8 +1162,9 @@ export class PluginRuntime implements Versioning {
     correlation: { operationId?: string; action?: string } = {},
     owner?: string,
     target?: {
-      generation: string;
+      generation?: string;
       causal: { parentId?: string; depth: number };
+      viewer?: ViewerAuthority;
     },
   ) {
     if (hook.startsWith("pre-")) {
@@ -1150,7 +1176,9 @@ export class PluginRuntime implements Versioning {
         !entry.source.enabled || (owner && id !== owner) ||
         !entry.source.hooks.includes(hook)
       ) continue;
-      if (target && entry.host?.generation !== target.generation) continue;
+      if (target?.generation && entry.host?.generation !== target.generation) {
+        continue;
+      }
       const ids = this.handlerIds(entry, "hook", hook);
       if (entry.status !== "ready" || !entry.host?.available || !ids.length) {
         entry.deliveryFailures++;
@@ -1174,6 +1202,7 @@ export class PluginRuntime implements Versioning {
           {
             generation: target?.generation ?? entry.host.generation!,
             causal: target?.causal ?? operationCause(payload),
+            viewer: target?.viewer,
           },
         ).catch(() => {
           entry.deliveryFailures++;
@@ -1194,6 +1223,7 @@ export class PluginRuntime implements Versioning {
     target?: {
       generation: string;
       causal: { parentId?: string; depth: number };
+      viewer?: ViewerAuthority;
     },
   ) {
     const entry = this.entries.get(owner);
@@ -1211,6 +1241,7 @@ export class PluginRuntime implements Versioning {
         {
           generation: target?.generation ?? entry.host.generation!,
           causal: target?.causal,
+          viewer: target?.viewer,
         },
       ).catch(() => {
         entry.deliveryFailures++;
@@ -1233,8 +1264,9 @@ export class PluginRuntime implements Versioning {
     generation: string,
     receipt: unknown,
     causal: { parentId?: string; depth: number },
+    viewer?: ViewerAuthority,
   ) {
-    const target = { generation, causal };
+    const target = { generation, causal, viewer };
     this.post("on-action-result", receipt, {}, owner, target);
     this.subscriptions(owner, "action-result", receipt, target);
   }

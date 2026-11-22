@@ -39,6 +39,9 @@ export interface ActionAdapters {
 }
 
 interface ActionContext {
+  viewer?: import("../auth/authority.ts").ViewerAuthority;
+  retain?(): { current(): boolean; release(): void };
+  generationCurrent?(): boolean;
   pluginId: string;
   generation: string;
   causalParent?: string;
@@ -104,12 +107,14 @@ export class PluginActions {
     if (!ctx.current()) {
       throw new Error("plugin generation authority revoked");
     }
+    ctx.viewer?.assertCurrent("editNotes");
     const authority = requesterAuthority(
       manifest,
       this.#adapters.vaultPath,
       this.#adapters.statePath,
       ctx.generation,
       ctx.current,
+      ctx.viewer,
     );
     const input = (args ?? {}) as Record<string, unknown>;
     if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -171,7 +176,7 @@ export class PluginActions {
         generation: ctx.generation,
         receipts: [],
         manifest: structuredClone(manifest),
-        current: ctx.current,
+        current: ctx.generationCurrent ?? ctx.current,
         retired: false,
       };
       this.#rings.set(key, ring);
@@ -186,6 +191,14 @@ export class PluginActions {
         ["accepted", "running"].includes(receipt.status)
       ).length >= this.#pendingLimit
     ) throw new Error("plugin action admission capacity exhausted");
+    const retained = ctx.retain?.();
+    if (retained) {
+      const captured = ctx;
+      ctx = {
+        ...captured,
+        current: () => captured.current() && retained.current(),
+      };
+    }
     this.#record(manifest.id, ctx.generation, {
       requestId,
       status: "accepted",
@@ -203,13 +216,15 @@ export class PluginActions {
             detail: "requester ended before execution; no effect was started",
           },
         });
+        retained?.release();
         return;
       }
-      this.#execute(ring.manifest, action, capturedArgs, ctx, requestId).catch(
-        () => {
-          // #execute records its own receipts.
-        },
-      );
+      this.#execute(ring.manifest, action, capturedArgs, ctx, requestId)
+        .finally(() => retained?.release()).catch(
+          () => {
+            // #execute records its own receipts.
+          },
+        );
     });
     return { requestId };
   }
@@ -238,6 +253,7 @@ export class PluginActions {
     }
     this.#record(manifest.id, ctx.generation, { requestId, status: "running" });
     const origin = {
+      viewer: ctx.viewer,
       origin: "plugin" as const,
       causalParent: ctx.causalParent ?? requestId,
       causalPlugin: manifest.id,
@@ -255,6 +271,7 @@ export class PluginActions {
         this.#adapters.statePath,
         ctx.generation,
         ctx.current,
+        ctx.viewer,
       );
       if (action === "create") {
         const note = await this.#adapters.operations.createNote(
@@ -392,6 +409,11 @@ export class PluginActions {
   ): void {
     this.#record(manifest.id, ctx.generation, receipt);
     if (!ctx.current()) return;
+    try {
+      ctx.viewer?.assertCurrent();
+    } catch {
+      return;
+    }
     const disclosed = projectActionReceipt(
       manifest,
       this.#adapters.vaultPath,
@@ -407,6 +429,7 @@ export class PluginActions {
           parentId: receipt.operationId ?? receipt.requestId,
           depth: ctx.causalDepth + 1,
         },
+        ctx.viewer,
       );
     } catch { /* receipt remains queryable */ }
   }

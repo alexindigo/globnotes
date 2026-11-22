@@ -133,6 +133,13 @@ export function createInstanceAuth(adapters: {
       admitted.check();
       return admitted.evaluator.capabilities(value);
     },
+    async viewer(request: Request) {
+      const admitted = admission(request);
+      const bind = admitted.evaluator.prepareViewer();
+      const value = await principal(request, admitted.sessions);
+      admitted.check();
+      return bind(value);
+    },
     noteMutationLease: (request: Request) => lease(request, "editNotes"),
     readLease: (request: Request) => lease(request, "readVault"),
     async settingsWriteGuard(request: Request): Promise<() => void> {

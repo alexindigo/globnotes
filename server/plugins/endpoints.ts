@@ -18,6 +18,7 @@ import {
   type PluginHttpResponse,
 } from "./contracts.ts";
 import type { PluginRuntime } from "./runtime.ts";
+import type { ViewerAuthority } from "../auth/authority.ts";
 
 export type EndpointOutcome =
   | { kind: "response"; response: PluginHttpResponse }
@@ -214,6 +215,7 @@ export class PluginEndpoints {
   async invoke(
     admission: Extract<EndpointAdmission, { kind: "admitted" }>,
     request: PluginHttpRequest,
+    viewer?: ViewerAuthority,
   ): Promise<EndpointOutcome> {
     const runtime = this.runtime();
     if (
@@ -230,6 +232,7 @@ export class PluginEndpoints {
           path: admission.path,
           params: admission.params,
         }],
+        viewer,
       );
       return { kind: "response", response: normalizeEndpointResult(value) };
     } catch {
@@ -240,10 +243,11 @@ export class PluginEndpoints {
   async dispatch(
     id: string,
     request: PluginHttpRequest,
+    viewer?: ViewerAuthority,
   ): Promise<EndpointOutcome> {
     const admission = this.admit(id, request.method, request.path);
     return admission.kind === "admitted"
-      ? await this.invoke(admission, request)
+      ? await this.invoke(admission, request, viewer)
       : admission;
   }
 }

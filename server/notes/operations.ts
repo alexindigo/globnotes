@@ -69,6 +69,7 @@ import type { PeerAcknowledgement } from "../hub/store.ts";
 type SaveResult = NonNullable<Note["saveResult"]>;
 
 interface OperationCorrelation {
+  viewer?: import("../auth/authority.ts").ViewerAuthority;
   peer?: string;
   causalParent?: string;
   causalPlugin?: string;
@@ -132,7 +133,7 @@ export class NoteOperations {
     ctx: OperationOrigin,
     extra: Partial<OperationFact> = {},
   ): OperationFact {
-    return {
+    return this.adapters.lifecycle.bindViewer({
       operationId,
       action: action as OperationAction,
       origin: ctx.origin,
@@ -142,7 +143,7 @@ export class NoteOperations {
       causalDepth: ctx.causalDepth,
       ...extra,
       ...(ctx.peer ? { metadata: { ...extra.metadata, peer: ctx.peer } } : {}),
-    };
+    }, ctx.origin === "api" ? ctx.lease.viewer : ctx.viewer);
   }
 
   async #guard(
@@ -153,7 +154,12 @@ export class NoteOperations {
     const runtime = this.adapters.runtime();
     if (!runtime) return [];
     try {
-      return await runtime.guard(hook, fact, operationDeadline);
+      return await runtime.guard(
+        hook,
+        fact,
+        operationDeadline,
+        this.adapters.lifecycle.viewerForFact(fact),
+      );
     } catch (e) {
       if (e instanceof PluginGuardError) {
         throw new OperationError(

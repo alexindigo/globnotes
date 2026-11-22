@@ -68,6 +68,8 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "tests/instance_disclosure_test.ts",
       "tests/operation_lease_test.ts",
       "tests/identity_authority_test.ts",
+      "tests/identity_plugin_viewer_test.ts",
+      "tests/plugin_invocation_context_test.ts",
       "server/config/file_store.ts",
       "server/config/owned_publication.ts",
       "server/auth/records.ts",
@@ -286,6 +288,7 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
       "tests/helpers/credential_commands.ts",
     ],
     "tests/helpers/credential_commands.ts": [
+      "tests/identity_plugin_viewer_test.ts",
       "tests/credential_bootstrap_preparation_test.ts",
       "tests/identity_account_workflows_test.ts",
       "tests/credential_login_step_test.ts",
@@ -409,6 +412,7 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
     [IDENTITY_HELPER]: [
       "tests/helpers/identity_workflows.ts",
       "tests/identity_provisioning_test.ts",
+      "tests/identity_plugin_viewer_test.ts",
       "tests/helpers/identity_bootstrap.ts",
       "tests/helpers/identity_fixture.ts",
       "tests/identity_http_reads_test.ts",

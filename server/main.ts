@@ -178,23 +178,35 @@ state.mcp = globalConfig.mcpEnabled
     rateLimiter: createRateLimiter({ perMinute: globalConfig.mcpRateLimit }),
   })
   : null;
-lifecycle.onFact((fact) => {
+lifecycle.onFact((fact, viewer) => {
   const runtime = plugins.runtime;
   if (!runtime) return;
   if (fact.action === "operation-error") {
-    runtime.post("on-operation-error", fact, {
-      operationId: fact.operationId,
-      action: "operation-error",
-    });
+    runtime.post(
+      "on-operation-error",
+      fact,
+      {
+        operationId: fact.operationId,
+        action: "operation-error",
+      },
+      undefined,
+      { viewer, causal: { depth: fact.causalDepth ?? 0 } },
+    );
     return;
   }
-  runtime.post(`on-${fact.action}` as never, fact, {
-    operationId: fact.operationId,
-    action: fact.action,
-  });
+  runtime.post(
+    `on-${fact.action}` as never,
+    fact,
+    {
+      operationId: fact.operationId,
+      action: fact.action,
+    },
+    undefined,
+    { viewer, causal: { depth: fact.causalDepth ?? 0 } },
+  );
 });
-lifecycle.onSync((fact) => {
-  plugins.syncAll(fact).catch((e) =>
+lifecycle.onSync((fact, viewer) => {
+  plugins.syncAll(fact, viewer).catch((e) =>
     logger.error(`plugin sync delivery failed: ${e}`)
   );
 });

@@ -13,6 +13,22 @@ import { sanitizeRequestHeaders } from "./endpoints.ts";
 import { advertisedEndpointMethods } from "./endpoint_table.ts";
 import { state } from "../state.ts";
 import { type ObservedClock, processClock } from "../observed_time.ts";
+import type { ViewerAuthority } from "../auth/authority.ts";
+import type { createInstanceAuth } from "../auth/middleware.ts";
+import { createHttpPolicy } from "../auth/http_policy.ts";
+
+/** Injection-only identity caller; production activation remains at cutover. */
+export function createIdentityPluginProxy(
+  auth: ReturnType<typeof createInstanceAuth>,
+) {
+  const policy = createHttpPolicy(auth);
+  return async (request: PluginProxyRequest) => {
+    return await policy.read(request._raw, "readVault", async () => {
+      const viewer = await auth.viewer(request._raw);
+      return await proxyPluginEndpoint(request, undefined, viewer);
+    });
+  };
+}
 
 const textEncoder = new TextEncoder();
 export const PLUGIN_BODY_ACQUISITION_MS = 30_000;
@@ -61,6 +77,7 @@ function localLookup<T>(lookup: () => T): T {
 export async function proxyPluginEndpoint(
   request: PluginProxyRequest,
   _localPath?: string,
+  viewer?: ViewerAuthority,
 ): Promise<Response> {
   const { id, path } = encodedPluginPath(request);
   const endpoints = state.pluginEndpoints;
@@ -88,7 +105,7 @@ export async function proxyPluginEndpoint(
     headers: sanitizeRequestHeaders(request.headers),
     body,
   };
-  const outcome = await endpoints.invoke(admission, envelope);
+  const outcome = await endpoints.invoke(admission, envelope, viewer);
   if (outcome.kind === "unavailable" || outcome.kind === "not-found") {
     // Disabled/unavailable plugins and plain route misses are both 404 —
     // installed files never leak availability.
@@ -102,6 +119,7 @@ export async function proxyPluginEndpoint(
     );
   }
   const { response } = outcome;
+  viewer?.assertCurrent();
   return new Response(
     response.body.length ? response.body as unknown as BodyInit : null,
     { status: response.status, headers: response.headers },

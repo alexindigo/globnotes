@@ -21,6 +21,7 @@ import { PluginRuntime } from "../server/plugins/runtime.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
+import { createOperationLease } from "../server/operation_lease.ts";
 
 function deferred<T>() {
   return Promise.withResolvers<T>();
@@ -42,7 +43,7 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
-Deno.test("plugin context: independent managed timer cannot borrow an active pre invocation", async () => {
+Deno.test("plugin context: viewer timers retain their caller while true background cannot borrow a pre invocation", async () => {
   const fixture = await pluginFixture();
   const guardEntered = deferred<void>(),
     backgroundEntered = deferred<void>(),
@@ -52,8 +53,11 @@ Deno.test("plugin context: independent managed timer cannot borrow an active pre
     runtime: { server: "service.js" },
     hooks: ["pre-save"],
   }, {
-    "service.js": `export function activate(ctx) {
-      ctx.commands.register({id:'arm',label:'Arm',target:'server'},()=>{ctx.timers.setTimeout(async()=>{await ctx.readNote('background-gate'); await ctx.actions.request('create',{path:'timer',content:'x'});},0);});
+    "service.js":
+      `let viewerTimer=Promise.withResolvers();export function activate(ctx) {
+      ctx.timers.setTimeout(async()=>{await ctx.readNote('background-gate');await ctx.actions.request('create',{path:'background',content:'x'});},0);
+      ctx.commands.register({id:'arm',label:'Arm',target:'server'},()=>{ctx.timers.setTimeout(async()=>{try{await ctx.readNote('background-gate'); await ctx.actions.request('create',{path:'timer',content:'x'});viewerTimer.resolve('incorrect');}catch{viewerTimer.resolve('denied');}},0);});
+      ctx.commands.register({id:'status',label:'Status',target:'server'},()=>viewerTimer.promise);
       ctx.hooks.on('pre-save', async()=>{await ctx.readNote('guard-gate'); await Promise.resolve(); try{ctx.actions.request('create',{path:'forbidden'});return 'incorrect';}catch{return 'pre-rejected';}});
     }`,
   });
@@ -92,7 +96,21 @@ Deno.test("plugin context: independent managed timer cannot borrow an active pre
     const guard = [...host.registrations].find(([, value]) =>
       value.id === "pre-save"
     )![0];
-    await host.invoke(arm, [{}]);
+    const retained = createOperationLease("retained", [() => {}]);
+    const operation = (required?: string) =>
+      createOperationLease("live", [() => {
+        if (required === "editNotes") throw new Error("View cannot write");
+      }], [retained.lease]).lease;
+    await host.invoke(arm, [{}], false, host.limits.serviceCallMs, {
+      viewer: {
+        retained: retained.lease,
+        operation,
+        assertCurrent: (required) => {
+          operation(required).assertCurrent();
+        },
+        sessionCurrent: () => true,
+      },
+    });
     const guarded = host.invoke(
       guard,
       [{
@@ -121,6 +139,9 @@ Deno.test("plugin context: independent managed timer cannot borrow an active pre
     });
     releaseGuard.resolve();
     assertEquals(await guarded, "pre-rejected");
+    const status =
+      [...host.registrations].find(([, value]) => value.id === "status")![0];
+    assertEquals(await host.invoke(status, []), "denied");
   } finally {
     releaseGuard.resolve();
     host.stop();

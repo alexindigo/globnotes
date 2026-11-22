@@ -226,11 +226,17 @@ async function constructPluginOperationsFixture(
     vaultPath: fixture.vault,
     statePath: fixture.statePath,
   });
-  lifecycle.onFact((fact) =>
-    runtime.post(`on-${fact.action}` as never, fact, {
-      operationId: fact.operationId,
-      action: fact.action,
-    })
+  lifecycle.onFact((fact, viewer) =>
+    runtime.post(
+      `on-${fact.action}` as never,
+      fact,
+      {
+        operationId: fact.operationId,
+        action: fact.action,
+      },
+      undefined,
+      { viewer, causal: { depth: fact.causalDepth ?? 0 } },
+    )
   );
   await runtime.reconcile();
   await pluginSettled(runtime, id, "ready");

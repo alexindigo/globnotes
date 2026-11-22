@@ -263,10 +263,11 @@ export interface ActionReceipt {
 /** No Request/Response, credentials or host context can cross these envelopes. */
 export interface InvocationReference {
   id: string;
-  kind: "background" | "invocation" | "disposal";
+  kind: "background" | "invocation" | "disposal" | "continuation";
   pre: boolean;
 }
 export type HostMessage =
+  | { type: "contextRetired"; generation: string; contextId: string }
   | {
     type: "init";
     generation: string;
@@ -331,6 +332,7 @@ export type WorkerMessage =
     generation: string;
     handlerId: string;
     registration: HandlerRegistration;
+    contextId?: string;
   }
   | { type: "unregister"; generation: string; handlerId: string }
   | {

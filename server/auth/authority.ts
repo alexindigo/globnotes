@@ -35,6 +35,13 @@ const REQUIREMENTS = {
   manageVault: "admin",
 } as const;
 export type VaultOperation = keyof typeof REQUIREMENTS;
+/** Retained host-only identity, never a Worker permission snapshot. */
+export interface ViewerAuthority {
+  readonly retained: OperationLease<"retained">;
+  operation(operation?: VaultOperation): OperationLease<"live">;
+  assertCurrent(operation?: VaultOperation): void;
+  sessionCurrent(): boolean;
+}
 export type InstanceOperation =
   | "readInstance"
   | "manageOwnAccount"
@@ -221,6 +228,58 @@ export class InstanceAuthority {
   lease(principal: Principal, operation: VaultOperation): VaultAuthorityLease {
     return this.prepareLease(operation)(principal);
   }
+  /** Capture the concrete bundle before any asynchronous principal resolution. */
+  prepareViewer(): (principal: Principal) => ViewerAuthority {
+    const lifetime = this.lifetime;
+    assertOperationLease(lifetime, "live");
+    const selected = withAuthorityContext(
+      undefined,
+      (context) => this.currentVault(context),
+    );
+    const vault = selected ? Object.freeze({ ...selected }) : null;
+    return (admittedPrincipal) => {
+      const principal = Object.freeze({ ...admittedPrincipal });
+      const { lease: retained } = createOperationLease("retained", [
+        (_id, native) =>
+          withAuthorityContext(native, (context) => {
+            this.#principal(principal, context);
+            if (
+              !vault || !sameAuthorityVault(this.currentVault(context), vault)
+            ) {
+              changed();
+            }
+            if (!vault.lifecycle.operational(context)) changed();
+            return undefined;
+          }),
+      ], [lifetime]);
+      if (!this.capabilities(principal, vault).canRead) forbidden();
+      const operation = (required: VaultOperation = "readVault") => {
+        assertOperationLease(retained, "retained");
+        return createOperationLease("live", [() => {}], [
+          retained,
+          this.lease(principal, required).lease,
+        ]).lease;
+      };
+      return Object.freeze({
+        retained,
+        operation,
+        assertCurrent: (required?: VaultOperation) => {
+          operation(required).assertCurrent();
+        },
+        sessionCurrent: () => {
+          try {
+            assertOperationLease(retained, "retained");
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      });
+    };
+  }
+  viewer(principal: Principal): ViewerAuthority {
+    return this.prepareViewer()(principal);
+  }
   /** Capture concrete owner witnesses before token validation or any other wait.
    * This is preparation, not permission: binding still evaluates the principal. */
   prepareLease(
@@ -307,6 +366,7 @@ export class InstanceAuthority {
         aclRevision: snapshot.value.revision,
         operation,
         principal: Object.freeze({ ...principal }),
+        viewer: this.viewer(principal),
         epoch,
         assertCurrent,
       });

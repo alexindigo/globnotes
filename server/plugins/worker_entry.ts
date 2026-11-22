@@ -5,6 +5,11 @@
 /** Handler functions never leave their owning Worker. The host binds authority. */
 import { createUuid } from "../../shared/uuid.ts";
 import {
+  createOwnershipScope,
+  type OwnedResource,
+  type OwnershipScope,
+} from "../../shared/ownership.js";
+import {
   storageDriver,
   StorageError,
   type StorageProvider,
@@ -19,12 +24,14 @@ import {
   type HookName,
   type HostMessage,
   HTTP_METHODS,
+  type InvocationReference,
   type JsonValues,
   jsonValues,
   type WorkerMessage,
 } from "./contracts.ts";
 import {
   currentWorkerContext,
+  registrationPending,
   revokeWorkerContext,
   runBackground,
   runInvocation,
@@ -144,10 +151,20 @@ let declaredHooks = new Set<HookName>();
 let permissionsSource: Source | undefined;
 const handlers = new Map<string, Handler>();
 const handlerKinds = new Map<string, HandlerRegistration["kind"]>();
-const resources = new Set<Disposer>();
+const resources = createOwnershipScope();
+interface ManagedResource {
+  scope: OwnershipScope;
+  handle: OwnedResource<undefined>;
+}
+const continuationResources = new Map<string, ManagedResource>();
 const pendingRpc = new Map<
   number,
-  { resolve(value: unknown): void; reject(error: Error): void }
+  {
+    contextId: string;
+    retiring: boolean;
+    resolve(value: unknown): void;
+    reject(error: Error): void;
+  }
 >();
 function send(message: WorkerMessage) {
   self.postMessage(message);
@@ -155,7 +172,11 @@ function send(message: WorkerMessage) {
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : "plugin handler failed";
 }
-function rpc(method: string, args: unknown[]): Promise<unknown> {
+function rpc(
+  method: string,
+  args: unknown[],
+  reference?: InvocationReference,
+): Promise<unknown> {
   if (stopping) {
     return Promise.reject(
       method.startsWith("fs.")
@@ -165,7 +186,7 @@ function rpc(method: string, args: unknown[]): Promise<unknown> {
   }
   let context;
   try {
-    context = currentWorkerContext();
+    context = reference ?? currentWorkerContext();
   } catch (error) {
     return Promise.reject(
       method.startsWith("fs.") ? new FsError("fs_generation_revoked") : error,
@@ -173,7 +194,12 @@ function rpc(method: string, args: unknown[]): Promise<unknown> {
   }
   const id = ++sequence;
   return new Promise((resolve, reject) => {
-    pendingRpc.set(id, { resolve, reject });
+    pendingRpc.set(id, {
+      resolve,
+      reject,
+      contextId: context.id,
+      retiring: method === "context.release",
+    });
     send({
       type: "rpc",
       generation,
@@ -190,15 +216,13 @@ function own(disposer: Disposer): Disposer {
   if (typeof disposer !== "function") {
     throw new Error("disposer must be callable");
   }
-  let active = true;
-  const release = () => {
-    if (!active) return;
-    active = false;
-    resources.delete(release);
-    return disposer();
+  const handle = resources.defer(disposer);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    return resources.release(handle);
   };
-  resources.add(release);
-  return release;
 }
 function register(
   registration: HandlerRegistration,
@@ -215,14 +239,69 @@ function register(
   }
   const handlerId = `handler-${++sequence}`;
   jsonValues(registration);
-  handlers.set(handlerId, handler);
-  handlerKinds.set(handlerId, registration.kind);
-  send({ type: "register", generation, handlerId, registration });
-  return own(() => {
-    handlers.delete(handlerId);
-    handlerKinds.delete(handlerId);
-    send({ type: "unregister", generation, handlerId });
+  return managed((context) => {
+    handlers.set(handlerId, handler);
+    handlerKinds.set(handlerId, registration.kind);
+    send({
+      type: "register",
+      generation,
+      handlerId,
+      registration,
+      contextId: context.id,
+    });
+    return () => {
+      handlers.delete(handlerId);
+      handlerKinds.delete(handlerId);
+      send({ type: "unregister", generation, handlerId });
+    };
   });
+}
+/** Reserve resource custody before host admission or arming any resource. */
+function managed(arm: (context: InvocationReference) => Disposer): Disposer {
+  const parent = currentWorkerContext();
+  const scope = createOwnershipScope();
+  const handle = resources.defer(() =>
+    scope.releaseAll().then((report) => report.throwIfFailed())
+  );
+  let cancelled = false;
+  const release = () => {
+    if (cancelled) return;
+    cancelled = true;
+    scope.retire();
+    return resources.release(handle);
+  };
+  const admit = async (context: InvocationReference) => {
+    // Cancellation before admission is an ordinary outcome, not a failure of
+    // the invocation that created and released the resource.
+    if (scope.retired || stopping) {
+      if (context.kind === "continuation") {
+        await rpc("context.release", [], context);
+      }
+      return;
+    }
+    if (context.kind === "continuation") {
+      continuationResources.set(context.id, { scope, handle });
+      scope.defer(() => {
+        continuationResources.delete(context.id);
+        // Host retirement may already have closed it; still join its ACK.
+        return rpc("context.release", [], context).catch(() => undefined);
+      });
+    }
+    await scope.acquire(() => arm(context), (dispose) => dispose());
+  };
+  if (parent.kind === "background") {
+    // Background registrations arm synchronously during activation.
+    scope.defer(arm(parent));
+  } else {
+    const admission = rpc("context.derive", []).then((value) =>
+      admit(value as InvocationReference)
+    ).catch(async (error) => {
+      await release();
+      throw error;
+    });
+    registrationPending(admission);
+  }
+  return release;
 }
 function timer(
   callback: Disposer,
@@ -233,11 +312,23 @@ function timer(
   if (!Number.isFinite(milliseconds) || milliseconds < 0) {
     throw new Error("timer duration must be non-negative");
   }
-  const run = () => {
-    if (stopping) return;
-    if (!interval) release();
-    runBackground(() =>
-      Promise.resolve().then(callback).catch(() => {
+  let busy = false;
+  const release = managed((context) => {
+    const run = async () => {
+      if (stopping || (context.kind === "continuation" && busy)) return;
+      if (context.kind === "continuation") busy = true;
+      else if (!interval) await release();
+      let firing: InvocationReference | undefined;
+      try {
+        if (context.kind === "continuation") {
+          firing = await rpc(
+            "context.begin",
+            [],
+            context,
+          ) as InvocationReference;
+          await runInvocation(firing, async () => await callback());
+        } else await runBackground(async () => await callback());
+      } catch {
         if (role === "driver") {
           send({
             type: "initError",
@@ -246,14 +337,24 @@ function timer(
           });
           return;
         }
-        rpc("diagnostic", ["managed_timer_failed"]).catch(() => undefined);
-      })
-    );
-  };
-  const id = interval
-    ? setInterval(run, milliseconds)
-    : setTimeout(run, milliseconds);
-  const release = own(() => interval ? clearInterval(id) : clearTimeout(id));
+        if (context.kind === "background") {
+          runBackground(() =>
+            rpc("diagnostic", ["managed_timer_failed"]).catch(() => undefined)
+          );
+        }
+      } finally {
+        if (firing) {
+          await rpc("context.release", [], firing).catch(() => undefined);
+        }
+        if (!interval && context.kind === "continuation") await release();
+        busy = false;
+      }
+    };
+    const id = interval
+      ? setInterval(run, milliseconds)
+      : setTimeout(run, milliseconds);
+    return () => interval ? clearInterval(id) : clearTimeout(id);
+  });
   return release;
 }
 const ctx: PluginCtx = {
@@ -526,15 +627,8 @@ const renderAdapters: Record<
   onSync: (module) => module.onSync?.(ctx),
 };
 async function cleanup(): Promise<string[]> {
-  const errors: string[] = [];
-  for (const release of [...resources].reverse()) {
-    try {
-      await release();
-    } catch (error) {
-      errors.push(reason(error));
-    }
-  }
-  resources.clear();
+  const report = await resources.releaseAll();
+  const errors = report.errors.map(reason);
   handlers.clear();
   handlerKinds.clear();
   for (const pending of pendingRpc.values()) {
@@ -705,6 +799,20 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
     return;
   }
   if (message.generation !== generation) return;
+  if (message.type === "contextRetired") {
+    const resource = continuationResources.get(message.contextId);
+    if (resource) {
+      resource.scope.retire();
+      resources.release(resource.handle).catch(() => undefined);
+    }
+    for (const [id, pending] of pendingRpc) {
+      if (pending.contextId === message.contextId && !pending.retiring) {
+        pendingRpc.delete(id);
+        pending.reject(new Error("continuation retired"));
+      }
+    }
+    return;
+  }
   if (message.type === "rpcResponse") {
     const pending = pendingRpc.get(message.id);
     if (pending) {

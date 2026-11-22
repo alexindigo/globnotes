@@ -48,6 +48,7 @@ import {
 } from "./network_contracts.ts";
 import { permissionFingerprint } from "./network_permissions.ts";
 import { PluginSettingsEnvironment } from "./settings_environment.ts";
+import type { ViewerAuthority } from "../auth/authority.ts";
 
 const INTERNAL_PLUGINS_DIR = path.resolve(
   path.dirname(path.fromFileUrl(import.meta.url)),
@@ -1009,10 +1010,10 @@ export class PluginManager {
     this.startPromise = null;
   }
   /** Ordinary changes retain workers and broadcast legacy sync to every replica. */
-  syncAll(snapshot?: OperationFact): Promise<void> {
+  syncAll(snapshot?: OperationFact, viewer?: ViewerAuthority): Promise<void> {
     const next = this.syncBoundary.catch(() => undefined).then(async () => {
       for (const owner of this.readyRenderOwners()) {
-        if (this.renderOwnerCurrent(owner)) await owner.host.syncAll();
+        if (this.renderOwnerCurrent(owner)) await owner.host.syncAll(viewer);
       }
       this.serviceRuntime?.post(
         "on-sync",
@@ -1023,6 +1024,9 @@ export class PluginManager {
           timestamp: new Date().toISOString(),
           initial: false,
         },
+        {},
+        undefined,
+        { viewer, causal: { depth: snapshot?.causalDepth ?? 0 } },
       );
     });
     this.syncBoundary = next;

@@ -19,6 +19,7 @@ import type MarkdownIt from "markdown-it";
 import type { PluginHost } from "../plugins/host.ts";
 import { logger } from "../logger.ts";
 import { state } from "../state.ts";
+import type { ViewerAuthority } from "../auth/authority.ts";
 import {
   createMarkdown,
   escapeHtml,
@@ -49,12 +50,16 @@ interface LoadedPlugin {
   host: PluginHost;
   selectors: SelectorSpec[];
   current(): boolean;
+  viewer?: ViewerAuthority;
 }
 
 /** Fetch selectors once per render; plugins without selectors are inert.
  * Ids in `disabled` are skipped (per-request, from the client's
  * localStorage switches). */
-async function loadPlugins(disabled?: Set<string>): Promise<LoadedPlugin[]> {
+async function loadPlugins(
+  disabled?: Set<string>,
+  viewer?: ViewerAuthority,
+): Promise<LoadedPlugin[]> {
   const manager = state.plugins;
   if (!manager) return [];
   await manager.ensureStarted();
@@ -66,12 +71,12 @@ async function loadPlugins(disabled?: Set<string>): Promise<LoadedPlugin[]> {
     if (!host.renderCapable) continue;
     if (disabled?.has(host.manifest.id)) continue;
     try {
-      const specs = (await host.call("getSelectors", [])) as
+      const specs = (await host.call("getSelectors", [], { viewer })) as
         | SelectorSpec[]
         | null;
       if (!current()) continue;
       if (Array.isArray(specs) && specs.length > 0) {
-        out.push({ host, selectors: specs, current });
+        out.push({ host, selectors: specs, current, viewer });
       }
     } catch (e) {
       logger.error(
@@ -112,7 +117,7 @@ async function dispatch(
     if (!p.selectors.some((s) => matches(s, current))) continue;
     let res: unknown;
     try {
-      res = await p.host.call("parseNode", [current]);
+      res = await p.host.call("parseNode", [current], { viewer: p.viewer });
       if (!p.current()) continue;
     } catch (e) {
       logger.error(`plugin '${p.host.manifest.id}' parseNode failed: ${e}`);
@@ -325,10 +330,15 @@ async function renderBlock(
  * adds a gutter to multi-line code fences. */
 export async function renderMarkdown(
   source: string,
-  opts: { disabled?: string[]; lineNumbers?: boolean } = {},
+  opts: {
+    disabled?: string[];
+    lineNumbers?: boolean;
+    viewer?: ViewerAuthority;
+  } = {},
 ): Promise<string> {
   const plugins = await loadPlugins(
     opts.disabled?.length ? new Set(opts.disabled) : undefined,
+    opts.viewer,
   );
   const tokens = md.parse(source, {});
   return await renderBlock(
