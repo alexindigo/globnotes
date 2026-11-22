@@ -59,6 +59,7 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "server/config/file_store.ts",
       "server/auth/records.ts",
       "tests/owned_publication_test.ts",
+      "tests/recorded_publication_test.ts",
       "server/auth/internal/account_credentials.ts",
       "tests/credential_proof_test.ts",
       "tests/credential_transition_test.ts",
@@ -90,6 +91,8 @@ export const PUBLICATION_OWNERSHIP: OwnershipRules = {
       PUBLICATION_STORE,
       PUBLICATION_OWNER,
       "tests/owned_publication_test.ts",
+      "server/auth/offline_recovery.ts",
+      "tests/recorded_publication_test.ts",
     ],
   },
 };
@@ -242,7 +245,11 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
       "tests/credential_preparation_test.ts",
       "tests/credential_directory_test.ts",
     ],
-    [OFFLINE_RECOVERY]: [CREDENTIAL_ENGINE, PREPARATION_HELPER],
+    [OFFLINE_RECOVERY]: [
+      CREDENTIAL_ENGINE,
+      PREPARATION_HELPER,
+      "tests/recorded_publication_test.ts",
+    ],
     [PREPARATION_HELPER]: [
       "tests/credential_preparation_test.ts",
       "tests/config_durability_test.ts",

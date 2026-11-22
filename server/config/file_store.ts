@@ -8,7 +8,12 @@ import {
 } from "../operation_lease.ts";
 import { bindGuardedSink } from "../internal/guarded_sink.ts";
 import { createUuid } from "../../shared/uuid.ts";
-import { registerPublicationWriter } from "./internal/publication_port.ts";
+import {
+  type RecordedCandidate,
+  type RecordedCandidateData,
+  registerPublicationWriter,
+  registerRecordedWriter,
+} from "./internal/publication_port.ts";
 import {
   type PublicationOutcome,
   PublicationRecoveryRequired,
@@ -256,6 +261,34 @@ export class BoundFileStore {
       this,
       (...args) => this.#preparePublication(...args),
     );
+    registerRecordedWriter(this, path.resolve(this.root), {
+      prepare: (raw, expected, lease, setId, role) => {
+        assertOperationLease(lease, "live");
+        this.#recordIdentity(setId, role);
+        const candidate = this.#prepare(raw, expected);
+        try {
+          syncOwnedStoredDirectory(
+            path.dirname(candidate.temporary),
+            this.root,
+          );
+          return this.#recordedCandidate(candidate, lease, setId, role);
+        } catch (error) {
+          candidate.phase = "discarded";
+          try {
+            this.#cleanupCandidate(candidate.custody);
+          } catch (cleanup) {
+            throw new AggregateError(
+              [error, cleanup],
+              "Recorded preparation and cleanup failed.",
+              { cause: error },
+            );
+          }
+          throw error;
+        }
+      },
+      recover: (input, lease, setId, role) =>
+        this.#recoverRecorded(input, lease, setId, role),
+    });
   }
 
   capture(): StoredConfigSnapshot {
@@ -369,7 +402,7 @@ export class BoundFileStore {
       node.location === target
     )?.identity;
     // Replacement authority on the directory must not bypass target write access.
-    if (identity) Deno.openSync(target, { write: true }).close();
+    this.#assertWritable(target, !!identity);
     const custody = this.#createCandidate(path.dirname(target));
     const temporary = custody.temporary;
     try {
@@ -528,6 +561,286 @@ export class BoundFileStore {
     Deno.removeSync(temporary);
   }
 
+  #recordIdentity(setId: string, role: string): void {
+    if (
+      !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(setId) ||
+      !/^[a-z][a-z0-9-]*$/.test(role)
+    ) throw new StoredConfigConflict();
+  }
+
+  #assertWritable(target: string, identity: boolean): void {
+    if (identity) Deno.openSync(target, { write: true }).close();
+  }
+
+  #deliverCandidate(candidate: StoredCandidate): void {
+    const temporary = candidate.temporary,
+      target = candidate.snapshot.binding.target;
+    if (candidate.replace) {
+      Deno.renameSync(temporary, target);
+    } else {
+      Deno.linkSync(temporary, target);
+    }
+  }
+
+  #recordedCandidate(
+    candidate: StoredCandidate,
+    lease: OperationLease<"live"> | OperationLease<"recovery">,
+    setId: string,
+    role: string,
+  ): RecordedCandidate {
+    const record: RecordedCandidateData = Object.freeze({
+      version: 1,
+      setId,
+      role,
+      before: candidate.expected,
+      after: candidate.snapshot,
+      candidate: path.basename(candidate.temporary),
+    });
+    const validateStorage = () => {
+      if (candidate.phase === "discarded" || candidate.phase === "publishing") {
+        throw new StoredConfigConflict();
+      }
+      if (candidate.phase === "published") {
+        this.assertUnchanged(candidate.snapshot);
+        return;
+      }
+      const original = this.#inspectCandidate(candidate.custody).identity;
+      const current = configNode(candidate.temporary).identity;
+      const after =
+        candidate.snapshot.binding.nodes.find((node) =>
+          node.location === candidate.snapshot.binding.target
+        )!.identity;
+      if (
+        original?.dev !== after?.dev || original?.ino !== after?.ino ||
+        JSON.stringify(current) !== JSON.stringify(after) ||
+        Deno.readTextFileSync(candidate.temporary) !== candidate.snapshot.raw
+      ) throw new StoredConfigConflict();
+      this.assertUnchanged(candidate.expected);
+      this.#assertWritable(
+        candidate.snapshot.binding.target,
+        candidate.replace,
+      );
+    };
+    const operation = createOperationLease(lease.mode, [() => {
+      validateStorage();
+      return undefined;
+    }], [lease]);
+    const validate = () => assertOperationLease(operation.lease, lease.mode);
+    let busy = false;
+    let cleaning = false;
+    const deliver = bindGuardedSink(
+      operation.lease,
+      lease.mode,
+      () => ({ value: undefined }),
+      () => {
+        this.#deliverCandidate(candidate);
+        return undefined;
+      },
+    );
+    return Object.freeze({
+      record,
+      validate,
+      apply: () => {
+        if (busy) throw new StoredConfigConflict();
+        busy = true;
+        try {
+          // Successful replay is idempotent, but only while its exact after state
+          // remains current. Never reapply a stale retired journal over a new edit.
+          if (candidate.phase !== "published") {
+            validate();
+            deliver(undefined);
+            candidate.phase = "published";
+          } else validate();
+          let warning = false;
+          try {
+            this.#cleanupCandidate(candidate.custody);
+          } catch {
+            warning = true;
+          }
+          try {
+            syncOwnedStoredDirectory(
+              path.dirname(candidate.snapshot.binding.target),
+              this.root,
+            );
+          } catch {
+            warning = true;
+          }
+          return Object.freeze({ snapshot: candidate.snapshot, warning });
+        } finally {
+          busy = false;
+        }
+      },
+      discard: () => {
+        // A decided participant is never passed to ordinary discard by its set
+        // owner. Published state itself is irreversible; only alias cleanup runs.
+        if (candidate.phase !== "published") candidate.phase = "discarded";
+        operation.retire();
+        if (cleaning) return;
+        cleaning = true;
+        try {
+          this.#cleanupCandidate(candidate.custody);
+        } finally {
+          cleaning = false;
+        }
+      },
+    });
+  }
+
+  #recoverRecorded(
+    input: unknown,
+    lease: OperationLease<"recovery">,
+    setId: string,
+    role: string,
+  ): RecordedCandidate {
+    assertOperationLease(lease, "recovery");
+    this.#recordIdentity(setId, role);
+    // Round-trip first: capture getters once before any final authority fence.
+    const data = JSON.parse(JSON.stringify(input)) as RecordedCandidateData;
+    const keys = (value: object, names: string[]) =>
+      Object.keys(value).sort().join() === names.sort().join();
+    if (
+      !data ||
+      !keys(data, [
+        "version",
+        "setId",
+        "role",
+        "before",
+        "after",
+        "candidate",
+      ]) ||
+      data.version !== 1 || data.setId !== setId || data.role !== role ||
+      typeof data.candidate !== "string" ||
+      !/^\.config-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
+        data.candidate,
+      )
+    ) throw new StoredConfigConflict();
+    // Schema-check every serialized node; neither roots nor destinations can be
+    // selected by journal bytes. Compare the entire binding to the actual store.
+    for (const snapshot of [data.before, data.after]) {
+      if (
+        !snapshot || !keys(snapshot, ["raw", "binding"]) ||
+        !(snapshot.raw === null || typeof snapshot.raw === "string") ||
+        !snapshot.binding ||
+        !keys(snapshot.binding, ["configured", "target", "nodes"]) ||
+        snapshot.binding.configured !== path.resolve(this.filename) ||
+        !Array.isArray(snapshot.binding.nodes)
+      ) throw new StoredConfigConflict();
+      for (const node of snapshot.binding.nodes) {
+        if (
+          !node || !keys(node, ["location", "identity"]) ||
+          typeof node.location !== "string"
+        ) {
+          throw new StoredConfigConflict();
+        }
+        const identity = node.identity;
+        if (
+          identity !== null && (
+            !identity ||
+            !keys(identity, [
+              "dev",
+              "ino",
+              "mode",
+              "uid",
+              "gid",
+              "kind",
+              "link",
+            ]) ||
+            ![
+              identity.dev,
+              identity.ino,
+              identity.mode,
+              identity.uid,
+              identity.gid,
+            ].every((n) => n === null || Number.isSafeInteger(n) && n >= 0) ||
+            !["file", "directory", "link"].includes(identity.kind) ||
+            !(identity.link === null || typeof identity.link === "string")
+          )
+        ) throw new StoredConfigConflict();
+      }
+    }
+    if (typeof data.after.raw !== "string") throw new StoredConfigConflict();
+    const freeze = (value: unknown): void => {
+      if (value && typeof value === "object") {
+        Object.values(value).forEach(freeze);
+        Object.freeze(value);
+      }
+    };
+    freeze(data);
+    const target = data.before.binding.target;
+    const afterIdentity = data.after.binding.nodes.find((node) =>
+      node.location === target
+    )?.identity;
+    const expectedAfter = {
+      ...data.before.binding,
+      nodes: data.before.binding.nodes.map((node) =>
+        node.location === target
+          ? { location: target, identity: afterIdentity }
+          : node
+      ),
+    };
+    if (
+      !afterIdentity || afterIdentity.kind !== "file" ||
+      afterIdentity.ino === null ||
+      JSON.stringify(data.after.binding) !== JSON.stringify(expectedAfter)
+    ) {
+      throw new StoredConfigConflict();
+    }
+    const current = this.capture();
+    const published = JSON.stringify(current) === JSON.stringify(data.after);
+    if (!published && JSON.stringify(current) !== JSON.stringify(data.before)) {
+      throw new StoredConfigConflict();
+    }
+    const temporary = path.join(path.dirname(target), data.candidate);
+    const custody: CandidateCustody = {
+      temporary,
+      handle: undefined,
+      identity: null,
+      requested: false,
+      unlinked: published,
+    };
+    // Reopen without following a foreign symlink. A published rename may have
+    // consumed the alias; no descriptor or deletion authority is then needed.
+    const alias = configNode(temporary).identity;
+    if (alias) {
+      if (
+        JSON.stringify(alias) !== JSON.stringify(afterIdentity) ||
+        Deno.readTextFileSync(temporary) !== data.after.raw
+      ) throw new StoredConfigConflict();
+      custody.handle = Deno.openSync(temporary, { read: true });
+      this.#candidates.add(custody);
+      custody.unlinked = false;
+      try {
+        const actual = this.#inspectCandidate(custody).identity;
+        if (
+          actual?.dev !== afterIdentity.dev || actual?.ino !== afterIdentity.ino
+        ) {
+          throw new StoredConfigConflict();
+        }
+      } catch (error) {
+        // Failed admission owns the descriptor, but never adopts unlink rights.
+        custody.handle.close();
+        this.#candidates.delete(custody);
+        throw error;
+      }
+    } else if (!published) throw new StoredConfigConflict();
+    const candidate: StoredCandidate = {
+      temporary,
+      custody,
+      identity: afterIdentity,
+      expected: data.before,
+      snapshot: data.after,
+      replace: data.before.raw !== null,
+      phase: published ? "published" : "prepared",
+    };
+    try {
+      return this.#recordedCandidate(candidate, lease, setId, role);
+    } catch (error) {
+      custody.handle?.close();
+      this.#candidates.delete(custody);
+      throw error;
+    }
+  }
+
   /** Internal owner capability. Callers bind installation while preparing; the
    * returned single-use operation accepts no effect callback or replacement data.
    * P01 restricts the private module port to the bound publication owners. */
@@ -553,7 +866,7 @@ export class BoundFileStore {
       ) throw new StoredConfigConflict();
       const target = candidate.snapshot.binding.target,
         identity = candidate.replace;
-      if (identity) Deno.openSync(target, { write: true }).close();
+      this.#assertWritable(target, identity);
       this.assertUnchanged(candidate.expected);
     }], [lease]);
     let deliver: () => void;
@@ -591,16 +904,8 @@ export class BoundFileStore {
           warning = false;
         try {
           // Bind and capture the native delivery inputs before any final checks.
-          const temporary = candidate.temporary,
-            target = candidate.snapshot.binding.target,
-            snapshot = candidate.snapshot;
-          deliver = candidate.replace
-            ? () => {
-              Deno.renameSync(temporary, target);
-            }
-            : () => {
-              Deno.linkSync(temporary, target);
-            };
+          const snapshot = candidate.snapshot;
+          deliver = () => this.#deliverCandidate(candidate);
           publish(undefined);
           // Delivery is complete. Installation/receipt handling cannot grant
           // another write and must survive this operation's self-revocation.

@@ -5,6 +5,97 @@ import type {
   StoredConfigSnapshot,
 } from "../file_store.ts";
 
+/** Durable data is not a live capability. Only the private writer can admit it
+ * again, under an issued exclusive recovery owner for this root. */
+export interface RecordedCandidateData {
+  readonly version: 1;
+  readonly setId: string;
+  readonly role: string;
+  readonly before: StoredConfigSnapshot;
+  readonly after: StoredConfigSnapshot;
+  readonly candidate: string;
+}
+export interface RecordedCandidate {
+  readonly record: RecordedCandidateData;
+  validate(): void;
+  apply(): {
+    readonly snapshot: StoredConfigSnapshot;
+    readonly warning: boolean;
+  };
+  discard(): void;
+}
+interface NativeRecordedWriter {
+  prepare(
+    raw: string,
+    expected: StoredConfigSnapshot,
+    lease: OperationLease<"live">,
+    setId: string,
+    role: string,
+  ): RecordedCandidate;
+  recover(
+    input: unknown,
+    lease: OperationLease<"recovery">,
+    setId: string,
+    role: string,
+  ): RecordedCandidate;
+}
+const recordedWriters = new WeakMap<
+  object,
+  { root: string; writer: NativeRecordedWriter }
+>();
+const recoveryOwners = new WeakMap<object, {
+  root: string;
+  lease: OperationLease<"recovery">;
+}>();
+
+/** Called only by the actual exclusive offline owner, not ordinary consumers. */
+export function registerPublicationRecovery(
+  authority: object,
+  root: string,
+  lease: OperationLease<"recovery">,
+): void {
+  if (recoveryOwners.has(authority)) {
+    throw new TypeError("Recovery already bound.");
+  }
+  recoveryOwners.set(authority, { root, lease });
+}
+export function registerRecordedWriter(
+  store: object,
+  root: string,
+  writer: NativeRecordedWriter,
+): void {
+  if (recordedWriters.has(store)) {
+    throw new TypeError("Recorded writer already bound.");
+  }
+  recordedWriters.set(store, { root, writer });
+}
+export function recordedWriter(store: object) {
+  const binding = recordedWriters.get(store);
+  if (!binding) {
+    throw new TypeError("Recorded publication requires an issued writer.");
+  }
+  return Object.freeze({
+    prepare: binding.writer.prepare,
+    recover(input: unknown, authority: object, setId: string, role: string) {
+      return binding.writer.recover(
+        input,
+        publicationRecoveryLease(authority, binding.root),
+        setId,
+        role,
+      );
+    },
+  });
+}
+function publicationRecoveryLease(authority: object, root: string) {
+  const owner = recoveryOwners.get(authority);
+  if (!owner || owner.root !== root) {
+    throw new TypeError(
+      "Publication recovery requires the exclusive root owner.",
+    );
+  }
+  return owner.lease;
+}
+
 type Prepare = (
   raw: string,
   expected: StoredConfigSnapshot,

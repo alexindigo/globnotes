@@ -117,6 +117,7 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
     replacement: "P06; wider adoption A04/A05/I06/I14",
     closed: true,
     consumers: [
+      "tests/recorded_publication_test.ts",
       "tests/owned_publication_test.ts",
       "tests/config_file_store_test.ts",
       "tests/identity_accounts_test.ts",

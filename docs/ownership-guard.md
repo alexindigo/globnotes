@@ -338,6 +338,36 @@ replace the name between them, and that replacement can be removed. Deno has no
 descriptor-relative unlink; service write serialization does not exclude external
 writers or eliminate this residual window.
 
+### Recorded storage candidates (G1a)
+
+The same private writer port supports journal-recordable candidate data. Records
+contain host-only prepared bytes, full before/after bindings, set/role correlation
+and a same-directory candidate basename. They are not public receipts or live
+publication handles. The writer syncs both the candidate and its directory before
+returning a record. Only the actual exclusive offline recovery owner can admit a
+record again for its exact root; an issued recovery-mode lease alone is not that
+capability. Recovery validates the complete record against the bound store,
+current before/after bytes, parent identities, candidate metadata and content,
+then pins the reopened descriptor. No journal-selected destination is accepted.
+
+Recovery cannot retain a process descriptor across a crash. It reconstructs
+authority from validated durable state under the exclusive advisory owner, not
+from cached inode numbers alone. An external writer that removes and recreates
+an indistinguishable file (including reused inode, metadata and bytes) cannot be
+distinguished by these pathname primitives. External replacement between
+inspection/open/publication/unlink remains a race; the identity lock excludes
+cooperating application owners, not arbitrary filesystem writers. Recovery is
+not a hostile-filesystem sandbox. Unrecorded preparations have creating-process
+cleanup custody only; no orphan scan or recovery of unknown files is promised.
+
+Recorded apply separates irreversible disk publication from runtime installation.
+Its private result reports the exact prepared snapshot and post-publication
+durability/alias-cleanup warning. Repeated replay accepts only the exact after
+state and never overwrites a subsequent edit. Discard revokes publication before
+retryable cleanup. Existing single-file commit remains unchanged, with an
+optional synchronous IdentityFile observer after installation. Set settlement and
+domain journal/decision ownership are separate from this storage capability.
+
 ## Sign-in delivery (P08)
 
 The preparatory instance sign-in API returns an issued principal and a lazy

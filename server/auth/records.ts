@@ -50,6 +50,7 @@ export class IdentityFile<T> {
     filename: string,
     readonly validate: (value: unknown) => T,
     empty: T,
+    notify: () => undefined = () => undefined,
   ) {
     this.#publication = createOwnedPublication<T>(
       filename,
@@ -57,6 +58,7 @@ export class IdentityFile<T> {
         this.#snapshot = Object.freeze({ value, persistence });
         return undefined;
       },
+      notify,
     );
     const persistence = this.#publication.capture();
     let value: T;

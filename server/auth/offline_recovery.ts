@@ -2,6 +2,7 @@
 import { resolve } from "@std/path";
 import { acquireIdentityOwnership } from "./ownership.ts";
 import { IdentityStateError } from "./records.ts";
+import { registerPublicationRecovery } from "../config/internal/publication_port.ts";
 import {
   assertOperationLease,
   createOperationLease,
@@ -32,6 +33,7 @@ export function acquireOfflineRecovery(root: string) {
       authority,
       Object.freeze({ root: canonical, lease: operation.lease }),
     );
+    registerPublicationRecovery(authority, canonical, operation.lease);
     return Object.freeze({
       authority,
       close() {
