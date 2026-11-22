@@ -31,6 +31,15 @@ import { OwnershipError } from "../shared/ownership.js";
 import { heldOperation } from "./helpers/owned_operation.ts";
 import { authenticatorCode } from "./helpers/totp.ts";
 import { fixturePasswordHash } from "./helpers/config.ts";
+import { SignJWT } from "jose";
+import { receiveSession } from "./helpers/session_delivery.ts";
+import { resetFixturePassword } from "./helpers/account_preparation.ts";
+import type {
+  InitialAccountProof,
+  LoginProof,
+} from "../server/auth/account_credentials.ts";
+import type { AccountIdentity } from "../server/auth/accounts.ts";
+import { InstanceSessions } from "../server/auth/sessions.ts";
 import type { AccountPreparationAuthority } from "../server/auth/account_credentials.ts";
 
 const SET = "00000000-0000-4000-8000-000000000020";
@@ -565,6 +574,11 @@ Deno.test("account participation: recipient receipt requires its exact ACL peer 
         recipient.identity,
       );
       assertEquals(recipient.identity.passwordChangeRequired, true);
+      assertThrows(
+        () => f.accounts.credentials.initialAccountProof(account!, grant),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
     } finally {
       set?.discard();
       account?.discard();
@@ -853,6 +867,620 @@ function publishEnrolledSetup(
     assertEquals(pair.release().state, "committed");
   });
   assertEquals(acl.grants, { [prepared.identity.id]: "admin" });
+}
+
+type PreparationFixture = Parameters<
+  Parameters<typeof preparationFixture>[0]
+>[0];
+interface BootstrapPair {
+  readonly f: PreparationFixture;
+  readonly account: PublicationParticipant;
+  readonly access: PublicationParticipant;
+  readonly acl: AclRepository;
+  readonly set: ReturnType<typeof createPublicationSet>;
+  readonly owner: ReturnType<typeof createOperationLease<"live">>;
+  readonly identity: AccountIdentity;
+  readonly code: string | undefined;
+  readonly abort: AbortController;
+  proof(): InitialAccountProof;
+  settle(): void;
+}
+function bootstrapPair(
+  run: (pair: BootstrapPair) => Promise<void> | void,
+  options: { totp?: boolean; completion?: boolean; witness?: () => undefined } =
+    {},
+) {
+  return preparationFixture(async (f) => {
+    const owner = createOperationLease("live", [
+      options.witness ?? (() => undefined),
+    ]);
+    const abort = new AbortController();
+    const parts: PublicationParticipant[] = [];
+    let set: ReturnType<typeof createPublicationSet> | undefined;
+    try {
+      f.signing.initialize();
+      const source = f.authority(
+        "initial",
+        options.completion === false ? undefined : owner.lease,
+      );
+      const bundle = options.totp
+        ? await f.accounts.credentials.beginInitialEnrollment(source, "alice")
+        : undefined;
+      const code = bundle
+        ? await authenticatorCode(bundle.secret, SETUP_NOW)
+        : undefined;
+      const prepared = await f.accounts.credentials.prepareInitialAccount(
+        source,
+        bundle
+          ? { ...f.request(), authenticator: { key: bundle.key, code: code! } }
+          : f.request(),
+        abort.signal,
+      );
+      const acl = new AclRepository(`${f.root}/vault`, VAULT_A, {
+        accounts: f.accounts,
+      });
+      acl.prepareParents();
+      const access = acl.prepareInitialParticipant(
+        prepared.identity,
+        "view",
+        acl.capture(),
+        owner.lease,
+        SET,
+      );
+      parts.push(access);
+      const account = f.accounts.credentials.prepareAccountParticipant(
+        prepared.prepared,
+        SET,
+      );
+      parts.push(account);
+      set = createPublicationSet(SET, [account, access], journalPath(f.root));
+      const publication = set;
+      await run({
+        f,
+        owner,
+        account,
+        access,
+        acl,
+        set,
+        code,
+        abort,
+        identity: prepared.identity,
+        proof: () =>
+          f.accounts.credentials.initialAccountProof(account, access),
+        settle() {
+          publication.decide();
+          assertEquals(publication.publish().state, "committed");
+          assertEquals(publication.release().state, "committed");
+        },
+      });
+    } finally {
+      set?.discard();
+      for (const part of parts) part.discard();
+      owner.retire();
+    }
+  }, setupOptions);
+}
+
+Deno.test("bootstrap proof: reentrant completion witness cannot mint a second proof", () => {
+  let reenter: (() => undefined) | undefined;
+  const events: string[] = [];
+  return bootstrapPair(async (p) => {
+    p.settle();
+    reenter = () => {
+      reenter = undefined;
+      assertThrows(
+        () => p.proof(),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+      events.push("nested refused");
+      return undefined;
+    };
+    const proof = p.proof();
+    assertEquals(events, ["nested refused"]);
+    const body = await receiveSession(await p.f.sessions.issue(proof));
+    assertEquals(body.principal.accountId, p.identity.id);
+  }, {
+    witness: () => {
+      reenter?.();
+      return undefined;
+    },
+  });
+});
+
+Deno.test("bootstrap proof: completion owner survives the intentional end of initial admission freshness", () =>
+  preparationFixture(async (f) => {
+    let fresh = true;
+    const admission = createOperationLease("live", [() => {
+      if (!fresh) throw new Error("initial admission ended");
+      return undefined;
+    }]);
+    const owner = createOperationLease("live", [() => undefined]);
+    let set: ReturnType<typeof createPublicationSet> | undefined;
+    const parts: PublicationParticipant[] = [];
+    try {
+      f.signing.initialize();
+      const prepared = await f.accounts.credentials.prepareInitialAccount(
+        f.authority("initial", owner.lease, admission.lease),
+        f.request(),
+      );
+      const acl = new AclRepository(`${f.root}/vault`, VAULT_A, {
+        accounts: f.accounts,
+      });
+      acl.prepareParents();
+      const access = acl.prepareInitialParticipant(
+        prepared.identity,
+        "none",
+        acl.capture(),
+        owner.lease,
+        SET,
+      );
+      parts.push(access);
+      const account = f.accounts.credentials.prepareAccountParticipant(
+        prepared.prepared,
+        SET,
+      );
+      parts.push(account);
+      set = createPublicationSet(SET, [account, access], journalPath(f.root));
+      set.decide();
+      set.publish();
+      set.release();
+      fresh = false;
+      assertThrows(
+        () => admission.lease.assertCurrent(),
+        Error,
+        "initial admission ended",
+      );
+      const proof = f.accounts.credentials.initialAccountProof(account, access);
+      const body = await receiveSession(await f.sessions.issue(proof));
+      assertEquals(body.principal.accountId, prepared.identity.id);
+      assertEquals(acl.capture().value, {
+        version: 1,
+        vaultId: VAULT_A,
+        revision: 1,
+        updateId: acl.capture().value.updateId,
+        updateActorId: prepared.identity.id,
+        everybody: "none",
+        grants: { [prepared.identity.id]: "admin" },
+      });
+    } finally {
+      set?.discard();
+      for (const part of parts) part.discard();
+      owner.retire();
+      admission.retire();
+    }
+  }));
+
+Deno.test("bootstrap proof: reentrant final session clock retires owner before native enqueue", () =>
+  bootstrapPair(async (p) => {
+    p.settle();
+    let retire = false;
+    const sessions = new InstanceSessions(p.f.accounts, p.f.signing, {
+      expirySeconds: 86400,
+    }, {
+      now: () => {
+        if (retire) p.owner.retire();
+        return SETUP_NOW;
+      },
+    });
+    const issued = await sessions.issue(p.proof());
+    retire = true;
+    await assertRejects(
+      () => receiveSession(issued),
+      AuthenticationError,
+      "Invalid authentication credentials.",
+    );
+  }));
+
+for (const totp of [false, true]) {
+  Deno.test(`bootstrap proof: exact settled pair reaches the existing signer and guarded body without another code (${totp})`, () =>
+    bootstrapPair(async (p) => {
+      p.settle();
+      const before = storedState(p.f.accounts);
+      const proof = p.proof();
+      const typeContract = (): LoginProof => {
+        // @ts-expect-error Initial publication and password verification have distinct proof brands.
+        return proof;
+      };
+      void typeContract;
+      assertEquals([Object.keys(proof), Object.isFrozen(proof)], [[], true]);
+      const sign = SignJWT.prototype.sign;
+      const calls: string[] = [];
+      SignJWT.prototype.sign = function (...args) {
+        calls.push("sign");
+        return sign.apply(this, args);
+      };
+      let issued: Awaited<ReturnType<typeof p.f.sessions.issue>>;
+      try {
+        issued = await p.f.sessions.issue(proof);
+      } finally {
+        SignJWT.prototype.sign = sign;
+      }
+      assertEquals(calls, ["sign"]);
+      const body = await receiveSession(issued);
+      assertEquals(body.principal.accountId, p.identity.id);
+      assertEquals(
+        (await p.f.sessions.validateToken(body.access_token)).accountId,
+        p.identity.id,
+      );
+      assertEquals(storedState(p.f.accounts), before);
+      await assertRejects(
+        () => p.f.sessions.issue(proof),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+      assertThrows(
+        () => p.proof(),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+      const restarted = new AccountRepository(p.f.root, undefined, {
+        now: () => SETUP_NOW + 30_000,
+      });
+      if (!totp) await restarted.credentials.authenticate("alice", "password");
+      else {
+        const key = storedState(restarted).accounts[0].totpKey!;
+        await restarted.credentials.authenticate(
+          "alice",
+          "password",
+          await authenticatorCode(key, SETUP_NOW + 30_000),
+        );
+      }
+    }, { totp }));
+}
+
+Deno.test("bootstrap proof: missing owner, account-only, uninstalled and unreleased publication cannot mint", async () => {
+  await bootstrapPair((p) => {
+    p.set.discard();
+    assertThrows(
+      () => p.proof(),
+      AuthenticationError,
+      "Invalid authentication credentials.",
+    );
+  });
+  await bootstrapPair((p) => {
+    assertThrows(
+      () => p.proof(),
+      AuthenticationError,
+      "Invalid authentication credentials.",
+    );
+    p.set.decide();
+    assertThrows(
+      () => p.proof(),
+      AuthenticationError,
+      "Invalid authentication credentials.",
+    );
+    assertEquals(p.set.publish().state, "committed");
+    assertThrows(
+      () => p.proof(),
+      AuthenticationError,
+      "Invalid authentication credentials.",
+    );
+    p.set.release();
+    assertEquals(Object.keys(p.proof()), []);
+  });
+  await bootstrapPair((p) => {
+    p.settle();
+    assertThrows(
+      () => p.proof(),
+      AuthenticationError,
+      "Invalid authentication credentials.",
+    );
+  }, { completion: false });
+  await preparationFixture(async (f) => {
+    const owner = createOperationLease("live", [() => undefined]);
+    let account: PublicationParticipant | undefined;
+    try {
+      const prepared = await f.accounts.credentials.prepareInitialAccount(
+        f.authority("initial", owner.lease),
+        f.request(),
+      );
+      const participant = account = f.accounts.credentials
+        .prepareAccountParticipant(
+          prepared.prepared,
+          SET,
+        );
+      assertMissingPeer(f.root, [participant]);
+      assertThrows(
+        () =>
+          f.accounts.credentials.initialAccountProof(
+            participant,
+            {} as PublicationParticipant,
+          ),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+    } finally {
+      account?.discard();
+      owner.retire();
+    }
+  });
+});
+
+Deno.test("bootstrap proof: another root's real settled ACL is not the matching setup peer", () =>
+  bootstrapPair(async (p) => {
+    p.settle();
+    await bootstrapPair((other) => {
+      other.settle();
+      assertThrows(
+        () =>
+          p.f.accounts.credentials.initialAccountProof(p.account, other.access),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+    });
+    const body = await receiveSession(await p.f.sessions.issue(p.proof()));
+    assertEquals(body.principal.accountId, p.identity.id);
+  }));
+
+Deno.test("bootstrap proof: signing failure retires its proof but keeps normal sign-in available", () =>
+  bootstrapPair(async (p) => {
+    p.settle();
+    const proof = p.proof();
+    const sign = SignJWT.prototype.sign;
+    SignJWT.prototype.sign = () => {
+      SignJWT.prototype.sign = sign;
+      return Promise.reject(new Error("fixture signer failed"));
+    };
+    try {
+      await assertRejects(
+        () => p.f.sessions.issue(proof),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+    } finally {
+      SignJWT.prototype.sign = sign;
+    }
+    await assertRejects(
+      () => p.f.sessions.issue(proof),
+      AuthenticationError,
+      "Invalid authentication credentials.",
+    );
+    const session = await signIn(p.f.sessions, {
+      username: "alice",
+      password: "password",
+    });
+    assertEquals(session.principal.accountId, p.identity.id);
+  }));
+
+Deno.test("bootstrap proof: forged, cloned, foreign and wrong-purpose values never reach signing", () =>
+  bootstrapPair(async (p) => {
+    p.settle();
+    for (
+      const [account, access] of [
+        [{}, p.access],
+        [{ ...p.account }, p.access],
+        [p.account, {}],
+        [p.account, { ...p.access }],
+      ]
+    ) {
+      assertThrows(
+        () =>
+          p.f.accounts.credentials.initialAccountProof(
+            account as PublicationParticipant,
+            access as PublicationParticipant,
+          ),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+    }
+    const proof = p.proof();
+    for (
+      const value of [
+        {},
+        { ...proof },
+        structuredClone(proof),
+        p.identity,
+        p.account,
+        { committed: true },
+        null,
+      ]
+    ) {
+      await assertRejects(
+        () => p.f.sessions.issue(value as InitialAccountProof),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+    }
+    await preparationFixture(async (foreign) => {
+      foreign.signing.initialize();
+      await assertRejects(
+        () => foreign.sessions.issue(proof),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+      assertThrows(
+        () =>
+          foreign.accounts.credentials.initialAccountProof(p.account, p.access),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+    });
+    // A stored account and a valid ordinary LoginProof remain different from
+    // initial publication evidence; neither can mint an initial proof.
+    const login = await p.f.accounts.credentials.authenticate(
+      "alice",
+      "password",
+    );
+    assertThrows(
+      () =>
+        p.f.accounts.credentials.initialAccountProof(
+          login as unknown as PublicationParticipant,
+          p.access,
+        ),
+      AuthenticationError,
+      "Invalid authentication credentials.",
+    );
+    const ordinary = await receiveSession(await p.f.sessions.issue(login));
+    assertEquals(ordinary.principal.accountId, p.identity.id);
+    const initial = await receiveSession(await p.f.sessions.issue(proof));
+    assertEquals(initial.principal.accountId, p.identity.id);
+  }));
+
+for (
+  const boundary of [
+    "owner",
+    "aggregate",
+    "account",
+    "acl",
+    "signing",
+    "abort",
+  ] as const
+) {
+  Deno.test(`bootstrap proof: held signing ${boundary} prevents session disclosure`, () =>
+    bootstrapPair(async (p) => {
+      p.settle();
+      const proof = p.proof();
+      await heldOperation({
+        label: `bootstrap signature ${boundary}`,
+        owner: () => p.f.sessions,
+        progress: { kind: "controlled", clock: "external" },
+      }, (hold) => {
+        const sign = SignJWT.prototype.sign;
+        SignJWT.prototype.sign = function (...args) {
+          SignJWT.prototype.sign = sign;
+          return hold().then(() => sign.apply(this, args));
+        };
+        try {
+          return p.f.sessions.issue(proof);
+        } finally {
+          SignJWT.prototype.sign = sign;
+        }
+      }, async (operation) => {
+        await operation.reached();
+        if (boundary === "owner") p.owner.retire();
+        if (boundary === "abort") p.abort.abort();
+        if (boundary === "aggregate") p.f.accounts.retireCredentials();
+        if (boundary === "account") {
+          await resetFixturePassword(
+            p.f.accounts,
+            p.identity.id,
+            "changed",
+            NEXT,
+          );
+        }
+        if (boundary === "acl") {
+          p.acl.save({ everybody: "none", grants: {} }, p.acl.capture(), {
+            updateId: NEXT,
+            actorId: p.identity.id,
+          });
+        }
+        if (boundary === "signing") {
+          const raw = Deno.readTextFileSync(`${p.f.root}/sessions.json`);
+          Deno.writeTextFileSync(`${p.f.root}/replacement`, raw);
+          Deno.renameSync(
+            `${p.f.root}/replacement`,
+            `${p.f.root}/sessions.json`,
+          );
+        }
+        await assertRejects(
+          () => operation.result(),
+          AuthenticationError,
+          "Invalid authentication credentials.",
+        );
+        await assertRejects(
+          () => p.f.sessions.issue(proof),
+          AuthenticationError,
+          "Invalid authentication credentials.",
+        );
+      });
+    }));
+}
+
+Deno.test("bootstrap proof: actual first-file publication cannot mint before the ACL and runtime pair settle", () =>
+  bootstrapPair(async (p) => {
+    p.set.decide();
+    const link = Deno.linkSync;
+    const events: string[] = [];
+    Deno.linkSync = (from, to) => {
+      link(from, to);
+      if (String(to) === `${p.f.root}/accounts.json`) {
+        events.push("account linked");
+        assertThrows(
+          () => p.proof(),
+          AuthenticationError,
+          "Invalid authentication credentials.",
+        );
+      }
+      if (String(to) === `${p.f.root}/vault/access.json`) {
+        events.push("ACL linked");
+      }
+    };
+    try {
+      assertEquals(p.set.publish().state, "committed");
+    } finally {
+      Deno.linkSync = link;
+    }
+    assertEquals(events, ["account linked", "ACL linked"]);
+    assertThrows(
+      () => p.proof(),
+      AuthenticationError,
+      "Invalid authentication credentials.",
+    );
+    p.set.release();
+    const body = await receiveSession(await p.f.sessions.issue(p.proof()));
+    assertEquals(body.principal.accountId, p.identity.id);
+  }));
+
+for (
+  const boundary of [
+    "owner",
+    "aggregate",
+    "account",
+    "acl",
+    "acl-binding",
+    "signing",
+    "cancel",
+    "abort",
+  ] as const
+) {
+  Deno.test(`bootstrap proof: queued body ${boundary} releases no token bytes`, () =>
+    bootstrapPair(async (p) => {
+      p.settle();
+      const proof = p.proof();
+      const issued = await p.f.sessions.issue(proof);
+      if (boundary === "owner") p.owner.retire();
+      if (boundary === "abort") p.abort.abort();
+      if (boundary === "aggregate") p.f.accounts.retireCredentials();
+      if (boundary === "account") {
+        await resetFixturePassword(
+          p.f.accounts,
+          p.identity.id,
+          "changed",
+          NEXT,
+        );
+      }
+      if (boundary === "acl") {
+        p.acl.save({ everybody: "none", grants: {} }, p.acl.capture(), {
+          updateId: NEXT,
+          actorId: p.identity.id,
+        });
+      }
+      if (boundary === "acl-binding") {
+        const file = `${p.f.root}/vault/access.json`;
+        const replacement = `${p.f.root}/vault/replacement`;
+        const raw = Deno.readTextFileSync(file);
+        Deno.writeTextFileSync(replacement, raw);
+        Deno.renameSync(replacement, file);
+        assertEquals(Deno.readTextFileSync(file), raw);
+      }
+      if (boundary === "signing") {
+        const raw = Deno.readTextFileSync(`${p.f.root}/sessions.json`);
+        Deno.writeTextFileSync(`${p.f.root}/replacement`, raw);
+        Deno.renameSync(`${p.f.root}/replacement`, `${p.f.root}/sessions.json`);
+      }
+      if (boundary === "cancel") await issued.body.cancel();
+      else {await assertRejects(
+          () => receiveSession(issued),
+          AuthenticationError,
+          "Invalid authentication credentials.",
+        );}
+      await assertRejects(
+        () => p.f.sessions.issue(proof),
+        AuthenticationError,
+        "Invalid authentication credentials.",
+      );
+    }));
 }
 
 Deno.test("setup enrollment: candidate retirement after transfer rejects decision without activating TOTP", () =>

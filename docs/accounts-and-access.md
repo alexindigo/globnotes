@@ -98,3 +98,13 @@ Recorded pair replay requires both recovered participants and uses the exact
 prepared account/ACL state under the exclusive offline root owner. It does not
 require an in-memory candidate or check a new wall-clock code. Setup screens
 and HTTP requests are still inactive here.
+
+Bootstrap sign-in accepts a distinct opaque initial-account proof from the
+aggregate, only after its exact initial-account/creator-ACL pair settles. The
+trusted initial admission binding supplies a separate completion owner: setup
+freshness intentionally ends at publication, while that owner, cancellation,
+account, ACL and signing bindings must remain current through signing and response
+body consumption. Both proof kinds use the same session signer and guarded body.
+The settled set verifies every member's native binding. Bootstrap never verifies
+or spends another authenticator code. Single-file,
+partial, unreleased or caller-certified publication cannot mint this proof.

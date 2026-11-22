@@ -9,6 +9,7 @@ import type { PublicationParticipant } from "../../config/owned_publication.ts";
 import { assertPublicationAuthority } from "../../internal/publication_validation.ts";
 import {
   accountAclParticipant,
+  assertSettledInitialAccountPair,
   registerInitialAccountParticipant,
   registerRecipientAccountParticipant,
 } from "./account_participation.ts";
@@ -52,6 +53,10 @@ import {
 declare const loginProofBrand: unique symbol;
 export interface LoginProof {
   readonly [loginProofBrand]: true;
+}
+declare const initialProofBrand: unique symbol;
+export interface InitialAccountProof {
+  readonly [initialProofBrand]: true;
 }
 declare const loginClaimBrand: unique symbol;
 export interface LoginClaim {
@@ -121,22 +126,32 @@ export interface AccountPreparationAuthority {
 type PreparationPurpose = "initial" | "recipient";
 const preparationAuthorities = new WeakMap<
   AccountPreparationAuthority,
-  { owner: object; purpose: PreparationPurpose; lease: OperationLease<"live"> }
+  {
+    owner: object;
+    purpose: PreparationPurpose;
+    lease: OperationLease<"live">;
+    completion?: OperationLease<"live">;
+  }
 >();
 /** Trusted bootstrap/Admin admission adapter, not a consumer-supplied flag. */
 export function bindAccountPreparationAuthority(
   owner: AccountCredentials,
   purpose: PreparationPurpose,
   lease: OperationLease<"live">,
+  completion?: OperationLease<"live">,
 ): AccountPreparationAuthority {
   if (!["initial", "recipient"].includes(purpose)) {
     throw new IdentityStateError();
   }
   assertOperationLease(lease, "live");
+  if (completion !== undefined) {
+    if (purpose !== "initial") throw new IdentityStateError();
+    assertOperationLease(completion, "live");
+  }
   const authority = Object.freeze({}) as AccountPreparationAuthority;
   preparationAuthorities.set(
     authority,
-    Object.freeze({ owner, purpose, lease }),
+    Object.freeze({ owner, purpose, lease, completion }),
   );
   return authority;
 }
@@ -179,9 +194,11 @@ interface PreparedAccountRecord {
   readonly operation: ReturnType<typeof createOperationLease<"live">>;
   readonly purpose: PreparationPurpose | "import";
   readonly validation: { transferred: boolean };
+  readonly completion?: OperationLease<"live">;
+  readonly signal?: AbortSignal;
   receipt?: ProvisioningReceipt;
   enrollment?: InitialEnrollmentAttempt;
-  phase: "prepared" | "publishing" | "participating" | "finished";
+  phase: "prepared" | "publishing" | "participating" | "claiming" | "finished";
 }
 /** Private repository integration. The parsed import contract permits only the
  * repository to bind these callbacks; workflows receive the narrow commands. */
@@ -293,6 +310,11 @@ export function bindAccountCredentials(
     renderQr = options.renderQr;
   const lifetime = createOperationLease("live", [() => undefined]);
   const proofs = new WeakMap<LoginProof, ProofRecord>();
+  const initialProofs = new WeakMap<InitialAccountProof, ProofRecord>();
+  const accountParticipants = new WeakMap<
+    PublicationParticipant,
+    PreparedAccountRecord
+  >();
   const claims = new WeakMap<LoginClaim, ProofRecord>();
   const enrollments = new Map<string, EnrollmentAttempt>();
   let initialEnrollment: InitialEnrollmentAttempt | undefined;
@@ -573,6 +595,8 @@ export function bindAccountCredentials(
         operation,
         purpose,
         validation,
+        completion: admitted.completion,
+        signal,
         enrollment,
         phase: "prepared",
       });
@@ -851,6 +875,7 @@ export function bindAccountCredentials(
           });
         }
         value.phase = "participating";
+        accountParticipants.set(participant, value);
         issued = true;
         return participant;
       } finally {
@@ -1053,8 +1078,60 @@ export function bindAccountCredentials(
         close(proof);
       }
     },
-    beginLogin(proof: LoginProof): LoginClaim {
-      const record = proofs.get(proof);
+    initialAccountProof(
+      participant: PublicationParticipant,
+      acl: PublicationParticipant,
+    ): InitialAccountProof {
+      const value = accountParticipants.get(participant);
+      if (
+        !value || value.purpose !== "initial" ||
+        value.phase !== "participating" || !value.completion
+      ) {
+        throw new AuthenticationError();
+      }
+      const assertPair = (): undefined => {
+        if (value.signal?.aborted) throw new AuthenticationError();
+        assertSettledInitialAccountPair(
+          participant,
+          acl,
+          credentials,
+          value.account.id,
+        );
+        assertSnapshot(value.account);
+        return undefined;
+      };
+      let operation:
+        | ReturnType<typeof createOperationLease<"live">>
+        | undefined;
+      value.phase = "claiming";
+      try {
+        // Admission freshness ended at decision. The separately captured owner
+        // remains the parent of this completion, not permission for another write.
+        operation = createOperationLease("live", [assertPair], [
+          lifetime.lease,
+          value.completion,
+        ]);
+        const proof = Object.freeze({}) as InitialAccountProof;
+        initialProofs.set(proof, {
+          account: value.account,
+          operation,
+          phase: "prepared",
+        });
+        value.phase = "finished";
+        value.operation.retire();
+        if (value.enrollment) retireInitialEnrollment(value.enrollment);
+        return proof;
+      } catch {
+        operation?.retire();
+        value.phase = "participating";
+        throw new AuthenticationError();
+      }
+    },
+    beginLogin(proof: LoginProof | InitialAccountProof): LoginClaim {
+      // Separate maps are the purpose checks. Neither stored records nor a
+      // caller-selected tag can change one proof kind into another.
+      const record = proofs.get(proof as LoginProof) ??
+        initialProofs.get(proof as InitialAccountProof);
       if (!record || record.phase !== "prepared") {
         throw new AuthenticationError();
       }

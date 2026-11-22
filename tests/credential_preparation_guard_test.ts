@@ -58,3 +58,23 @@ Deno.test("account preparation registration: issued preparation commands do not 
     [],
   );
 });
+Deno.test("bootstrap registration: erased initial proof and issued commands confer no completion binder", () => {
+  assertEquals(
+    analyzeOwnership([{
+      file: "server/api/controller.ts",
+      text:
+        'import type {InitialAccountProof} from "public"; const proof=credentials.initialAccountProof(account,acl); await sessions.issue(proof);',
+      imports: { public: "server/auth/account_credentials.ts" },
+    }], PREPARATION_OWNERSHIP),
+    [],
+  );
+  for (
+    const module of [
+      ACCOUNT_PARTICIPATION,
+      PARTICIPANT_COMPLETION,
+      CREDENTIAL_ENGINE,
+    ]
+  ) {
+    assertPrivateModule(module, PREPARATION_OWNERSHIP);
+  }
+});

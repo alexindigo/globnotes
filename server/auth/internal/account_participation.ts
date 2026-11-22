@@ -2,7 +2,10 @@
 import type { AccountIdentity } from "../accounts.ts";
 import { IdentityStateError } from "../records.ts";
 import type { AccessLevel } from "../acl.ts";
-import { definePublicationPeerPair } from "../../config/internal/participant_completion.ts";
+import {
+  definePublicationPeerPair,
+  settledPublication,
+} from "../../config/internal/participant_completion.ts";
 
 interface AclParticipantBinding {
   readonly kind: "initial" | "grant";
@@ -79,4 +82,21 @@ export function accountAclParticipant(
     binding.account.id !== accountId
   ) throw new IdentityStateError();
   return binding;
+}
+
+/** Native completion checks both bindings; the ACL must be this set's exact
+ * live creator grant, not a recovered or separately settled participant. */
+export function assertSettledInitialAccountPair(
+  account: object,
+  acl: object,
+  credentials: object,
+  accountId: string,
+): void {
+  const binding = accountAclParticipant(acl, credentials, accountId);
+  const { members } = settledPublication(account);
+  if (
+    binding.kind !== "initial" || binding.account.passwordChangeRequired ||
+    members.length !== 2 || !members.includes(account) ||
+    !members.includes(acl)
+  ) throw new IdentityStateError();
 }

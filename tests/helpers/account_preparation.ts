@@ -6,7 +6,10 @@ import {
 } from "../../server/auth/account_credentials.ts";
 import { bindAccountPreparationAuthority } from "../../server/auth/internal/account_credentials.ts";
 import { acquireOfflineRecovery } from "../../server/auth/offline_recovery.ts";
-import { createOperationLease } from "../../server/operation_lease.ts";
+import {
+  createOperationLease,
+  type OperationLease,
+} from "../../server/operation_lease.ts";
 import {
   InstanceSessions,
   SessionRepository,
@@ -79,11 +82,16 @@ export function preparationContext(root: string, options: CredentialOptions) {
     ...options,
   });
   const lifetime = createOperationLease("live", [() => undefined]);
-  const authority = (purpose: "initial" | "recipient") =>
+  const authority = (
+    purpose: "initial" | "recipient",
+    completion?: OperationLease<"live">,
+    admission = lifetime.lease,
+  ) =>
     bindAccountPreparationAuthority(
       accounts.credentials,
       purpose,
-      lifetime.lease,
+      admission,
+      completion,
     );
   const request = (
     changes: Partial<AccountPreparationRequest> = {},

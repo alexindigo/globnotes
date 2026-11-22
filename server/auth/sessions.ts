@@ -14,6 +14,7 @@ import {
 import {
   type AccountCredentials,
   AuthenticationError,
+  type InitialAccountProof,
   type LoginProof,
 } from "./account_credentials.ts";
 export { AuthenticationError };
@@ -203,7 +204,7 @@ export class InstanceSessions {
     return await this.issue(proof);
   }
   async issue(
-    proof: LoginProof,
+    proof: LoginProof | InitialAccountProof,
   ): Promise<IssuedSession> {
     const credentials = this.#credentials;
     const claim = credentials.beginLogin(proof);
