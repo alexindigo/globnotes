@@ -14,6 +14,25 @@ import { state } from "../state.ts";
 import { LocalAuth } from "./local.ts";
 import { pendingTotpEnrollments } from "./totp_enrolment.ts";
 import { settingsWriteGuard } from "./middleware.ts";
+import {
+  type AuthorityVault,
+  InstanceAuthority,
+  sameAuthorityVault,
+} from "./authority.ts";
+import {
+  ACCESS_LEVELS,
+  type AccessLevel,
+  type AclSnapshot,
+  type EverybodyLevel,
+} from "./acl.ts";
+import type { AccountPrincipal, Principal } from "./sessions.ts";
+import { AuthenticationError } from "./account_credentials.ts";
+import { identity, IdentityStateError, integer, record } from "./records.ts";
+import { createOperationLease } from "../operation_lease.ts";
+import {
+  type AuthorityCallback,
+  readAuthorityState,
+} from "./authority_context.ts";
 
 function conflict(message: string): never {
   throw new HttpError(409, message);
@@ -325,4 +344,214 @@ export async function updateAccess(
   // Settings-only locking leaves unrelated plugin owners intact.
   if (before.mode !== data.mode) await state.plugins?.runtime?.reconcile();
   return result;
+}
+
+const json = (body: ReadableStream<Uint8Array>) =>
+  new Response(body, { headers: { "content-type": "application/json" } });
+const UPDATE_FIELDS = [
+  "revision",
+  "signature",
+  "updateId",
+  "everybody",
+  "grants",
+  "additions",
+];
+
+/** Prepared v3 vault Access workflow; the active legacy entries above remain
+ * until cutover. Every read and edit is admitted by the target's live Admin
+ * lease. Only lease-bound bodies leave it, including the self-demotion ACK. */
+export class VaultAccess {
+  readonly authority: InstanceAuthority;
+  readonly vault: AuthorityVault;
+  constructor(authority: InstanceAuthority, vault: AuthorityVault) {
+    this.authority = authority;
+    this.vault = Object.freeze({ ...vault });
+  }
+  /** P05 target Admin; never a guest or another bound vault. */
+  admit(principal: Principal) {
+    if (
+      !sameAuthorityVault(
+        readAuthorityState((context) => this.authority.currentVault(context)),
+        this.vault,
+      )
+    ) {
+      throw new HttpError(404, "Vault unavailable.");
+    }
+    return this.authority.lease(principal, "manageVault");
+  }
+  /** Exact login only, deliberately no account-list/search operation. */
+  #exact(login: string) {
+    try {
+      return this.authority.sessions.accounts.byLogin(login);
+    } catch (error) {
+      if (error instanceof IdentityStateError) return null;
+      throw error;
+    }
+  }
+  async view(principal: Principal, signal?: AbortSignal) {
+    const lease = this.admit(principal);
+    const accounts = this.authority.sessions.accounts, acl = this.vault.acl;
+    return lease.body(
+      await lease.read(async () => {
+        const view = await acl.view();
+        signal?.throwIfAborted();
+        const named = Object.entries(view.grants).map(([id, level]) =>
+          Object.freeze({ id, login: accounts.byId(id)?.login ?? null, level })
+        );
+        return Object.freeze({ ...view, named: Object.freeze(named) });
+      }),
+    );
+  }
+  resolve(principal: Principal, login: unknown) {
+    const lease = this.admit(principal);
+    if (typeof login !== "string") {
+      throw new HttpError(422, "Invalid exact login.");
+    }
+    const account = this.#exact(login);
+    return lease.body(lease.prepare(
+      account ? Object.freeze({ id: account.id, login: account.login }) : null,
+    ));
+  }
+  async update(principal: Principal, input: unknown, signal?: AbortSignal) {
+    const lease = this.admit(principal);
+    const actor = principal as AccountPrincipal;
+    if (
+      !record(input) ||
+      Object.keys(input).some((key) => !UPDATE_FIELDS.includes(key)) ||
+      !integer(input.revision) || typeof input.signature !== "string" ||
+      !identity(input.updateId) ||
+      !["none", "view", "edit"].includes(String(input.everybody)) ||
+      !record(input.grants) ||
+      (input.additions !== undefined && !Array.isArray(input.additions))
+    ) throw new HttpError(422, "Invalid vault access change.");
+    const updateId = input.updateId;
+    const grants: Record<string, AccessLevel> = {};
+    for (const [id, level] of Object.entries(input.grants)) {
+      if (!identity(id) || !ACCESS_LEVELS.includes(level as AccessLevel)) {
+        throw new HttpError(422, "Invalid named grant.");
+      }
+      grants[id] = level as AccessLevel;
+    }
+    for (const entry of (input.additions ?? []) as unknown[]) {
+      if (
+        !record(entry) || Object.keys(entry).length !== 2 ||
+        typeof entry.login !== "string" ||
+        !ACCESS_LEVELS.includes(entry.level as AccessLevel)
+      ) throw new HttpError(422, "Invalid exact-login grant.");
+      const account = this.#exact(entry.login);
+      if (!account || Object.hasOwn(grants, account.id)) {
+        throw new HttpError(409, "Exact login is missing or duplicated.");
+      }
+      grants[account.id] = entry.level as AccessLevel;
+    }
+    const acl = this.vault.acl,
+      expected = acl.capture(),
+      view = await acl.view();
+    if (
+      input.revision !== view.revision || input.signature !== view.signature ||
+      updateId === view.updateId
+    ) throw new StoredConfigConflict();
+    const guard = () => {
+      signal?.throwIfAborted();
+      lease.assertCurrent(updateId);
+    };
+    guard();
+    acl.save(
+      { everybody: input.everybody as EverybodyLevel, grants },
+      expected,
+      { updateId, actorId: actor.accountId },
+      guard,
+    );
+    // The edit may intentionally retire the actor's Admin lease. The exact
+    // acknowledgment is historical; it discloses no ACL and permits no write.
+    const capabilities = this.authority.capabilities(principal, this.vault);
+    return this.#acknowledge(
+      actor,
+      Object.freeze({
+        updateId,
+        committed: true as const,
+        capabilities,
+      }),
+      signal,
+    );
+  }
+  /** Actor-bound lost-reply status. A demoted actor learns only whether its own
+   * update is the current ACL revision, never the grants or another actor's edit. */
+  outcome(principal: Principal, updateId: unknown, signal?: AbortSignal) {
+    if (principal.kind !== "account") throw new AuthenticationError();
+    this.authority.sessions.assertCurrent(principal);
+    if (
+      !identity(updateId) ||
+      !sameAuthorityVault(
+        readAuthorityState((context) => this.authority.currentVault(context)),
+        this.vault,
+      )
+    ) throw new HttpError(422, "Invalid outcome request.");
+    const acl = this.vault.acl, snapshot: AclSnapshot = acl.capture();
+    return this.#acknowledge(
+      principal,
+      Object.freeze({
+        matched: snapshot.value.updateId === updateId &&
+          snapshot.value.updateActorId === principal.accountId,
+        capabilities: this.authority.capabilities(principal, this.vault),
+      }),
+      signal,
+      (context) => context.assertAclUnchanged(acl, snapshot),
+    );
+  }
+  #acknowledge(
+    principal: AccountPrincipal,
+    value: Readonly<Record<string, unknown>>,
+    signal?: AbortSignal,
+    exact: AuthorityCallback<void> = () => {},
+  ) {
+    const { sessions, lifetime } = this.authority;
+    const outcome = createOperationLease("outcome", [
+      () =>
+        readAuthorityState((context) => {
+          signal?.throwIfAborted();
+          context.assertPrincipal(sessions, principal);
+          if (
+            !sameAuthorityVault(
+              this.authority.currentVault(context),
+              this.vault,
+            )
+          ) {
+            throw new HttpError(404, "Vault unavailable.");
+          }
+          exact(context);
+          return undefined;
+        }),
+    ], [lifetime]);
+    const disclosure = this.authority.acknowledgment(outcome.lease);
+    return disclosure.body(disclosure.prepare(value));
+  }
+}
+/** Injection-only adapters, not discovered on the active legacy route tree. */
+export function vaultAccessHandlers(
+  workflow: VaultAccess,
+  principal: (request: Request) => Promise<Principal>,
+) {
+  return Object.freeze({
+    async get(request: Request) {
+      return json(
+        await workflow.view(await principal(request), request.signal),
+      );
+    },
+    async put(request: Request) {
+      const admitted = await principal(request);
+      workflow.admit(admitted);
+      return json(
+        await workflow.update(admitted, await request.json(), request.signal),
+      );
+    },
+    async resolve(request: Request, login: string) {
+      return json(workflow.resolve(await principal(request), login));
+    },
+    async outcome(request: Request, updateId: string) {
+      return json(
+        workflow.outcome(await principal(request), updateId, request.signal),
+      );
+    },
+  });
 }

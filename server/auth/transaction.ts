@@ -23,6 +23,7 @@ import {
 } from "./offline_recovery.ts";
 import { type AccountIdentity, type AccountRepository } from "./accounts.ts";
 import {
+  type AccessLevel,
   type AclRepository,
   type AclSnapshot,
   type EverybodyLevel,
@@ -207,12 +208,64 @@ export class IdentityTransaction {
       lease,
       operationId,
     );
-    let account: PublicationParticipant;
-    try {
-      account = this.#accounts.credentials.prepareAccountParticipant(
-        candidate,
+    return this.#group(
+      { kind: "setup", operationId, actorId: creator.id },
+      access,
+      () =>
+        this.#accounts.credentials.prepareAccountParticipant(
+          candidate,
+          operationId,
+        ),
+    );
+  }
+  /** Create-and-add: the target ACL grant is staged first, then the temporary
+   * recipient whose committed receipt names that exact grant participant. */
+  prepareRecipient(
+    acl: AclRepository,
+    prepared: Readonly<
+      { prepared: PreparedAccount; identity: AccountIdentity }
+    >,
+    level: AccessLevel,
+    expected: AclSnapshot,
+    receipt: Readonly<{ actorId: string; payloadHash: string }>,
+    lease: OperationLease<"live">,
+    operationId: string,
+  ): IdentityParticipants {
+    this.#assertLiveCall(lease);
+    return this.#stage(() => {
+      if (acl !== this.#acl || !identity(operationId)) {
+        throw new IdentityStateError();
+      }
+      const { prepared: candidate, identity: recipient } = prepared;
+      const { actorId, payloadHash } = receipt;
+      const access = this.#acl.prepareGrantParticipant(
+        recipient,
+        level,
+        expected,
+        { updateId: operationId, actorId },
+        lease,
         operationId,
       );
+      return this.#group(
+        { kind: "create-and-add", operationId, actorId },
+        access,
+        () =>
+          this.#accounts.credentials.prepareAccountParticipant(
+            candidate,
+            operationId,
+            { acl: access, operationId, actorId, payloadHash },
+          ),
+      );
+    });
+  }
+  #group(
+    decision: Omit<IdentityDecision, "vaultId">,
+    access: PublicationParticipant,
+    prepareAccount: () => PublicationParticipant,
+  ): IdentityParticipants {
+    let account: PublicationParticipant;
+    try {
+      account = prepareAccount();
     } catch (cause) {
       try {
         access.discard();
@@ -226,12 +279,7 @@ export class IdentityTransaction {
       throw cause;
     }
     const binding = {
-      decision: Object.freeze({
-        kind: "setup" as const,
-        operationId,
-        actorId: creator.id,
-        vaultId: this.#acl.vaultId,
-      }),
+      decision: Object.freeze({ ...decision, vaultId: this.#acl.vaultId }),
       parts: Object.freeze([access, account]),
       phase: "prepared" as "prepared" | "transferred" | "discarded",
     };

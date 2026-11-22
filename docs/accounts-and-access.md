@@ -119,10 +119,9 @@ The later CLI adapter still owns paired-state classification, legacy refusal,
 configured roots, stdin and signing initialization before account publication.
 Reset-password and disable-authenticator keep their existing distinct behavior.
 
-The prepared identity transaction records one versioned `setup` decision for
-the exact configured account and ACL roots. The journal parser also accepts
-`create-and-add`, reserved here for the later vault access workflow; setup is
-the only operation `commit` can record in this unit. The transaction transfers
+The prepared identity transaction records one versioned `setup` or
+`create-and-add` decision for the exact configured account and ACL roots. The
+operation must match the prepared participant group. The transaction transfers
 the sealed set before attempting the decision, installs both snapshots, retires
 the exact journal, then releases admission. Offline recovery can finish
 discarding an undecided preparation even if cleanup already removed some or all
@@ -213,3 +212,26 @@ execution. Recorded decisions recover under the same exclusive owner before
 another command runs. Corrupt stores and unimported legacy data are not repaired
 or imported. Reset/disable revoke only that account's old tokens; other accounts
 and the signing key are unchanged.
+
+## Prepared vault access workflows
+
+These prepared workflows are not yet on the active route tree; the current
+Access screen keeps using the existing settings until the coordinated cutover.
+Snapshots, exact-login resolution and edits require live Admin on that target
+vault. A named None overrides Everybody else; a declared Admin is separate and
+is never saved as a grant. There is no last-admin veto. Self-demotion returns
+only a safe acknowledgment and the actor's current capabilities. An actor-bound
+status read tells a demoted account whether its own update is current, without
+the list or another person's edit.
+
+Create and add publishes the temporary account, its committed receipt and the
+named grant as one recorded decision with the target Admin checked from
+preparation through that decision. Before the decision neither changes; after
+it, recovery completes both before admission. Its reply is
+`{operationId, accountId, committed: true}`, never a partial result. An exact
+retry acknowledges the original account without another password reset or
+restoring a later-removed grant. Changed payloads, another actor or vault and
+existing logins conflict. Receipts keep a keyed payload identity, never the
+temporary password or its unkeyed digest. A known-ID status read waits for the
+admitted operation to settle; a missing receipt while it hashes is not failure.
+Unresolved publication reports unavailable state, never a false noncommit.
