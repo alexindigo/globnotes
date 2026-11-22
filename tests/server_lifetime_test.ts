@@ -51,6 +51,11 @@ Deno.test("server working directories isolate prefix stamping from sibling and d
       Deno.remove(dir, { recursive: true }))).value;
     const second = (await scope.acquire(createServerWorkingDirectory, (dir) =>
       Deno.remove(dir, { recursive: true }))).value;
+    // The compatibility owner now installs a privately completed build, not
+    // donor bytes (which a previous cold-load may already have prefix-stamped).
+    const completedIndex = original === null
+      ? null
+      : await Deno.readTextFile(`${first}/client/dist/index.html`);
     assertEquals(first === second, false);
     assertEquals(first.startsWith(Deno.cwd() + "/"), false);
     assertEquals(second.startsWith(Deno.cwd() + "/"), false);
@@ -62,7 +67,7 @@ Deno.test("server working directories isolate prefix stamping from sibling and d
     if (original !== null) {
       assertEquals(
         await Deno.readTextFile(`${second}/client/dist/index.html`),
-        original,
+        completedIndex,
       );
       assertEquals(await Deno.readTextFile(donor), original);
     } else {
@@ -331,7 +336,7 @@ const nativeRemove=Deno.remove;
 let vault="";
 const removal=new Error("vault removal failed");
 Deno.remove=async (file,options)=>{
-  if(String(file).includes("globnotes-test-vault-")) {
+  if(/globnotes-layout-[^/]+$/.test(String(file))) {
     vault=String(file);
     if(${
           JSON.stringify(mode)
@@ -427,7 +432,7 @@ for (const phase of ["startup", "receipt"] as const) {
         `
 Deno.writeTextFileSync(${
           JSON.stringify(record)
-        },JSON.stringify({pid:Deno.pid,cwd:Deno.cwd(),vault:Deno.env.get('GLOBNOTES_GLOBNOTES_PATH')}));
+        },JSON.stringify({pid:Deno.pid,cwd:Deno.cwd(),vault:Deno.env.get('GLOBNOTES_GLOBNOTES_PATH')??Deno.env.get('GLOBNOTES__VAULTS_BASEPATH')+'/globnotes'}));
 ${
           phase === "startup" ? "throw new Error('startup sentinel');" : `
 Deno.addSignalListener('SIGTERM',()=>Deno.exit(0));

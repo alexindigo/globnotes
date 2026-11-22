@@ -13,7 +13,6 @@
  * health) is one shared wait with the suite's single bound
  * (tests/helpers/wait.ts). */
 
-import { copy, existsSync } from "@std/fs";
 import * as path from "@std/path";
 import { DENO } from "./process_values.ts";
 import { spawnOwnedChild } from "./owned_child.ts";
@@ -23,39 +22,30 @@ import { testEnvironment } from "./environment.ts";
 import { publishRecord } from "./process_records.ts";
 import { boundOperation } from "./owned_operation.ts";
 import type { StoredConfig } from "../../server/config.ts";
+import {
+  admitLayout,
+  bindLayout,
+  type FixtureLayout,
+  fixtureLayout,
+  layoutEnvironment,
+  prepareFixtureMetadata,
+  serverWorkingDirectory,
+} from "./fixture_layout.ts";
+import type { CompletedBuild } from "./completed_build.ts";
 
 const SERVER_MAIN = path.fromFileUrl(
   new URL("../../server/main.ts", import.meta.url),
 );
 const REPO_ROOT = path.fromFileUrl(new URL("../../", import.meta.url));
-const REPO_DIST = path.join(REPO_ROOT, "client", "dist");
 const LISTENING = /globnotes listening on http:\/\/\S*:(\d+)/;
 const SHUTDOWN_GRACE_MS = 5_000;
 /** Port protocol shared with subprocess fixtures that emulate the server. */
 export const SERVER_PORT_ENV = "GLOBNOTES__SERVER_PORT";
 
-/** Auto-created vault dirs, swept at test-process unload so a test that
- * forgets to clean up still leaves no /tmp/globnotes-test-vault-*
- * leftovers. Vaults passed in via GLOBNOTES_GLOBNOTES_PATH are caller-owned and
- * never tracked (restart-style tests reuse them across close()s). */
-const trackedVaults = new Set<string>();
-globalThis.addEventListener?.("unload", () => {
-  for (const vault of trackedVaults) {
-    try {
-      Deno.removeSync(vault, { recursive: true });
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) {
-        console.error(`Failed to remove tracked test vault ${vault}`, error);
-        continue;
-      }
-    }
-    trackedVaults.delete(vault);
-  }
-});
-
 export interface TestServer {
   baseUrl: string;
   vault: string;
+  layout: FixtureLayout;
   /** The port the server bound (it chose it itself). */
   port: number;
   pid: number;
@@ -83,26 +73,7 @@ export class UnexpectedServerExitError extends Error {
 /** A scratch working directory for one server. When the checkout has a
  * client build, the server gets a private copy of it to serve and stamp.
  * Raw native launchers use this same owner and remove it after child exit. */
-export async function createServerWorkingDirectory(): Promise<string> {
-  const dir = await Deno.makeTempDir({ prefix: "globnotes-test-cwd-" });
-  try {
-    if (existsSync(REPO_DIST)) {
-      await copy(REPO_DIST, path.join(dir, "client", "dist"));
-    }
-    return dir;
-  } catch (primary) {
-    try {
-      await Deno.remove(dir, { recursive: true });
-    } catch (cleanup) {
-      throw new AggregateError(
-        [primary, cleanup],
-        "Server cwd preparation failed",
-        { cause: primary },
-      );
-    }
-    throw primary;
-  }
-}
+export const createServerWorkingDirectory = serverWorkingDirectory;
 
 function insideCheckout(dir: string): boolean {
   const root = Deno.realPathSync(REPO_ROOT);
@@ -127,48 +98,103 @@ export async function bootServer(
     /** Per-child pipe consumer for fixture protocols independent of filesystem IO.
      * Called synchronously after captured output; must not throw. */
     observeOutput?: (name: "stdout" | "stderr", chunk: string) => void;
+    layout?: FixtureLayout;
+    build?: CompletedBuild;
   } = {},
 ): Promise<TestServer> {
+  inputs = { ...inputs };
+  const initialAuth = inputs.fixtureAuth;
+  if (initialAuth && typeof initialAuth === "object") {
+    inputs.fixtureAuth = { ...initialAuth };
+  }
   const {
     cwd,
-    host = "127.0.0.1",
+    host,
     origin,
-    healthFetch = fetch,
+    healthFetch,
     denoArgs,
     observeOutput,
+    layout: suppliedLayout,
+    build,
   } = opts;
-  const extraArgs = [...(denoArgs ?? [])];
+  opts = {
+    cwd,
+    host,
+    origin,
+    healthFetch,
+    observeOutput,
+    denoArgs: [...(denoArgs ?? [])],
+    layout: suppliedLayout,
+    build,
+  };
+  const extraArgs = opts.denoArgs!;
   const lifetime = createFixtureScope();
   let returned = false;
   return await lifetime.prepare(async (scope) => {
-    const fixture = testEnvironment(inputs), env = fixture.values;
-    const hostname = host;
-    const ownsVault = !env.GLOBNOTES_GLOBNOTES_PATH;
-    const vault = env.GLOBNOTES_GLOBNOTES_PATH ??
-      (await scope.acquire(
-        () => Deno.makeTempDir({ prefix: "globnotes-test-vault-" }),
-        async (vault) => {
-          // Successful callers may intentionally restart with this vault. Failed
-          // constructors have no caller to take custody, so release immediately.
-          if (returned) return;
-          try {
-            await Deno.remove(vault, { recursive: true });
-          } catch (error) {
-            if (!(error instanceof Deno.errors.NotFound)) throw error;
-          }
-          trackedVaults.delete(vault);
-        },
-      )).value;
-    if (ownsVault) trackedVaults.add(vault);
-    const metadata = env.GLOBNOTES__METADATA_PATH
-      ? path.resolve(env.GLOBNOTES__METADATA_PATH, "globnotes")
-      : path.join(vault, ".globnotes");
+    const fixture = testEnvironment(inputs);
+    const hostname = opts.host ?? "127.0.0.1";
+    const healthFetch = opts.healthFetch ?? fetch;
+    const layout = opts.layout ??
+      await fixtureLayout(scope, fixture.values, {
+        cwd: opts.cwd,
+        build: opts.build,
+        retainPersistent: () => returned,
+      });
+    bindLayout(layout, scope);
+    if (
+      opts.cwd !== undefined &&
+      (await scope.admit(() => insideCheckout(opts.cwd!))).value
+    ) {
+      throw new Error(
+        `test servers must not run in the checkout (cwd ${opts.cwd}): the ` +
+          "server rewrites the cwd-relative client/dist/index.html at boot",
+      );
+    }
+    if (
+      (await admitLayout(layout, scope, () => insideCheckout(layout.cwd))).value
+    ) {
+      throw new TypeError("Owned layout cwd must not be inside the checkout");
+    }
+    if (opts.layout && (opts.cwd !== undefined || opts.build !== undefined)) {
+      throw new TypeError("An owned layout already binds its cwd and build");
+    }
+    if (opts.layout) {
+      for (
+        const key of [
+          "GLOBNOTES__VAULTS_BASEPATH",
+          "GLOBNOTES_GLOBNOTES_PATH",
+          "GLOBNOTES__METADATA_PATH",
+        ]
+      ) {
+        const supplied = fixture.values[key];
+        if (
+          supplied !== undefined &&
+          (supplied ? path.resolve(supplied) : supplied) !==
+            layout.environment[key]
+        ) {
+          throw new TypeError(
+            `Boot cannot replace its owned layout binding: ${key}`,
+          );
+        }
+      }
+    }
+    const env = { ...layoutEnvironment(layout), ...fixture.values };
+    // Normalize explicit child-facing paths once; leave omitted overrides absent.
+    for (
+      const key of [
+        "GLOBNOTES__VAULTS_BASEPATH",
+        "GLOBNOTES_GLOBNOTES_PATH",
+        "GLOBNOTES__METADATA_PATH",
+      ]
+    ) {
+      if (layout.environment[key] !== undefined) {
+        env[key] = layout.environment[key];
+      }
+    }
+    const vault = layout.vault, metadata = layout.metadata;
     if (fixture.fixtureAuth) {
-      // Metadata may live in a caller-owned root. Admit the complete effect so
-      // retirement joins it before releasing this constructor's owned roots.
-      await scope.admit(async (signal) => {
-        await Deno.mkdir(metadata, { recursive: true });
-        signal.throwIfAborted();
+      await prepareFixtureMetadata(layout, scope);
+      await admitLayout(layout, scope, async (signal) => {
         let saved: StoredConfig = {};
         try {
           saved = JSON.parse(
@@ -184,23 +210,6 @@ export async function bootServer(
         );
       });
     }
-    if (
-      cwd !== undefined &&
-      (await scope.admit(() => insideCheckout(cwd))).value
-    ) {
-      throw new Error(
-        `test servers must not run in the checkout (cwd ${cwd}): the ` +
-          "server rewrites the cwd-relative client/dist/index.html at boot",
-      );
-    }
-    const ownedCwd = cwd === undefined
-      ? (await scope.admit(() =>
-        scope.acquire(
-          createServerWorkingDirectory,
-          (dir) => Deno.remove(dir, { recursive: true }),
-        )
-      )).value.value
-      : null;
     const args = [
       "run",
       "--unstable-worker-options",
@@ -219,10 +228,9 @@ export async function bootServer(
     scope.defer(() => draining);
     const child = (await spawnOwnedChild(scope, DENO, {
       args,
-      cwd: cwd ?? ownedCwd!,
+      cwd: layout.cwd,
       env: {
         ...env,
-        GLOBNOTES_GLOBNOTES_PATH: vault,
         [SERVER_PORT_ENV]: "0",
         GLOBNOTES__SERVER_HOST: hostname,
       },
@@ -268,7 +276,7 @@ export async function bootServer(
         if (port === null) return pending({ port: null });
         const listeningPort = port;
         try {
-          const res = (await scope.admit(async (scopeSignal) => {
+          const res = (await admitLayout(layout, scope, async (scopeSignal) => {
             const requestSignal = AbortSignal.any([
               signal,
               ownerGone.signal,
@@ -296,7 +304,11 @@ export async function bootServer(
           ownerGone.signal.throwIfAborted();
           return res.ok ? done() : pending({ port, health: res.status });
         } catch (error) {
-          if (signal.aborted || ownerGone.signal.aborted) throw error;
+          if (
+            signal.aborted || ownerGone.signal.aborted || scope.signal.aborted
+          ) {
+            throw error;
+          }
           return pending({ port, health: String(error) }); // not up yet
         }
       }, {
@@ -326,6 +338,7 @@ export async function bootServer(
     const server: TestServer = {
       baseUrl: origin?.(boundPort) ?? `http://127.0.0.1:${boundPort}`,
       vault,
+      layout,
       port: boundPort,
       pid: child.pid,
       args,
@@ -335,6 +348,10 @@ export async function bootServer(
       exited: status,
       close: () =>
         closing ??= (async () => {
+          if (scope.signal.aborted) {
+            await lifetime.close();
+            return;
+          }
           try {
             if (child.status()) {
               throw new UnexpectedServerExitError(
@@ -347,10 +364,8 @@ export async function bootServer(
             throw error;
           }
           await lifetime.close();
-          // The vault is deliberately NOT removed here: restart-style tests
-          // reuse the same vault across close()s. Auto-created vault paths
-          // are tracked instead and swept at process unload (below), so
-          // /tmp never accumulates globnotes-test-vault-* leftovers.
+          // Compatibility boot retains successful persistent roots for restart.
+          // Explicit layouts instead remain owned by their enclosing scope.
         })(),
     };
     ownerGone.signal.throwIfAborted();

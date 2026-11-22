@@ -384,30 +384,6 @@
     "family": "coordination:client/tests/e2e/plugin-review-repairs.mjs"
   },
   {
-    "file": "client/tests/e2e/prefix-auth-fixture.mjs",
-    "capability": "Promise.*",
-    "line": 61,
-    "source": "Promise",
-    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
-    "family": "coordination:client/tests/e2e/prefix-auth-fixture.mjs"
-  },
-  {
-    "file": "client/tests/e2e/prefix-auth-fixture.mjs",
-    "capability": "Promise.race",
-    "line": 61,
-    "source": "Promise.race",
-    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
-    "family": "coordination:client/tests/e2e/prefix-auth-fixture.mjs"
-  },
-  {
-    "file": "client/tests/e2e/prefix-auth-fixture.mjs",
-    "capability": "setTimeout.*",
-    "line": 61,
-    "source": "setTimeout",
-    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
-    "family": "coordination:client/tests/e2e/prefix-auth-fixture.mjs"
-  },
-  {
     "file": "client/tests/e2e/remotely-save-fixture.mjs",
     "capability": "Promise.withResolvers",
     "line": 188,

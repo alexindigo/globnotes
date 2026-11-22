@@ -72,14 +72,6 @@
     "family": "native-permissions"
   },
   {
-    "file": "client/tests/e2e/prefix-auth-fixture.mjs",
-    "line": 38,
-    "capability": "Deno.Command",
-    "source": "Deno.Command",
-    "context": "const child = new Deno.Command(Deno.execPath(), {",
-    "family": "native-prefix"
-  },
-  {
     "file": "client/tests/e2e/runner-entrypoint-controls.mjs",
     "line": 12,
     "capability": "Deno.Command",

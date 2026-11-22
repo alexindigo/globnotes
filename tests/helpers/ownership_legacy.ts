@@ -28,6 +28,16 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
       "tests/plugin_settings_schema_lease_test.ts",
     ],
   },
+  "fixture-layout-pilot": {
+    replacement: "P15",
+    closed: true,
+    consumers: [
+      "tests/fixture_layout_ownership_test.ts",
+      "tests/config_paths_test.ts",
+      "client/tests/e2e/setup-wizard.mjs",
+      "client/tests/e2e/plugin-prefix-auth.mjs",
+    ],
+  },
   "child-lifetime-pilot": {
     replacement: "P12",
     closed: true,

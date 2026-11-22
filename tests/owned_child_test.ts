@@ -10,6 +10,7 @@ import {
 import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
 import { OwnershipError } from "../shared/ownership.js";
 import { bootServer, type TestServer } from "./helpers/boot.ts";
+import { buildClient } from "./helpers/completed_build.ts";
 import {
   type ChildSignalClock,
   type OwnedChild,
@@ -195,8 +196,11 @@ Deno.test("child owner review: boot joins rejected actual status without an unha
       preload,
       `Deno.writeTextFileSync(${
         JSON.stringify(record)
-      },JSON.stringify({pid:Deno.pid,cwd:Deno.cwd(),vault:Deno.env.get("GLOBNOTES_GLOBNOTES_PATH")})); console.log("globnotes listening on http://127.0.0.1:1"); Deno.exit(17);`,
+      },JSON.stringify({pid:Deno.pid,cwd:Deno.cwd(),vault:Deno.env.get("GLOBNOTES_GLOBNOTES_PATH")??Deno.env.get("GLOBNOTES__VAULTS_BASEPATH")+"/globnotes"})); console.log("globnotes listening on http://127.0.0.1:1"); Deno.exit(17);`,
     );
+    // Build preparation owns another child. Complete it before observing only
+    // the server's status, including when this checkout has production assets.
+    const build = await buildClient(scope);
     const original = Object.getOwnPropertyDescriptor(
       Deno.ChildProcess.prototype,
       "status",
@@ -217,7 +221,7 @@ Deno.test("child owner review: boot joins rejected actual status without an unha
       },
     });
     const error = await assertRejects(
-      () => bootServer({}, { denoArgs: ["--preload", preload] }),
+      () => bootServer({}, { build, denoArgs: ["--preload", preload] }),
       Error,
       "P12 actual status rejection",
     );
@@ -672,7 +676,7 @@ for (
         `
 Deno.writeTextFileSync(${
           JSON.stringify(record)
-        }, JSON.stringify({pid:Deno.pid,cwd:Deno.cwd(),vault:Deno.env.get("GLOBNOTES_GLOBNOTES_PATH")}));
+        }, JSON.stringify({pid:Deno.pid,cwd:Deno.cwd(),vault:Deno.env.get("GLOBNOTES_GLOBNOTES_PATH")??Deno.env.get("GLOBNOTES__VAULTS_BASEPATH")+"/globnotes"}));
 Deno.serve({hostname:"127.0.0.1",port:0,onListen({port}) {console.log("globnotes listening on http://127.0.0.1:"+port);}}, request => {
   if(new URL(request.url).pathname === "/exit") Deno.exit(17);
   return new Response("healthy");
@@ -680,6 +684,7 @@ Deno.serve({hostname:"127.0.0.1",port:0,onListen({port}) {console.log("globnotes
 await new Promise(()=>{});
 `,
       );
+      const build = await buildClient(scope);
       const descriptor = Object.getOwnPropertyDescriptor(
         Deno.ChildProcess.prototype,
         "status",
@@ -745,7 +750,11 @@ await new Promise(()=>{});
       await assertRejects(
         () =>
           bounded(
-            bootServer({}, { denoArgs: ["--preload", preload], healthFetch })
+            bootServer({}, {
+              build,
+              denoArgs: ["--preload", preload],
+              healthFetch,
+            })
               .then(
                 (server) => {
                   escaped = server;

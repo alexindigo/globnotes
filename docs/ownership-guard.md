@@ -181,13 +181,52 @@ The one existing post-verdict rescue is counted, not a permanent owner allowance
 
 Child acquisition returns an owned handle. Cancellation reaps the child through
 `onCancel` before admitted child work drains; LIFO release still joins reaping.
-Boot admits borrowed metadata, donor-copy and health effects through its scope,
-registering acquired roots before an admitted operation can lose authority.
 Child custody precedes status subscription and cancellation-hook setup. Its
 acquisition disposer also closes piped stdin; uncreated pipes are never touched.
 Status retirement is recorded in the first callback on the native status promise.
 Boot uses an explicit Deno allowlist and rejects health outcomes after actual
 child exit, including outcomes returned through the contract-only health IO port.
+Boot admits layout metadata and health effects through both the layout owner and
+the runtime borrower. Layout retirement cancels and joins its child runtime before
+releasing roots; acquired values stay in handles across awaits.
+
+## Layout and completed-build registration
+
+P15's public completed-build facade exports only successful concrete build entry
+points. Injected producers and the installer live in a private module registered
+to the layout owner, facade and owner contract. Boot and the prefix fixture have
+explicit root rules denying raw directory acquisition/copying; the layout/build
+owners retain those direct roots. Product note and artifact byte writes stay real.
+The migrated prefix command occurrence and boot's obsolete std filesystem import
+are removed from inventory in the same commit. No factory-result or build-path
+string heuristic remains; runtime contracts prove successful production, immutable
+captured bytes, scoped installation and borrowed-root behavior.
+
+Boot, the prefix fixture, the layout owner and the completed-build owner each
+have an explicit Deno member allowlist. The native fixture's permitted stream,
+network and evidence APIs do not widen boot's filesystem surface. Construction
+captures input/options once, and both server close adapters join their cached
+close promise. Every live borrower of the cached build links to its producer
+scope, so cancellation can reap the child before admitted work drains. A
+producer retired before issuing its input is never joined: a later borrower
+starts a fresh producer even before the cancelled job's rejection settles. Native
+readiness fences actual exit and scope retirement after IO; donor preservation
+compares the donor's captured bytes or absence, never private-build equality.
+Readiness IO uses the P04 bound-operation owner inside layout admission, including
+native health, catalogue transport and body parsing. Cancellation-ignoring IO or
+body disposal cannot retain that admission. Root cleanup remains tracked through
+failed construction/removal until successful removal or confirmed absence. P15
+contracts use the shared scoped gates and private cancellation waiter, without
+adding raw coordination allowances.
+Native catalogue body ownership includes the locked reader, not only the
+Response: cancellation releases that reader without joining uncooperative body
+IO. Boot retains the generation's output observer and the shared
+UnexpectedServerExitError distinction; native close uses the same bare verdict
+only after successful cleanup. Pre-handoff native publication failures remain
+inside construction custody and cannot leave a child or owned layout behind.
+Build acquisition checks borrower custody after capturing caller options, before
+donor inspection, producer entry or cached delivery. A getter cannot retire the
+borrower and still obtain the cached input.
 
 ## Operation leases and sinks (P05)
 

@@ -333,6 +333,10 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       "client/tests/e2e/native-totp-fixture.mjs",
       "client/tests/e2e/access-settings.mjs",
       "client/tests/e2e/plugin-review-repairs.mjs",
+      "tests/helpers/fixture_layout.ts",
+      "tests/helpers/completed_build_engine.ts",
+      "tests/fixture_layout_ownership_test.ts",
+      "client/tests/e2e/prefix-auth-fixture.mjs",
     ],
     [PLUGIN_FIXTURE_ENGINE]: [
       "tests/helpers/plugin_fixture.ts",
@@ -563,6 +567,97 @@ export const CONTENDER_PILOT_OWNERSHIP: OwnershipRules = {
     },
   },
 };
+export const COMPLETED_BUILD_ENGINE = "tests/helpers/completed_build_engine.ts";
+export const LAYOUT_OWNER = "tests/helpers/fixture_layout.ts";
+export const PREFIX_LAYOUT = "client/tests/e2e/prefix-auth-fixture.mjs";
+export const LAYOUT_MODULE_RULES = {
+  "jsr:/@std/fs@^1.0.20/ensure-dir": [],
+  [COMPLETED_BUILD_ENGINE]: [
+    "tests/helpers/completed_build.ts",
+    LAYOUT_OWNER,
+    "tests/fixture_layout_ownership_test.ts",
+  ],
+};
+export const LAYOUT_OWNERSHIP: OwnershipRules = {
+  ...CHILD_OWNERSHIP,
+  modules: { ...CHILD_OWNERSHIP.modules, ...LAYOUT_MODULE_RULES },
+};
+export const LAYOUT_PILOT_OWNERSHIP: OwnershipRules = {
+  ...BOOT_OWNERSHIP,
+  roots: {
+    ...BOOT_OWNERSHIP.roots,
+    Deno: {
+      ...BOOT_OWNERSHIP.roots.Deno,
+      members: ["errors", "readTextFile", "realPathSync"],
+      ownedMembers: {
+        ...BOOT_OWNERSHIP.roots.Deno.ownedMembers,
+        ...Object.fromEntries(
+          [
+            "makeTempDir",
+            "makeTempDirSync",
+            "makeTempFile",
+            "makeTempFileSync",
+            "mkdir",
+            "mkdirSync",
+            "copyFile",
+            "copyFileSync",
+          ].map((member) => [member, [LAYOUT_OWNER, COMPLETED_BUILD_ENGINE]]),
+        ),
+      },
+    },
+  },
+  modules: {
+    ...BOOT_OWNERSHIP.modules,
+    ...LAYOUT_MODULE_RULES,
+    "jsr:/@std/fs@^1.0.20/ensure-dir": [],
+  },
+};
+export const PREFIX_LAYOUT_OWNERSHIP: OwnershipRules = {
+  ...LAYOUT_PILOT_OWNERSHIP,
+  roots: {
+    ...LAYOUT_PILOT_OWNERSHIP.roots,
+    Deno: {
+      ...LAYOUT_PILOT_OWNERSHIP.roots.Deno,
+      members: [
+        "errors",
+        "execPath",
+        "listen",
+        "open",
+        "readFile",
+        "writeTextFile",
+      ],
+    },
+  },
+};
+export const LAYOUT_OWNER_OWNERSHIP: OwnershipRules = {
+  ...LAYOUT_PILOT_OWNERSHIP,
+  roots: {
+    ...LAYOUT_PILOT_OWNERSHIP.roots,
+    Deno: {
+      ...LAYOUT_PILOT_OWNERSHIP.roots.Deno,
+      members: ["errors", "makeTempDir", "mkdir", "remove", "removeSync"],
+    },
+  },
+};
+export const COMPLETED_BUILD_OWNERSHIP: OwnershipRules = {
+  ...LAYOUT_PILOT_OWNERSHIP,
+  roots: {
+    ...LAYOUT_PILOT_OWNERSHIP.roots,
+    Deno: {
+      ...LAYOUT_PILOT_OWNERSHIP.roots.Deno,
+      members: [
+        "errors",
+        "makeTempDir",
+        "mkdir",
+        "readDir",
+        "readFile",
+        "remove",
+        "statSync",
+        "writeFile",
+      ],
+    },
+  },
+};
 const allModules = (rules: OwnershipRules): OwnershipRules => ({
   ...rules,
   modules: {
@@ -571,6 +666,7 @@ const allModules = (rules: OwnershipRules): OwnershipRules => ({
     ...CHILD_MODULE_RULES,
     ...DRIVER_MODULE_RULES,
     ...CLOCK_MODULE_RULES,
+    ...LAYOUT_MODULE_RULES,
   },
 });
 const driverDenoMembers: Record<string, readonly string[]> = {
@@ -610,7 +706,13 @@ export function registeredOwnership(sources: SourceModule[]) {
         : source.file === OPERATION_PILOT
         ? OPERATION_PILOT_OWNERSHIP
         : source.file === BOOT_OWNER
-        ? BOOT_OWNERSHIP
+        ? LAYOUT_PILOT_OWNERSHIP
+        : source.file === PREFIX_LAYOUT
+        ? PREFIX_LAYOUT_OWNERSHIP
+        : source.file === LAYOUT_OWNER
+        ? LAYOUT_OWNER_OWNERSHIP
+        : source.file === COMPLETED_BUILD_ENGINE
+        ? COMPLETED_BUILD_OWNERSHIP
         : fixtureScenarios.includes(source.file)
         ? FIXTURE_SCENARIO_OWNERSHIP
         : source.file === RECORD_CHANNEL
