@@ -48,6 +48,8 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
     ...RESOURCE_OWNERSHIP.modules,
     [OPERATION_LEASE_OWNER]: [
       "server/auth/sessions.ts",
+      "server/auth/account.ts",
+      "tests/identity_account_workflows_test.ts",
       AUTHORITY_PILOT,
       "server/auth/middleware.ts",
       GUARDED_SINK_OWNER,
@@ -256,10 +258,12 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
     ...SECRET_OWNERSHIP.modules,
     [CREDENTIAL_ENGINE]: [
       ACCOUNT_REPOSITORY,
+      "server/auth/account.ts",
       "tests/helpers/credential_commands.ts",
     ],
     "tests/helpers/credential_commands.ts": [
       "tests/credential_bootstrap_preparation_test.ts",
+      "tests/identity_account_workflows_test.ts",
       "tests/credential_login_step_test.ts",
       "tests/credential_transition_test.ts",
       "tests/identity_totp_contract_test.ts",
@@ -268,6 +272,7 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
     ],
     [ACCOUNT_REPOSITORY]: [
       "server/auth/sessions.ts",
+      "tests/identity_account_workflows_test.ts",
       "server/auth/acl.ts",
       "tests/config_durability_test.ts",
       "tests/credential_proof_test.ts",
@@ -310,6 +315,7 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
       "tests/recorded_publication_set_test.ts",
     ],
     [PREPARATION_HELPER]: [
+      "tests/identity_account_workflows_test.ts",
       "tests/credential_preparation_test.ts",
       "tests/participant_admin_authority_test.ts",
       "tests/credential_bootstrap_preparation_test.ts",
@@ -356,6 +362,7 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
       "tests/identity_totp_upgrade_test.ts",
     ],
     [IDENTITY_HELPER]: [
+      "tests/identity_account_workflows_test.ts",
       "tests/credential_login_step_test.ts",
       "tests/participant_admin_authority_test.ts",
       "tests/credential_bootstrap_preparation_test.ts",

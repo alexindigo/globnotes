@@ -11,7 +11,6 @@ import { fixturePasswordHash } from "./helpers/config.ts";
 import { assert, assertEquals } from "@std/assert";
 import { authenticatorCode, TOTP_STEP_MS, totpStep } from "./helpers/totp.ts";
 import { settledTotpNow } from "./helpers/totp_live.ts";
-import { totpSecretFromRawKey } from "../server/auth/local.ts";
 import { bootServer } from "./helpers/boot.ts";
 
 Deno.test("auth: setup mode", async (t) => {
@@ -321,13 +320,13 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
         );
         assertEquals(res.status, 200);
         const body = await res.json();
-        assert(typeof body.key === "string" && body.key.length === 20);
+        assert(typeof body.key === "string" && /^[A-Z2-7]{32}$/.test(body.key));
         assert(body.uri.startsWith("otpauth://totp/globnotes:alice"));
         assert(body.uri.includes("issuer=globnotes"));
         assert(body.qr.startsWith("data:image/png;base64,"));
         key = body.key;
         secret = new URL(body.uri).searchParams.get("secret")!;
-        assertEquals(secret, totpSecretFromRawKey(key));
+        assertEquals(secret, key);
         // The manual-entry form is the base32 secret, same as the boot log.
         assertEquals(body.secret, secret);
         assert(body.uri.includes(`secret=${secret}`));
@@ -362,6 +361,10 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
           }),
         });
         assertEquals(res.status, 400);
+        assertEquals(
+          (await res.json()).detail,
+          "That code doesn't match this key - wait for a fresh code and try again.",
+        );
         const status = await fetch(`${server.baseUrl}/_/api/setup`);
         assertEquals((await status.json()).setupRequired, true);
         const configExists = await Deno.stat(
@@ -472,11 +475,11 @@ Deno.test("auth: password+TOTP wizard flow", async (t) => {
       try {
         const res = await fetch(`${restarted.baseUrl}/_/api/config`);
         assertEquals((await res.json()).authType, "totp");
-        const code = totpSecretFromRawKey(
-          JSON.parse(
-            await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
-          ).totp_key,
+        const stored = JSON.parse(
+          await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
         );
+        assertEquals(stored.totp_key_encoding, "base32");
+        const code = stored.totp_key;
         const login = await fetch(`${restarted.baseUrl}/_/api/token`, {
           method: "POST",
           headers: { "content-type": "application/json" },

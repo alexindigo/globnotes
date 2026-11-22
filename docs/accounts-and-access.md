@@ -118,3 +118,18 @@ cannot transfer into setup/create-and-add participants or mint a bootstrap proof
 The later CLI adapter still owns paired-state classification, legacy refusal,
 configured roots, stdin and signing initialization before account publication.
 Reset-password and disable-authenticator keep their existing distinct behavior.
+
+The prepared own-account workflow maps GET, PATCH and authenticator enrollment
+to the credential aggregate. It requires the current password and, when enabled,
+a fresh current authenticator code. Only the current issued enrollment can be
+confirmed. Temporary passwords must be replaced, not submitted again as the new
+password. Account-local revision and update ID prevent stale or repeated changes.
+No target-account field, replacement token or credential-outcome endpoint exists.
+The exact committed acknowledgment survives its own credential revocation, but
+not replacement of the captured instance lifetime. Lost replies use normal sign-in.
+These account handlers are injection-only until the coordinated cutover.
+
+While the legacy setup and Access screens remain active, their service owns the
+current enrollment attempt through QR rendering and confirmation. Newly confirmed
+secrets carry an explicit Base32 marker. Existing unmarked/raw stored secrets keep
+their historical interpretation; keeping an authenticator does not rewrite it.

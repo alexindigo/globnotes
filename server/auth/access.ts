@@ -11,7 +11,8 @@ import {
 } from "../config.ts";
 import { hashPassword } from "../helpers.ts";
 import { state } from "../state.ts";
-import { checkTotpCode, LocalAuth, totpSecretFromRawKey } from "./local.ts";
+import { LocalAuth } from "./local.ts";
+import { pendingTotpEnrollments } from "./totp_enrolment.ts";
 import { settingsWriteGuard } from "./middleware.ts";
 
 function conflict(message: string): never {
@@ -220,17 +221,9 @@ export async function updateAccess(
     (!enabled && (newKey !== undefined || data.totpCode !== undefined)) ||
     (newKey === "")
   ) throw new HttpError(422, "Invalid authenticator enrolment.");
-  if (enabled && (!before.totpEnabled || newKey !== undefined)) {
-    if (
-      !newKey || !/^\d{6}$/.test(String(data.totpCode ?? "")) ||
-      !checkTotpCode(String(data.totpCode), totpSecretFromRawKey(newKey))
-    ) {
-      throw new HttpError(
-        400,
-        "Confirm the new authenticator with its current six-digit code before changing access.",
-      );
-    }
-  }
+  const enrollment = enabled && (!before.totpEnabled || newKey !== undefined)
+    ? pendingTotpEnrollments(config).confirm("access", newKey, data.totpCode)
+    : undefined;
   const securityChanged = protectedMode &&
     (!auth || username !== before.username || password !== undefined ||
       enabled !== before.totpEnabled || newKey !== undefined);
@@ -246,6 +239,7 @@ export async function updateAccess(
   const commit = async () => {
     guard();
     snapshot.assertCurrent();
+    enrollment?.assertCurrent();
     if (auth) {
       if (typeof data.currentPassword !== "string") {
         throw new HttpError(
@@ -267,6 +261,7 @@ export async function updateAccess(
     }
     guard();
     snapshot.assertCurrent();
+    enrollment?.assertCurrent();
     const next: StoredConfig = {
       ...snapshot.base,
       auth_type: mode,
@@ -279,9 +274,8 @@ export async function updateAccess(
       if (!auth || data.username !== undefined) next.username = username;
       if (newHash !== undefined) next.password_hash = newHash;
       if (enabled && newKey !== undefined) {
-        // This legacy enrollment lane supplies raw UTF-8, including replacements.
         next.totp_key = newKey;
-        next.totp_key_encoding = null;
+        next.totp_key_encoding = enrollment!.encoding;
       }
       if (securityChanged) {
         next.secret_key = [...crypto.getRandomValues(new Uint8Array(32))].map((
@@ -319,6 +313,7 @@ export async function updateAccess(
       state.plugins?.stop();
     }
     state.lifecycle?.notifyInvalidation();
+    await enrollment?.complete();
     return {
       view: await accessView(),
       requiresLogin: protectedMode && securityChanged,

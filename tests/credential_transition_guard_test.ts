@@ -3,8 +3,13 @@ import { assertEquals } from "@std/assert";
 import { analyzeOwnership } from "./helpers/ownership_contract.ts";
 import { assertPrivateModule } from "./helpers/credential_registration.ts";
 import {
+  ACCOUNT_RECORD,
   ACCOUNT_REPOSITORY,
+  ADOPTION_OWNERSHIP,
   CREDENTIAL_ENGINE,
+  CREDENTIAL_REDUCER,
+  OFFLINE_RECOVERY,
+  PREPARATION_HELPER,
   PROOF_OWNERSHIP,
   SECRET_CODEC,
 } from "./helpers/ownership_rules.ts";
@@ -19,6 +24,46 @@ Deno.test("credential command registration: private binders, raw ports and codec
   ) {
     assertPrivateModule(module, PROOF_OWNERSHIP);
   }
+});
+Deno.test("own-account registration: only the exact workflow binds commands and it gains no raw record, verifier or recovery port", () => {
+  assertEquals(
+    analyzeOwnership([{
+      file: "server/auth/account.ts",
+      text: 'import {bindCredentialAuthority} from "private";',
+      imports: { private: CREDENTIAL_ENGINE },
+    }], ADOPTION_OWNERSHIP),
+    [],
+  );
+  for (
+    const module of [
+      ACCOUNT_REPOSITORY,
+      SECRET_CODEC,
+      ACCOUNT_RECORD,
+      CREDENTIAL_REDUCER,
+      OFFLINE_RECOVERY,
+      PREPARATION_HELPER,
+      "tests/helpers/credential_commands.ts",
+    ]
+  ) {
+    const sites = analyzeOwnership([{
+      file: "server/auth/account.ts",
+      text: 'export * from "private";',
+      imports: { private: module },
+    }], ADOPTION_OWNERSHIP);
+    assertEquals(sites.map(({ file, capability }) => ({ file, capability })), [{
+      file: "server/auth/account.ts",
+      capability: `module:${module}`,
+    }]);
+  }
+  const sites = analyzeOwnership([{
+    file: "server/auth/account-copy.ts",
+    text: 'import {bindCredentialAuthority} from "private";',
+    imports: { private: CREDENTIAL_ENGINE },
+  }], ADOPTION_OWNERSHIP);
+  assertEquals(sites.map(({ file, capability }) => ({ file, capability })), [{
+    file: "server/auth/account-copy.ts",
+    capability: `module:${CREDENTIAL_ENGINE}`,
+  }]);
 });
 Deno.test("credential command registration: narrow commands and candidate presentation grant no binder", () => {
   assertEquals(

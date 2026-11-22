@@ -6,11 +6,8 @@
  * Ported from the Python server's post_setup with identical behavior.
  */
 
-import {
-  checkTotpCode,
-  LocalAuth,
-  totpSecretFromRawKey,
-} from "@server/auth/local.ts";
+import { LocalAuth } from "@server/auth/local.ts";
+import { pendingTotpEnrollments } from "@server/auth/totp_enrolment.ts";
 import { AuthType, StoredConfigConflict } from "@server/config.ts";
 import { hashPassword } from "@server/helpers.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
@@ -33,7 +30,8 @@ interface SetupRequest {
 export default async function (
   request: PathfinderRequest,
 ): Promise<{ setupRequired: boolean }> {
-  if (!state.config.setupRequired) {
+  const config = state.config;
+  if (!config.setupRequired) {
     throw new HttpError(409, "Setup has already been completed.");
   }
   const data = (await request.body.json()) as SetupRequest;
@@ -42,7 +40,6 @@ export default async function (
       `username=${data.username ?? "(none)"} ` +
       `passwordLength=${data.password?.length ?? 0}`,
   );
-  const config = state.config;
   const snapshot = config.captureStoredConfig();
   const base = snapshot.raw === null ? null : JSON.parse(snapshot.raw);
   if (JSON.stringify(base) !== JSON.stringify(config.storedConfig)) {
@@ -56,13 +53,18 @@ export default async function (
     typeof data.readOnlySettings !== "boolean"
   ) throw new HttpError(422, "readOnlySettings must be a boolean.");
   const complete = async () => {
+    let enrollment:
+      | ReturnType<
+        ReturnType<typeof pendingTotpEnrollments>["confirm"]
+      >
+      | undefined;
     if (state.config !== config || !config.setupRequired) {
       throw new HttpError(409, "Setup has already been completed.");
     }
     try {
       config.assertStoredConfigUnchanged(snapshot);
       // Setup replaces the authenticator as a whole, never inheriting metadata
-      // from an unfinished setup record. Enrollment here supplies raw UTF-8.
+      // from an unfinished setup record. Newly confirmed candidates are marked.
       if (base) {
         delete base.totp_key;
         delete base.totp_key_encoding;
@@ -94,26 +96,14 @@ export default async function (
         if (!data.username || !data.password) {
           throw new HttpError(400, "Username and password are required.");
         }
-        let authType: AuthType = AuthType.PASSWORD;
-        if (data.totpKey !== undefined) {
-          // The code is verified BEFORE anything is persisted — a mismatch
-          // leaves setup pending so the wizard stays open.
-          if (!data.totpCode) {
-            throw new HttpError(
-              400,
-              "A current authenticator code is required to enable TOTP.",
-            );
-          }
-          if (
-            !checkTotpCode(data.totpCode, totpSecretFromRawKey(data.totpKey))
-          ) {
-            throw new HttpError(
-              400,
-              "That code doesn't match this key — wait for a fresh code and try again.",
-            );
-          }
-          authType = AuthType.TOTP;
-        }
+        enrollment = data.totpKey === undefined
+          ? undefined
+          : pendingTotpEnrollments(config).confirm(
+            "setup",
+            data.totpKey,
+            data.totpCode,
+          );
+        const authType = enrollment ? AuthType.TOTP : AuthType.PASSWORD;
         const secretKey = [...crypto.getRandomValues(new Uint8Array(32))]
           .map((b) => b.toString(16).padStart(2, "0"))
           .join("");
@@ -124,6 +114,7 @@ export default async function (
             "Setup changed while password preparation was pending.",
           );
         }
+        enrollment?.assertCurrent();
         config.saveStoredConfig({
           ...base,
           auth_type: authType,
@@ -131,7 +122,10 @@ export default async function (
           password_hash: passwordHash,
           secret_key: secretKey,
           ...(data.totpKey !== undefined
-            ? { totp_key: data.totpKey, totp_key_encoding: null }
+            ? {
+              totp_key: data.totpKey,
+              totp_key_encoding: enrollment!.encoding,
+            }
             : {}),
         }, snapshot);
         config.authType = authType;
@@ -168,6 +162,7 @@ export default async function (
     state.plugins?.runtime?.reconcile().catch((e) =>
       logger.error(`plugin runtime reconciliation failed: ${e}`)
     );
+    await enrollment?.complete();
     return { setupRequired: config.setupRequired };
   };
   return state.lifecycle

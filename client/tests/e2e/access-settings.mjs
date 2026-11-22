@@ -189,6 +189,7 @@ try {
   await session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
   const after = JSON.parse(await saved());
   assert(after.auth_type === "totp" && after.password_hash === owned.initial.password_hash && after.username === username && after.brand_name === owned.initial.brand_name && after.unrelated_fixture.kept, "Confirmed 2FA replaced existing credentials/config");
+  assert(after.totp_key === bundle.key && after.totp_key_encoding === "base32" && bundle.key === bundle.secret, "Confirmed authenticator did not persist the issued secret interpretation");
   assert((await api("auth-check", "GET", undefined, oldToken)).status === 401, "Confirmed 2FA left old session valid");
   await closeSidebar(session);
   await fill("#username", username); await fill("#password", password);
@@ -323,6 +324,7 @@ try {
   await owned.session.button("Save access settings"); await owned.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
   const replacementSaved = JSON.parse(await saved());
   assert(replacementSaved.totp_key === replacement.key && replacementSaved.password_hash === owned.initial.password_hash, "Authenticator replacement changed the password or failed to persist the new key");
+  assert(replacementSaved.totp_key_encoding === "base32" && replacement.key === replacement.secret, "Authenticator replacement lost the issued encoding");
   assert((await api("auth-check", "GET", undefined, replacementToken)).status === 401, "Confirmed replacement retained old session authority");
   assert((await api("token", "POST", { username, password: password + newConfirmation })).status === 401, "Replacement enrolment code can be replayed as login");
   await closeSidebar();

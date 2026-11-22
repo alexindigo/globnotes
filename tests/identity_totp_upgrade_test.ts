@@ -156,11 +156,11 @@ Deno.test("stored TOTP upgrade: effective legacy aliases retain the persisted re
   }));
 
 for (const lane of ["access", "setup"]) {
-  Deno.test(`stored TOTP replacement: legacy ${lane} replaces a marked key as UTF-8 and removes both fields`, () =>
+  Deno.test(`stored TOTP replacement: legacy ${lane} confirms only its issued canonical replacement and removes both fields`, () =>
     identityFixture(async (vault, rootScope) => {
       await Deno.mkdir(`${vault}/.globnotes`);
       const path = `${vault}/.globnotes/config.json`;
-      const oldKey = "A".repeat(32), newKey = "raw replacement";
+      const oldKey = "A".repeat(32);
       await Deno.writeTextFile(
         path,
         JSON.stringify({
@@ -212,12 +212,22 @@ for (const lane of ["access", "setup"]) {
         token = initial.body.access_token;
         await clock.value.advanceStep();
       }
-      const newSecret = base32(utf8(newKey));
+      const enrollment = await call(`${lane}/totp-enrolment`, "POST", {
+        username: "alice",
+      }, token);
+      assertEquals(enrollment.status, 200);
+      const peer = await call(`${lane}/totp-enrolment`, "POST", {
+        username: "alice",
+      }, token);
+      assertEquals(peer.status, 200);
+      const newKey = enrollment.body.key;
+      const newSecret = enrollment.body.secret;
+      assertEquals(newKey, newSecret);
       const newCode = await clock.value.code(newSecret);
       const current = lane === "access"
         ? (await call("access", "GET", undefined, token)).body
         : null;
-      const replaced = await call(lane, lane === "access" ? "PUT" : "POST", {
+      const change = {
         mode: "password",
         username: "alice",
         ...(lane === "setup" ? { password: "password" } : {
@@ -229,14 +239,41 @@ for (const lane of ["access", "setup"]) {
         totpEnabled: true,
         totpKey: newKey,
         totpCode: newCode,
+      };
+      const original = await Deno.readTextFile(path);
+      for (const rejectedKey of ["unissued raw key"]) {
+        const rejected = await call(lane, lane === "access" ? "PUT" : "POST", {
+          ...change,
+          totpKey: rejectedKey,
+        }, token);
+        assertEquals(rejected.status, 422);
+        assertEquals(await Deno.readTextFile(path), original);
+      }
+      // Independent issuance is not retirement. The peer candidate still
+      // requires its own code; its key cannot borrow this attempt's proof.
+      const wrongProof = await call(lane, lane === "access" ? "PUT" : "POST", {
+        ...change,
+        totpKey: peer.body.key,
+        totpCode: "",
       }, token);
+      assertEquals(wrongProof.status, 400);
+      assertEquals(await Deno.readTextFile(path), original);
+      const replaced = await call(
+        lane,
+        lane === "access" ? "PUT" : "POST",
+        change,
+        token,
+      );
       assertEquals(
         replaced.status,
         200,
         JSON.stringify({ response: replaced.body, logs: server.value.logs() }),
       );
       const saved = JSON.parse(await Deno.readTextFile(path));
-      assertEquals([saved.totp_key, saved.totp_key_encoding], [newKey, null]);
+      assertEquals([saved.totp_key, saved.totp_key_encoding], [
+        newKey,
+        "base32",
+      ]);
       await clock.value.advanceStep();
       const signedIn = await login(await clock.value.code(newSecret));
       assertEquals(signedIn.status, 200);
@@ -245,15 +282,52 @@ for (const lane of ["access", "setup"]) {
         (await call("auth-check", "GET", undefined, token)).status,
         200,
       );
-      const view = (await call("access", "GET", undefined, token)).body;
+      let view = (await call("access", "GET", undefined, token)).body;
+      let activeSecret = newSecret;
       await clock.value.advanceStep();
+      if (lane === "access") {
+        const beforeReuse = await Deno.readTextFile(path);
+        const replacement = {
+          mode: "password",
+          totpEnabled: true,
+          revision: view.revision,
+          signature: view.signature,
+          currentPassword: "password",
+          currentTotp: await clock.value.code(newSecret),
+        };
+        const consumed = await call("access", "PUT", {
+          ...replacement,
+          totpKey: newKey,
+          totpCode: await clock.value.code(newSecret),
+        }, token);
+        assertEquals(consumed.status, 422);
+        assertEquals(await Deno.readTextFile(path), beforeReuse);
+        const peerCompletion = await call("access", "PUT", {
+          ...replacement,
+          totpKey: peer.body.key,
+          totpCode: await clock.value.code(peer.body.secret),
+        }, token);
+        assertEquals(peerCompletion.status, 200);
+        const peerSaved = JSON.parse(await Deno.readTextFile(path));
+        assertEquals([peerSaved.totp_key, peerSaved.totp_key_encoding], [
+          peer.body.key,
+          "base32",
+        ]);
+        activeSecret = peer.body.secret;
+        await clock.value.advanceStep();
+        const peerSignIn = await login(await clock.value.code(activeSecret));
+        assertEquals(peerSignIn.status, 200);
+        token = peerSignIn.body.access_token;
+        view = (await call("access", "GET", undefined, token)).body;
+        await clock.value.advanceStep();
+      }
       const removed = await call("access", "PUT", {
         mode: "password",
         totpEnabled: false,
         revision: view.revision,
         signature: view.signature,
         currentPassword: "password",
-        currentTotp: await clock.value.code(newSecret),
+        currentTotp: await clock.value.code(activeSecret),
       }, token);
       assertEquals(removed.status, 200);
       const cleared = JSON.parse(await Deno.readTextFile(path));
