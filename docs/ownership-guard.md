@@ -117,6 +117,14 @@ behavior, reserve-before-allocation and partial-runtime cleanup are runtime
 contracts; the source guard does not infer callback provenance or count method
 calls.
 
+The native `fixture-ownership.mjs` facade and `native-ownership-control.mjs`
+pilot have exact parsed registrations: public P03 use is allowed, private scope
+construction, raw custody and filesystem imports/roots are not. Product modules
+cannot import the native test facade. These declarations do not infer scope
+identity: ordinary TS/native runtime tests prove shared issuance, co-admission,
+cancellation and all-attempt cleanup, with the browser pilot checking exact final
+targets and surviving note consumers.
+
 P03's coordination-bearing scenario modules also register `Promise` as a root:
 ordinary result aggregation is permitted, while raw constructors, deferreds and
 aliases reject. Milestones enter through `fixture_coordination.ts`, which admits

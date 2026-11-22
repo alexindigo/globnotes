@@ -220,6 +220,15 @@ even when reporting or an earlier close fails. Report/cleanup failures still fai
 the case and retain any original case error. Drivers supply their own retention
 decisions, including probes that deliberately preserve failed dirty pages.
 
+`client/tests/e2e/fixture-ownership.mjs` re-exports P03's public `fixtureScope`
+verbatim for native Deno cases. Acquire bindings and pages before effects; keep
+owned values in their `.value` envelopes. Scope exit cancels before draining,
+reports before releasing and preserves primary plus cleanup failures. `admit`
+co-admits work with issued TS or native scopes, including borrowed roots.
+The A/B ownership control is the bounded browser-resource pilot: nested A closes
+while B and the pre-existing page still render the fixture note, then the final
+target roster exactly matches the original. Legacy case/result owners remain.
+
 `tests/helpers/boot.ts` gives SIGTERM five seconds, then sends SIGKILL only
 to its owned child; it drains output and releases the private cwd after exit.
 An unexpected prior exit still rejects close with diagnostics. If native plugin

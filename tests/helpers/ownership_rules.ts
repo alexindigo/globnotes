@@ -314,6 +314,9 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
 };
 
 export const FIXTURE_SCOPE_ENGINE = "tests/helpers/fixture_scope_engine.ts";
+export const NATIVE_FIXTURE_SCOPE = "client/tests/e2e/fixture-ownership.mjs";
+export const NATIVE_FIXTURE_PILOT =
+  "client/tests/e2e/native-ownership-control.mjs";
 export const PLUGIN_FIXTURE_ENGINE = "tests/helpers/plugin_fixture_engine.ts";
 export const PLUGIN_OPERATIONS = "tests/helpers/plugin_operations_fixture.ts";
 /** Private construction modules have public callback facades. Every import form
@@ -327,6 +330,7 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       PLUGIN_FIXTURE_ENGINE,
       PLUGIN_OPERATIONS,
       "tests/fixture_scope_test.ts",
+      "tests/native_fixture_scope_test.ts",
       "tests/fixture_clock_ownership_test.ts",
       "tests/helpers/hub_fixture.ts",
       "tests/helpers/plugin_lifecycle.ts",
@@ -407,8 +411,26 @@ export const PRODUCT_OWNERSHIP: OwnershipRules = {
   modules: {
     ...FIXTURE_OWNERSHIP.modules,
     "tests/helpers/fixture_scope.ts": [],
+    [NATIVE_FIXTURE_SCOPE]: [],
     "tests/helpers/plugin_fixture.ts": [],
     [PLUGIN_OPERATIONS]: [],
+  },
+};
+
+/** The native facade and its complete small pilot use P03, never raw custody,
+ * private construction or filesystem roots. The pilot reads only its CDP port. */
+export const NATIVE_FIXTURE_OWNERSHIP: OwnershipRules = {
+  ...FIXTURE_OWNERSHIP,
+  roots: {
+    ...FIXTURE_OWNERSHIP.roots,
+    Deno: { members: ["env"] },
+  },
+  modules: {
+    ...FIXTURE_OWNERSHIP.modules,
+    [RESOURCE_CORE]: [],
+    "node:fs": [],
+    "node:fs/promises": [],
+    "@std/fs": [],
   },
 };
 
@@ -706,7 +728,10 @@ export function registeredOwnership(sources: SourceModule[]) {
   >();
   for (const source of sources) {
     const rules = DRIVER_OWNERSHIP[source.file] ??
-      (source.file === CONTENDER_ADAPTER
+      (source.file === NATIVE_FIXTURE_SCOPE ||
+          source.file === NATIVE_FIXTURE_PILOT
+        ? NATIVE_FIXTURE_OWNERSHIP
+        : source.file === CONTENDER_ADAPTER
         ? OPERATION_ADAPTER_OWNERSHIP
         : source.file === CONTENDER_PILOT || source.file === CONTENDER_GUARD
         ? CONTENDER_PILOT_OWNERSHIP

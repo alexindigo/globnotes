@@ -34,6 +34,7 @@ export const NATIVE_HELPERS = {
   "conflict-native-fixture.mjs": "conflict fixture",
   "driver-export-owner.mjs": "durable export observer",
   "fixtures.mjs": "fixture re-exports",
+  "fixture-ownership.mjs": "public P03 callback scope bridge",
   "generic-platform-evidence.mjs": "acceptance evidence projection",
   "harness-arguments.mjs": "argument parser",
   "harness-helpers.mjs": "server fixture adapter",
@@ -326,6 +327,7 @@ export const SHARED_CASE_FILES = [
 ].map(file => "client/tests/e2e/" + file);
 
 export const FILE_CASES = Object.fromEntries([
+  ["client/tests/e2e/fixture-ownership.mjs", ["native-ownership-control"]],
   ["client/tests/e2e/native-totp-fixture.mjs", ["setup-totp-desktop", "plugin-review-repairs---variant-access-conflict", ...["totp-in-place", "current-totp-password", "replace-authenticator", "protected-current-totp-geometry"].map(label => `access-settings---variant-${label}`)]],
   ["client/tests/e2e/native-response-gate.mjs", [...nativeMatrixSelection("plugin-permissions"), ["note-save-fifo"], ["note-save-owner-guards"]].map(caseName)],
   ...SHARED_CASE_FILES.map(file => [file, SELECTION.map(caseName)]),
