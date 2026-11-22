@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { join, resolve } from "@std/path";
+import { dirname, join } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { hashPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
@@ -196,10 +196,12 @@ export class AccountRepository {
     credentialOptions: CredentialOptions = {},
   ) {
     this.#file = file;
-    this.capture();
+    const snapshot = this.capture();
     const owner: ReturnType<typeof bindAccountCredentials> =
       bindAccountCredentials({
-        root: resolve(root),
+        // Recovery admission follows the same resolved file binding as writes.
+        // The constructor's root selects only the default file, never authority.
+        root: dirname(snapshot.persistence.binding.configured),
         capture: () => this.capture(),
         assertSnapshot: (snapshot) => this.assertUnchanged(snapshot),
         normalizeLogin,

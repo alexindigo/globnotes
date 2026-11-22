@@ -964,6 +964,7 @@ Deno.test("credential commands: a durability warning retains the committed recei
       rename = Deno.renameSync,
       warning = logger.warning;
     let deny = false, observed = false;
+    let observedRevision: number | undefined;
     let next:
       | ReturnType<typeof f.accounts.credentials.beginEnrollment>
       | undefined;
@@ -984,7 +985,8 @@ Deno.test("credential commands: a durability warning retains the committed recei
       deny = false;
       if (!observed) {
         observed = true;
-        assertEquals(f.accounts.identityById(ACCOUNT_A)?.credentialRevision, 1);
+        observedRevision = f.accounts.identityById(ACCOUNT_A)
+          ?.credentialRevision;
         next = f.accounts.credentials.beginEnrollment(f.bound());
       }
     };
@@ -1006,6 +1008,7 @@ Deno.test("credential commands: a durability warning retains the committed recei
       logger.warning = warning;
     }
     assert(observed);
+    assertEquals(observedRevision, 1);
     assert(next);
     assertEquals(result.credentialRevision, 1);
     const replacement = await next;

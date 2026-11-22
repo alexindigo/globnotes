@@ -9,7 +9,10 @@ import {
   assertThrows,
 } from "@std/assert";
 import { fixtureGate, fixtureTest } from "./helpers/fixture_coordination.ts";
-import { AccountRepository } from "../server/auth/accounts.ts";
+import {
+  AccountRepository,
+  type AccountState,
+} from "../server/auth/accounts.ts";
 import {
   type AccountPreparationAuthority,
   type AccountPreparationRequest,
@@ -18,7 +21,7 @@ import {
   type PreparedAccount,
 } from "../server/auth/account_credentials.ts";
 import { type OfflineRecoveryAuthority } from "../server/auth/offline_recovery.ts";
-import { IdentityStateError } from "../server/auth/records.ts";
+import { IdentityFile, IdentityStateError } from "../server/auth/records.ts";
 import { IdentityOwnershipError } from "../server/auth/ownership.ts";
 import { StoredConfigConflict } from "../server/config/file_store.ts";
 import {
@@ -765,6 +768,69 @@ Deno.test("offline recovery: another identity root's authority is not accepted",
     });
   }));
 
+for (const mismatched of [false, true]) {
+  Deno.test(`offline recovery: the injected file defines the admission root, mismatched=${mismatched}`, () =>
+    credentialCommandFixture(async (f) => {
+      const filename = `${f.root}/accounts.json`,
+        otherRoot = `${f.root}/other-root`;
+      const before = f.accounts.capture().value;
+      // Trusted fixture state uses the injected persistence seam; reopened
+      // AccountRepository instances below still apply the real schema validator.
+      const file = new IdentityFile<AccountState>(
+        filename,
+        (value) => value as AccountState,
+        before,
+      );
+      const accounts = new AccountRepository(
+        mismatched ? otherRoot : f.root,
+        file,
+        {
+          hash: (password) => Promise.resolve(fixturePasswordHash(password)),
+        },
+      );
+      const request = {
+        accountId: ACCOUNT_A,
+        credentialRevision: 0,
+        updateId: UPDATE,
+        password: "recovered",
+      };
+      try {
+        const originalBytes = Deno.readTextFileSync(filename);
+        const wrong = recoveryForRoot(otherRoot);
+        try {
+          await assertRejects(
+            () => accounts.credentials.resetPassword(wrong.authority, request),
+            IdentityStateError,
+            "Invalid identity state; original bytes retained.",
+          );
+        } finally {
+          wrong.close();
+        }
+        assertEquals(Deno.readTextFileSync(filename), originalBytes);
+        const right = recoveryForRoot(f.root);
+        try {
+          await accounts.credentials.resetPassword(right.authority, request);
+        } finally {
+          right.close();
+        }
+        assertEquals(new AccountRepository(f.root).capture().value, {
+          ...before,
+          revision: before.revision + 1,
+          updateId: UPDATE,
+          accounts: [{
+            ...before.accounts[0],
+            passwordHash: fixturePasswordHash("recovered"),
+            passwordChangeRequired: true,
+            credentialRevision: 1,
+            credentialUpdateId: UPDATE,
+          }],
+        });
+      } finally {
+        accounts.retireCredentials();
+      }
+    }));
+}
+
 for (
   const stored of [
     { key: "key" },
@@ -1043,6 +1109,9 @@ Deno.test("account preparation: published durability warning returns its exact a
     );
     const open = Deno.openSync, link = Deno.linkSync, warning = logger.warning;
     let deny = false, warnings = 0;
+    let observedIdentity:
+      | ReturnType<typeof f.accounts.identityById>
+      | undefined;
     Deno.linkSync = (from, to) => {
       link(from, to);
       if (String(to) === `${f.root}/accounts.json`) deny = true;
@@ -1059,10 +1128,7 @@ Deno.test("account preparation: published durability warning returns its exact a
     logger.warning = () => {
       deny = false;
       warnings++;
-      assertEquals(
-        f.accounts.identityById(prepared.identity.id),
-        prepared.identity,
-      );
+      observedIdentity = f.accounts.identityById(prepared.identity.id);
     };
     try {
       assertEquals(
@@ -1070,6 +1136,7 @@ Deno.test("account preparation: published durability warning returns its exact a
         prepared.identity,
       );
       assertEquals(warnings, 1);
+      assertEquals(observedIdentity, prepared.identity);
       assertThrows(
         () => f.accounts.credentials.publishPreparedAccount(prepared.prepared),
         IdentityStateError,
