@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { signIn } from "./helpers/session_delivery.ts";
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
+import { totpEnrolment } from "../server/auth/totp_enrolment.ts";
 import { fixtureGate, fixtureTest } from "./helpers/fixture_coordination.ts";
 import {
   AuthenticationError,
@@ -434,6 +442,132 @@ Deno.test("credential commands: temporary password must change before other cred
     null,
     true,
   ));
+
+Deno.test("credential commands: a forced change rejects the temporary password before spending the current code", () =>
+  credentialCommandFixture(
+    async (f) => {
+      const before = Deno.readTextFileSync(`${f.root}/accounts.json`);
+      const code = await f.code();
+      await assertRejects(
+        () =>
+          f.accounts.credentials.changeOwn(
+            f.authority,
+            f.request({
+              current: { password: "password", code },
+              newPassword: "password",
+            }),
+          ),
+        IdentityStateError,
+      );
+      assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), before);
+      const result = await f.accounts.credentials.changeOwn(
+        f.authority,
+        f.request({
+          current: { password: "password", code },
+          newPassword: "permanent password",
+        }),
+      );
+      assertEquals(result.passwordChangeRequired, false);
+      const next = await f.code(undefined, undefined, 1);
+      await assertRejects(
+        () => f.accounts.credentials.authenticate("alice", "password", next),
+        AuthenticationError,
+      );
+      await f.accounts.credentials.authenticate(
+        "alice",
+        "permanent password",
+        next,
+      );
+    },
+    {},
+    { key: "key" },
+    true,
+  ));
+
+Deno.test("credential commands: enrollment renders a login with an unpaired surrogate and keeps it stored as is", () =>
+  credentialCommandFixture(async (f) => {
+    const login = "alice\uD800";
+    f.accounts.importAccount(
+      identityAccount({
+        id: ACCOUNT_B,
+        login,
+        passwordHash: fixturePasswordHash("password"),
+      }),
+    );
+    const owner = f.bound(f.accounts.identityById(ACCOUNT_B)!);
+    const bundle = await enrollmentWithBytes(
+      f,
+      new Uint8Array(20).fill(7),
+      owner,
+    );
+    assertEquals(
+      bundle.uri,
+      `otpauth://totp/globnotes:alice%EF%BF%BD?secret=${bundle.secret}&issuer=globnotes`,
+    );
+    const result = await f.accounts.credentials.changeOwn(
+      owner,
+      f.request({
+        authenticator: {
+          kind: "enroll",
+          key: bundle.key,
+          code: await f.code(bundle.key, "base32"),
+        },
+      }),
+    );
+    assert(result.totpEnabled);
+    assertEquals(f.accounts.byId(ACCOUNT_B)!.login, login);
+    assertEquals(f.accounts.byId(ACCOUNT_B)!.totpKey, bundle.key);
+    const setup = await totpEnrolment(login);
+    assertEquals(
+      setup.uri,
+      `otpauth://totp/globnotes:alice%EF%BF%BD?secret=${setup.secret}&issuer=globnotes`,
+    );
+  }));
+
+fixtureTest(
+  "credential commands: overlapping fixed-byte enrollments restore native randomness before rendering settles",
+  (scope) => {
+    const gates = [
+      fixtureGate<string>(scope),
+      fixtureGate<string>(scope),
+      fixtureGate<string>(scope),
+    ];
+    const uris: string[] = [];
+    return credentialCommandFixture(async (f) => {
+      f.accounts.importAccount(
+        identityAccount({
+          id: ACCOUNT_B,
+          login: "bob",
+          passwordHash: fixturePasswordHash("password"),
+        }),
+      );
+      const bob = f.bound(f.accounts.identityById(ACCOUNT_B)!);
+      const native = crypto.getRandomValues;
+      const first = enrollmentWithBytes(f, new Uint8Array(20).fill(1));
+      const second = enrollmentWithBytes(f, new Uint8Array(20).fill(2), bob);
+      assertStrictEquals(crypto.getRandomValues, native);
+      assertEquals(uris.length, 2);
+      gates[0].resolve(`qr:${uris[0]}`);
+      const a = await first;
+      gates[1].resolve(`qr:${uris[1]}`);
+      const b = await second;
+      assertStrictEquals(crypto.getRandomValues, native);
+      assertNotEquals(a.key, b.key);
+      const pending = f.accounts.credentials.beginEnrollment(f.authority);
+      assertEquals(uris.length, 3);
+      gates[2].resolve(`qr:${uris[2]}`);
+      const later = await pending;
+      assertNotEquals(later.key, a.key);
+      assertNotEquals(later.key, b.key);
+    }, {
+      renderQr: (uri) => {
+        const gate = gates[uris.length];
+        uris.push(uri);
+        return gate.promise;
+      },
+    });
+  },
+);
 
 Deno.test("credential commands: foreign authority and another account's candidate cannot change this account", () =>
   credentialCommandFixture(async (f) => {

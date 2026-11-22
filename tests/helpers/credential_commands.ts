@@ -10,6 +10,7 @@ import {
 } from "../../server/auth/account_credentials.ts";
 import { bindCredentialAuthority } from "../../server/auth/internal/account_credentials.ts";
 import { StoredConfigConflict } from "../../server/config/file_store.ts";
+import type { TotpEnrollmentBundle } from "../../server/auth/totp_enrolment.ts";
 import { createOperationLease } from "../../server/operation_lease.ts";
 import {
   InstanceSessions,
@@ -133,13 +134,13 @@ export async function credentialCommandFixture(
   });
 }
 /** Deterministic server issuance for effective-key identity controls only. */
-export async function enrollmentWithBytes(
+export function enrollmentWithBytes(
   fixture: CommandFixture,
   bytes: Uint8Array,
   authority = fixture.authority,
-) {
+): Promise<TotpEnrollmentBundle> {
   if (bytes.length !== 20) {
-    throw new Error("Candidate fixture requires 20 bytes");
+    return Promise.reject(new Error("Candidate fixture requires 20 bytes"));
   }
   const random = crypto.getRandomValues;
   crypto.getRandomValues = function <T extends ArrayBufferView>(array: T): T {
@@ -149,8 +150,10 @@ export async function enrollmentWithBytes(
     }
     return random.call(crypto, array) as T;
   };
+  // beginEnrollment draws candidate bytes synchronously, so the stub is
+  // restored before any renderer settles; overlapping calls never inherit it.
   try {
-    return await fixture.accounts.credentials.beginEnrollment(authority);
+    return fixture.accounts.credentials.beginEnrollment(authority);
   } finally {
     crypto.getRandomValues = random;
   }

@@ -407,8 +407,12 @@ export function bindAccountCredentials(
         throw new StoredConfigConflict();
       }
       const initial = store.byId(authority.accountId)!;
+      // A forced change must end the temporary password, not re-issue it to
+      // whoever handed it out. Checked before any current code is spent.
       if (
-        initial.passwordChangeRequired && request.newPassword === undefined
+        initial.passwordChangeRequired &&
+        (request.newPassword === undefined ||
+          await verify(request.newPassword, initial.passwordHash))
       ) throw new IdentityStateError();
       let attempt: EnrollmentAttempt | undefined;
       let confirmed: StoredAuthenticator | undefined;

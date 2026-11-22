@@ -13,6 +13,11 @@ export interface TotpEnrollmentBundle {
   readonly qr: string;
 }
 export type EnrollmentRenderer = (uri: string) => Promise<string>;
+/** Display label only: any accepted login, including one with an unpaired
+ * surrogate, encodes. The stored login itself is never rewritten. */
+function displayLabel(username: string): string {
+  return encodeURIComponent(username.toWellFormed());
+}
 /** Presentation only. The credential aggregate owns issuance and generation. */
 export async function renderAccountTotpEnrollment(
   username: string,
@@ -21,7 +26,7 @@ export async function renderAccountTotpEnrollment(
 ): Promise<TotpEnrollmentBundle> {
   const secret = storedTotpManualSecret(candidate);
   const uri = `otpauth://totp/globnotes:${
-    encodeURIComponent(username)
+    displayLabel(username)
   }?secret=${secret}&issuer=globnotes`;
   return Object.freeze({ key: secret, secret, uri, qr: await render(uri) });
 }
@@ -37,7 +42,7 @@ export async function totpEnrolment(
   ).join("");
   const secret = totpSecretFromRawKey(key);
   const uri = `otpauth://totp/globnotes:${
-    encodeURIComponent(username.trim() || "globnotes")
+    displayLabel(username.trim() || "globnotes")
   }?secret=${secret}&issuer=globnotes`;
   return { key, secret, uri, qr: await QRCode.toDataURL(uri, { margin: 1 }) };
 }
