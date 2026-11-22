@@ -22,6 +22,82 @@ const NOW = 1_800_000_000_000;
 const base32 = (bytes: Uint8Array) => encodeBase32(bytes).replace(/=+$/, "");
 const utf8 = (text: string) => new TextEncoder().encode(text);
 
+for (
+  const replacement of [
+    { key: "raw replacement" },
+    { key: "B".repeat(32) },
+    { key: "explicit UTF-8", encoding: null },
+    { key: "C".repeat(32), encoding: "base32" as const },
+  ]
+) {
+  Deno.test(`stored TOTP replacement: key and encoding replace together ${JSON.stringify(replacement)}`, () =>
+    identityFixture(async (root) => {
+      const accounts = new AccountRepository(root);
+      const original = accounts.importAccount(identityAccount({
+        passwordHash: fixturePasswordHash("password"),
+        totpKey: "A".repeat(32),
+        totpKeyEncoding: "base32",
+        lastTotpStep: 100,
+      }));
+      const changed = accounts.changeCredentials(original.id, 0, {
+        totpKey: replacement.key,
+        ...("encoding" in replacement
+          ? { totpKeyEncoding: replacement.encoding }
+          : {}),
+      }, UPDATE);
+      assertEquals(
+        changed,
+        identityAccount({
+          passwordHash: original.passwordHash,
+          totpKey: replacement.key,
+          ...("encoding" in replacement
+            ? { totpKeyEncoding: replacement.encoding }
+            : {}),
+          lastTotpStep: null,
+          credentialRevision: 1,
+          credentialUpdateId: UPDATE,
+        }),
+      );
+      const reopened = new AccountRepository(root);
+      assertEquals(reopened.byId(original.id), changed);
+      const signing = new SessionRepository(root);
+      signing.initialize();
+      const sessions = new InstanceSessions(reopened, signing, {
+        expirySeconds: 1000,
+      }, { now: () => NOW });
+      const secret = replacement.encoding === "base32"
+        ? replacement.key
+        : base32(utf8(replacement.key));
+      const token = await sessions.login({
+        username: "alice",
+        password: "password",
+        totp: await authenticatorCode(secret, NOW),
+      });
+      assertEquals(
+        (await sessions.validateToken(token.access_token)).accountId,
+        original.id,
+      );
+      const removed = reopened.changeCredentials(original.id, 1, {
+        totpKey: null,
+      }, UPDATE);
+      assertEquals(
+        removed,
+        identityAccount({
+          passwordHash: original.passwordHash,
+          totpKey: null,
+          lastTotpStep: null,
+          credentialRevision: 2,
+          credentialUpdateId: UPDATE,
+        }),
+      );
+      assertEquals(Object.hasOwn(removed, "totpKeyEncoding"), false);
+      assertEquals(
+        new AccountRepository(root).storedAuthenticator(original.id),
+        { kind: "none" },
+      );
+    }));
+}
+
 Deno.test("stored TOTP upgrade: effective legacy aliases retain the persisted replay floor", () =>
   identityFixture((root) => {
     const accounts = new AccountRepository(root);
@@ -36,6 +112,129 @@ Deno.test("stored TOTP upgrade: effective legacy aliases retain the persisted re
       100,
     );
   }));
+
+for (const lane of ["access", "setup"]) {
+  Deno.test(`stored TOTP replacement: legacy ${lane} replaces a marked key as UTF-8 and removes both fields`, () =>
+    identityFixture(async (vault, rootScope) => {
+      await Deno.mkdir(`${vault}/.globnotes`);
+      const path = `${vault}/.globnotes/config.json`;
+      const oldKey = "A".repeat(32), newKey = "raw replacement";
+      await Deno.writeTextFile(
+        path,
+        JSON.stringify({
+          ...(lane === "access" ? { auth_type: "totp" } : {}),
+          username: "alice",
+          password_hash: fixturePasswordHash("password"),
+          secret_key: "stored-secret-key",
+          totp_key: oldKey,
+          totp_key_encoding: "base32",
+        }),
+      );
+      const clock = await rootScope.acquire(
+        () => createNativeTotpClock(vault, NOW),
+        (clock) => clock.close(),
+      );
+      const server = await rootScope.acquire(
+        () =>
+          bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault }, {
+            denoArgs: clock.value.denoArgs,
+          }),
+        (server) => server.close(),
+      );
+      const call = async (
+        route: string,
+        method = "GET",
+        data?: unknown,
+        token?: string,
+      ) => {
+        const response = await fetch(`${server.value.baseUrl}/_/api/${route}`, {
+          method,
+          headers: {
+            "content-type": "application/json",
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+          },
+          ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+        });
+        return { status: response.status, body: await response.json() };
+      };
+      const login = (code = "") =>
+        call("token", "POST", {
+          username: "alice",
+          password: "password" + code,
+        });
+      let token: string | undefined;
+      const oldCode = await clock.value.code(oldKey);
+      if (lane === "access") {
+        const initial = await login(oldCode);
+        assertEquals(initial.status, 200);
+        token = initial.body.access_token;
+        await clock.value.advanceStep();
+      }
+      const newSecret = base32(utf8(newKey));
+      const newCode = await clock.value.code(newSecret);
+      const current = lane === "access"
+        ? (await call("access", "GET", undefined, token)).body
+        : null;
+      const replaced = await call(lane, lane === "access" ? "PUT" : "POST", {
+        mode: "password",
+        username: "alice",
+        ...(lane === "setup" ? { password: "password" } : {
+          revision: current.revision,
+          signature: current.signature,
+          currentPassword: "password",
+          currentTotp: await clock.value.code(oldKey),
+        }),
+        totpEnabled: true,
+        totpKey: newKey,
+        totpCode: newCode,
+      }, token);
+      assertEquals(
+        replaced.status,
+        200,
+        JSON.stringify({ response: replaced.body, logs: server.value.logs() }),
+      );
+      const saved = JSON.parse(await Deno.readTextFile(path));
+      assertEquals([saved.totp_key, saved.totp_key_encoding], [newKey, null]);
+      await clock.value.advanceStep();
+      const signedIn = await login(await clock.value.code(newSecret));
+      assertEquals(signedIn.status, 200);
+      token = signedIn.body.access_token;
+      assertEquals(
+        (await call("auth-check", "GET", undefined, token)).status,
+        200,
+      );
+      const view = (await call("access", "GET", undefined, token)).body;
+      await clock.value.advanceStep();
+      const removed = await call("access", "PUT", {
+        mode: "password",
+        totpEnabled: false,
+        revision: view.revision,
+        signature: view.signature,
+        currentPassword: "password",
+        currentTotp: await clock.value.code(newSecret),
+      }, token);
+      assertEquals(removed.status, 200);
+      const cleared = JSON.parse(await Deno.readTextFile(path));
+      assertEquals(
+        [
+          Object.hasOwn(cleared, "totp_key"),
+          Object.hasOwn(cleared, "totp_key_encoding"),
+        ],
+        [false, false],
+      );
+      const passwordOnly = await login();
+      assertEquals(passwordOnly.status, 200);
+      assertEquals(
+        (await call(
+          "auth-check",
+          "GET",
+          undefined,
+          passwordOnly.body.access_token,
+        )).status,
+        200,
+      );
+    }));
+}
 
 Deno.test("stored TOTP upgrade: alias classes preserve floor, block-boundary and genuinely different keys reset it", () =>
   identityFixture(async (root) => {

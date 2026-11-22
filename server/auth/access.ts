@@ -278,12 +278,20 @@ export async function updateAccess(
     if (protectedMode) {
       if (!auth || data.username !== undefined) next.username = username;
       if (newHash !== undefined) next.password_hash = newHash;
-      if (enabled && newKey !== undefined) next.totp_key = newKey;
+      if (enabled && newKey !== undefined) {
+        // This legacy enrollment lane supplies raw UTF-8, including replacements.
+        next.totp_key = newKey;
+        next.totp_key_encoding = null;
+      }
       if (securityChanged) {
         next.secret_key = [...crypto.getRandomValues(new Uint8Array(32))].map((
           byte,
         ) => byte.toString(16).padStart(2, "0")).join("");
       }
+    }
+    if (!enabled) {
+      delete next.totp_key;
+      delete next.totp_key_encoding;
     }
     try {
       config.saveStoredConfig(next, snapshot.persistence);

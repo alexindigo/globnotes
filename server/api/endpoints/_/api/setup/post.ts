@@ -61,6 +61,12 @@ export default async function (
     }
     try {
       config.assertStoredConfigUnchanged(snapshot);
+      // Setup replaces the authenticator as a whole, never inheriting metadata
+      // from an unfinished setup record. Enrollment here supplies raw UTF-8.
+      if (base) {
+        delete base.totp_key;
+        delete base.totp_key_encoding;
+      }
       if (data.mode === "none") {
         config.saveStoredConfig({
           ...base,
@@ -124,7 +130,9 @@ export default async function (
           username: data.username.toLowerCase(),
           password_hash: passwordHash,
           secret_key: secretKey,
-          ...(data.totpKey !== undefined ? { totp_key: data.totpKey } : {}),
+          ...(data.totpKey !== undefined
+            ? { totp_key: data.totpKey, totp_key_encoding: null }
+            : {}),
         }, snapshot);
         config.authType = authType;
         config.setupRequired = false;

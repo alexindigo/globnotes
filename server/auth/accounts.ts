@@ -6,6 +6,7 @@ import { StoredConfigConflict } from "../config/file_store.ts";
 import {
   decodeStoredAuthenticator,
   sameStoredTotpSecret,
+  serializeStoredTotpSecret,
   type StoredAuthenticator,
   type TotpKeyEncoding,
 } from "./credentials.ts";
@@ -283,14 +284,27 @@ export class AccountRepository {
     if (!account || account.credentialRevision !== credentialRevision) {
       throw new StoredConfigConflict();
     }
-    const candidate = { ...account, ...changes };
-    if (changes.totpKey === null) delete candidate.totpKeyEncoding;
     const before = this.#decode(account);
-    const after = decodeStoredAuthenticator(
-      candidate.totpKey,
-      candidate.totpKeyEncoding,
-      null,
-    );
+    // A replacement is one codec value, never a key merged with old metadata.
+    // Omitted encoding on a supplied key means historical UTF-8, not inheritance.
+    const after = Object.hasOwn(changes, "totpKey")
+      ? decodeStoredAuthenticator(
+        changes.totpKey,
+        changes.totpKeyEncoding,
+        null,
+      )
+      : before;
+    const candidate = { ...account, ...changes };
+    if (Object.hasOwn(changes, "totpKey")) {
+      delete candidate.totpKeyEncoding;
+      if (after.kind === "totp") {
+        const stored = serializeStoredTotpSecret(after.secret);
+        candidate.totpKey = stored.key;
+        if (stored.encoding !== undefined) {
+          candidate.totpKeyEncoding = stored.encoding;
+        }
+      }
+    }
     const keepFloor = before.kind === "totp" && after.kind === "totp" &&
       sameStoredTotpSecret(before.secret, after.secret);
     const next = validateAccount({
