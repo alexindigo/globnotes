@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "readVault";
 
 /** GET /_/api/search — full-text search. Defaults ported from the Python
  * route: sort=score, order=desc, nested=true, folder=None, limit=None;

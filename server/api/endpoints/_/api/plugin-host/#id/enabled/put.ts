@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "manageVault";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 
 import { HttpError } from "@pathfinder/pathfinder";

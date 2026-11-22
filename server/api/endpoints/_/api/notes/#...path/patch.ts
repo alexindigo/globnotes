@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "editNotes";
 
 import { note_exists, note_not_found } from "@server/api_messages.ts";
 import type { NoteUpdate } from "@server/notes/models.ts";

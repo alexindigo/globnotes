@@ -10,16 +10,75 @@
  * prefix overlap — layer0 is the package's own tree).
  */
 
-import type { Middleware } from "@pathfinder/pathfinder";
+import { HttpError, type Middleware } from "@pathfinder/pathfinder";
+import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
+import {
+  createHttpPolicy,
+  type HttpLease,
+  type HttpOperation,
+  type InstanceAuth,
+  protectVaultResponse,
+  replacePrivateResponse,
+} from "@server/auth/http_policy.ts";
 
 import { enforceAuth } from "@server/auth/middleware.ts";
 import { assertVaultTarget } from "@server/config/projection.ts";
 import { state } from "@server/state.ts";
+import { logger } from "@server/logger.ts";
 
 declare module "@pathfinder/pathfinder" {
   interface Meta {
     auth?: boolean;
+    operation?: HttpOperation;
+    disclosure?: "receipt";
   }
+  interface State {
+    identityLease?: HttpLease;
+  }
+}
+
+/** Prepared only; production activation belongs to I14. */
+export function createIdentityAuthMiddleware(auth: InstanceAuth): Middleware {
+  const policy = createHttpPolicy(auth);
+  return async (request, context) => {
+    if (context.miss !== undefined) return;
+    const lease = await policy.admit(request._raw, context.meta.operation);
+    if (!lease) return;
+    context.state.identityLease = lease;
+    // The admitted mutation's own outcome sink owns its exact acknowledgment.
+    if (
+      context.meta.operation === "editNotes" ||
+      context.meta.disclosure === "receipt"
+    ) return;
+    return (response) => {
+      try {
+        return protectVaultResponse(lease, response._raw);
+      } catch (error) {
+        if (error instanceof OperationError) {
+          return replacePrivateResponse(
+            response._raw,
+            toOperationResponse(error),
+          );
+        }
+        if (error instanceof HttpError) {
+          return replacePrivateResponse(
+            response._raw,
+            Response.json({ detail: error.detail }, {
+              status: error.status,
+              headers: error.headers,
+            }),
+          );
+        }
+        // Preserve Pathfinder's generic 500 outcome while retaining source
+        // custody until consumption, including abort/lifetime/unknown failures.
+        logger.error("Private response refused:", error);
+        return replacePrivateResponse(
+          response._raw,
+          new Response(null, { status: 500 }),
+        );
+      }
+    };
+  };
 }
 
 export default (async (request, context) => {

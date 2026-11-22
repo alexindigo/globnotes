@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "readVault";
 
 import { note_not_found } from "@server/api_messages.ts";
 import { InvalidPathError, NoteNotFoundError } from "@server/notes/models.ts";

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "readVault";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { enforceAuthMetadata } from "@server/auth/middleware.ts";
 import { browserChange } from "@server/hub/browser_changes.ts";

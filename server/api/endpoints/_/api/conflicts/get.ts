@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "readVault";
 import { HttpError } from "@pathfinder/pathfinder";
 import { listConflicts } from "@server/hub/conflicts.ts";
 import { state } from "@server/state.ts";

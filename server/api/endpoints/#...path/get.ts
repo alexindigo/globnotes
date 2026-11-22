@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "shellOrFile";
+export { createIdentityCatchAll } from "@server/catchall.ts";
 
 /**
  * Root catch-all route: /_/ static assets, vault files and note pages.

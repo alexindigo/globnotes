@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "readVault";
+export { createIdentityFileGet } from "@server/files/response.ts";
 
 import { file_not_found, invalid_file_path } from "@server/api_messages.ts";
 import { FileNotFoundError, ValueError } from "@server/files/file_serving.ts";

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "readVault";
 
 /** GET /_/api/tags — all indexed tags. Authenticated like the Python route. */
 

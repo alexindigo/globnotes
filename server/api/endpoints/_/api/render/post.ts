@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "readVault";
 
 import { renderMarkdown } from "@server/render/pipeline.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";

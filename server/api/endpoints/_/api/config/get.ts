@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "session";
 
 /** GET /_/api/config — server-side config the UI needs at boot.
  * Public by design (the client learns the auth type from it). */

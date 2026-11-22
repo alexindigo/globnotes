@@ -76,11 +76,26 @@ function register(
     annotations: tool.annotations,
   }, async (args): Promise<CallToolResult> => {
     try {
-      const output = await tool.run(args, ctx);
-      return {
+      ctx.readLease?.assertCurrent();
+      const operation = await ctx.operationLease?.(
+        tool.write ? "editNotes" : "readVault",
+      );
+      ctx.readLease?.assertCurrent();
+      const output = await tool.run(
+        args,
+        operation && tool.write ? { ...ctx, lease: operation } : ctx,
+      );
+      const result = {
         content: [{ type: "text" as const, text: resultText(output) }],
         structuredContent: output.structured as Record<string, unknown>,
       };
+      // A committed write's result is its own acknowledgment, never a stale
+      // read; only read results recheck before they leave the tool.
+      if (!tool.write) {
+        operation?.assertCurrent();
+        ctx.readLease?.assertCurrent();
+      }
+      return result;
     } catch (error) {
       const path = (args as { path?: unknown }).path;
       const failure = describeToolError(
@@ -109,7 +124,12 @@ export function createGlobnotesMcpServer(
     capabilities: { tools: { listChanged: false } },
     instructions: INSTRUCTIONS,
   });
-  const ctx: ToolContext = { vault: access.vault, lease: access.lease };
+  const ctx: ToolContext = {
+    vault: access.vault,
+    lease: access.lease,
+    readLease: access.readLease,
+    operationLease: access.operationLease,
+  };
   for (const tool of READ_TOOLS) register(server, tool, ctx);
   for (const tool of WRITE_TOOLS) {
     if (access.lease !== null || access.calledTools?.includes(tool.name)) {

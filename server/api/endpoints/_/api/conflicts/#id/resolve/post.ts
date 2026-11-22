@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "editNotes";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { noteMutationLease } from "@server/auth/middleware.ts";
 import { ConflictStaleError } from "@server/hub/conflicts.ts";

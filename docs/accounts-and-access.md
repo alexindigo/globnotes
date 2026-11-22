@@ -245,3 +245,23 @@ An aborted retry or status request stops waiting without cancelling the admitted
 operation. Unresolved publication reports unavailable state, never a false
 noncommit. If staged writes cannot be discarded before the journal is written,
 the transaction retains their reservations for offline recovery.
+
+## Prepared HTTP access requirements
+
+Every discovered endpoint declares the operation it requires (`public`,
+`session`, `manageOwnAccount`, `createVault`, `readVault`, `editNotes`,
+`manageVault`, `shellOrFile` or `mcp`). The prepared middleware admits from that
+declaration and the concrete vault target, never from the HTTP method: a missing
+declaration is refused, administrative GETs need Admin and render POST needs
+View. Read responses, including HEAD, conditional, range and bodyless replies,
+are checked again when their status and each body chunk are delivered. A
+refusal replaces the private reply and releases its source when the refusal
+itself is read or cancelled. Note writes and Access receipts keep their own
+acknowledgments.
+
+Direct and API file reads share one read lease. MCP captures each caller's own
+access and takes a per-tool lease, so a View caller keeps the read tools while
+another account can edit. Read replies are rechecked at delivery; a reply that
+carries a committed write stays its acknowledgment. These adapters are
+injection-only; the existing production composition stays active until the
+coordinated cutover.

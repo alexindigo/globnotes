@@ -31,8 +31,17 @@ import type { NoteMutationLease } from "../plugins/lifecycle.ts";
 import { state } from "../state.ts";
 import { formatVersion } from "../../shared/version.ts";
 import type { RateLimiter } from "./rate_limit.ts";
-import { createGlobnotesMcpServer, type McpAccess } from "./server.ts";
+import {
+  createGlobnotesMcpServer,
+  type McpAccess,
+  WRITE_TOOLS,
+} from "./server.ts";
 import { type McpVault, stateVault } from "./vault.ts";
+import {
+  type InstanceAuth,
+  protectPrivateResponse,
+} from "../auth/http_policy.ts";
+import type { VaultAuthorityLease, VaultOperation } from "../auth/authority.ts";
 
 export interface McpEndpointAdapters {
   vault: McpVault;
@@ -46,6 +55,13 @@ export interface McpEndpointAdapters {
   version(): string;
   /** The tool-call rate limit (server/mcp/rate_limit.ts); null = none. */
   rateLimiter: RateLimiter | null;
+  /** Prepared caller-specific authority; the legacy adapter remains active. */
+  callerAccess?(request: Request): Promise<{
+    subject: string | null;
+    lease: NoteMutationLease | null;
+    readLease: VaultAuthorityLease;
+    operationLease(operation: VaultOperation): Promise<VaultAuthorityLease>;
+  }>;
 }
 
 /** The running server's adapters (the default). main.ts passes the
@@ -242,7 +258,15 @@ export function createMcpEndpoint(
       const limiter = adapters.rateLimiter;
       let lease: NoteMutationLease | null = null;
       let subject: string | null = null;
-      if (adapters.writable()) {
+      let readLease: VaultAuthorityLease | undefined;
+      let operationLease: McpAccess["operationLease"];
+      if (adapters.callerAccess) {
+        const caller = await adapters.callerAccess(request);
+        lease = caller.lease;
+        readLease = caller.readLease;
+        operationLease = caller.operationLease;
+        subject = caller.subject;
+      } else if (adapters.writable()) {
         lease = await adapters.lease(request);
         // The lease is captured; the subject is only for the rate limit.
         if (limiter) subject = await adapters.authenticateRead(request);
@@ -257,7 +281,7 @@ export function createMcpEndpoint(
         );
       }
       const legacyEra = await isLegacyRequest(request);
-      const tools = limiter || !lease
+      const tools = limiter || !lease || readLease
         ? await calledTools(request, legacyEra)
         : [];
       if (limiter && tools.length > 0) {
@@ -284,6 +308,8 @@ export function createMcpEndpoint(
       const access: McpAccess = {
         vault: adapters.vault,
         lease,
+        readLease,
+        operationLease,
         ...(lease ? {} : { calledTools: tools }),
       };
       const authInfo: AuthInfo = {
@@ -292,11 +318,20 @@ export function createMcpEndpoint(
         scopes: lease ? ["notes:read", "notes:write"] : ["notes:read"],
         extra: { [ACCESS_KEY]: access },
       };
-      return await served(async () =>
+      const response = await served(async () =>
         legacyEra
           ? await legacy(request, authInfo)
           : await modern.fetch(request, { authInfo })
       );
+      // Read replies are disclosed only while the caller can still read. A
+      // reply carrying a write outcome is that write's acknowledgment: refusing
+      // it after commit would report an applied change as not applied.
+      const writes = tools.filter((name) =>
+        WRITE_TOOLS.some((tool) => tool.name === name)
+      );
+      return readLease && writes.length === 0
+        ? protectPrivateResponse(readLease, response)
+        : response;
     },
     notAllowed(request) {
       if (foreignOrigin(request)) {
@@ -305,5 +340,26 @@ export function createMcpEndpoint(
       return jsonRpcError(405, "Method not allowed.", { Allow: "POST" });
     },
     close: () => modern.close(),
+  };
+}
+
+/** A View caller remains a reader even when another account can edit. */
+export function identityMcpCaller(auth: InstanceAuth) {
+  return async (request: Request) => {
+    const readLease = await auth.readLease(request);
+    const capabilities = await auth.capabilities(request);
+    const lease = capabilities.canEdit
+      ? await auth.noteMutationLease(request)
+      : null;
+    readLease.assertCurrent();
+    return {
+      subject: readLease.principal.kind === "account"
+        ? readLease.principal.accountId
+        : null,
+      readLease,
+      lease,
+      operationLease: (operation: VaultOperation) =>
+        auth.lease(request, operation),
+    };
   };
 }

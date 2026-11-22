@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "editNotes";
 
 import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
 import {

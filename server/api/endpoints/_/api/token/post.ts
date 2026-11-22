@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "public";
 
 /**
  * POST /_/api/token — log in, receive a bearer token. Public by design

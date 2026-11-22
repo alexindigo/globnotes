@@ -17,6 +17,10 @@ import { FileNotFoundError, ValueError } from "./files/file_serving.ts";
 import { guessType } from "./files/mimetypes.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "./state.ts";
+import type { InstanceAuth } from "./auth/http_policy.ts";
+import type { VaultAuthorityLease } from "./auth/authority.ts";
+import type { FileServing } from "./files/file_serving.ts";
+import { servedFileResponse } from "./files/response.ts";
 
 const MARKDOWN_EXT = ".md";
 // cwd-relative, same as the Python server's "client/dist/index.html".
@@ -64,7 +68,11 @@ function isFile(p: string): boolean {
   }
 }
 
-export async function catchAll(request: PathfinderRequest): Promise<Response> {
+export async function catchAll(request: PathfinderRequest, adapters?: {
+  auth: InstanceAuth;
+  files: FileServing;
+  shell?: () => Response;
+}): Promise<Response> {
   // Static client assets live under /_/ before anything vault-space.
   if (request.path === "/_" || request.path.startsWith("/_/")) {
     const rel = request.path === "/_" ? "" : request.path.slice(3);
@@ -95,21 +103,23 @@ export async function catchAll(request: PathfinderRequest): Promise<Response> {
     // broken-image behavior honest). A note page still wins for dotted
     // titles (e.g. a note named "a/v2.1").
     try {
-      await enforceAuth(request._raw);
-      const served = state.files.get(vaultPath);
-      const headers: Record<string, string> = {
-        "content-type": served.mediaType,
-        ...served.headers,
-      };
-      if (served.downloadName !== null) {
-        headers["content-disposition"] =
-          `attachment; filename="${served.downloadName}"`;
-      }
-      return new Response(served.body as BodyInit, { headers });
+      let lease: VaultAuthorityLease | undefined;
+      if (adapters) lease = await adapters.auth.readLease(request._raw);
+      else await enforceAuth(request._raw);
+      const served = (adapters?.files ?? state.files).get(
+        vaultPath,
+        lease?.assertCurrent,
+      );
+      return servedFileResponse(served, request._raw, lease);
     } catch (e) {
       if (e instanceof FileNotFoundError) {
         if (
-          !isFile(path.join(state.files.storagePath, vaultPath + MARKDOWN_EXT))
+          !isFile(
+            path.join(
+              (adapters?.files ?? state.files).storagePath,
+              vaultPath + MARKDOWN_EXT,
+            ),
+          )
         ) {
           throw new HttpError(404, file_not_found);
         }
@@ -122,5 +132,14 @@ export async function catchAll(request: PathfinderRequest): Promise<Response> {
   }
 
   // Everything else is a note page (the client 404s unknown titles).
-  return serveIndex();
+  return (adapters?.shell ?? serveIndex)();
+}
+
+export function createIdentityCatchAll(
+  auth: InstanceAuth,
+  files: FileServing,
+  shell?: () => Response,
+) {
+  return (request: PathfinderRequest) =>
+    catchAll(request, { auth, files, shell });
 }

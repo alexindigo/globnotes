@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "public";
 
 /**
  * POST /_/api/setup — complete first-run setup: disable auth, read-only

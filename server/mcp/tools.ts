@@ -20,6 +20,7 @@ import {
   NoteNotFoundError,
 } from "../notes/models.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
+import type { VaultAuthorityLease, VaultOperation } from "../auth/authority.ts";
 import { notFound, READ_ONLY_MESSAGE, ToolError } from "./errors.ts";
 import { codePointLength, codePointSlice } from "./note_parts.ts";
 import { highlightsToText } from "./snippets.ts";
@@ -40,6 +41,8 @@ export interface ToolContext {
   vault: McpVault;
   /** The caller's write authority; null on a read-only instance. */
   lease: NoteMutationLease | null;
+  readLease?: VaultAuthorityLease;
+  operationLease?(operation: VaultOperation): Promise<VaultAuthorityLease>;
 }
 
 export interface ToolAnnotations {

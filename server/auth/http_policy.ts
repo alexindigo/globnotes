@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+import { HttpError } from "@pathfinder/pathfinder";
+import { createOwnershipScope } from "../../shared/ownership.js";
+import { logger } from "../logger.ts";
+import type {
+  AuthorityVault,
+  InstanceAuthorityLease,
+  VaultAuthorityLease,
+} from "./authority.ts";
+import type { createInstanceAuth } from "./middleware.ts";
+
+export const HTTP_OPERATIONS = [
+  "public",
+  "session",
+  "manageOwnAccount",
+  "createVault",
+  "readVault",
+  "editNotes",
+  "manageVault",
+  "shellOrFile",
+  "mcp",
+] as const;
+export type HttpOperation = typeof HTTP_OPERATIONS[number];
+export type InstanceAuth = ReturnType<typeof createInstanceAuth>;
+export type HttpLease = InstanceAuthorityLease | VaultAuthorityLease;
+
+/** Instance operations never consult the selected vault. */
+export function singleIdentityVault(vault: AuthorityVault) {
+  return (request: Request): AuthorityVault => {
+    const targets = new URL(request.url).searchParams.getAll("vault");
+    if (
+      targets.length > 1 || targets.length === 1 && targets[0] !== "globnotes"
+    ) {
+      throw new HttpError(400, "Unsupported vault target.");
+    }
+    return vault;
+  };
+}
+
+/** Status/headers and each actual body delivery share the admitted lease. */
+export function protectVaultResponse(
+  lease: HttpLease,
+  response: Response,
+): Response {
+  const body = response.body;
+  const init = {
+    status: response.status,
+    statusText: response.statusText,
+    headers: new Headers(response.headers),
+  };
+  lease.assertCurrent();
+  return new Response(body ? lease.stream(body) : null, init);
+}
+
+/** Pathfinder forbids touching the original body during its post phase. P02
+ * retains it until the refusal is consumed/cancelled. Cancellation is started,
+ * not awaited: an uncooperative private source must not hold the refusal open. */
+function privateSourceCustody(original: Response) {
+  const scope = createOwnershipScope();
+  const source = original.body;
+  scope.defer(() => {
+    if (source) {
+      source.cancel().catch((error) =>
+        logger.warning("Private response cleanup failed:", error)
+      );
+    }
+  });
+  return scope;
+}
+/** Direct adapters may release a refused source immediately; post-functions use
+ * replacePrivateResponse instead so Pathfinder sees an untouched original. */
+export async function protectPrivateResponse(
+  lease: HttpLease,
+  response: Response,
+): Promise<Response> {
+  try {
+    return protectVaultResponse(lease, response);
+  } catch (error) {
+    const released = await privateSourceCustody(response).releaseAll();
+    released.throwIfFailed(error);
+    throw error;
+  }
+}
+export async function replacePrivateResponse(
+  original: Response,
+  refusal: Response,
+): Promise<Response> {
+  const scope = privateSourceCustody(original);
+  const payload = new Uint8Array(await refusal.arrayBuffer());
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const released = await scope.releaseAll();
+        released.throwIfFailed();
+        controller.enqueue(payload);
+        controller.close();
+      },
+      async cancel() {
+        const released = await scope.releaseAll();
+        released.throwIfFailed();
+      },
+    }, { highWaterMark: 0 }),
+    {
+      status: refusal.status,
+      statusText: refusal.statusText,
+      headers: refusal.headers,
+    },
+  );
+}
+
+/** Discovered metadata, not a path or HTTP-method switchboard. Mixed surfaces
+ * bind their own operation-qualified lease in catch-all/MCP consumers. */
+export function createHttpPolicy(auth: InstanceAuth) {
+  return Object.freeze({
+    async admit(
+      request: Request,
+      operation: unknown,
+    ): Promise<HttpLease | null> {
+      if (
+        typeof operation !== "string" ||
+        !HTTP_OPERATIONS.includes(operation as HttpOperation)
+      ) {
+        throw new HttpError(403, "Endpoint access requirement is missing.");
+      }
+      if (
+        operation === "public" || operation === "shellOrFile" ||
+        operation === "mcp"
+      ) return null;
+      if (operation === "session") {
+        return await auth.instanceLease(request, "readInstance");
+      }
+      if (operation === "manageOwnAccount" || operation === "createVault") {
+        return await auth.instanceLease(request, operation);
+      }
+      return await auth.lease(
+        request,
+        operation as "readVault" | "editNotes" | "manageVault",
+      );
+    },
+    async read(
+      request: Request,
+      operation: "readVault" | "manageVault",
+      prepare: () => Promise<Response>,
+    ): Promise<Response> {
+      const lease = await auth.lease(request, operation);
+      return protectPrivateResponse(lease, await prepare());
+    },
+    async json<T>(
+      request: Request,
+      operation: "session" | "readVault" | "manageVault",
+      prepare: () => Promise<T>,
+    ): Promise<Response> {
+      const lease = operation === "session"
+        ? await auth.instanceLease(request, "readInstance")
+        : await auth.lease(request, operation);
+      const handle = await lease.read(prepare);
+      return new Response(lease.body(handle), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+}

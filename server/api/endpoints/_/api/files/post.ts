@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "editNotes";
 
 import { invalid_file_name } from "@server/api_messages.ts";
 import { ValueError } from "@server/files/file_serving.ts";

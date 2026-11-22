@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "manageVault";
 
 import { state } from "@server/state.ts";
 

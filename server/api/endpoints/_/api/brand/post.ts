@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "manageVault";
 
 /**
  * POST /_/api/brand — mutate the instance branding: name, accent, and

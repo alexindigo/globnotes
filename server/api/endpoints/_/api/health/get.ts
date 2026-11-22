@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "public";
 
 /** GET /_/api/health — healthcheck. Deliberately unauthenticated,
  * same as the Python server. */

@@ -115,7 +115,8 @@ export class FileServing {
     }
   }
 
-  get(relPath: string): ServedFile {
+  get(relPath: string, assertCurrent: () => void = () => {}): ServedFile {
+    assertCurrent();
     // Hidden files and directories are none of the app's business.
     if (relPath.split("/").some((s) => s.startsWith("."))) {
       throw new FileNotFoundError(`'${relPath}' not found.`);
@@ -154,8 +155,10 @@ export class FileServing {
       // Forced download.
       downloadName = path.basename(filepath);
     }
+    const body = Deno.readFileSync(filepath);
+    assertCurrent();
     return {
-      body: Deno.readFileSync(filepath),
+      body,
       mediaType,
       downloadName,
       headers,

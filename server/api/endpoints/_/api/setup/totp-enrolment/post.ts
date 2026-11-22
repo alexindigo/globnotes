@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "public";
 
 /** POST /_/api/setup/totp-enrolment — mint a TOTP key for the first-run
  * setup wizard. Public by design (the setup endpoints are), but only

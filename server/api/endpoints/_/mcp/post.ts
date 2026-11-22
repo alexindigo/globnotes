@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "mcp";
 
 /** POST /_/mcp — the MCP endpoint (server/mcp/endpoint.ts, docs/mcp.md).
  * It authenticates like the REST API itself: every MCP call is a POST, so

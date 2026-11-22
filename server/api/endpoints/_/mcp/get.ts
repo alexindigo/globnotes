@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "mcp";
 
 /** GET /_/mcp — stateless MCP has no sessions or server-initiated streams:
  * 405 with `Allow: POST` (server/mcp/endpoint.ts). */

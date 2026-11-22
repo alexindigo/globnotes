@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "manageVault";
+export const disclosure = "receipt";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import { updateAccess } from "@server/auth/access.ts";
 import { settingsWriteGuard } from "@server/auth/middleware.ts";

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "manageVault";
 
 /**
  * Legacy POST /_/api/setup/reset — configured access is now updated in

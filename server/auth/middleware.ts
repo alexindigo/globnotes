@@ -126,6 +126,13 @@ export function createInstanceAuth(adapters: {
     principal: (request: Request) => principal(request),
     lease,
     instanceLease,
+    /** Live capability flags for the request's principal and concrete vault. */
+    async capabilities(request: Request) {
+      const admitted = admission(request);
+      const value = await principal(request, admitted.sessions);
+      admitted.check();
+      return admitted.evaluator.capabilities(value);
+    },
     noteMutationLease: (request: Request) => lease(request, "editNotes"),
     readLease: (request: Request) => lease(request, "readVault"),
     async settingsWriteGuard(request: Request): Promise<() => void> {

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+export const operation = "readVault";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 
 /** GET /_/api/plugin-host/events — authenticated catalog/settings-revision/
