@@ -8,9 +8,10 @@ import {
   SessionRepository,
 } from "../server/auth/sessions.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { createNativeTotpClock } from "../client/tests/e2e/native-totp-fixture.mjs";
 import { fixtureScope } from "./helpers/fixture_scope.ts";
 import { fixturePasswordHash } from "./helpers/config.ts";
-import { authenticatorCode, settledTotpNow } from "./helpers/totp.ts";
+import { authenticatorCode } from "./helpers/totp.ts";
 import {
   identityAccount,
   identityFixture,
@@ -149,7 +150,7 @@ for (
       assertEquals(reset.lastTotpStep, saved.lastTotpStep);
     }));
 
-  Deno.test(`stored TOTP upgrade: legacy cold-start login reads note without rewriting ${JSON.stringify(stored)}`, () =>
+  Deno.test(`stored TOTP upgrade: legacy cold-start sign-in reads note without rewriting ${JSON.stringify(stored)}`, () =>
     identityFixture(async (vault, rootScope) => {
       await Deno.mkdir(`${vault}/.globnotes`);
       const path = `${vault}/.globnotes/config.json`;
@@ -172,10 +173,17 @@ for (
         `${vault}/SecretProbe.md`,
         "# Secret Probe\n\nOriginal authenticator note bytes.\n",
       );
+      const clock = await rootScope.acquire(
+        () => createNativeTotpClock(vault, NOW),
+        (clock) => clock.close(),
+      );
       for (const restart of [false, true]) {
         await fixtureScope(async (scope) => {
           const server = await scope.acquire(
-            () => bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault }),
+            () =>
+              bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault }, {
+                denoArgs: clock.value.denoArgs,
+              }),
             (server) => server.close(),
           );
           await rootScope.admit(async () => {
@@ -188,8 +196,7 @@ for (
             const secret = stored.encoding === "base32"
               ? stored.key
               : base32(utf8(stored.key));
-            const now = await settledTotpNow();
-            const code = await authenticatorCode(secret, now);
+            const code = await authenticatorCode(secret, clock.value.now());
             const response = await fetch(
               `${server.value.baseUrl}/_/api/token`,
               {
