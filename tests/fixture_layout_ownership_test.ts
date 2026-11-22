@@ -71,7 +71,6 @@ Deno.test("layout review: construction captures every input and option once befo
     const root = (await scope.acquire(() =>
       Deno.makeTempDir({ prefix: "layout-capture-" }), (root) =>
       Deno.remove(root, { recursive: true }))).value;
-    const build = await fixtureBuild(scope);
     const reads: string[] = [];
     const capture = (name: string, value: unknown) => ({
       enumerable: true,
@@ -88,7 +87,7 @@ Deno.test("layout review: construction captures every input and option once befo
     const options = Object.defineProperties({}, {
       cwd: capture("cwd", `${root}/app`),
       artifacts: capture("artifacts", `${root}/evidence`),
-      build: capture("build", build),
+      build: capture("build", undefined),
       retainPersistent: capture("retention", undefined),
     });
     const layout = await fixtureLayout(scope, inputs, options);
@@ -894,12 +893,11 @@ Deno.test("layout owner: caller-relative paths are absolute before child launch 
       await Deno.mkdir(directory);
     }
     const relative = (value: string) => path.relative(Deno.cwd(), value);
-    const build = await fixtureBuild(scope);
     const layout = await fixtureLayout(scope, {
       GLOBNOTES__VAULTS_BASEPATH: relative(root.value),
       GLOBNOTES_GLOBNOTES_PATH: relative(vault),
       GLOBNOTES__METADATA_PATH: relative(metadata),
-    }, { cwd: relative(cwd), artifacts: relative(artifacts), build });
+    }, { cwd: relative(cwd), artifacts: relative(artifacts) });
     assertEquals([
       layout.instance,
       layout.vault,
@@ -1131,7 +1129,7 @@ Deno.test("completed build: failed producer and malformed or symlink outputs nev
   }
 });
 
-Deno.test("layout owner: failed installation and failed peer disposal still release every owned root and retain borrowed bytes", async () => {
+Deno.test("layout owner: failed peer disposal after installation still releases every owned root and retains borrowed bytes", async () => {
   let instance = "", cwd = "", artifacts = "", borrowed = "";
   await fixtureScope(async (outer) => {
     const build = await fixtureBuild(outer);
@@ -1140,7 +1138,7 @@ Deno.test("layout owner: failed installation and failed peer disposal still rele
       (root) => Deno.remove(root, { recursive: true }),
     )).value;
     await Deno.writeTextFile(`${borrowed}/Note.md`, "keep real bytes");
-    const primary = Error("installation failed"),
+    const primary = Error("scenario failed after successful installation"),
       cleanup = Error("peer disposal failed");
     const error = await assertRejects(
       () =>
@@ -1177,5 +1175,233 @@ Deno.test("layout owner: failed installation and failed peer disposal still rele
       "Boot requires an issued completed-build input",
     );
     assertEquals(forged.scope.size, 0);
+  });
+});
+
+for (const failed of ["stdout", "stderr"] as const) {
+  Deno.test(`pr117: failed ${failed} log acquisition cancels its unread pipe and closes the sibling log`, async () => {
+    await fixtureScope(async (scope) => {
+      const input = await nativeLayout(scope);
+      const file = `${input.directory}/server-${failed}.log`;
+      const sibling = failed === "stdout" ? "stderr" : "stdout";
+      await Deno.writeTextFile(file, "borrowed evidence");
+      const open = Deno.open, cancel = ReadableStream.prototype.cancel;
+      const cancelled: ReadableStream[] = [], closed: string[] = [];
+      try {
+        ReadableStream.prototype.cancel = function (reason) {
+          cancelled.push(this);
+          return cancel.call(this, reason);
+        };
+        Deno.open = async (...args: Parameters<typeof Deno.open>) => {
+          const handle = await open(...args);
+          if (String(args[0]) === `${input.directory}/server-${sibling}.log`) {
+            const close = handle.close.bind(handle);
+            handle.close = () => {
+              closed.push(sibling);
+              close();
+            };
+          }
+          return handle;
+        };
+        await assertRejects(
+          () =>
+            bootPrefixAuthFixture({
+              ...input,
+              healthFetch: () => Promise.resolve(new Response(null)),
+            }),
+          Deno.errors.AlreadyExists,
+          `File exists (os error 17): open '${file}'`,
+        );
+        assertEquals(cancelled.map((stream) => stream.locked), [false]);
+        const reader = cancelled[0].getReader();
+        try {
+          assertEquals(
+            await bounded(reader.closed, "unread native pipe closed"),
+            undefined,
+          );
+        } finally {
+          reader.releaseLock();
+        }
+        assertEquals(closed, [sibling]);
+        assertEquals(await Deno.readTextFile(file), "borrowed evidence");
+        const record = JSON.parse(
+          await Deno.readTextFile(`${input.directory}/startup-ownership.json`),
+        );
+        await absentRoot(record.cwd);
+        await absentRoot(record.instance);
+      } finally {
+        Deno.open = open;
+        ReadableStream.prototype.cancel = cancel;
+      }
+    });
+  });
+}
+
+Deno.test("pr117: installation fails after a real asset write and releases partial owned paths, not borrowed notes", async () => {
+  await fixtureScope(async (outer) => {
+    const borrowed = (await outer.acquire(
+      () => Deno.makeTempDir({ prefix: "failed-install-borrowed-" }),
+      (root) => Deno.remove(root, { recursive: true }),
+    )).value;
+    await Deno.writeTextFile(`${borrowed}/Note.md`, "keep borrowed bytes");
+    const bytes: Record<string, string> = {
+      "index.html": html,
+      "later.js": "complete asset",
+    };
+    const build = await completeBuild(outer, async (output) => {
+      await Deno.mkdir(output);
+      for (const [name, value] of Object.entries(bytes)) {
+        await Deno.writeTextFile(`${output}/${name}`, value);
+      }
+    });
+    const write = Deno.writeFile,
+      failure = Error("second installed asset failed");
+    const events: string[] = [], names: string[] = [];
+    let cwd = "";
+    try {
+      Deno.writeFile = async (target, data, options) => {
+        const file = String(target);
+        if (!file.includes("/client/dist/")) {
+          return await write(target, data, options);
+        }
+        cwd = path.dirname(path.dirname(path.dirname(file)));
+        names.push(path.basename(file));
+        if (names.length === 2) {
+          events.push("later write failed");
+          throw failure;
+        }
+        await write(target, data, options);
+        assertEquals(await Deno.readTextFile(file), bytes[path.basename(file)]);
+        events.push("first asset persisted");
+      };
+      const error = await assertRejects(
+        () =>
+          fixtureScope((scope) =>
+            fixtureLayout(scope, { GLOBNOTES_GLOBNOTES_PATH: borrowed }, {
+              build,
+            })
+          ),
+        Error,
+        failure.message,
+      );
+      assertStrictEquals(error, failure);
+    } finally {
+      Deno.writeFile = write;
+    }
+    assertEquals(names.sort(), ["index.html", "later.js"]);
+    assertEquals(events, ["first asset persisted", "later write failed"]);
+    const root = path.dirname(cwd);
+    for (const owned of [cwd, `${root}/instance`, `${root}/artifacts`, root]) {
+      await absentRoot(owned);
+    }
+    assertEquals(
+      await Deno.readTextFile(`${borrowed}/Note.md`),
+      "keep borrowed bytes",
+    );
+  });
+});
+
+Deno.test("pr117: origin retirement at the successful boot handoff cannot return a server", async () => {
+  await fixtureScope(async (outer) => {
+    const lifetime = createFixtureScope();
+    outer.defer(() => lifetime.close());
+    const build = await fixtureBuild(lifetime.scope);
+    const layout = await fixtureLayout(lifetime.scope, {}, { build });
+    const events: string[] = [];
+    let healthy = false, escaped = false, closing: Promise<void> | undefined;
+    const work = bootServer({ fixtureAuth: { auth_type: "none" } }, {
+      layout,
+      async healthFetch(url, options) {
+        const response = await fetch(url, options);
+        assertEquals(response.status, 200);
+        healthy = true;
+        events.push("healthy");
+        return response;
+      },
+      origin(port) {
+        if (healthy) {
+          events.push("retired at handoff");
+          closing = lifetime.close();
+        }
+        return `http://127.0.0.1:${port}`;
+      },
+    }).then((server) => {
+      escaped = true;
+      outer.defer(() => server.close());
+      return server;
+    });
+    try {
+      await assertRejects(() => work, OwnershipError, "Owner is retired");
+    } finally {
+      await closing;
+    }
+    assertEquals([events, escaped], [["healthy", "retired at handoff"], false]);
+    for (const owned of [layout.cwd, layout.instance, layout.artifacts]) {
+      await absentRoot(owned);
+    }
+  });
+});
+
+for (const kind of ["symlink", "file"] as const) {
+  Deno.test(`pr117: completed-build output root must be a real directory, not a ${kind}`, async () => {
+    await fixtureScope(async (outer) => {
+      const borrowed = (await outer.acquire(
+        () => Deno.makeTempDir({ prefix: "build-root-target-" }),
+        (root) => Deno.remove(root, { recursive: true }),
+      )).value;
+      await Deno.writeTextFile(`${borrowed}/index.html`, html);
+      let output = "";
+      await assertRejects(
+        () =>
+          fixtureScope((scope) =>
+            completeBuild(scope, async (directory) => {
+              output = directory;
+              if (kind === "symlink") await Deno.symlink(borrowed, output);
+              else await Deno.writeTextFile(output, html);
+              assertEquals(
+                (await Deno.lstat(output)).isSymlink,
+                kind === "symlink",
+              );
+            })
+          ),
+        TypeError,
+        "Completed build requires a real output directory",
+      );
+      await absentRoot(path.dirname(output));
+      assertEquals(await Deno.readTextFile(`${borrowed}/index.html`), html);
+    });
+  });
+}
+
+Deno.test("pr117: borrowed cwd and completed build reject before allocation and each alone retains its one asset source", async () => {
+  await fixtureScope(async (outer) => {
+    const root = (await outer.acquire(
+      () => Deno.makeTempDir({ prefix: "ambiguous-build-" }),
+      (root) => Deno.remove(root, { recursive: true }),
+    )).value;
+    const cwd = `${root}/app`;
+    await Deno.mkdir(`${cwd}/client/dist`, { recursive: true });
+    await Deno.writeTextFile(
+      `${cwd}/client/dist/index.html`,
+      "borrowed index B",
+    );
+    const build = await fixtureBuild(outer);
+    for (const suppliedCwd of [cwd, ""]) {
+      const lifetime = createFixtureScope();
+      outer.defer(() => lifetime.close());
+      await assertRejects(
+        () => fixtureLayout(lifetime.scope, {}, { cwd: suppliedCwd, build }),
+        TypeError,
+        "A borrowed cwd cannot be combined with a completed build",
+      );
+      assertEquals(lifetime.scope.size, 0);
+    }
+    const borrowed = await fixtureLayout(outer, {}, { cwd });
+    assertEquals(borrowed.cwd, cwd);
+    const installed = await fixtureLayout(outer, {}, { build });
+    assertEquals([
+      await Deno.readTextFile(`${borrowed.cwd}/client/dist/index.html`),
+      await Deno.readTextFile(`${installed.cwd}/client/dist/index.html`),
+    ], ["borrowed index B", html]);
   });
 });

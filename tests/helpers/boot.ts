@@ -369,6 +369,9 @@ export async function bootServer(
         })(),
     };
     ownerGone.signal.throwIfAborted();
+    // All caller code, including origin(), has run. Scope retirement need not
+    // have produced a child-exit notification yet; fence it at the handoff too.
+    scope.assertCurrent();
     returned = true;
     return server;
   });

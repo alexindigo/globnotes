@@ -52,7 +52,12 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
    const drains = ["stdout", "stderr"].map(name => {
     let collection;
     const admission=scope.admit(()=>collection=(async () => {
-    const file = await Deno.open(`${directory}/server-${name}.log`, { write: true, createNew: true });
+    const file = await Deno.open(`${directory}/server-${name}.log`, { write: true, createNew: true }).catch(error=>fixtureScope(cleanup=>{
+      // A successful child acquisition transfers both read ends to these drains.
+      // If log acquisition fails, no iterator has taken custody of this pipe.
+      cleanup.defer(()=>child[name].cancel());
+      throw error;
+    }));
     try {
       for await (const chunk of child[name]) {
         logs[name] += new TextDecoder().decode(chunk);

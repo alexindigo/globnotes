@@ -59,6 +59,12 @@ export async function completeBuild(
         } else throw new TypeError("Completed build contains a non-file asset");
       }
     };
+    // Validate the root itself, not the target readDir would follow through a link.
+    const rootInfo = await Deno.lstat(output);
+    signal.throwIfAborted();
+    if (rootInfo.isSymlink || !rootInfo.isDirectory) {
+      throw new TypeError("Completed build requires a real output directory");
+    }
     await visit(output);
     if (!files.get("index.html")?.length) {
       throw new TypeError("Completed build requires a nonempty index.html");

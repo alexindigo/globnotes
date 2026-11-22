@@ -53,6 +53,11 @@ export async function fixtureLayout(
     retainPersistent,
   } = options;
   // Validate the captured input before allocating any root for it.
+  if (suppliedCwd !== undefined && suppliedBuild !== undefined) {
+    throw new TypeError(
+      "A borrowed cwd cannot be combined with a completed build",
+    );
+  }
   if (suppliedBuild !== undefined) assertCompletedBuild(suppliedBuild);
   const root = await scope.acquire(
     async () => {

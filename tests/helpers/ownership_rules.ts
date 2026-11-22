@@ -647,6 +647,7 @@ export const COMPLETED_BUILD_OWNERSHIP: OwnershipRules = {
       ...LAYOUT_PILOT_OWNERSHIP.roots.Deno,
       members: [
         "errors",
+        "lstat",
         "makeTempDir",
         "mkdir",
         "readDir",
