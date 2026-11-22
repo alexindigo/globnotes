@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { fromFileUrl, join, relative, toFileUrl } from "@std/path";
 import {
   analyzeOwnership,
   familyInventoryErrors,
@@ -13,6 +13,9 @@ import {
   OWNERSHIP_FAMILIES,
 } from "./helpers/ownership_legacy.ts";
 import {
+  BROWSER_OPERATION_CONTRACT,
+  BROWSER_OPERATION_OWNER,
+  BROWSER_OPERATION_PILOT,
   NATIVE_FINALIZER,
   registeredOwnership,
   RESOURCE_CORE,
@@ -24,6 +27,145 @@ import { assertUnowned } from "./ownership_review_test.ts";
 
 const repositoryRoot = (moduleUrl: string | URL = import.meta.url) =>
   fromFileUrl(new URL("../", moduleUrl));
+
+Deno.test("G5 registration: the browser pilot cannot bypass custody or browser capability owners", () => {
+  const inputs = [
+    'import {createOwnershipScope as raw} from "facade";',
+    'export * from "facade";',
+    'await import("facade");',
+    "const raw = fetch;",
+    'navigator["credentials"];',
+    'localStorage.getItem("credentials");',
+    'sessionStorage.getItem("credentials");',
+    "crypto.subtle;",
+    'import "engine";',
+    "Promise.withResolvers();",
+    "window.crypto;",
+    "globalThis.crypto;",
+  ];
+  const expected = [
+    `module:${RESOURCE_CORE}`,
+    `module:${RESOURCE_CORE}`,
+    `module:${RESOURCE_CORE}`,
+    "fetch.*",
+    "navigator.*",
+    "localStorage.getItem",
+    "sessionStorage.getItem",
+    "crypto.subtle",
+    `module:${RESOURCE_ENGINE}`,
+    "Promise.withResolvers",
+    "window.crypto",
+    "globalThis.crypto",
+  ];
+  for (const [index, text] of inputs.entries()) {
+    const sites = registeredOwnership([input(text, BROWSER_OPERATION_PILOT)]);
+    assertEquals(sites.map(({ file, capability }) => ({ file, capability })), [{
+      file: BROWSER_OPERATION_PILOT,
+      capability: expected[index],
+    }]);
+  }
+  assertEquals(
+    registeredOwnership([input(
+      'import {createOwnershipScope} from "facade";',
+      BROWSER_OPERATION_OWNER,
+    )]),
+    [],
+  );
+  const sources: SourceModule[] = [
+    input('export * from "engine";', "client/raw-bridge.mjs"),
+    {
+      file: BROWSER_OPERATION_PILOT,
+      text: 'import "bridge";',
+      imports: { bridge: "client/raw-bridge.mjs" },
+    },
+  ];
+  assertEquals(
+    registeredOwnership(sources).map(({ file, capability }) => ({
+      file,
+      capability,
+    })),
+    [{
+      file: "client/raw-bridge.mjs",
+      capability: `module:${RESOURCE_ENGINE}`,
+    }],
+  );
+});
+
+Deno.test("G5 registration: actual browser owner, pilot and contract retain their exact capabilities", async () => {
+  const root = repositoryRoot();
+  // These are exact dependency declarations, not another source selector/parser.
+  // Unknown imports reject through the existing unresolved-import rule. Plain
+  // client modules are not roots of the server/native repository source graph.
+  const dependencies: Record<string, string[]> = {
+    [BROWSER_OPERATION_OWNER]: ["../shared/ownership.js"],
+    [BROWSER_OPERATION_PILOT]: [
+      "./api.js",
+      "./bus/index.js",
+      "./connectionLifetime.js",
+      "./operationOwner.js",
+      "./connectionLifetime.js",
+    ],
+    [BROWSER_OPERATION_CONTRACT]: [
+      "vitest",
+      "../operationOwner.js",
+      "../../shared/ownership.js",
+      "../../tests/helpers/owned_operation.ts",
+    ],
+  };
+  const sources = await Promise.all(
+    Object.entries(dependencies).map(async ([file, specifiers]) => ({
+      file,
+      text: await Deno.readTextFile(join(root, file)),
+      imports: Object.fromEntries(
+        specifiers.map((specifier) => [
+          specifier,
+          specifier.startsWith(".")
+            ? relative(
+              root,
+              fromFileUrl(new URL(specifier, toFileUrl(join(root, file)))),
+            )
+            : import.meta.resolve(specifier),
+        ]),
+      ),
+    })),
+  );
+  for (const source of sources) {
+    assertEquals(
+      analyzeOwnership([source], {
+        roots: {},
+        modules: Object.fromEntries(
+          Object.values(source.imports).map((identity) => [identity, []]),
+        ),
+      }).map((site) => site.capability),
+      dependencies[source.file].map((specifier) =>
+        `module:${source.imports[specifier]}`
+      ),
+    );
+  }
+  // Exact remaining scheduler acquisitions predate G5 and belong to the later
+  // browser migration. They grant no new owner or directory-wide allowance.
+  const schedulingContext =
+    "setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), now = () => Date.now(),";
+  assertEquals(
+    registeredOwnership(sources).map((
+      { file, capability, source, context },
+    ) => ({ file, capability, source, context })),
+    [
+      {
+        file: BROWSER_OPERATION_PILOT,
+        capability: "Date.now",
+        source: "Date.now",
+        context: schedulingContext,
+      },
+      {
+        file: BROWSER_OPERATION_PILOT,
+        capability: "setTimeout.*",
+        source: "setTimeout",
+        context: schedulingContext,
+      },
+    ],
+  );
+});
 
 Deno.test("P02 review: encoded checkout roots reach the actual source owner", async () => {
   const directory = await Deno.makeTempDir({ prefix: "ownership-path-" });

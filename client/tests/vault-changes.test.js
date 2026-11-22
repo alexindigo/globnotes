@@ -4,10 +4,81 @@ import { acquireVaultChanges, createVaultChanges, HIDDEN_GRACE_MS, MAX_DELAY_MS,
   TERMINAL_STATUSES } from "../vaultChanges.js";
 import { openVaultChanges } from "../api.js";
 import { TOPICS } from "../bus/index.js";
+import { heldOperation } from "../../tests/helpers/owned_operation.ts";
 
 afterEach(() => vi.useRealTimers());
 const flush = () => vi.advanceTimersByTimeAsync(0);
 describe("vault change owner", () => {
+  it("fences each callback and cursor when publication synchronously restarts the owner", async () => {
+    const calls = [], events = [];
+    const owner = createVaultChanges({
+      open: async options => { calls.push(options); events.push(["open", options.since]); return () => events.push(["close", options.since]); },
+      publish(topic, data) { events.push([topic, data]); if (data.path === "first.md") owner.restart(); },
+    });
+    const release = owner.acquire(); await owner.settle();
+    calls[0].onEvent({ event: "change", data: { seq: 1, path: "first.md" } });
+    calls[0].onEvent({ event: "change", data: { seq: 2, path: "stale.md" } });
+    calls[0].onEvent({ event: "cursor", data: { next: 99 } });
+    calls[0].onEvent({ event: "drivers", data: { revision: 99 } });
+    await owner.settle();
+    calls[1].onEvent({ event: "change", data: { seq: 2, path: "current.md" } });
+    calls[1].onEvent({ event: "cursor", data: { next: 3 } });
+    release(); expect((await owner.settle()).errors).toEqual([]);
+    expect(events).toEqual([
+      ["open", 0], [TOPICS.VAULT_CHANGE, { seq: 1, path: "first.md" }], ["close", 0], ["open", 1],
+      [TOPICS.VAULT_CHANGE, { seq: 2, path: "current.md" }], ["close", 1],
+    ]);
+    expect(owner.state().seq).toBe(3);
+  });
+  it("fences reentrant packet getters before cursor/revision installation", async () => {
+    const calls = [], events = [];
+    const owner = createVaultChanges({ open: async options => { calls.push(options); return () => {}; }, publish: (...args) => events.push(args) });
+    const release = owner.acquire(); await owner.settle();
+    calls[0].onEvent({ event: "cursor", data: { get next() { owner.suspendDocument(); return 99; } } });
+    expect([owner.state().seq, events]).toEqual([0, []]);
+    release(); expect((await owner.settle()).errors).toEqual([]);
+  });
+  it("retains a pending original open and observes late disposer rejection", async () => {
+    let hold, release;
+    const cleanup = new Error("late close"), closed = [];
+    const owner = createVaultChanges({ open: async () => { await hold(); return () => { closed.push("original"); return Promise.reject(cleanup); }; } });
+    await heldOperation({ label: "original vault open", owner: () => owner, progress: { kind: "controlled", clock: "external" } },
+      boundary => { hold = boundary; release = owner.acquire(); return owner.settle(); }, async original => {
+    await original.reached(); release();
+    const report = await original.result();
+    expect(closed).toEqual(["original"]);
+    expect(report.errors).toEqual([cleanup]); expect(report.errors[0]).toBe(cleanup);
+    });
+  });
+  it("final disposal is idempotent and fences outstanding reference releases", async () => {
+    const events = [];
+    const owner = createVaultChanges({ open: async () => () => events.push("close") });
+    const first = owner.acquire(), second = owner.acquire(); await owner.settle();
+    const close = owner.dispose();
+    expect(owner.dispose()).toBe(close);
+    first(); second(); owner.restart();
+    expect((await close).errors).toEqual([]);
+    expect([owner.state().owners, owner.state().connected, events]).toEqual([0, false, ["close"]]);
+    expect(() => owner.acquire()).toThrow(new Error("Vault changes owner is disposed"));
+  });
+  it("a queued retired timer cannot dispatch or clear the replacement reconnect", async () => {
+    const calls = [], timers = [];
+    const owner = createVaultChanges({
+      open: async options => { calls.push(options); return () => {}; },
+      setTimer: (callback, delay) => { const timer = { callback, delay }; timers.push(timer); return timer; },
+      clearTimer() {},
+    });
+    const release = owner.acquire(); await owner.settle();
+    calls[0].onClose("ended");
+    owner.restart(); await owner.settle();
+    calls[1].onClose("ended");
+    timers[0].callback();
+    calls[1].onClose("ended");
+    expect([calls.map(call => call.since), timers.map(timer => timer.delay)]).toEqual([[0, 0], [500, 1000]]);
+    timers[1].callback(); await owner.settle();
+    expect(calls.map(call => call.since)).toEqual([0, 0, 0]);
+    release(); expect((await owner.settle()).errors).toEqual([]);
+  });
   it("suspends document-owned wires and resumes once from the accepted cursor", async () => {
     vi.useFakeTimers();
     const calls = [], disposers = [], publish = vi.fn();

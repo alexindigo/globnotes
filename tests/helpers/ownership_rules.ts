@@ -468,6 +468,45 @@ export const NATIVE_FIXTURE_OWNERSHIP: OwnershipRules = {
   },
 };
 
+export const BROWSER_OPERATION_OWNER = "client/operationOwner.js";
+export const BROWSER_OPERATION_PILOT = "client/vaultChanges.js";
+export const BROWSER_OPERATION_CONTRACT =
+  "client/tests/operation-owner.test.js";
+/** Bound plain-module delivery uses P02, never its private engine. The pilot
+ * cannot bypass the adapter for custody or acquire raw browser capabilities. */
+export const BROWSER_OPERATION_OWNERSHIP: OwnershipRules = {
+  ...PRODUCT_OWNERSHIP,
+  roots: {
+    ...PRODUCT_OWNERSHIP.roots,
+    Promise: {
+      members: ["resolve", "reject", "all", "allSettled"],
+      ownedMembers: { withResolvers: [BROWSER_OPERATION_OWNER] },
+    },
+    ...Object.fromEntries(
+      ["fetch", "navigator", "localStorage", "sessionStorage", "crypto"].map(
+        (root) => [root, { members: [] }],
+      ),
+    ),
+    ...Object.fromEntries(
+      ["globalThis", "window", "self", "global"].map((root) => [root, {
+        ...PRODUCT_OWNERSHIP.roots[root],
+        ownedMembers: {
+          ...PRODUCT_OWNERSHIP.roots[root]?.ownedMembers,
+          fetch: [],
+          navigator: [],
+          crypto: [],
+          localStorage: [],
+          sessionStorage: [],
+        },
+      }]),
+    ),
+  },
+  modules: {
+    ...PRODUCT_OWNERSHIP.modules,
+    [RESOURCE_CORE]: [BROWSER_OPERATION_OWNER],
+  },
+};
+
 export const RECORD_CHANNEL = "tests/helpers/owned_record_channel.ts";
 export const RECORD_PUBLICATION = "tests/helpers/record_publication.ts";
 export const SYNC_CONTROL = "tests/helpers/sync_status_control.ts";
@@ -765,6 +804,9 @@ export function registeredOwnership(sources: SourceModule[]) {
       (source.file === NATIVE_FIXTURE_SCOPE ||
           source.file === NATIVE_FIXTURE_PILOT
         ? NATIVE_FIXTURE_OWNERSHIP
+        : source.file === BROWSER_OPERATION_OWNER ||
+            source.file === BROWSER_OPERATION_PILOT
+        ? BROWSER_OPERATION_OWNERSHIP
         : source.file === CONTENDER_ADAPTER
         ? OPERATION_ADAPTER_OWNERSHIP
         : source.file === CONTENDER_PILOT || source.file === CONTENDER_GUARD

@@ -2,6 +2,7 @@
 import { openVaultChanges } from "./api.js";
 import { publish, TOPICS } from "./bus/index.js";
 import { connectionLifetime, createConnectionLifetime } from "./connectionLifetime.js";
+import { createOperationOwner } from "./operationOwner.js";
 export { HIDDEN_GRACE_MS } from "./connectionLifetime.js";
 
 /** Reconnect delays grow from 500 ms and never exceed this. */
@@ -18,100 +19,139 @@ export const STREAM_RETRY_MS = 60_000;
  * 503 during a restart) is retried with the bounded backoff. */
 export const TERMINAL_STATUSES = new Set([400, 401, 403, 404, 405, 410, 501]);
 
-/** One reference-counted owner per app; generations fence late connections. */
+/** One reference-counted owner per app; issued operations fence late connections. */
 export function createVaultChanges({ open = options => openVaultChanges(options), publish: emit = publish,
   // Resolved at call time, so the page's current timer implementation applies.
   setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), now = () => Date.now(),
   lifetime = createConnectionLifetime({ setTimer, clearTimer }) } = {}) {
-  let owners = 0, generation = 0, seq = 0, attempts = 0, polling = false, pollingSince = 0;
+  let owners = 0, seq = 0, attempts = 0, polling = false, pollingSince = 0;
   let pageActive = lifetime.state().active;
-  let timer = null, close = null, abort = null;
+  let timer = null, connection = null, connected = false, disposed = false, disposal = null;
+  const draining = new Set(), cleanupErrors = [];
   const revisions = new Map();
   const metadataTopics = { conflicts: TOPICS.VAULT_CONFLICTS, drivers: TOPICS.VAULT_DRIVERS };
-  const live = () => owners > 0 && pageActive;
+  const live = () => !disposed && owners > 0 && pageActive;
   function retire() {
-    generation++;
-    clearTimer(timer); timer = null;
-    abort?.abort(); abort = null;
-    close?.(); close = null;
+    const old = connection; connection = null; connected = false;
+    if (!old) return;
+    const join = old.dispose();
+    draining.add(join);
+    join.then(report => { cleanupErrors.push(...report.errors); draining.delete(join); });
   }
-  function enterPolling() {
+  function enterPolling(at) {
     if (polling) return;
-    polling = true; pollingSince = now();
+    polling = true; pollingSince = at;
   }
   async function connect(continuePoll = false) {
     if (!live()) return;
     retire();
-    const own = generation, mode = polling ? "poll" : "stream";
+    // Cleanup may reenter restart/acquire; the replacement it installed wins.
+    if (connection || !live()) return;
+    const mode = polling ? "poll" : "stream";
     // Completed polls continue one observation lifetime. Real reconnects and
     // page/owner restarts must deliver a fresh snapshot even at the same revision.
     if (!continuePoll) revisions.clear();
     let openedAt = null;
-    abort = new AbortController();
-    const current = () => live() && generation === own;
+    const abort = new AbortController();
+    const current = () => live() && connection === operationOwner;
     // Every non-terminal outcome ends here: one timer, a bounded delay.
     const reconnect = reason => {
       if (!current() || timer !== null) return;
+      const at = now();
+      if (!current() || timer !== null) return;
       let delay;
       if (reason === "poll") {
-        enterPolling(); // The stream request may itself have received JSON.
+        enterPolling(at); // The stream request may itself have received JSON.
         // A completed poll is a healthy exchange; the transport paces it.
         attempts = 0; delay = 0;
-        if (now() - pollingSince >= STREAM_RETRY_MS) polling = false;
+        if (at - pollingSince >= STREAM_RETRY_MS) polling = false;
       } else {
-        if (mode === "stream" && openedAt !== null && now() - openedAt >= STABLE_MS) attempts = 0;
+        if (mode === "stream" && openedAt !== null && at - openedAt >= STABLE_MS) attempts = 0;
         // A stream that broke (not one that ended cleanly) falls back to polling.
-        if (mode === "stream" && reason !== "ended") enterPolling();
+        if (mode === "stream" && reason !== "ended") enterPolling(at);
         delay = Math.min(MAX_DELAY_MS, 500 * 2 ** Math.min(attempts++, 6));
       }
       const continuePoll = reason === "poll" && polling;
-      timer = setTimer(() => { timer = null; if (current()) connect(continuePoll); }, delay);
+      timer = setTimer(() => { if (!current()) return; timer = null; connect(continuePoll); }, delay);
     };
+    const operationOwner = createOperationOwner({
+      owner: Object.freeze({}),
+      dispatch: (options, delivery) => open({ ...options, signal: abort.signal,
+        onEvent: value => delivery.deliver("event", value), onClose: reason => delivery.deliver("close", reason) }),
+      release: disposer => disposer?.(),
+      cancel() { clearTimer(timer); timer = null; abort.abort(); },
+      channels: {
+        event: {
+          // Snapshot all event fields before the adapter's final delivery fence.
+          prepare(value) { const event = value.event, data = value.data; return { value: { event, data: data && { ...data } } }; },
+          deliver({ event, data }) {
+            if (Object.hasOwn(metadataTopics, event)) {
+              if (!Number.isSafeInteger(data?.revision) || data.revision < 0) throw new Error(`Invalid ${event === "conflicts" ? "conflict" : "driver"} revision`);
+              if (data.revision === revisions.get(event)) return;
+              revisions.set(event, data.revision);
+              emit(metadataTopics[event], { revision: data.revision });
+            } else if (event === "reset" || event === "cursor") {
+              if (!Number.isSafeInteger(data?.next) || data.next < 0) throw new Error("Invalid vault cursor");
+              seq = data.next;
+              if (event === "reset") emit(TOPICS.VAULT_RESET, { next: seq });
+            } else if (event === "change") {
+              if (!Number.isSafeInteger(data?.seq) || data.seq <= seq) return;
+              seq = data.seq;
+              emit(TOPICS.VAULT_CHANGE, data);
+            }
+          },
+        },
+        close: { deliver: reconnect },
+      },
+    });
+    connection = operationOwner;
+    const operation = operationOwner.operation();
     try {
-      const disposer = await open({ since: seq, poll: mode === "poll", signal: abort.signal,
-        onEvent({ event, data }) {
-          if (!current()) return;
-          if (Object.hasOwn(metadataTopics, event)) {
-            if (!Number.isSafeInteger(data?.revision) || data.revision < 0) throw new Error(`Invalid ${event === "conflicts" ? "conflict" : "driver"} revision`);
-            if (data.revision === revisions.get(event)) return;
-            revisions.set(event, data.revision);
-            emit(metadataTopics[event], { revision: data.revision });
-          } else if (event === "reset" || event === "cursor") {
-            if (!Number.isSafeInteger(data?.next) || data.next < 0) throw new Error("Invalid vault cursor");
-            seq = data.next;
-            if (event === "reset") emit(TOPICS.VAULT_RESET, { next: seq });
-          } else if (event === "change") {
-            if (!Number.isSafeInteger(data?.seq) || data.seq <= seq) return;
-            seq = data.seq;
-            emit(TOPICS.VAULT_CHANGE, data);
-          }
-        }, onClose: reconnect });
-      if (current()) { close = disposer; openedAt = now(); }
-      else disposer?.();
+      await operationOwner.dispatch(operation, { since: seq, poll: mode === "poll" });
+      const opened = now();
+      if (current()) { connected = true; openedAt = opened; }
     } catch (error) {
+      const status = error?.status;
       if (!current()) return;
-      if (TERMINAL_STATUSES.has(error?.status)) { retire(); return; }
+      if (TERMINAL_STATUSES.has(status)) { retire(); return; }
       // No HTTP answer at all: the stream path itself failed.
-      if (mode === "stream" && error?.status === undefined) enterPolling();
+      if (mode === "stream" && status === undefined) {
+        const at = now(); if (!current()) return;
+        enterPolling(at);
+      }
       reconnect(error);
     }
   }
-  lifetime.subscribe(next => {
+  const unsubscribe = lifetime.subscribe(next => {
     if (pageActive === next) return;
     pageActive = next;
     if (next) connect(); else retire();
   });
+  async function settle() {
+    await connection?.settle();
+    await Promise.all([...draining]);
+    return Object.freeze({ errors: Object.freeze([...cleanupErrors]) });
+  }
   return {
     suspendDocument: lifetime.suspendDocument,
     resumeDocument: lifetime.resumeDocument,
     setVisible: lifetime.setVisible,
     restart() { if (live()) connect(); },
+    settle,
+    dispose() {
+      if (disposal) return disposal;
+      disposed = true; owners = 0;
+      disposal = Promise.resolve().then(settle);
+      unsubscribe(); retire();
+      return disposal;
+    },
     acquire() {
+      if (disposed) throw new Error("Vault changes owner is disposed");
       if (++owners === 1) connect();
       let released = false;
-      return () => { if (released) return; released = true; if (--owners === 0) retire(); };
+      return () => { if (released || disposed) return; released = true; if (--owners === 0) retire(); };
     },
-    state: () => ({ owners, seq, polling, attempts, visible: lifetime.state().visible, connected: close !== null }),
+    state: () => ({ owners, seq, polling, attempts, visible: lifetime.state().visible, connected }),
   };
 }
 

@@ -10,6 +10,18 @@ import { publish, subscribe } from "../bus/index.js";
 import { CHANGE_STREAM_HEARTBEAT_MS, CHANGE_STREAM_STALL_MS } from "../../shared/vault_changes.ts";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+it("real poll delivery stops after reentrant retirement before remaining entries, cursor and metadata", async () => {
+  const events = [], packet = { entries: [{ seq: 1, path: "first.md" }, { seq: 2, path: "stale.md" }],
+    next: 90, conflictRevision: 7, driverRevision: 8 };
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(packet)));
+  const owner = createVaultChanges({ publish(topic, data) { events.push([topic, data]); owner.suspendDocument(); } });
+  const release = owner.acquire();
+  expect((await owner.settle()).errors).toEqual([]);
+  expect(events).toEqual([["vault:change", { seq: 1, path: "first.md" }]]);
+  expect(owner.state().seq).toBe(1);
+  expect(fetch.mock.calls.map(([, options]) => options.signal.aborted)).toEqual([true]);
+  release(); expect((await owner.settle()).errors).toEqual([]);
+});
 it("stream transport carries bearer authority and parses split UTF-8 change/reset frames", async () => {
   let stream;
   vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ start(controller) { stream = controller; } }), { headers: { "content-type": "text/event-stream" } })));

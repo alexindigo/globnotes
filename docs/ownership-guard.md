@@ -463,3 +463,40 @@ identity, retirement, rollback, transfer, error preservation and exactly-once
 all-attempt finalization remain runtime/type contracts. Import permission does
 not prove arbitrary adapter logic delegates correctly. P02 migrates none of
 P01's 90 process/root sites and adds no inventory allowance.
+
+## Browser operation pilot (G5)
+
+`client/operationOwner.js` binds a frozen non-null workflow identity, transport
+and prepared delivery channels once. Its issued handles are local to that owner;
+unchecked JavaScript cannot substitute a cloned or foreign operation. `dispatch`
+and `release` reject through promises. Dispatch returns a P02 owned value handle.
+Preparation returns `{ value }`; getters are inspected before the final fence,
+and thenable data stays inside that envelope. Transport adapters must capture
+request facts in preparation, not select replacement credentials during dispatch.
+
+`revoke()` fences live delivery and new dispatch. An already dispatched retained,
+outcome or recovery operation can accept one matching `complete` callback, but
+not a live delivery such as navigation. `dispose()` fences the entire workflow,
+including recovery and late completions, before starting cancellation. Its cached
+join returns P02's all-attempt release report and waits for original pending wires.
+It cannot promise termination of uncooperative transport. `settle()` observes the
+currently pending original acquisitions; it does not certify their success or
+erase an unresolved write, dirty form or operation ID. A callback must not await
+its own release/disposal join.
+
+The bounded `vaultChanges.js` pilot captures one operation per stream/poll and
+prepares each event before delivery. Reentrant retirement suppresses all remaining
+events and cursor updates. Its reconnect pacing and wire format remain unchanged;
+`settle()` also exposes retained cleanup errors. The same parsed guard protects
+the exact pilot from raw P02 custody and direct browser capability roots. No
+inventory allowance or parser policy changes accompany this pilot; other browser
+controllers remain later adoptions.
+
+The existing repository graph roots cover server/tests/native modules, not all
+plain client modules. G5's real-source control reads its three exact files and
+uses explicit URL-resolved dependency declarations with the same analyzer. It
+checks every runtime import against the complete declaration list (including
+the pilot's repeated re-export); missing, added and stale declarations fail.
+Its two pre-existing default `Date.now`/`setTimeout` references remain an exact
+residual scheduler inventory for later browser adoption, not new owner
+permissions. It does not claim closure of unrelated client transitives.
