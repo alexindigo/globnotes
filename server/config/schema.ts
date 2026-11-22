@@ -56,6 +56,9 @@ export const INSTANCE_SCHEMA: Schema = {
   hub: { scaninterval: { type: "number", valid: (v) => Number(v) > 0 } },
   plugins: { renderworkers: positiveInteger },
   sessions: { expirydays: positiveInteger },
+  accounts: {
+    first: { login: { type: "string" }, password: { type: "string" } },
+  },
   log: {
     level: {
       type: "string",
@@ -85,6 +88,7 @@ export interface InstanceConfig {
   hub: { scaninterval: number };
   plugins: { renderworkers: number };
   sessions: { expirydays: number };
+  accounts: { first: { login: string; password: string } };
   log: { level: string };
   mcp: { enabled: boolean; ratelimit: number };
 }

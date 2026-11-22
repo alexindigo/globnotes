@@ -152,3 +152,60 @@ current enrollment attempt per lane and config owner through QR rendering and
 confirmation; a new issuance replaces only that lane's attempt. Newly confirmed
 secrets carry an explicit Base32 marker. Existing unmarked/raw stored secrets keep
 their historical interpretation; keeping an authenticator does not rewrite it.
+
+## Prepared setup and first-account seed
+
+The prepared setup workflow creates one unrestricted account, its initialized
+marker and its one target's explicit creator Admin plus the submitted Everybody
+else Edit/View/None level. Signing state is initialized first. Only the settled
+account/ACL pair can issue the existing session handoff; its final JSON body also
+contains `setupRequired: false`, `vaultId` and `everybody`. Enrollment alone is
+inert. No new setup route or screen is active until the coordinated cutover.
+
+The instance schema now accepts these one-time seed leaves through normal
+defaults/TOML/environment precedence:
+
+```toml
+[accounts.first]
+login = ""
+password = ""
+```
+
+Their environment names are `GLOBNOTES__ACCOUNTS_FIRST_LOGIN` and
+`GLOBNOTES__ACCOUNTS_FIRST_PASSWORD`. Supply both or neither; passwords retain
+their exact spaces. Diagnostics identify keys and sources, never their values.
+Protect the file/environment and remove the seed after use. JavaScript does not
+promise memory erasure. The prepared boot adapter applies it once before public
+admission; production boot wiring remains in the coordinated cutover.
+Ready stores ignore seed changes/removal without comparing/resetting credentials
+or making a second account. Incomplete, corrupt and recognized unimported legacy
+state require explicit recovery/migration, never silent seed repair.
+
+A configured account gets no implicit vault grant. For a configured first account
+to administer the existing target, also set its separate declaration, for example
+`GLOBNOTES_GLOBNOTES_PATH=/notes` and `GLOBNOTES_GLOBNOTES_ADMIN=alice`. Otherwise
+ordinary saved/fallback access applies; the person's own account remains reachable.
+
+## Offline commands
+
+The new offline CLI is directly runnable against compatible v3 stores. Stop the
+owning instance using your deployment's normal procedure first. Inside that
+deployment's container/workspace, use `GLOBNOTES_CONFIG` and the same configured
+paths as the instance; run `deno run --allow-read --allow-write --allow-env
+--allow-net server/auth/cli.ts` followed by the command below. This is not an HTTP
+administrator or permission to stop host services.
+
+| # | Command | Outcome |
+|---|---|---|
+| 1 | `account create --login NAME --password-stdin` | Temporary-password account, no vault grant; deliberately finishes a signing-only first-account interruption |
+| 2 | `account reset-password --login NAME --password-stdin` | Temporary replacement password; original authenticator interpretation and replay floor retained |
+| 3 | `account disable-totp --login NAME` | Clears authenticator/floor without changing the password |
+| 4 | `vault grant-admin --vault globnotes --login NAME` | Grants an existing account Admin on the existing configured target only |
+
+Passwords arrive as one nonempty stdin line, never an argv option or printed
+result. Command summaries contain only operation/account/update identities and
+the committed result. A live owner causes immediate refusal, not queued later
+execution. Recorded decisions recover under the same exclusive owner before
+another command runs. Corrupt stores and unimported legacy data are not repaired
+or imported. Reset/disable revoke only that account's old tokens; other accounts
+and the signing key are unchanged.

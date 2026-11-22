@@ -43,6 +43,12 @@ renderworkers = 2
 # Login lifetime in days; GLOBNOTES__SESSIONS_EXPIRYDAYS.
 expirydays = 30
 
+# One-time first-account seed, never synchronized to saved credentials.
+[accounts.first]
+# GLOBNOTES__ACCOUNTS_FIRST_LOGIN / GLOBNOTES__ACCOUNTS_FIRST_PASSWORD.
+login = ""
+password = ""
+
 [log]
 # DEBUG, INFO, WARNING or ERROR; GLOBNOTES__LOG_LEVEL.
 level = "INFO"

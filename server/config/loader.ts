@@ -2,6 +2,7 @@
 import { parse } from "@std/toml";
 import { fromFileUrl } from "@std/path";
 import { snapshotEnvironment } from "../environment.ts";
+import { normalizeLogin } from "../auth/accounts.ts";
 import {
   DECLARATION_SCHEMA,
   INSTANCE_SCHEMA,
@@ -418,6 +419,30 @@ export function loadInstanceConfig(
       base,
       problems,
     ) as unknown as LoadResult<VaultConfig>;
+  }
+  const first = get(result.config, "accounts.first");
+  if (
+    isTree(first) && typeof first.login === "string" &&
+    typeof first.password === "string"
+  ) {
+    const sources = ["accounts.first.login", "accounts.first.password"].map(
+      (key) => `${key} (${result.provenance[key]?.source ?? "defaults"})`,
+    ).join(", ");
+    if ((first.login === "") !== (first.password === "")) {
+      problems.push(
+        `config: ${sources}: login and password must both be supplied (values withheld)`,
+      );
+    } else if (first.login !== "") {
+      try {
+        first.login = normalizeLogin(first.login);
+      } catch {
+        problems.push(
+          `config: accounts.first.login (${
+            result.provenance["accounts.first.login"]?.source ?? "defaults"
+          }): invalid account login (value withheld)`,
+        );
+      }
+    }
   }
   if (problems.length) throw new ConfigError(problems);
   return freeze({ ...result, vaults }) as unknown as InstanceLoadResult;

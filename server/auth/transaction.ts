@@ -65,6 +65,13 @@ const ownedRoots = new Set<string>();
  * surviving journal under exclusive recovery authority. If the journal was
  * already unlinked, its owner must finish retirement before it can close. */
 export class IdentityTransaction {
+  /** A missing journal is not an admission check while a root is owned. */
+  static assertUnowned(root: string): void {
+    if (ownedRoots.has(physicalStateRoot(root))) {
+      throw new IdentityTransactionUnavailable();
+    }
+  }
+
   readonly #journal;
   readonly #accounts: AccountRepository;
   readonly #acl: AclRepository;
