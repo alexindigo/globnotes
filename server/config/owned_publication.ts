@@ -26,6 +26,11 @@ import {
   setValidation,
   withPublicationValidation,
 } from "../internal/publication_validation.ts";
+import {
+  assertPublicationPeers,
+  registerParticipantCompletion,
+  type SettledPublicationSet,
+} from "./internal/participant_completion.ts";
 
 function immutable<T>(value: T): T {
   if (value && typeof value === "object") {
@@ -70,6 +75,7 @@ interface SetFence {
   phase: SetPhase;
   decided: boolean;
   validating?: boolean;
+  completion?: SettledPublicationSet;
 }
 interface ParticipantState {
   readonly owner: object;
@@ -208,11 +214,13 @@ export function createPublicationSet(
   if (!Array.isArray(handles)) {
     throw new TypeError("Publication set requires an array.");
   }
-  const entries = Array.from(handles, (handle) => participants.get(handle));
+  const capturedHandles = Array.from(handles);
+  const entries = capturedHandles.map((handle) => participants.get(handle));
   if (!entries.length || entries.some((entry) => !entry || entry.fence)) {
     throw new TypeError("Publication set requires unused issued participants.");
   }
   const members = entries as ParticipantState[];
+  assertPublicationPeers(capturedHandles);
   for (const member of members) member.available();
   const records = members.map((m) => m.candidate.record);
   const binding: ReservationJournal = {
@@ -234,6 +242,10 @@ export function createPublicationSet(
   const lifetime = createOwnershipScope();
   const fence: SetFence = { phase: "prepared", decided: members[0].decided };
   const validation = setValidation(fence);
+  fence.completion = Object.freeze({
+    identity: lifetime.identity,
+    members: Object.freeze(capturedHandles),
+  });
   for (const member of members) {
     member.fence = fence;
     member.writes.seal(fence, binding);
@@ -429,6 +441,16 @@ export function createOwnedPublication<T>(
       },
     }) as PublicationParticipant;
     participants.set(handle, state);
+    registerParticipantCompletion(handle, () => {
+      if (state.fence?.phase !== "settled" || !state.fence.completion) {
+        throw new PublicationSetUnavailable();
+      }
+      assertAvailable();
+      // A settled historical set is not authority to disclose a later account
+      // or ACL replacement. Recheck the exact published binding as well.
+      store.assertUnchanged(candidate.record.after);
+      return state.fence.completion;
+    });
     return handle;
   };
   return Object.freeze({

@@ -9,6 +9,10 @@ import {
 } from "./account_credentials.ts";
 import { bindAccountCredentials } from "./internal/account_credentials.ts";
 import {
+  authorityRead,
+  registerAuthorityReader,
+} from "./internal/authority_read.ts";
+import {
   decodeStoredAuthenticator,
   type StoredAuthenticator,
 } from "./credentials.ts";
@@ -151,9 +155,39 @@ export class AccountRepository {
             [value.lease],
           );
         },
+        participant: (prepared, setId) => {
+          const value = owner.resolvePreparedAccount(prepared, setId);
+          const expected = value.snapshot;
+          return this.#file.prepareParticipant(
+            {
+              ...expected.value,
+              initialized: true,
+              revision: expected.value.revision + 1,
+              updateId: value.updateId,
+              accounts: [
+                ...expected.value.accounts,
+                validateAccount(value.account),
+              ],
+              provisioning: value.receipt
+                ? [...expected.value.provisioning, value.receipt]
+                : expected.value.provisioning,
+            },
+            expected,
+            value.lease,
+            setId,
+            "accounts",
+          );
+        },
       }, credentialOptions);
     this.#credentials = owner.credentials;
     this.#retireCredentials = owner.retire;
+    registerAuthorityReader(
+      this,
+      (context) =>
+        this.#directorySnapshot(
+          authorityRead<AccountSnapshot>(this.#file, context),
+        ),
+    );
   }
   retireCredentials(): void {
     this.#retireCredentials();
@@ -175,7 +209,9 @@ export class AccountRepository {
     return this.byId(id);
   }
   capture(): AccountDirectorySnapshot {
-    const snapshot = this.#file.capture();
+    return this.#directorySnapshot(this.#file.capture());
+  }
+  #directorySnapshot(snapshot: AccountSnapshot): AccountDirectorySnapshot {
     if (snapshot !== this.#directory?.stored) {
       const value = Object.freeze({
         ...snapshot.value,

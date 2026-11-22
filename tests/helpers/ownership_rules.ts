@@ -72,6 +72,8 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "tests/credential_preparation_test.ts",
       "server/internal/publication_validation.ts",
       "tests/participant_validation_test.ts",
+      "tests/participant_admin_authority_test.ts",
+      "tests/credential_bootstrap_preparation_test.ts",
     ],
     [GUARDED_SINK_OWNER]: [
       AUTHORITY_DISCLOSURE,
@@ -90,25 +92,54 @@ export const PUBLICATION_PORT = "server/config/internal/publication_port.ts";
 export const PUBLICATION_VALIDATION =
   "server/internal/publication_validation.ts";
 export const AUTHORITY_READ = "server/auth/internal/authority_read.ts";
+export const PARTICIPANT_COMPLETION =
+  "server/config/internal/participant_completion.ts";
+export const ACCOUNT_PARTICIPATION =
+  "server/auth/internal/account_participation.ts";
 export const PUBLICATION_OWNERSHIP: OwnershipRules = {
   roots: OPERATION_OWNERSHIP.roots,
   modules: {
-    [PUBLICATION_VALIDATION]: [PUBLICATION_OWNER],
+    [PUBLICATION_VALIDATION]: [
+      PUBLICATION_OWNER,
+      "server/auth/internal/account_credentials.ts",
+    ],
     ["server/internal/operation_validation.ts"]: [
       "server/operation_lease.ts",
       PUBLICATION_VALIDATION,
+      "server/auth/internal/authority_context.ts",
+    ],
+    ["server/auth/internal/authority_context.ts"]: [
+      "server/auth/authority_context.ts",
+      "server/auth/authority.ts",
+      "server/auth/acl.ts",
+      "server/auth/sessions.ts",
     ],
     [AUTHORITY_READ]: [
       PUBLICATION_PILOT,
       "tests/participant_validation_test.ts",
+      "server/auth/accounts.ts",
+      "server/auth/acl.ts",
+      "server/auth/sessions.ts",
+      "server/auth/internal/authority_context.ts",
     ],
     ...OPERATION_OWNERSHIP.modules,
+    [PARTICIPANT_COMPLETION]: [
+      PUBLICATION_OWNER,
+      "server/auth/internal/account_credentials.ts",
+      "tests/credential_bootstrap_preparation_test.ts",
+    ],
+    [ACCOUNT_PARTICIPATION]: [
+      "server/auth/acl.ts",
+      "server/auth/internal/account_credentials.ts",
+    ],
     [PUBLICATION_OWNER]: [
       PUBLICATION_PILOT,
       "tests/owned_publication_test.ts",
       "tests/helpers/recorded_publication_child.ts",
       "tests/recorded_publication_set_test.ts",
       "tests/participant_validation_test.ts",
+      "tests/credential_bootstrap_preparation_test.ts",
+      "tests/participant_admin_authority_test.ts",
     ],
     [PUBLICATION_PORT]: [
       PUBLICATION_STORE,
@@ -261,12 +292,14 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
     [CREDENTIAL_ENGINE]: [
       ...PROOF_OWNERSHIP.modules[CREDENTIAL_ENGINE],
       PREPARATION_HELPER,
+      "tests/participant_admin_authority_test.ts",
     ],
     [ACCOUNT_REPOSITORY]: [
       ...PROOF_OWNERSHIP.modules[ACCOUNT_REPOSITORY],
       PREPARATION_HELPER,
       "tests/credential_preparation_test.ts",
       "tests/credential_directory_test.ts",
+      "tests/credential_bootstrap_preparation_test.ts",
     ],
     [OFFLINE_RECOVERY]: [
       CREDENTIAL_ENGINE,
@@ -276,6 +309,8 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
     ],
     [PREPARATION_HELPER]: [
       "tests/credential_preparation_test.ts",
+      "tests/participant_admin_authority_test.ts",
+      "tests/credential_bootstrap_preparation_test.ts",
       "tests/config_durability_test.ts",
       "tests/credential_directory_test.ts",
       "tests/credential_proof_test.ts",
@@ -320,6 +355,8 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
     ],
     [IDENTITY_HELPER]: [
       "tests/credential_login_step_test.ts",
+      "tests/participant_admin_authority_test.ts",
+      "tests/credential_bootstrap_preparation_test.ts",
       "tests/config_durability_test.ts",
       "tests/config_owned_root_test.ts",
       "tests/credential_directory_test.ts",

@@ -2,6 +2,15 @@
 import { join } from "@std/path";
 import { jwtVerify, SignJWT } from "jose";
 import { AccountRepository } from "./accounts.ts";
+import type { AuthorityReadContext } from "./authority_context.ts";
+import {
+  assertAuthorityContext,
+  withAuthorityContext,
+} from "./internal/authority_context.ts";
+import {
+  authorityRead,
+  registerAuthorityReader,
+} from "./internal/authority_read.ts";
 import {
   type AccountCredentials,
   AuthenticationError,
@@ -75,6 +84,15 @@ export class SessionRepository {
     if (saved.persistence.raw !== null && saved.value.signingKey === null) {
       throw new IdentityStateError();
     }
+    registerAuthorityReader(this, (native) => {
+      const state = native
+        ? authorityRead<{ value: SessionState }>(this.#file, native).value
+        : this.capture().value;
+      return Object.freeze({
+        initialized: state.signingKey !== null,
+        signingRevision: state.signingRevision,
+      });
+    });
   }
   capture() {
     return this.#file.capture();
@@ -105,13 +123,13 @@ export class SessionRepository {
 }
 
 export class InstanceSessions {
-  readonly #now: () => number;
+  readonly #now: (context: AuthorityReadContext) => number;
   readonly #credentials: AccountCredentials;
   constructor(
     readonly accounts: AccountRepository,
     readonly signing: SessionRepository,
     readonly settings: SessionSettings,
-    options: { now?: () => number } = {},
+    options: { now?: (context: AuthorityReadContext) => number } = {},
   ) {
     if (
       !Number.isSafeInteger(settings.expirySeconds) ||
@@ -127,12 +145,34 @@ export class InstanceSessions {
   async resolve(token: string | null): Promise<Principal> {
     return token === null ? GUEST : await this.validateToken(token);
   }
-  assertCurrent(principal: AccountPrincipal): void {
-    const now = this.#now();
-    const account = this.accounts.identityById(principal.accountId),
-      signing = this.signing.current();
+  /** Public ordinary assertions deliberately do not inherit a native check.
+   * AuthorityPrincipalCheck is the required-context validation callback form. */
+  assertCurrent(principal: AccountPrincipal): void;
+  assertCurrent(
+    principal: AccountPrincipal,
+    context: AuthorityReadContext,
+  ): void;
+  assertCurrent(
+    principal: AccountPrincipal,
+    context?: AuthorityReadContext,
+  ): void {
+    if (context) this.#assertCurrent(principal, context);
+    else {withAuthorityContext(undefined, (ordinary) =>
+        this.#assertCurrent(principal, ordinary));}
+  }
+  #assertCurrent(
+    principal: AccountPrincipal,
+    context: AuthorityReadContext,
+  ): void {
+    assertAuthorityContext(context);
+    const now = this.#now(context);
+    const account = context.accounts(this.accounts).value.accounts.find((a) =>
+        a.id === principal.accountId
+      ),
+      signing = context.signing(this.signing);
     if (
-      !account || account.credentialRevision !== principal.credentialRevision ||
+      !signing.initialized || !account ||
+      account.credentialRevision !== principal.credentialRevision ||
       account.passwordChangeRequired !== principal.passwordChangeRequired ||
       signing.signingRevision !== principal.signingRevision ||
       !Number.isFinite(principal.expiresAt) ||
@@ -172,7 +212,7 @@ export class InstanceSessions {
       const account = claim.identity;
       const signingSnapshot = this.signing.capture();
       const signing = this.signing.current(),
-        seconds = Math.floor(this.#now() / 1000);
+        seconds = Math.floor(withAuthorityContext(undefined, this.#now) / 1000);
       const expiry = seconds + this.settings.expirySeconds;
       if (!Number.isSafeInteger(expiry)) throw new AuthenticationError();
       const access_token = await new SignJWT({
@@ -251,7 +291,7 @@ export class InstanceSessions {
             "credentialRevision",
             "signingRevision",
           ],
-          currentDate: new Date(this.#now()),
+          currentDate: new Date(withAuthorityContext(undefined, this.#now)),
         },
       );
       if (

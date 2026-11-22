@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import type { AccountIdentity } from "../accounts.ts";
-import type { Account, AccountSnapshot } from "./account_record.ts";
+import type {
+  Account,
+  AccountSnapshot,
+  ProvisioningReceipt,
+} from "./account_record.ts";
+import type { PublicationParticipant } from "../../config/owned_publication.ts";
+import { assertPublicationAuthority } from "../../internal/publication_validation.ts";
+import { requirePublicationPeer } from "../../config/internal/participant_completion.ts";
+import { accountAclParticipant } from "./account_participation.ts";
 import { reduceAccountCredentials } from "./credential_reducer.ts";
 import { hashPassword, verifyPassword } from "../../helpers.ts";
 import { AuthenticationError } from "../account_credentials.ts";
@@ -142,6 +150,12 @@ export interface OfflineAccountRequest {
   readonly credentialRevision: number;
   readonly updateId: string;
 }
+export interface AccountParticipantReceipt {
+  readonly acl: PublicationParticipant;
+  readonly operationId: string;
+  readonly actorId: string;
+  readonly payloadHash: string;
+}
 export interface OfflinePasswordRequest extends OfflineAccountRequest {
   readonly password: string;
 }
@@ -151,7 +165,10 @@ interface PreparedAccountRecord {
   readonly updateId: string;
   readonly guard: () => undefined;
   readonly operation: ReturnType<typeof createOperationLease<"live">>;
-  phase: "prepared" | "publishing" | "finished";
+  readonly purpose: PreparationPurpose | "import";
+  readonly validation: { transferred: boolean };
+  receipt?: ProvisioningReceipt;
+  phase: "prepared" | "publishing" | "participating" | "finished";
 }
 /** Private repository integration. The parsed import contract permits only the
  * repository to bind these callbacks; workflows receive the narrow commands. */
@@ -174,6 +191,7 @@ interface CredentialStore {
   ): Account;
   publish(transition: PreparedCredentialTransition): void;
   create(prepared: PreparedAccount): void;
+  participant(prepared: PreparedAccount, setId: string): PublicationParticipant;
 }
 interface ProofRecord {
   readonly account: Account;
@@ -433,9 +451,12 @@ export function bindAccountCredentials(
       admitted.purpose !== purpose
     ) throw new IdentityStateError();
     const snapshot = store.capture();
+    const validation = { transferred: false };
     const operation = createOperationLease("live", [() => {
       if (signal?.aborted) throw new AuthenticationError();
-      store.assertSnapshot(snapshot);
+      // Once transferred, the native candidate owns exact snapshot/CAS checks.
+      // Public repository reads are intentionally fenced during set assembly.
+      if (!validation.transferred) store.assertSnapshot(snapshot);
       if (
         purpose === "initial"
           ? snapshot.value.initialized || snapshot.value.accounts.length !== 0
@@ -481,6 +502,8 @@ export function bindAccountCredentials(
         updateId: request.updateId,
         guard,
         operation,
+        purpose,
+        validation,
         phase: "prepared",
       });
       guard();
@@ -594,6 +617,8 @@ export function bindAccountCredentials(
           updateId: createUuid(),
           guard,
           operation,
+          purpose: "import",
+          validation: { transferred: false },
           phase: "prepared",
         });
         issued = true;
@@ -628,6 +653,80 @@ export function bindAccountCredentials(
       } finally {
         value.phase = "finished";
         value.operation.retire();
+      }
+    },
+    prepareAccountParticipant(
+      prepared: PreparedAccount,
+      setId: string,
+      receipt?: AccountParticipantReceipt,
+    ): PublicationParticipant {
+      const value = preparedAccounts.get(prepared);
+      if (!value || value.phase !== "prepared" || !identity(setId)) {
+        throw new IdentityStateError();
+      }
+      value.phase = "publishing";
+      let issued = false;
+      try {
+        assertPublicationAuthority(value.operation.lease, store.root, setId);
+        if (value.purpose === "recipient" && receipt === undefined) {
+          throw new IdentityStateError();
+        }
+        let peer: PublicationParticipant | undefined;
+        if (receipt !== undefined) {
+          if (
+            !record(receipt) ||
+            !fields(receipt, [
+              "acl",
+              "operationId",
+              "actorId",
+              "payloadHash",
+            ])
+          ) throw new IdentityStateError();
+          const { acl, operationId, actorId, payloadHash } = receipt;
+          if (
+            value.purpose !== "recipient" || !identity(operationId) ||
+            !identity(actorId) ||
+            typeof payloadHash !== "string" ||
+            !/^[0-9a-f]{64}$/.test(payloadHash) ||
+            !value.snapshot.value.accounts.find((account) =>
+              account.id === actorId
+            ) ||
+            value.snapshot.value.provisioning.find((r) =>
+              r.operationId === operationId
+            )
+          ) throw new IdentityStateError();
+          const grant = accountAclParticipant(
+            acl,
+            credentials,
+            value.account.id,
+          );
+          if (grant.kind !== "grant" || grant.actorId !== actorId) {
+            throw new IdentityStateError();
+          }
+          value.receipt = Object.freeze({
+            operationId,
+            actorId,
+            payloadHash,
+            accountId: value.account.id,
+            vaultId: grant.vaultId,
+            level: grant.level,
+            aclUpdateId: grant.updateId,
+            committed: true,
+          });
+          peer = acl;
+        }
+        assertPublicationAuthority(value.operation.lease, store.root, setId);
+        value.validation.transferred = true;
+        const participant = store.participant(prepared, setId);
+        if (peer) requirePublicationPeer(participant, peer);
+        value.phase = "participating";
+        issued = true;
+        return participant;
+      } finally {
+        if (!issued) {
+          value.phase = "finished";
+          value.operation.retire();
+        }
       }
     },
     resetPassword(
@@ -865,17 +964,20 @@ export function bindAccountCredentials(
   });
   return Object.freeze({
     credentials,
-    resolvePreparedAccount(prepared: PreparedAccount) {
+    resolvePreparedAccount(prepared: PreparedAccount, setId?: string) {
       const value = preparedAccounts.get(prepared);
       if (!value || value.phase !== "publishing") {
         throw new IdentityStateError();
       }
-      value.guard();
+      if (setId !== undefined) {
+        assertPublicationAuthority(value.operation.lease, store.root, setId);
+      } else value.guard();
       return Object.freeze({
         account: value.account,
         snapshot: value.snapshot,
         updateId: value.updateId,
         lease: value.operation.lease,
+        receipt: value.receipt,
       });
     },
     // Only the repository's private binding may resolve sealed write inputs.

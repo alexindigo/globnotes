@@ -18,6 +18,15 @@ import {
   record,
 } from "./records.ts";
 import type { Principal } from "./sessions.ts";
+import type { OperationLease } from "../operation_lease.ts";
+import {
+  authorityRead,
+  registerAuthorityReader,
+} from "./internal/authority_read.ts";
+import type { AccountDirectorySnapshot } from "./accounts.ts";
+import type { AuthorityReadContext } from "./authority_context.ts";
+import { assertAuthorityContext } from "./internal/authority_context.ts";
+import { registerAccountAclParticipant } from "./internal/account_participation.ts";
 
 export const ACCESS_LEVELS = ["none", "view", "edit", "admin"] as const;
 export type AccessLevel = typeof ACCESS_LEVELS[number];
@@ -114,7 +123,31 @@ export class AclRepository {
         everybody: "none",
         grants: {},
       },
+      undefined,
+      options.accounts.root,
     );
+    registerAuthorityReader(this, (context) => {
+      const snapshot = authorityRead<AclSnapshot>(this.#file, context);
+      const accounts = authorityRead<AccountDirectorySnapshot>(
+        this.#accounts,
+        context,
+      );
+      const adminId = this.#adminLogin
+        ? accounts.value.accounts.find((a) => a.login === this.#adminLogin)
+          ?.id ?? null
+        : null;
+      return {
+        snapshot,
+        policyKey: this.#policyKey(snapshot.value.revision, adminId),
+        effectiveLevel: (
+          principal: Principal,
+          context: AuthorityReadContext,
+        ) => {
+          assertAuthorityContext(context);
+          return this.#effectiveLevel(snapshot.value, adminId, principal);
+        },
+      };
+    });
   }
   capture(): AclSnapshot {
     return this.#file.capture();
@@ -141,17 +174,30 @@ export class AclRepository {
   }
   /** Includes only this vault's deployment overlay, not global account-store churn. */
   get policyKey(): string {
+    return this.#policyKey(this.revision, this.declaredAdmin.accountId);
+  }
+  #policyKey(revision: number, adminId: string | null): string {
     return JSON.stringify([
       this.vaultId,
-      this.revision,
+      revision,
       this.#adminLogin,
-      this.declaredAdmin.accountId,
+      adminId,
     ]);
   }
   effectiveLevel(principal: Principal): AccessLevel {
-    const value = this.capture().value;
+    return this.#effectiveLevel(
+      this.capture().value,
+      this.declaredAdmin.accountId,
+      principal,
+    );
+  }
+  #effectiveLevel(
+    value: AclState,
+    adminId: string | null,
+    principal: Principal,
+  ): AccessLevel {
     if (principal.kind === "guest") return value.everybody;
-    if (principal.accountId === this.declaredAdmin.accountId) return "admin";
+    if (principal.accountId === adminId) return "admin";
     return Object.hasOwn(value.grants, principal.accountId)
       ? value.grants[principal.accountId]
       : value.everybody;
@@ -223,6 +269,80 @@ export class AclRepository {
       expected,
       guard,
     );
+  }
+  /** Prepared setup only. The creator is not active until the pair settles. */
+  prepareInitialParticipant(
+    input: AccountIdentity,
+    everybody: EverybodyLevel,
+    expected: AclSnapshot,
+    lease: OperationLease<"live">,
+    setId: string,
+  ) {
+    const creator = Object.freeze(
+      validateAccountIdentity(structuredClone(input)),
+    );
+    if (expected.persistence.raw !== null) throw new StoredConfigConflict();
+    const next = prepareInitialAcl(this.vaultId, creator, everybody);
+    const participant = this.#file.prepareParticipant(
+      next,
+      expected,
+      lease,
+      setId,
+      "access",
+    );
+    registerAccountAclParticipant(participant, {
+      kind: "initial",
+      credentials: this.#accounts.credentials,
+      account: creator,
+      vaultId: this.vaultId,
+      level: "admin",
+      updateId: next.updateId!,
+      actorId: creator.id,
+    });
+    return participant;
+  }
+  /** Stage ACL first, while current account admission is still available. The
+   * account aggregate requires this exact peer for a committed create receipt. */
+  prepareGrantParticipant(
+    input: AccountIdentity,
+    grant: AccessLevel,
+    expected: AclSnapshot,
+    update: Readonly<{ updateId: string; actorId: string }>,
+    lease: OperationLease<"live">,
+    setId: string,
+  ) {
+    const recipient = Object.freeze(
+      validateAccountIdentity(structuredClone(input)),
+    );
+    const { updateId, actorId } = update;
+    if (
+      !recipient.passwordChangeRequired || !this.#accounts.byId(actorId) ||
+      this.#accounts.byId(recipient.id)
+    ) throw new IdentityStateError();
+    const next = validateAcl({
+      ...expected.value,
+      revision: expected.value.revision + 1,
+      updateId,
+      updateActorId: actorId,
+      grants: { ...expected.value.grants, [recipient.id]: grant },
+    }, this.vaultId);
+    const participant = this.#file.prepareParticipant(
+      next,
+      expected,
+      lease,
+      setId,
+      "access",
+    );
+    registerAccountAclParticipant(participant, {
+      kind: "grant",
+      credentials: this.#accounts.credentials,
+      account: recipient,
+      vaultId: this.vaultId,
+      level: grant,
+      updateId,
+      actorId,
+    });
+    return participant;
   }
   /** Import writes a validated bound record; it never reads v2 files or publishes a vault. */
   importAcl(

@@ -29,6 +29,9 @@ export interface ProvisioningReceipt {
   readonly vaultId: string;
   readonly accountId: string;
   readonly payloadHash: string;
+  readonly committed: true;
+  readonly level: "none" | "view" | "edit" | "admin";
+  readonly aclUpdateId: string;
 }
 export interface AccountState {
   readonly version: 1;
@@ -113,9 +116,15 @@ export function validateState(value: unknown): AccountState {
         "vaultId",
         "accountId",
         "payloadHash",
+        "committed",
+        "level",
+        "aclUpdateId",
       ]) || !identity(receipt.operationId) || !identity(receipt.actorId) ||
       !identity(receipt.vaultId) || !identity(receipt.accountId) ||
       !accounts.some((a) => a.id === receipt.accountId) ||
+      !accounts.some((a) => a.id === receipt.actorId) ||
+      receipt.committed !== true || !identity(receipt.aclUpdateId) ||
+      !["none", "view", "edit", "admin"].includes(receipt.level as string) ||
       typeof receipt.payloadHash !== "string" ||
       !/^[0-9a-f]{64}$/.test(receipt.payloadHash) ||
       operations.has(receipt.operationId)

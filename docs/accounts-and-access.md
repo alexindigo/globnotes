@@ -55,3 +55,35 @@ stream enqueue boundaries; actual HTTP/SSE and plugin propagation are later step
 Revocation denies pending work, never rolls back an already committed effect or
 deletes a browser's unsaved text. Unrelated account/vault revisions do not retire
 another lease.
+
+Account preparation can transfer an issued, single-use account into a sealed
+publication set with its initialized marker. Setup ACL preparation accepts only a
+redacted unrestricted creator. Create-and-add prepares the ACL first, then binds
+the account's committed receipt to that exact ACL participant; an account-only
+set cannot publish that receipt. Receipt fields retain actor, operation, keyed
+payload identity, target, original level and ACL update identity. Neither
+preparation activates an account or grant. Reads and competing writes remain
+unavailable until the whole set is installed and released. The later identity
+transaction still owns its durable journal and recovery, not these adapters.
+
+Native participant validation retains the full P05 authority chain. Its private
+account, ACL and session projections read the pre-fence committed runtime state
+of that reservation or exact assembled set; public reads and public lease checks
+remain fenced. Context is synchronous and cannot be retained for later reads.
+All guard callbacks still precede native storage validation and final pure
+lifetime fences, including immediately before each file publication. An Admin
+grant therefore validates its own committed authority without activating the
+prospective grant or reopening outside readers.
+
+Authority callbacks now take a required `AuthorityReadContext`: selection,
+lifecycle/service eligibility, principal validation, ACL evaluation and the
+session clock receive the same issued context for that check. Its account and
+signing projections are redacted and live, not cached eligibility. The context
+expires at the end of that check and is not reusable in the next check of the
+same publication set. Context-free public reads still refuse custody.
+
+A service callback reads `context.accounts(sessions.accounts).value.initialized`
+and `context.signing(sessions.signing).initialized`; its lifecycle adapter must
+forward that same context. Ordinary/background evaluation can use
+`readAuthorityState(service.operational)`, which always issues an ordinary scoped
+context and cannot borrow publication authority from an enclosing callback.

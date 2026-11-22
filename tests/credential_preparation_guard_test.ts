@@ -3,15 +3,32 @@ import { assertEquals } from "@std/assert";
 import { analyzeOwnership } from "./helpers/ownership_contract.ts";
 import { assertPrivateModule } from "./helpers/credential_registration.ts";
 import {
+  ACCOUNT_PARTICIPATION,
+  AUTHORITY_READ,
   CREDENTIAL_ENGINE,
   OFFLINE_RECOVERY,
+  PARTICIPANT_COMPLETION,
   PREPARATION_HELPER,
   PREPARATION_OWNERSHIP,
+  PUBLICATION_VALIDATION,
 } from "./helpers/ownership_rules.ts";
 Deno.test("account preparation registration: HTTP cannot import offline authority, private preparation or its test helper", () => {
   for (
     const module of [OFFLINE_RECOVERY, CREDENTIAL_ENGINE, PREPARATION_HELPER]
   ) assertPrivateModule(module, PREPARATION_OWNERSHIP);
+});
+Deno.test("account participation registration: completion and ACL provenance cannot be acquired by workflows", () => {
+  for (
+    const module of [
+      ACCOUNT_PARTICIPATION,
+      PARTICIPANT_COMPLETION,
+      AUTHORITY_READ,
+      PUBLICATION_VALIDATION,
+      "server/auth/internal/authority_context.ts",
+    ]
+  ) {
+    assertPrivateModule(module, PREPARATION_OWNERSHIP);
+  }
 });
 Deno.test("account preparation registration: offline re-export rejects at its origin, not its consumer", () => {
   const sites = analyzeOwnership([

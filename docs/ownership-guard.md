@@ -421,6 +421,31 @@ registered participant before serving repository reads.
 
 ## Sign-in delivery (P08)
 
+G2a adds private ACL-participant facts and native set-completion ports. Only the
+ACL repository binds domain facts, and only the publication owner binds actual
+completion. The aggregate resolves these issued handles; workflows cannot import
+either binder through any runtime import or re-export form. The ordinary pilot
+asserts rejected clones, missing receipt peers, unreleased sets and same-byte
+foreign replacement. Completion binds the exact set and current native bindings,
+not a caller's committed flag or a plain publication receipt.
+
+Participant authority uses private registered projections, not public-read
+exceptions. The publication owner issues root/set reservation contexts and exact
+assembled-set contexts; the lease engine transports them only through one native
+check's witnesses. The generic transport does not know publication semantics.
+Private projection imports are limited to their concrete owners and the actual
+authority evaluator. Public lease assertions suppress native context, and retained
+contexts no longer match once their check returns. Ordinary native/Admin tests
+cover both the original successful composition and outside/reentrant refusal.
+
+The public `authority_context.ts` facade exposes the required callback types and
+an ordinary-only read scope. Only the concrete authority/session/ACL owners can
+import its native issuer. Ordinary tests cover real identity-backed eligibility,
+the complete selector/principal/clock/lifecycle callback sequence under one
+context, later-check expiry, context-free callback refusal and reentrant
+ordinary/background refusal. Type contracts reject callback invocations without
+a context and construction of a context DTO.
+
 The preparatory instance sign-in API returns an issued principal and a lazy
 response body, never raw token fields. Its private stream retains signed bytes
 and the claimed proof until native enqueue or cancellation. Parent, claim and

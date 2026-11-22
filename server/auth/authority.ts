@@ -15,11 +15,13 @@ export type {
   AuthorityDisclosure,
   PreparedAuthorityRead,
 } from "../internal/authority_disclosure.ts";
-import type {
-  NoteMutationLease,
-  PluginLifecycle,
-} from "../plugins/lifecycle.ts";
+import type { NoteMutationLease } from "../plugins/lifecycle.ts";
 import { ACCESS_LEVELS, type AclRepository } from "./acl.ts";
+import { withAuthorityContext } from "./internal/authority_context.ts";
+import type {
+  AuthorityCallback,
+  AuthorityReadContext,
+} from "./authority_context.ts";
 import {
   AuthenticationError,
   type InstanceSessions,
@@ -41,7 +43,10 @@ export interface AuthorityVault {
   readonly identity: object;
   readonly id: string;
   readonly acl: AclRepository;
-  readonly lifecycle: Pick<PluginLifecycle, "epoch" | "operational">;
+  readonly lifecycle: {
+    readonly epoch: number;
+    readonly operational: AuthorityCallback<boolean>;
+  };
 }
 /** Projection allocation is not an owner change. Owner bindings still must agree. */
 export function sameAuthorityVault(
@@ -88,13 +93,13 @@ function changed(operationId?: string): never {
 export class InstanceAuthority {
   constructor(
     readonly sessions: InstanceSessions,
-    readonly currentVault: () => AuthorityVault | null,
+    readonly currentVault: AuthorityCallback<AuthorityVault | null>,
     readonly lifetime: OperationLease<"live">,
   ) {}
-  #principal(principal: Principal): void {
+  #principal(principal: Principal, context: AuthorityReadContext): void {
     if (principal.kind === "account") {
       try {
-        this.sessions.assertCurrent(principal);
+        context.assertPrincipal(this.sessions, principal);
       } catch (error) {
         if (error instanceof AuthenticationError) unauthorized();
         throw error;
@@ -114,8 +119,8 @@ export class InstanceAuthority {
     const lifetime = this.lifetime;
     assertOperationLease(lifetime, "live");
     const principal = Object.freeze({ ...admittedPrincipal });
-    const guard = () => {
-      this.#principal(principal);
+    const guard = (context: AuthorityReadContext) => {
+      this.#principal(principal, context);
       if (operation === "readInstance") return;
       if (principal.kind !== "account") unauthorized();
       if (operation === "createVault" && principal.passwordChangeRequired) {
@@ -123,8 +128,8 @@ export class InstanceAuthority {
       }
       if (!["manageOwnAccount", "createVault"].includes(operation)) forbidden();
     };
-    const { lease } = createOperationLease("live", [() => {
-      guard();
+    const { lease } = createOperationLease("live", [(_id, native) => {
+      withAuthorityContext(native, guard);
     }], [lifetime]);
     return Object.freeze({
       ...createAuthorityDisclosure(lease, "live"),
@@ -147,21 +152,26 @@ export class InstanceAuthority {
   }
   capabilities(
     principal: Principal,
-    vault: AuthorityVault | null = this.currentVault(),
+    vault?: AuthorityVault | null,
   ) {
-    this.#principal(principal);
-    const signedIn = principal.kind === "account",
-      unrestricted = !signedIn || !principal.passwordChangeRequired;
-    const granted = vault && vault.id === vault.acl.vaultId &&
-        vault.lifecycle.operational() && unrestricted
-      ? ACCESS_LEVELS.indexOf(vault.acl.effectiveLevel(principal))
-      : 0;
-    return Object.freeze({
-      canRead: granted >= 1,
-      canEdit: granted >= 2,
-      canManageVault: granted >= 3,
-      canManageOwnAccount: signedIn,
-      canCreateVault: signedIn && unrestricted,
+    return withAuthorityContext(undefined, (context) => {
+      const selected = vault === undefined ? this.currentVault(context) : vault;
+      this.#principal(principal, context);
+      const signedIn = principal.kind === "account",
+        unrestricted = !signedIn || !principal.passwordChangeRequired;
+      const granted = selected && selected.id === selected.acl.vaultId &&
+          selected.lifecycle.operational(context) && unrestricted
+        ? ACCESS_LEVELS.indexOf(
+          context.acl(selected.acl).effectiveLevel(principal, context),
+        )
+        : 0;
+      return Object.freeze({
+        canRead: granted >= 1,
+        canEdit: granted >= 2,
+        canManageVault: granted >= 3,
+        canManageOwnAccount: signedIn,
+        canCreateVault: signedIn && unrestricted,
+      });
     });
   }
   lease(principal: Principal, operation: VaultOperation): VaultAuthorityLease {
@@ -176,9 +186,9 @@ export class InstanceAuthority {
     assertOperationLease(lifetime, "live");
     // Capture now, but report target/storage errors only after authenticating.
     // A failed capture is retained too; it must never be retried under a new owner.
-    const captured = (() => {
+    const captured = withAuthorityContext(undefined, (context) => {
       try {
-        const selected = this.currentVault();
+        const selected = this.currentVault(context);
         if (!selected || selected.id !== selected.acl.vaultId) {
           throw new HttpError(404, "Vault unavailable.");
         }
@@ -194,15 +204,18 @@ export class InstanceAuthority {
       } catch (error) {
         return { error };
       }
-    })();
+    });
     return (admittedPrincipal: Principal): VaultAuthorityLease => {
       const principal = Object.freeze({ ...admittedPrincipal });
-      this.#principal(principal);
+      withAuthorityContext(
+        undefined,
+        (context) => this.#principal(principal, context),
+      );
       if ("error" in captured) throw captured.error;
       const { vault, snapshot, policy, epoch } = captured.value;
-      const allows = () => {
-        this.#principal(principal);
-        if (!vault.lifecycle.operational()) {
+      const allows = (context: AuthorityReadContext) => {
+        this.#principal(principal, context);
+        if (!vault.lifecycle.operational(context)) {
           throw new HttpError(503, "Vault unavailable.");
         }
         if (principal.kind === "account" && principal.passwordChangeRequired) {
@@ -211,27 +224,36 @@ export class InstanceAuthority {
         const requirement = REQUIREMENTS[operation];
         if (
           !requirement ||
-          ACCESS_LEVELS.indexOf(vault.acl.effectiveLevel(principal)) <
+          ACCESS_LEVELS.indexOf(
+              context.acl(vault.acl).effectiveLevel(principal, context),
+            ) <
             ACCESS_LEVELS.indexOf(requirement)
         ) forbidden();
       };
-      allows();
-      const guard = (operationId?: string): undefined => {
-        this.#principal(principal);
+      withAuthorityContext(undefined, allows);
+      const guard = (
+        context: AuthorityReadContext,
+        operationId?: string,
+      ): undefined => {
+        this.#principal(principal, context);
+        const acl = context.acl(vault.acl);
         if (
-          !sameAuthorityVault(this.currentVault(), vault) ||
+          !sameAuthorityVault(this.currentVault(context), vault) ||
           vault.lifecycle.epoch !== epoch ||
-          vault.acl.policyKey !== policy
+          acl.policyKey !== policy
         ) changed(operationId);
         try {
-          vault.acl.assertUnchanged(snapshot);
+          context.assertAclUnchanged(vault.acl, snapshot);
         } catch (error) {
           if (error instanceof StoredConfigConflict) changed(operationId);
           throw error;
         }
-        allows();
+        allows(context);
       };
-      const { lease } = createOperationLease("live", [guard], [lifetime]);
+      const { lease } = createOperationLease("live", [
+        (id, native) =>
+          withAuthorityContext(native, (context) => guard(context, id)),
+      ], [lifetime]);
       const assertCurrent = lease.assertCurrent;
       assertCurrent();
       return Object.freeze({

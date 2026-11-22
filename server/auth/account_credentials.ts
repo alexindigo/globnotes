@@ -7,6 +7,7 @@ export class AuthenticationError extends Error {
 }
 export type {
   AccountCredentials,
+  AccountParticipantReceipt,
   AccountPreparationAuthority,
   AccountPreparationRequest,
   AuthenticatorChange,
