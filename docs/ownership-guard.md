@@ -278,6 +278,13 @@ legacy sign-in handlers are unchanged.
 Inspection returns a plain envelope; token bytes are delivered data, never a
 pending inspection result.
 
+The aggregate may reject sign-in with `AuthenticationError.code` equal to
+`authenticator_required` only after a correct password and current account/owner
+checks, including after the verifier returns. Missing or empty code spends no
+TOTP step and issues no proof or session. The next submission verifies the full
+credentials again; no challenge is retained. Other failures and credential-change
+verification remain generic, including adapter-thrown errors with that code.
+
 ## Credential publication dependencies (P09-P10)
 
 Credential commands pass their admitted domain/aggregate lease through the sealed

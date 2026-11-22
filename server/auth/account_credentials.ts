@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 /** Safe errors and erased command types. Runtime binders stay private. */
 export class AuthenticationError extends Error {
-  constructor() {
+  constructor(readonly code?: "authenticator_required") {
     super("Invalid authentication credentials.");
   }
 }

@@ -181,6 +181,12 @@ interface ProofRecord {
   phase: "prepared" | "claimed" | "finished";
   claimOwner?: ReturnType<typeof createOperationLease<"live">>;
 }
+/** Only this verifier can produce the sign-in step. Thrown errors, including
+ * AuthenticationError values supplied by adapters, are always generic. */
+type VerificationResult = {
+  readonly kind: "verified" | "authenticator_required";
+  readonly record: ProofRecord;
+};
 interface EnrollmentAttempt {
   readonly accountId: string;
   readonly revision: number;
@@ -302,7 +308,7 @@ export function bindAccountCredentials(
     witness: () => undefined = () => undefined,
     expected?: Account,
     parents: readonly OperationLease<"live">[] = [],
-  ): Promise<ProofRecord> => {
+  ): Promise<VerificationResult> => {
     if (
       typeof login !== "string" || typeof password !== "string" ||
       (code !== undefined && typeof code !== "string") ||
@@ -326,17 +332,25 @@ export function bindAccountCredentials(
         !await verify(password, account.passwordHash)
       ) throw new AuthenticationError();
       assertOperationLease(operation.lease, "live");
-      const live = store.byId(account.id);
-      if (
-        !live || live.credentialRevision !== account.credentialRevision ||
-        live.passwordHash !== account.passwordHash
-      ) throw new AuthenticationError();
+      assertSnapshot(account);
+      // Keep the exact password-checked snapshot, not a replacement with the
+      // same password/revision but different authenticator or replay state.
+      const live = account;
       if (expected) assertSnapshot(expected);
       const authenticator = store.authenticator(live);
       let verified = live;
       if (authenticator.kind === "totp") {
+        if (code === undefined || code === "") {
+          assertSnapshot(live);
+          assertOperationLease(operation.lease, "live");
+          admitted = true;
+          return {
+            kind: "authenticator_required",
+            record: { account: live, operation, phase: "prepared" },
+          };
+        }
         const step = matchingStoredTotpStep(
-          code ?? "",
+          code,
           authenticator.secret,
           now(),
         );
@@ -352,7 +366,10 @@ export function bindAccountCredentials(
       assertSnapshot(verified);
       assertOperationLease(operation.lease, "live");
       admitted = true;
-      return { account: verified, operation, phase: "prepared" };
+      return {
+        kind: "verified",
+        record: { account: verified, operation, phase: "prepared" },
+      };
     } catch {
       throw new AuthenticationError();
     } finally {
@@ -634,8 +651,18 @@ export function bindAccountCredentials(
       signal?: AbortSignal,
     ): Promise<LoginProof> {
       const verified = await verifyCurrent(login, password, code, signal);
+      if (verified.kind === "authenticator_required") {
+        try {
+          // Recheck after the verifier's async return; issue no LoginProof and
+          // retire the private operation even when this final check rejects.
+          current(verified.record);
+          throw new AuthenticationError("authenticator_required");
+        } finally {
+          close(verified.record);
+        }
+      }
       const proof = Object.freeze({}) as LoginProof;
-      proofs.set(proof, verified);
+      proofs.set(proof, verified.record);
       return proof;
     },
     async beginEnrollment(source: CredentialAuthority, signal?: AbortSignal) {
@@ -728,7 +755,7 @@ export function bindAccountCredentials(
         ) throw new StoredConfigConflict();
         return undefined;
       };
-      const proof = await verifyCurrent(
+      const verified = await verifyCurrent(
         initial.login,
         request.current.password,
         request.current.code,
@@ -737,6 +764,11 @@ export function bindAccountCredentials(
         initial,
         [lease],
       );
+      if (verified.kind !== "verified") {
+        close(verified.record);
+        throw new AuthenticationError();
+      }
+      const proof = verified.record;
       proof.phase = "claimed";
       let token: PreparedCredentialTransition | undefined;
       let committed = false;

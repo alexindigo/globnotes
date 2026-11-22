@@ -196,6 +196,7 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
       "tests/helpers/credential_commands.ts",
     ],
     "tests/helpers/credential_commands.ts": [
+      "tests/credential_login_step_test.ts",
       "tests/credential_transition_test.ts",
       "tests/identity_totp_contract_test.ts",
       "tests/credential_preparation_test.ts",
@@ -280,6 +281,7 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
       "tests/identity_totp_upgrade_test.ts",
     ],
     [IDENTITY_HELPER]: [
+      "tests/credential_login_step_test.ts",
       "tests/config_durability_test.ts",
       "tests/config_owned_root_test.ts",
       "tests/credential_directory_test.ts",

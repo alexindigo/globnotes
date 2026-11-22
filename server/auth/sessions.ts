@@ -152,6 +152,8 @@ export class InstanceSessions {
       typeof input.password !== "string" ||
       (input.totp !== undefined && typeof input.totp !== "string")
     ) throw new AuthenticationError();
+    // Preserve the aggregate's safe missing-authenticator step. It carries no
+    // proof/session; issue still accepts only a fully verified LoginProof.
     const proof = await this.#credentials.authenticate(
       input.username,
       input.password,

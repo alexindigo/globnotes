@@ -4,9 +4,32 @@ import { analyzeOwnership } from "./helpers/ownership_contract.ts";
 import { assertPrivateModule } from "./helpers/credential_registration.ts";
 import {
   ACCOUNT_REPOSITORY,
+  ADOPTION_OWNERSHIP,
   CREDENTIAL_ENGINE,
   PROOF_OWNERSHIP,
 } from "./helpers/ownership_rules.ts";
+Deno.test("sign-in registration: the login-step pilot owns fixture use, not a private binder or repository", () => {
+  const file = "tests/credential_login_step_test.ts";
+  const sites = analyzeOwnership([{
+    file,
+    text: `
+      import {credentialCommandFixture} from "fixture";
+      import {storedState} from "identity";
+      import {bindAccountCredentials} from "engine";
+      import {AccountRepository} from "repository";
+    `,
+    imports: {
+      fixture: "tests/helpers/credential_commands.ts",
+      identity: "tests/helpers/identity.ts",
+      engine: CREDENTIAL_ENGINE,
+      repository: ACCOUNT_REPOSITORY,
+    },
+  }], ADOPTION_OWNERSHIP);
+  assertEquals(sites.map((site) => [site.file, site.capability]), [
+    [file, `module:${CREDENTIAL_ENGINE}`],
+    [file, `module:${ACCOUNT_REPOSITORY}`],
+  ]);
+});
 Deno.test("sign-in registration: private aggregate and repository ports reject all runtime import forms", () => {
   assertPrivateModule(CREDENTIAL_ENGINE, PROOF_OWNERSHIP);
   assertPrivateModule(ACCOUNT_REPOSITORY, PROOF_OWNERSHIP);
