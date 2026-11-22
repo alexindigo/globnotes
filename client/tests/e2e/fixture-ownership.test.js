@@ -7,17 +7,25 @@ import { browserOwnershipControl } from "./native-ownership-control.mjs";
 vi.mock("./legacy-fixture.mjs", () => ({ runCase: vi.fn() }));
 vi.mock("./cdp.mjs", () => ({ connect: vi.fn(), launchBrowser: vi.fn(), stopBrowser: vi.fn() }));
 
-function fixture({ fail = "", closeFailures = [], browserUi = false, leakedUi = false } = {}) {
-  const events = [], active = ["pre-existing"], bindings = [];
+function fixture({ fail = "", closeFailures = [], browserUi = false, managedChurn = false, leakedPage = "", leakedContext = "", lostPreserved = "" } = {}) {
+  const events = [], active = ["pre-existing"], contexts = ["context:pre-existing"], bindings = [];
   const ui = browserUi ? ["pre-existing-ui"] : [];
+  const workers = [], peers = [];
   const primary = new Error(`failed ${fail}`);
   const note = { text: "Fixture readme. #inbox", href: "http://globnotes.test:9000/readme", secure: false };
   const allocate = name => { events.push(name); if (name === fail) throw primary; };
   const release = name => { events.push(name); const error = closeFailures.find(row => row.name === name); if (error) throw error; };
   const session = {
+    targetId: "pre-existing", browserContextId: "context:pre-existing",
     browser: { async send(method) {
+      if (method === "Target.getBrowserContexts") return { browserContextIds: [...contexts] };
       expect(method).toBe("Target.getTargets");
-      return { targetInfos: [...active.map(targetId => ({ targetId, type: "page" })), ...ui.map(targetId => ({ targetId, type: "browser_ui" }))] };
+      return { targetInfos: [
+        ...active.map(targetId => ({ targetId, type: "page", browserContextId: `context:${targetId}` })),
+        ...ui.map(targetId => ({ targetId, type: "browser_ui" })),
+        ...workers.map(targetId => ({ targetId, type: "service_worker", url: "chrome-extension://nkeimhogjdpnpccoofpliimaahmaaome/thunk.js" })),
+        ...peers.map(targetId => ({ targetId, type: "page", browserContextId: "unrelated-context" })),
+      ] };
     } },
     goto: async () => { events.push("pre-existing:goto"); },
     poll: async () => { events.push("pre-existing:read"); return note; },
@@ -36,21 +44,32 @@ function fixture({ fail = "", closeFailures = [], browserUi = false, leakedUi = 
       const { label } = binding;
       allocate(`page:${label}`);
       active.push(label);
+      contexts.push(`context:${label}`);
+      if (label === "B") {
+        if (managedChurn === "worker") workers.push("browser-managed-worker");
+        if (managedChurn === "page") peers.push("unrelated-page");
+        if (managedChurn === "ui") ui.splice(0);
+      }
       return {
-        targetId: label,
+        targetId: label, browserContextId: `context:${label}`,
         async goto() { events.push(`goto:${label}`); },
         async evaluate() { events.push(`storage:${label}`); return true; },
         async poll() { events.push(`read:${label}`); return note; },
-        async close() { active.splice(active.indexOf(label), 1); release(`close:page:${label}`); },
+        async close() {
+          if (leakedPage !== label) active.splice(active.indexOf(label), 1);
+          if (leakedContext !== label) contexts.splice(contexts.indexOf(`context:${label}`), 1);
+          if (label === "A" && lostPreserved === "page") active.splice(active.indexOf("pre-existing"), 1);
+          if (label === "A" && lostPreserved === "context") contexts.splice(contexts.indexOf("context:pre-existing"), 1);
+          release(`close:page:${label}`);
+        },
       };
     },
     stop(binding) {
       if (browserUi) ui.splice(ui.indexOf(`ui:${binding.label}`), 1);
-      if (leakedUi && binding.label === "B") ui.push("leaked-ui");
       release(`close:binding:${binding.label}`);
     },
   };
-  return { f: { session, baseUrl: "http://globnotes.test:9000" }, adapters, events, active, primary, note };
+  return { f: { session, baseUrl: "http://globnotes.test:9000" }, adapters, events, active, contexts, primary, note };
 }
 
 it("exports the same callback scope, not another native cleanup engine", async () => {
@@ -69,27 +88,63 @@ it("the actual A/B pilot closes A alone, then B, with exact targets and events",
   expect(result).toEqual({
     closed: "A", retainedConsumer: "B", preservedTargets: ["pre-existing"], isolatedStorage: true,
     retainedNote: test.note, finalTargets: ["pre-existing"],
+    ownedTargets: ["A", "B"], ownedContexts: ["context:A", "context:B"], finalContexts: ["context:pre-existing"],
     events: ["binding:B:acquired", "page:B:acquired", "binding:A:acquired", "page:A:acquired", "report:A", "page:A:closed", "binding:A:closed", "retained:B:read", "preserved:read", "report:B", "page:B:closed", "binding:B:closed"],
   });
   expect(test.events).toEqual(["pre-existing:goto", "binding:B", "page:B", "binding:A", "page:A", "goto:A", "goto:B", "storage:A", "storage:B", "close:page:A", "close:binding:A", "read:B", "pre-existing:read", "close:page:B", "close:binding:B"]);
   expect(test.active).toEqual(["pre-existing"]);
 });
 
-it("compares the full final roster even when bindings also allocate Chrome UI targets", async () => {
+it("checks explicit resource identities rather than browser-managed UI targets", async () => {
   const test = fixture({ browserUi: true });
   const result = await browserOwnershipControl(test.f, test.adapters);
-  expect(result.preservedTargets).toEqual(["pre-existing", "pre-existing-ui"]);
-  expect(result.finalTargets).toEqual(["pre-existing", "pre-existing-ui"]);
+  expect(result.preservedTargets).toEqual(["pre-existing"]);
+  expect(result.finalTargets).toEqual(["pre-existing"]);
+  expect(result.finalContexts).toEqual(["context:pre-existing"]);
   expect(result.retainedNote).toBe(test.note);
 });
 
-it("rejects an extra non-page target after cleanup instead of masking it with page filtering", async () => {
-  const test = fixture({ browserUi: true, leakedUi: true });
-  const error = await browserOwnershipControl(test.f, test.adapters).catch(error => error);
-  expect(error).toBeInstanceOf(Error);
-  expect(error.message).toBe('Browser resources escaped their scopes: expected ["pre-existing","pre-existing-ui"], observed ["leaked-ui","pre-existing","pre-existing-ui"]');
-  expect(test.active).toEqual(["pre-existing"]);
-});
+for (const kind of ["worker", "ui", "page"]) {
+  it(`does not claim unrelated ${kind} target churn`, async () => {
+    const test = fixture({ browserUi: true, managedChurn: kind });
+    const result = await browserOwnershipControl(test.f, test.adapters);
+    expect(result.finalTargets).toEqual(["pre-existing"]);
+    expect(result.finalContexts).toEqual(["context:pre-existing"]);
+    expect(result.retainedNote).toBe(test.note);
+    expect(test.active).toEqual(["pre-existing"]);
+  });
+}
+
+for (const label of ["A", "B"]) {
+  it(`rejects a leaked explicitly acquired ${label} page`, async () => {
+    const test = fixture({ leakedPage: label });
+    const error = await browserOwnershipControl(test.f, test.adapters).catch(error => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe(label === "A"
+      ? 'Binding teardown affected page ownership: expected ["B","pre-existing"], observed ["A","B","pre-existing"]'
+      : 'Browser resources escaped their scopes: expected ["pre-existing"], observed ["B","pre-existing"]');
+  });
+  it(`rejects a leaked explicitly acquired ${label} context even without a page`, async () => {
+    const test = fixture({ leakedContext: label });
+    const error = await browserOwnershipControl(test.f, test.adapters).catch(error => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe(label === "A"
+      ? 'Binding teardown affected context ownership: expected ["context:B","context:pre-existing"], observed ["context:A","context:B","context:pre-existing"]'
+      : 'Browser contexts escaped their scopes: expected ["context:pre-existing"], observed ["context:B","context:pre-existing"]');
+    expect(test.active).toEqual(["pre-existing"]);
+  });
+}
+
+for (const kind of ["page", "context"]) {
+  it(`rejects loss of the explicitly preserved ${kind}`, async () => {
+    const test = fixture({ lostPreserved: kind });
+    const error = await browserOwnershipControl(test.f, test.adapters).catch(error => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe(kind === "page"
+      ? 'Binding teardown affected page ownership: expected ["B","pre-existing"], observed ["B"]'
+      : 'Binding teardown affected context ownership: expected ["context:B","context:pre-existing"], observed ["context:B"]');
+  });
+}
 
 for (const [fail, expected] of [
   ["binding:B", ["binding:B"]],

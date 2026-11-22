@@ -227,7 +227,13 @@ reports before releasing and preserves primary plus cleanup failures. `admit`
 co-admits work with issued TS or native scopes, including borrowed roots.
 The A/B ownership control is the bounded browser-resource pilot: nested A closes
 while B and the pre-existing page still render the fixture note, then the final
-target roster exactly matches the original. Legacy case/result owners remain.
+explicitly acquired target and context identities are absent, with the original
+fixture page and context retained. The control projects each browser snapshot
+onto those issued identities, not a before/after difference of the global roster:
+Chrome manages extension workers and UI targets on its own lifecycle, and other
+owners' targets do not become this scope's resources merely by appearing during
+it. Exact page/context leak controls retain the cleanup proof. Legacy case/result
+owners and native scheduling remain unchanged.
 
 `tests/helpers/boot.ts` gives SIGTERM five seconds, then sends SIGKILL only
 to its owned child; it drains output and releases the private cwd after exit.
@@ -237,7 +243,7 @@ readiness failure remains the reported error.
 
 `SERIAL_CASES` in `legacy-native-suite.mjs` records exclusive cases and reasons:
 clipboard copy and TOTP use browser-global clipboard state, ownership-control
-checks the global target roster, background-connections changes activation,
+observes explicit ownership in the target/context rosters, background-connections changes activation,
 and autosave-timer asserts real-time input/timer budgets. Each drains the pool
 and runs alone. The same reasons appear in `suite.json`.
 
