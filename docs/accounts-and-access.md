@@ -119,6 +119,20 @@ The later CLI adapter still owns paired-state classification, legacy refusal,
 configured roots, stdin and signing initialization before account publication.
 Reset-password and disable-authenticator keep their existing distinct behavior.
 
+The prepared identity transaction now records one versioned setup or create-and-add
+decision for the exact configured account and ACL roots. It transfers the sealed
+set before attempting that decision, installs both snapshots, retires the exact
+journal, then releases admission. Undecided preparation can be discarded; an
+uncertain decision or incomplete settlement requires exclusive offline recovery
+before repositories are exposed. Foreign replacements and changed roots retain
+the journal as evidence. This is process-loss recovery, not a machine-power-loss
+guarantee, and does not activate account routes or the new setup screens.
+`prepareInitial` obtains both sealed participants from its registered repositories
+and returns one transaction-issued group. Commit rejects cloned, cross-owner,
+reused or differently correlated groups before taking custody; a refused caller
+cannot discard another transaction's preparation. The existing aggregate still
+owns account preparation and initial-account proof issuance.
+
 The prepared own-account workflow maps GET, PATCH and authenticator enrollment
 to the credential aggregate. It requires the current password and, when enabled,
 a fresh current authenticator code. Only the current issued enrollment can be

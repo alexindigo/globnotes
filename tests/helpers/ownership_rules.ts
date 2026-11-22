@@ -47,6 +47,8 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
   modules: {
     ...RESOURCE_OWNERSHIP.modules,
     [OPERATION_LEASE_OWNER]: [
+      "server/auth/transaction.ts",
+      "tests/helpers/identity_transaction.ts",
       "server/auth/sessions.ts",
       "server/auth/account.ts",
       "tests/identity_account_workflows_test.ts",
@@ -125,6 +127,11 @@ export const PUBLICATION_OWNERSHIP: OwnershipRules = {
       "server/auth/internal/authority_context.ts",
     ],
     ...OPERATION_OWNERSHIP.modules,
+    "server/auth/transaction.ts": [
+      "tests/helpers/identity_transaction.ts",
+      "tests/identity_transaction_test.ts",
+      "tests/identity_durability_test.ts",
+    ],
     [PARTICIPANT_COMPLETION]: [
       PUBLICATION_OWNER,
       ACCOUNT_PARTICIPATION,
@@ -136,6 +143,7 @@ export const PUBLICATION_OWNERSHIP: OwnershipRules = {
       "server/auth/internal/account_credentials.ts",
     ],
     [PUBLICATION_OWNER]: [
+      "server/auth/transaction.ts",
       PUBLICATION_PILOT,
       "tests/owned_publication_test.ts",
       "tests/helpers/recorded_publication_child.ts",
@@ -272,6 +280,7 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
       "tests/identity_sessions_test.ts",
     ],
     [ACCOUNT_REPOSITORY]: [
+      "server/auth/transaction.ts",
       "server/auth/sessions.ts",
       "tests/identity_account_workflows_test.ts",
       "server/auth/acl.ts",
@@ -310,12 +319,16 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
       "tests/credential_bootstrap_preparation_test.ts",
     ],
     [OFFLINE_RECOVERY]: [
+      "server/auth/transaction.ts",
       CREDENTIAL_ENGINE,
       PREPARATION_HELPER,
       "tests/recorded_publication_test.ts",
       "tests/recorded_publication_set_test.ts",
     ],
     [PREPARATION_HELPER]: [
+      "tests/helpers/identity_transaction.ts",
+      "tests/identity_transaction_test.ts",
+      "tests/identity_durability_test.ts",
       "tests/identity_account_workflows_test.ts",
       "tests/credential_preparation_test.ts",
       "tests/participant_admin_authority_test.ts",
@@ -363,6 +376,10 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
       "tests/identity_totp_upgrade_test.ts",
     ],
     [IDENTITY_HELPER]: [
+      "tests/helpers/identity_transaction.ts",
+      "tests/identity_transaction_test.ts",
+      "tests/identity_durability_test.ts",
+      "tests/identity_initial_publication_test.ts",
       "tests/identity_account_workflows_test.ts",
       "tests/credential_login_step_test.ts",
       "tests/participant_admin_authority_test.ts",
@@ -579,6 +596,7 @@ export const RECORD_MODULE_RULES = {
   "jsr:@std/fs@^1.0.20": [],
   "jsr:/@std/fs@^1.0.20/copy": [],
   [RECORD_CHANNEL]: [
+    "tests/identity_transaction_test.ts",
     "tests/recorded_publication_set_test.ts",
     SYNC_CONTROL,
     "tests/helpers/backup_retarget_preload.ts",

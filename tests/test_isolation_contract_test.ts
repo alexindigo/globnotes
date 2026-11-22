@@ -199,6 +199,12 @@ const RAW_CLOCK_ALLOWED: NonNullable<Rule["allowed"]> = [
  * build. Vault effects belong to server/hub/effects.ts. */
 const STATE_WRITES_ALLOWED: NonNullable<Rule["allowed"]> = [
   {
+    file: "server/auth/transaction.ts",
+    line: "Deno.removeSync(this.#saved.binding.target);",
+    reason:
+      "Retire only the exact bound identity journal after the entire participant set installs; the shared publication owner writes every participant.",
+  },
+  {
     file: "server/hub/drivers/secrets.ts",
     line: "const file = Deno.openSync(this.filename, {",
     reason:
