@@ -3,6 +3,7 @@ import { assertEquals, assertThrows } from "@std/assert";
 import { analyzeOwnership } from "./helpers/ownership_contract.ts";
 import {
   FIXTURE_SCOPE_ENGINE,
+  NATIVE_FINALIZER,
   NATIVE_FIXTURE_OWNERSHIP,
   NATIVE_FIXTURE_PILOT,
   NATIVE_FIXTURE_SCOPE,
@@ -11,7 +12,16 @@ import {
 } from "./helpers/ownership_rules.ts";
 
 for (const file of [NATIVE_FIXTURE_SCOPE, NATIVE_FIXTURE_PILOT]) {
-  for (const module of [FIXTURE_SCOPE_ENGINE, RESOURCE_CORE, "node:fs"]) {
+  for (
+    const module of [
+      FIXTURE_SCOPE_ENGINE,
+      RESOURCE_CORE,
+      NATIVE_FINALIZER,
+      "node:fs",
+      "jsr:@std/fs@^1.0.20",
+      "jsr:/@std/fs@^1.0.20/copy",
+    ]
+  ) {
     for (
       const text of [
         'import { createFixtureScope as create } from "raw";',

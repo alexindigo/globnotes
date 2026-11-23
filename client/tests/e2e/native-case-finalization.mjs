@@ -1,4 +1,17 @@
 import { createOwnershipScope } from "../../../shared/ownership.js";
+import { createFixtureScope, ownFixtureScope } from "../../../tests/helpers/fixture_scope_engine.ts";
+
+// The case retains custody of callback scopes through interruption as well as
+// normal return. P03 cancels every child before joining it or closing the fixture.
+export function createNativeCaseLifetime(closeFixture) {
+  const lifetime = createFixtureScope();
+  lifetime.scope.defer(closeFixture);
+  let closing;
+  return {
+    ownScope: scope => ownFixtureScope(lifetime.scope, scope),
+    close: () => closing ??= lifetime.close(),
+  };
+}
 
 // Compatibility entry: callers retain their existing retention decisions and
 // rethrow their case error when finalization succeeds. The core owns all release.

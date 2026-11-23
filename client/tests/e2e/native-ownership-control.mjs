@@ -36,6 +36,7 @@ export async function browserOwnershipControl(f, {
   equal(before.contexts, contextIds, "Retained fixture context missing");
   let result;
   await fixtureScope(async bScope => {
+    f.ownScope(bScope);
     const bindingB = (await bScope.acquire(() => launch({ port }), async binding => {
       await stop(binding); events.push("binding:B:closed");
     })).value;
@@ -46,6 +47,7 @@ export async function browserOwnershipControl(f, {
     targetIds.push(b.targetId); contextIds.push(b.browserContextId);
     events.push("page:B:acquired");
     await fixtureScope(async aScope => {
+      f.ownScope(aScope);
       const bindingA = (await aScope.acquire(() => launch({ port }), async binding => {
         await stop(binding); events.push("binding:A:closed");
       })).value;

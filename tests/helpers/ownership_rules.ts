@@ -343,6 +343,7 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       DRIVER_FIXTURE,
       FIXTURE_CLOCK,
       "client/tests/e2e/native-totp-fixture.mjs",
+      NATIVE_FINALIZER,
       "client/tests/e2e/access-settings.mjs",
       "client/tests/e2e/plugin-review-repairs.mjs",
       "tests/helpers/fixture_layout.ts",
@@ -428,9 +429,11 @@ export const NATIVE_FIXTURE_OWNERSHIP: OwnershipRules = {
   modules: {
     ...FIXTURE_OWNERSHIP.modules,
     [RESOURCE_CORE]: [],
+    [NATIVE_FINALIZER]: [],
     "node:fs": [],
     "node:fs/promises": [],
-    "@std/fs": [],
+    "jsr:@std/fs@^1.0.20": [],
+    "jsr:/@std/fs@^1.0.20/copy": [],
   },
 };
 
@@ -491,7 +494,6 @@ export const RECORD_PILOT_OWNERSHIP: OwnershipRules = {
     ...RECORD_OWNERSHIP.modules,
     "node:fs": [],
     "node:fs/promises": [],
-    "@std/fs": [],
   },
 };
 export const RECORD_ENGINE_OWNERSHIP: OwnershipRules = {

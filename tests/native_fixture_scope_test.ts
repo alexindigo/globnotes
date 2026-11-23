@@ -13,19 +13,171 @@ import {
   waitForCancellation,
 } from "./helpers/fixture_coordination.ts";
 import { bounded } from "./helpers/worker_liveness.ts";
+import { workMilestone } from "./helpers/product_settlement.ts";
 import { OwnershipError } from "../shared/ownership.js";
+import { createNativeCaseLifetime } from "../client/tests/e2e/native-case-finalization.mjs";
+import { browserOwnershipControl } from "../client/tests/e2e/native-ownership-control.mjs";
+
+// Cleanup containment must never replace the assertion that required rescue.
+async function finish(
+  join: Promise<unknown>[],
+  failed: boolean,
+  label: string,
+) {
+  try {
+    for (const result of await bounded(Promise.allSettled(join), label)) {
+      if (result.status === "rejected") throw result.reason;
+    }
+  } catch (error) {
+    if (!failed) throw error;
+  }
+}
+
+Deno.test("native test cleanup joins every result without replacing a primary failure", async () => {
+  const primary = new Error("body failed"),
+    cleanup = new Error("cleanup failed");
+  const events: string[] = [];
+  const observed = await assertRejects(
+    async () => {
+      try {
+        throw primary;
+      } finally {
+        await finish(
+          [
+            Promise.reject(cleanup),
+            Promise.resolve().then(() => {
+              events.push("sibling joined");
+            }),
+          ],
+          true,
+          "native primary cleanup",
+        );
+      }
+    },
+    Error,
+    "body failed",
+  );
+  assertStrictEquals(observed, primary);
+  assertEquals(events, ["sibling joined"]);
+  assertStrictEquals(
+    await assertRejects(
+      () =>
+        finish([Promise.reject(cleanup)], false, "native cleanup-only failure"),
+      Error,
+      "cleanup failed",
+    ),
+    cleanup,
+  );
+});
+
+Deno.test("native case interruption cancels and drains both scopes before the retained fixture", async () => {
+  await fixtureScope(async (testScope) => {
+    const events: string[] = [], scopes: FixtureScope[] = [];
+    const entered = fixtureGate(testScope), rescue = new AbortController();
+    const lifetime = createNativeCaseLifetime(() =>
+      events.push("fixture:closed")
+    );
+    let count = 0;
+    const fixture = {
+      baseUrl: "http://globnotes.test:9000",
+      ownScope(scope: FixtureScope) {
+        lifetime.ownScope(scope);
+        scopes.push(scope);
+      },
+      session: {
+        targetId: "retained",
+        browserContextId: "context:retained",
+        goto: () => {},
+        browser: {
+          send: (method: string) =>
+            method === "Target.getTargets"
+              ? { targetInfos: [{ targetId: "retained", type: "page" }] }
+              : { browserContextIds: ["context:retained"] },
+        },
+      },
+    };
+    const running = browserOwnershipControl(fixture, {
+      launch: () => ({ label: count++ ? "A" : "B" }),
+      connectPage: ({ binding }: { binding: { label: string } }) => ({
+        targetId: binding.label,
+        browserContextId: `context:${binding.label}`,
+        async goto() {
+          events.push(`admit:${binding.label}`);
+          entered.resolve();
+          try {
+            await waitForCancellation(
+              AbortSignal.any([scopes.at(-1)!.signal, rescue.signal]),
+            );
+          } finally {
+            events.push(`drain:${binding.label}`);
+          }
+        },
+        close: () => {
+          events.push(`close:${binding.label}`);
+        },
+      }),
+      stop: (binding: { label: string }) => {
+        events.push(`stop:${binding.label}`);
+      },
+    } as unknown as NonNullable<Parameters<typeof browserOwnershipControl>[1]>);
+    const checked = assertRejects(
+      () => running,
+      OwnershipError,
+      "Fixture scope retired",
+    );
+    let failed = false;
+    try {
+      await bounded(
+        workMilestone(checked, entered.promise, "A admitted"),
+        "native interrupt admission",
+      );
+      await bounded(lifetime.close(), "native interrupted case close");
+      assertStrictEquals(
+        await bounded(checked, "native interrupted pilot"),
+        scopes[1].signal.reason,
+      );
+      assertEquals(events, [
+        "admit:A",
+        "drain:A",
+        "close:A",
+        "stop:A",
+        "close:B",
+        "stop:B",
+        "fixture:closed",
+      ]);
+      await bounded(lifetime.close(), "native interrupted close is idempotent");
+      assertEquals(scopes.map((scope) => [scope.signal.aborted, scope.size]), [[
+        true,
+        0,
+      ], [true, 0]]);
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      rescue.abort(new OwnershipError("Fixture scope retired"));
+      await finish(
+        [checked, lifetime.close()],
+        failed,
+        "native interruption rescue join",
+      );
+    }
+  });
+});
 
 Deno.test("native scope: public facades expose the identical P03 issuer only", async () => {
   assertEquals(Object.keys(native), ["fixtureScope"]);
   assertStrictEquals(native.fixtureScope, fixtureScope);
-  await native.fixtureScope(async (scope: FixtureScope) => {
-    await fixtureScope(async (borrower) => {
-      const value = {};
-      const admitted = await scope.admit(() => value, borrower);
-      assertStrictEquals(admitted.value, value);
-      assertEquals([scope.size, borrower.size], [0, 0]);
-    });
-  });
+  await bounded(
+    native.fixtureScope(async (scope: FixtureScope) => {
+      await fixtureScope(async (borrower) => {
+        const value = {};
+        const admitted = await scope.admit(() => value, borrower);
+        assertStrictEquals(admitted.value, value);
+        assertEquals([scope.size, borrower.size], [0, 0]);
+      });
+    }),
+    "native public facade callback",
+  );
 });
 
 Deno.test("native scope: wrapped values do not inspect a resource's then again", async () => {
@@ -36,12 +188,15 @@ Deno.test("native scope: wrapped values do not inspect a resource's then again",
       return undefined;
     },
   });
-  await native.fixtureScope(async (scope: FixtureScope) => {
-    const handle = await scope.acquire(() => resource, (value) => {
-      disposed = value;
-    });
-    assertStrictEquals(handle.value, resource);
-  });
+  await bounded(
+    native.fixtureScope(async (scope: FixtureScope) => {
+      const handle = await scope.acquire(() => resource, (value) => {
+        disposed = value;
+      });
+      assertStrictEquals(handle.value, resource);
+    }),
+    "native wrapped resource callback",
+  );
   assertEquals(reads, 1);
   assertStrictEquals(disposed, resource);
 });
@@ -51,6 +206,7 @@ for (const first of ["root", "borrower"] as const) {
     const root = createFixtureScope(), borrower = createFixtureScope();
     const firstOwner = first === "root" ? root : borrower;
     const secondOwner = first === "root" ? borrower : root;
+    const rescue = new AbortController();
     const events: string[] = [];
     let running!: Promise<Readonly<{ value: never }>>;
     root.scope.defer(() => events.push("root:released"));
@@ -59,9 +215,8 @@ for (const first of ["root", "borrower"] as const) {
       running = root.scope.admit(
         (signal) => {
           events.push("admitted");
-          return waitForCancellation(signal).finally(() =>
-            events.push("drained")
-          );
+          return waitForCancellation(AbortSignal.any([signal, rescue.signal]))
+            .finally(() => events.push("drained"));
         },
         borrower.scope,
         nativeScope,
@@ -72,11 +227,15 @@ for (const first of ["root", "borrower"] as const) {
         "Fixture scope retired",
       );
       await bounded(firstOwner.close(), "native co-admitted close");
-      assertStrictEquals(await checked, firstOwner.scope.signal.reason);
-      await secondOwner.close();
+      assertStrictEquals(
+        await bounded(checked, "native co-admitted rejection"),
+        firstOwner.scope.signal.reason,
+      );
+      await bounded(secondOwner.close(), "second native owner close");
     });
+    let failed = false;
     try {
-      await used;
+      await bounded(used, "native co-admitted callback");
       assertEquals(events, [
         "admitted",
         "drained",
@@ -84,51 +243,61 @@ for (const first of ["root", "borrower"] as const) {
         `${first === "root" ? "borrower" : "root"}:released`,
       ]);
       assertEquals([root.scope.size, borrower.scope.size], [0, 0]);
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
-      await Promise.all([root.close(), borrower.close()]);
+      rescue.abort(new OwnershipError("Fixture scope retired"));
+      await finish(
+        [root.close(), borrower.close(), used],
+        failed,
+        "native co-admitted rescue join",
+      );
     }
   });
 }
 
 Deno.test("native scope: already retired acquisition and foreign or retired borrowers never enter", async () => {
   const retired = createFixtureScope();
-  await retired.close();
+  await bounded(retired.close(), "retire native acquisition owner");
   const events: string[] = [];
-  await native.fixtureScope(async (scope: FixtureScope) => {
-    await assertRejects(
-      () =>
-        retired.scope.acquire(
-          () => events.push("allocate"),
-          () => events.push("dispose"),
-        ),
-      OwnershipError,
-      "Owner is retired",
-    );
-    for (const foreign of [null, {}, { ...scope }]) {
+  await bounded(
+    native.fixtureScope(async (scope: FixtureScope) => {
       await assertRejects(
         () =>
-          scope.admit(
-            () => events.push("foreign effect"),
-            foreign as FixtureScope,
+          retired.scope.acquire(
+            () => events.push("allocate"),
+            () => events.push("dispose"),
           ),
-        TypeError,
-        "Work admission requires an issued fixture scope",
+        OwnershipError,
+        "Owner is retired",
       );
-    }
-    await assertRejects(
-      () => scope.admit(() => events.push("retired effect"), retired.scope),
-      OwnershipError,
-      "Owner is retired",
-    );
-    assertEquals([scope.size, events], [0, []]);
-  });
+      for (const foreign of [null, {}, { ...scope }]) {
+        await assertRejects(
+          () =>
+            scope.admit(
+              () => events.push("foreign effect"),
+              foreign as FixtureScope,
+            ),
+          TypeError,
+          "Work admission requires an issued fixture scope",
+        );
+      }
+      await assertRejects(
+        () => scope.admit(() => events.push("retired effect"), retired.scope),
+        OwnershipError,
+        "Owner is retired",
+      );
+      assertEquals([scope.size, events], [0, []]);
+    }),
+    "native rejected acquisition and admission callback",
+  );
 });
 
 Deno.test("native scope: late allocation is disposed exactly once before close finishes", async () => {
   await fixtureScope(async (testScope) => {
     const owner = createFixtureScope(), gate = fixtureGate(testScope);
     const value = {}, events: string[] = [];
-    testScope.defer(() => owner.close());
     owner.scope.onCancel(() => {
       events.push("cancel");
       gate.resolve();
@@ -146,13 +315,26 @@ Deno.test("native scope: late allocation is disposed exactly once before close f
       OwnershipError,
       "Owner is retired",
     );
-    await bounded(owner.close(), "late native allocation cleanup");
-    await checked;
-    await owner.close();
-    assertEquals([events, owner.scope.size], [
-      ["allocate", "cancel", "dispose"],
-      0,
-    ]);
+    let failed = false;
+    try {
+      await bounded(owner.close(), "late native allocation cleanup");
+      await bounded(checked, "late native acquisition rejection");
+      await bounded(owner.close(), "late native owner close");
+      assertEquals([events, owner.scope.size], [
+        ["allocate", "cancel", "dispose"],
+        0,
+      ]);
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      gate.resolve();
+      await finish(
+        [owner.close(), checked],
+        failed,
+        "late native acquisition rescue join",
+      );
+    }
   });
 });
 
@@ -174,40 +356,73 @@ Deno.test("native scope: synchronous allocator retirement fences later admission
     OwnershipError,
     "Owner is retired",
   );
-  await checked;
-  await bounded(closing, "reentrant native acquisition close");
-  await assertRejects(
-    () => owner.scope.admit(() => events.push("effect")),
-    OwnershipError,
-    "Owner is retired",
-  );
-  assertEquals([events, owner.scope.size], [
-    ["allocate", "dispose:resource"],
-    0,
-  ]);
+  let failed = false;
+  try {
+    await bounded(checked, "reentrant native acquisition rejection");
+    await bounded(closing, "reentrant native acquisition close");
+    await bounded(
+      assertRejects(
+        () => owner.scope.admit(() => events.push("effect")),
+        OwnershipError,
+        "Owner is retired",
+      ),
+      "retired native acquisition admission",
+    );
+    assertEquals([events, owner.scope.size], [
+      ["allocate", "dispose:resource"],
+      0,
+    ]);
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    await finish(
+      [owner.close()],
+      failed,
+      "reentrant native acquisition rescue join",
+    );
+  }
 });
 
 Deno.test("native scope: synchronous effect retirement rejects its captured admission", async () => {
   const borrower = createFixtureScope(), events: string[] = [];
   let closing!: Promise<void>;
   borrower.scope.defer(() => events.push("released"));
-  await native.fixtureScope(async (scope: FixtureScope) => {
-    await assertRejects(
-      () =>
-        scope.admit(() => {
-          assertEquals([scope.size, borrower.scope.size], [1, 2]);
-          events.push("entered");
-          closing = borrower.close();
-          events.push("retired");
-          return "stale result";
-        }, borrower.scope),
-      OwnershipError,
-      "Owner is retired",
+  let failed = false;
+  try {
+    await bounded(
+      native.fixtureScope(async (scope: FixtureScope) => {
+        await bounded(
+          assertRejects(
+            () =>
+              scope.admit(() => {
+                assertEquals([scope.size, borrower.scope.size], [1, 2]);
+                events.push("entered");
+                closing = borrower.close();
+                events.push("retired");
+                return "stale result";
+              }, borrower.scope),
+            OwnershipError,
+            "Owner is retired",
+          ),
+          "reentrant native admission rejection",
+        );
+        await bounded(closing, "reentrant native admission close");
+        assertEquals([scope.size, borrower.scope.size], [0, 0]);
+      }),
+      "reentrant native admission callback",
     );
-    await bounded(closing, "reentrant native admission close");
-    assertEquals([scope.size, borrower.scope.size], [0, 0]);
-  });
-  assertEquals(events, ["entered", "retired", "released"]);
+    assertEquals(events, ["entered", "retired", "released"]);
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    await finish(
+      [borrower.close()],
+      failed,
+      "reentrant native admission rescue join",
+    );
+  }
 });
 
 Deno.test("native scope: async reporting settles before either resource is released", async () => {
@@ -227,15 +442,21 @@ Deno.test("native scope: async reporting settles before either resource is relea
         events.push("report:settled");
       },
     });
-    // Always open the reporter's hold before joining the original callback run.
-    testScope.defer(() => running);
-    await entered.promise;
+    let failed = false;
     try {
+      await bounded(
+        workMilestone(running, entered.promise, "native report entered"),
+        "native report entry",
+      );
       assertEquals(events, ["body", "report:start"]);
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
+      // Rescue the held reporter before joining, even when entry never arrived.
       release.resolve();
+      await finish([running], failed, "native report rescue join");
     }
-    await bounded(running, "native report before release");
     assertEquals(events, [
       "body",
       "report:start",
@@ -251,26 +472,29 @@ Deno.test("native scope: report precedes release and retains primary plus every 
   const root = new Error("root close failed"),
     page = new Error("page close failed");
   const events: string[] = [];
-  const error = await assertRejects(
-    () =>
-      native.fixtureScope((scope: FixtureScope) => {
-        scope.defer(() => {
-          events.push("root");
-          throw root;
-        });
-        scope.defer(() => {
-          events.push("page");
-          throw page;
-        });
-        throw primary;
-      }, {
-        report: () => {
-          events.push("report");
-          throw report;
-        },
-      }),
-    AggregateError,
-    "Owned resource release failed",
+  const error = await bounded(
+    assertRejects(
+      () =>
+        native.fixtureScope((scope: FixtureScope) => {
+          scope.defer(() => {
+            events.push("root");
+            throw root;
+          });
+          scope.defer(() => {
+            events.push("page");
+            throw page;
+          });
+          throw primary;
+        }, {
+          report: () => {
+            events.push("report");
+            throw report;
+          },
+        }),
+      AggregateError,
+      "Owned resource release failed",
+    ),
+    "native failure report and cleanup",
   );
   assertStrictEquals(error.cause, primary);
   assertStrictEquals(error.errors[0], primary);

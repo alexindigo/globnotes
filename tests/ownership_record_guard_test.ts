@@ -98,7 +98,7 @@ for (const file of [SYNC_NATIVE, SYNC_PRELOAD]) {
         "module:node:fs/promises",
       ],
       ['import {writeFileSync as publish} from "node:fs";', "module:node:fs"],
-      ['import {copy} from "@std/fs";', "module:@std/fs"],
+      ['import {copy} from "@std/fs";', "module:jsr:@std/fs@^1.0.20"],
       [
         'import {syncStatusChannel} from "public"; Deno.writeTextFile("control","{}");',
         "Deno.writeTextFile",
@@ -116,7 +116,7 @@ for (const file of [SYNC_NATIVE, SYNC_PRELOAD]) {
         imports: {
           public: "tests/helpers/sync_status_control.ts",
           records: "tests/helpers/process_records.ts",
-          "@std/fs": "@std/fs",
+          "@std/fs": "jsr:@std/fs@^1.0.20",
         },
       }], RECORD_PILOT_OWNERSHIP);
       assertUnowned(sites, capability);

@@ -5,6 +5,7 @@ import { nativeSession } from "./native-cdp-session.mjs";
 import { clickReady } from "./native-actions.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { closeClipboardWitness, readClipboardText } from "./native-clipboard.mjs";
+import { createNativeCaseLifetime } from "./native-case-finalization.mjs";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 export const CHAIN = ["readme", "rendering/code-blocks", "rendering/math", "rendering/callouts", "rendering/highlights", "rendering/mermaid", "rendering/frontmatter", "links/wiki-links", "links/embeds", "folders/dad/recipes/soup", "folders/mom/ideas", "rename-me/moving-note"];
@@ -85,9 +86,9 @@ export async function createFixture(name, directory, { empty = false } = {}) {
     };
     await page.addInitScript('for(const [key,value] of [["sidebarVisible","false"],["sidebarRecent","false"]])if(localStorage.getItem(key)===null)localStorage.setItem(key,value);');
     await Deno.writeTextFile(directory + "/ownership.json", JSON.stringify({ name, vault, state, baseUrl, pid: server.pid, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
-    let closing;
+    const lifetime = createNativeCaseLifetime(async () => { releaseWire(); try { await closeClipboardWitness(session); } finally { try { await session.close(); } finally { await server.close(); } } });
     return { name, directory, vault, state, server, page, session, baseUrl, api, image, writes,
-      close() { return closing ??= (async()=>{ releaseWire(); try { await closeClipboardWitness(session); } finally { try { await session.close(); } finally { await server.close(); } } })(); } };
+      ownScope: lifetime.ownScope, close: lifetime.close };
   } catch (error) {
     if (session) await session.close();
     if (server) await server.close();

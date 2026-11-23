@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import { fixtureScope } from "./fixture-ownership.mjs";
 import { fixtureScope as tsFixtureScope } from "../../../tests/helpers/fixture_scope.ts";
 import { browserOwnershipControl } from "./native-ownership-control.mjs";
+import { createNativeCaseLifetime } from "./native-case-finalization.mjs";
 
 // Browser acquisition is injected at the pilot's normal adapter boundary.
 vi.mock("./legacy-fixture.mjs", () => ({ runCase: vi.fn() }));
@@ -11,6 +12,7 @@ function fixture({ fail = "", closeFailures = [], browserUi = false, managedChur
   const events = [], active = ["pre-existing"], contexts = ["context:pre-existing"], bindings = [];
   const ui = browserUi ? ["pre-existing-ui"] : [];
   const workers = [], peers = [];
+  const lifetime = createNativeCaseLifetime(() => events.push("fixture:closed"));
   const primary = new Error(`failed ${fail}`);
   const note = { text: "Fixture readme. #inbox", href: "http://globnotes.test:9000/readme", secure: false };
   const allocate = name => { events.push(name); if (name === fail) throw primary; };
@@ -69,7 +71,7 @@ function fixture({ fail = "", closeFailures = [], browserUi = false, managedChur
       release(`close:binding:${binding.label}`);
     },
   };
-  return { f: { session, baseUrl: "http://globnotes.test:9000" }, adapters, events, active, contexts, primary, note };
+  return { f: { session, baseUrl: "http://globnotes.test:9000", ownScope: lifetime.ownScope }, adapters, events, active, contexts, primary, note };
 }
 
 it("exports the same callback scope, not another native cleanup engine", async () => {

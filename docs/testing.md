@@ -235,6 +235,13 @@ owners' targets do not become this scope's resources merely by appearing during
 it. Exact page/context leak controls retain the cleanup proof. Legacy case/result
 owners and native scheduling remain unchanged.
 
+The legacy case's close port owns each admitted native callback scope through
+P03's child-scope links. SIGTERM therefore cancels and joins A/B finalization
+before closing the retained page and server or exiting the case process. Native
+scenarios borrow that custody through `ownScope`; they do not acquire the private
+construction/finalization owner. Native guard rules use resolved filesystem
+module identities, including the std filesystem root and copy subpath.
+
 `tests/helpers/boot.ts` gives SIGTERM five seconds, then sends SIGKILL only
 to its owned child; it drains output and releases the private cwd after exit.
 An unexpected prior exit still rejects close with diagnostics. If native plugin
