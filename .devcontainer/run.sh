@@ -63,26 +63,6 @@ while (($#)); do
 done
 (($#)) || fail 'usage: run.sh [--browser] [--source DIR] [--run-dir DIR] -- COMMAND [ARG...]'
 
-if [[ -n "${GLOBNOTES_CONTAINER_ENGINE:-}" ]]; then
-    case "$GLOBNOTES_CONTAINER_ENGINE" in podman|docker) engine="$GLOBNOTES_CONTAINER_ENGINE" ;; *) fail 'engine must be podman or docker' ;; esac
-elif command -v podman >/dev/null; then
-    engine=podman
-elif command -v docker >/dev/null; then
-    engine=docker
-else
-    fail 'no container engine available'
-fi
-engine_version="$(timeout 15 "$engine" --version)"
-case "$engine_version" in
-    'podman version '*) backend=podman ;;
-    'Docker version '*) backend=docker ;;
-    *) fail "unsupported engine: $engine_version" ;;
-esac
-if [[ "$backend" == podman ]]; then
-    [[ "$(timeout 20 "$engine" info --format '{{.Host.Security.Rootless}}')" == true ]] || fail 'rootless Podman required'
-fi
-printf 'globnotes-run: engine=%s backend=%s\n' "$engine" "$backend" >&2
-
 source_dir="$(realpath -- "$source_dir")"
 [[ -d "$source_dir" ]] || fail 'source directory missing'
 if [[ -z "$run_dir" ]]; then
@@ -92,10 +72,52 @@ fi
 mkdir -p "$run_dir" "$run_dir/tmp" "$run_dir/logs" "$run_dir/artifacts"
 run_dir="$(realpath -- "$run_dir")"
 [[ "$source_dir" != /tmp && "$source_dir" != /tmp/* && "$run_dir" != /tmp && "$run_dir" != /tmp/* ]] || fail 'host /tmp is not a workspace'
-# Podman/buildah also use disk-backed scratch during builds and pulls.
+# Engine initialization, builds and pulls all need disk-backed scratch and logs.
 mkdir -p "$run_dir/engine-tmp"
 export TMPDIR="$run_dir/engine-tmp"
+
+if [[ -n "${GLOBNOTES_CONTAINER_ENGINE:-}" ]]; then
+    case "$GLOBNOTES_CONTAINER_ENGINE" in podman|docker) engine="$GLOBNOTES_CONTAINER_ENGINE" ;; *) fail 'engine must be podman or docker' ;; esac
+elif command -v podman >/dev/null; then
+    engine=podman
+elif command -v docker >/dev/null; then
+    engine=docker
+else
+    fail 'no container engine available'
+fi
 export GLOBNOTES_CONTAINER_ENGINE="$engine"
+step identify-engine engine-version.stderr.log
+timeout 15 "$engine" --version > "$run_dir/logs/engine-version.txt" 2> "$step_log"
+engine_version="$(< "$run_dir/logs/engine-version.txt")"
+case "$engine_version" in
+    'podman version '*) backend=podman ;;
+    'Docker version '*) backend=docker ;;
+    *) fail "unsupported engine: $engine_version" ;;
+esac
+# Cold engine/storage initialization belongs to preparation, like mapped layers.
+PREPARATION_TIMEOUT=1200
+if [[ "$backend" == podman ]]; then
+    run_step prepare-engine engine-info.json timeout "$PREPARATION_TIMEOUT" "$engine" info --format json
+    step check-rootless rootless.stderr.log
+    rootless_command="$engine info --format '{{.Host.Security.Rootless}}'"
+    status=0
+    timeout 20 "$engine" info --format '{{.Host.Security.Rootless}}' > "$run_dir/logs/rootless.txt" 2> "$step_log" || status=$?
+    if ((status != 0)); then
+        if ((status == 124)); then
+            printf 'globnotes-run: rootless check timed out after 20 seconds; command: %s\n' "$rootless_command" >&2
+        else
+            printf 'globnotes-run: rootless check errored (exit %s); command: %s\n' "$status" "$rootless_command" >&2
+        fi
+        exit "$status"
+    fi
+    rootless="$(< "$run_dir/logs/rootless.txt")"
+    case "$rootless" in
+        true) ;;
+        false) fail "Podman is not rootless (reported false); command: $rootless_command" ;;
+        *) fail "rootless check returned unexpected output: $rootless; command: $rootless_command" ;;
+    esac
+fi
+printf 'globnotes-run: engine=%s backend=%s\n' "$engine" "$backend" >&2
 
 # Build caps: Podman and the legacy Docker builder take --memory; BuildKit's
 # docker build takes --resource where its daemon supports per-step limits.
@@ -148,7 +170,7 @@ prepare_image() {
     start="$EPOCHREALTIME"
     # create materializes cold ID-mapped layers without starting any process.
     # This is image preparation, using the image-build bound, not the 30 s start.
-    run_step "prepare-$kind-image" "prepare-$kind.log" timeout 1200 "$engine" create \
+    run_step "prepare-$kind-image" "prepare-$kind.log" timeout "$PREPARATION_TIMEOUT" "$engine" create \
         --name "$preparation_name" --network none "${runtime_mapping[@]}" --user "$user" "$image" || status=$?
     elapsed=$(( ${EPOCHREALTIME/./} - ${start/./} ))
     printf '{"image":"%s","seconds":%d.%06d,"exit":%d}\n' "$image" "$((elapsed / 1000000))" "$((elapsed % 1000000))" "$status" >> "$run_dir/logs/preparation-timings.jsonl"

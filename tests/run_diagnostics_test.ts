@@ -8,9 +8,22 @@ set -euo pipefail
 printf '%s\\n' "$*" >> "$FAKE_CALLS"
 case "$*" in
     --version)
+        printf 'engine version diagnostic\\n' >&2
         if [[ "$FAKE_BACKEND" == docker ]]; then printf 'Docker version test\\n';
         else printf 'podman version test\\n'; fi ;;
-    info*) printf 'true\\n' ;;
+    'info --format json')
+        if [[ "$FAIL_STEP" == prepare-engine ]]; then
+            printf 'engine storage initialization rejected\\n' >&2; exit 42
+        fi
+        printf '{}\\n' ;;
+    info*)
+        case "$FAIL_STEP" in
+            rootless-false) printf 'false\\n' ;;
+            rootless-timeout) printf 'rootless query interrupted\\n' >&2; exit 124 ;;
+            rootless-error) printf 'engine query denied\\n' >&2; exit 42 ;;
+            rootless-invalid) printf 'unknown\\n' ;;
+            *) printf 'true\\n' ;;
+        esac ;;
     'image inspect '*)
         if [[ "$FAIL_STEP" == build-dev-image ]]; then exit 1; fi
         if [[ "$FAIL_STEP" == inspect-dev-image && -e "$FAKE_SEEN" ]]; then
@@ -65,6 +78,7 @@ esac
 
 for (
   const [step, message, browser] of [
+    ["prepare-engine", "engine storage initialization rejected", false],
     ["inspect-dev-image", "inspection denied", false],
     ["build-dev-image", "build rejected", false],
     ["prepare-dev-image", "mapped storage rejected", false],
@@ -113,7 +127,14 @@ for (
       assertStringIncludes(stderr, `step=${step} failed (exit 42)`);
       assertStringIncludes(stderr, "last 80 lines of");
       assertStringIncludes(stderr, message);
-      if (step.includes("prepare")) {
+      if (step === "prepare-engine") {
+        const calls = (await Deno.readTextFile(`${root}/calls`)).split("\n");
+        assertEquals(calls.some((line) => line.startsWith("run ")), false);
+        assertEquals(calls.some((line) => line.startsWith("image ")), false);
+        assertEquals(calls.filter((line) => line.startsWith("info ")), [
+          "info --format json",
+        ]);
+      } else if (step.includes("prepare")) {
         const calls = (await Deno.readTextFile(`${root}/calls`)).split("\n");
         assertEquals(calls.some((line) => line.startsWith("run ")), false);
         assertEquals(
@@ -178,10 +199,24 @@ for (const backend of ["podman", "docker"]) {
           "\n",
         );
         const creates = calls.filter((line) => line.startsWith("create "));
+        const initialization = calls.indexOf("info --format json");
+        const rootlessCheck = calls.indexOf(
+          "info --format {{.Host.Security.Rootless}}",
+        );
         if (backend === "docker") {
           assertEquals(creates, []);
+          assertEquals(initialization, -1);
+          assertEquals(rootlessCheck, -1);
           return;
         }
+        assertEquals(
+          initialization >= 0 && rootlessCheck > initialization,
+          true,
+        );
+        assertEquals(
+          rootlessCheck < calls.findIndex((line) => line.startsWith("image ")),
+          true,
+        );
         assertEquals(creates.length, browser ? 2 : 1);
         const firstRun = calls.findIndex((line) => line.startsWith("run "));
         for (const kind of browser ? ["dev", "chromium"] : ["dev"]) {
@@ -217,4 +252,76 @@ for (const backend of ["podman", "docker"]) {
       }
     });
   }
+}
+
+for (
+  const [failure, status, message] of [
+    ["rootless-false", 1, "Podman is not rootless (reported false)"],
+    ["rootless-timeout", 124, "rootless check timed out after 20 seconds"],
+    ["rootless-error", 42, "rootless check errored (exit 42)"],
+    [
+      "rootless-invalid",
+      1,
+      "rootless check returned unexpected output: unknown",
+    ],
+  ] as const
+) {
+  Deno.test(`launcher reports the actual rootless check outcome: ${failure}`, async () => {
+    const root = await Deno.makeTempDir({ prefix: "launcher-rootless-" });
+    try {
+      await Deno.mkdir(`${root}/.devcontainer`, { recursive: true });
+      await Deno.mkdir(`${root}/bin`);
+      await Deno.copyFile(
+        new URL("../.devcontainer/run.sh", import.meta.url),
+        `${root}/.devcontainer/run.sh`,
+      );
+      await Deno.writeTextFile(`${root}/bin/podman`, engine, { mode: 0o755 });
+      const result = await command("bash", {
+        args: [
+          `${root}/.devcontainer/run.sh`,
+          "--run-dir",
+          `${root}/run`,
+          "--",
+          "true",
+        ],
+        env: {
+          PATH: `${root}/bin:${Deno.env.get("PATH")}`,
+          GLOBNOTES_CONTAINER_ENGINE: "podman",
+          FAKE_BACKEND: "podman",
+          FAIL_STEP: failure,
+          FAKE_CALLS: `${root}/calls`,
+          FAKE_SEEN: `${root}/seen`,
+        },
+      }).output();
+      const stderr = new TextDecoder().decode(result.stderr);
+      assertEquals(result.code, status);
+      assertStringIncludes(stderr, message);
+      assertStringIncludes(
+        stderr,
+        "podman info --format '{{.Host.Security.Rootless}}'",
+      );
+      assertStringIncludes(
+        stderr,
+        `step=check-rootless failed (exit ${status})`,
+      );
+      assertEquals(stderr.includes("rootless Podman required"), false);
+      if (failure === "rootless-error") {
+        assertStringIncludes(stderr, "engine query denied");
+        assertStringIncludes(
+          await Deno.readTextFile(`${root}/run/logs/rootless.stderr.log`),
+          "engine query denied",
+        );
+      }
+      const calls = (await Deno.readTextFile(`${root}/calls`)).trim().split(
+        "\n",
+      );
+      assertEquals(calls, [
+        "--version",
+        "info --format json",
+        "info --format {{.Host.Security.Rootless}}",
+      ]);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
 }

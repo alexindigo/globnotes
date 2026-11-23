@@ -53,7 +53,19 @@ Host `/tmp` is refused as a workspace. Examples:
 .devcontainer/run.sh --browser -- bash scripts/gates.sh --all --browser
 ```
 
-For rootless Podman, image preparation includes `prepare-dev-image` and,
+The launcher creates its disk-backed scratch and logs before querying the engine.
+For rootless Podman, `prepare-engine` first runs `podman info --format json` to
+initialize first-use engine/storage state, retaining `logs/engine-info.json` and
+reporting failures as that preparation step. This new step has a 1200-second
+bound, shared with mapped-layer preparation, because cold storage initialization
+is preparation work rather than a short property check. No existing limit is
+raised. The subsequent `check-rootless` query retains its 20-second bound and
+separates a reported `false`, timeout and engine error, printing the command and
+preserving nonzero exit status and stderr (`rootless.txt`, `rootless.stderr.log`).
+Unexpected successful output is reported verbatim rather than called non-rootless.
+Docker does not run these Podman-specific steps.
+
+Mapped-image preparation includes `prepare-dev-image` and,
 with `--browser`, `prepare-chromium-image`. Each creates a never-started,
 network-isolated container from the runtime image with the same UID/GID mapping
 and user, then inspects and removes it. This materializes cold ID-mapped image
