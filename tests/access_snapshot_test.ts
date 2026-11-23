@@ -11,6 +11,7 @@ import { LocalAuth } from "../server/auth/local.ts";
 import setupHandler from "../server/api/endpoints/_/api/setup/post.ts";
 import brandHandler from "../server/api/endpoints/_/api/brand/post.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { publicScenario, storedScenario } from "./helpers/fixture_scenarios.ts";
 
 async function accessSnapshotFixture() {
   const root = await Deno.makeTempDir({ prefix: "review-access-snapshot-" });
@@ -30,7 +31,10 @@ async function accessSnapshotFixture() {
     '[brand]\nname="original"\n',
   );
   const config = new GlobalConfig(
-    testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: root }),
+    testEnvironment({
+      GLOBNOTES_GLOBNOTES_PATH: root,
+      fixtureScenario: storedScenario(publicScenario()),
+    }),
   );
   state.config = config;
   state.auth = null;

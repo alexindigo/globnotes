@@ -1,4 +1,8 @@
-import { fixturePasswordHash } from "./helpers/config.ts";
+import {
+  accountScenario,
+  signedInScenario,
+  storedScenario,
+} from "./helpers/fixture_scenarios.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** LocalAuth fixtures own private credentials and resolved session settings. */
@@ -27,9 +31,8 @@ function authFor(
 ): LocalAuth {
   // LocalAuth consumes the explicitly seeded private record.
   assertEquals(
-    Object.entries(env.fixtureAuth as Record<string, unknown>).every(([k, v]) =>
-      config.storedConfig?.[k] === v
-    ),
+    Object.entries(testEnvironment(env).fixtureAuth as Record<string, unknown>)
+      .every(([k, v]) => config.storedConfig?.[k] === v),
     true,
   );
   return new LocalAuth(config);
@@ -37,12 +40,11 @@ function authFor(
 
 Deno.test("LocalAuth: login and token round-trip", async () => {
   const env = {
-    fixtureAuth: {
-      auth_type: "password",
-      username: "alice",
-      password_hash: fixturePasswordHash("secret"),
-      secret_key: "testsecret",
-    },
+    fixtureScenario: signedInScenario(
+      { login: "alice", password: "secret" },
+      {},
+      { secret_key: "testsecret" },
+    ),
   };
   const auth = authFor(await makeConfig(env), env);
   const token = await auth.login({ username: "ALICE", password: "secret" });
@@ -56,12 +58,11 @@ Deno.test("LocalAuth: login and token round-trip", async () => {
 
 Deno.test("LocalAuth: token for a different username is rejected", async () => {
   const env = {
-    fixtureAuth: {
-      auth_type: "password",
-      username: "alice",
-      password_hash: fixturePasswordHash("secret"),
-      secret_key: "testsecret",
-    },
+    fixtureScenario: signedInScenario(
+      { login: "alice", password: "secret" },
+      {},
+      { secret_key: "testsecret" },
+    ),
   };
   const config = await makeConfig(env);
   const auth = authFor(config, env);
@@ -72,7 +73,10 @@ Deno.test("LocalAuth: token for a different username is rejected", async () => {
       testEnvironment({
         ...env,
         GLOBNOTES_GLOBNOTES_PATH: config.notesPath,
-        fixtureAuth: { username: "mallory" },
+        fixtureScenario: accountScenario(
+          signedInScenario({ login: "mallory", password: "secret" }).identity,
+          { username: "mallory" },
+        ),
       }),
     ),
   );
@@ -83,12 +87,11 @@ Deno.test("LocalAuth: token for a different username is rejected", async () => {
 
 Deno.test("LocalAuth: session expiry lands in the token", async () => {
   const env = {
-    fixtureAuth: {
-      auth_type: "password",
-      username: "alice",
-      password_hash: fixturePasswordHash("secret"),
-      secret_key: "testsecret",
-    },
+    fixtureScenario: signedInScenario(
+      { login: "alice", password: "secret" },
+      {},
+      { secret_key: "testsecret" },
+    ),
     GLOBNOTES__SESSIONS_EXPIRYDAYS: "7",
   };
   const auth = authFor(await makeConfig(env), env);
@@ -104,12 +107,11 @@ Deno.test("LocalAuth: session expiry lands in the token", async () => {
 
 Deno.test("LocalAuth: expiry metadata shares verification and preserves no-expiry tokens", async () => {
   const env = {
-    fixtureAuth: {
-      auth_type: "password",
-      username: "alice",
-      password_hash: fixturePasswordHash("secret"),
-      secret_key: "testsecret",
-    },
+    fixtureScenario: signedInScenario(
+      { login: "alice", password: "secret" },
+      {},
+      { secret_key: "testsecret" },
+    ),
   };
   const auth = authFor(await makeConfig(env), env);
   const expiry = Math.floor(Date.now() / 1000) + 60;
@@ -146,13 +148,11 @@ Deno.test("LocalAuth: expiry metadata shares verification and preserves no-expir
 Deno.test("LocalAuth: TOTP login and single-use enforcement", async () => {
   const totpKey = "my-totp-key";
   const env = {
-    fixtureAuth: {
-      auth_type: "totp",
-      username: "alice",
-      password_hash: fixturePasswordHash("secret"),
-      secret_key: "testsecret",
-      totp_key: totpKey,
-    },
+    fixtureScenario: signedInScenario(
+      { login: "alice", password: "secret", totpKey },
+      {},
+      { secret_key: "testsecret" },
+    ),
   };
   const auth = authFor(await makeConfig(env), env);
   assert(auth.isTotpEnabled);
@@ -208,7 +208,12 @@ Deno.test("LocalAuth: stored-hash login (setup wizard path)", async () => {
     }),
   );
   const config = new GlobalConfig(
-    testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: vault }),
+    testEnvironment({
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      fixtureScenario: storedScenario(
+        signedInScenario({ login: "carol", password: "hunter2" }),
+      ),
+    }),
   );
   const auth = new LocalAuth(config);
   const token = await auth.login({ username: "Carol", password: "hunter2" });
@@ -239,7 +244,19 @@ Deno.test("LocalAuth: wizard-enrolled TOTP (stored key + password hash)", async 
     }),
   );
   const auth = new LocalAuth(
-    new GlobalConfig(testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: vault })),
+    new GlobalConfig(
+      testEnvironment({
+        GLOBNOTES_GLOBNOTES_PATH: vault,
+        fixtureScenario: storedScenario(
+          signedInScenario({
+            login: "dave",
+            password: "hunter2",
+            totpKey,
+            totpKeyEncoding: "base32",
+          }),
+        ),
+      }),
+    ),
   );
   assert(auth.isTotpEnabled);
   assert(!("totpKeyFromEnv" in auth));

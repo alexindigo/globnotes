@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
@@ -66,7 +67,7 @@ async function fixtureBundle(
   const env = testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     fixtureStatePath: fixture.statePath,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   state.config = new GlobalConfig(env);
   state.auth = null;

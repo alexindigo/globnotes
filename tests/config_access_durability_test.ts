@@ -2,6 +2,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { GlobalConfig } from "./helpers/config.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { publicScenario, storedScenario } from "./helpers/fixture_scenarios.ts";
 import { accessView, updateAccess } from "../server/auth/access.ts";
 import status from "../server/api/endpoints/_/api/config/get.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
@@ -26,7 +27,10 @@ Deno.test("config durability warning: published access policy reaches runtime an
       JSON.stringify({ auth_type: "none", access_revision: 0 }),
     );
     const config = new GlobalConfig(
-      testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: root }),
+      testEnvironment({
+        GLOBNOTES_GLOBNOTES_PATH: root,
+        fixtureScenario: storedScenario(publicScenario()),
+      }),
     );
     state.config = config;
     state.auth = null;

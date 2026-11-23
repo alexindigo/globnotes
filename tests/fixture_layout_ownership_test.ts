@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import {
   assert,
   assertEquals,
@@ -150,17 +151,22 @@ Deno.test("layout review: boot captures options once and concurrent close joins 
         },
       },
     });
-    const inputs = Object.defineProperty({}, "fixtureAuth", {
+    const inputs = Object.defineProperty({}, "fixtureScenario", {
       enumerable: true,
       get() {
-        reads.push("fixtureAuth");
-        return { auth_type: "none" };
+        reads.push("fixtureScenario");
+        return publicScenario();
       },
     });
     const server = (await scope.acquire(() =>
       bootServer(inputs, options), (server) =>
       server.close())).value;
-    assertEquals(reads, ["fixtureAuth", "healthFetch", "denoArgs", "layout"]);
+    assertEquals(reads, [
+      "fixtureScenario",
+      "healthFetch",
+      "denoArgs",
+      "layout",
+    ]);
     const closing = server.close();
     assertStrictEquals(server.close(), closing);
     // Close owns its SIGTERM grace and SIGKILL escalation; a generic bound of
@@ -797,7 +803,7 @@ Deno.test("layout owner: simultaneous default layouts isolate complete roots wit
     const servers = await Promise.all(
       layouts.map((layout) =>
         scope.acquire(
-          () => bootServer({ fixtureAuth: { auth_type: "none" } }, { layout }),
+          () => bootServer({ fixtureScenario: publicScenario() }, { layout }),
           (server) => server.close(),
         )
       ),
@@ -831,7 +837,7 @@ Deno.test("layout owner: intentional same-instance restart retains exactly its s
     const build = await fixtureBuild(scope),
       layout = await fixtureLayout(scope, {}, { build });
     const first = await scope.acquire(
-      () => bootServer({ fixtureAuth: { auth_type: "none" } }, { layout }),
+      () => bootServer({ fixtureScenario: publicScenario() }, { layout }),
       (server) => server.close(),
     );
     await note(first.value.baseUrl, "Restarted", "same instance\n");
@@ -926,7 +932,7 @@ Deno.test("layout owner: closing an explicit layout reaps its live server before
     cleanup.defer(() => lifetime.close());
     const build = await fixtureBuild(lifetime.scope);
     const layout = await fixtureLayout(lifetime.scope, {}, { build });
-    const server = await bootServer({ fixtureAuth: { auth_type: "none" } }, {
+    const server = await bootServer({ fixtureScenario: publicScenario() }, {
       layout,
     });
     await note(server.baseUrl, "Owned", "persisted before retirement\n");
@@ -983,7 +989,7 @@ Deno.test("layout owner: caller-relative paths are absolute before child launch 
       layout.artifacts,
     ], [root.value, vault, `${metadata}/globnotes`, cwd, artifacts]);
     const server = await scope.acquire(
-      () => bootServer({ fixtureAuth: { auth_type: "none" } }, { layout }),
+      () => bootServer({ fixtureScenario: publicScenario() }, { layout }),
       (server) => server.close(),
     );
     await note(server.value.baseUrl, "Relative", "resolved before spawn\n");
@@ -1066,7 +1072,7 @@ Deno.test("layout owner: borrowed missing metadata is left to real product prefl
     assertEquals(layout.metadata, `${metadata}/globnotes`);
     await absentRoot(`${root.value}/missing-parent`);
     const server = await scope.acquire(
-      () => bootServer({ fixtureAuth: { auth_type: "none" } }, { layout }),
+      () => bootServer({ fixtureScenario: publicScenario() }, { layout }),
       (server) => server.close(),
     );
     await note(
@@ -1386,7 +1392,7 @@ Deno.test("pr117: origin retirement at the successful boot handoff cannot return
     const layout = await fixtureLayout(lifetime.scope, {}, { build });
     const events: string[] = [];
     let healthy = false, escaped = false, closing: Promise<void> | undefined;
-    const work = bootServer({ fixtureAuth: { auth_type: "none" } }, {
+    const work = bootServer({ fixtureScenario: publicScenario() }, {
       layout,
       async healthFetch(url, options) {
         const response = await fetch(url, options);

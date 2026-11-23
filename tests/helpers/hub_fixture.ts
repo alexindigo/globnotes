@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./fixture_scenarios.ts";
 import { GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
@@ -38,7 +39,7 @@ export async function hubOperationsFixture(
     const env = testEnvironment({
       GLOBNOTES_GLOBNOTES_PATH: vault,
       fixtureStatePath: `${root}/state`,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
     });
     const config = new GlobalConfig(env),
       notes = new FileSystemNotes(

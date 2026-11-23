@@ -5,6 +5,7 @@ import { GlobalConfig, StoredConfigConflict } from "./helpers/config.ts";
 import { BoundFileStore } from "../server/config/file_store.ts";
 import { bootServer } from "./helpers/boot.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { publicScenario, storedScenario } from "./helpers/fixture_scenarios.ts";
 import { loadInstanceConfig } from "../server/config/loader.ts";
 import { VaultConfigStore } from "../server/config/vault.ts";
 
@@ -13,6 +14,7 @@ function deployment(root: string, statePath = `${root}/globnotes`) {
   return testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: `${root}/vault`,
     fixtureStatePath: statePath,
+    fixtureScenario: storedScenario(publicScenario()),
   });
 }
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { walkSync } from "@std/fs";
@@ -452,7 +453,7 @@ Deno.test("driver acceptance: read-only server restart pauses persisted instance
     await f.configure(id, { enabled: true });
     assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "off edit");
     const restarted = await f.restart({
-      fixtureAuth: { auth_type: "read_only" },
+      fixtureScenario: publicScenario("view"),
     });
     await restarted.initialDriver(id, "paused");
     assertEquals((await f.one(id)).status, "paused");

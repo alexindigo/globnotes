@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals, assertRejects } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
+import { publicScenario, setupScenario } from "./helpers/fixture_scenarios.ts";
 
 for (const mode of ["none", "setup", "read_only"]) {
   Deno.test(`session startup: typed expiry supports ${mode}`, async () => {
     const server = await bootServer({
-      fixtureAuth: mode === "setup" ? undefined : { auth_type: mode },
+      fixtureScenario: mode === "setup"
+        ? setupScenario()
+        : publicScenario(mode === "none" ? "edit" : "view"),
       GLOBNOTES__SESSIONS_EXPIRYDAYS: "3",
     });
     try {
@@ -22,7 +25,9 @@ for (const mode of ["none", "setup", "read_only"]) {
     await assertRejects(
       () =>
         bootServer({
-          fixtureAuth: mode === "setup" ? undefined : { auth_type: mode },
+          fixtureScenario: mode === "setup"
+            ? setupScenario()
+            : publicScenario(mode === "none" ? "edit" : "view"),
           GLOBNOTES__SESSIONS_EXPIRYDAYS: "not-an-integer",
         }),
       Error,

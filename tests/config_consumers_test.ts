@@ -1,6 +1,6 @@
 import { testMetadata } from "./helpers/environment.ts";
-import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { signedInScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { decodeJwt } from "jose";
 import { LocalAuth } from "../server/auth/local.ts";
@@ -145,12 +145,13 @@ Deno.test("config consumers: session expiry reaches the signed JWT, independent 
   try {
     const config = new GlobalConfig(testEnvironment({
       GLOBNOTES_GLOBNOTES_PATH: root,
-      fixtureAuth: {
-        auth_type: "password",
-        username: "owner",
-        password_hash: fixturePasswordHash("fixture password"),
-        secret_key: "fixture signing material",
-      },
+      fixtureScenario: signedInScenario(
+        { login: "owner", password: "fixture password" },
+        {},
+        {
+          secret_key: "fixture signing material",
+        },
+      ),
       GLOBNOTES__SESSIONS_EXPIRYDAYS: "10",
     }));
     const auth = new LocalAuth(

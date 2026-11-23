@@ -18,6 +18,7 @@ import {
 } from "../../server/config/paths.ts";
 import { VaultConfigStore } from "../../server/config/vault.ts";
 import { type FixtureEnvironment, testEnvironment } from "./environment.ts";
+import type { IdentityFixturePayload } from "./identity_fixture.ts";
 export * from "../../server/config.ts";
 
 // Default-only constructor adapters use the one documented test seam.
@@ -36,6 +37,8 @@ export function fixturePasswordHash(password: string): string {
   return hash;
 }
 export class GlobalConfig extends ProductionConfig {
+  /** Available to the prepared account fixture; never a production config field. */
+  readonly fixtureIdentity?: IdentityFixturePayload | null;
   constructor(
     input: FixtureEnvironment | ResolvedVaultSettings = testEnvironment(),
     explicit?: ResolvedVaultSettings,
@@ -104,5 +107,6 @@ export class GlobalConfig extends ProductionConfig {
         instance.metadata.path,
       ),
     });
+    this.fixtureIdentity = input.fixtureIdentity;
   }
 }

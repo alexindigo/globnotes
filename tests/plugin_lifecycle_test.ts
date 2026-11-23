@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 /** Guarded-operation lifecycle tests: rejection precedes mutation, actual
  * H1 renames and captured deletes reach observers, partial storage failure
@@ -521,7 +522,7 @@ Deno.test("lifecycle: initial indexing is inventory plus on-sync, not fake creat
     const env = testEnvironment({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       fixtureStatePath: fixture.statePath,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
     });
     let manager: PluginManager | null = null;
     try {
@@ -744,7 +745,7 @@ Deno.test("lifecycle: wire envelope over HTTP carries structured codes; rewrite 
     const server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       GLOBNOTES__SERVER_PATHPREFIX: "",
     });
     try {

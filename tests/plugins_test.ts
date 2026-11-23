@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 /**
  * Plugin sandbox tests — manifest parsing, capability → permission
@@ -341,7 +342,7 @@ Deno.test("plugins: server boots with a plugin in the vault", async () => {
       `export function getSelectors() { return []; }`,
     );
     const server = await bootServer({
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       GLOBNOTES_GLOBNOTES_PATH: vault,
     });
     try {
@@ -434,7 +435,7 @@ Deno.test("plugins: client module endpoint serves fresh from disk", async () => 
     writePlugin(vault, "plainplug", "");
 
     const server = await bootServer({
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       GLOBNOTES_GLOBNOTES_PATH: vault,
     });
     try {
@@ -482,7 +483,7 @@ Deno.test("plugins: app.js endpoint serves the browser runtime entry for enabled
     writePlugin(vault, "noapp", "");
 
     const server = await bootServer({
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       GLOBNOTES_GLOBNOTES_PATH: vault,
     });
     try {
@@ -517,7 +518,7 @@ Deno.test("plugins: pluginRpc resolves against real state", async () => {
   try {
     const env = testEnvironment({
       GLOBNOTES_GLOBNOTES_PATH: vault,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
     });
     Deno.writeTextFileSync(path.join(vault, "hello.md"), "hi there");
     Deno.writeTextFileSync(path.join(vault, "data.bin"), "bytes");

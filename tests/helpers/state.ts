@@ -1,5 +1,6 @@
 import { testMetadata } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./fixture_scenarios.ts";
 
 /** In-process server state for unit-level tests (no subprocess boot). */
 
@@ -83,7 +84,7 @@ export function setupState(
 ): UnitState {
   const env = testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   const config = new GlobalConfig(env);
   const notes = gatedNotes(

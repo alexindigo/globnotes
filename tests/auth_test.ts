@@ -1,5 +1,5 @@
-import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { signedInScenario } from "./helpers/fixture_scenarios.ts";
 
 /**
  * Integration tests for the setup wizard and auth flows — the Deno port
@@ -270,12 +270,11 @@ Deno.test("auth: explicitly seeded private credentials replace the fixture's pub
     );
     const server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: vault,
-      fixtureAuth: {
-        auth_type: "password",
-        username: "bob",
-        password_hash: fixturePasswordHash("hunter2"),
-        secret_key: "testsecret",
-      },
+      fixtureScenario: signedInScenario(
+        { login: "bob", password: "hunter2" },
+        {},
+        { secret_key: "testsecret" },
+      ),
     });
     try {
       const setup = await fetch(`${server.baseUrl}/_/api/setup`);

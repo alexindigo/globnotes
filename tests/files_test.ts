@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 /**
  * Integration tests for file serving, upload, and the root catch-all —
@@ -32,7 +33,7 @@ async function bootWithApp(
   const { appDir, vault } = await makeApp();
   const server = await bootServer(
     {
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       ...env,
       GLOBNOTES_GLOBNOTES_PATH: vault,
     },

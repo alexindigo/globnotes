@@ -1,5 +1,6 @@
 import { testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
@@ -232,7 +233,7 @@ for (const boundary of ["operation", "per-plugin"] as const) {
     const env = testEnvironment({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       fixtureStatePath: fixture.statePath,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
     });
     const config = new GlobalConfig(env);
     const lifecycle = new PluginLifecycle(config);

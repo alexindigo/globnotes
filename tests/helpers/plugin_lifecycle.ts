@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./fixture_scenarios.ts";
 
 import * as path from "@std/path";
 import { DatabaseSync } from "node:sqlite";
@@ -145,7 +146,7 @@ export async function bundle(opts: {
     const env = testEnvironment({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       fixtureStatePath: fixture.statePath,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       // External writes bypass the storage layer; scans must see them
       // immediately rather than through the 15s scan-cache TTL.
       GLOBNOTES__INDEX_SCANCACHETTL: opts.scanCacheTtl ?? "0",

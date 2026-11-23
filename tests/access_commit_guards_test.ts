@@ -13,6 +13,7 @@ import {
 } from "../server/plugins/network_store.ts";
 import brandHandler from "../server/api/endpoints/_/api/brand/post.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import { publicScenario, storedScenario } from "./helpers/fixture_scenarios.ts";
 import { writeFailureReport } from "./helpers/failure_report.ts";
 
 async function settingsFixture(
@@ -45,7 +46,10 @@ async function settingsFixture(
       '[brand]\nname="Original guarded brand"\naccent="#aabbcc"\n',
     );
     const config = new GlobalConfig(
-        testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: vault }),
+        testEnvironment({
+          GLOBNOTES_GLOBNOTES_PATH: vault,
+          fixtureScenario: storedScenario(publicScenario()),
+        }),
       ),
       lifecycle = new PluginLifecycle(config);
     state.config = config;

@@ -1,4 +1,7 @@
-import { fixturePasswordHash } from "./helpers/config.ts";
+import {
+  publicScenario,
+  signedInScenario,
+} from "./helpers/fixture_scenarios.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -304,7 +307,7 @@ Deno.test("rate limit: a real server, GLOBNOTES__MCP_RATELIMIT and two addresses
   // two peers.
   const testHost = Deno.env.get("GLOBNOTES_TEST_HOST");
   const server = await bootServer({
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__MCP_RATELIMIT: "3",
   }, { host: "0.0.0.0" });
   try {
@@ -328,12 +331,13 @@ Deno.test("rate limit: a real server, GLOBNOTES__MCP_RATELIMIT and two addresses
 
 Deno.test("rate limit: a real server, two tokens share the account's budget", async () => {
   const server = await bootServer({
-    fixtureAuth: {
-      auth_type: "password",
-      username: "agent",
-      password_hash: fixturePasswordHash("correct horse"),
-      secret_key: "mcp-rate-limit-test-secret",
-    },
+    fixtureScenario: signedInScenario(
+      { login: "agent", password: "correct horse" },
+      {},
+      {
+        secret_key: "mcp-rate-limit-test-secret",
+      },
+    ),
     GLOBNOTES__MCP_RATELIMIT: "3",
   });
   const token = async () => {
@@ -361,7 +365,7 @@ Deno.test("rate limit: a real server, two tokens share the account's budget", as
 
 Deno.test("rate limit: GLOBNOTES__MCP_RATELIMIT=0 disables it", async () => {
   const server: TestServer = await bootServer({
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__MCP_RATELIMIT: "0",
   });
   try {
@@ -378,7 +382,7 @@ Deno.test("rate limit: the setting defaults to 600 per minute", async () => {
     const config = (value?: string) =>
       new GlobalConfig(testEnvironment({
         GLOBNOTES_GLOBNOTES_PATH: vault,
-        fixtureAuth: { auth_type: "none" },
+        fixtureScenario: publicScenario(),
         GLOBNOTES__MCP_RATELIMIT: value,
       })).mcpRateLimit;
     assertEquals(config(), 600);

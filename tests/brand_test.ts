@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 /**
  * Integration tests for the branding endpoints: POST /_/api/brand
@@ -55,7 +56,7 @@ async function scratchAppDir(): Promise<
 }
 
 Deno.test("brand: POST round-trip", async (t) => {
-  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
+  const server = await bootServer({ fixtureScenario: publicScenario() });
   try {
     await t.step("sets name and accent, persists to config.toml", async () => {
       const res = await postBrand(server.baseUrl, {
@@ -199,7 +200,7 @@ Deno.test("brand: POST round-trip", async (t) => {
 });
 
 Deno.test("brand: file serving guards", async (t) => {
-  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
+  const server = await bootServer({ fixtureScenario: publicScenario() });
   try {
     const brandDir = path.join(server.vault, ".globnotes", "brand");
     await Deno.mkdir(brandDir, { recursive: true });
@@ -223,7 +224,7 @@ Deno.test("brand: file serving guards", async (t) => {
 
 Deno.test("brand: generated web manifest", async (t) => {
   await t.step("defaults without branding", async () => {
-    const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
+    const server = await bootServer({ fixtureScenario: publicScenario() });
     try {
       const res = await fetch(`${server.baseUrl}/_/brand/site.webmanifest`);
       assertEquals(res.status, 200);
@@ -248,7 +249,7 @@ Deno.test("brand: generated web manifest", async (t) => {
     const { appDir, cleanup: cleanupApp } = await scratchAppDir();
     const server = await bootServer(
       {
-        fixtureAuth: { auth_type: "none" },
+        fixtureScenario: publicScenario(),
         GLOBNOTES_GLOBNOTES_BRAND_NAME: "Test Brand",
         GLOBNOTES_GLOBNOTES_BRAND_ACCENT: "#ff6600",
       },
@@ -274,7 +275,7 @@ Deno.test("brand: generated web manifest", async (t) => {
   });
 
   await t.step("custom manifest file is served as-is", async () => {
-    const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
+    const server = await bootServer({ fixtureScenario: publicScenario() });
     try {
       const brandDir = path.join(server.vault, ".globnotes", "brand");
       await Deno.mkdir(brandDir, { recursive: true });
@@ -295,7 +296,7 @@ Deno.test("brand: generated web manifest", async (t) => {
     const { appDir, cleanup } = await scratchAppDir();
     const server = await bootServer(
       {
-        fixtureAuth: { auth_type: "none" },
+        fixtureScenario: publicScenario(),
         GLOBNOTES__SERVER_PATHPREFIX: "/notes",
       },
       { cwd: appDir },
@@ -313,7 +314,7 @@ Deno.test("brand: generated web manifest", async (t) => {
 });
 
 Deno.test("brand: read-only auth forbids mutation", async () => {
-  const server = await bootServer({ fixtureAuth: { auth_type: "read_only" } });
+  const server = await bootServer({ fixtureScenario: publicScenario("view") });
   try {
     const res = await postBrand(server.baseUrl, { name: "Nope" });
     assertEquals(res.status, 403);

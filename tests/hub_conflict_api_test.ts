@@ -1,5 +1,6 @@
 import { testMetadata } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import list from "../server/api/endpoints/_/api/conflicts/get.ts";
@@ -220,7 +221,7 @@ Deno.test("conflict API: real HTTP choices reach disk, filtered inbox and ordina
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: `${root}/vault`,
     GLOBNOTES__METADATA_PATH: `${root}/state`,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   try {
     const json = async (route: string, method = "GET", body?: unknown) => {

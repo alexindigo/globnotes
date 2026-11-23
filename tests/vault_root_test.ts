@@ -1,5 +1,6 @@
 import { testMetadata } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { GlobalConfig } from "./helpers/config.ts";
@@ -71,7 +72,7 @@ Deno.test("vault root: dot-dot spelling preserves initial search and hub-project
     await Deno.writeTextFile(`${vault}/sub/child.md`, "rootneedle");
     const server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: `${vault}/sub/../`,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       GLOBNOTES__HUB_SCANINTERVAL: "0.1",
     });
     try {

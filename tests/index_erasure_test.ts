@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { DatabaseSync } from "node:sqlite";
@@ -26,7 +27,7 @@ function fixture() {
   const env = testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: vault,
     fixtureStatePath: storage,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__INDEX_BATCHDELAY: "0",
     GLOBNOTES__INDEX_BATCHSIZE: "2",
   });

@@ -1,4 +1,7 @@
-import { fixturePasswordHash } from "./helpers/config.ts";
+import {
+  publicScenario,
+  signedInScenario,
+} from "./helpers/fixture_scenarios.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -95,7 +98,7 @@ const initialize = (version: string) =>
   });
 
 Deno.test("mcp protocol: malformed, unsupported and unusual requests", async () => {
-  const server = await boot({ fixtureAuth: { auth_type: "none" } });
+  const server = await boot({ fixtureScenario: publicScenario() });
   try {
     for (const body of ["{", ""]) {
       const reply = await send(server, body);
@@ -222,7 +225,7 @@ Deno.test("mcp protocol: malformed, unsupported and unusual requests", async () 
 });
 
 Deno.test("mcp protocol: 50 concurrent tool calls", async () => {
-  const server = await boot({ fixtureAuth: { auth_type: "none" } });
+  const server = await boot({ fixtureScenario: publicScenario() });
   try {
     const replies = await Promise.all(
       Array.from(
@@ -273,12 +276,11 @@ Deno.test("mcp protocol: 50 concurrent tool calls", async () => {
 Deno.test("mcp protocol: a token that expires between calls", async () => {
   const secret = "mcp-protocol-test-secret";
   const server = await boot({
-    fixtureAuth: {
-      auth_type: "password",
-      username: "agent",
-      password_hash: fixturePasswordHash("correct horse"),
-      secret_key: secret,
-    },
+    fixtureScenario: signedInScenario(
+      { login: "agent", password: "correct horse" },
+      {},
+      { secret_key: secret },
+    ),
   });
   try {
     // The server's own token format, with a two-second lifetime.
@@ -302,7 +304,7 @@ Deno.test("mcp protocol: a token that expires between calls", async () => {
 
 Deno.test("mcp protocol: storage failures don't show server paths", async () => {
   const outside = await Deno.makeTempDir({ prefix: "globnotes-mcp-outside-" });
-  const server = await boot({ fixtureAuth: { auth_type: "none" } });
+  const server = await boot({ fixtureScenario: publicScenario() });
   try {
     const vault = server.vault;
     await Deno.mkdir(path.join(vault, "Folder.md"));
@@ -354,7 +356,7 @@ Deno.test("mcp protocol: storage failures don't show server paths", async () => 
 
 Deno.test("mcp protocol: the endpoint lives under the path prefix", async () => {
   const server = await boot({
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__SERVER_PATHPREFIX: "/mom",
   });
   try {
@@ -394,7 +396,7 @@ Deno.test("mcp protocol: a 1,000-note folder and 3,000 tags page within the budg
   );
   const server = await boot({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   try {
     await waitUntil(async () => {

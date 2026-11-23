@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { currentBase } from "./helpers/storage.ts";
 import { versionOf } from "../server/hub/merge.ts";
 import type { Base } from "../server/hub/gate.ts";
@@ -101,7 +102,7 @@ async function bundle(
   const env = testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     fixtureStatePath: fixture.statePath,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   const config = new GlobalConfig(env),
     notes = new FileSystemNotes(fixture.vault, probes, testServices(env).notes),
@@ -1330,7 +1331,7 @@ Deno.test("plugin authority: real Worker HTTP timer without file hooks persists 
     server = await launchBackgroundFixture({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
     });
     await waitBackgroundAdmission(server, () => fetchObserved);
     const invoke = async () => {

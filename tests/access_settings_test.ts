@@ -6,6 +6,11 @@ import { hashPassword } from "../server/helpers.ts";
 import { bootServer, type TestServer } from "./helpers/boot.ts";
 import { writeFailureReport } from "./helpers/failure_report.ts";
 import { testEnvironment } from "./helpers/environment.ts";
+import {
+  publicScenario,
+  signedInScenario,
+  storedScenario,
+} from "./helpers/fixture_scenarios.ts";
 import { authenticatorCode } from "./helpers/totp.ts";
 import { settledTotpNow, unusedWindowCode } from "./helpers/totp_live.ts";
 import { HttpError } from "@pathfinder/pathfinder";
@@ -54,7 +59,10 @@ Deno.test("access: settings lock projection separates public notes from settings
       `${vault}/.globnotes/config.json`,
       JSON.stringify({ auth_type: "none", read_only_settings: true }),
     );
-    const env = testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: vault });
+    const env = testEnvironment({
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      fixtureScenario: storedScenario(publicScenario()),
+    });
     const config = new GlobalConfig(env);
     assertEquals(config.authType, "none");
     assertEquals(config.setupRequired, false);
@@ -63,7 +71,9 @@ Deno.test("access: settings lock projection separates public notes from settings
       new GlobalConfig(
         testEnvironment({
           GLOBNOTES_GLOBNOTES_PATH: vault,
-          fixtureAuth: { read_only_settings: false },
+          fixtureScenario: publicScenario("edit", {
+            read_only_settings: false,
+          }),
         }),
       ).settingsWritable,
       true,
@@ -96,6 +106,9 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
   await Deno.writeTextFile(`${vault}/Seed.md`, "Seed content.\n");
   let server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: vault,
+    fixtureScenario: storedScenario(
+      signedInScenario({ login: "alice", password: "old-password" }),
+    ),
     GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
   }, { cwd: vault });
   const call = async (
@@ -368,7 +381,7 @@ Deno.test("access: configured credentials and confirmed 2FA commit in place", as
     await server.close();
     server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: vault,
-      fixtureAuth: { read_only_settings: false },
+      fixtureScenario: publicScenario("edit", { read_only_settings: false }),
       GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
     }, { cwd: vault });
     await t.step(

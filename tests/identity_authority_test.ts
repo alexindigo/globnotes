@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { signIn } from "./helpers/session_delivery.ts";
 import {
   assert,
@@ -390,7 +391,7 @@ async function scope(root: string, owner: FixtureScope) {
   const config = new GlobalConfig(testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: vaultPath,
     fixtureStatePath: metadata,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   }));
   const lifecycle = new PluginLifecycle(config);
   const acl = new AclRepository(metadata, VAULT_A, { accounts: base.accounts });

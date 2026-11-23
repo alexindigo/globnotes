@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
@@ -11,7 +12,7 @@ const encodedPath = (p: string) =>
   p.split("/").map(encodeURIComponent).join("/");
 
 Deno.test("attachment names: existing special names download through API and vault routes", async (t) => {
-  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
+  const server = await bootServer({ fixtureScenario: publicScenario() });
   try {
     for (const name of NAMES) {
       await Deno.writeFile(`${server.vault}/${name}`, bytes);
@@ -37,7 +38,7 @@ Deno.test("attachment names: existing special names download through API and vau
 });
 
 Deno.test("attachment names: raw and encoded references survive base-aware note moves and relinks", async (t) => {
-  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
+  const server = await bootServer({ fixtureScenario: publicScenario() });
   try {
     for (const encoding of ["raw", "encoded"]) {
       for (const strategy of ["move", "relink"]) {

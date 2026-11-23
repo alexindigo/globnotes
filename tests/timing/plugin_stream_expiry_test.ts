@@ -1,4 +1,4 @@
-import { fixturePasswordHash } from "../helpers/config.ts";
+import { signedInScenario } from "../helpers/fixture_scenarios.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -38,12 +38,11 @@ for (const invalidate of [false, true]) {
     const server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-      fixtureAuth: {
-        auth_type: "password",
-        username: "stream-fixture",
-        password_hash: fixturePasswordHash("fixture-password"),
-        secret_key: secret,
-      },
+      fixtureScenario: signedInScenario(
+        { login: "stream-fixture", password: "fixture-password" },
+        {},
+        { secret_key: secret },
+      ),
       GLOBNOTES__SERVER_PATHPREFIX: "",
     });
     const controller = new AbortController();

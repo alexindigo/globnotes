@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { HttpError } from "@pathfinder/pathfinder";
@@ -453,7 +454,7 @@ async function endpointFixture(prefix = "", invalid?: "grammar" | "shape") {
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__SERVER_PATHPREFIX: prefix,
   });
   const base = `${server.baseUrl}${prefix}`;

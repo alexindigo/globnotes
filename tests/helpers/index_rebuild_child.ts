@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./fixture_scenarios.ts";
 // A deliberate process exit leaves SQLite's actual crash/recovery files intact.
 import { DatabaseSync } from "node:sqlite";
 import { GlobalConfig } from "./config.ts";
@@ -13,7 +14,7 @@ const [vault, storage, boundary] = Deno.args;
 const env = testEnvironment({
   GLOBNOTES_GLOBNOTES_PATH: vault,
   fixtureStatePath: storage,
-  fixtureAuth: { auth_type: "none" },
+  fixtureScenario: publicScenario(),
   GLOBNOTES__INDEX_BATCHDELAY: "0",
 });
 let canonicalOpens = 0;

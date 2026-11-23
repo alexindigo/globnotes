@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 /** Sandbox endpoint + host control API tests over real HTTP: plugin code
  * executes only in its worker, envelopes stay structured, 404/405/Allow
@@ -22,7 +23,7 @@ async function pluginApiServer(opts: Record<string, string> = {}) {
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__SERVER_PATHPREFIX: "",
     ...opts,
   });

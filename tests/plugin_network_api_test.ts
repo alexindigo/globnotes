@@ -1,3 +1,8 @@
+import {
+  publicScenario,
+  setupScenario,
+  signedInScenario,
+} from "./helpers/fixture_scenarios.ts";
 import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
@@ -151,7 +156,7 @@ async function apiFixture(
   const launchEnv = {
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__SERVER_PATHPREFIX: "",
     ...extra,
   };
@@ -973,13 +978,22 @@ Deno.test("plugin network api: corrupted control bytes are retained and cannot b
 
 Deno.test("plugin network api: setup, password and read-only enforcement cover the new host routes", async () => {
   for (const mode of ["", "password", "read_only"]) {
+    const legacyAuth = {
+      auth_type: mode || undefined,
+      username: "fixture-user",
+      password_hash: fixturePasswordHash("fixture-password"),
+      secret_key: crypto.randomUUID(),
+    };
     const b = await apiFixture({
-      fixtureAuth: {
-        auth_type: mode || undefined,
-        username: "fixture-user",
-        password_hash: fixturePasswordHash("fixture-password"),
-        secret_key: crypto.randomUUID(),
-      },
+      fixtureScenario: mode === "password"
+        ? signedInScenario(
+          { login: "fixture-user", password: "fixture-password" },
+          {},
+          { secret_key: legacyAuth.secret_key },
+        )
+        : mode === "read_only"
+        ? publicScenario("view", legacyAuth)
+        : setupScenario(legacyAuth),
     });
     try {
       const response = await b.get("networked/permissions");

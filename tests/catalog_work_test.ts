@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
@@ -292,7 +293,7 @@ Deno.test("catalogue work: real HTTP invalidation settles admitted work without 
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   let observer: Awaited<ReturnType<typeof observeCatalog>> | undefined;
   try {
@@ -442,7 +443,7 @@ Deno.test("catalogue work: a hung service job fails through its real product dea
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   try {
     const initial = await catalogPluginReady(server, "http-hung");

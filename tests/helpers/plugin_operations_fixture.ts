@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./fixture_scenarios.ts";
 import { testEnvironment } from "./environment.ts";
 import { AuthType, GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
@@ -131,7 +132,7 @@ async function constructPluginOperationsFixture(
   const env = testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     fixtureStatePath: fixture.statePath,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   const config = new GlobalConfig(env);
   config.authType = AuthType.NONE;

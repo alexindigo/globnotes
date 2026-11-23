@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./fixture_scenarios.ts";
 import type { DriverCapabilities } from "../../server/plugins/driver_contract.ts";
 import { readManifest } from "../../server/plugins/manifest.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
@@ -118,7 +119,7 @@ export async function storageServerFixture(
     const env = {
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
     };
     // Control only this owned subprocess's observed-time seam. No process env,

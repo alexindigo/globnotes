@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals, assertFalse } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { parse, stringify } from "@std/toml";
@@ -54,7 +55,7 @@ Deno.test("config acceptance: shell and server retain original provenance; saves
     assert(
       projection.trim().split("\n").every((row) => row.startsWith("LAUNCH_")),
     );
-    server = await bootServer({ ...env, fixtureAuth: { auth_type: "none" } });
+    server = await bootServer({ ...env, fixtureScenario: publicScenario() });
     const config = () =>
       fetch(`${server!.baseUrl}/notes/_/api/config`).then((r) => r.json());
     const manifest = () =>

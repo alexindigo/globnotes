@@ -32,6 +32,7 @@ import {
   serverWorkingDirectory,
 } from "./fixture_layout.ts";
 import type { CompletedBuild } from "./completed_build.ts";
+import type { IdentityFixturePayload } from "./identity_fixture.ts";
 
 const SERVER_MAIN = path.fromFileUrl(
   new URL("../../server/main.ts", import.meta.url),
@@ -46,6 +47,8 @@ export interface TestServer {
   baseUrl: string;
   vault: string;
   layout: FixtureLayout;
+  /** Prepared account input; not active production authority before I14c4. */
+  fixtureIdentity?: IdentityFixturePayload | null;
   /** The port the server bound (it chose it itself). */
   port: number;
   pid: number;
@@ -103,6 +106,9 @@ export async function bootServer(
   } = {},
 ): Promise<TestServer> {
   inputs = { ...inputs };
+  if (inputs.fixtureScenario !== undefined) {
+    inputs.fixtureScenario = structuredClone(inputs.fixtureScenario);
+  }
   const initialAuth = inputs.fixtureAuth;
   if (initialAuth && typeof initialAuth === "object") {
     inputs.fixtureAuth = { ...initialAuth };
@@ -339,6 +345,7 @@ export async function bootServer(
       baseUrl: origin?.(boundPort) ?? `http://127.0.0.1:${boundPort}`,
       vault,
       layout,
+      fixtureIdentity: fixture.fixtureIdentity,
       port: boundPort,
       pid: child.pid,
       args,

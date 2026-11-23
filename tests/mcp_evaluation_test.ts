@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 /**
  * The MCP evaluation's answers, verified with the real tools
@@ -182,7 +183,7 @@ Deno.test("mcp evaluation: every answer is derived with the real tools", async (
   // read_only: the evaluation is answerable without any write tool.
   const server = await bootOnTestDomain({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "read_only" },
+    fixtureScenario: publicScenario("view"),
   });
   try {
     const client = await connectMcp(server);

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import * as path from "@std/path";
@@ -216,7 +217,7 @@ Deno.test("review repairs: R02 publication failure reports persisted revision, f
       testEnvironment({
         GLOBNOTES_GLOBNOTES_PATH: b.fixture.vault,
         fixtureStatePath: b.fixture.statePath,
-        fixtureAuth: { auth_type: "none" },
+        fixtureScenario: publicScenario(),
       }),
     );
     state.auth = null;

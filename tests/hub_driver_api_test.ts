@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
@@ -14,7 +15,7 @@ async function shutdownWithLiveStream(
   options: Parameters<typeof bootServer>[1] = {},
 ) {
   const server = await bootServer(
-    { fixtureAuth: { auth_type: "none" } },
+    { fixtureScenario: publicScenario() },
     options,
   );
   const stream = await fetch(`${server.baseUrl}/_/api/changes`, {
@@ -76,7 +77,7 @@ Deno.test("driver API: real HTTP CRUD and keys are write-only, revision-bound an
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: f.vault,
     GLOBNOTES__METADATA_PATH: f.metadataBase,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   const packets: string[] = [];
   async function call(method: string, route = "", body?: unknown) {
@@ -282,10 +283,10 @@ for (const settings of ["true", "false"]) {
     const server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: f.vault,
       GLOBNOTES__METADATA_PATH: f.metadataBase,
-      fixtureAuth: {
+      fixtureScenario: publicScenario(settings === "true" ? "edit" : "view", {
         auth_type: settings === "true" ? "none" : "read_only",
         read_only_settings: settings === "true",
-      },
+      }),
     });
     try {
       const read = await fetch(`${server.baseUrl}/_/api/drivers`);

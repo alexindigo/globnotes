@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 /**
  * Render pipeline tests — markdown-it default rendering (no plugins),
@@ -24,7 +25,7 @@ import { testEnvironment } from "./helpers/environment.ts";
 function setupState(vault: string, plugins: PluginManager | null): void {
   const env = testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   const config = new GlobalConfig(env);
   initState(
@@ -289,7 +290,7 @@ Deno.test("render: endpoint end-to-end", async () => {
   let server;
   try {
     server = await bootServer({
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       GLOBNOTES_GLOBNOTES_PATH: vault,
       GLOBNOTES__PLUGINS_RENDERWORKERS: "1",
     });

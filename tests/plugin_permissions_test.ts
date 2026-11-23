@@ -1,4 +1,5 @@
 import { testMetadata, testServices } from "./helpers/environment.ts";
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** Permission boundary tests: service raw filesystem denial, mediated grant
@@ -33,7 +34,10 @@ async function serviceBundle(opts: {
   const env = {
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-    fixtureAuth: { auth_type: opts.authType ?? "none" },
+    fixtureScenario: publicScenario(
+      opts.authType === "read_only" ? "view" : "edit",
+      { auth_type: opts.authType ?? "none" },
+    ),
   };
   const environment = testEnvironment(env);
   const config = new GlobalConfig(environment);

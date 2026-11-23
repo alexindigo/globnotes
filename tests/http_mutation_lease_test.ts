@@ -10,6 +10,10 @@ import { assert, assertEquals } from "@std/assert";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { SignJWT } from "jose";
 import { AuthType, GlobalConfig } from "./helpers/config.ts";
+import {
+  accountScenario,
+  signedInScenario,
+} from "./helpers/fixture_scenarios.ts";
 import { LocalAuth } from "../server/auth/local.ts";
 import { enforceAuth } from "../server/auth/middleware.ts";
 import { FileServing } from "../server/files/file_serving.ts";
@@ -92,10 +96,16 @@ async function fixture() {
   const env = testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: vault,
     fixtureStatePath: storage,
-    fixtureAuth: {
-      username: "lease-fixture",
-      password_hash: fixturePasswordHash("fixture-only-password"),
-    },
+    fixtureScenario: accountScenario(
+      signedInScenario({
+        login: "lease-fixture",
+        password: "fixture-only-password",
+      }, { everybody: "edit" }).identity,
+      {
+        username: "lease-fixture",
+        password_hash: fixturePasswordHash("fixture-only-password"),
+      },
+    ),
     GLOBNOTES__INDEX_SCANCACHETTL: "0",
   });
   Deno.writeTextFileSync(

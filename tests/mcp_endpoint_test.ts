@@ -1,4 +1,7 @@
-import { fixturePasswordHash } from "./helpers/config.ts";
+import {
+  publicScenario,
+  signedInScenario,
+} from "./helpers/fixture_scenarios.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -222,7 +225,7 @@ Deno.test("mcp endpoint: none mode, both protocol eras, every tool", async () =>
   const vault = await vaultCopy();
   const server = await boot({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   });
   try {
     for (const modern of [false, true]) {
@@ -248,7 +251,7 @@ Deno.test("mcp endpoint: none mode, both protocol eras, every tool", async () =>
 });
 
 Deno.test("mcp endpoint: a single long token stays within the response limit", async () => {
-  const server = await boot({ fixtureAuth: { auth_type: "none" } });
+  const server = await boot({ fixtureScenario: publicScenario() });
   try {
     const client = await connect(server);
     try {
@@ -287,7 +290,7 @@ Deno.test("mcp endpoint: a single long token stays within the response limit", a
 });
 
 Deno.test("mcp endpoint: a long title and a long tag stay within the response limit", async () => {
-  const server = await boot({ fixtureAuth: { auth_type: "none" } });
+  const server = await boot({ fixtureScenario: publicScenario() });
   try {
     const client = await connect(server);
     try {
@@ -347,7 +350,7 @@ Deno.test("mcp endpoint: a long title and a long tag stay within the response li
 });
 
 Deno.test("mcp endpoint: transport rules (405, Origin, Allow)", async () => {
-  const server = await boot({ fixtureAuth: { auth_type: "none" } });
+  const server = await boot({ fixtureScenario: publicScenario() });
   try {
     for (const method of ["GET", "DELETE"]) {
       const res = await fetch(`${server.baseUrl}/_/mcp`, { method });
@@ -368,12 +371,13 @@ Deno.test("mcp endpoint: transport rules (405, Origin, Allow)", async () => {
 
 Deno.test("mcp endpoint: password mode needs the API token", async () => {
   const server = await boot({
-    fixtureAuth: {
-      auth_type: "password",
-      username: "agent",
-      password_hash: fixturePasswordHash("correct horse"),
-      secret_key: "mcp-endpoint-test-secret",
-    },
+    fixtureScenario: signedInScenario(
+      { login: "agent", password: "correct horse" },
+      {},
+      {
+        secret_key: "mcp-endpoint-test-secret",
+      },
+    ),
   });
   try {
     const anonymous = await post(server);
@@ -429,7 +433,7 @@ Deno.test("mcp endpoint: read_only lists the read tools and refuses writes", asy
   const vault = await vaultCopy();
   const server = await boot({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "read_only" },
+    fixtureScenario: publicScenario("view"),
   });
   try {
     for (const modern of [false, true]) {
@@ -469,7 +473,7 @@ Deno.test("mcp endpoint: read_only lists the read tools and refuses writes", asy
 
 Deno.test("mcp endpoint: GLOBNOTES__MCP_ENABLED=false answers 404", async () => {
   const server = await boot({
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__MCP_ENABLED: "false",
   });
   try {
@@ -501,7 +505,7 @@ Deno.test("mcp endpoint: a plugin pre-save guard cancels an MCP write", async ()
     const server = await boot({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
     });
     try {
       await catalogPluginReady(server, "guard");
@@ -565,7 +569,7 @@ Deno.test("mcp endpoint: plugin guards cancel MCP creates, renames and deletes",
     const server = await boot({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
     });
     try {
       await catalogPluginReady(server, "guard");

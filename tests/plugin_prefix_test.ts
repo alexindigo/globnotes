@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 /** Prefix-wrapper correction: exact segment matching and query preservation.
  * Fail-first coverage for the v2-owned app glue — plugin APIs under a path
@@ -20,7 +21,7 @@ Deno.test("prefix: segment boundaries, retained queries and protected plugin rou
     const server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       GLOBNOTES__SERVER_PATHPREFIX: "/notes",
     });
     try {

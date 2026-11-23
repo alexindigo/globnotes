@@ -1,4 +1,7 @@
-import { fixturePasswordHash } from "./helpers/config.ts";
+import {
+  publicScenario,
+  signedInScenario,
+} from "./helpers/fixture_scenarios.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -206,7 +209,7 @@ Deno.test("host admission: one warning per transition into exposure (PR #28 revi
 
 Deno.test("host admission: access-policy changes notify their listeners", () => {
   const config = new GlobalConfig(testEnvironment({
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
   }));
   const lifecycle = new PluginLifecycle(config);
   let calls = 0;
@@ -304,7 +307,7 @@ const ALLOWED = "127.0.0.1,globnotes.home,[::1]:8443";
 
 Deno.test("host admission: an unlisted host gets 421 on every route", async () => {
   const server = await bootServer({
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__SERVER_ALLOWEDHOSTS: ALLOWED,
   });
   try {
@@ -336,7 +339,7 @@ Deno.test("host admission: an unlisted host gets 421 on every route", async () =
 });
 
 Deno.test("host admission: unset, every host is answered and open modes warn", async () => {
-  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
+  const server = await bootServer({ fixtureScenario: publicScenario() });
   try {
     await seed(server);
     const statuses = await everyRoute(server, "evil.example");
@@ -355,18 +358,19 @@ Deno.test("host admission: unset, every host is answered and open modes warn", a
   // the allow-list or a login silences the warning.
   for (
     const [env, warns] of [
-      [{ fixtureAuth: { auth_type: "read_only" } }, true],
+      [{ fixtureScenario: publicScenario("view") }, true],
       [{
-        fixtureAuth: { auth_type: "read_only" },
+        fixtureScenario: publicScenario("view"),
         GLOBNOTES__SERVER_ALLOWEDHOSTS: "127.0.0.1",
       }, false],
       [{
-        fixtureAuth: {
-          auth_type: "password",
-          username: "agent",
-          password_hash: fixturePasswordHash("correct horse"),
-          secret_key: "host-admission-test-secret",
-        },
+        fixtureScenario: signedInScenario(
+          { login: "agent", password: "correct horse" },
+          {},
+          {
+            secret_key: "host-admission-test-secret",
+          },
+        ),
       }, false],
     ] as [Record<string, unknown>, boolean][]
   ) {
@@ -386,7 +390,7 @@ Deno.test("host admission: unset, every host is answered and open modes warn", a
 
 Deno.test("host admission: applies before the path prefix", async () => {
   const server = await bootServer({
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__SERVER_ALLOWEDHOSTS: ALLOWED,
     GLOBNOTES__SERVER_PATHPREFIX: "/mom",
   });
@@ -455,7 +459,7 @@ Deno.test("host admission: setup and access changes into exposure warn at runtim
 Deno.test("host admission: an invalid setting stops startup", async () => {
   const error = await assertRejects(() =>
     bootServer({
-      fixtureAuth: { auth_type: "none" },
+      fixtureScenario: publicScenario(),
       GLOBNOTES__SERVER_ALLOWEDHOSTS: "globnotes.home,http://bad",
     })
   );

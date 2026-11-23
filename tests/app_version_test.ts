@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { toFileUrl } from "@std/path";
@@ -149,7 +150,7 @@ Deno.test("formats the display version", () => {
 
 Deno.test("/_/api/config returns the version and full revision", async () => {
   const server = await bootServer({
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES_REVISION: REVISION,
   });
   try {
@@ -164,7 +165,7 @@ Deno.test("/_/api/config returns the version and full revision", async () => {
 
 Deno.test("/_/api/config returns a null revision when none is supplied", async () => {
   const server = await bootServer({
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES_REVISION: "",
   });
   try {
@@ -183,7 +184,7 @@ Deno.test("startup logs the version before the listening line", async () => {
   // healthy); the version line must already precede it on stdout.
   const server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES_REVISION: "",
   });
   const output = server.logs().stdout;

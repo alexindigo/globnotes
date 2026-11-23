@@ -1,5 +1,6 @@
 import { testMetadata, testServices } from "./helpers/environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 /**
  * Paging inside storage (plans/mcp-interop §1 row 5): search, tag and folder
@@ -92,7 +93,7 @@ async function indexedVault(
   await write(vault);
   const env = testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES__INDEX_BATCHDELAY: "0",
     GLOBNOTES__INDEX_BATCHSIZE: "2000",
   });

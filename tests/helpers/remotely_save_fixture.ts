@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./fixture_scenarios.ts";
 import { assert, assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { bootServer } from "./boot.ts";
@@ -17,7 +18,7 @@ export async function remotelySaveServerFixture(authorities: string[]) {
   const env = {
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-    fixtureAuth: { auth_type: "none" },
+    fixtureScenario: publicScenario(),
     GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
   };
   let server = await bootServer(env);

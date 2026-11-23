@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assertEquals } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 
 Deno.test("attachment Markdown: rewritten destinations render and resolve after repeated moves and relinks", async (t) => {
-  const server = await bootServer({ fixtureAuth: { auth_type: "none" } });
+  const server = await bootServer({ fixtureScenario: publicScenario() });
   // Explicit URL fixtures also catch accidental double decoding of literal %29.
   const files = [
     ["a(1).png", "a%281%29.png"],
