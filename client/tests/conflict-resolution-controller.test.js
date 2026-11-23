@@ -21,6 +21,42 @@ describe("paired conflict comparison", () => {
     expect(f.controller.state.pair).toEqual(pair()); expect(f.controller.state.originalHref).toBe("/prefix/A.md");
     expect(f.controller.state.status).toBe("open"); f.controller.back(); expect(f.navigate).toHaveBeenCalledWith({ name: "conflicts" });
   });
+  it("owns read readiness until the invalidated pair and actions settle", async () => {
+    const initial = deferred(), reread = deferred();
+    const f = fixture({ read: vi.fn().mockReturnValueOnce(initial.promise).mockReturnValueOnce(reread.promise) });
+    const mounted = f.controller.mount("a");
+    expect([f.controller.state.reading, f.controller.state.status]).toEqual([true, "loading"]);
+    initial.resolve(pair()); await mounted;
+    expect([f.controller.state.reading, f.controller.state.canKeep]).toEqual([false, true]);
+    const invalidated = f.handlers.get(TOPICS.VAULT_CHANGE)({ path: "A.md" });
+    expect([f.controller.state.reading, f.controller.state.reviewRequired, f.controller.state.canKeep]).toEqual([true, true, false]);
+    reread.resolve(pair()); await invalidated;
+    expect([f.controller.state.reading, f.controller.state.reviewRequired, f.controller.state.canKeep]).toEqual([false, false, true]);
+  });
+  it("does not let an old selection clear the current read readiness", async () => {
+    const old = deferred(), selected = deferred();
+    const f = fixture({ read: vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(selected.promise) });
+    const mounting = f.controller.mount("a"), selecting = f.controller.select("b");
+    old.resolve(pair("a")); await mounting;
+    expect([f.controller.state.reading, f.controller.state.id, f.controller.state.pair]).toEqual([true, "b", null]);
+    selected.resolve(pair("b")); await selecting;
+    expect([f.controller.state.reading, f.controller.state.pair.id]).toEqual([false, "b"]);
+    await f.controller.select(null);
+    expect([f.controller.state.reading, f.controller.state.status]).toEqual([false, "idle"]);
+  });
+  it("keeps readiness busy across a coalesced successor and retires failed reads", async () => {
+    const initial = deferred(), successor = deferred();
+    const read = vi.fn().mockReturnValueOnce(initial.promise).mockReturnValueOnce(successor.promise).mockRejectedValueOnce(Error("offline"));
+    const f = fixture({ read });
+    const mounted = f.controller.mount("a");
+    const invalidated = f.handlers.get(TOPICS.VAULT_RESET)();
+    initial.resolve(pair()); await mounted; await invalidated;
+    expect([read.mock.calls, f.controller.state.reading, f.controller.state.pair]).toEqual([[["a"], ["a"]], true, null]);
+    successor.resolve(pair()); await successor.promise;
+    expect([f.controller.state.reading, f.controller.state.pair.id]).toEqual([false, "a"]);
+    await f.controller.refresh();
+    expect([f.controller.state.reading, f.controller.state.error]).toEqual([false, "Could not load comparison."]);
+  });
   it("URL selection fences old reads, including a Back/Forward visit", async () => {
     const old = deferred(), f = fixture({ read: vi.fn().mockReturnValueOnce(old.promise).mockImplementation(async id => pair(id)) });
     f.controller.mount("a"); await flush(); await f.controller.select("b"); old.resolve(pair("a")); await flush();

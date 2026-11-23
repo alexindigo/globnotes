@@ -25,7 +25,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
   drafts = createConflictDraftStore(), registerParticipant = registerSessionParticipant,
   unload = createUnloadConfirmation(), requestAuthentication = requestReauthentication,
   observationMs = NOTE_SAVE_OBSERVATION_MS, lifetime } = {}) {
-  const state = reactive({ id: null, status: "idle", pair: null, reviewRequired: false,
+  const state = reactive({ id: null, status: "idle", pair: null, reading: false, reviewRequired: false,
     error: "", feedback: "", settledByUs: false, originalHref: "", copyHref: "", merge: false, draft: "",
     recovered: false, confirmation: null, decision: null, busy: false, unknown: false,
     authenticationRequired: false, retainedFailure: false, draftRetained: false,
@@ -81,6 +81,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
     if (disposed || !state.id) return;
     retry.begin();
     if (flight) { dirty = true; return flight; }
+    state.reading = true;
     const own = generation, id = state.id;
     const work = (async () => {
       await Promise.resolve();
@@ -106,7 +107,13 @@ export function createConflictResolutionController({ read = getConflict, send = 
           }
         }
       } finally {
-        if (current(own)) { flight = null; if (dirty) { dirty = false; refresh(); } }
+        if (current(own)) {
+          flight = null;
+          // A superseded read still owns the pending layout until its successor
+          // publishes the authoritative pair and capabilities together.
+          if (dirty) { dirty = false; refresh(); }
+          else state.reading = false;
+        }
       }
     })();
     flight = work; return work;
@@ -120,7 +127,7 @@ export function createConflictResolutionController({ read = getConflict, send = 
     generation++; flight = null; dirty = false; pending = null; cancelConfirmation(); drafts.release();
     scope = getContext().scope ?? `${readPathPrefix()}:globnotes`;
     draftBase = null; draftRevision = 0; recovered = null; seed = ""; reviewLocked = false;
-    Object.assign(state, { id, status: id ? "loading" : "idle", pair: null, reviewRequired: false, error: "", feedback: "", settledByUs: false,
+    Object.assign(state, { id, status: id ? "loading" : "idle", pair: null, reading: false, reviewRequired: false, error: "", feedback: "", settledByUs: false,
       merge: false, draft: "", recovered: false, draftRetained: false, retainedFailure: false });
     if (id) {
       try { recovered = drafts.load(scope, id); } catch { state.feedback = "Could not read the browser merge draft."; }

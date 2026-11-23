@@ -14,30 +14,32 @@
         <button type="button" class="text-theme-brand hover:underline" @click="controller.reviewCurrent">Review current versions</button>
       </div>
       <p v-if="comparison.message" role="status" class="conflicts-page__notice" :aria-busy="comparison.busy">{{ comparison.message }}</p>
-      <ConflictComparison v-if="comparison.pair && comparison.status === 'open'" :pair="comparison.pair" :original-href="comparison.originalHref" :copy-href="comparison.copyHref" :on-open="controller.followFile" />
-      <div v-if="comparison.recovered" class="conflicts-page__notice" role="status">
-        <p>A browser merge draft is available. Resume it for review, or discard only this local draft.</p>
-        <div class="conflicts-page__actions">
-          <button type="button" class="conflicts-page__button" @click="controller.resumeDraft">Resume draft</button>
-          <button type="button" class="conflicts-page__button" @click="controller.discard">Discard draft</button>
+      <div class="conflicts-page__content" :aria-busy="comparison.reading && comparison.reviewRequired">
+        <ConflictComparison v-if="comparison.pair && comparison.status === 'open'" :pair="comparison.pair" :original-href="comparison.originalHref" :copy-href="comparison.copyHref" :on-open="controller.followFile" />
+        <div v-if="comparison.recovered" class="conflicts-page__notice" role="status">
+          <p>A browser merge draft is available. Resume it for review, or discard only this local draft.</p>
+          <div class="conflicts-page__actions">
+            <button type="button" class="conflicts-page__button" @click="controller.resumeDraft">Resume draft</button>
+            <button type="button" class="conflicts-page__button" @click="controller.discard">Discard draft</button>
+          </div>
         </div>
-      </div>
-      <section v-if="comparison.merge" class="conflicts-page__merge" aria-labelledby="merge-label">
-        <label id="merge-label" for="conflict-merge">Manual merge</label>
-        <p v-if="comparison.pair && comparison.status === 'open'">Save at <span :title="comparison.pair.original.path">{{ comparison.pair.original.path }}</span>; remove <span :title="comparison.pair.copy.path">{{ comparison.pair.copy.path }}</span>.</p>
-        <textarea id="conflict-merge" :value="comparison.draft" :readonly="comparison.busy || comparison.authenticationRequired || comparison.status !== 'open'" spellcheck="false" @input="controller.setDraft($event.target.value)" />
-      </section>
-      <div v-if="comparison.status === 'open' || comparison.merge" class="conflicts-page__actions" aria-label="Conflict actions">
-        <template v-if="comparison.canKeep">
-          <button type="button" class="conflicts-page__button" @click="controller.choose('original')">Keep original</button>
-          <button type="button" class="conflicts-page__button" @click="controller.choose('copy')">Keep conflict copy</button>
-          <button type="button" class="conflicts-page__button" @click="controller.choose('both')">Keep both</button>
-        </template>
-        <button v-if="comparison.canMerge" type="button" class="conflicts-page__button" @click="controller.editMerge">Edit a merge</button>
-        <button v-if="comparison.canSaveMerge" type="button" class="conflicts-page__button conflicts-page__button--primary" @click="controller.choose('merge')">Save merge</button>
-        <button v-if="comparison.merge && !comparison.busy && !comparison.unknown && !comparison.authenticationRequired" type="button" class="conflicts-page__button" @click="controller.cancelMerge">Cancel merge</button>
-        <button v-if="!comparison.busy && !comparison.unknown && !comparison.authenticationRequired" type="button" class="conflicts-page__button" @click="controller.back">Postpone</button>
-        <button v-if="comparison.unknown && !comparison.reviewRequired" type="button" class="conflicts-page__button" @click="controller.reviewCurrent">Review current versions</button>
+        <section v-if="comparison.merge" class="conflicts-page__merge" aria-labelledby="merge-label">
+          <label id="merge-label" for="conflict-merge">Manual merge</label>
+          <p v-if="comparison.pair && comparison.status === 'open'">Save at <span :title="comparison.pair.original.path">{{ comparison.pair.original.path }}</span>; remove <span :title="comparison.pair.copy.path">{{ comparison.pair.copy.path }}</span>.</p>
+          <textarea id="conflict-merge" :value="comparison.draft" :readonly="comparison.busy || comparison.authenticationRequired || comparison.status !== 'open'" spellcheck="false" @input="controller.setDraft($event.target.value)" />
+        </section>
+        <div v-if="comparison.status === 'open' || comparison.merge" class="conflicts-page__actions" aria-label="Conflict actions">
+          <template v-if="comparison.canKeep">
+            <button type="button" class="conflicts-page__button" @click="controller.choose('original')">Keep original</button>
+            <button type="button" class="conflicts-page__button" @click="controller.choose('copy')">Keep conflict copy</button>
+            <button type="button" class="conflicts-page__button" @click="controller.choose('both')">Keep both</button>
+          </template>
+          <button v-if="comparison.canMerge" type="button" class="conflicts-page__button" @click="controller.editMerge">Edit a merge</button>
+          <button v-if="comparison.canSaveMerge" type="button" class="conflicts-page__button conflicts-page__button--primary" @click="controller.choose('merge')">Save merge</button>
+          <button v-if="comparison.merge && !comparison.busy && !comparison.unknown && !comparison.authenticationRequired" type="button" class="conflicts-page__button" @click="controller.cancelMerge">Cancel merge</button>
+          <button v-if="!comparison.busy && !comparison.unknown && !comparison.authenticationRequired" type="button" class="conflicts-page__button" @click="controller.back">Postpone</button>
+          <button v-if="comparison.unknown && !comparison.reviewRequired" type="button" class="conflicts-page__button" @click="controller.reviewCurrent">Review current versions</button>
+        </div>
       </div>
       <ConfirmModal v-if="comparison.confirmation" :model-value="true" title="Resolve conflict" :message="comparison.confirmation.message" :confirm-button-text="comparison.confirmation.label" confirm-button-style="danger" action-layout="grouped" @confirm="controller.confirmResolution(comparison.confirmation.identity)" @cancel="controller.cancelConfirmation" />
       <ConfirmModal v-if="comparison.decision" :model-value="true" title="Merge draft" :message="comparison.decision.message" :confirm-button-text="comparison.decision.canSave ? 'Save merge' : 'Discard draft'" :reject-button-text="comparison.decision.canSave ? 'Discard draft' : undefined" action-layout="grouped" @confirm="controller.onDecision(comparison.decision.canSave ? 'save' : 'discard')" @reject="controller.onDecision('discard')" @cancel="controller.onDecision('cancel')" />

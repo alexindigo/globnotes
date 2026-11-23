@@ -10,6 +10,7 @@ import Conflicts from "../views/Conflicts.vue";
 import { CONFLICT_INBOX } from "../conflictInbox.js";
 import { getConflict, resolveConflict } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
+import { publish, TOPICS } from "../bus/index.js";
 vi.mock("../api.js", () => ({ getConflict: vi.fn(), getConflicts: vi.fn(), resolveConflict: vi.fn() }));
 vi.mock("../vaultChanges.js", () => ({ acquireVaultChanges: vi.fn() }));
 enableAutoUnmount(afterEach);
@@ -52,6 +53,23 @@ describe("conflict render wiring", () => {
     await flushPromises(); expect(wrapper.text()).toContain("This conflict was resolved elsewhere.");
     getConflict.mockRejectedValueOnce({ response: { status: 404 } }); await r.push("/_/conflicts/b"); await flushPromises();
     expect(wrapper.text()).toContain("Conflict not found."); expect(wrapper.findAll("[disabled]")).toHaveLength(0);
+  });
+  it("marks only invalidated actions pending while leaving explicit review usable", async () => {
+    const pair = { id: "a", revision: 1, state: "open", original: member("A.md"), copy: member("B.md") };
+    getConflict.mockResolvedValue(pair);
+    const r = router(); await r.push("/_/conflicts/a");
+    const wrapper = routed(r, { state: {}, acquire: () => () => {} }); await flushPromises();
+    let finish;
+    const reread = new Promise(resolve => { finish = resolve; });
+    getConflict.mockReturnValueOnce(reread);
+    publish(TOPICS.VAULT_CHANGE, { path: "A.md" }); await flushPromises();
+    const actions = wrapper.get('[aria-label="Conflict actions"]');
+    const content = wrapper.get('.conflicts-page__content');
+    expect([content.attributes("aria-busy"), actions.findAll("button").map(b => b.text())]).toEqual(["true", ["Postpone"]]);
+    expect(content.findAll('.conflict-version a').map(link => link.element.closest('[aria-busy="true"]') === content.element)).toEqual([true, true]);
+    expect(button(wrapper, "Review current versions").element.parentElement.closest('[aria-busy="true"]')).toBe(null);
+    finish(pair); await reread; await flushPromises();
+    expect([content.attributes("aria-busy"), actions.findAll("button").map(b => b.text())]).toEqual(["false", ["Keep original", "Keep conflict copy", "Keep both", "Edit a merge", "Postpone"]]);
   });
   it("wires source input, destructive confirmation and guarded route cancellation through the controller", async () => {
     const pair = { id: "a", revision: 1, state: "open", original: member("A.md"), copy: member("B.md") };

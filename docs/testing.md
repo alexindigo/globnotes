@@ -218,6 +218,14 @@ write/sync. A cleared PUT busy flag alone precedes the owning snapshot; restorin
 Add/Remove rows can still move lower inputs. The positive controls-ready marker
 keeps the next native gesture after that snapshot's actual UI result.
 
+Conflict content regions expose their controller's invalidated read lifetime through
+`aria-busy`, including coalesced invalidations. This covers source links, the merge
+editor and actions that move together; explicit review remains outside the pending
+region. Source text can remain visible
+while a reread temporarily removes Keep/Edit actions and displays a review notice;
+it is not action readiness. The resolution native case holds a real replay-driven
+reread across geometry sampling, then observes one Postpone with unchanged files.
+
 Sidebar-dependent native navigation uses `showSidebar` from
 `sidebar-navigation-native.mjs`. It waits for SidebarPanel's interactive opener
 or visible Settings gear in one DOM observation, opens the collapsed sidebar
