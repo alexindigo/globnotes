@@ -10,6 +10,7 @@ step_label=initialization
 step_log=""
 name=""
 chromium_name=""
+preparation_name=""
 dev_started=false
 chromium_started=false
 step() {
@@ -24,6 +25,9 @@ run_step() {
 cleanup() {
     local status=$?
     trap - EXIT INT TERM
+    if [[ -n "$preparation_name" ]]; then
+        timeout 20 "$engine" rm "$preparation_name" > "$run_dir/logs/cleanup-preparation.log" 2>&1 || true
+    fi
     if "$chromium_started"; then
         timeout 15 "$engine" inspect "$chromium_name" > "$run_dir/logs/final-chromium.json" 2>&1 || true
         timeout 20 "$engine" stop --time 5 "$chromium_name" > "$run_dir/logs/stop-chromium.log" 2>&1 || true
@@ -132,12 +136,35 @@ build_image() {
     run_step "inspect-$kind-image" "image-$kind.json" timeout 20 "$engine" image inspect "$image"
     built_image="$image"
 }
+# Preparation and launch must select the same runtime-mapped image storage.
+runtime_mapping=()
+if [[ "$backend" == podman ]]; then
+    runtime_mapping=(--userns=keep-id:uid=1000,gid=1000)
+fi
+prepare_image() {
+    local kind="$1" image="$2" user="$3" start elapsed status=0
+    [[ "$backend" == podman ]] || return 0
+    preparation_name="globnotes-prepare-$kind-$$-${RANDOM}"
+    start="$EPOCHREALTIME"
+    # create materializes cold ID-mapped layers without starting any process.
+    # This is image preparation, using the image-build bound, not the 30 s start.
+    run_step "prepare-$kind-image" "prepare-$kind.log" timeout 1200 "$engine" create \
+        --name "$preparation_name" --network none "${runtime_mapping[@]}" --user "$user" "$image" || status=$?
+    elapsed=$(( ${EPOCHREALTIME/./} - ${start/./} ))
+    printf '{"image":"%s","seconds":%d.%06d,"exit":%d}\n' "$image" "$((elapsed / 1000000))" "$((elapsed % 1000000))" "$status" >> "$run_dir/logs/preparation-timings.jsonl"
+    ((status == 0)) || return "$status"
+    run_step "inspect-prepared-$kind-image" "prepared-$kind.json" timeout 15 "$engine" inspect "$preparation_name"
+    run_step "remove-prepared-$kind-image" "remove-prepared-$kind.log" timeout 20 "$engine" rm "$preparation_name"
+    preparation_name=""
+}
 build_image dev "$ROOT/.devcontainer/Dockerfile"
 dev_image="$built_image"
+prepare_image dev "$dev_image" dev
 chromium_image=""
 if "$browser"; then
     build_image chromium "$ROOT/.devcontainer/chromium/Dockerfile"
     chromium_image="$built_image"
+    prepare_image chromium "$chromium_image" chromium
 fi
 if [[ "$backend" == podman ]]; then
     timeout 15 "$engine" network exists globnotes-test || run_step create-network network-create.log timeout 20 "$engine" network create globnotes-test
@@ -155,7 +182,7 @@ dev_args=(--rm "${DEV_CAPS[@]}" --network globnotes-test --hostname globnotes.te
     --env TMPDIR=/run-tmp --env DENO_DIR=/deno-dir --env GLOBNOTES_TEST_HOST=globnotes.test
     --env CDP_PORT=9335 --env NO_COLOR=1 --env VITEST_MAX_WORKERS=1)
 if [[ "$backend" == podman ]]; then
-    dev_args+=(--userns=keep-id:uid=1000,gid=1000 --user dev --volume globnotes-deno-cache:/deno-dir)
+    dev_args+=("${runtime_mapping[@]}" --user dev --volume globnotes-deno-cache:/deno-dir)
 else
     # Docker runs as the invoking user, who owns neither the image's dev home nor
     # a new named volume (copied from the image as uid 1000): give it a cache
@@ -184,7 +211,7 @@ browser_args=(--detach --name "$chromium_name" --network "container:$name"
     --memory=2g --memory-swap=2g --pids-limit=512 --cpus=2 --shm-size=1g
     --volume "$run_dir/tmp:/run-tmp:rw" --env TMPDIR=/run-tmp)
 if [[ "$backend" == podman ]]; then
-    browser_args+=(--userns=keep-id:uid=1000,gid=1000 --user chromium)
+    browser_args+=("${runtime_mapping[@]}" --user chromium)
 else
     browser_args+=(--user "$(id -u):$(id -g)" --env HOME=/run-tmp/chromium-home)
 fi

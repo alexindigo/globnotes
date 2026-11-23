@@ -53,6 +53,21 @@ Host `/tmp` is refused as a workspace. Examples:
 .devcontainer/run.sh --browser -- bash scripts/gates.sh --all --browser
 ```
 
+For rootless Podman, image preparation includes `prepare-dev-image` and,
+with `--browser`, `prepare-chromium-image`. Each creates a never-started,
+network-isolated container from the runtime image with the same UID/GID mapping
+and user, then inspects and removes it. This materializes cold ID-mapped image
+layers before launch, with the same 1200-second bound as image builds.
+The mapped layers remain cached with the image; warm runs use the same path.
+Docker needs no mapping preparation. Both detached process starts retain their
+30-second bounds, resource caps and single-shot behavior.
+
+Preparation logs (`prepare-<kind>.log`), never-started container inspections
+(`prepared-<kind>.json`), removal logs and `preparation-timings.jsonl` are retained
+in `logs/`. Preparation, inspection and removal failures name their own step,
+preserve the failing status and stop before any workload launch; exit cleanup
+also attempts removal of an unfinished preparation container.
+
 ## The gates: `scripts/gates.sh`
 
 CI runs `--checks` and `--timing` once, alongside a three-entry native matrix:
