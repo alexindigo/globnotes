@@ -5,6 +5,7 @@ import { directoryFromPath } from "./helpers.js";
 import { createNoteSaveQueue, NOTE_SAVE_OBSERVATION_MS } from "./noteSaveQueue.js";
 import { notePathError } from "./validators.js";
 import { requestReauthentication } from "./reauthentication.js";
+import { createOperationOwner } from "./operationOwner.js";
 
 const idleState = () => Object.freeze({ status: "idle", unresolved: false, queued: Object.freeze([]), jobs: Object.freeze([]), canDiscard: true });
 
@@ -43,6 +44,24 @@ export function createNoteSaveOwner({
   let editSession = 0;
   let pendingRenamePrompt = null;
   let authentication = null;
+  let identity, routeResult, sessionLifetime = null;
+  const sent = new WeakMap();
+  const identityCurrent = () => identity === getState().identity && getState().canEdit !== false;
+  const retired = () => Object.assign(new Error("Original identity authority retired; work is retained."), { clientScopeRetired: true });
+  const requireIdentity = () => { if (!identityCurrent()) throw retired(); };
+  const owns = value => value.session === sessionLifetime && value.identity === getState().identity && getState().canEdit !== false;
+  const operations = createOperationOwner({ owner: Object.freeze({ ownerId }),
+    prepare(intent) { const value = { ...intent }; if (!owns(value)) throw retired(); return { value }; },
+    dispatch: intent => intent.sourcePath ? update(intent.sourcePath, intent.targetPath, intent.content, intent.fileRefs, intent.baseContent) : create(intent.targetPath, intent.content),
+    channels: Object.fromEntries([
+      ["note", applyNote], ["path", applyPath], ["content", applyContentAcknowledgement], ["title", publishTitle],
+      ["fact", publishFact], ["files", setMovedFiles], ["saved", saved],
+      ["route", (...args) => { routeResult = urlSync.canonicalSaveRoute(...args); }], ["links", updateRenamedLinks],
+    ].map(([name, callback]) => [name, {
+      prepare(value) { const captured = { ...value, args: [...value.args] }; if (!owns(captured)) void operations.release(captured.operation); return { value: captured.args }; },
+      deliver: args => callback(...args),
+    }])),
+  });
   const aliases = new Set();
 
   const state = () => Object.freeze({ queue: queueSnapshot,
@@ -77,7 +96,7 @@ export function createNoteSaveOwner({
   async function prepare(snapshot, context) {
     const preparingQueue = queue;
     const session = editSession;
-    const isCurrent = () => context.isPreparationCurrent() && preparingQueue === queue && session === editSession && snapshot.sessionId === preparingQueue.state().sessionId;
+    const isCurrent = () => context.isPreparationCurrent() && preparingQueue === queue && session === editSession && snapshot.sessionId === preparingQueue.state().sessionId && identityCurrent();
     const requireCurrent = () => {
       if (!isCurrent()) throw new Error("Obsolete attachment preparation abandoned.");
     };
@@ -101,14 +120,17 @@ export function createNoteSaveOwner({
   }
 
   async function acknowledge(snapshot, result, context) {
+    const original = sent.get(snapshot), own = operations;
+    const { operation } = original;
+    const effect = (name, ...args) => { if (!own.deliver(operation, name, { ...original, args })) throw retired(); };
     const newer = queue.state().queued;
     const current = getState();
     const ownsContent = current.contentRevision === snapshot.contentRevision && !newer.length;
     const ownsPath = current.pathRevision === snapshot.pathRevision && !newer.some(job => job.snapshot.pathRevision > snapshot.pathRevision);
     if (context.sourcePath) aliases.add(context.sourcePath);
     aliases.add(result.path);
-    applyNote(result);
-    if (ownsPath) applyPath(result.path);
+    effect("note", result);
+    if (ownsPath) effect("path", result.path);
     const live = getBuffer();
     const conflict = result.saveResult?.status === "conflict";
     const merged = result.saveResult?.status === "merged";
@@ -116,20 +138,27 @@ export function createNoteSaveOwner({
     // A text diff cannot certify reference coordinates in newer text. Keep it
     // literally and require a decision; only the unchanged sent base takes ACK.
     const rebaseConflict = !!transformedRename && live !== snapshot.content;
-    if (!rebaseConflict && (ownsContent || transformedRename || (merged && live === snapshot.content)) && live !== result.content) applyContentAcknowledgement(result.content);
-    publishTitle();
-    if (!context.sourcePath || conflict) publishFact(TOPICS.NOTE_CREATE, { path: result.path });
-    else if (context.sourcePath !== result.path) publishFact(TOPICS.NOTE_RENAME, { oldPath: context.sourcePath, newPath: result.path });
-    else publishFact(TOPICS.NOTE_SAVE, { path: result.path });
-    setMovedFiles(result.movedFiles ?? []);
-    saved(result, { originalPath: context.sourcePath, snapshot, newer: newer.length > 0 || live !== snapshot.content });
-    await urlSync.canonicalSaveRoute(snapshot, result.path);
-    if (!conflict && context.sourcePath && context.sourcePath !== result.path) updateRenamedLinks(context.sourcePath, result.path);
+    if (!rebaseConflict && (ownsContent || transformedRename || (merged && live === snapshot.content)) && live !== result.content) effect("content", result.content);
+    effect("title");
+    if (!context.sourcePath || conflict) effect("fact", TOPICS.NOTE_CREATE, { path: result.path });
+    else if (context.sourcePath !== result.path) effect("fact", TOPICS.NOTE_RENAME, { oldPath: context.sourcePath, newPath: result.path });
+    else effect("fact", TOPICS.NOTE_SAVE, { path: result.path });
+    effect("files", result.movedFiles ?? []);
+    effect("saved", result, { originalPath: context.sourcePath, snapshot, newer: newer.length > 0 || live !== snapshot.content });
+    effect("route", snapshot, result.path); await routeResult;
+    if (!conflict && context.sourcePath && context.sourcePath !== result.path) effect("links", context.sourcePath, result.path);
     return { rebaseConflict, baseContent: merged && (newer.length > 0 || live !== snapshot.content) ? snapshot.content : result.content };
   }
 
+  async function releaseSend(snapshot) {
+    const original = sent.get(snapshot);
+    if (!original) return;
+    sent.delete(snapshot);
+    await operations.release(original.operation);
+  }
+
   function clearAcknowledgedDrafts(snapshot) {
-    if (isContentChanged() || queue.state().unresolved) return;
+    if (!identityCurrent() || isContentChanged() || queue.state().unresolved) return;
     drafts.clearAcknowledged(snapshot.draftRevision);
   }
 
@@ -138,7 +167,10 @@ export function createNoteSaveOwner({
     queue?.dispose();
     const current = getState();
     const startedNew = current.isNewNote;
+    identity = current.identity;
     const sessionId = `${ownerId}:${++editSession}`;
+    const editIdentity = identity;
+    const session = sessionLifetime = Object.freeze({});
     queue = createNoteSaveQueue({
       sessionId,
       initial: startedNew ? null : { path: current.note.path, content: current.note.content ?? "" },
@@ -149,15 +181,22 @@ export function createNoteSaveOwner({
         refreshDirtyState();
       },
       prepare,
-      send: (snapshot, context, preparation) => context.sourcePath
-        ? update(context.sourcePath, context.targetPath, snapshot.content, preparation.fileRefs, context.baseContent)
-        : create(context.targetPath, snapshot.content),
-      acknowledge,
-      failed: (error, _, failure) => {
-        if (failure?.authenticationRequired) recoverAuthentication(failure);
-        else failed(error);
+      send: async (snapshot, context, preparation) => {
+        requireIdentity();
+        const own = operations, operation = own.operation("outcome");
+        sent.set(snapshot, { operation, identity: editIdentity, session });
+        const response = await own.dispatch(operation, { identity: editIdentity, session, sourcePath: context.sourcePath, targetPath: context.targetPath,
+          content: snapshot.content, fileRefs: preparation.fileRefs, baseContent: context.baseContent });
+        return response.value;
       },
-      canResolveLate: (_, result) => getBuffer() === result.content && getState().requestedPath === result.path,
+      acknowledge,
+      releaseSend,
+      failed: (error, _, failure) => {
+        if (!identityCurrent()) return;
+        if (failure?.authenticationRequired) recoverAuthentication(failure);
+        else if (identityCurrent()) failed(error);
+      },
+      canResolveLate: (_, result) => identityCurrent() && getBuffer() === result.content && getState().requestedPath === result.path,
       drained: clearAcknowledgedDrafts,
     });
     queueSnapshot = queue.state();
@@ -228,7 +267,7 @@ export function createNoteSaveOwner({
     Promise.resolve(requestAuthentication()).then(accepted => {
       if (authentication !== own) return;
       authentication = null;
-      if (accepted && queue === recoveringQueue) recoveringQueue.resumeAfterAuthentication(failure.serial);
+      if (accepted && queue === recoveringQueue && identityCurrent()) recoveringQueue.resumeAfterAuthentication(failure.serial);
     }).catch(error => { if (authentication === own) { authentication = null; failed(error); } });
   }
 
@@ -285,12 +324,13 @@ export function createNoteSaveOwner({
   }
 
   function dispose() {
-    revokeRenamePrompt();
-    queue?.dispose();
+    end();
+    return operations.dispose();
   }
 
   function end() {
-    dispose();
+    revokeRenamePrompt();
+    queue?.dispose(); sessionLifetime = null;
     queue = null;
     queueSnapshot = idleState();
     notify();

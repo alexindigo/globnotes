@@ -3,7 +3,7 @@ import { createSettingsPageState, validateSettingsInput } from "../settingsPageS
 
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 let controller;
-afterEach(() => { controller?.dispose(); controller = null; vi.useRealTimers(); });
+afterEach(async () => { await controller?.dispose(); controller = null; vi.useRealTimers(); });
 function fixture() {
   const descriptor = { fields: [{ key: "message", label: "Message", type: "text", default: "seed" }, { key: "limit", label: "Limit", type: "number", default: 5, min: 1, max: 10, step: 1 }] };
   const pages = new Map(["a", "b"].map(id => [id, { id: `plugin:${id}:p`, owner: id, pageId: "p", label: id.toUpperCase(), available: true, descriptor }]));
@@ -98,7 +98,7 @@ describe("retained page-owned settings consumers", () => {
       expect(await departure).toBe(false); expect(confirm).not.toHaveBeenCalled();
       expect(await controller.retry("plugin:a:p")).toBe(false); expect(registry.commit).toHaveBeenCalledTimes(1);
       controller.edit("plugin:a:p", "message", "newer D");
-      wire.resolve({ revision: 1, values: { message: "captured A", limit: 5 } }); await Promise.resolve(); await Promise.resolve();
+      wire.resolve({ revision: 1, values: { message: "captured A", limit: 5 } }); await controller.settle();
       expect(controller.snapshot("plugin:a:p").committed.message).toBe("captured A");
       expect(controller.snapshot("plugin:a:p").drafts.message).toBe("newer D");
     } finally { wire.resolve({ revision: 1, values: { message: "captured A", limit: 5 } }); }
@@ -132,7 +132,6 @@ describe("retained page-owned settings consumers", () => {
 });
 
 describe("review repairs: R18 descriptor adoption after owned work", () => {
-  const drain = async () => { for (let i = 0; i < 16; i++) await Promise.resolve(); };
   function replace(pages, key) {
     pages.set("a", { ...pages.get("a"), descriptor: { fields: [{ key, type: "text", default: `${key}-default` }] } });
     controller.reconcile();
@@ -142,12 +141,12 @@ describe("review repairs: R18 descriptor adoption after owned work", () => {
     registry.commit.mockReturnValue(wire.promise); controller.edit("plugin:a:p", "message", "D1 proposal");
     const saving = controller.commit("plugin:a:p");
     replace(pages, "d2"); replace(pages, "d3"); registry.read.mockReturnValue(reading.promise);
-    wire.resolve({ revision: 1, values: { message: "D1 proposal", limit: 5 } }); await saving; await drain();
+    wire.resolve({ revision: 1, values: { message: "D1 proposal", limit: 5 } }); await saving; await controller.settle();
     const adopting = controller.snapshot("plugin:a:p");
     expect(adopting.page.descriptor.fields[0].key).toBe("d3"); expect(adopting.changedDescriptor).toBeNull();
     expect(adopting.loaded).toBe(false); expect(adopting.canSave).toBe(false);
     expect(registry.read).toHaveBeenCalledTimes(2); expect(registry.read.mock.calls[1][0].descriptor.fields[0].key).toBe("d3");
-    reading.resolve({ revision: 9, values: { d3: "D3 authoritative" } }); await drain();
+    reading.resolve({ revision: 9, values: { d3: "D3 authoritative" } }); await controller.load("plugin:a:p");
     expect(controller.snapshot("plugin:a:p").committed).toEqual({ d3: "D3 authoritative" });
     expect(controller.snapshot("plugin:a:p").canSave).toBe(true);
     controller.edit("plugin:a:p", "d3", "D3 explicit proposal"); registry.commit.mockResolvedValue({ revision: 10, values: { d3: "D3 explicit proposal" } });
@@ -160,7 +159,7 @@ describe("review repairs: R18 descriptor adoption after owned work", () => {
     replace(pages, "d2"); replace(pages, "d3");
     expect(controller.snapshot("plugin:a:p").page.descriptor.fields[0].key).toBe("message"); expect(registry.read).toHaveBeenCalledTimes(1);
     registry.read.mockResolvedValue({ revision: 8, values: { d3: "fresh D3" } });
-    wire.resolve({ revision: 1, values: { message: "D1 proposal", limit: 5 } }); await drain();
+    wire.resolve({ revision: 1, values: { message: "D1 proposal", limit: 5 } }); await controller.settle(); await controller.load("plugin:a:p");
     expect(controller.snapshot("plugin:a:p").page.descriptor.fields[0].key).toBe("d3");
     expect(controller.snapshot("plugin:a:p").committed).toEqual({ d3: "fresh D3" });
     expect(controller.snapshot("plugin:a:p").pending).toBe(false); expect(controller.snapshot("plugin:a:p").changedDescriptor).toBeNull();
@@ -170,29 +169,29 @@ describe("review repairs: R18 descriptor adoption after owned work", () => {
     registry.commit.mockReturnValue(wire.promise); controller.edit("plugin:a:p", "message", "submitted");
     const saving = controller.commit("plugin:a:p"); controller.edit("plugin:a:p", "limit", ""); replace(pages, "d2");
     const latest = pages.get("a"); pages.delete("a"); controller.reconcile();
-    wire.resolve({ revision: 1, values: { message: "submitted", limit: 5 } }); await saving; await drain();
+    wire.resolve({ revision: 1, values: { message: "submitted", limit: 5 } }); await saving; await controller.settle();
     const retained = controller.snapshot("plugin:a:p"); expect(retained.page.descriptor.fields[0].key).toBe("message");
     expect(retained.drafts.limit).toBe(""); expect(retained.errors.limit).toBe("Enter a number."); expect(retained.available).toBe(false);
     expect(registry.read).toHaveBeenCalledTimes(1);
     pages.set("a", { ...latest, descriptor: { fields: [{ key: "d3", type: "text", default: "new" }] } }); controller.reconcile();
     registry.read.mockResolvedValue({ revision: 7, values: { d3: "resolved" } });
-    expect(await controller.resolveDeparture(["plugin:a:p"], "page", "discard")).toBe(true); await drain();
+    expect(await controller.resolveDeparture(["plugin:a:p"], "page", "discard")).toBe(true); await controller.load("plugin:a:p");
     expect(controller.snapshot("plugin:a:p").page.descriptor.fields[0].key).toBe("d3");
     expect(controller.snapshot("plugin:a:p").committed).toEqual({ d3: "resolved" });
   });
   it("review repairs: R18 a settled unknown write can read current D3 without replay and retain D1 until explicit discard", async () => {
     const { registry, pages } = fixture(); await controller.load("plugin:a:p");
     registry.commit.mockRejectedValue(Error("original response lost"));
-    controller.edit("plugin:a:p", "message", "original retained intent"); expect(await controller.commit("plugin:a:p")).toBe(false); await drain();
+    controller.edit("plugin:a:p", "message", "original retained intent"); expect(await controller.commit("plugin:a:p")).toBe(false); await controller.settle();
     replace(pages, "d2"); replace(pages, "d3"); registry.read.mockResolvedValue({ revision: 1, values: { d3: "current authoritative" } });
     expect(await controller.resolveDeparture(["plugin:a:p"], "close", "discard")).toBe(false);
     expect(controller.snapshot("plugin:a:p").drafts.message).toBe("original retained intent");
-    expect(await controller.retry("plugin:a:p")).toBe(false); await drain();
+    expect(await controller.retry("plugin:a:p")).toBe(false); await controller.settle();
     expect(registry.read).toHaveBeenCalledTimes(2); expect(registry.commit).toHaveBeenCalledTimes(1);
     expect(controller.snapshot("plugin:a:p").status).toBe("conflict"); expect(controller.snapshot("plugin:a:p").uncertain).toBeNull();
     expect(controller.snapshot("plugin:a:p").drafts.message).toBe("original retained intent");
     expect(controller.snapshot("plugin:a:p").page.descriptor.fields[0].key).toBe("message");
-    expect(await controller.resolveDeparture(["plugin:a:p"], "close", "discard")).toBe(true); await drain();
+    expect(await controller.resolveDeparture(["plugin:a:p"], "close", "discard")).toBe(true); await controller.load("plugin:a:p");
     expect(controller.snapshot("plugin:a:p").page.descriptor.fields[0].key).toBe("d3");
     expect(controller.snapshot("plugin:a:p").committed).toEqual({ d3: "current authoritative" });
     expect(registry.commit).toHaveBeenCalledTimes(1);
@@ -201,15 +200,15 @@ describe("review repairs: R18 descriptor adoption after owned work", () => {
     const { registry, pages } = fixture(), reload = deferred(); await controller.load("plugin:a:p");
     controller.edit("plugin:a:p", "message", "persisted original");
     registry.commit.mockRejectedValue({ response: { status: 503, data: { code: "plugin_settings_source_commit_failed", detail: "revision 1 persisted" } } });
-    expect(await controller.commit("plugin:a:p")).toBe(false); await drain();
+    expect(await controller.commit("plugin:a:p")).toBe(false); await controller.settle();
     const old = pages.get("a");
     for (const label of ["D2", "D3"]) { pages.set("a", { ...old, descriptor: { ...old.descriptor, label } }); controller.reconcile(); }
     registry.read.mockResolvedValueOnce({ revision: 1, values: { message: "persisted original", limit: 5 } }).mockReturnValueOnce(reload.promise);
-    expect(await controller.retry("plugin:a:p")).toBe(true); await drain();
+    expect(await controller.retry("plugin:a:p")).toBe(true); await controller.settle();
     expect(controller.snapshot("plugin:a:p").page.descriptor.label).toBe("D3");
     expect(controller.snapshot("plugin:a:p").loaded).toBe(false); expect(controller.snapshot("plugin:a:p").canSave).toBe(false);
     expect(registry.commit).toHaveBeenCalledTimes(1);
-    reload.resolve({ revision: 1, values: { message: "fresh D3 load", limit: 5 } }); await drain();
+    reload.resolve({ revision: 1, values: { message: "fresh D3 load", limit: 5 } }); await controller.load("plugin:a:p");
     expect(controller.snapshot("plugin:a:p").committed.message).toBe("fresh D3 load");
     expect(controller.snapshot("plugin:a:p").canSave).toBe(true);
   });

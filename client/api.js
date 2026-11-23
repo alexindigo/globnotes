@@ -10,10 +10,95 @@ import { readPathPrefix } from "./pathPrefix.js";
 import { CHANGE_STREAM_STALL_MS } from "../shared/vault_changes.ts";
 import { hasUnsavedWork } from "./sessionActions.js";
 import { requestReauthentication } from "./reauthentication.js";
+import { createOperationOwner } from "./operationOwner.js";
 
 const pathPrefix = readPathPrefix();
 
 const api = axios.create({ baseURL: `${pathPrefix}/_/api` });
+
+/** Prepared instance transport. Capture credentials before preparation/queueing;
+ * callers own their final UI delivery separately from the original wire. */
+export function createIdentityApi({ tokens, sessionKey, captureLive, captureCredential, prefix = pathPrefix,
+  http = axios.create({ baseURL: `${prefix}/_/api` }), fetch: request = fetch,
+  onAuthorityFailure = () => {} } = {}) {
+  const get = http.get?.bind(http), post = http.post?.bind(http), send = http.request?.bind(http);
+  function capture(recovery = false) {
+    const scope = sessionKey(), token = tokens.getStoredToken();
+    const current = recovery ? captureCredential?.() : captureLive?.();
+    return { scope, token, current: () => (current?.() ?? (recovery || scope === sessionKey())) && token === tokens.getStoredToken() };
+  }
+  async function exchange(kind, path, data, options = {}, recovery = false) {
+    const captured = capture(recovery);
+    let result, owner;
+    owner = createOperationOwner({ owner: Object.freeze({ scope: captured.scope }),
+      prepare() {
+        const prepared = { ...options, headers: { ...(options.headers ?? {}),
+          ...(captured.token ? { Authorization: `Bearer ${captured.token}` } : {}) } };
+        if (!captured.current()) owner.revoke();
+        return { value: prepared };
+      },
+      dispatch: prepared => kind === "read" ? get(path, prepared) : send({ ...prepared, method: kind, url: path, data }),
+      channels: { failure: { prepare(error) { if (!captured.current()) owner.revoke(); return { value: error }; }, deliver: onAuthorityFailure } },
+      completion: { prepare(response) {
+        const value = response.data;
+        if (!captured.current()) owner.revoke();
+        return { value };
+      }, deliver: value => { result = value; } },
+    });
+    const operation = owner.operation(kind === "read" ? "live" : "outcome");
+    try {
+      const response = await owner.dispatch(operation, path);
+      if (!owner.complete(operation, response.value)) throw Object.assign(new Error("Response belongs to a retired identity."), { staleIdentity: true });
+      return result;
+    } catch (error) {
+      if (!recovery && [401, 403].includes(error.response?.status ?? error.status)) owner.deliver(operation, "failure", error);
+      throw error;
+    } finally { (await owner.dispose()).throwIfFailed(); }
+  }
+  async function stream(open, options) {
+    const captured = capture();
+    let owner;
+    owner = createOperationOwner({ owner: Object.freeze({ scope: captured.scope }),
+      prepare(value) { const prepared = { ...value }; if (!captured.current()) owner.revoke(); return { value: prepared }; },
+      dispatch: (value, delivery) => open({ ...value, request, readToken: () => captured.token, basePrefix: prefix, isCurrent: captured.current,
+        onEvent: event => delivery.deliver("event", event), onClose: reason => delivery.deliver("close", reason) }),
+      release: close => close?.(),
+      channels: Object.fromEntries([["event", options.onEvent], ["close", options.onClose], ["failure", onAuthorityFailure]].map(([name, callback]) => [name, {
+        prepare(value) { if (!captured.current()) owner.revoke(); return { value }; }, deliver: value => callback?.(value),
+      }])),
+    });
+    const operation = owner.operation();
+    try { await owner.dispatch(operation, options); }
+    catch (error) {
+      if ([401, 403].includes(error.response?.status ?? error.status)) owner.deliver(operation, "failure", error);
+      (await owner.dispose()).throwIfFailed(error);
+    }
+    return async () => { (await owner.dispose()).throwIfFailed(); };
+  }
+  return Object.freeze({ read: (path, options) => exchange("read", path, undefined, options),
+    write: (method, path, data, options) => exchange(method, path, data, options),
+    getConfig: () => exchange("read", "config", undefined, undefined, true), getStatus: () => exchange("read", "auth/check"),
+    async getToken(username, password, totp) {
+      return (await post("token", { username, password, ...(totp ? { totp } : {}) })).data.access_token;
+    },
+    openPluginHostEvents: options => stream(openPluginHostEvents, options),
+    openVaultChanges: options => stream(openVaultChanges, options),
+  });
+}
+
+// The request's existing controller owns the forwarding listener too. Unlike
+// AbortSignal.any this works on the configured Vite baseline browsers.
+function followRequestSignal(controller, signal) {
+  if (signal?.aborted) controller.abort(signal.reason);
+  else signal?.addEventListener("abort", () => controller.abort(signal.reason), { once: true, signal: controller.signal });
+  return controller.signal;
+}
+
+// A refused response must not join an unrelated tee peer. Request retirement
+// fences callbacks; observe cancellation without claiming that peer has ended.
+function cancelResponseBody(response) {
+  response.body?.cancel().catch(() => {});
+}
 
 api.interceptors.request.use(
   // If the request is not for the token endpoint, add the token to the headers.
@@ -420,17 +505,21 @@ export async function invokePluginCommand(id, command, payload = {}) {
  * {event, data}; onClose fires on stream end (policy-change close, auth
  * failure) so the caller can reconnect with fresh authorization. Returns a
  * close function. Carries only IDs/revisions/status — never private data. */
-export async function openPluginHostEvents({ onEvent, onClose, signal }) {
+export async function openPluginHostEvents({ onEvent, onClose, signal, request = fetch,
+  readToken = getStoredToken, basePrefix = pathPrefix, isCurrent = () => true }) {
   const controller = new AbortController();
-  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
-  const response = await fetch(`${pathPrefix}/_/api/plugin-host/events`, {
-    headers: getStoredToken()
-      ? { authorization: `Bearer ${getStoredToken()}` }
+  const requestSignal = followRequestSignal(controller, signal);
+  const token = readToken();
+  const response = await request(`${basePrefix}/_/api/plugin-host/events`, {
+    headers: token
+      ? { authorization: `Bearer ${token}` }
       : {},
     signal: requestSignal,
-  });
+  }).catch(error => { controller.abort(); throw error; });
+  if (!isCurrent()) { controller.abort(); cancelResponseBody(response); return () => { controller.abort(); }; }
   if (!response.ok || !response.body) {
-    await response.body?.cancel();
+    controller.abort();
+    cancelResponseBody(response);
     const error = new Error(`plugin events stream failed: ${response.status}`);
     error.status = response.status;
     throw error;
@@ -450,17 +539,17 @@ export async function openPluginHostEvents({ onEvent, onClose, signal }) {
           buffer = buffer.slice(index + 2);
           const event = /event: (.+)/.exec(chunk)?.[1]?.trim();
           const data = /data: (.+)/.exec(chunk)?.[1];
-          if (event) {
+          if (event && !requestSignal.aborted && isCurrent()) {
             onEvent({ event, data: data ? JSON.parse(data) : null });
           }
         }
       }
-      if (!requestSignal.aborted) onClose?.("ended");
+      if (!requestSignal.aborted && isCurrent()) onClose?.("ended");
     } catch (e) {
-      if (!requestSignal.aborted) {
+      if (!requestSignal.aborted && isCurrent()) {
         onClose?.(e instanceof Error ? e.message : "error");
       }
-    }
+    } finally { controller.abort(); }
   })();
   return () => {
     controller.abort();
@@ -473,9 +562,10 @@ export async function openPluginHostEvents({ onEvent, onClose, signal }) {
  * has stalled, e.g. a half-open TCP connection or a buffering proxy: it is
  * aborted and reported as a failure (rejection before a response, onClose
  * after), so the owner reconnects through its backoff (vaultChanges.js). */
-export async function openVaultChanges({ since = 0, poll = false, onEvent, onClose, signal, stallMs = CHANGE_STREAM_STALL_MS }) {
+export async function openVaultChanges({ since = 0, poll = false, onEvent, onClose, signal, stallMs = CHANGE_STREAM_STALL_MS,
+  request = fetch, readToken = getStoredToken, basePrefix = pathPrefix, isCurrent = () => true }) {
   const controller = new AbortController();
-  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
+  const requestSignal = followRequestSignal(controller, signal);
   let stalled = null, watchdog, reader = null;
   const settle = () => { clearTimeout(watchdog); watchdog = undefined; };
   const stall = () => {
@@ -515,35 +605,38 @@ export async function openVaultChanges({ since = 0, poll = false, onEvent, onClo
   };
   try {
     const headers = { accept: poll ? "application/json" : "text/event-stream" };
-    const token = getStoredToken();
+    const token = readToken();
     if (token) headers.authorization = `Bearer ${token}`;
-    response = await fetch(`${pathPrefix}/_/api/changes?since=${since}${poll ? "&poll=1" : ""}`, { headers, signal: requestSignal });
+    response = await request(`${basePrefix}/_/api/changes?since=${since}${poll ? "&poll=1" : ""}`, { headers, signal: requestSignal });
+    if (!isCurrent()) { settle(); controller.abort(); cancelResponseBody(response); return () => { controller.abort(); }; }
     if (!response.ok) {
-      await response.body?.cancel();
+      controller.abort(); cancelResponseBody(response);
       throw Object.assign(new Error(`Vault changes failed: ${response.status}`), { status: response.status });
     }
     if (!response.headers.get("content-type")?.includes("text/event-stream")) packet = await readJson();
   } catch (error) {
     settle();
+    controller.abort();
     throw stalled ?? error;
   }
   if (packet) {
     settle();
     let timer;
-    if (!requestSignal.aborted) {
-      if (packet.gap) onEvent({ event: "reset", data: { next: packet.next } });
-      else for (const entry of packet.entries) onEvent({ event: "change", data: entry });
-      onEvent({ event: "cursor", data: { next: packet.next } });
-      if (packet.conflictRevision !== undefined) onEvent({ event: "conflicts", data: { revision: packet.conflictRevision } });
-      if (packet.driverRevision !== undefined) onEvent({ event: "drivers", data: { revision: packet.driverRevision } });
-      timer = setTimeout(() => { if (!requestSignal.aborted) onClose?.("poll"); }, 1000);
+    const deliver = value => { if (!requestSignal.aborted && isCurrent()) onEvent(value); };
+    if (!requestSignal.aborted && isCurrent()) {
+      if (packet.gap) deliver({ event: "reset", data: { next: packet.next } });
+      else for (const entry of packet.entries) deliver({ event: "change", data: entry });
+      deliver({ event: "cursor", data: { next: packet.next } });
+      if (packet.conflictRevision !== undefined) deliver({ event: "conflicts", data: { revision: packet.conflictRevision } });
+      if (packet.driverRevision !== undefined) deliver({ event: "drivers", data: { revision: packet.driverRevision } });
+      if (!requestSignal.aborted && isCurrent()) timer = setTimeout(() => { if (!requestSignal.aborted && isCurrent()) onClose?.("poll"); controller.abort(); }, 1000);
     }
     return () => { clearTimeout(timer); controller.abort(); };
   }
   if (!response.body?.getReader) {
     settle();
-    await response.body?.cancel();
-    return openVaultChanges({ since, poll: true, onEvent, onClose, signal: requestSignal, stallMs });
+    cancelResponseBody(response);
+    return openVaultChanges({ since, poll: true, onEvent, onClose, signal: requestSignal, stallMs, request, readToken, basePrefix, isCurrent });
   }
   reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -560,17 +653,19 @@ export async function openVaultChanges({ since = 0, poll = false, onEvent, onClo
           const chunk = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
           const event = /^event: (.+)$/m.exec(chunk)?.[1];
           const data = /^data: (.+)$/m.exec(chunk)?.[1];
-          if (event && data && !requestSignal.aborted) onEvent({ event, data: JSON.parse(data) });
+          if (event && data && !requestSignal.aborted && isCurrent()) onEvent({ event, data: JSON.parse(data) });
         }
       }
       settle();
+      if (!isCurrent()) return;
       if (stalled) onClose?.(stalled);
       else if (!requestSignal.aborted) onClose?.("ended");
     } catch (error) {
       settle();
+      if (!isCurrent()) return;
       if (stalled) onClose?.(stalled);
       else if (!requestSignal.aborted) onClose?.(error);
-    }
+    } finally { controller.abort(); }
   })();
   return () => { settle(); controller.abort(); reader.cancel().catch(() => {}); };
 }

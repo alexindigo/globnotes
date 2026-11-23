@@ -1,5 +1,29 @@
 import { readPathPrefix } from "./pathPrefix.js";
 import { ref } from "vue";
+import { identityCookie, identityTokenScope } from "../shared/identity_token.ts";
+
+/** Prepared instance adapter; never imports, migrates or deletes v2 credentials. */
+export function createIdentityTokenStorage({ prefix = readPathPrefix(), local = localStorage,
+  session = sessionStorage, setCookie = value => { document.cookie = value; } } = {}) {
+  const scope = identityTokenScope(prefix), revision = ref(0);
+  function storeToken(token, persist = false) {
+    if (typeof token !== "string" || !token || /\s/.test(token)) throw new TypeError("Invalid session token.");
+    session.setItem(scope.key, token);
+    if (persist) local.setItem(scope.key, token);
+    else local.removeItem(scope.key);
+    setCookie(identityCookie(scope.cookieName, token, scope.path));
+    revision.value++;
+  }
+  function getStoredToken() { revision.value; return session.getItem(scope.key); }
+  function clearStoredToken() {
+    session.removeItem(scope.key); local.removeItem(scope.key);
+    setCookie(identityCookie(scope.cookieName, "", scope.path, true)); revision.value++;
+  }
+  return Object.freeze({ scope, storeToken, getStoredToken, clearStoredToken,
+    loadStoredToken() { const token = local.getItem(scope.key); if (token !== null) storeToken(token, true); },
+    isCurrentTokenStored() { const current = getStoredToken(); return current !== null && current === local.getItem(scope.key); },
+  });
+}
 
 const tokenStorageKey = "token";
 const revision = ref(0);

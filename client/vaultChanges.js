@@ -23,14 +23,15 @@ export const TERMINAL_STATUSES = new Set([400, 401, 403, 404, 405, 410, 501]);
 export function createVaultChanges({ open = options => openVaultChanges(options), publish: emit = publish,
   // Resolved at call time, so the page's current timer implementation applies.
   setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), now = () => Date.now(),
-  lifetime = createConnectionLifetime({ setTimer, clearTimer }) } = {}) {
+  lifetime = createConnectionLifetime({ setTimer, clearTimer }), sessionKey = () => undefined } = {}) {
   let owners = 0, seq = 0, attempts = 0, polling = false, pollingSince = 0;
   let pageActive = lifetime.state().active;
   let timer = null, connection = null, connected = false, disposed = false, disposal = null;
   const draining = new Set(), cleanupErrors = [];
   const revisions = new Map();
   const metadataTopics = { conflicts: TOPICS.VAULT_CONFLICTS, drivers: TOPICS.VAULT_DRIVERS };
-  const live = () => !disposed && owners > 0 && pageActive;
+  let identitySession;
+  const live = () => !disposed && owners > 0 && pageActive && identitySession !== null;
   function retire() {
     const old = connection; connection = null; connected = false;
     if (!old) return;
@@ -47,13 +48,13 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     retire();
     // Cleanup may reenter restart/acquire; the replacement it installed wins.
     if (connection || !live()) return;
-    const mode = polling ? "poll" : "stream";
+    const mode = polling ? "poll" : "stream", identity = sessionKey();
     // Completed polls continue one observation lifetime. Real reconnects and
     // page/owner restarts must deliver a fresh snapshot even at the same revision.
     if (!continuePoll) revisions.clear();
     let openedAt = null;
     const abort = new AbortController();
-    const current = () => live() && connection === operationOwner;
+    const current = () => live() && connection === operationOwner && identity === sessionKey();
     // Every non-terminal outcome ends here: one timer, a bounded delay.
     const reconnect = reason => {
       if (!current() || timer !== null) return;
@@ -102,7 +103,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
       channels: {
         event: {
           // Snapshot all event fields before the adapter's final delivery fence.
-          prepare(value) { const event = value.event, data = value.data; return { value: { event, data: data && { ...data } } }; },
+          prepare(value) { const event = value.event, data = value.data, captured = data && { ...data }; if (!current()) operationOwner.revoke(); return { value: { event, data: captured } }; },
           deliver({ event, data }) {
             if (Object.hasOwn(metadataTopics, event)) {
               if (!Number.isSafeInteger(data?.revision) || data.revision < 0) throw new Error(`Invalid ${event === "conflicts" ? "conflict" : "driver"} revision`);
@@ -152,6 +153,14 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     return Object.freeze({ errors: Object.freeze([...cleanupErrors]) });
   }
   return {
+    setSession(next) {
+      if (next === identitySession) return;
+      // Publish the replacement before cancellation can reenter. A newer
+      // session/restart installed by that callback owns its connection.
+      identitySession = next; seq = 0; attempts = 0; polling = false; revisions.clear();
+      retire();
+      if (identitySession === next && !connection && live()) connect();
+    },
     suspendDocument: lifetime.suspendDocument,
     resumeDocument: lifetime.resumeDocument,
     setVisible: lifetime.setVisible,

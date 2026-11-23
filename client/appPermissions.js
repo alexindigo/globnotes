@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { computed, reactive, readonly, ref, watch, watchEffect } from "vue";
 import { getPluginPermissions, putPluginPermissions, getPluginPermissionRequests, decidePluginPermissionRequest } from "./api.js";
-import { permissionEligibility, permissionSessionKey, permissionWritability } from "./appSessionPolicy.js";
+import { permissionEligibility, permissionSessionKey, permissionWritability, readerRuntimeEligibility } from "./appSessionPolicy.js";
 import { modalStack } from "./modalState.js";
 import { createPluginPermissionController, permissionScopeKey, permissionAttentionId } from "./pluginPermissionController.js";
 import { pluginCatalog, refreshPluginRuntimeCatalog, startPluginRuntime, stopPluginRuntime } from "./pluginRuntime.js";
@@ -21,6 +21,7 @@ export function createAppPermissions({
 }) {
   const permissions = createPermissions({ readView, writeView, readPending, decideRequest, changed });
   const permissionsEligible = computed(() => permissionEligibility(configReady(), config(), routeName(), token()));
+  const runtimeEligible = computed(() => readerRuntimeEligibility(configReady(), config(), routeName(), token()));
   const permissionsWritable = computed(() => permissionWritability(permissionsEligible.value, config()));
   const activePermissionRequest = ref(null), permissionRiskVisible = ref(false), permissionRiskMessage = ref("");
   let requestOpening = 0, permissionRiskResolve = null, openingOwner = null, disposed=false;
@@ -76,7 +77,7 @@ export function createAppPermissions({
     requestOpening++; openingOwner=null; activePermissionRequest.value = null; finishPermissionRisk(false);
     if (permissionsEligible.value) { permissions.reconcile(catalog.value); permissions.refreshPending(); }
   }, { immediate: true });
-  const stopRuntimeSession = watch([permissionsEligible, session], ([active, key]) => { if (active) startRuntime(key); else stopRuntime(); });
+  const stopRuntimeSession = watch([runtimeEligible, session], ([active, key]) => { if (active) startRuntime(key); else stopRuntime(); });
   const stopCatalog = watch(catalog, value => {
     permissions.reconcile(value); if (permissionsEligible.value) permissions.refreshPending();
     if (configReady()) refreshConfig();

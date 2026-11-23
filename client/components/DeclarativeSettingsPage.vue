@@ -17,10 +17,16 @@
     </div>
     <div ref="fieldStart" tabindex="-1" class="flex flex-col gap-8">
       <SettingsSection v-for="group in snapshot.fieldGroups" :key="group.id" :title="group.label" :tone="group.tone" :help-paragraphs="group.descriptionParagraphs">
-        <SettingsField v-for="field in group.fields" :key="field.key" :field="field" v-bind="snapshot.fieldViews[field.key]" :on-browse="onBrowse"
-          @edit="$emit('edit',$event)" @commit="$emit('commit',$event)" />
+        <div v-for="field in group.fields" :key="field.key">
+          <p v-if="snapshot.fieldViews[field.key]?.recovered" class="settings-help">Current saved value: <code>{{ snapshot.fieldViews[field.key].currentValue }}</code></p>
+          <SettingsField :field="field" v-bind="snapshot.fieldViews[field.key]" :on-browse="onBrowse"
+            @edit="$emit('edit',$event)" @commit="$emit('commit',$event)" />
+        </div>
       </SettingsSection>
     </div>
+    <SettingsActions v-if="snapshot.recoverySave">
+      <CustomButton size="settings" type="button" label="Save recovered edits" variant="cta" :disabled="!snapshot.canSave || snapshot.pending || !snapshot.writable" @click="$emit('commit')" />
+    </SettingsActions>
   </div>
 </template>
 <script setup>

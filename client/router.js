@@ -10,6 +10,18 @@ import { readPathPrefix } from "./pathPrefix.js";
 
 const pathPrefix = readPathPrefix();
 
+/** Prepared guard; explicit sign-in and own-account never require vault read. */
+export function createIdentityRouteGuard({ status, signIn = to => ({ name: "login", query: { redirect: to.fullPath } }) }) {
+  return async to => {
+    if (to.name === "login") return true;
+    const current = await status();
+    if (to.name === "account") return current.capabilities.canManageOwnAccount ? true : signIn(to);
+    if (current.setupRequired) return to.name === "setup" ? true : { name: "setup" };
+    if (current.principal?.passwordChangeRequired) return { name: "account" };
+    return current.capabilities.canRead ? true : current.principal?.kind === "account" ? { name: "account" } : signIn(to);
+  };
+}
+
 const router = createRouter({
   history: createWebHistory(pathPrefix + "/"),
   routes: [

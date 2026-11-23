@@ -296,3 +296,30 @@ another account can edit. Read replies are rechecked at delivery; a reply that
 carries a committed write stays its acknowledgment. These adapters are
 injection-only; the existing production composition stays active until the
 coordinated cutover.
+
+## Prepared browser session
+
+The injected browser session derives access from the safe capability projection,
+not an auth mode or the presence of a token. Its live key includes account/guest,
+session generation, vault and authority revision. Reader runtime eligibility is
+separate from Admin inventory/review. Named sign-in remains available on public
+vaults, and own-account navigation does not require vault read access.
+
+`tokenStorage` owns prefix-qualified storage and cookie writes. The shared prefix
+codec supplies the default cookie name to the prepared server composition. It
+does not import, delete or fall back to old `token` keys/cookies. Cookies remain
+usable on ordinary local-domain HTTP. Browser logout clears only this instance's
+local credentials after Save/Discard/Cancel participants permit departure.
+
+G5 owns admitted reads, sign-in/logout completion, stream callbacks and original
+note/Settings write custody. Credential replacement fences live delivery without
+dropping original work from settlement/disposal. An original successful write
+retains its acknowledgment even when its live UI is retired; it is not relabeled
+unknown or resent under the replacement credential. Dirty editors and Settings
+drafts remain with their original owner. Browsing caches, search results and
+draft storage are identity-qualified. Recovery reads outlive retired stream
+access, but cannot restore another credential attempt.
+
+These factories and capability-aware consumers are prepared only. The existing
+App/router/auth wiring remains active; account screens and production identity
+activation belong to the coordinated cutover.

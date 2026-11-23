@@ -17,6 +17,7 @@ import { createInstanceAuth, type StatusAdmission } from "./middleware.ts";
 import type { AuthorityCallback } from "./authority_context.ts";
 import { createIdentityProjections } from "./projection.ts";
 import type { InstanceSessions } from "./sessions.ts";
+import { identityTokenScope } from "../../shared/identity_token.ts";
 
 /** Target-bound stream admission. The lease fences every delivered chunk; the
  * subscription only lets the stream close and release promptly. */
@@ -73,7 +74,7 @@ export function createIdentityComposition(adapters: {
   vaultId: string;
   config: GlobalConfig;
   lifecycle?: PluginLifecycle;
-  cookieName: string;
+  cookieName?: string;
   lifetime: OperationLease<"live">;
   plugins(): PluginManager;
   setupStatus(): { setupRequired: boolean };
@@ -94,7 +95,8 @@ export function createIdentityComposition(adapters: {
   const auth = createInstanceAuth({
     sessions,
     vault: () => vault,
-    cookieName: adapters.cookieName,
+    cookieName: adapters.cookieName ??
+      identityTokenScope(adapters.config.pathPrefix).cookieName,
     lifetime: () => lifetime,
   });
   const projections = createIdentityProjections(adapters);

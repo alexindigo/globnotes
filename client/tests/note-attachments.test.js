@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { uploadFile } from "../api.js";
 import { subscribe, TOPICS } from "../bus/index.js";
 import { createNoteAttachments } from "../noteAttachments.js";
+import { heldOperation } from "../../tests/helpers/owned_operation.ts";
 
 vi.mock("../api.js", () => ({ uploadFile: vi.fn() }));
 beforeEach(() => vi.clearAllMocks());
@@ -16,6 +17,25 @@ function fixture(overrides = {}) {
 }
 
 describe("note attachments", () => {
+  it("View cannot upload and a retired upload cannot insert into Bob's editor", async () => {
+    let state = { identity: "alice", canEdit: false, path: "Note" }, hold;
+    const insert = vi.fn(), f = fixture({ getState: () => state, upload: vi.fn(async () => { await hold(); return uploaded; }) });
+    await f.postAttachment(file, insert); expect(f.upload).not.toHaveBeenCalled();
+    state.canEdit = true;
+    await heldOperation({ label: "original attachment", owner: () => f, progress: { kind: "controlled", clock: "external" } }, boundary => {
+      hold = boundary; return f.postAttachment(file, insert);
+    }, async work => {
+      await work.reached(); state = { identity: "bob", canEdit: true, path: "Other" }; await work.result();
+      expect(insert).not.toHaveBeenCalled(); expect(f.publish).not.toHaveBeenCalled(); expect(f.failed).not.toHaveBeenCalled();
+      expect(f.notify.mock.calls).toEqual([[{ message: "Uploading attachment..." }]]);
+    });
+  });
+  it("an upload notification cannot reentrantly borrow replacement authority", async () => {
+    let state = { identity: "alice", canEdit: true, path: "Note" };
+    const f = fixture({ getState: () => state, notify: () => { state = { identity: "bob", canEdit: true, path: "Other" }; } });
+    await f.postAttachment(file);
+    expect(f.upload).not.toHaveBeenCalled(); expect(f.publish).not.toHaveBeenCalled();
+  });
   it.each([
     [{ requestedPath: "new/folder/Note", path: "old/Note" }, "new/folder"],
     [{ requestedPath: "", path: "viewed/Note" }, "viewed"],

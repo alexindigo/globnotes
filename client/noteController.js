@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { computed, nextTick, reactive, readonly, ref, shallowRef } from "vue";
+import { computed, nextTick, reactive, readonly, ref, shallowRef, watch } from "vue";
 import { createUuid } from "../shared/uuid.ts";
 import { apiErrorHandler, deleteNote, getNote } from "./api.js";
 import { Note } from "./classes.js";
@@ -24,6 +24,7 @@ import { noteOperationError, noteSaveError } from "./noteErrors.js";
 import { notePathError } from "./validators.js";
 import { acquireVaultChanges } from "./vaultChanges.js";
 import { reviewConflictTarget } from "./conflictNavigation.js";
+import { createOperationOwner } from "./operationOwner.js";
 
 // Ephemeral tab-session metadata, retained when the Note view is unmounted.
 const conflictBanners = new Map();
@@ -49,8 +50,10 @@ export function createNoteController({
   acquireChanges = acquireVaultChanges,
   failed = error => apiErrorHandler(error, toast),
   ownerId = createUuid(),
+  sessionKey = () => null,
 }) {
-  const canModify = computed(() => getContext().authType != authTypes.readOnly);
+  const noteScope = ref(sessionKey());
+  const canModify = computed(() => noteScope.value === sessionKey() && (getContext().capabilities ? getContext().capabilities.canEdit === true : getContext().authType != authTypes.readOnly));
   const isNewNote = computed(() => !getContext().path);
   const editMode = ref(false);
   const isSaveChangesModalVisible = ref(false);
@@ -98,7 +101,7 @@ export function createNoteController({
     updated: count => notify(`Updated links in ${count} note(s).`, "Links updated", "success"),
   });
   const { addImageBlobHook } = attachmentsFactory({
-    getState: () => ({ requestedPath: newPath.value, path: getContext().path }),
+    getState: () => ({ requestedPath: newPath.value, path: getContext().path, identity: sessionKey(), canEdit: canModify.value }),
     notify: ({ title, message, severity }) => notify(message, title, severity), failed,
   });
   // The port exposes editor capabilities, never a component or its DOM/state.
@@ -130,6 +133,25 @@ export function createNoteController({
   let contentChangedTimeout = null, titleFollowTimer = null;
   let pendingNavTarget = null, pendingSessionDecision = null, pendingDecisionPromise = null;
   const resourceIdentity = computed(() => noteResourceIdentity(getContext().path, getContext().query));
+  const reads = createOperationOwner({ owner: Object.freeze({ ownerId }), dispatch: path => read(path),
+    channels: { result: {
+      prepare(value) {
+        const data = { ...value.data };
+        if (!value.current()) void reads.release(value.operation);
+        return { value: { data, accept: value.accept } };
+      },
+      deliver: value => value.accept(value.data),
+    } },
+  });
+  async function readOwned(path, current) {
+    const operation = reads.operation();
+    let result;
+    try {
+      const response = await reads.dispatch(operation, path);
+      reads.deliver(operation, "result", { operation, current, data: response.value, accept: value => { result = value; } });
+      return result;
+    } finally { await reads.release(operation); }
+  }
   const urlSync = createNoteUrlSync({
     router, ownerId, getLocation, getPath: () => getContext().path,
     getState: () => ({ isNewNote: isNewNote.value, editMode: editMode.value,
@@ -138,7 +160,7 @@ export function createNoteController({
   const saveOwner = saveOwnerFactory({
     ownerId,
     getState: () => ({ note: note.value, isNewNote: isNewNote.value, requestedPath: newPath.value,
-      contentRevision: contentRevision.value, pathRevision: pathRevision.value }),
+      contentRevision: contentRevision.value, pathRevision: pathRevision.value, identity: sessionKey(), canEdit: canModify.value }),
     getBuffer: currentBuffer, isContentChanged: isDirty,
     applyNote: result => { note.value = new Note(result); },
     applyPath: path => { newPath.value = path; editBasename.value = basenameOf(path ?? ""); editFolder.value = directoryFromPath(path ?? ""); },
@@ -217,17 +239,19 @@ export function createNoteController({
   function onSourceSelection(line) { editorLine.value = line; urlSync.scheduleCaretSync(); }
 
   function init() {
+    if (noteScope.value !== sessionKey() && (editMode.value || queueState.value.unresolved)) return;
+    noteScope.value = sessionKey();
     if (urlSync.consumeAcknowledgedResource(getContext().path, saveOwner.queueState()?.sessionId)) return;
     clearEditTimers();
     saveOwner.reset();
     externalRead++; pendingVaultEntry = null; pendingVaultReset = false; vaultNotice.value = ""; deletedElsewhere = false;
     vaultRefreshPending = false;
-    const generation = ++loadGeneration, resource = resourceIdentity.value;
-    const isCurrentLoad = () => generation === loadGeneration && resource === resourceIdentity.value;
+    const generation = ++loadGeneration, resource = resourceIdentity.value, identity = sessionKey();
+    const isCurrentLoad = () => generation === loadGeneration && resource === resourceIdentity.value && identity === sessionKey();
     drafts.release();
     isNoteNotFound.value = false; loadStatus.value = "loading";
     if (getContext().path) {
-      return read(getContext().path).then(data => {
+      return readOwned(getContext().path, isCurrentLoad).then(data => {
         if (!isCurrentLoad()) return;
         note.value = data; refreshDirtyState(); loadStatus.value = "loaded"; publishTitle(); enterEditFromFragment();
         viewLine.value = viewLineFromFragment(parseFragment(getLocation().hash));
@@ -249,6 +273,7 @@ export function createNoteController({
   }
   function toggleEditModeHandler() { if (editMode.value) closeHandler(); else editHandler(true); }
   function editHandler(pushUrl = false) {
+    if (!canModify.value) return;
     pendingPush = pushUrl;
     if (!newPath.value && note.value.path) newPath.value = note.value.path;
     if (loadDraft()) isDraftModalVisible.value = true;
@@ -331,6 +356,7 @@ export function createNoteController({
     }
   }
   function setEditMode() {
+    if (!canModify.value) return;
     newPath.value = note.value.path;
     editBasename.value = basenameOf(newPath.value || ""); editFolder.value = directoryFromPath(newPath.value);
     unsavedChanges.value = false; editorInitialValue.value = getInitialEditorValue();
@@ -362,17 +388,34 @@ export function createNoteController({
   function onTitleInput() { titleTouched.value = true; syncTitle(); }
   function applyRename() { return !editMode.value || saveOwner.rename(); }
   function getInitialEditorValue() { const draftContent = loadDraft(); return draftContent !== null ? draftContent : note.value.content ?? ""; }
-  async function deleteHandler() { if (!await resolveOwnedWork()) return; isDeleteModalVisible.value = true; }
+  let deleteIntent = null;
+  function captureDeletion() {
+    const identity = sessionKey();
+    const generation = loadGeneration, resource = resourceIdentity.value;
+    return () => canModify.value && identity === sessionKey() && generation === loadGeneration && resource === resourceIdentity.value;
+  }
+  async function deleteHandler() {
+    const current = captureDeletion();
+    if (!current() || !await resolveOwnedWork() || !current()) return;
+    deleteIntent = current;
+    isDeleteModalVisible.value = true;
+  }
   async function deleteConfirmedHandler() {
-    if (!await settlePendingWrites() || isDirty()) return;
-    return remove(note.value.path, note.value.version).then(() => {
-      publishFact(TOPICS.NOTE_DELETE, { path: note.value.path }); exitEditState();
+    const current = deleteIntent ?? captureDeletion();
+    deleteIntent = null;
+    if (!current() || !await settlePendingWrites() || isDirty() || !current()) return;
+    const { path, version } = note.value;
+    try {
+      await remove(path, version);
+      if (!current()) return;
+      publishFact(TOPICS.NOTE_DELETE, { path }); exitEditState();
       notify("Note deleted ✓", "Success", "success"); router.push({ name: "home" });
-    }).catch(error => {
+    } catch (error) {
+      if (!current()) return;
       showNoteError(error, noteOperationError(error));
       // Changed elsewhere: the note stays; show what is there now.
       if (error?.response?.data?.code === "base_stale") return refreshFromVault();
-    });
+    }
   }
   function saveHandler(close = false) {
     if (!close) return saveOwner.save(deletedElsewhere);
@@ -392,7 +435,7 @@ export function createNoteController({
     const dirty = isDirty(), becameClean = unsavedChanges.value && !dirty;
     unsavedChanges.value = dirty; setUnload(dirty);
     const fact = { path: newPath.value ?? note.value.path, revision: contentRevision.value,
-      editing: editMode.value, unsaved: dirty, canSave: editMode.value && !notePathError(newPath.value) && queueState.value.status !== "paused" && !queueState.value.rebaseConflict };
+       editing: editMode.value, unsaved: dirty, canSave: canModify.value && editMode.value && !notePathError(newPath.value) && queueState.value.status !== "paused" && !queueState.value.rebaseConflict };
     if (!lastEditState || Object.keys(fact).some(key => fact[key] !== lastEditState[key])) {
       lastEditState = fact;
       publishFact(TOPICS.NOTE_EDIT_STATE, fact);
@@ -470,10 +513,10 @@ export function createNoteController({
     if (!path) return;
     if (loadStatus.value === "loading") { pendingVaultReset = true; return; }
     if (loadStatus.value !== "loaded") return;
-    const ticket = ++externalRead, generation = loadGeneration, version = note.value.version;
+    const ticket = ++externalRead, generation = loadGeneration, version = note.value.version, identity = sessionKey();
     try {
-      const fresh = await read(path);
-      if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path) return;
+      const fresh = await readOwned(path, () => ticket === externalRead && generation === loadGeneration && openVaultPath() === path && identity === sessionKey());
+      if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path || identity !== sessionKey()) return;
       if (!deletedElsewhere && !isNoteNotFound.value && fresh.version && fresh.version === note.value.version) {
         vaultRefreshPending = false; vaultNotice.value = ""; return;
       }
@@ -498,7 +541,7 @@ export function createNoteController({
       vaultNotice.value = "";
       notify("Updated with changes from elsewhere", "Note updated", "info");
     } catch (error) {
-      if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path) return;
+      if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path || identity !== sessionKey()) return;
       if (error.response?.status === 404) markDeletedElsewhere();
       else {
         if (vaultRefreshPending) vaultNotice.value = "This note changed elsewhere, but reload failed; the displayed version may be out of date.";
@@ -556,15 +599,23 @@ export function createNoteController({
   function routeHashChanged(hash) { if (!editMode.value) viewLine.value = viewLineFromFragment(parseFragment(hash), viewLine.value); }
   function captureEditorForRemount() { if (editMode.value && editorMode.value === "wysiwyg" && editor) editorInitialValue.value = currentBuffer(); }
   function dispose() {
+    stopIdentity();
     vaultRefreshPending = false;
     if (editMode.value) { editMode.value = false; refreshDirtyState(); }
     clearEditTimers();
     preview.dispose();
     externalRead++; releaseChanges?.(); releaseChanges = null;
-    loadGeneration++; saveOwner.dispose(); disposeSessionParticipant();
+    loadGeneration++; const saving = saveOwner.dispose(); disposeSessionParticipant();
     if (pendingSessionDecision) { pendingSessionDecision("cancel"); pendingSessionDecision = null; }
     editorActionUnsubs.forEach(fn => fn()); editorActionUnsubs = [];
+    return Promise.all([reads.dispose(), saving]);
   }
+  const stopIdentity = watch(sessionKey, () => {
+    loadGeneration++; externalRead++; clearEditTimers(); preview.cancel();
+    pendingVaultEntry = null; pendingVaultReset = false;
+    if (!editMode.value && !queueState.value.unresolved) { note.value = {}; previewHtml.value = ""; loadStatus.value = "loading"; }
+    refreshDirtyState();
+  }, { flush: "sync" });
   const state = readonly(reactive({
     canModify, isNewNote, editMode, isSaveChangesModalVisible, isDeleteModalVisible, isDraftModalVisible,
     isNoteNotFound, loadStatus, note, editBasename, editFolder, folderDatalistOptions,

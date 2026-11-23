@@ -3,8 +3,70 @@ import { subscribe, TOPICS } from "./bus/index.js";
 import { useGlobalStore } from "./globalStore.js";
 import { basenameOf } from "./notePath.js";
 import { subscribeVaultNotes } from "./vaultNoteInvalidation.js";
+import { createOperationOwner } from "./operationOwner.js";
 
 const RETRY_DELAYS = [1000, 3000, 8000];
+
+/** Prepared app-owned cache; retirement never touches a draft or editor. */
+export function createIdentityNoteIndex({ sessionKey, canRead, read = getNoteIndex,
+  store = useGlobalStore(), subscribeAction = subscribe, subscribeChanges = subscribeVaultNotes, failed = () => {} } = {}) {
+  let ticket = 0, identity = null, disposed = false;
+  let owner;
+  const guarded = deliver => ({ prepare(value) {
+    const prepared = { ...value };
+    if (prepared.entries) prepared.entries = prepared.entries.map(entry => ({ ...entry }));
+    if (disposed || prepared.key !== identity || prepared.key !== sessionKey() || !canRead() || prepared.ticket !== undefined && prepared.ticket !== ticket) void owner.release(prepared.operation);
+    return { value: prepared };
+  }, deliver });
+  owner = createOperationOwner({ owner: Object.freeze({}),
+    dispatch(intent) {
+      if (intent.kind === "read") return read();
+      if (intent.kind === "opened") return intent.path;
+      const callback = intent.topic === TOPICS.NOTE_OPEN
+        ? value => opened(value.path)
+        : () => refresh();
+      return { close: intent.topic === "changes" ? subscribeChanges(callback) : subscribeAction(intent.topic, callback) };
+    },
+    release: value => value?.close?.(),
+    channels: {
+      entries: guarded(value => {
+        store.notePaths = value.entries.map(entry => entry.path); store.noteMeta = value.entries;
+        const paths = new Set(store.notePaths);
+        store.recentlyOpened = store.recentlyOpened.filter(path => paths.has(path));
+      }),
+      opened: guarded(value => { store.recentlyOpened = [value.path, ...store.recentlyOpened.filter(item => item !== value.path)].slice(0, 10); }),
+      failed: guarded(value => failed(value.error)),
+    },
+  });
+  for (const topic of [TOPICS.NOTE_CREATE, TOPICS.NOTE_RENAME, TOPICS.NOTE_DELETE, TOPICS.NOTE_OPEN, "changes"]) {
+    const operation = owner.operation();
+    owner.dispatch(operation, { kind: "subscribe", topic, operation }).catch(failed);
+  }
+  function setSession(next) {
+    ticket++; identity = next;
+    store.notePaths = []; store.noteMeta = []; store.recentlyOpened = [];
+  }
+  async function opened(path) {
+    if (disposed || identity === null || !canRead()) return;
+    const key = identity, operation = owner.operation();
+    try {
+      const result = await owner.dispatch(operation, { kind: "opened", path });
+      owner.deliver(operation, "opened", { operation, key, path: result.value });
+    } finally { await owner.release(operation); }
+  }
+  async function refresh() {
+    const key = sessionKey(), own = ++ticket;
+    if (disposed || key === null || !canRead() || key !== identity) return false;
+    const operation = owner.operation();
+    try {
+      const entries = (await owner.dispatch(operation, { kind: "read" })).value;
+      return owner.deliver(operation, "entries", { operation, key, ticket: own, entries });
+    } catch (error) { owner.deliver(operation, "failed", { operation, key, ticket: own, error }); return false; }
+    finally { await owner.release(operation); }
+  }
+  return Object.freeze({ setSession, refresh, hasWork: owner.hasWork, settle: owner.settle,
+    dispose() { disposed = true; setSession(null); return owner.dispose(); } });
+}
 
 let refreshTicket = 0;
 export function refreshNoteIndex(attempt = 0) {

@@ -3,6 +3,7 @@
 export const NOTE_SAVE_OBSERVATION_MS = 60_000;
 
 export function classifyNoteSaveFailure(error, phase) {
+  if (phase === "sending" && error?.clientScopeRetired === true) return "known-unsent";
   if (phase === "preparing") return error?.cancelled ? "cancelled-unsent" : "known-unsent";
   const response = error?.response;
   const code = response?.data?.code;
@@ -133,13 +134,16 @@ export function createNoteSaveQueue(adapters) {
         try {
           result = validAck(await observe(job, "sending", () => adapters.send(snapshot, context, prepared)));
         } catch (error) {
+          await adapters.releaseSend?.(snapshot);
           job.inFlight = false;
           if (!disposed && job.token === generation) pause(job, error, classifyNoteSaveFailure(error, "sending"), "sending");
           break;
         }
         job.inFlight = false;
-        if (disposed || job.token !== generation) break;
+        if (disposed || job.token !== generation) { await adapters.releaseSend?.(snapshot); break; }
         if (result.committed === true) {
+          await adapters.releaseSend?.(snapshot);
+          if (disposed || job.token !== generation) break;
           // The effect succeeded but the current base cannot be disclosed.
           // Preserve the draft and block all queued saves until read-back.
           pause(job, new Error("Save committed, but the saved note is no longer available to this session. Read it again before editing."), "known-committed", "receipt", result);
@@ -158,6 +162,7 @@ export function createNoteSaveQueue(adapters) {
           if (holdQueued || integration?.rebaseConflict) blockRebase();
         }
         catch (error) { pause(job, error, "known-committed", "acknowledging"); break; }
+        finally { await adapters.releaseSend?.(snapshot); }
         if (disposed || job.token !== generation) break;
         job.phase = "acknowledged";
         job.outcome = Object.freeze({ status: "acknowledged", result, late });

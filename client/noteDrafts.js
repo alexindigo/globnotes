@@ -1,4 +1,11 @@
 import { isCurrentTokenStored } from "./tokenStorage.js";
+import { identityOwnerKey } from "../shared/identity_session.ts";
+
+export function createIdentityNoteDraftStore({ prefix, identity, tokens, ...adapters }) {
+  const owner = identityOwnerKey(identity());
+  return createNoteDraftStore({ ...adapters, scope: JSON.stringify([prefix, owner]),
+    isTokenStored: tokens.isCurrentTokenStored, isCurrent: () => identityOwnerKey(identity()) === owner });
+}
 
 const DRAFT_PREFIX = "globnotes:draft:";
 // Bare legacy keys are ambiguous: these values belong to app modules, not drafts.
@@ -30,14 +37,17 @@ export function createNoteDraftStore({
   local = localStorage,
   session = sessionStorage,
   isTokenStored = isCurrentTokenStored,
+  scope = null, isCurrent = () => true,
 } = {}) {
   const owned = new Map();
+  const keyFor = path => scope === null ? DRAFT_PREFIX + path : `${DRAFT_PREFIX}identity:${encodeURIComponent(scope)}:${encodeURIComponent(path)}`;
 
   function save(path, content, revision) {
+    if (!isCurrent()) return;
     const persisted = isTokenStored();
     if (typeof content !== "string" || !path) return;
     const storage = persisted ? local : session;
-    const key = DRAFT_PREFIX + path;
+    const key = keyFor(path);
     storage.setItem(key, content);
     owned.set(`${persisted ? "local" : "session"}:${key}`, {
       storage, key, value: content, revision,
@@ -45,10 +55,10 @@ export function createNoteDraftStore({
   }
 
   function load(path, revision) {
-    if (!path) return null;
-    const key = DRAFT_PREFIX + path;
-    const localDraft = readDraft(local, path, key);
-    const sessionDraft = readDraft(session, path, key);
+    if (!path || !isCurrent()) return null;
+    const key = keyFor(path);
+    const localDraft = scope === null ? readDraft(local, path, key) : local.getItem(key);
+    const sessionDraft = scope === null ? readDraft(session, path, key) : session.getItem(key);
     if (localDraft !== null) owned.set(`local:${key}`, {
       storage: local, key, value: localDraft, revision,
     });

@@ -20,6 +20,10 @@ import { connectionLifetime, createConnectionLifetime } from "./connectionLifeti
 
 const pathPrefix = readPathPrefix();
 
+export function createIdentityPluginRuntime({ sessionKey, ...adapters }) {
+  return createPluginRuntime({ ...adapters, getSession: sessionKey });
+}
+
 /** Internal injectable owner; the application uses the singleton below. */
 export function createPluginRuntime({
   readCatalog = getPluginHostCatalog,

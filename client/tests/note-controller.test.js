@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isReadonly, reactive } from "vue";
+import { isReadonly, reactive, ref } from "vue";
+import { heldOperation } from "../../tests/helpers/owned_operation.ts";
 import { createNoteController } from "../noteController.js";
 import { createNotePreview } from "../notePreview.js";
 import { TOPICS } from "../bus/index.js";
@@ -57,6 +58,24 @@ function fixture(overrides = {}, contextValues = {}) {
 }
 
 describe("note workflow ownership", () => {
+  it("identity invalidation retains the original dirty editor and cannot borrow Bob's Edit", async () => {
+    const identity = ref("alice");
+    const f = fixture({ sessionKey: () => identity.value }, { capabilities: { canEdit: true } });
+    await f.controller.mount(); f.enter(); f.input("Alice retained typing"); identity.value = "bob";
+    expect([f.controller.currentBuffer(), f.controller.isDirty(), f.controller.state.canModify]).toEqual(["Alice retained typing", true, false]);
+    await f.controller.init(); expect(f.adapters.read).toHaveBeenCalledTimes(1);
+    const receipt = f.controller.saveHandler(); if (receipt) await receipt.completion;
+    expect(updateNote).not.toHaveBeenCalled(); expect(f.controller.state.editMode).toBe(true); expect(f.drafts.clear).not.toHaveBeenCalled();
+  });
+  it("a retired identity's original read cannot repopulate the current note view", async () => {
+    vi.useRealTimers();
+    const identity = ref("alice"); let hold;
+    const f = fixture({ sessionKey: () => identity.value, read: async () => { await hold(); return { path: "folder/P", content: "Alice private" }; } });
+    await heldOperation({ label: "original note read", owner: () => f.controller, progress: { kind: "controlled", clock: "external" } }, boundary => { hold = boundary; return f.controller.mount(); }, async work => {
+      await work.reached(); identity.value = "bob"; await work.result();
+      expect([f.controller.state.note.content, f.controller.state.canModify]).toEqual([undefined, false]);
+    });
+  });
   it("Review conflict uses the shared copy lookup and ordinary dirty departure protection", async () => {
     const lookupByMember = vi.fn(() => ({ id: "conflict-a" }));
     const f = fixture({ conflictInbox: { lookupByMember } }); await f.controller.mount(); f.enter(); f.input("Keep my typing");
@@ -510,6 +529,19 @@ describe("note workflow ownership", () => {
     expect(f.adapters.toast.add).toHaveBeenCalledWith(expect.objectContaining({ summary: "Changed elsewhere", severity: "error" }));
     expect(f.router.push).not.toHaveBeenCalled(); expect(f.adapters.publish).not.toHaveBeenCalledWith(TOPICS.NOTE_DELETE, expect.anything());
     expect(f.controller.state.note.content).toBe("Elsewhere");
+  });
+  it("a delete refusal for the original identity cannot notify or refresh its replacement", async () => {
+    const identity = ref("alice"), entered = deferred(), removed = deferred();
+    const f = fixture({ sessionKey: () => identity.value, remove: vi.fn(() => { entered.resolve(); return removed.promise; }) });
+    await f.controller.mount(); await f.controller.deleteHandler();
+    const deletion = f.controller.deleteConfirmedHandler();
+    await entered.promise;
+    identity.value = "bob";
+    removed.reject({ response: { status: 409, data: { code: "base_stale" } } });
+    await deletion;
+    expect(f.adapters.read).toHaveBeenCalledExactlyOnceWith("folder/P");
+    expect(f.adapters.toast.add).not.toHaveBeenCalled();
+    expect(f.router.push).not.toHaveBeenCalled();
   });
   it("delete failure uses classified policy or the injected generic fallback", async () => {
     const f = fixture({ remove: vi.fn().mockRejectedValueOnce({ response: { data: { code: "operation_conflict", detail: "Conflict detail" } } }).mockRejectedValueOnce(Error("unmapped")) });

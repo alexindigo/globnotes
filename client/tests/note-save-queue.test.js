@@ -17,7 +17,8 @@ async function ack(request, path = "P") { request.resolve({ path, content: reque
 
 describe("per-note save FIFO", () => {
   it("records a receipt without making its missing private body the next save base", async () => {
-    const { queue, sent, adapters } = fixture();
+    const releaseSend = vi.fn();
+    const { queue, sent, adapters } = fixture({ releaseSend });
     const first = queue.submit(snapshot("committed"));
     queue.submit(snapshot("new draft"));
     await flushPromises();
@@ -26,6 +27,7 @@ describe("per-note save FIFO", () => {
     expect(await first.completion).toMatchObject({ status: "acknowledged", result: { committed: true } });
     expect(queue.state()).toMatchObject({ status: "paused", failure: { certainty: "known-committed" }, queued: [{ snapshot: { content: "new draft" } }] });
     expect(adapters.acknowledge).not.toHaveBeenCalled();
+    expect(releaseSend).toHaveBeenCalledExactlyOnceWith(sent[0].snapshot);
     expect(sent).toHaveLength(1);
   });
   it.each(["preparing", "sending"])("only the current authentication rejection can resume its retained job (%s)", async phase => {

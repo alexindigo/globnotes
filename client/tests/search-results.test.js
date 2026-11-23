@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reactive, ref } from "vue";
+import { flushPromises } from "@vue/test-utils";
 import { createSearchResults } from "../searchResults.js";
 import { apiErrorHandler, getNotes, rewriteRefs } from "../api.js";
 import { params, searchSortOptions as sorts } from "../constants.js";
@@ -56,6 +57,24 @@ describe("search result policy", () => {
     const s = setup({ input: { folder: "F" } });
     await s.controller.init();
     expect(s.loadNotes).toHaveBeenCalledExactlyOnceWith("word", undefined, undefined, undefined, true, "F");
+  });
+
+  it("disposal joins the nested wire after the direct search has failed", async () => {
+    const entered = deferred(), nested = deferred();
+    const s = setup({ nested: false });
+    s.loadNotes.mockRejectedValueOnce(new Error("direct rejected")).mockImplementationOnce(() => { entered.resolve(); return nested.promise; });
+    const search = s.controller.init();
+    await entered.promise;
+    // Make the two outcomes observable without waiting for a guessed number of turns.
+    let completed = false;
+    const closed = s.controller.dispose().then(() => { completed = true; });
+    expect(s.loadNotes).toHaveBeenCalledTimes(2);
+    await flushPromises(); // drain the direct refusal and disposal microtasks, not the held nested wire
+    expect(completed).toBe(false);
+    nested.resolve([]);
+    await Promise.all([search, closed]);
+    expect(completed).toBe(true);
+    expect(s.reportError).not.toHaveBeenCalled();
   });
 
   it("builds direct and nested queries and derives sorted immediate subdirectories", async () => {
@@ -345,11 +364,11 @@ describe("reference rewrite outcome accounting", () => {
   });
 
   it("removes acknowledged rows without clearing another still-pending row", async () => {
-    const last = deferred(); const s = setup({ files });
-    s.rewrite.mockResolvedValueOnce(undefined).mockReturnValueOnce(last.promise);
+    const last = deferred(), entered = deferred(); const s = setup({ files });
+    s.rewrite.mockResolvedValueOnce(undefined).mockImplementationOnce(() => { entered.resolve(); return last.promise; });
     const pending = s.controller.fixAllRefs();
-    // Wait for the first acknowledgement and the next dispatch, not a timer.
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    // Observe the original operation's actual second transport entry.
+    await entered.promise;
     expect(s.rewrite).toHaveBeenCalledTimes(2);
     expect(s.state().rewriteFiles).toEqual([files[1]]);
     expect(s.state().fixInProgress).toBe(true); expect(s.toast.add).not.toHaveBeenCalled();

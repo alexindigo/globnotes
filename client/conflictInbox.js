@@ -4,7 +4,7 @@ import { getConflicts } from "./api.js";
 import { subscribe, TOPICS } from "./bus/index.js";
 import { acquireVaultChanges } from "./vaultChanges.js";
 import { getStoredToken } from "./tokenStorage.js";
-import { permissionEligibility, permissionSessionKey } from "./appSessionPolicy.js";
+import { readerRuntimeEligibility, permissionSessionKey } from "./appSessionPolicy.js";
 import { conflictTarget } from "./conflictNavigation.js";
 import { createConflictReadRetry } from "./conflictReadRetry.js";
 
@@ -79,7 +79,7 @@ export function createConflictInbox({ read = getConflicts, subscribe: on = subsc
   function bindContext({ config, configReady, routeName, vault = () => "globnotes" }) {
     stopContext?.();
     const release = acquire();
-    stopContext = watch(() => [!!routeName() && permissionEligibility(configReady(), config(), routeName(), token()),
+    stopContext = watch(() => [!!routeName() && readerRuntimeEligibility(configReady(), config(), routeName(), token()),
       `${vault()}:${permissionSessionKey(config(), token())}`], ([active, key]) => setContext({ active, key }), { immediate: true, flush: "sync" });
     return () => { stopContext?.(); stopContext = null; release(); };
   }

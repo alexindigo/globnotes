@@ -18,11 +18,12 @@ import { registerSessionParticipant } from "./sessionActions.js";
 import { createSettingsPageState } from "./settingsPageState.js";
 import { commitPluginPage, findPage, isPluginSettingsPage, readPluginPage, settingsPages, settingsNavigation } from "./settingsRegistry.js";
 import { getStoredToken } from "./tokenStorage.js";
-import { permissionSessionKey } from "./appSessionPolicy.js";
+import { identityOwnerKey, permissionSessionKey } from "./appSessionPolicy.js";
 import { formatVersion } from "../shared/version.ts";
 import { createAccessSettingsState } from "./accessSettingsState.js";
 import { attention } from './attention.js';
 import { createDriverSettings } from './driverSettingsController.js';
+import { createOperationOwner } from "./operationOwner.js";
 
 const defaultRegistry = {
   find: findPage,
@@ -62,19 +63,23 @@ export function createSettingsSession({
   const stopAccessSession = watch([()=>permissionSessionKey(config(),token()),()=>config().accessRevision],()=>{
     const refresh=(access.state.loading || isVisible()) && ['access','account'].includes(currentPage.value?.kind);
     access.invalidate();
+    closePathChoice();
     if(refresh)void access.load();
   },{flush:'sync'});
   // Recheck at the intent boundary too: browser token storage is not reactive.
   async function loadAccessSummary(){access.invalidate();return await access.load();}
   const attentionItems = attentionRegistry.items;
-  const canLogout = computed(() => [authTypes.password, authTypes.totp].includes(config().authType));
+  const canLogout = computed(() => config().capabilities ? config().principal?.kind === "account" : [authTypes.password, authTypes.totp].includes(config().authType));
   const versionLabel = computed(() => formatVersion({ version: config()?.version, revision: config()?.revision }));
   const currentPageId = ref("core:appearance");
   const expandedPluginId = ref(null), capturedPlugins=new Map();
   const ownsPermissions = !permissionController;
+  const permissionContext = () => config().capabilities
+    ? [permissionSessionKey(config(), token()), { active: config().capabilities.canManageVault === true, canWrite: writable() && config().capabilities.canManageVault === true }]
+    : ["settings", { active: true, canWrite: writable() }];
   const permissions = permissionController ?? createPermissions({ readView: getPluginPermissions, writeView: putPluginPermissions,
     readPending: getPluginPermissionRequests, decideRequest: decidePluginPermissionRequest, changed: refreshCatalog });
-  if (ownsPermissions) permissions.setSession("settings", { active: true, canWrite: writable() });
+  if (ownsPermissions) permissions.setSession(...permissionContext());
   const riskVisible = ref(false), riskTitle = ref(""), riskMessage = ref("");
   const riskConfirmText = ref(""), riskConfirmStyle = ref("cta");
   const pathChoice = ref(null), pathEntries = ref([]), pathChoiceError = ref(""), pathLoading = ref(false);
@@ -85,6 +90,18 @@ export function createSettingsSession({
   });
   const pathCrumbs = computed(() => [{label:'Vault',path:''}, ...(pathChoice.value?.root.split('/').filter(Boolean).map((label,index,parts)=>({label,path:parts.slice(0,index+1).join('/')})) ?? [])]);
   let pathTicket = 0, riskResolve = null;
+  let pathOwner;
+  const pathChannel = deliver => ({ prepare(value) {
+    const captured = { ...value };
+    if (captured.session !== permissionSessionKey(config(), token()) || captured.ticket !== pathTicket || captured.choice !== pathChoice.value || !writable()) void pathOwner.release(captured.operation);
+    return { value: captured };
+  }, deliver });
+  pathOwner = createOperationOwner({ owner: Object.freeze({}), dispatch: root => readPaths(root),
+    channels: {
+      choices: pathChannel(value => { value.choice.root = value.root; pathEntries.value = value.entries; }),
+      failed: pathChannel(value => { pathChoiceError.value = value.message; }),
+    },
+  });
   const departureVisible = ref(false), departureMessage = ref(""), departureCanSave = ref(false), departureConfirmText = ref('Save');
   let departureRequest = null, departureResolve = null;
 
@@ -102,7 +119,11 @@ export function createSettingsSession({
     departureResolve?.(decision);
     departureResolve = null;
   }
-  const pageState = createPages({ registry, confirm: askDeparture });
+  const pageState = createPages({ registry, confirm: askDeparture,
+    getSession: () => permissionSessionKey(config(), token()),
+    getRecoveryScope: () => config().capabilities?.canManageVault && config().accountId && config().vaultId ? identityOwnerKey(config()) : null,
+    canRead: page => !isPluginSettingsPage(page) || !config().capabilities || config().capabilities.canManageVault,
+    canWrite: writable });
   const inventory = createInventory({
     getCatalog: () => catalog.value,
     getSession: () => permissionSessionKey(config(), token()),
@@ -149,7 +170,10 @@ export function createSettingsSession({
     return byOwner;
   });
   const groupedPages = computed(() => settingsNavigation(projectedPages.value, currentPageId.value));
-  const currentSnapshot = computed(() => ({ ...pageState.snapshot(currentPageId.value, writable()), writable: writable() }));
+  const currentSnapshot = computed(() => {
+    const projected = pageState.snapshot(currentPageId.value, writable());
+    return { ...(projected.page ? projected : pageState.snapshot("core:appearance", writable())), writable: writable() };
+  });
   const currentPage = computed(() => currentSnapshot.value.page);
   const currentPageIsPlugin = computed(() => isPluginSettingsPage(currentPage.value));
   const catalogPlugins = computed(() => catalog.value?.plugins ?? []);
@@ -226,9 +250,9 @@ export function createSettingsSession({
     return inventory.discard();
   }
   const stopPages = watch(pages, () => pageState.reconcile());
-  const stopCatalog = watch([catalog, writable], () => {
+  const stopCatalog = watch([catalog, writable, () => permissionSessionKey(config(), token())], () => {
     for(const plugin of catalog.value?.plugins ?? [])capturedPlugins.set(plugin.id,{...plugin});
-    if (ownsPermissions) permissions.setSession("settings", { active: true, canWrite: writable() });
+    if (ownsPermissions) permissions.setSession(...permissionContext());
     permissions.reconcile(catalog.value);
   }, { immediate: true });
 
@@ -350,14 +374,16 @@ export function createSettingsSession({
   }
   async function loadPathChoices(root) {
     const choice = pathChoice.value; if (!choice) return; const ticket = ++pathTicket; pathChoiceError.value = ''; pathLoading.value=true;
+    const session = permissionSessionKey(config(), token()), operation = pathOwner.operation();
     let timer;
     try {
-      const tree = await Promise.race([readPaths(root), new Promise((_, reject) => { timer = clock.setTimeout(() => reject(Error('Host path choices could not be loaded within the deadline.')), 5000); })]);
+      const { value: tree } = await Promise.race([pathOwner.dispatch(operation, root), new Promise((_, reject) => { timer = clock.setTimeout(() => reject(Error('Host path choices could not be loaded within the deadline.')), 5000); })]);
       const entries = tree.folders.map(entry => ({ path: entry.path, label: entry.name, directory: true }));
       if (choice.field.type === 'file') for (const note of tree.notes) entries.push({ path: `${note.path}.md`, label: `${note.title}.md`, directory: false });
-      if (ticket === pathTicket && pathChoice.value === choice) { choice.root = root; pathEntries.value = entries.filter(entry => choice.field.type === 'file' || entry.directory).sort((a,b)=>Number(b.directory)-Number(a.directory)||a.label.localeCompare(b.label)); }
-    } catch (error) { if (ticket === pathTicket) pathChoiceError.value = error.message; }
-    finally { clock.clearTimeout(timer); if(ticket===pathTicket) pathLoading.value=false; }
+      const captured = entries.filter(entry => choice.field.type === 'file' || entry.directory).sort((a,b)=>Number(b.directory)-Number(a.directory)||a.label.localeCompare(b.label));
+      pathOwner.deliver(operation, "choices", { operation, session, ticket, choice, root, entries: captured });
+    } catch (error) { pathOwner.deliver(operation, "failed", { operation, session, ticket, choice, message: error.message }); }
+    finally { clock.clearTimeout(timer); if(ticket===pathTicket) pathLoading.value=false; void pathOwner.release(operation); }
   }
   function selectPath(path) {
     const choice = pathChoice.value; if (!choice) return;
@@ -368,8 +394,9 @@ export function createSettingsSession({
   const choosePathEntry = entry => entry.directory ? loadPathChoices(entry.path) : selectPath(entry.path);
   function dispose() {
     decideDeparture("cancel"); resolveRisk(false); closePathChoice(); disposeParticipant();
-    drivers.dispose(); inventory.dispose(); pageState.dispose(); core.dispose(); access.dispose(); if (ownsPermissions) permissions.dispose();
+    drivers.dispose(); inventory.dispose(); const pagesClosing = pageState.dispose(); core.dispose(); access.dispose(); if (ownsPermissions) permissions.dispose();
     stopPages(); stopCatalog(); stopAccessSession();
+    return Promise.all([pathOwner.dispose(), pagesClosing]);
   }
   return {
     state: readonly(reactive({ brandingSnapshot, keybindingSnapshot, appearanceSnapshot, accessSummary, accountName, accountSummary, attentionItems, canLogout, versionLabel, currentPageId,
