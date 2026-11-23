@@ -20,7 +20,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   applyBrand = applyBrandToDocument, navigate = () => {}, failed = () => {},
   reloadPage = () => window.location.reload() } = {}) {
   const ready = ref(false), valid = ref(false), reloadRequired = ref(null);
-  let latestRead, transitionPending = null, documentAccount = null, locking = false;
+  let latestRead, transitionPending = null, documentAccount = null, locking = false, loginProof = null;
   const key = () => valid.value ? identitySessionKey(config()) : null;
   const context = createSessionContext({ key, tokens, isOpen: () => !reloadRequired.value });
   const unavailable = () => context.disposed || locking || !!reloadRequired.value;
@@ -39,6 +39,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
       },
     });
   function retire(onTransition = () => {}, closing = false) {
+    loginProof = null;
     const current = closing ? () => true : context.advanceProjection();
     onTransition(current);
     valid.value = false;
@@ -84,7 +85,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     }
     return adopting();
   }
-  async function refresh(onAccepted) {
+  async function refresh({ accepted = false } = {}) {
     if (unavailable()) return false;
     latestRead = {};
     const current = context.captureTransition().bind(() => latestRead);
@@ -94,8 +95,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
       const response = await owner.dispatch(operation, "config");
       const receipt = { fresh: response.value, onTransition: next => { failureCurrent = next.bind(() => latestRead); } };
       if (!owner.deliver(operation, "config", receipt) || !receipt.accepted) return false;
-      onAccepted?.(capture());
-      return true;
+      return accepted ? Object.freeze({ current: capture(), principal: Object.freeze({ ...receipt.fresh.principal }) }) : true;
     } catch (error) {
       if (!failureCurrent()) return false;
       if (ready.value) {
@@ -150,8 +150,16 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   }
   function reload() { if (reloadRequired.value) reloadPage(); }
   return Object.freeze({ state: readonly(reactive({ ready, valid, reloadRequired })), key, capture,
-    load: refresh, refresh, adopt, invalidate: () => !unavailable() && retire(), beforeSignIn, acceptToken, logout, transport: io, tokens,
+    load: refresh, refresh, acceptProjection: () => refresh({ accepted: true }), adopt, invalidate: () => !unavailable() && retire(), beforeSignIn, acceptToken, logout, transport: io, tokens,
     hasWork: () => attempt.hasWork(), settle: () => attempt.settle(),
+    snapshot: () => config(),
+    retainLoginProof(proof, accepted) {
+      if (!context.disposed && key() != null && (!accepted || accepted.current())) loginProof = { proof: { username: proof.username, password: proof.password }, current: capture() };
+    },
+    consumeLoginProof() {
+      const saved = loginProof; loginProof = null;
+      return saved?.current() ? saved.proof : null;
+    },
     dispose() { if (!context.disposed) { stopSharedSignIn?.(); context.dispose(); retire(undefined, true); } return attempt.dispose(); },
   });
 }

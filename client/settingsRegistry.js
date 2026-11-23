@@ -21,7 +21,7 @@ const CORE_PAGES = [
   { id: "core:sync", label: "Sync", group: "vault", kind: "sync", description: "Sync this vault with other places." },
   { id: "core:branding", label: "Branding", group: "vault", kind: "branding" },
   { id: "core:access", label: "Access", group: "vault", kind: "access" },
-  { id: "core:account", label: "Account", group: "vault", kind: "account" },
+  { id: "core:account", label: "Account", group: "account", kind: "account" },
 ];
 
 /** Page kind belongs to its normalized namespace, not its plugin owner name. */
@@ -57,7 +57,7 @@ export const settingsPages = computed(() => {
 
 /** One navigation entry per owner; retained definitions stay reachable as tabs. */
 export function settingsNavigation(pages, selected) {
-  return [['browser', 'This browser'], ['vault', 'This vault'], ['plugin', 'Plugin settings']].map(([id, label]) => {
+  return [['account', 'Your account'], ['browser', 'This browser'], ['vault', 'This vault'], ['plugin', 'Plugin settings']].map(([id, label]) => {
     const entries = new Map();
     for (const page of pages) {
       if (page.group !== id) continue;

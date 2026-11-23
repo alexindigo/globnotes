@@ -155,6 +155,17 @@ export async function postSetup(data) {
   }
 }
 
+// Prepared account transports do not use the legacy live-token interceptor.
+// Controllers pass the credential captured by the original form at dispatch.
+const accountApi = axios.create({ baseURL: `${pathPrefix}/_/api` });
+const accountHeaders = ({ token = getStoredToken() } = {}) => ({ headers: token ? { Authorization: `Bearer ${token}` } : {} });
+export const getOwnAccount = async options => (await accountApi.get("account", accountHeaders(options))).data;
+export const patchOwnAccount = async (data, options) => (await accountApi.patch("account", data, accountHeaders(options))).data;
+export const postAccountTotpEnrolment = async options => (await accountApi.post("account/totp-enrolment", undefined, accountHeaders(options))).data;
+export const getSetupStatus = async () => (await accountApi.get("setup")).data;
+export const postIdentitySetup = async data => (await accountApi.post("setup", data)).data;
+export const postIdentitySetupEnrolment = async username => (await accountApi.post("setup/totp-enrolment", { username })).data;
+
 export async function getAccessSettings() { return (await api.get("access")).data; }
 export async function putAccessSettings(data) { return (await api.put("access", data)).data; }
 export async function postAccessTotpEnrolment(username) { return (await api.post("access/totp-enrolment", { username })).data; }

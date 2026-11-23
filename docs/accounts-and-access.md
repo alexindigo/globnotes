@@ -337,3 +337,36 @@ The Settings modal already uses the Settings session factory. Its capability-awa
 branches are inactive because the existing App config does not supply `capabilities`.
 The prepared identity factories do not replace the active App/router/auth wiring;
 account screens and production identity activation belong to the coordinated cutover.
+
+## Prepared account, setup and sign-in screens
+
+The prepared forms use separate password and authenticator steps. The token
+adapter sends the issuer's guarded response body directly; its safe
+`authenticator_required` error appears only after a correct current password.
+A rejected code clears the attempted code, not the password needed for another
+submission. Switching accounts or disposing the form clears both.
+
+Your account is instance-scoped and does not require vault access. Its immutable
+form owner captures the credential used by reads, enrollment and PATCH. Voluntary
+changes first resolve existing Save/Discard/Cancel participants, then show one
+all-device logout confirmation. Cancel retains the form and issued enrollment.
+An admitted change may acknowledge its own immediate credential revocation, but
+cannot sign out a replacement account. A lost reply says "Connection lost. Sign
+in again." It never retries PATCH or opens a credential-review screen. Definite
+precommit errors retain the form; forced sign-in retains dirty note work through
+the existing departure owner.
+
+Temporary-password sign-in keeps the just-proven password only in transient
+session memory for the required private-password form. Losing that handoff means
+ordinary sign-in again, not a proof taken from the restricted token. If a CLI reset
+retained an authenticator, the password change asks for a fresh code and sends it
+directly to PATCH, without spending it on another token request first. This
+required change has no extra voluntary all-device confirmation.
+
+Fresh setup displays View for Everybody else and sends that exact choice, or
+the selected Edit/No access value, with the account and optional issued
+authenticator candidate. An acknowledged setup hands its session to the caller
+for the notes landing. A lost setup reply checks readiness rather than replaying
+creation. These views/controllers and the token adapter are not active routes;
+their production composition and browser acceptance remain in the cutover and
+acceptance steps.

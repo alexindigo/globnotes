@@ -5,19 +5,50 @@ import { getToastOptions } from "./helpers.js";
 import { storeToken } from "./tokenStorage.js";
 import { createOperationOwner } from "./operationOwner.js";
 import { bindContext } from "./sessionContext.js";
+import { reactive, readonly } from "vue";
 
 export function createIdentityLoginFlow({ session, ...adapters }) {
   return createLoginFlow({ ...adapters, identity: true,
     requestToken: session.transport.getToken,
     persistToken: session.acceptToken,
-    authenticated: async acceptContext => {
-      let current;
-      if (!await session.refresh(accepted => { current = acceptContext(accepted); }) || !current?.()) return;
-      const target = adapters.redirect?.() || { name: "home" };
-      if (current()) await (adapters.authenticated ? adapters.authenticated() : adapters.navigate(target));
+    authenticated: async (proof, acceptContext) => {
+      const accepted = await session.acceptProjection();
+      if (!accepted) return;
+      const current = acceptContext(accepted.current);
+      if (!current()) return;
+      const required = accepted.principal.passwordChangeRequired === true;
+      const target = required ? { name: "account" } : adapters.redirect?.() || { name: "home" };
+      if (!current()) return;
+      if (required) { session.retainLoginProof(proof, accepted); if (current()) await adapters.navigate(target); }
+      else await (adapters.authenticated ? adapters.authenticated() : adapters.navigate(target));
     },
     beforeSignIn: session.beforeSignIn, capture: session.capture,
   });
+}
+
+/** One transient password/code form for the page and public-note dialog. */
+export function createIdentityLoginState({ session, navigate, redirect = () => null, authenticated, toast, reportError } = {}) {
+  const fields = reactive({ username: "", password: "", totp: "", rememberMe: false, step: "password", busy: false });
+  let disposed = false;
+  const erase = () => { fields.password = ""; fields.totp = ""; };
+  const flow = createIdentityLoginFlow({ session, navigate, redirect, authenticated, toast, reportError,
+    credentials: () => fields, isCurrent: () => !disposed,
+    clearAccepted: erase,
+    clearCredentials() { if (fields.step === "authenticator") fields.totp = ""; else erase(); },
+    challenge(error) {
+      if ((error.response?.data?.code ?? error.code) !== "authenticator_required") return false;
+      fields.step = "authenticator"; fields.totp = ""; return true;
+    },
+  });
+  return { state: readonly(fields), setField(name, value) {
+    if (!disposed && !fields.busy && ["username", "password", "totp", "rememberMe"].includes(name)) fields[name] = value;
+  }, async submit() {
+    if (disposed || fields.busy) return;
+    fields.busy = true;
+    try { await flow.logIn(); } finally { if (!disposed) fields.busy = false; }
+  }, useAnotherAccount() { if (!disposed && !fields.busy) { erase(); fields.username = ""; fields.step = "password"; } },
+    hasWork: flow.hasWork, settle: flow.settle,
+    dispose() { disposed = true; erase(); return flow.dispose(); } };
 }
 
 export function loginError(error) {
@@ -31,14 +62,15 @@ export function createLoginFlow({
   credentials, clearCredentials, redirect, navigate, toast,
   requestToken = getToken, persistToken = storeToken, reportError = apiErrorHandler,
   authenticated, isCurrent = () => true, identity = false,
-  beforeSignIn, capture = () => isCurrent,
+  beforeSignIn, capture = () => isCurrent, challenge, clearAccepted = clearCredentials,
 } = {}) {
-  let pending = null, active = null, current, tokenAccepted = false, completing, disposed = false;
+  let pending = null, active = null, current, tokenAccepted = false, completing, disposed = false, acceptedProof, challenged;
   const acceptContext = session => current = bindContext(() => !disposed && isCurrent() && session());
   const channel = (prepare, deliver) => ({ prepare: value => ({ value: prepare(value) }), deliver });
   const owner = createOperationOwner({ owner: Object.freeze({}),
     prepare(value) {
       const fields = { ...value };
+      if (identity) acceptedProof = { username: fields.username, password: fields.password };
       return { value: fields };
     },
     async dispatch(fields) {
@@ -54,8 +86,12 @@ export function createLoginFlow({
         // phase captures it, never an arbitrary token selected at later dispatch.
         acceptContext(capture());
       }),
-      complete: channel(() => authenticated ? null : redirect() || { name: "home" }, target => { completing = authenticated ? authenticated(acceptContext) : navigate(target); }),
+      complete: channel(() => authenticated ? acceptedProof : redirect() || { name: "home" }, target => {
+        completing = authenticated ? identity ? authenticated(target, acceptContext) : authenticated() : navigate(target);
+      }),
       clear: { deliver: () => clearCredentials() },
+      accepted: { deliver: () => clearAccepted() },
+      challenge: { deliver: error => { challenged = challenge?.(error) === true; } },
       error: { deliver: error => { const message = loginError(error); if (message) toast.add(message); else reportError(error, toast); } },
     },
   });
@@ -72,12 +108,18 @@ export function createLoginFlow({
     pending = owner.dispatch(operation, credentials())
       .then(result => {
         if (result.value === null || !owner.deliver(operation, "token", result.value) || !tokenAccepted) return;
-        if (owner.deliver(operation, "complete", null, current)) return completing;
+        if (owner.deliver(operation, "complete", null, current)) {
+          if (identity) owner.deliver(operation, "accepted", null, current);
+          return completing;
+        }
       })
       .catch((error) => {
-        owner.deliver(operation, "clear", null, current);
+        challenged = false;
+        owner.deliver(operation, "challenge", error, current);
+        if (challenged) return;
+        if (!identity || !tokenAccepted) owner.deliver(operation, "clear", null, current);
         owner.deliver(operation, "error", error, current);
-      }).finally(async () => { await owner.release(operation); active = null; pending = null; });
+      }).finally(async () => { acceptedProof = null; await owner.release(operation); active = null; pending = null; });
     return pending;
   }
 
