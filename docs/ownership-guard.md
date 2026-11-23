@@ -374,7 +374,10 @@ domain journal/decision ownership are separate from this storage capability.
 
 IdentityFile participant acquisition immediately fences capture, unchanged checks,
 parent preparation and ordinary writes, including during construction of sibling
-participants. A participant exposes only discard; it is an issued WeakMap handle,
+participants. Ordinary bound-file writes to a reserved destination are also
+checked immediately before native delivery, after every authority witness, even
+through another store or a configured symlink to the same destination.
+A participant exposes only discard; it is an issued WeakMap handle,
 not a record/file/installer bundle. Set assembly accepts each exact owner, role,
 destination and set identity once. Standalone discard or undecided set discard
 revokes publication before all-attempt cleanup; a failed cleanup keeps admission
@@ -384,19 +387,21 @@ The private set protocol is: acquire sealed participants; assemble; validate;
 durably record the prepared set; decide; attempt the durable logical decision;
 publish all files; install all exact snapshots; retire the exact journal; release
 admission and notify all observers. The transaction, not this storage owner,
-provides the journal, exclusion and logical decision. `decide` validates again
-and transfers custody before an uncertain journal decision attempt. Ordinary
-cleanup never discards a decided set. All authority witnesses run before all
-set storage checks, followed by the lease engine's final pure lifetime fences.
+provides the configured journal path, exclusion and logical decision. `decide`
+validates again and transfers custody before an uncertain journal decision
+attempt. Ordinary cleanup never discards a decided set. All authority witnesses
+run before all set storage checks, followed by the lease engine's final pure
+lifetime fences.
 Authority witnesses must use their captured/private validation capabilities,
 not reenter a participant's deliberately fenced public read API.
 
 Publication/apply or required installation failure leaves the whole set
 recovery-required. Successful installation alone does not release admission:
-journal retirement failure must leave it fenced. Only after the transaction
-retires the exact journal does it call release. Optional observer failures are
-reported separately after every observer has been attempted; post-publication
-durability/alias warnings remain committed. Reopen reconstructs participants
+journal retirement failure must leave it fenced. The transaction confirms
+durable retirement; release refuses if the bound journal entry still exists.
+Optional observer failures are reported separately after every observer has
+been attempted; post-publication durability/alias warnings remain committed.
+Reopen reconstructs participants
 under actual exclusive authority, validates recorded domain values without
 normalizing their bytes, and follows the same set protocol. Rejected recovery
 admission releases its descriptor without unlinking a decided candidate. The

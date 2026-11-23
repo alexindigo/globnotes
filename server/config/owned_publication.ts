@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { resolve } from "@std/path";
 import {
   BoundFileStore,
   type PublicationOutcome,
@@ -74,18 +75,35 @@ interface ParticipantState {
   readonly candidate: RecordedCandidate;
   readonly install: () => undefined;
   readonly notify: () => undefined;
+  readonly releaseWrites: () => void;
   available(): void;
   hold(fence: SetFence): void;
   fence?: SetFence;
 }
 const participants = new WeakMap<PublicationParticipant, ParticipantState>();
 
+function journalRetired(filename: string): boolean {
+  try {
+    Deno.lstatSync(filename);
+    return false;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return true;
+    throw error;
+  }
+}
+
 /** Storage set protocol only. Its trusted caller owns journal publication,
- * logical decision, registration/exclusion and journal retirement. */
+ * logical decision, registration/exclusion and durable journal retirement. Bind
+ * its configured journal now so release cannot mistake another path for it. */
 export function createPublicationSet(
   setId: string,
   handles: readonly PublicationParticipant[],
+  journalPath: string,
 ) {
+  if (typeof journalPath !== "string" || !journalPath) {
+    throw new TypeError("Publication set requires a configured journal path.");
+  }
+  const journal = resolve(journalPath);
   if (!Array.isArray(handles)) {
     throw new TypeError("Publication set requires an array.");
   }
@@ -178,10 +196,13 @@ export function createPublicationSet(
       }
     },
     release(): PublicationOutcome {
-      if (fence.phase !== "installed") throw new PublicationSetUnavailable();
-      // The transaction calls this only after exact journal retirement. Required
-      // runtime installation is complete; observers now see a consistent set.
+      if (fence.phase !== "installed" || !journalRetired(journal)) {
+        throw new PublicationSetUnavailable();
+      }
+      // Required runtime installation is complete and the bound journal is
+      // absent. The transaction owns confirmation of durable retirement.
       fence.phase = "settled";
+      for (const member of members) member.releaseWrites();
       lifetime.retire();
       for (const member of members) {
         try {
@@ -217,6 +238,7 @@ export function createPublicationSet(
         throw new AggregateError(errors, "Publication set cleanup failed.");
       }
       fence.phase = "discarded";
+      for (const member of members) member.releaseWrites();
       lifetime.retire();
     },
   });
@@ -257,6 +279,7 @@ export function createOwnedPublication<T>(
     candidate: RecordedCandidate,
     captured: T,
     reservation: SetFence,
+    releaseWrites: () => void,
     recovered = false,
   ): PublicationParticipant => {
     const state: ParticipantState = {
@@ -265,6 +288,7 @@ export function createOwnedPublication<T>(
       candidate,
       install: () => install(captured, candidate.record.after),
       notify,
+      releaseWrites,
       available: () => {
         if (
           unavailable || held !== reservation ||
@@ -283,7 +307,10 @@ export function createOwnedPublication<T>(
         // A sibling's failed recovery must never delete a journal participant.
         if (recovered) candidate.detach();
         else candidate.discard();
-        if (!recovered) reservation.phase = "discarded";
+        if (!recovered) {
+          reservation.phase = "discarded";
+          releaseWrites();
+        }
       },
     }) as PublicationParticipant;
     participants.set(handle, state);
@@ -311,6 +338,7 @@ export function createOwnedPublication<T>(
     ) {
       assertAvailable();
       const captured = immutable(structuredClone(value));
+      const raw = JSON.stringify(captured) + "\n";
       assertAvailable();
       const reservation: SetFence = {
         phase: "prepared",
@@ -319,28 +347,24 @@ export function createOwnedPublication<T>(
         setId,
       };
       const validation = publicationValidation(store.root, setId);
+      const writer = recordedWriter(store);
+      const releaseWrites = writer.reserveOrdinaryWrites(expected);
       held = reservation;
       let candidate: RecordedCandidate;
       try {
         candidate = withPublicationValidation(
           validation,
-          () =>
-            recordedWriter(store).prepare(
-              JSON.stringify(captured) + "\n",
-              expected,
-              lease,
-              setId,
-              role,
-            ),
+          () => writer.prepare(raw, expected, lease, setId, role),
         );
       } catch (error) {
         held = undefined;
+        releaseWrites();
         throw error;
       }
       try {
-        return participant(candidate, captured, reservation);
+        return participant(candidate, captured, reservation, releaseWrites);
       } catch (error) {
-        held = undefined;
+        reservation.phase = "recovery-required";
         try {
           candidate.discard();
         } catch (cleanup) {
@@ -350,6 +374,8 @@ export function createOwnedPublication<T>(
             { cause: error },
           );
         }
+        held = undefined;
+        releaseWrites();
         throw error;
       }
     },
@@ -371,18 +397,17 @@ export function createOwnedPublication<T>(
       };
       held = reservation;
       let candidate: RecordedCandidate;
+      const writer = recordedWriter(store);
       try {
-        candidate = recordedWriter(store).recover(
-          input,
-          authority,
-          setId,
-          role,
-        );
+        candidate = writer.recover(input, authority, setId, role);
       } catch (error) {
         reservation.phase = "recovery-required";
         throw error;
       }
       try {
+        const releaseWrites = writer.reserveOrdinaryWrites(
+          candidate.record.after,
+        );
         const captured = immutable(
           structuredClone(validate(JSON.parse(candidate.record.after.raw!))),
         );
@@ -391,7 +416,13 @@ export function createOwnedPublication<T>(
         if (JSON.stringify(captured) + "\n" !== candidate.record.after.raw) {
           throw new StoredConfigConflict();
         }
-        return participant(candidate, captured, reservation, true);
+        return participant(
+          candidate,
+          captured,
+          reservation,
+          releaseWrites,
+          true,
+        );
       } catch (error) {
         reservation.phase = "recovery-required";
         // Recovery owns a descriptor but an unaccepted record must not be

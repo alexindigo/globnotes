@@ -17,6 +17,7 @@ import {
 import {
   type PublicationOutcome,
   PublicationRecoveryRequired,
+  PublicationSetUnavailable,
   StoredConfigConflict,
 } from "./publication_outcome.ts";
 export {
@@ -241,6 +242,19 @@ function configBinding(configured: string): StoredConfigSnapshot["binding"] {
   });
 }
 
+// A destination can have several bound writer instances (including symlink
+// aliases). Track each live custody hold independently of those instances.
+const reservedTargets = new Map<string, Set<symbol>>();
+function reserveTarget(target: string): () => void {
+  const hold = Symbol();
+  let claims = reservedTargets.get(target);
+  if (!claims) reservedTargets.set(target, claims = new Set());
+  claims.add(hold);
+  return () => {
+    if (claims.delete(hold) && !claims.size) reservedTargets.delete(target);
+  };
+}
+
 /** Main's bound-file persistence, independent of serialization and config policy.
  * The owning service serializes writes. Publication is the commit point; later
  * durability warnings cannot roll it back, and installation failure needs recovery. */
@@ -262,6 +276,8 @@ export class BoundFileStore {
       (...args) => this.#preparePublication(...args),
     );
     registerRecordedWriter(this, path.resolve(this.root), {
+      reserveOrdinaryWrites: (expected) =>
+        reserveTarget(expected.binding.target),
       prepare: (raw, expected, lease, setId, role) => {
         assertOperationLease(lease, "live");
         this.#recordIdentity(setId, role);
@@ -572,10 +588,16 @@ export class BoundFileStore {
     if (identity) Deno.openSync(target, { write: true }).close();
   }
 
-  #deliverCandidate(candidate: StoredCandidate): void {
+  #deliverCandidate(candidate: StoredCandidate, ordinary: boolean): void {
     const temporary = candidate.temporary,
-      target = candidate.snapshot.binding.target;
-    if (candidate.replace) {
+      target = candidate.snapshot.binding.target,
+      replace = candidate.replace;
+    // All authority witnesses and storage validation have returned. Only the
+    // native link/rename may follow this final, non-reentrant reservation check.
+    if (ordinary && reservedTargets.has(target)) {
+      throw new PublicationSetUnavailable();
+    }
+    if (replace) {
       Deno.renameSync(temporary, target);
     } else {
       Deno.linkSync(temporary, target);
@@ -634,7 +656,7 @@ export class BoundFileStore {
       lease.mode,
       () => ({ value: undefined }),
       () => {
-        this.#deliverCandidate(candidate);
+        this.#deliverCandidate(candidate, false);
         return undefined;
       },
     );
@@ -922,7 +944,7 @@ export class BoundFileStore {
         try {
           // Bind and capture the native delivery inputs before any final checks.
           const snapshot = candidate.snapshot;
-          deliver = () => this.#deliverCandidate(candidate);
+          deliver = () => this.#deliverCandidate(candidate, true);
           publish(undefined);
           // Delivery is complete. Installation/receipt handling cannot grant
           // another write and must survive this operation's self-revocation.

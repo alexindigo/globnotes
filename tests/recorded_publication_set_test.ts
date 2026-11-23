@@ -3,8 +3,16 @@ import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { acquireOfflineRecovery } from "../server/auth/offline_recovery.ts";
 import { IdentityFile } from "../server/auth/records.ts";
-import { createOperationLease } from "../server/operation_lease.ts";
 import {
+  BoundFileStore,
+  syncStoredDirectory,
+} from "../server/config/file_store.ts";
+import {
+  createOperationLease,
+  type OperationLease,
+} from "../server/operation_lease.ts";
+import {
+  createOwnedPublication,
   createPublicationSet,
   type PublicationParticipant,
 } from "../server/config/owned_publication.ts";
@@ -27,6 +35,11 @@ const OTHER = "00000000-0000-4000-8000-000000000002";
 const unavailable =
   "Publication set is unavailable; settlement or recovery is required.";
 const conflict = "Stored configuration changed before commit.";
+const journalPath = (root: string) => `${root}/journal.json`;
+function retireJournal(root: string) {
+  Deno.removeSync(journalPath(root));
+  syncStoredDirectory(root);
+}
 function fixture(
   run: (root: string, scope: FixtureScope) => void | Promise<void>,
 ) {
@@ -61,28 +74,72 @@ function pair(root: string, events: unknown[] = []) {
   });
   return { one, two };
 }
+function ownParticipant(scope: FixtureScope, part: PublicationParticipant) {
+  scope.defer(() => part.discard());
+  return part;
+}
+function preparePair(
+  scope: FixtureScope,
+  { one, two }: ReturnType<typeof pair>,
+  oneLease: OperationLease<"live">,
+  twoLease = oneLease,
+) {
+  return [
+    ownParticipant(
+      scope,
+      one.prepareParticipant(
+        { revision: 1 },
+        one.capture(),
+        oneLease,
+        SET,
+        "one",
+      ),
+    ),
+    ownParticipant(
+      scope,
+      two.prepareParticipant(
+        { revision: 2 },
+        two.capture(),
+        twoLease,
+        SET,
+        "two",
+      ),
+    ),
+  ];
+}
+function recoverSet(
+  root: string,
+  scope: FixtureScope,
+  files: readonly ReturnType<typeof pair>["one"][],
+  records: readonly RecordedCandidateData[],
+  authority: object,
+  phase: "prepared" | "decided",
+) {
+  const set = createPublicationSet(
+    SET,
+    files.map((file, i) =>
+      ownParticipant(
+        scope,
+        file.recoverParticipant(
+          records[i],
+          authority,
+          SET,
+          i === 0 ? "one" : "two",
+          phase,
+        ),
+      )
+    ),
+    journalPath(root),
+  );
+  scope.defer(() => set.discard());
+  return set;
+}
 function stagedPair(root: string, scope: FixtureScope, events: unknown[] = []) {
   const { one, two } = pair(root, events);
   const lease = createOperationLease("live", [() => undefined]);
   scope.defer(() => lease.retire());
-  const parts = [
-    one.prepareParticipant(
-      { revision: 1 },
-      one.capture(),
-      lease.lease,
-      SET,
-      "one",
-    ),
-    two.prepareParticipant(
-      { revision: 2 },
-      two.capture(),
-      lease.lease,
-      SET,
-      "two",
-    ),
-  ];
-  for (const part of parts) scope.defer(() => part.discard());
-  const set = createPublicationSet(SET, parts);
+  const parts = preparePair(scope, { one, two }, lease.lease);
+  const set = createPublicationSet(SET, parts, journalPath(root));
   scope.defer(() => set.discard());
   return { one, two, parts, set };
 }
@@ -113,12 +170,93 @@ Deno.test("publication participant: acquisition fences reads before set assembly
     part.discard();
     assertStrictEquals(file.capture(), before);
     assertThrows(
-      () => createPublicationSet(SET, [part]),
+      () => createPublicationSet(SET, [part], journalPath(root)),
       PublicationSetUnavailable,
       unavailable,
     );
     assertEquals([...Deno.readDirSync(root)], []);
   }));
+
+for (const writer of ["same owner", "alias owner"] as const) {
+  Deno.test(`publication participant: final ordinary write from ${writer} refuses a reservation acquired by its witness`, () =>
+    fixture((root, scope) => {
+      const target = `${root}/one.json`;
+      const filename = writer === "same owner" ? target : `${root}/alias.json`;
+      if (writer === "alias owner") {
+        Deno.writeTextFileSync(target, '{"revision":0}\n');
+        Deno.symlinkSync(target, filename);
+      }
+      const observed: string[] = [];
+      const owner = (filename: string) =>
+        createOwnedPublication<{ revision: number }>(filename, () => {
+          observed.push("installed");
+          return undefined;
+        }, () => {
+          observed.push("notified");
+          return undefined;
+        });
+      const file = owner(target);
+      const ordinary = writer === "same owner" ? file : owner(filename);
+      const before = file.capture();
+      const authority = createOperationLease("live", [() => undefined]);
+      scope.defer(() => authority.retire());
+      let reserve = false;
+      let part: PublicationParticipant | undefined;
+      const writerLease = createOperationLease("live", [() => {
+        if (reserve && !part) {
+          const acquired = file.prepareParticipant(
+            { revision: 1 },
+            before,
+            authority.lease,
+            SET,
+            "one",
+          );
+          scope.defer(() => acquired.discard());
+          part = acquired;
+          observed.push("reserved");
+        }
+        return undefined;
+      }]);
+      scope.defer(() => writerLease.retire());
+      const pending = ordinary.prepare(
+        { revision: 9 },
+        ordinary.capture(),
+        writerLease.lease,
+      );
+      scope.defer(() => pending.discard());
+
+      reserve = true;
+      assertThrows(
+        () => pending.publish(),
+        PublicationSetUnavailable,
+        unavailable,
+      );
+      const legacy = new BoundFileStore(filename);
+      assertThrows(
+        () => legacy.replace('{"revision":8}\n'),
+        PublicationSetUnavailable,
+        unavailable,
+      );
+      assertEquals([legacy.capture().raw, observed], [before.raw, [
+        "reserved",
+      ]]);
+
+      part!.discard();
+      assertEquals(
+        ordinary.prepare({ revision: 2 }, ordinary.capture(), authority.lease)
+          .publish().state,
+        "committed",
+      );
+      assertEquals([Deno.readTextFileSync(target), observed], [
+        '{"revision":2}\n',
+        ["reserved", "installed", "notified"],
+      ]);
+      assertEquals(
+        [...Deno.readDirSync(root)].map((e) => e.name).sort(),
+        writer === "same owner" ? ["one.json"] : ["alias.json", "one.json"],
+      );
+    }));
+}
 
 Deno.test("publication set: committed alias warning is separate and next ordinary mutation retries cleanup without republication", () =>
   fixture((root, scope) => {
@@ -140,7 +278,7 @@ Deno.test("publication set: committed alias warning is separate and next ordinar
     }
     assertEquals(set.release().state, "committed");
     assertThrows(
-      () => createPublicationSet(SET, parts),
+      () => createPublicationSet(SET, parts, journalPath(root)),
       TypeError,
       "Publication set requires unused issued participants.",
     );
@@ -172,22 +310,12 @@ Deno.test("publication participant: configured participant roots are bound befor
     );
     const lease = createOperationLease("live", [() => undefined]);
     scope.defer(() => lease.retire());
-    const set = createPublicationSet(SET, [
-      one.prepareParticipant(
-        { revision: 1 },
-        one.capture(),
-        lease.lease,
-        SET,
-        "one",
-      ),
-      two.prepareParticipant(
-        { revision: 2 },
-        two.capture(),
-        lease.lease,
-        SET,
-        "two",
-      ),
-    ]);
+    const set = createPublicationSet(
+      SET,
+      preparePair(scope, { one, two }, lease.lease),
+      journalPath(root),
+    );
+    scope.defer(() => set.discard());
     set.decide();
     set.publish();
     set.release();
@@ -209,17 +337,13 @@ Deno.test("publication participant: configured participant roots are bound befor
         root,
       ),
     ];
-    const replay = createPublicationSet(
-      SET,
-      files.map((file, i) =>
-        file.recoverParticipant(
-          set.records[i],
-          recovery.authority,
-          SET,
-          i === 0 ? "one" : "two",
-          "decided",
-        )
-      ),
+    const replay = recoverSet(
+      root,
+      scope,
+      files,
+      set.records,
+      recovery.authority,
+      "decided",
     );
     replay.decide();
     assertEquals(replay.publish().state, "committed");
@@ -376,6 +500,7 @@ for (
           createPublicationSet(
             kind === "foreign-set" ? OTHER : SET,
             input as PublicationParticipant[],
+            journalPath(root),
           ),
         type,
         message,
@@ -456,7 +581,7 @@ for (const boundary of ["install", "retire-journal"] as const) {
           };
           assertStrictEquals(
             assertThrows(
-              () => Deno.removeSync(`${root}/journal.json`),
+              () => retireJournal(root),
               Error,
               failure.message,
             ),
@@ -483,13 +608,11 @@ for (const boundary of ["install", "retire-journal"] as const) {
           unavailable,
         );
       }
-      if (boundary === "install") {
-        assertThrows(
-          () => set.release(),
-          PublicationSetUnavailable,
-          unavailable,
-        );
-      }
+      assertThrows(
+        () => set.release(),
+        PublicationSetUnavailable,
+        unavailable,
+      );
       assertEquals([
         Deno.readTextFileSync(`${root}/one.json`),
         Deno.readTextFileSync(`${root}/two.json`),
@@ -497,25 +620,17 @@ for (const boundary of ["install", "retire-journal"] as const) {
       const recovery = acquireOfflineRecovery(root);
       scope.defer(() => recovery.close());
       const fresh = pair(root);
-      const replay = createPublicationSet(SET, [
-        fresh.one.recoverParticipant(
-          set.records[0],
-          recovery.authority,
-          SET,
-          "one",
-          "decided",
-        ),
-        fresh.two.recoverParticipant(
-          set.records[1],
-          recovery.authority,
-          SET,
-          "two",
-          "decided",
-        ),
-      ]);
+      const replay = recoverSet(
+        root,
+        scope,
+        [fresh.one, fresh.two],
+        set.records,
+        recovery.authority,
+        "decided",
+      );
       replay.decide();
       assertEquals(replay.publish().state, "committed");
-      Deno.removeSync(`${root}/journal.json`);
+      retireJournal(root);
       replay.release();
       assertEquals([fresh.one.capture().value, fresh.two.capture().value], [{
         revision: 1,
@@ -540,22 +655,11 @@ Deno.test("publication set: all observers are attempted and notification failure
     });
     const lease = createOperationLease("live", [() => undefined]);
     scope.defer(() => lease.retire());
-    const set = createPublicationSet(SET, [
-      one.prepareParticipant(
-        { revision: 1 },
-        one.capture(),
-        lease.lease,
-        SET,
-        "one",
-      ),
-      two.prepareParticipant(
-        { revision: 2 },
-        two.capture(),
-        lease.lease,
-        SET,
-        "two",
-      ),
-    ]);
+    const set = createPublicationSet(
+      SET,
+      preparePair(scope, { one, two }, lease.lease),
+      journalPath(root),
+    );
     scope.defer(() => set.discard());
     set.decide();
     set.publish();
@@ -612,7 +716,7 @@ for (
                   "two",
                 ),
               );
-              set = createPublicationSet(SET, parts);
+              set = createPublicationSet(SET, parts, journalPath(root));
               set.validate();
               const journal = new IdentityFile(
                 `${root}/journal.json`,
@@ -654,24 +758,8 @@ Deno.test("publication set: a later participant authority cannot change an earli
       a.retire();
       b.retire();
     });
-    const parts = [
-      one.prepareParticipant(
-        { revision: 1 },
-        one.capture(),
-        a.lease,
-        SET,
-        "one",
-      ),
-      two.prepareParticipant(
-        { revision: 2 },
-        two.capture(),
-        b.lease,
-        SET,
-        "two",
-      ),
-    ];
-    for (const part of parts) scope.defer(() => part.discard());
-    const set = createPublicationSet(SET, parts);
+    const parts = preparePair(scope, { one, two }, a.lease, b.lease);
+    const set = createPublicationSet(SET, parts, journalPath(root));
     scope.defer(() => set.discard());
     armed = true;
     assertThrows(() => set.decide(), StoredConfigConflict, conflict);
@@ -696,14 +784,18 @@ Deno.test("publication set: a disguised rejected observer is reported without an
     const lease = createOperationLease("live", [() => undefined]);
     scope.defer(() => lease.retire());
     const set = createPublicationSet(SET, [
-      file.prepareParticipant(
-        { revision: 1 },
-        file.capture(),
-        lease.lease,
-        SET,
-        "one",
+      ownParticipant(
+        scope,
+        file.prepareParticipant(
+          { revision: 1 },
+          file.capture(),
+          lease.lease,
+          SET,
+          "one",
+        ),
       ),
-    ]);
+    ], journalPath(root));
+    scope.defer(() => set.discard());
     set.decide();
     assertEquals(set.publish().state, "committed");
     assertEquals(set.release().notificationFailed, true);
@@ -772,11 +864,30 @@ const journalSchema = objectRecordSchema<Journal>("G1 journal", (value) => {
   if (
     Object.keys(value).sort().join() !== "phase,records,setId" ||
     value.setId !== SET ||
-    !["prepared", "decided"].includes(String(value.phase)) ||
+    (value.phase !== "prepared" && value.phase !== "decided") ||
     !Array.isArray(value.records) || value.records.length !== 2
   ) throw new Error("invalid journal");
   return value as unknown as Journal;
 });
+
+Deno.test("publication recovery: journal decoder rejects an array that coerces to decided", () =>
+  fixture((root, scope) => {
+    const { set } = stagedPair(root, scope);
+    Deno.writeTextFileSync(
+      `${root}/journal.json`,
+      JSON.stringify({
+        setId: SET,
+        phase: ["decided"],
+        records: set.records,
+      }),
+    );
+    const journal = recordReader(
+      openRecordDirectory(scope, root),
+      "journal.json",
+      journalSchema,
+    );
+    assertThrows(() => journal.read(), Error, "invalid journal");
+  }));
 
 for (const phase of ["prepared", "decided", "half", "installed"] as const) {
   Deno.test(`publication set: real ${phase} child loss reopens exact pair and second recovery is idempotent`, () =>
@@ -836,26 +947,32 @@ for (const phase of ["prepared", "decided", "half", "installed"] as const) {
       const recovery = acquireOfflineRecovery(root);
       scope.defer(() => recovery.close());
       const events: unknown[] = [], fresh = pair(root, events);
-      const replay = createPublicationSet(SET, [
-        fresh.one.recoverParticipant(
-          saved.records[0],
-          recovery.authority,
-          SET,
-          "one",
-          saved.phase,
-        ),
-        fresh.two.recoverParticipant(
-          saved.records[1],
-          recovery.authority,
-          SET,
-          "two",
-          saved.phase,
-        ),
-      ]);
+      const replay = recoverSet(
+        root,
+        scope,
+        [fresh.one, fresh.two],
+        saved.records,
+        recovery.authority,
+        saved.phase,
+      );
       if (saved.phase === "prepared") replay.discard();
       else {
         replay.decide();
         assertEquals(replay.publish().state, "committed");
+        assertThrows(
+          () => replay.release(),
+          PublicationSetUnavailable,
+          unavailable,
+        );
+        assertEquals(events, []);
+        for (const file of [fresh.one, fresh.two]) {
+          assertThrows(
+            () => file.capture(),
+            PublicationSetUnavailable,
+            unavailable,
+          );
+        }
+        retireJournal(root);
         replay.release();
       }
       const expected = saved.phase === "prepared"
@@ -873,22 +990,14 @@ for (const phase of ["prepared", "decided", "half", "installed"] as const) {
       );
       if (saved.phase === "decided") {
         const again = pair(root);
-        const second = createPublicationSet(SET, [
-          again.one.recoverParticipant(
-            saved.records[0],
-            recovery.authority,
-            SET,
-            "one",
-            saved.phase,
-          ),
-          again.two.recoverParticipant(
-            saved.records[1],
-            recovery.authority,
-            SET,
-            "two",
-            saved.phase,
-          ),
-        ]);
+        const second = recoverSet(
+          root,
+          scope,
+          [again.one, again.two],
+          saved.records,
+          recovery.authority,
+          saved.phase,
+        );
         second.decide();
         assertEquals(second.publish().state, "committed");
         second.release();
@@ -901,7 +1010,7 @@ for (const phase of ["prepared", "decided", "half", "installed"] as const) {
         [...Deno.readDirSync(root)].map((e) => e.name).sort(),
         saved.phase === "prepared"
           ? ["identity.lock", "journal.json"]
-          : ["identity.lock", "journal.json", "one.json", "two.json"],
+          : ["identity.lock", "one.json", "two.json"],
       );
     }));
 }

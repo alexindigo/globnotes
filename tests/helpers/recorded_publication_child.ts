@@ -10,6 +10,7 @@ const validate = (value: unknown) => value as { revision: number };
 const one = new IdentityFile(`${root}/one.json`, validate, { revision: 0 });
 const two = new IdentityFile(`${root}/two.json`, validate, { revision: 0 });
 const lease = createOperationLease("live", [() => undefined]);
+const journalPath = `${root}/journal.json`;
 const set = createPublicationSet(setId, [
   one.prepareParticipant(
     { revision: 1 },
@@ -25,9 +26,9 @@ const set = createPublicationSet(setId, [
     setId,
     "two",
   ),
-]);
+], journalPath);
 const journal = new IdentityFile(
-  `${root}/journal.json`,
+  journalPath,
   (value) => value,
   null,
 );

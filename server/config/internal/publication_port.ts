@@ -29,6 +29,7 @@ export interface RecordedCandidate {
   detach(): void;
 }
 interface NativeRecordedWriter {
+  reserveOrdinaryWrites(expected: StoredConfigSnapshot): () => void;
   prepare(
     raw: string,
     expected: StoredConfigSnapshot,
@@ -79,6 +80,7 @@ export function recordedWriter(store: object) {
     throw new TypeError("Recorded publication requires an issued writer.");
   }
   return Object.freeze({
+    reserveOrdinaryWrites: binding.writer.reserveOrdinaryWrites,
     prepare: binding.writer.prepare,
     recover(input: unknown, authority: object, setId: string, role: string) {
       return binding.writer.recover(

@@ -5,7 +5,7 @@ import { authorityRead } from "../server/auth/internal/authority_read.ts";
 import { createOperationLease } from "../server/operation_lease.ts";
 import { createPublicationSet } from "../server/config/owned_publication.ts";
 import { PublicationSetUnavailable } from "../server/config/publication_outcome.ts";
-import { fixtureScope } from "./helpers/fixture_scope.ts";
+import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
 import { assertPrivateModule } from "./helpers/credential_registration.ts";
 import {
   AUTHORITY_READ,
@@ -18,17 +18,17 @@ const SET = "00000000-0000-4000-8000-000000000071";
 const OTHER = "00000000-0000-4000-8000-000000000072";
 const unavailable =
   "Publication set is unavailable; settlement or recovery is required.";
-function fixture(run: (root: string) => void) {
+function fixture(run: (root: string, scope: FixtureScope) => void) {
   return fixtureScope(async (scope) => {
     const root = await scope.acquire(
       () => Deno.makeTempDir({ prefix: "participant-validation-" }),
       (root) => Deno.remove(root, { recursive: true }),
     );
-    await scope.admit(() => run(root.value));
+    await scope.admit(() => run(root.value, scope));
   });
 }
 Deno.test("participant validation: private native reads retain committed state, public and reentrant checks stay fenced", () =>
-  fixture((root) => {
+  fixture((root, scope) => {
     const a = new IdentityFile(
       `${root}/a.json`,
       (v) => v as { n: number },
@@ -72,6 +72,7 @@ Deno.test("participant validation: private native reads retain committed state, 
       }
       return undefined;
     }]);
+    scope.defer(() => operation.retire());
     probing = true;
     const first = a.prepareParticipant(
       { n: 1 },
@@ -80,6 +81,7 @@ Deno.test("participant validation: private native reads retain committed state, 
       SET,
       "first",
     );
+    scope.defer(() => first.discard());
     assertThrows(
       () => authorityRead(a, retained),
       PublicationSetUnavailable,
@@ -92,7 +94,12 @@ Deno.test("participant validation: private native reads retain committed state, 
       SET,
       "second",
     );
-    const set = createPublicationSet(SET, [first, second]);
+    scope.defer(() => second.discard());
+    const set = createPublicationSet(
+      SET,
+      [first, second],
+      `${root}/journal.json`,
+    );
     try {
       const other = new IdentityFile(
         `${root}/other.json`,
