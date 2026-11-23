@@ -36,7 +36,6 @@ export default async function (request: PathfinderRequest) {
       body.revision ?? -1,
       body.sourceKey,
     );
-    state.lifecycle?.notifyInvalidation();
     return {
       values: committed.values,
       revision: committed.revision,

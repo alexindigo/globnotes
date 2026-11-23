@@ -52,6 +52,51 @@ function freeze<T>(value: T): T {
   }
   return value;
 }
+/** Domain subscriber registration only. The owned publication decides when the
+ * returned notify runs (after single-file installation, or after a set's journal
+ * retirement and release) and records an observer failure as notificationFailed
+ * without turning the committed result into a rejection. */
+export function identityObservers() {
+  const listeners = new Set<() => void>();
+  return Object.freeze({
+    subscribe(listener: () => undefined): () => void {
+      if (
+        typeof listener !== "function" ||
+        Object.prototype.toString.call(listener) === "[object AsyncFunction]"
+      ) {
+        throw new TypeError("Identity observers must be synchronous.");
+      }
+      // One entry per subscription: a repeated function is a second observer.
+      const entry = () => {
+        const completion: unknown = listener();
+        if (completion !== undefined) {
+          // Observe rejection of a mis-typed JS/TS subscriber without making
+          // publication wait for it or accepting any async observer result.
+          Promise.resolve(completion).catch(() => undefined);
+          throw new TypeError("Identity observers must be synchronous.");
+        }
+      };
+      listeners.add(entry);
+      return () => {
+        listeners.delete(entry);
+      };
+    },
+    notify(): undefined {
+      const errors: unknown[] = [];
+      for (const listener of [...listeners]) {
+        try {
+          listener();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (errors.length) {
+        throw new AggregateError(errors, "Identity observers failed.");
+      }
+      return undefined;
+    },
+  });
+}
 export interface IdentitySnapshot<T> {
   readonly value: T;
   readonly persistence: StoredConfigSnapshot;

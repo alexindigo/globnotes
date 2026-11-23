@@ -330,7 +330,7 @@ export async function updateAccess(
       state.plugins?.runtime?.suspend();
       state.plugins?.stop();
     }
-    state.lifecycle?.notifyInvalidation();
+    state.lifecycle?.notifyInvalidation("catalog");
     await enrollment?.complete();
     return {
       view: await accessView(),

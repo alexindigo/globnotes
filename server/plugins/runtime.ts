@@ -21,7 +21,7 @@ import { changesAuthority, followPluginChanges } from "./changes.ts";
 import { MetadataWatches } from "../metadata/service.ts";
 import { CHANGES_API_VERSION } from "./change_contract.ts";
 import type { DisplacementOffer, Versioning } from "../hub/versioning.ts";
-import { readGrantCovers } from "./lifecycle.ts";
+import { type PluginInvalidationDomain, readGrantCovers } from "./lifecycle.ts";
 import { PluginHost, type RpcAuthority, type WorkLane } from "./host.ts";
 import { processClock } from "../observed_time.ts";
 import type { ServiceJobs } from "./service_jobs.ts";
@@ -84,7 +84,7 @@ export interface RuntimeAdapters {
   ): Promise<unknown>;
   /** Apply plugin read grants before disclosing fact snapshot contents. */
   sanitizeFact?(manifest: PluginManifest, fact: unknown): unknown;
-  changed?(): void;
+  changed?(domain: PluginInvalidationDomain): void;
   network?: PluginNetworkRequests;
   settingsEnvironment?: PluginSettingsEnvironment;
   ownerEpoch?(id: string): number;
@@ -156,10 +156,10 @@ export class PluginRuntime implements Versioning {
   ) {
     this.limits = { ...PLUGIN_LIMITS, ...limits };
   }
-  private changed() {
+  private changed(domain: PluginInvalidationDomain = "catalog") {
     this.noteSettlement();
     this.catalogVersion++;
-    this.adapters.changed?.();
+    this.adapters.changed?.(domain);
   }
   private noteSettlement(): void {
     const previous = this.settlementChanged;
@@ -1260,7 +1260,7 @@ export class PluginRuntime implements Versioning {
     const event = { pluginId: owner, pageId, revision };
     this.post("on-settings-change", event, {}, owner);
     this.subscriptions(owner, "settings-change", event);
-    this.changed();
+    this.changed("settings");
   }
   actionResult(
     owner: string,

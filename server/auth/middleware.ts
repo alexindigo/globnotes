@@ -133,6 +133,27 @@ export function createInstanceAuth(adapters: {
       admitted.check();
       return admitted.evaluator.capabilities(value);
     },
+    /** Decide and bind the disclosure scope without an intervening await. */
+    async statusAdmission(request: Request) {
+      const admitted = admission(request);
+      const principalValue = await principal(request, admitted.sessions);
+      admitted.check();
+      const capabilities = admitted.evaluator.capabilities(principalValue);
+      return capabilities.canRead
+        ? {
+          scope: "vault" as const,
+          capabilities,
+          lease: admitted.evaluator.lease(principalValue, "readVault"),
+        }
+        : {
+          scope: "instance" as const,
+          capabilities,
+          lease: admitted.evaluator.instanceLease(
+            principalValue,
+            "readInstance",
+          ),
+        };
+    },
     noteMutationLease: (request: Request) => lease(request, "editNotes"),
     readLease: (request: Request) => lease(request, "readVault"),
     async settingsWriteGuard(request: Request): Promise<() => void> {
@@ -146,6 +167,10 @@ export function createInstanceAuth(adapters: {
     },
   });
 }
+
+export type StatusAdmission = Awaited<
+  ReturnType<ReturnType<typeof createInstanceAuth>["statusAdmission"]>
+>;
 
 /** The auth rules themselves, usable both by the middleware (gated by
  * ctx.authRequired) and by the catch-all which serves vault files. */

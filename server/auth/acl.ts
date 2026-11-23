@@ -12,6 +12,7 @@ import {
   fields,
   identity,
   IdentityFile,
+  identityObservers,
   type IdentitySnapshot,
   IdentityStateError,
   integer,
@@ -114,6 +115,7 @@ export function prepareInitialAcl(
 /** Vault-owned ACL. Declaration-owned Admin is evaluated live but never saved as
  * an inferred grant. It has no credentials or process-wide current principal. */
 export class AclRepository {
+  readonly #observers = identityObservers();
   readonly #file: IdentityFile<AclState>;
   readonly #accounts: AccountRepository;
   readonly #adminLogin: string | null;
@@ -138,7 +140,7 @@ export class AclRepository {
         everybody: "none",
         grants: {},
       },
-      undefined,
+      this.#observers.notify,
       options.accounts.root,
     );
     registerAuthorityReader(this, (context) => {
@@ -159,6 +161,10 @@ export class AclRepository {
         },
       };
     });
+  }
+  /** Observes only this concrete vault's installed ACL, after publication. */
+  subscribe(listener: () => undefined): () => void {
+    return this.#observers.subscribe(listener);
   }
   capture(): AclSnapshot {
     return this.#file.capture();

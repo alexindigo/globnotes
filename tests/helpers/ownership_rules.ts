@@ -66,6 +66,7 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       AUTHORITY_DISCLOSURE,
       "server/plugins/host.ts",
       "tests/instance_disclosure_test.ts",
+      "tests/helpers/identity_scope.ts",
       "tests/operation_lease_test.ts",
       "tests/identity_authority_test.ts",
       "tests/identity_plugin_viewer_test.ts",
@@ -140,6 +141,7 @@ export const PUBLICATION_OWNERSHIP: OwnershipRules = {
     "server/auth/transaction.ts": [
       "server/auth/bootstrap.ts",
       "tests/helpers/identity_workflows.ts",
+      "tests/identity_composition_provisioning_test.ts",
       "tests/identity_provisioning_test.ts",
       "tests/helpers/identity_transaction.ts",
       "tests/identity_transaction_test.ts",
@@ -322,6 +324,8 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
       "tests/identity_totp_test.ts",
       "tests/identity_totp_fixed_form_test.ts",
       "tests/identity_totp_upgrade_test.ts",
+      "tests/helpers/identity_scope.ts",
+      "tests/identity_projection_test.ts",
     ],
   },
 };
@@ -381,6 +385,9 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
       "tests/identity_totp_fixed_form_test.ts",
       "tests/identity_totp_test.ts",
       "tests/identity_totp_upgrade_test.ts",
+      "tests/helpers/identity_scope.ts",
+      "tests/identity_projection_test.ts",
+      "tests/identity_streams_test.ts",
     ],
   },
 };
@@ -447,6 +454,9 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
       "tests/identity_totp_fixed_form_test.ts",
       "tests/identity_totp_test.ts",
       "tests/identity_totp_upgrade_test.ts",
+      "tests/helpers/identity_scope.ts",
+      "tests/identity_projection_test.ts",
+      "tests/identity_streams_test.ts",
     ],
   },
 };

@@ -203,6 +203,123 @@ Deno.test("identity transaction durability: journal retirement failure keeps the
     ], [staged.identity.id, { [staged.identity.id]: "admin" }]);
   }));
 
+/** Each notification records what a reader can observe at that moment. */
+function observePair(
+  f: ReturnType<typeof transactionContext>,
+  root: string,
+  observations: unknown[][],
+) {
+  const observe = (source: string) => () => {
+    const account = f.accounts.byLogin("alice");
+    observations.push([
+      source,
+      account?.id ?? null,
+      f.acl.capture().value.grants,
+      f.acl.capture().value.everybody,
+      Deno.statSync(root).isDirectory &&
+      [...Deno.readDirSync(root)].some((entry) =>
+        entry.name === "identity-transaction.json"
+      ),
+    ]);
+    return undefined;
+  };
+  return [
+    f.accounts.subscribe(observe("accounts")),
+    f.acl.subscribe(observe("access")),
+  ];
+}
+
+Deno.test("identity transaction notifications: observers see the installed pair only after journal retirement", () =>
+  identityFixture(async (root, scope) => {
+    const f = transactionContext(root, scope);
+    const observations: unknown[][] = [];
+    for (const release of observePair(f, root, observations)) {
+      scope.defer(release);
+    }
+    const staged = await f.stage();
+    assertEquals(observations, []);
+    const outcome = f.transaction.commit(staged.meta, staged.parts, f.lease);
+    assertEquals([outcome.state, outcome.notificationFailed], [
+      "committed",
+      false,
+    ]);
+    const pair = [
+      staged.identity.id,
+      { [staged.identity.id]: "admin" },
+      "view",
+      false,
+    ];
+    assertEquals(observations, [["access", ...pair], ["accounts", ...pair]]);
+  }));
+
+for (const mode of ["throw", "return completion"] as const) {
+  Deno.test(`identity transaction notifications: an observer that fails (${mode}) cannot turn the committed pair into a rejection`, () =>
+    identityFixture(async (root, scope) => {
+      const f = transactionContext(root, scope);
+      const observations: unknown[][] = [];
+      for (const release of observePair(f, root, observations)) {
+        scope.defer(release);
+      }
+      const failure = new Error("fixture observer failure");
+      const invalidObserver = mode === "throw"
+        ? () => {
+          throw failure;
+        }
+        : (() => Promise.reject(failure)) as unknown as () => undefined;
+      scope.defer(f.acl.subscribe(invalidObserver));
+      const staged = await f.stage();
+      const outcome = f.transaction.commit(staged.meta, staged.parts, f.lease);
+      assertEquals([outcome.state, outcome.notificationFailed], [
+        "committed",
+        true,
+      ]);
+      const pair = [
+        staged.identity.id,
+        { [staged.identity.id]: "admin" },
+        "view",
+        false,
+      ];
+      assertEquals(observations, [["access", ...pair], ["accounts", ...pair]]);
+      f.transaction.assertReady();
+      assertEquals(f.accounts.byLogin("alice"), staged.identity);
+    }));
+}
+
+Deno.test("identity transaction notifications: retirement failure releases none; offline recovery notifies the recovered pair", () =>
+  identityFixture(async (root, scope) => {
+    const failing = transactionContext(root, scope, (phase) => {
+      if (phase === "retiring") throw new Error("fixture journal retirement");
+    });
+    const before: unknown[][] = [];
+    for (const release of observePair(failing, root, before)) {
+      scope.defer(release);
+    }
+    const staged = await failing.stage();
+    assertThrows(
+      () =>
+        failing.transaction.commit(staged.meta, staged.parts, failing.lease),
+      IdentityTransactionUnavailable,
+      "Identity publication requires recovery; no partial state is available.",
+    );
+    assertEquals(before, []);
+    const recovery = recoveryForRoot(root);
+    scope.defer(() => recovery.close());
+    failing.retire();
+    const next = transactionContext(root, scope);
+    const after: unknown[][] = [];
+    for (const release of observePair(next, root, after)) {
+      scope.defer(release);
+    }
+    next.transaction.recover(recovery.authority);
+    const pair = [
+      staged.identity.id,
+      { [staged.identity.id]: "admin" },
+      "view",
+      false,
+    ];
+    assertEquals(after, [["access", ...pair], ["accounts", ...pair]]);
+  }));
+
 Deno.test("identity transaction durability: every published file is synced before exact journal removal", () =>
   identityFixture(async (root, scope) => {
     const f = transactionContext(root, scope);

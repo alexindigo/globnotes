@@ -166,6 +166,31 @@ const RAW_CLOCK_ALLOWED: NonNullable<Rule["allowed"]> = [
     reason: "wall clock by design: the stream closes at credential expiry",
   },
   {
+    file: "server/auth/identity_sse.ts",
+    line: "const timer = setInterval(() => mark(heartbeat), heartbeatMs);",
+    reason: "keepalive cadence the server emits; nothing fails when it is late",
+  },
+  {
+    file: "server/auth/identity_sse.ts",
+    line: "const remaining = expiresAt - Date.now();",
+    reason: "wall clock by design: the stream closes at credential expiry",
+  },
+  {
+    file: "server/auth/identity_sse.ts",
+    line: "else expiry = setTimeout(expire, Math.min(remaining, 2147483647));",
+    reason: "wall clock by design: the stream closes at credential expiry",
+  },
+  {
+    file: "server/plugins/identity_events.ts",
+    line: '() => frame("heartbeat", { at: Date.now() }),',
+    reason: "a timestamp in the event frame, not a budget",
+  },
+  {
+    file: "server/plugins/identity_events.ts",
+    line: ': frame("invalidate", { at: Date.now(), domain });',
+    reason: "a timestamp in the event frame, not a budget",
+  },
+  {
     file: "server/plugins/lifecycle.ts",
     line: "this.managedWrites.set(filename, { deletedAt: Date.now() });",
     reason: "compared with filesystem mtimes, which are wall-clock times",

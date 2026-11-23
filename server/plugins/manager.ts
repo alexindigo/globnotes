@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import type { PluginInvalidationDomain } from "./lifecycle.ts";
 
 /** One catalog of optional contributions. Rendering is a lazy compatibility adapter. */
 import * as path from "@std/path";
@@ -122,7 +123,8 @@ export class PluginManager {
   private readonly ownerEpochs = new Map<string, number>();
   private readonly seenEnabled = new Map<string, boolean>();
   private networkCommit: PersistenceAdapters["commit"];
-  private networkChanged: () => void = () => {};
+  private inventoryChanged: (domain: PluginInvalidationDomain) => void =
+    () => {};
   private readonly retirements = new Set<Promise<void>>();
 
   constructor(
@@ -195,7 +197,7 @@ export class PluginManager {
         return entry ? this.networkPlugin(entry) : undefined;
       },
       installedSource: (id) => this.installed.lease(id),
-      changed: () => this.networkChanged(),
+      changed: () => this.inventoryChanged("settings"),
       revokeReduced: (id, effective) => this.revokeReduced(id, effective),
       reload: (id, policy) => this.reloadPermissions(id, policy),
       sourceDurable: () => !!this.options.persistence || !!this.serviceRuntime,
@@ -425,6 +427,38 @@ export class PluginManager {
     };
   }
 
+  /** Reader contribution catalog, built from enabled descriptors rather than by
+   * subtracting fields from the administrative inventory above. */
+  async readerCatalog() {
+    const { metadata } = await this.policy.read();
+    return {
+      contractVersion: PLUGIN_CONTRACT_VERSION,
+      changesApiVersion: CHANGES_API_VERSION,
+      policy: { revision: metadata.revision },
+      plugins: this.orderedManifests().map((manifest) => ({
+        id: manifest.id,
+        name: manifest.name,
+        version: manifest.version,
+        enabled: true,
+        client: manifest.hasClient,
+        runtime: { client: !!manifest.runtime.client },
+        rendering: !!manifest.entry,
+        commands:
+          this.serviceRuntime?.commands().filter((command) =>
+            command.pluginId === manifest.id
+          ).map((command) => ({
+            id: command.id,
+            label: command.label,
+            target: command.target,
+            context: command.context,
+            description: command.description,
+            pluginId: command.pluginId,
+            fullId: command.fullId,
+          })) ?? [],
+      })),
+    };
+  }
+
   /** Existing enabled-only API shape is retained for legacy editor loaders. */
   listPlugins(): {
     id: string;
@@ -482,7 +516,7 @@ export class PluginManager {
       throw new Error("plugin runtime is already configured");
     }
     this.networkCommit = (effect) => adapters.commit(effect);
-    this.networkChanged = () => adapters.changed?.();
+    this.inventoryChanged = (domain) => adapters.changed?.(domain);
     this.serviceRuntime = new PluginRuntime(
       () => {
         const { policy, automatic } = this.policy.selection();
@@ -640,7 +674,7 @@ export class PluginManager {
             this.admitRenderRecovery(owner, host, previous),
           registrationChanged: () => {
             if (this.renderOwners.get(id) === owner && owner.host === host) {
-              this.networkChanged();
+              this.inventoryChanged("settings");
             }
           },
           failed: (detail) => {
@@ -651,7 +685,7 @@ export class PluginManager {
               detail,
             };
             this.hosts.delete(id);
-            this.networkChanged();
+            this.inventoryChanged("settings");
           },
         },
       );
@@ -847,7 +881,7 @@ export class PluginManager {
     await this.driverOwners?.reconcile();
     if (this.renderRequested) await this.ensureStarted();
     await Promise.all([...this.retirements]);
-    this.networkChanged();
+    this.inventoryChanged("catalog");
   }
   private revokeReduced(id: string, next: PermissionDeclaration): void {
     const owner = this.renderOwners.get(id), old = owner?.host?.delegated;

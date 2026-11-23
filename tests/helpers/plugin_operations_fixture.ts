@@ -7,7 +7,10 @@ import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import { NoteOperations } from "../../server/notes/operations.ts";
 import { AuxiliaryFilesystem } from "../../server/plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "../../server/plugins/data.ts";
-import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
+import {
+  PluginLifecycle,
+  type PluginServiceEligibility,
+} from "../../server/plugins/lifecycle.ts";
 import { createPluginManager } from "./plugin_manager.ts";
 import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { PluginSettingsEnvironment } from "../../server/plugins/settings_environment.ts";
@@ -60,6 +63,9 @@ export interface PluginOperationsOptions {
   fixture?: ScopedPluginFixture & { dispose?: () => Promise<void> };
   fault?: RpcFault;
   limits?: Partial<PluginLimits>;
+  /** Instance service eligibility for prepared identity compositions. */
+  serviceEligibility?: PluginServiceEligibility;
+  changeLimit?: number;
 }
 
 /** Compatibility entry retains evidence just as its existing close contract did.
@@ -129,7 +135,7 @@ async function constructPluginOperationsFixture(
   });
   const config = new GlobalConfig(env);
   config.authType = AuthType.NONE;
-  const lifecycle = new PluginLifecycle(config),
+  const lifecycle = new PluginLifecycle(config, options.serviceEligibility),
     notes = new FileSystemNotes(fixture.vault, {}, testServices(env).notes),
     fileServing = new FileServing(fixture.vault);
   const hub = (await scope.acquire(
@@ -138,6 +144,7 @@ async function constructPluginOperationsFixture(
         fixture.vault,
         testMetadata(fixture.statePath),
         testServices(env).hub,
+        { changeLimit: options.changeLimit },
       ),
     (hub) => hub.stop(),
   )).value;
@@ -199,6 +206,7 @@ async function constructPluginOperationsFixture(
     filesystem,
   });
   const runtime = manager.configureRuntime({
+    changed: (domain) => lifecycle.notifyInvalidation(domain),
     operational: () => lifecycle.operational(),
     writable: () => lifecycle.writable(),
     commit: (effect) => lifecycle.gate.run(effect),

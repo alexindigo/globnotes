@@ -132,7 +132,7 @@ async function bundle(
             : []
         ),
       commit: (effect) => lifecycle.gate.run(effect),
-      changed: () => lifecycle.notifyInvalidation(),
+      changed: () => lifecycle.notifyInvalidation("catalog"),
       revokeReduced: (id, effective) =>
         runtime.revokeNetworkReduced(id, effective),
       reload: (id, policy) => runtime.reloadNetwork(id, policy.effective),

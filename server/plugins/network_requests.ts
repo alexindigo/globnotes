@@ -397,9 +397,11 @@ export class PluginNetworkRequests {
                 error instanceof Error ? error.message : "source commit failed"
               }`,
           });
-          throw error;
-        } finally {
+          // The values are already published. On success the data owner's
+          // post-commit settings event covers this metadata too; only the
+          // partial outcome needs its own notification.
           this.adapters.changed();
+          throw error;
         }
       },
     };

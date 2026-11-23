@@ -51,7 +51,8 @@ Instance account management and create-vault eligibility need no selected vault.
 The new middleware adapter is injected, not enabled at ordinary startup yet.
 Its write lease fits the existing NoteOperations final-effect contract and its
 settings guard fits the TOML/CAS writer. Read adapters recheck delayed values and
-stream enqueue boundaries; actual HTTP/SSE and plugin propagation are later steps.
+stream enqueue boundaries. Prepared projections and streams (below) are not
+routed yet; HTTP activation and plugin propagation are later steps.
 Revocation denies pending work, never rolls back an already committed effect or
 deletes a browser's unsaved text. Unrelated account/vault revisions do not retire
 another lease.
@@ -136,6 +137,12 @@ reused or differently correlated groups before taking custody; a refused caller
 cannot discard another transaction's preparation. The existing aggregate still
 owns account preparation and initial-account proof issuance.
 
+Account and ACL repositories accept synchronous observers. The owned publication
+calls them only after installation: a single-file change after its write, and a
+transaction set after both snapshots are installed and the journal is retired.
+An observer failure is reported as `notificationFailed` on the committed outcome,
+never as a rejection. Another vault's ACL has its own observers.
+
 The prepared own-account workflow maps GET, PATCH and authenticator enrollment
 to the credential aggregate. It requires the current password and, when enabled,
 a fresh current authenticator code. Only the current issued enrollment can be
@@ -151,6 +158,30 @@ current enrollment attempt per lane and config owner through QR rendering and
 confirmation; a new issuance replaces only that lane's attempt. Newly confirmed
 secrets carry an explicit Base32 marker. Existing unmarked/raw stored secrets keep
 their historical interpretation; keeping an authenticator does not rewrite it.
+
+## Prepared projections and streams
+
+`createIdentityComposition` takes an explicit live lifetime from its caller and
+binds one concrete ACL/vault, the instance sessions and a plugin lifecycle whose
+service eligibility comes from the instance (initialized accounts and signing),
+not from any browser's access.
+The lifecycle forwards each issued authority read context to service eligibility;
+ordinary/background queries open a separate ordinary read scope. Eligibility
+reads current initialized-account and signing-readiness projections through that
+context, never a cached result or a context-free read during paired publication.
+Status, configuration and catalog responses are
+allowlisted values delivered through the issued lease's lazy JSON body. A reader
+gets enabled plugin contribution descriptors, not a filtered administrative
+inventory. None and guests without access get an instance-only status without a
+vault ID, so a later ACL change does not fence it, but credential retirement does.
+
+The prepared vault-change and plugin-event streams use the same target-bound read
+lease for every poll body and SSE chunk. Readers do not receive change peers,
+driver revisions or settings/driver invalidations. An account, concrete-vault ACL
+or policy change, lifecycle epoch, session expiry, request abort or cancellation
+closes the stream and releases its listeners and timers; a request aborted before
+or during admission registers none. Retiring the composition lifetime fences
+delivery. Production still uses the legacy routes until the coordinated cutover.
 
 ## Prepared setup and first-account seed
 

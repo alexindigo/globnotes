@@ -251,7 +251,7 @@ Deno.test("hub changes: metadata-only closure is emitted without a file id and b
     );
     // A policy epoch closes both the file and metadata subscriptions.
     f.lifecycle.bumpEpoch();
-    f.lifecycle.notifyInvalidation();
+    f.lifecycle.notifyInvalidation("catalog");
     assertEquals(await replay.read(), { value: undefined, done: true });
     assertEquals(subscriptions, 0);
   } finally {
@@ -304,7 +304,7 @@ Deno.test("hub changes: driver metadata uses authenticated SSE/poll with indepen
       driverRevision: 18,
     });
     f.lifecycle.bumpEpoch();
-    f.lifecycle.notifyInvalidation();
+    f.lifecycle.notifyInvalidation("catalog");
     assertEquals(await reader.read(), { done: true, value: undefined });
     assertEquals(listeners.size, 0);
     const resumed = await changes(request("", { accept: "text/event-stream" }));

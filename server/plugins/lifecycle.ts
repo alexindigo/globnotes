@@ -10,6 +10,11 @@ import type { ActionReceipt, OperationFact } from "./contracts.ts";
 import type { PluginManifest } from "./manifest.ts";
 import { OperationError } from "./errors.ts";
 import type { ViewerAuthority } from "../auth/authority.ts";
+import {
+  type AuthorityCallback,
+  type AuthorityReadContext,
+  readAuthorityState,
+} from "../auth/authority_context.ts";
 
 /** Host-only HTTP authority, captured before body/preparation/queue awaits.
  * Credentials and assertion closures never enter facts or Worker envelopes. */
@@ -146,6 +151,11 @@ export class AsyncLock {
   }
 }
 
+export type PluginInvalidationDomain = "catalog" | "settings" | "drivers";
+export interface PluginServiceEligibility {
+  operational: AuthorityCallback<boolean>;
+  writable: AuthorityCallback<boolean>;
+}
 export class PluginLifecycle {
   /** Monotonic access-policy epoch. Setup/reset/access-mode changes bump it
    * BEFORE old-generation authority is revoked; captured epochs then fail
@@ -173,23 +183,42 @@ export class PluginLifecycle {
   viewerForFact(fact: OperationFact): ViewerAuthority | undefined {
     return this.#viewers.get(fact);
   }
-  readonly #invalidateListeners = new Set<() => void>();
+  readonly #invalidateListeners = new Set<
+    (domain: PluginInvalidationDomain) => void
+  >();
 
   /** Catalog/settings-revision/status invalidation stream subscribers.
-   * Listeners are removed on disconnect/shutdown by their owners. */
-  subscribeInvalidation(listener: () => void): () => void {
+   * Listeners are removed on disconnect/shutdown by their owners. The domain
+   * lets reader streams omit administrative settings/driver invalidations. */
+  subscribeInvalidation(
+    listener: (domain: PluginInvalidationDomain) => void,
+  ): () => void {
     this.#invalidateListeners.add(listener);
     return () => this.#invalidateListeners.delete(listener);
   }
-  notifyInvalidation(): void {
+  notifyInvalidation(domain: PluginInvalidationDomain): void {
     for (const listener of [...this.#invalidateListeners]) {
       try {
-        listener();
+        listener(domain);
       } catch { /* a dead listener must not mute the others */ }
     }
   }
 
-  constructor(private readonly config: GlobalConfig) {}
+  /** Prepared identity compositions inject instance service eligibility. It is
+   * independent of any browser's vault access; the legacy mode bridge remains
+   * the default until the production switch. */
+  constructor(
+    private readonly config: GlobalConfig,
+    private readonly serviceEligibility?: PluginServiceEligibility,
+  ) {}
+
+  assertServiceEligibility(eligibility: PluginServiceEligibility): void {
+    if (this.serviceEligibility !== eligibility) {
+      throw new TypeError(
+        "Plugin lifecycle belongs to another identity owner.",
+      );
+    }
+  }
 
   get epoch(): number {
     return this.#epoch;
@@ -212,10 +241,24 @@ export class PluginLifecycle {
     this.#policyListeners.add(listener);
     return () => this.#policyListeners.delete(listener);
   }
-  operational(): boolean {
+  operational(context?: AuthorityReadContext): boolean {
+    const service = this.serviceEligibility;
+    if (service) {
+      // Authority evaluation forwards its issued context. Ordinary/background
+      // queries open their own scope and cannot inherit native custody.
+      return context
+        ? service.operational(context)
+        : readAuthorityState((ordinary) => service.operational(ordinary));
+    }
     return !this.config.setupRequired;
   }
   writable(): boolean {
+    const service = this.serviceEligibility;
+    if (service) {
+      return readAuthorityState((context) =>
+        this.operational(context) && service.writable(context)
+      );
+    }
     return this.operational() && this.config.authType !== AuthType.READ_ONLY;
   }
 

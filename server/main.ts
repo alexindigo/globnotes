@@ -220,7 +220,7 @@ plugins.configureRuntime({
   commit: (effect) => lifecycle.gate.run(effect),
   sanitizeFact: (manifest, fact) =>
     lifecycle.applyReadGrants(manifest, fact as never),
-  changed: () => lifecycle.notifyInvalidation(),
+  changed: (domain) => lifecycle.notifyInvalidation(domain),
   rpc: servicePluginRpc({
     vaultPath: globalConfig.notesPath,
     statePath: globalConfig.statePath,

@@ -10,7 +10,6 @@ import {
 } from "@std/assert";
 import { fixtureGate, fixtureTest } from "./helpers/fixture_coordination.ts";
 import { AccountRepository } from "../server/auth/accounts.ts";
-import type { AccountState } from "../server/auth/internal/account_record.ts";
 import {
   type AccountPreparationAuthority,
   type AccountPreparationRequest,
@@ -19,7 +18,7 @@ import {
   type PreparedAccount,
 } from "../server/auth/account_credentials.ts";
 import { type OfflineRecoveryAuthority } from "../server/auth/offline_recovery.ts";
-import { IdentityFile, IdentityStateError } from "../server/auth/records.ts";
+import { IdentityStateError } from "../server/auth/records.ts";
 import { IdentityOwnershipError } from "../server/auth/ownership.ts";
 import { StoredConfigConflict } from "../server/config/file_store.ts";
 import {
@@ -803,21 +802,14 @@ Deno.test("offline recovery: another identity root's authority is not accepted",
   }));
 
 for (const mismatched of [false, true]) {
-  Deno.test(`offline recovery: the injected file defines the admission root, mismatched=${mismatched}`, () =>
+  Deno.test(`offline recovery: the configured file defines the admission root, mismatched=${mismatched}`, () =>
     credentialCommandFixture(async (f) => {
       const filename = `${f.root}/accounts.json`,
         otherRoot = `${f.root}/other-root`;
       const before = storedState(f.accounts);
-      // Trusted fixture state uses the injected persistence seam; reopened
-      // AccountRepository instances below still apply the real schema validator.
-      const file = new IdentityFile<AccountState>(
-        filename,
-        (value) => value as AccountState,
-        before,
-      );
       const accounts = new AccountRepository(
         mismatched ? otherRoot : f.root,
-        file,
+        filename,
         {
           hash: (password) => Promise.resolve(fixturePasswordHash(password)),
         },

@@ -34,6 +34,7 @@ import {
   fields,
   identity,
   IdentityFile,
+  identityObservers,
   IdentityStateError,
   integer,
   record,
@@ -76,15 +77,21 @@ export interface AccountDirectorySnapshot {
 /** Repository owns stored records; only its aggregate binding sees credentials. */
 export class AccountRepository {
   readonly root: string;
+  readonly #observers = identityObservers();
   readonly #file: IdentityFile<AccountState>;
   readonly #authenticators = new WeakMap<Account, StoredAuthenticator>();
   #directory?: { stored: AccountSnapshot; public: AccountDirectorySnapshot };
   readonly #credentials: AccountCredentials;
   readonly #retireCredentials: () => boolean;
+  /** The repository owns its file and notification. An alternate configured
+   * filename changes the binding, never the writer or the recovery authority. */
   constructor(
     root: string,
-    file = new IdentityFile<AccountState>(
-      join(root, "accounts.json"),
+    filename = join(root, "accounts.json"),
+    credentialOptions: CredentialOptions = {},
+  ) {
+    this.#file = new IdentityFile<AccountState>(
+      filename,
       validateState,
       {
         version: 1,
@@ -94,10 +101,8 @@ export class AccountRepository {
         accounts: [],
         provisioning: [],
       },
-    ),
-    credentialOptions: CredentialOptions = {},
-  ) {
-    this.#file = file;
+      this.#observers.notify,
+    );
     const snapshot = this.#file.capture();
     // Recovery and fixture integrations share the same resolved binding as writes.
     this.root = dirname(snapshot.persistence.binding.configured);
@@ -197,6 +202,10 @@ export class AccountRepository {
   }
   retireCredentials(): void {
     this.#retireCredentials();
+  }
+  /** Observes installed account-store publications, including set members. */
+  subscribe(listener: () => undefined): () => void {
+    return this.#observers.subscribe(listener);
   }
   /** Offline journal replay only; no candidate or wall-clock code is reissued. */
   recoverParticipant(
