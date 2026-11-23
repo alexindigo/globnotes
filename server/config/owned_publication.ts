@@ -61,6 +61,7 @@ type SetPhase =
   | "publishing"
   | "installed"
   | "settled"
+  | "discarding"
   | "discarded"
   | "recovery-required";
 interface SetFence {
@@ -68,6 +69,7 @@ interface SetFence {
   setId?: string;
   phase: SetPhase;
   decided: boolean;
+  validating?: boolean;
 }
 interface ParticipantState {
   readonly owner: object;
@@ -75,12 +77,111 @@ interface ParticipantState {
   readonly candidate: RecordedCandidate;
   readonly install: () => undefined;
   readonly notify: () => undefined;
-  readonly releaseWrites: () => void;
+  readonly writes: WriteReservation;
   available(): void;
   hold(fence: SetFence): void;
   fence?: SetFence;
 }
 const participants = new WeakMap<PublicationParticipant, ParticipantState>();
+
+interface ReservationJournal {
+  readonly path: string;
+  readonly members: ReadonlySet<WriteReservation>;
+}
+
+/** The registry owns the native write hold, independently of candidate
+ * descriptors and participant handles. Recovery can validate a candidate
+ * without displacing the current fence; only a complete set can take custody. */
+class WriteReservation {
+  static readonly #active = new Map<string, WriteReservation>();
+  #key: string;
+  #release: () => void;
+  #fence?: SetFence;
+  #validatingRecovery = false;
+  #record?: RecordedCandidate["record"];
+  #journal?: ReservationJournal;
+
+  private constructor(key: string, release: () => void, fence?: SetFence) {
+    this.#key = key;
+    this.#release = release;
+    this.#fence = fence;
+  }
+
+  static claim(
+    expected: StoredConfigSnapshot,
+    setId: string,
+    role: string,
+    fence: SetFence | undefined,
+    acquire: () => () => void,
+    record?: RecordedCandidate["record"],
+  ): WriteReservation {
+    const key = JSON.stringify([expected.binding.target, setId, role]);
+    const existing = this.#active.get(key);
+    if (existing) {
+      const original = existing.#record;
+      if (
+        !record || !original || record.root !== original.root ||
+        record.candidate !== original.candidate ||
+        record.before.raw !== original.before.raw ||
+        record.after.raw !== original.after.raw || !existing.canRecover()
+      ) throw new PublicationSetUnavailable();
+      return existing;
+    }
+    const writes = new WriteReservation(key, acquire(), fence);
+    writes.#record = record;
+    this.#active.set(key, writes);
+    return writes;
+  }
+
+  record(candidate: RecordedCandidate) {
+    this.#record = candidate.record;
+  }
+
+  ownedBy(fence: SetFence): boolean {
+    return this.#fence === fence && this.#isActive() &&
+      !this.#validatingRecovery;
+  }
+
+  #isActive(): boolean {
+    return WriteReservation.#active.get(this.#key) === this;
+  }
+
+  canRecover(): boolean {
+    return this.#isActive() && !this.#validatingRecovery &&
+      !this.#fence?.validating &&
+      (!this.#fence ||
+        ["prepared", "decided", "installed", "recovery-required"].includes(
+          this.#fence.phase,
+        ));
+  }
+
+  validateRecovery<T>(validate: () => T): T {
+    this.#validatingRecovery = true;
+    try {
+      return validate();
+    } finally {
+      this.#validatingRecovery = false;
+    }
+  }
+
+  acceptsJournal(journal: ReservationJournal): boolean {
+    const previous = this.#journal;
+    return !previous || (previous.path === journal.path &&
+      previous.members.size === journal.members.size &&
+      [...previous.members].every((member) => journal.members.has(member)));
+  }
+
+  seal(fence: SetFence, journal: ReservationJournal) {
+    this.#fence = fence;
+    this.#journal = journal;
+  }
+
+  release(fence: SetFence) {
+    if (!this.ownedBy(fence)) throw new PublicationSetUnavailable();
+    this.#release();
+    WriteReservation.#active.delete(this.#key);
+  }
+}
 
 function journalRetired(filename: string): boolean {
   try {
@@ -114,13 +215,19 @@ export function createPublicationSet(
   const members = entries as ParticipantState[];
   for (const member of members) member.available();
   const records = members.map((m) => m.candidate.record);
+  const binding: ReservationJournal = {
+    path: journal,
+    members: new Set(members.map((member) => member.writes)),
+  };
   if (
     records.some((r) => r.setId !== setId) ||
     new Set(records.map((r) => r.role)).size !== members.length ||
     new Set(records.map((r) => r.after.binding.target)).size !==
       members.length ||
     new Set(members.map((m) => m.owner)).size !== members.length ||
-    members.some((m) => m.decided !== members[0].decided)
+    members.some((m) =>
+      m.decided !== members[0].decided || !m.writes.acceptsJournal(binding)
+    )
   ) {
     throw new StoredConfigConflict();
   }
@@ -129,8 +236,10 @@ export function createPublicationSet(
   const validation = setValidation(fence);
   for (const member of members) {
     member.fence = fence;
+    member.writes.seal(fence, binding);
     member.hold(fence);
   }
+  const ownsWrites = () => members.every((m) => m.writes.ownedBy(fence));
   let warning = false, notificationFailed = false;
   const receipt = (
     state: "committed" | "recovery-required",
@@ -142,13 +251,11 @@ export function createPublicationSet(
       warning: warning ? "stored-durability-unconfirmed" : null,
       notificationFailed,
     });
-  let validating = false;
-  let cleaning = false;
   const validate = () => {
-    if (fence.phase !== "prepared" || validating) {
+    if (fence.phase !== "prepared" || fence.validating || !ownsWrites()) {
       throw new PublicationSetUnavailable();
     }
-    validating = true;
+    fence.validating = true;
     try {
       // All authority callbacks precede ALL set storage checks, followed by the
       // shared lease engine's final pure lifetime fences. Per-member lease checks
@@ -162,8 +269,11 @@ export function createPublicationSet(
           }], members.map((member) => member.candidate.authority)),
       );
       check.retire();
+    } catch (error) {
+      if (fence.decided) fence.phase = "recovery-required";
+      throw error;
     } finally {
-      validating = false;
+      fence.validating = false;
     }
     if (fence.phase !== "prepared") throw new PublicationSetUnavailable();
   };
@@ -178,7 +288,9 @@ export function createPublicationSet(
       fence.phase = "decided";
     },
     publish(): PublicationOutcome {
-      if (fence.phase !== "decided") throw new PublicationSetUnavailable();
+      if (fence.phase !== "decided" || !ownsWrites()) {
+        throw new PublicationSetUnavailable();
+      }
       fence.phase = "publishing";
       try {
         for (const member of members) {
@@ -196,13 +308,15 @@ export function createPublicationSet(
       }
     },
     release(): PublicationOutcome {
-      if (fence.phase !== "installed" || !journalRetired(journal)) {
+      if (
+        fence.phase !== "installed" || !ownsWrites() || !journalRetired(journal)
+      ) {
         throw new PublicationSetUnavailable();
       }
       // Required runtime installation is complete and the bound journal is
       // absent. The transaction owns confirmation of durable retirement.
       fence.phase = "settled";
-      for (const member of members) member.releaseWrites();
+      for (const member of members) member.writes.release(fence);
       lifetime.retire();
       for (const member of members) {
         try {
@@ -214,31 +328,25 @@ export function createPublicationSet(
       return receipt("committed");
     },
     discard() {
-      if (fence.decided) return;
-      if (validating) {
-        // Revocation is synchronous even when a validation witness reenters.
-        fence.phase = "discarded";
+      if (fence.decided || fence.phase === "discarding" || !ownsWrites()) {
+        return;
       }
       const errors: unknown[] = [];
-      fence.phase = "recovery-required";
-      if (cleaning) return;
-      cleaning = true;
-      try {
-        for (const member of members) {
-          try {
-            member.candidate.discard();
-          } catch (error) {
-            errors.push(error);
-          }
+      // Revoke synchronously without admitting recovery during cleanup.
+      fence.phase = "discarding";
+      for (const member of members) {
+        try {
+          member.candidate.discard();
+        } catch (error) {
+          errors.push(error);
         }
-      } finally {
-        cleaning = false;
       }
       if (errors.length) {
+        fence.phase = "recovery-required";
         throw new AggregateError(errors, "Publication set cleanup failed.");
       }
       fence.phase = "discarded";
-      for (const member of members) member.releaseWrites();
+      for (const member of members) member.writes.release(fence);
       lifetime.retire();
     },
   });
@@ -279,7 +387,7 @@ export function createOwnedPublication<T>(
     candidate: RecordedCandidate,
     captured: T,
     reservation: SetFence,
-    releaseWrites: () => void,
+    writes: WriteReservation,
     recovered = false,
   ): PublicationParticipant => {
     const state: ParticipantState = {
@@ -288,11 +396,12 @@ export function createOwnedPublication<T>(
       candidate,
       install: () => install(captured, candidate.record.after),
       notify,
-      releaseWrites,
+      writes,
       available: () => {
         if (
           unavailable || held !== reservation ||
-          reservation.phase !== "prepared"
+          reservation.phase !== "prepared" ||
+          !(recovered ? writes.canRecover() : writes.ownedBy(reservation))
         ) throw new PublicationSetUnavailable();
       },
       hold: (fence) => {
@@ -301,15 +410,21 @@ export function createOwnedPublication<T>(
     };
     const handle = Object.freeze({
       discard() {
-        if (state.fence) return; // Set custody is no longer ordinary scratch.
-        reservation.phase = "recovery-required";
-        // Before the whole recovery set is admitted, release read custody only.
-        // A sibling's failed recovery must never delete a journal participant.
-        if (recovered) candidate.detach();
-        else candidate.discard();
+        if (
+          state.fence || reservation.phase === "discarding" ||
+          (!recovered && !writes.ownedBy(reservation))
+        ) return;
+        reservation.phase = "discarding";
+        try {
+          // A sibling's failed recovery must never delete a journal participant.
+          if (recovered) candidate.detach();
+          else candidate.discard();
+        } finally {
+          reservation.phase = "recovery-required";
+        }
         if (!recovered) {
           reservation.phase = "discarded";
-          releaseWrites();
+          writes.release(reservation);
         }
       },
     }) as PublicationParticipant;
@@ -348,7 +463,13 @@ export function createOwnedPublication<T>(
       };
       const validation = publicationValidation(store.root, setId);
       const writer = recordedWriter(store);
-      const releaseWrites = writer.reserveOrdinaryWrites(expected);
+      const writes = WriteReservation.claim(
+        expected,
+        setId,
+        role,
+        reservation,
+        () => writer.reserveOrdinaryWrites(expected),
+      );
       held = reservation;
       let candidate: RecordedCandidate;
       try {
@@ -358,11 +479,12 @@ export function createOwnedPublication<T>(
         );
       } catch (error) {
         held = undefined;
-        releaseWrites();
+        writes.release(reservation);
         throw error;
       }
+      writes.record(candidate);
       try {
-        return participant(candidate, captured, reservation, releaseWrites);
+        return participant(candidate, captured, reservation, writes);
       } catch (error) {
         reservation.phase = "recovery-required";
         try {
@@ -375,7 +497,7 @@ export function createOwnedPublication<T>(
           );
         }
         held = undefined;
-        releaseWrites();
+        writes.release(reservation);
         throw error;
       }
     },
@@ -405,26 +527,25 @@ export function createOwnedPublication<T>(
         throw error;
       }
       try {
-        const releaseWrites = writer.reserveOrdinaryWrites(
+        const writes = WriteReservation.claim(
           candidate.record.after,
+          setId,
+          role,
+          undefined,
+          () => writer.reserveOrdinaryWrites(candidate.record.after),
+          candidate.record,
         );
-        const captured = immutable(
-          structuredClone(validate(JSON.parse(candidate.record.after.raw!))),
-        );
-        // Validation must not silently normalize recorded bytes into a different
-        // runtime value. Recovery installs the exact recorded representation.
-        if (JSON.stringify(captured) + "\n" !== candidate.record.after.raw) {
-          throw new StoredConfigConflict();
-        }
-        return participant(
-          candidate,
-          captured,
-          reservation,
-          releaseWrites,
-          true,
-        );
+        return writes.validateRecovery(() => {
+          const captured = immutable(
+            structuredClone(validate(JSON.parse(candidate.record.after.raw!))),
+          );
+          // Recovery installs the exact recorded representation.
+          if (JSON.stringify(captured) + "\n" !== candidate.record.after.raw) {
+            throw new StoredConfigConflict();
+          }
+          return participant(candidate, captured, reservation, writes, true);
+        });
       } catch (error) {
-        reservation.phase = "recovery-required";
         // Recovery owns a descriptor but an unaccepted record must not be
         // discarded: a decided journal may still need its exact candidate.
         try {
@@ -435,6 +556,8 @@ export function createOwnedPublication<T>(
             "Recovery admission and descriptor release failed.",
             { cause: error },
           );
+        } finally {
+          reservation.phase = "recovery-required";
         }
         throw error;
       }

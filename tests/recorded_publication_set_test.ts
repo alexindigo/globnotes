@@ -1,4 +1,221 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { createOwnedPublication as reservationFixtureOwner } from "../server/config/owned_publication.ts";
+import { StoredConfigConflict as ReservationConflict } from "../server/config/publication_outcome.ts";
+import { assertStrictEquals as assertRejectedIdentity } from "@std/assert";
+import { join } from "@std/path";
+
+function prepareReservationJournal(root: string, setId: string) {
+  const lifetime = createOperationLease("live", [() => undefined], []);
+  try {
+    const journal = join(root, "journal.json");
+    const original = createPublicationSet(
+      setId,
+      ["first", "second"].map((role, i) => {
+        const target = reservationFixtureOwner<number>(
+          join(root, `${role}.json`),
+          () => undefined,
+          () => undefined,
+          root,
+        );
+        return target.prepareParticipant(
+          i + 1,
+          target.capture(),
+          lifetime.lease,
+          setId,
+          role,
+        );
+      }),
+      journal,
+    );
+    original.decide();
+    Deno.writeTextFileSync(journal, JSON.stringify(original.records));
+    assertEquals(original.publish().state, "committed");
+    return original;
+  } finally {
+    lifetime.retire();
+  }
+}
+
+for (
+  const failure of [
+    "none",
+    "validation",
+    "byte mismatch",
+    "publication",
+    "journal retirement",
+  ] as const
+) {
+  Deno.test(`publication reservation custody after recovery outcome: ${failure}`, () => {
+    const root = Deno.makeTempDirSync();
+    const lifetime = createOperationLease("live", [() => undefined], []);
+    const { lease } = lifetime;
+    const unavailable = new PublicationSetUnavailable().message;
+    try {
+      const setId = crypto.randomUUID();
+      const roles = ["first", "second"];
+      const paths = roles.map((role) => join(root, `${role}.json`));
+      const journal = join(root, "journal.json");
+      const owner = (
+        path: string,
+        install: (value: number) => undefined = () => undefined,
+      ) => reservationFixtureOwner(path, install, () => undefined, root);
+      const ordinary = paths.map((path) => owner(path));
+      const write = (target: typeof ordinary[number], value: number) =>
+        target.prepare(value, target.capture(), lease).publish().state;
+      const verifyFenced = () => {
+        for (const target of ordinary) {
+          assertThrows(
+            () => write(target, 3),
+            PublicationSetUnavailable,
+            unavailable,
+          );
+        }
+      };
+
+      // A separate hold on the very same target must survive settlement.
+      const unrelated = owner(paths[0]);
+      const unrelatedHandle = unrelated.prepareParticipant(
+        4,
+        unrelated.capture(),
+        lease,
+        crypto.randomUUID(),
+        roles[0],
+      );
+
+      const original = prepareReservationJournal(root, setId);
+      const admissionFailure = failure === "validation" ||
+        failure === "byte mismatch";
+      if (admissionFailure) {
+        // Model a restart after installation: keep the journal and bytes but
+        // remove the original set's in-process reservations before recovery.
+        const savedJournal = `${journal}.saved`;
+        Deno.renameSync(journal, savedJournal);
+        assertEquals(original.release().state, "committed");
+        Deno.renameSync(savedJournal, journal);
+      }
+
+      const recovery = acquireOfflineRecovery(root);
+      try {
+        const durable: unknown[] = JSON.parse(Deno.readTextFileSync(journal));
+        const installed: number[] = [];
+        let failInstall = failure === "publication";
+        const recover = (
+          i: number,
+          validate = (value: unknown) => value as number,
+        ) =>
+          owner(paths[i], (value) => {
+            if (failInstall && i === 1) throw new Error("Installation failed");
+            installed.push(value);
+            return undefined;
+          }).recoverParticipant(
+            durable[i],
+            recovery.authority,
+            setId,
+            roles[i],
+            validate,
+            "decided",
+          );
+        const reconstruct = () => {
+          const members = [recover(0), recover(1)];
+          if (failure === "none") {
+            assertThrows(
+              () => createPublicationSet(setId, members.slice(0, 1), journal),
+              ReservationConflict,
+              new ReservationConflict().message,
+            );
+          }
+          return createPublicationSet(setId, members, journal);
+        };
+        if (admissionFailure) {
+          const first = recover(0);
+          try {
+            if (failure === "validation") {
+              const rejected = new Error("Rejected recorded value");
+              assertRejectedIdentity(
+                assertThrows(
+                  () =>
+                    recover(1, () => {
+                      throw rejected;
+                    }),
+                  Error,
+                  rejected.message,
+                ),
+                rejected,
+              );
+            } else {
+              assertThrows(
+                () => recover(1, () => 19),
+                ReservationConflict,
+                new ReservationConflict().message,
+              );
+            }
+          } finally {
+            first.discard();
+          }
+          verifyFenced();
+        }
+        if (failure === "publication" || failure === "journal retirement") {
+          const firstReplay = reconstruct();
+          firstReplay.decide();
+          assertEquals(
+            firstReplay.publish().state,
+            failInstall ? "recovery-required" : "committed",
+          );
+          if (!failInstall) {
+            assertThrows(
+              () => firstReplay.release(),
+              PublicationSetUnavailable,
+              unavailable,
+            );
+          }
+          verifyFenced();
+          failInstall = false;
+        }
+
+        const replay = reconstruct();
+        replay.decide();
+        assertEquals(replay.publish().state, "committed");
+        assertEquals(
+          installed,
+          failure === "publication"
+            ? [1, 1, 2]
+            : failure === "journal retirement"
+            ? [1, 2, 1, 2]
+            : [1, 2],
+        );
+        verifyFenced();
+        Deno.removeSync(journal);
+        if (failure === "none") {
+          assertThrows(
+            () => original.release(),
+            PublicationSetUnavailable,
+            unavailable,
+          );
+        }
+        assertEquals(replay.release().state, "committed");
+        assertThrows(
+          () => write(ordinary[0], 3),
+          PublicationSetUnavailable,
+          unavailable,
+        );
+        unrelatedHandle.discard();
+        assertEquals(ordinary.map((target) => write(target, 3)), [
+          "committed",
+          "committed",
+        ]);
+        assertEquals(paths.map((path) => Deno.readTextFileSync(path)), [
+          "3\n",
+          "3\n",
+        ]);
+      } finally {
+        recovery.close();
+      }
+    } finally {
+      lifetime.retire();
+      Deno.removeSync(root, { recursive: true });
+    }
+  });
+}
 import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { acquireOfflineRecovery } from "../server/auth/offline_recovery.ts";
