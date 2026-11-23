@@ -78,6 +78,25 @@ function fixture(options = {}) {
 }
 
 describe("Settings composition and ownership", () => {
+  it.each([false, true])('session changes retire the host-path chooser with identity injection=%s', async injected => {
+    const identityControllers = injected ? { hasWork: () => false, settle: async () => true, departurePages: () => [], resolveDeparture: async () => true } : null;
+    const f = fixture({ identityControllers }); await f.session.browseField(pluginPage.id, folder);
+    expect(f.session.state.pathChoice).not.toBeNull(); f.token.value = 'replacement-token';
+    expect([f.session.state.pathChoice, f.session.state.pathEntries]).toEqual([null, []]);
+  });
+  it('resolves retained identity work before changing pages or closing and loads only the selected identity page', async () => {
+    let proceed = false;
+    const identityControllers = { account: { load: vi.fn() }, access: { load: vi.fn() }, hasWork: () => true, settle: async () => true,
+      departurePages: () => [{ page: { label: 'Access' }, canSave: true }], resolveDeparture: vi.fn(async () => proceed) };
+    const f = fixture({ identityControllers }); f.pages.value.push({ ...corePage('access'), kind: 'access' });
+    expect(await f.session.selectPage('core:access')).toBe(false); expect(f.session.state.currentPageId).toBe('core:appearance');
+    proceed = true; await f.session.openSettings('core:access'); expect(identityControllers.access.load).toHaveBeenCalledOnce();
+    expect(identityControllers.account.load).not.toHaveBeenCalled(); expect(api.getAccessSettings).not.toHaveBeenCalled(); expect(f.participant.hasUnsavedChanges()).toBe(true);
+    proceed = false; expect(await f.session.requestClose()).toBe(false); expect(f.visible.value).toBe(true);
+    proceed = true; expect(await f.participant.save()).toBe(true); expect(identityControllers.resolveDeparture).toHaveBeenLastCalledWith('session handoff', 'save');
+    expect(await f.participant.discard()).toBe(true); expect(identityControllers.resolveDeparture).toHaveBeenLastCalledWith('session handoff', 'discard');
+    expect(await f.session.requestClose()).toBe(true); expect(f.visible.value).toBe(false);
+  });
   it('projects page feedback from existing snapshots without moving recovery content into it', async () => {
     const f = fixture();
     f.records[pluginPage.id] = { status: 'saving' };

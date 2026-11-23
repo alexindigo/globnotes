@@ -11,7 +11,7 @@ import { GUEST } from "../server/auth/sessions.ts";
 import { StoredConfigConflict } from "../server/config/publication_outcome.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import { InstanceAuthority } from "../server/auth/authority.ts";
-import { VaultAccess } from "../server/auth/access.ts";
+import { VaultAccess, vaultAccessHandlers } from "../server/auth/access.ts";
 import { IdentityStateError } from "../server/auth/records.ts";
 import { identityWorkflowFixture } from "./helpers/identity_workflows.ts";
 
@@ -155,6 +155,40 @@ Deno.test("vault access: revision/signature CAS, exact-login addition and no gue
       [f.acl.capture().value.updateId, f.acl.capture().value.updateActorId],
       [updateId, f.alice.id],
     );
+  }));
+
+Deno.test("vault access: exact-login conflicts have the same safe HTTP response and do not replace the CAS", () =>
+  identityWorkflowFixture(async (f) => {
+    const before = await f.read(f.access.view(f.a));
+    const handlers = vaultAccessHandlers(f.access, () => Promise.resolve(f.a));
+    const put = (login: string, signature = before.signature) => {
+      return handlers.put(
+        new Request("http://fixture/_/api/access", {
+          method: "PUT",
+          body: JSON.stringify({
+            revision: before.revision,
+            signature,
+            updateId: createUuid(),
+            everybody: before.everybody,
+            grants: before.grants,
+            additions: [{ login, level: "view" }],
+          }),
+        }),
+      );
+    };
+    for (const login of ["nobody", "alice"]) {
+      const response = await put(login);
+      assertEquals([response.status, await response.json()], [409, {
+        code: "access_login_conflict",
+        detail: "The login could not be added to this vault.",
+      }]);
+    }
+    await assertRejects(
+      () => put("alice", "stale"),
+      StoredConfigConflict,
+      CONFLICT,
+    );
+    assertEquals(await f.read(f.access.view(f.a)), before);
   }));
 
 Deno.test("vault access: self-demotion acknowledgment and actor-bound lost-reply status reveal no full ACL", () =>

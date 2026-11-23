@@ -65,6 +65,8 @@
           />
           </SettingsTabs>
           </SettingsPage>
+          <AccountSettings v-else-if="currentPage?.kind === 'account' && session.identityControllers" :controller="session.identityControllers.account" />
+          <AccessSettings v-else-if="currentPage?.kind === 'access' && session.identityControllers" :controller="session.identityControllers.access" />
           <SettingsPage v-else-if="currentPage" :title="currentPage.label" :description="currentPage.description" :status="currentPageStatus">
             <!-- Appearance: the theme list content (values + callbacks;
              the legacy popup wrapper is not rendered here). -->
@@ -148,6 +150,8 @@ import Toggle from "./Toggle.vue";
 import PluginInventorySettingsPage from "./PluginInventorySettingsPage.vue";
 import SettingsNav from './settings/SettingsNav.vue';
 import SettingsPage from './settings/SettingsPage.vue';
+import AccountSettings from './settings/AccountSettings.vue';
+import AccessSettings from './settings/AccessSettings.vue';
 import SettingsTabs from './settings/SettingsTabs.vue';
 import SettingRow from './settings/SettingRow.vue';
 import SettingsActions from './SettingsActions.vue';
@@ -157,13 +161,14 @@ import KeybindingsSettingsPage from "./KeybindingsSettingsPage.vue";
 import BrandingSettingsPage from "./BrandingSettingsPage.vue";
 import SyncSettingsPage from "./SyncSettingsPage.vue";
 
-const props = defineProps({ permissionController: Object, writable: { type: Boolean, default: false } });
+const props = defineProps({ permissionController: Object, identityControllers: Object, writable: { type: Boolean, default: false } });
 const isVisible = defineModel({ type: Boolean });
 const emit = defineEmits(["open-access", "logout"]);
 const globalStore = useGlobalStore();
 const modal = ref(null);
 const session = createSettingsSession({
   permissionController: props.permissionController,
+  identityControllers: props.identityControllers,
   config: () => globalStore.config,
   applyBrand: fresh => { globalStore.config = { ...globalStore.config, brand: fresh }; },
   writable: () => props.writable,

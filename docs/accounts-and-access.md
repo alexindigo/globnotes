@@ -370,3 +370,22 @@ for the notes landing. A lost setup reply checks readiness rather than replaying
 creation. These views/controllers and the token adapter are not active routes;
 their production composition and browser acceptance remain in the cutover and
 acceptance steps.
+## Prepared Access screens
+
+The prepared Vault Access page shows named Admin, Edit, View and No access
+levels, followed by Everybody else (Edit, View or No access). A server-set Admin
+is explained as a static value; edits to other rows preserve its saved grant.
+Add existing changes vault access only. Create and add commits the new account
+and its vault access together and gives the recipient a temporary password.
+
+Access choices are retained before independent additions or departure. The form
+captures its original account, credential and vault scope: a later sign-in cannot
+dispatch its queued writes. Self-demotion has one confirmation naming the lost
+abilities and how access can be restored.
+
+An uncertain write keeps its original ID and wire. Receipt checks never replay
+PUT or POST. A negative create result while the original POST remains pending is
+inconclusive; one matching late acknowledgment can still complete that operation.
+Temporary passwords stay only in transient form memory and clear on success or
+disposal. These controllers and views are injection-only until the coordinated
+production switch; this section does not claim the new routes are active.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { HttpError } from "@pathfinder/pathfinder";
 import { StoredConfigConflict } from "../config/publication_outcome.ts";
+import { AccessLoginConflict } from "./access_login_conflict.ts";
 import { OperationError } from "../plugins/errors.ts";
 import { createOperationLease } from "../operation_lease.ts";
 import type { VaultAccess } from "./access.ts";
@@ -185,11 +186,14 @@ export class AccountProvisioning {
         signal,
       );
     }
-    if (accounts.byLogin(data.login)) throw new StoredConfigConflict();
+    const expected = acl.capture();
     const view = await acl.view();
     if (view.revision !== data.revision || view.signature !== data.signature) {
       throw new StoredConfigConflict();
     }
+    signal?.throwIfAborted();
+    admin.assertCurrent(data.operationId);
+    if (accounts.byLogin(data.login)) throw new AccessLoginConflict();
     const pending = (): undefined => {
       signal?.throwIfAborted();
       return undefined;
@@ -204,7 +208,6 @@ export class AccountProvisioning {
     ]);
     let parts: IdentityParticipants | undefined;
     try {
-      const expected = acl.capture();
       admin.assertCurrent(data.operationId);
       const prepared = await accounts.credentials.preparePasswordOnlyRecipient(
         bindAccountPreparationAuthority(

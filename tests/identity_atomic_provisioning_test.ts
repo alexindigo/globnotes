@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals, assertRejects } from "@std/assert";
 import { createUuid } from "../shared/uuid.ts";
+import { AccessLoginConflict } from "../server/auth/access_login_conflict.ts";
+import { StoredConfigConflict } from "../server/config/publication_outcome.ts";
 import {
   identityWorkflowFixture,
   type IdentityWorkflows,
@@ -18,6 +20,27 @@ async function request(f: IdentityWorkflows) {
     signature: view.signature,
   };
 }
+
+Deno.test("atomic provisioning: a duplicate login differs from stale access without publishing either", () =>
+  identityWorkflowFixture(async (f) => {
+    const before = [f.accounts.capture().value, f.acl.capture().value];
+    const input = { ...await request(f), login: "bob" };
+    const refusal = await assertRejects(
+      () => f.provisioning.createAndAdd(f.a, input),
+      AccessLoginConflict,
+      "HTTP 409",
+    );
+    assertEquals(await refusal.response().json(), {
+      code: "access_login_conflict",
+      detail: "The login could not be added to this vault.",
+    });
+    await assertRejects(
+      () => f.provisioning.createAndAdd(f.a, { ...input, signature: "stale" }),
+      StoredConfigConflict,
+      "Stored configuration changed before commit.",
+    );
+    assertEquals([f.accounts.capture().value, f.acl.capture().value], before);
+  }));
 
 Deno.test("atomic provisioning: a refused prepared decision leaves neither account nor grant", () =>
   identityWorkflowFixture(async (f) => {

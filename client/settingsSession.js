@@ -43,7 +43,7 @@ export function createSettingsSession({
   registerParticipant = registerSessionParticipant,
   createCore = createCoreSettingsAdapters, createPages = createSettingsPageState,
    createInventory = createPluginInventoryController, createPermissions = createPluginPermissionController,
-   createDrivers = createDriverSettings,
+   createDrivers = createDriverSettings, identityControllers = null,
 }) {
   const core = createCore({ getBrand: () => config().brand, writable, writeBrand: postBrand,
     readBrand: async () => (await getConfig()).brand, applyBrand });
@@ -61,9 +61,10 @@ export function createSettingsSession({
     ? accountName.value ? `Signed in as ${accountName.value}` : access.state.loading ? 'Reading current account…' : 'This session is signed in.'
     : 'This session has no account.'}));
   const stopAccessSession = watch([()=>permissionSessionKey(config(),token()),()=>config().accessRevision],()=>{
+    closePathChoice();
+    if (identityControllers) return;
     const refresh=(access.state.loading || isVisible()) && ['access','account'].includes(currentPage.value?.kind);
     access.invalidate();
-    closePathChoice();
     if(refresh)void access.load();
   },{flush:'sync'});
   // Recheck at the intent boundary too: browser token storage is not reactive.
@@ -139,18 +140,18 @@ export function createSettingsSession({
     confirmRemove:label => askRisk(`Remove ${label}?`, `Files in this vault and on ${label} stay as they are.`, 'Remove', 'danger') });
   const driverSnapshot = computed(() => drivers.state);
   const participant = {
-    hasUnsavedChanges: () => drivers.hasWork() || inventory.hasWork() || pageState.hasWork() || permissions.hasWork() || core.hasWork(),
-    settlePending: async () => await drivers.settle() && await inventory.settle() && await pageState.settle() && await permissions.settle() && await core.settle(),
+    hasUnsavedChanges: () => !!identityControllers?.hasWork() || drivers.hasWork() || inventory.hasWork() || pageState.hasWork() || permissions.hasWork() || core.hasWork(),
+    settlePending: async () => (!identityControllers || await identityControllers.settle()) && await drivers.settle() && await inventory.settle() && await pageState.settle() && await permissions.settle() && await core.settle(),
     requestDecision: reason => {
       const pages = pageState.pageIds().map(id => pageState.snapshot(id)).filter(page => page.dirty || page.pending);
       const permissionPages = permissions.recoveryIds().map(id => ({ page: { label: `Permissions for ${pluginName(id)}` }, canSave: !!permissions.snapshot(id).draft }));
       const corePages = core.hasWork() ? [{ page: { label: 'Branding' }, canSave: writable() }] : [];
       const inventoryPages = inventory.hasWork() ? [{ page: { label: 'Plugins' }, canSave: inventory.snapshot().canRetry }] : [];
-      const all = [...pages, ...permissionPages, ...corePages, ...inventoryPages, ...(drivers.hasWork() ? drivers.departurePages() : [])];
+      const all = [...pages, ...permissionPages, ...corePages, ...inventoryPages, ...(drivers.hasWork() ? drivers.departurePages() : []), ...(identityControllers?.departurePages() ?? [])];
       return askDeparture({ reason, pages: all, canSave: all.every(page => page.canSave) });
     },
-    save: async () => await drivers.resolveDeparture("session handoff", "save") && await inventory.resolveDeparture("session handoff", "save") && await pageState.resolveDeparture(pageState.pageIds(), "session handoff", "save") && await resolvePermissionDeparture(permissions.recoveryIds(), "session handoff", "save") && await resolveCoreDeparture('session handoff', 'save'),
-    discard: async () => await drivers.resolveDeparture("session handoff", "discard") && await inventory.resolveDeparture("session handoff", "discard") && await pageState.resolveDeparture(pageState.pageIds(), "session handoff", "discard") && await resolvePermissionDeparture(permissions.recoveryIds(), "session handoff", "discard") && await resolveCoreDeparture('session handoff', 'discard'),
+    save: async () => (!identityControllers || await identityControllers.resolveDeparture("session handoff", "save")) && await drivers.resolveDeparture("session handoff", "save") && await inventory.resolveDeparture("session handoff", "save") && await pageState.resolveDeparture(pageState.pageIds(), "session handoff", "save") && await resolvePermissionDeparture(permissions.recoveryIds(), "session handoff", "save") && await resolveCoreDeparture('session handoff', 'save'),
+    discard: async () => (!identityControllers || await identityControllers.resolveDeparture("session handoff", "discard")) && await drivers.resolveDeparture("session handoff", "discard") && await inventory.resolveDeparture("session handoff", "discard") && await pageState.resolveDeparture(pageState.pageIds(), "session handoff", "discard") && await resolvePermissionDeparture(permissions.recoveryIds(), "session handoff", "discard") && await resolveCoreDeparture('session handoff', 'discard'),
   };
   const disposeParticipant = registerParticipant("settings", participant);
   // Current registry order plus captured recovery definitions, normalized once
@@ -265,13 +266,16 @@ export function createSettingsSession({
     }
     const selected=page && registry.find(page);
     if (selected && !await selectPage(page)) return;
-    if (!selected && ['access','account'].includes(currentPage.value?.kind)) await loadAccessSummary();
+    if (!selected && ['access','account'].includes(currentPage.value?.kind)) {
+      if (identityControllers) await identityControllers[currentPage.value.kind].load(); else await loadAccessSummary();
+    }
     if (isVisible()) { focus(); return; }
     setVisible(true);
     if (currentPage.value?.kind === 'plugin-page') await pageState.load(currentPageId.value);
     if (currentPage.value?.kind === 'sync') drivers.activate();
   }
   async function selectPage(id) {
+    if (id !== currentPageId.value && identityControllers && !await identityControllers.resolveDeparture('changing pages')) return false;
     if (id !== currentPageId.value && !await drivers.resolveDeparture("changing pages")) return false;
     if (id !== currentPageId.value && !await inventory.resolveDeparture("changing pages")) return false;
     if (id !== currentPageId.value && !await pageState.resolveDeparture([currentPageId.value], "changing pages")) return false;
@@ -281,13 +285,16 @@ export function createSettingsSession({
     if (id !== currentPageId.value) expandedPluginId.value = null;
     currentPageId.value = id;
     if (currentPage.value?.kind === 'branding') core.loadBrand();
-    if (['access','account'].includes(currentPage.value?.kind)) await loadAccessSummary();
+    if (['access','account'].includes(currentPage.value?.kind)) {
+      if (identityControllers) await identityControllers[currentPage.value.kind].load(); else await loadAccessSummary();
+    }
     if (currentPage.value?.kind === 'plugin-page') await pageState.load(id);
     if (currentPage.value?.kind === 'sync') drivers.activate();
     return true;
   }
   /** Close keeps pending/invalid drafts unless explicitly resolved. */
   async function requestClose() {
+    if (identityControllers && !await identityControllers.resolveDeparture('closing Settings')) return false;
     if (!await drivers.resolveDeparture("closing Settings")) return false;
     if (!await inventory.resolveDeparture("closing Settings")) return false;
     if (!await pageState.resolveDeparture(pageState.pageIds(), "closing Settings")) return false;
@@ -405,7 +412,7 @@ export function createSettingsSession({
       departureVisible, departureMessage, departureCanSave, departureConfirmText, inventorySnapshot,
         groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageStatus, currentPageIsPlugin, catalogPlugins, catalogPolicy, driverSnapshot,
       pluginRows, autoEnableView, pluginPageHeader, expandedPluginId })),
-    core, permissions, pageState, inventory, drivers,
+    core, permissions, pageState, inventory, drivers, identityControllers,
     setRiskVisible: value => { riskVisible.value = value; },
     setDepartureVisible: value => { departureVisible.value = value; },
     openSettings, selectPage, requestClose, reloadCurrentPage, decideDeparture,

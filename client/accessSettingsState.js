@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { reactive } from "vue";
 import { createUuid } from "../shared/uuid.ts";
+import { createIdentityAccessSettingsState } from "./identityAccessSettingsState.js";
+export { createIdentityAccessSettingsState, accessLevels, accessLevelLabel } from "./identityAccessSettingsState.js";
 
 /** Owns configured Access wire/results; controls inject APIs and completion. */
-export function createAccessSettingsState({ read, write, readStatus, completed, timeoutMs = 5000 }) {
+export function createAccessSettingsState({ read, write, readStatus, completed, timeoutMs = 5000, identity = false, ...adapters }) {
+  if (identity) return createIdentityAccessSettingsState({ read, write, readStatus, completed, timeoutMs, ...adapters });
   const state = reactive({ view: null, loading: false, pending: false, inFlight: false, unknown: false, needsReview: false, reviewing: false, error: "" });
   let disposed = false, owner = 0, attempt = 0, reviewId = 0, submission = null, wire = null, requiresLogin = false;
   async function observe(promise) {

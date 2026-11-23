@@ -32,6 +32,7 @@ import {
 } from "./records.ts";
 import { readAuthorityState } from "./authority_context.ts";
 import { readRequestJson } from "./request_json.ts";
+import { AccessLoginConflict } from "./access_login_conflict.ts";
 
 function conflict(message: string): never {
   throw new HttpError(409, message);
@@ -466,13 +467,6 @@ export class VaultAccess {
     const actor = lease.principal as AccountPrincipal;
     const { revision, signature, updateId, everybody, grants, exact } =
       parseAccessChange(input);
-    for (const { login, level } of exact) {
-      const account = this.#exact(login);
-      if (!account || Object.hasOwn(grants, account.id)) {
-        throw new HttpError(409, "Exact login is missing or duplicated.");
-      }
-      grants[account.id] = level;
-    }
     const acl = this.vault.acl,
       expected = acl.capture(),
       view = await acl.view();
@@ -485,6 +479,13 @@ export class VaultAccess {
       lease.assertCurrent(updateId);
     };
     guard();
+    for (const { login, level } of exact) {
+      const account = this.#exact(login);
+      if (!account || Object.hasOwn(grants, account.id)) {
+        throw new AccessLoginConflict();
+      }
+      grants[account.id] = level;
+    }
     acl.save(
       { everybody, grants },
       expected,
@@ -545,13 +546,18 @@ export function vaultAccessHandlers(
     async put(request: Request) {
       const admitted = await principal(request);
       workflow.admit(admitted);
-      return json(
-        await workflow.update(
-          admitted,
-          await readRequestJson(request),
-          request.signal,
-        ),
-      );
+      try {
+        return json(
+          await workflow.update(
+            admitted,
+            await readRequestJson(request),
+            request.signal,
+          ),
+        );
+      } catch (error) {
+        if (error instanceof AccessLoginConflict) return error.response();
+        throw error;
+      }
     },
     async resolve(request: Request, login: string) {
       return json(
