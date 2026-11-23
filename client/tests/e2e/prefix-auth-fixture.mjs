@@ -25,21 +25,16 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
    const build=(await scope.admit(()=>repositoryBuild(scope,{required:true}))).value;
   const layout=await fixtureLayout(scope,{GLOBNOTES_GLOBNOTES_PATH:vault,GLOBNOTES__METADATA_PATH:metadataBase(vault,state)},{build,artifacts:directory});
   const cwd=layout.cwd,assets=build.assets;
-  const donorSnapshot=async()=>{
-    const rows=[];
-    for(const row of assets){let sha256=null;try{sha256=await hash(await Deno.readFile(`${ROOT}/client/dist/${row.path}`));}catch(error){if(!(error instanceof Deno.errors.NotFound))throw error;}rows.push({path:row.path,sha256});}
-    return rows;
-  };
-  const donorAssets=(await scope.admit(donorSnapshot)).value;
    await scope.admit(async signal=>{
    for (const row of assets) { signal.throwIfAborted(); assert(await hash(await Deno.readFile(`${cwd}/client/dist/${row.path}`)) === row.sha256, "Production asset copy mismatch"); }
-   await Deno.writeTextFile(`${directory}/production-assets-before.json`, JSON.stringify({ sourceRoot: ROOT, cwd, assets, donorAssets }, null, 2), { createNew: true });
+   await Deno.writeTextFile(`${directory}/production-assets-before.json`, JSON.stringify({ sourceRoot: ROOT, cwd, assets }, null, 2), { createNew: true });
    });
    const hostname = origin.address;
    const port = (await scope.admit(()=>{const listener=Deno.listen({hostname,port:0});try{return listener.addr.port;}finally{listener.close();}})).value;
   let draining=Promise.resolve();scope.defer(()=>draining);
    const owner = (await spawnOwnedChild(scope,Deno.execPath(), {
-    args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", "--allow-net", "--allow-env", `${ROOT}/server/main.ts`],
+    // The server can stamp its own copy, not the checkout's independently published build.
+    args: ["run", "--cached-only", "--frozen", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-read", "--allow-write", `--deny-write=${resolve(ROOT, "client/dist")}`, "--allow-net", "--allow-env", `${ROOT}/server/main.ts`],
     cwd,
     env: { ...layout.environment, GLOBNOTES__SERVER_PATHPREFIX: prefix, GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false", GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) },
     stdout: "piped", stderr: "piped",
@@ -86,7 +81,6 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
     if(returned&&owner.status())throw new UnexpectedServerExitError(`Prefix fixture server exited on its own before close() (pid ${child.pid}, exit code ${owner.status().code})`);
     await owner.terminate(5000);
     await draining;
-     await scope.admit(async()=>assert(JSON.stringify(await donorSnapshot())===JSON.stringify(donorAssets),"Donor production assets changed during prefix fixture"));
     }
     } catch(error) {await lifetime.close(error);throw error;}
     await lifetime.close();

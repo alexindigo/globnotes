@@ -584,6 +584,31 @@ for (
   Deno.test(`native layout review: ${phase} ${outcome} after actual child exit cannot escape a handle`, async () => {
     await fixtureScope(async (scope) => {
       const input = await nativeLayout(scope);
+      const overlapsBuild = outcome === "held disposal" ||
+        outcome === "held body";
+      const foreignIndex = `${input.directory}/foreign-index.html`;
+      const checkoutIndex = path.fromFileUrl(
+        new URL("../client/dist/index.html", import.meta.url),
+      );
+      const newIndex = "<!doctype html><title>independent rebuild</title>";
+      let foreignIndexReads = 0;
+      if (overlapsBuild) {
+        await Deno.writeTextFile(foreignIndex, html);
+        // Model the separate build in this test's own directory. A lookup of
+        // the checkout's index sees the publication without touching the checkout.
+        const read = Deno.readFile;
+        scope.defer(() => {
+          Deno.readFile = read;
+        });
+        Deno.readFile = (file, options) => {
+          const requested = file instanceof URL
+            ? path.fromFileUrl(file)
+            : path.normalize(file);
+          if (requested !== checkoutIndex) return read(file, options);
+          foreignIndexReads++;
+          return read(foreignIndex, options);
+        };
+      }
       const events: string[] = [];
       const observedExit = fixtureGate(scope),
         held = fixtureGate(scope),
@@ -599,6 +624,9 @@ for (
             ),
           );
           events.push("response received");
+          if (overlapsBuild) {
+            await Deno.writeTextFile(foreignIndex, newIndex);
+          }
           const killer = (await spawnOwnedChild(scope, "bash", {
             args: ["-c", 'kill -TERM "$1"', "native-exit", String(child.pid)],
             stdout: "null",
@@ -693,6 +721,15 @@ for (
         false,
       ]);
       assertEquals(bodyDisposals, outcome === "held body" ? 1 : 0);
+      if (overlapsBuild) {
+        assertEquals(
+          [foreignIndexReads, await Deno.readTextFile(foreignIndex)],
+          [
+            0,
+            newIndex,
+          ],
+        );
+      }
       await absentRoot(child.cwd);
       await absentRoot(child.instance);
     });

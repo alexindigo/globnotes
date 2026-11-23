@@ -218,8 +218,10 @@ close promise. Every live borrower of the cached build links to its producer
 scope, so cancellation can reap the child before admitted work drains. A
 producer retired before issuing its input is never joined: a later borrower
 starts a fresh producer even before the cancelled job's rejection settles. Native
-readiness fences actual exit and scope retirement after IO; donor preservation
-compares the donor's captured bytes or absence, never private-build equality.
+readiness fences actual exit and scope retirement after IO. The prefix fixture
+verifies its installed bytes against the completed build and denies child writes
+to the checkout's build directory. The checkout's independent build can change
+without affecting fixture startup or cleanup.
 Readiness IO uses the P04 bound-operation owner inside layout admission, including
 native health, catalogue transport and body parsing. Cancellation-ignoring IO or
 body disposal cannot retain that admission. Root cleanup remains tracked through
