@@ -1,5 +1,13 @@
 import { expect, it, vi } from "vitest";
-import { finalizeNativeCase } from "./native-case-finalization.mjs";
+import { closeNativeCase, finalizeNativeCase } from "./native-case-finalization.mjs";
+
+it("keeps teardown and publication failures when the report rejects", async () => {
+  const failure = new Error("teardown failed"), write = new Error("report failed");
+  const error = await closeNativeCase(async () => { throw failure; }, async () => { throw write; }).catch(error => error);
+  expect(error).toBeInstanceOf(AggregateError);
+  expect(error.errors).toEqual([failure, write]);
+  expect(error.cause).toBe(failure);
+});
 
 it("finishes reporting before releasing each owner once in order", async () => {
   const order = [];

@@ -5,7 +5,7 @@ import { nativeSession } from "./native-cdp-session.mjs";
 import { clickReady } from "./native-actions.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { closeClipboardWitness, readClipboardText } from "./native-clipboard.mjs";
-import { createNativeCaseLifetime } from "./native-case-finalization.mjs";
+import { closeNativeCase, createNativeCaseLifetime } from "./native-case-finalization.mjs";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 export const CHAIN = ["readme", "rendering/code-blocks", "rendering/math", "rendering/callouts", "rendering/highlights", "rendering/mermaid", "rendering/frontmatter", "links/wiki-links", "links/embeds", "folders/dad/recipes/soup", "folders/mom/ideas", "rename-me/moving-note"];
@@ -101,9 +101,25 @@ export async function runCase(name, exercise, options = {}) {
   await Deno.mkdir(parent, { recursive: true, mode: 0o700 });
   const directory = parent + "/" + name;
   let fixture, failure, interrupted = false;
+  let reporting = Promise.resolve(), closing, written = false;
+  const failures = [];
+  const describeFailure = error => ({ message: String(error), ...(error instanceof AggregateError ? { errors: error.errors.map(describeFailure) } : {}) });
+  const reportFailure = error => {
+    if (failures.includes(error)) return reporting;
+    failures.push(error);
+    const write = async () => {
+      let observed;
+      try { observed = await fixture.page.evaluate("({url:location.href,body:document.body.innerText,selection:getSelection().toString()})"); }
+      catch (captureError) { observed = { error: String(captureError) }; }
+      await Deno.writeTextFile(directory + "/failure.json", JSON.stringify({ name, error: String(failures[0]), failures: failures.map(describeFailure), pageErrors: fixture.page.pageErrors, writes: fixture.writes, observed }, null, 2), { createNew: !written });
+      written = true;
+    };
+    return reporting = reporting.then(write, write);
+  };
+  const close = () => closing ??= closeNativeCase(() => fixture.close(), reportFailure, () => reporting);
   const terminate = () => {
     interrupted = true;
-    if (fixture) void fixture.close().finally(() => Deno.exit(1));
+    if (fixture) void close().finally(() => Deno.exit(1));
   };
   Deno.addSignalListener("SIGTERM", terminate);
   try {
@@ -114,14 +130,9 @@ export async function runCase(name, exercise, options = {}) {
     await Deno.writeTextFile(directory + "/result.json", JSON.stringify({ name, passed: true, consumer }, null, 2), { createNew: true });
   } catch (error) {
     failure = error;
-    if (fixture) {
-      let observed;
-      try { observed = await fixture.page.evaluate("({url:location.href,body:document.body.innerText,selection:getSelection().toString()})"); }
-      catch (captureError) { observed = { error: String(captureError) }; }
-      await Deno.writeTextFile(directory + "/failure.json", JSON.stringify({ name, error: String(error), pageErrors: fixture.page.pageErrors, writes: fixture.writes, observed }, null, 2), { createNew: true });
-    }
+    if (fixture) await reportFailure(error);
   } finally {
-    if (fixture) await fixture.close();
+    if (fixture) await close();
     Deno.removeSignalListener("SIGTERM", terminate);
   }
   if (failure) throw failure;

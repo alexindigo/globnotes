@@ -13,6 +13,7 @@ interface FixtureController {
   readonly signal: AbortSignal;
   readonly settled: OwnershipScope;
   link(child: FixtureController, retired: () => void): void;
+  retain(child: FixtureController): void;
   cancel(): Promise<OwnershipRelease>;
   finish(): Promise<OwnershipRelease>;
 }
@@ -52,6 +53,18 @@ export function ownFixtureScope(
     linked!.delete(child);
   });
   linked.add(child);
+}
+
+/** A containing case must retain the child's final outcome, not just its live
+ * cancellation edge. The ordinary borrowing edge may detach during settlement;
+ * this receipt joins the cached full finish report, including prior failures. */
+export function retainFixtureScope(
+  owner: FixtureScope,
+  child: FixtureScope,
+): void {
+  if (owner === child) return;
+  ownFixtureScope(owner, child);
+  engines.get(owner)!.retain(engines.get(child)!);
 }
 
 /** Private construction implementation. Public scenarios enter via fixture_scope.ts.
@@ -100,6 +113,7 @@ export function createFixtureScope() {
   const cancellationResults = createOwnershipScope();
   const settled = createOwnershipScope();
   const reporting = createOwnershipScope();
+  const retained = new WeakSet<FixtureController>();
   const controller = new AbortController();
   let cancelled: Promise<OwnershipRelease> | undefined;
   let finished: Promise<OwnershipRelease> | undefined;
@@ -231,6 +245,11 @@ export function createFixtureScope() {
     settled,
     cancel,
     finish,
+    retain(child) {
+      if (retained.has(child)) return;
+      resources.defer(async () => (await child.finish()).throwIfFailed());
+      retained.add(child);
+    },
     link(child, retired) {
       let joining = false, drained = false;
       const signal = AbortSignal.any([controller.signal]);

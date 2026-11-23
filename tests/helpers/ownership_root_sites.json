@@ -58,15 +58,15 @@
   {
     "file": "client/tests/e2e/legacy-fixture.mjs",
     "capability": "Deno.exit",
-    "line": 105,
+    "line": 122,
     "source": "Deno.exit",
-    "context": "if (fixture) void fixture.close().finally(() => Deno.exit(1));",
+    "context": "if (fixture) void close().finally(() => Deno.exit(1));",
     "family": "native-process-control"
   },
   {
     "file": "client/tests/e2e/legacy-fixture.mjs",
     "capability": "Deno.addSignalListener",
-    "line": 107,
+    "line": 124,
     "source": "Deno.addSignalListener",
     "context": "Deno.addSignalListener(\"SIGTERM\", terminate);",
     "family": "native-process-control"
@@ -74,7 +74,7 @@
   {
     "file": "client/tests/e2e/legacy-fixture.mjs",
     "capability": "Deno.removeSignalListener",
-    "line": 124,
+    "line": 136,
     "source": "Deno.removeSignalListener",
     "context": "Deno.removeSignalListener(\"SIGTERM\", terminate);",
     "family": "native-process-control"

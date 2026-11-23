@@ -15,7 +15,10 @@ import {
 import { bounded } from "./helpers/worker_liveness.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
 import { OwnershipError } from "../shared/ownership.js";
-import { createNativeCaseLifetime } from "../client/tests/e2e/native-case-finalization.mjs";
+import {
+  closeNativeCase,
+  createNativeCaseLifetime,
+} from "../client/tests/e2e/native-case-finalization.mjs";
 import { browserOwnershipControl } from "../client/tests/e2e/native-ownership-control.mjs";
 
 // Cleanup containment must never replace the assertion that required rescue.
@@ -164,6 +167,89 @@ Deno.test("native case interruption cancels and drains both scopes before the re
   });
 });
 
+for (const pending of [false, true]) {
+  Deno.test(`native case retains a child's ${pending ? "pending" : "settled"} teardown failure before joining`, async () => {
+    await fixtureScope(async (testScope) => {
+      const entered = fixtureGate(testScope), release = fixtureGate(testScope);
+      const failure = new Error("child teardown failed"), events: string[] = [];
+      const child = createFixtureScope();
+      const lifetime = createNativeCaseLifetime(() => {
+        assertEquals(events, ["body", "dispose:start", "dispose:failed"]);
+        events.push("fixture:closed");
+      });
+      lifetime.ownScope(child.scope);
+      lifetime.ownScope(child.scope);
+      child.scope.defer(async () => {
+        events.push("dispose:start");
+        entered.resolve();
+        await release.promise;
+        events.push("dispose:failed");
+        throw failure;
+      });
+      const checked = assertRejects(
+        () =>
+          child.run(() => {
+            events.push("body");
+          }),
+        Error,
+        "child teardown failed",
+      );
+      let failed = false;
+      try {
+        await bounded(
+          workMilestone(checked, entered.promise, "child teardown entered"),
+          "child teardown entry",
+        );
+        if (!pending) {
+          release.resolve();
+          assertStrictEquals(
+            await bounded(checked, "child finishes before case join"),
+            failure,
+          );
+        }
+        const closing = assertRejects(
+          () => lifetime.close(),
+          Error,
+          "child teardown failed",
+        );
+        release.resolve();
+        assertStrictEquals(
+          await bounded(closing, "case retains child failure"),
+          failure,
+        );
+        assertStrictEquals(
+          await bounded(checked, "child teardown result"),
+          failure,
+        );
+        assertEquals(events, [
+          "body",
+          "dispose:start",
+          "dispose:failed",
+          "fixture:closed",
+        ]);
+      } catch (error) {
+        failed = true;
+        throw error;
+      } finally {
+        release.resolve();
+        await finish(
+          [
+            checked,
+            child.close().catch((error) => {
+              assertStrictEquals(error, failure);
+            }),
+            lifetime.close().catch((error: unknown) => {
+              assertStrictEquals(error, failure);
+            }),
+          ],
+          failed,
+          "retained child teardown rescue join",
+        );
+      }
+    });
+  });
+}
+
 Deno.test("native scope: public facades expose the identical P03 issuer only", async () => {
   assertEquals(Object.keys(native), ["fixtureScope"]);
   assertStrictEquals(native.fixtureScope, fixtureScope);
@@ -200,6 +286,64 @@ Deno.test("native scope: wrapped values do not inspect a resource's then again",
   assertEquals(reads, 1);
   assertStrictEquals(disposed, resource);
 });
+
+for (const fails of [false, true]) {
+  Deno.test(`native close awaits ${fails ? "teardown failure publication" : "existing reports"} before exit`, async () => {
+    await fixtureScope(async (testScope) => {
+      const entered = fixtureGate(testScope), release = fixtureGate(testScope);
+      const failure = new Error("child teardown failed"), events: string[] = [];
+      const report = async (error?: unknown) => {
+        if (fails) assertStrictEquals(error, failure);
+        events.push("report:start");
+        entered.resolve();
+        await release.promise;
+        events.push("report:published");
+      };
+      const closing = closeNativeCase(
+        () => {
+          events.push("close");
+          if (fails) throw failure;
+        },
+        report,
+        report,
+      ).then(
+        () => {
+          events.push("exit");
+        },
+        (error: unknown) => {
+          events.push("exit");
+          throw error;
+        },
+      );
+      const checked: Promise<unknown> = fails
+        ? assertRejects(() => closing, Error, "child teardown failed")
+        : closing;
+      let failed = false;
+      try {
+        await bounded(
+          workMilestone(checked, entered.promise, "native report entered"),
+          "close report entry",
+        );
+        assertEquals(events, ["close", "report:start"]);
+        release.resolve();
+        const result = await bounded(checked, "close publication before exit");
+        if (fails) assertStrictEquals(result, failure);
+        assertEquals(events, [
+          "close",
+          "report:start",
+          "report:published",
+          "exit",
+        ]);
+      } catch (error) {
+        failed = true;
+        throw error;
+      } finally {
+        release.resolve();
+        await finish([checked], failed, "close publication rescue join");
+      }
+    });
+  });
+}
 
 for (const first of ["root", "borrower"] as const) {
   Deno.test(`native scope: ${first} close cancels borrowed work before either release`, async () => {
