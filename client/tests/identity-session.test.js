@@ -20,6 +20,8 @@ import { createConflictInbox } from "../conflictInbox.js";
 import { canCreateNote } from "../noteCreation.js";
 import { registerSessionParticipant, resolveParticipants } from "../sessionActions.js";
 import { createSettingsPageState } from "../settingsPageState.js";
+import { reauthenticationRequest } from "../reauthentication.js";
+import * as pluginRuntime from "../pluginRuntime.js";
 
 const cleanups = [];
 afterEach(async () => {
@@ -309,7 +311,7 @@ it("logout keeps its shared completion and reaches ordinary sign-in when the ano
   const pending = f.session.logout();
   expect(f.session.logout()).toBe(pending); expect(await pending).toBe(true);
   await f.session.settle();
-  expect(getConfig).toHaveBeenCalledExactlyOnceWith();
+  expect(getConfig).toHaveBeenCalledExactlyOnceWith({ signal: undefined });
   expect([f.tokens.getStoredToken(), f.session.state.valid, f.events.filter(value => value === "login")]).toEqual([null, false, ["login"]]);
 });
 it.each([false, true])("every ordinary/gap poll callback has its own final fence (gap=%s)", async gap => {
@@ -345,14 +347,15 @@ it("authority failure belongs only to the originating credential attempt", async
   const current = createIdentityApi({ tokens: { getStoredToken: () => "opaque" }, sessionKey: () => scope, http: { get: async () => { throw error; } }, onAuthorityFailure: value => invalidated.push(value) });
   await expect(current.read("index")).rejects.toBe(error); expect(invalidated).toEqual([error]); expect(invalidated[0]).toBe(error);
 });
-
 it.each([401, 403])("the default transport lets initial recovery own a %s refusal", async status => {
-  const error = { response: { status } }, failed = vi.fn();
+  const error = { response: { status } }, failed = vi.fn(), navigate = vi.fn();
   const get = vi.fn(async () => { throw error; });
-  const session = createIdentityAppSession({ config: () => ({}), setConfig: vi.fn(), tokens: { getStoredToken: () => "old" }, http: { get }, failed });
+  const session = createIdentityAppSession({ config: () => ({}), setConfig: vi.fn(), tokens: { getStoredToken: () => "old" }, http: { get }, failed, navigate, retainedWork: () => false });
   cleanups.push(() => session.dispose());
   expect(await session.load()).toBe(false);
-  expect([get.mock.calls.length, failed.mock.calls, session.state.ready, session.state.valid]).toEqual([1, [[error]], false, false]);
+  expect([get.mock.calls.length, failed.mock.calls, session.state.ready, session.state.valid, navigate.mock.calls]).toEqual(status === 401
+    ? [1, [], true, false, [[{ name: "login" }]]]
+    : [1, [[error]], false, false, []]);
 });
 
 it("the default transport cannot deliver a pre-outage read after the same projection recovers", async () => {
@@ -371,6 +374,149 @@ it("the default transport cannot deliver a pre-outage read after the same projec
     session.invalidate(); expect(session.key()).toBeNull();
     expect(await session.refresh()).toBe(true); expect(session.key()).toBe(key);
     await expect(work.result()).rejects.toMatchObject({ staleIdentity: true });
+  });
+});
+
+it.each(["first-read-first", "newest-read-first"])("sign-in follows the accepted account across concurrent refreshes (%s)", async order => {
+  let first, second, reads = 0;
+  const f = app({ transport: { getToken: async () => "bob.jwt", getConfig: async () => {
+    const number = reads++; await (number === 0 ? first() : second()); return projection("bob", number === 0 ? "admin" : "view");
+  } } });
+  const login = flow(f), completed = vi.fn();
+  await heldOperation(controlled("sign-in projection", f.session), boundary => { first = boundary; return login.login.logIn().then(completed); }, async original => {
+    await original.reached();
+    await heldOperation(controlled("newer projection", f.session), boundary => { second = boundary; return f.session.refresh(); }, async newest => {
+      await newest.reached();
+      if (order === "first-read-first") {
+        original.release();
+      }
+      expect(await newest.result()).toBe(true); await original.result();
+      expect(login.navigate.mock.calls).toEqual([[{ name: "home" }]]);
+      expect(f.current.value).toEqual(projection("bob", "view"));
+    });
+  });
+});
+it.each(["different-account", "revoked"])("a superseding %s cannot complete an old sign-in", async winner => {
+  let hold, reads = 0;
+  const f = app({ transport: { getToken: async () => "bob.jwt", getConfig: async () => {
+    if (reads++ === 0) { await hold(); return projection("bob", "admin"); }
+    if (winner === "revoked") throw Object.assign(new Error("revoked"), { status: 401 });
+    return projection("charlie", "view");
+  } } });
+  const login = flow(f);
+  await heldOperation(controlled("old sign-in", f.session), boundary => { hold = boundary; return login.login.logIn(); }, async original => {
+    await original.reached(); await f.session.refresh(); await original.result();
+    expect(login.navigate.mock.calls).toEqual([]);
+    expect([f.current.value.principal.id, f.session.state.valid]).toEqual([winner === "revoked" ? "alice" : "charlie", winner !== "revoked"]);
+  });
+});
+it("config rejection stays with the original refresh instead of recursively reporting authority", async () => {
+  const error = Object.assign(new Error("invalid token"), { status: 401 }), authority = vi.fn();
+  const api = createIdentityApi({ tokens: { getStoredToken: () => "bad" }, sessionKey: () => null,
+    http: { get: async () => { throw error; } }, onAuthorityFailure: authority });
+  await expect(api.getConfig()).rejects.toBe(error); expect(authority.mock.calls).toEqual([]);
+  const fresh = ref(projection()), navigate = vi.fn(), failed = vi.fn();
+  const session = createIdentityAppSession({ config: () => fresh.value, setConfig: value => { fresh.value = value; },
+    tokens: { getStoredToken: () => "bad" }, transport: api, navigate, failed, stopRuntime() {} }); cleanups.push(() => session.dispose());
+  expect(await session.load()).toBe(false);
+  expect([session.state.ready, session.state.valid, navigate.mock.calls, failed.mock.calls]).toEqual([true, false, [[{ name: "login" }]], []]);
+});
+it("loaded-session recovery uses the existing reconnect owner with no live stream or retained capabilities", async () => {
+  let session, unavailable = true;
+  const timers = [], clears = [], opened = [], failed = vi.fn(), fresh = ref(projection()), token = "alice.jwt";
+  const changes = createVaultChanges({ sessionKey: () => session.key(), open: async () => { opened.push(session.key()); return () => {}; },
+    setTimer: (callback, delay) => { const timer = { callback, delay }; timers.push(timer); return timer; }, clearTimer: value => clears.push(value) });
+  cleanups.push(() => changes.dispose());
+  session = createIdentityAppSession({ config: () => fresh.value, setConfig: value => { fresh.value = value; },
+    tokens: { getStoredToken: () => token }, transport: { getConfig: async () => {
+      if (unavailable) throw Object.assign(new Error("restart"), { status: 503 }); return projection("alice", "edit", 2);
+    } }, failed, stopRuntime() {}, applyBrand() {}, setChangesSession: changes.setSession, recover: changes.revalidate });
+  cleanups.push(() => session.dispose()); session.adopt(fresh.value);
+  expect(await session.refresh()).toBe(false); await changes.settle();
+  expect([session.state.valid, fresh.value.capabilities, failed.mock.calls, timers.map(timer => timer.delay), opened]).toEqual([
+    false, { canRead: false, canEdit: false, canManageVault: false, canManageOwnAccount: false, canCreateVault: false }, [], [500], [],
+  ]);
+  unavailable = false; timers[0].callback(); await changes.settle();
+  expect([session.state.valid, fresh.value, opened]).toEqual([true, projection("alice", "edit", 2), []]);
+  expect(clears).toEqual([]);
+});
+it("a superseded recovery keeps the retry slot when its replacement is also unavailable", async () => {
+  const fresh = ref(projection()), retry = Object.assign(Error("restart"), { status: 503 });
+  const held = Promise.withResolvers(), entered = Promise.withResolvers(), timers = [];
+  const getConfig = vi.fn().mockRejectedValueOnce(retry).mockImplementationOnce(() => { entered.resolve(); return held.promise; })
+    .mockRejectedValueOnce(retry).mockResolvedValueOnce(projection("alice", "edit", 2));
+  const changes = createVaultChanges({ setTimer(fn, delay) { timers.push({ fn, delay }); return fn; }, clearTimer() {} });
+  const session = createIdentityAppSession({ config: () => fresh.value, setConfig: value => { fresh.value = value; },
+    tokens: { getStoredToken: () => "alice" }, transport: { getConfig }, stopRuntime() {}, applyBrand() {},
+    recover: changes.revalidate, setChangesSession: changes.setSession });
+  cleanups.push(changes.dispose, session.dispose); session.adopt(fresh.value);
+  try {
+    expect(await session.refresh()).toBe(false); await entered.promise;
+    expect(await session.refresh()).toBe(false);
+    held.reject(retry); await changes.settle();
+    expect(timers.map(timer => timer.delay)).toEqual([500]);
+    timers[0].fn(); await changes.settle();
+    expect([session.state.valid, fresh.value, getConfig.mock.calls.length]).toEqual([true, projection("alice", "edit", 2), 4]);
+  } finally { held.reject(retry); }
+});
+it("ordinary EOF reconnects with the last vault cursor and does not retire live config", async () => {
+  let session, source; const fresh = ref(projection()), scheduled = [], requests = [];
+  const api = createIdentityApi({ tokens: { getStoredToken: () => "alice" }, sessionKey: () => session.key(),
+    fetch: async input => { requests.push(new URL(input, "http://fixture").searchParams.get("since"));
+      return new Response(new ReadableStream({ start(controller) { source = controller; } }), { headers: { "Content-Type": "text/event-stream" } }); },
+    onAuthorityFailure: vi.fn(() => session.invalidate()) });
+  const changes = createVaultChanges({ sessionKey: () => session.key(), open: api.openVaultChanges,
+    setTimer(fn, delay) { scheduled.push({ fn, delay }); return fn; }, clearTimer() {} });
+  session = createIdentityAppSession({ config: () => fresh.value, setConfig: value => { fresh.value = value; },
+    tokens: { getStoredToken: () => "alice" }, transport: api, applyBrand() {}, stopRuntime() {}, setChangesSession: changes.setSession });
+  cleanups.push(changes.dispose, session.dispose); session.adopt(fresh.value);
+  const release = changes.acquire(); cleanups.push(release);
+  await changes.settle();
+  source.enqueue(new TextEncoder().encode('event: change\ndata: {"seq":7}\n\n')); source.close();
+  await vi.waitFor(() => expect(scheduled.map(entry => entry.delay)).toEqual([500]));
+  scheduled[0].fn(); await changes.settle(); source.close();
+  await vi.waitFor(() => expect(scheduled.map(entry => entry.delay)).toEqual([500, 1000]));
+  expect([session.state.valid, requests]).toEqual([true, ["0", "7"]]);
+});
+it("identity reauthentication restores only the runtime owned by the accepted projection", async () => {
+  const legacyStart = vi.spyOn(pluginRuntime, "startPluginRuntime"), legacyStop = vi.spyOn(pluginRuntime, "stopPluginRuntime");
+  const fresh = ref(projection()), startRuntime = vi.fn(); let token = "old";
+  const getConfig = vi.fn().mockRejectedValueOnce({ status: 401 }).mockResolvedValueOnce(projection("alice", "edit", 2));
+  const session = createIdentityAppSession({ config: () => fresh.value, setConfig: value => { fresh.value = value; },
+    tokens: { getStoredToken: () => token, storeToken: value => { token = value; }, clearStoredToken: () => { token = null; } },
+    transport: { getConfig }, stopRuntime() {}, applyBrand() {}, retainedWork: () => true, startRuntime });
+  cleanups.push(session.dispose); session.adopt(fresh.value);
+  try {
+    expect(await session.refresh()).toBe(false);
+    await vi.waitFor(() => expect(reauthenticationRequest.value).not.toBeNull());
+    const form = reauthenticationRequest.value;
+    expect((await session.signIn("new", { login: "alice" })).current()).toBe(true);
+    expect(await form.authenticated()).toBe(true);
+    expect([startRuntime.mock.calls.length, legacyStart.mock.calls, legacyStop.mock.calls, reauthenticationRequest.value]).toEqual([2, [], [], null]);
+  } finally { reauthenticationRequest.value?.cancel(); legacyStart.mockRestore(); legacyStop.mockRestore(); }
+});
+it("denied optional Admin work revalidates a live reader without restarting its runtime", async () => {
+  const f = app({ transport: { getConfig: vi.fn(async () => projection("alice", "view")) } });
+  f.session.adopt(projection("alice", "view")); const before = f.session.key(), events = [...f.events];
+  expect(await f.session.authorityChanged({ status: 403 })).toBe(true);
+  expect([f.session.key(), f.session.state.valid, f.events.slice(events.length)]).toEqual([before, true, ["config"]]);
+  expect(f.io.getConfig.mock.calls).toEqual([[{ signal: undefined }]]);
+});
+it("replacement credentials cancel held recovery and cannot adopt its old projection", async () => {
+  let session, hold, token = "alice.jwt", reads = 0;
+  const fresh = ref(projection()), timers = [];
+  const changes = createVaultChanges({ sessionKey: () => session.key(), setTimer: (callback, delay) => { timers.push({ callback, delay }); return callback; }, clearTimer() {} });
+  cleanups.push(() => changes.dispose());
+  session = createIdentityAppSession({ config: () => fresh.value, setConfig: value => { fresh.value = value; },
+    tokens: { getStoredToken: () => token, storeToken: value => { token = value; } }, transport: { getConfig: async () => {
+      if (reads++ === 0) throw Object.assign(new Error("restart"), { status: 503 });
+      await hold(); return projection("alice", "admin", 9);
+    } }, stopRuntime() {}, applyBrand() {}, setChangesSession: changes.setSession, recover: changes.revalidate });
+  cleanups.push(() => session.dispose()); session.adopt(fresh.value);
+  await heldOperation(controlled("held recovery", session), boundary => { hold = boundary; return session.refresh().then(async result => { await changes.settle(); return result; }); }, async work => {
+    await work.reached(); session.acceptToken("bob.jwt", false); session.adopt(projection("bob", "view"));
+    expect(await work.result()).toBe(false);
+    expect([token, session.state.valid, fresh.value, timers]).toEqual(["bob.jwt", true, projection("bob", "view"), []]);
   });
 });
 it("retired index, search and sidebar reads cannot repopulate another identity", async () => {

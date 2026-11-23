@@ -18,6 +18,7 @@ const FAVICON_MAP = [
 const FAVICON_FILES = new Set(FAVICON_MAP.map((entry) => entry.file));
 // Every icon link the tab can pick (32x32 + 16x16 + shortcut).
 const ICON_LINKS = 'link[rel="icon"], link[rel="shortcut icon"]';
+const faviconDefaults = new WeakMap();
 
 let currentBrand = null;
 
@@ -42,32 +43,35 @@ export function applyBrandToDocument(brand) {
   brandVersion.value += 1;
   const files = brand?.files ?? [];
 
-  for (const { selector, file } of FAVICON_MAP) {
-    const link = document.querySelector(selector);
-    if (link && files.includes(file)) {
-      link.href = `${pathPrefix}/_/brand/${file}?v=${brandVersion.value}`;
-    }
-  }
   // No dropped favicon files: the icon chain falls back — custom icon
   // upload → custom logo upload → accent-tinted bundled glob (same
   // recolor as the navbar logo).
+  let fallback = null;
   if (!files.some((file) => FAVICON_FILES.has(file))) {
     const customIcon = files.find((f) => f.startsWith("icon."));
     const customLogo = files.find((f) => f.startsWith("logo."));
-    let href = null;
     if (customIcon) {
-      href = `${pathPrefix}/_/brand/${customIcon}?v=${brandVersion.value}`;
+      fallback = `${pathPrefix}/_/brand/${customIcon}?v=${brandVersion.value}`;
     } else if (customLogo) {
-      href = `${pathPrefix}/_/brand/${customLogo}?v=${brandVersion.value}`;
+      fallback = `${pathPrefix}/_/brand/${customLogo}?v=${brandVersion.value}`;
     } else if (brand?.accent) {
       const tinted = tintBrandSvg(iconSvg, brand.accent);
-      href = `data:image/svg+xml,${encodeURIComponent(tinted)}`;
+      fallback = `data:image/svg+xml,${encodeURIComponent(tinted)}`;
     }
-    if (href) {
-      for (const link of document.querySelectorAll(ICON_LINKS)) {
-        link.href = href;
-        if (href.startsWith("data:")) link.removeAttribute("sizes");
-      }
+  }
+  // Every brand is projected from the original link, not the previous brand.
+  const links = `${ICON_LINKS}, link[rel="apple-touch-icon"], link[rel="mask-icon"]`;
+  for (const link of document.querySelectorAll(links)) {
+    if (!faviconDefaults.has(link)) faviconDefaults.set(link, {
+      href: link.getAttribute("href"), sizes: link.getAttribute("sizes"), color: link.getAttribute("color"),
+      file: FAVICON_MAP.find(entry => link.matches(entry.selector))?.file,
+    });
+    const original = faviconDefaults.get(link), iconFallback = link.matches(ICON_LINKS) ? fallback : null;
+    const href = files.includes(original.file) ? `${pathPrefix}/_/brand/${original.file}?v=${brandVersion.value}` : iconFallback ?? original.href;
+    const sizes = iconFallback?.startsWith("data:") ? null : original.sizes;
+    const color = link.matches('link[rel="mask-icon"]') ? brand?.accent ?? original.color : original.color;
+    for (const [name, value] of Object.entries({ href, sizes, color })) {
+      if (value === null) link.removeAttribute(name); else link.setAttribute(name, value);
     }
   }
   // The endpoint generates the manifest from the brand config when the

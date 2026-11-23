@@ -8,11 +8,16 @@ import { bindContext } from "./sessionContext.js";
 import { reactive, readonly } from "vue";
 
 export function createIdentityLoginFlow({ session, ...adapters }) {
+  let acceptedToken, acceptedPersist;
   return createLoginFlow({ ...adapters, identity: true,
     requestToken: session.transport.getToken,
-    persistToken: session.acceptToken,
-    authenticated: async (proof, acceptContext) => {
-      const accepted = await session.acceptProjection();
+    persistToken(token, persist) {
+      if (session.acceptToken(token, persist) === false) return false;
+      acceptedToken = token; acceptedPersist = persist; return true;
+    },
+    acceptIdentity: async (proof, acceptContext) => {
+      const accepted = session.signIn ? await session.signIn(acceptedToken, { login: proof.username, persist: acceptedPersist }) :
+        await session.acceptProjection();
       if (!accepted) return;
       const current = acceptContext(accepted.current);
       if (!current()) return;
@@ -61,7 +66,7 @@ export function loginError(error) {
 export function createLoginFlow({
   credentials, clearCredentials, redirect, navigate, toast,
   requestToken = getToken, persistToken = storeToken, reportError = apiErrorHandler,
-  authenticated, isCurrent = () => true, identity = false,
+  authenticated, acceptIdentity, isCurrent = () => true, identity = false,
   beforeSignIn, capture = () => isCurrent, challenge, clearAccepted = clearCredentials,
 } = {}) {
   let pending = null, active = null, current, tokenAccepted = false, completing, disposed = false, acceptedProof, challenged;
@@ -70,7 +75,7 @@ export function createLoginFlow({
   const owner = createOperationOwner({ owner: Object.freeze({}),
     prepare(value) {
       const fields = { ...value };
-      if (identity) acceptedProof = { username: fields.username, password: fields.password };
+      acceptedProof = { username: fields.username, password: fields.password };
       return { value: fields };
     },
     async dispatch(fields) {
@@ -86,8 +91,8 @@ export function createLoginFlow({
         // phase captures it, never an arbitrary token selected at later dispatch.
         acceptContext(capture());
       }),
-      complete: channel(() => authenticated ? acceptedProof : redirect() || { name: "home" }, target => {
-        completing = authenticated ? identity ? authenticated(target, acceptContext) : authenticated() : navigate(target);
+      complete: channel(() => authenticated || acceptIdentity ? acceptedProof : redirect() || { name: "home" }, target => {
+        completing = acceptIdentity ? acceptIdentity(target, acceptContext) : authenticated ? authenticated(target) : navigate(target);
       }),
       clear: { deliver: () => clearCredentials() },
       accepted: { deliver: () => clearAccepted() },

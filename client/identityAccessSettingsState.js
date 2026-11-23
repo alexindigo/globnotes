@@ -78,6 +78,13 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     canSave: computed(() => editableRows.value && dirty.value),
     canReview,
   }));
+  // Retained work is not a renderable projection. The form still owns exact
+  // receipts and departure decisions after the Admin view is withheld.
+  const presentation = computed(() => canManage() && current() ? state : Object.freeze({
+    status: original() && fields.status === "Access saved." ? fields.status : "",
+    canReview: original() && unknown.value && state.canReview,
+    error: original() && unknown.value ? "Review the outcome of your submitted access change." : "",
+  }));
   const adapters = {
     owner: form,
     prepare(intent) {
@@ -293,7 +300,7 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     if (disposed.value || inFlight.value || pending.value || reviewing.value || creation.value) return false;
     fields.needsReview = false; submission.value = null; fields.error = "";
     changes.clear();
-    fields.dialog = null; fields.login = ""; fields.temporaryPassword = "";
+    fields.dialog = null; fields.login = ""; fields.temporaryPassword = ""; confirmation = null; fields.confirmation = null;
     if (!current() || !canManage()) return true;
     return !!await load();
   }
@@ -380,7 +387,8 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     } catch { if (original() && ownsCreation(attempt)) fields.error = "Connection lost. Please try checking this account creation again."; return attempt.committed; }
     finally { attempt.checking = false; releaseReview(work); }
   }
-  return { state, load: options => load(options), requestCommit, confirmChange, review, discard, resolveDeparture, setLevel, setEverybody, remove, setField, openDialog, submitDialog, reviewCreation,
+  return { state, get presentation() { return presentation.value; }, load: options => load(options), requestCommit, confirmChange, review, discard, resolveDeparture, setLevel, setEverybody, remove, setField, openDialog, submitDialog, reviewCreation,
+    retainedWork: () => dirty.value || pending.value || !!submission.value || fields.needsReview || !!creation.value || !!fields.confirmation || !!fields.dialog,
     cancelConfirmation() { if (!busy.value) { confirmation = null; fields.confirmation = null; } },
     cancelDialog() { if (!busy.value && !creation.value) { fields.dialog = null; fields.temporaryPassword = ""; } },
     hasWork: () => dirty.value || pending.value || !!submission.value || !!creation.value || !!fields.confirmation || live.hasWork() || recovery.hasWork(),

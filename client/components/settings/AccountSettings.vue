@@ -35,6 +35,7 @@
   </SettingsPage>
 </template>
 <script setup>
+import { computed } from 'vue';
 import SettingsPage from './SettingsPage.vue';
 import SettingRow from './SettingRow.vue';
 import CustomButton from '../CustomButton.vue';
@@ -44,5 +45,5 @@ import AuthenticatorEnrollment from '../AuthenticatorEnrollment.vue';
 import IdentityDialog from '../IdentityDialog.vue';
 import SettingsActions from '../SettingsActions.vue';
 const props = defineProps({ controller:{type:Object,required:true} });
-const state = props.controller.state;
+const state = computed(() => props.controller.state);
 </script>

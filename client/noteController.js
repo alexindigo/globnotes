@@ -12,7 +12,8 @@ import { isActionAvailable } from "./modalState.js";
 import { defaultEditorMode, setDefaultEditorMode } from "./editorPreferences.js";
 import { basenameOf, encodeRewriteFiles, joinNotePath, newNoteTarget, notePath, pathBreadcrumbs } from "./notePath.js";
 import { displayTitle, followedBasename } from "./noteTitle.js";
-import { createNoteDraftStore } from "./noteDrafts.js";
+import { createIdentityNoteDraftStore, createNoteDraftStore } from "./noteDrafts.js";
+import { readPathPrefix } from "./pathPrefix.js";
 import { createNotePreview } from "./notePreview.js";
 import { createNoteUrlSync } from "./noteUrlSync.js";
 import { decideNavigation, noteResourceIdentity } from "./noteNavigationGate.js";
@@ -30,6 +31,23 @@ import { bindContext, createSessionContext, retiredContext } from "./sessionCont
 
 // Ephemeral tab-session metadata, retained when the Note view is unmounted.
 const conflictBanners = reactive(new Map());
+
+/** Clean readers can replace their session; retained editors cannot. */
+export function createIdentityNoteController({ session, prefix = readPathPrefix(), draftAdapters, ...adapters }) {
+  let owner = identityOwnerKey(session.snapshot()), principal = session.snapshot().principal;
+  const makeDrafts = () => createIdentityNoteDraftStore({ prefix, identity: session.snapshot, tokens: session.tokens, ...draftAdapters });
+  let store = makeDrafts();
+  const drafts = Object.fromEntries(["save", "load", "base", "clear", "clearClean", "clearAcknowledged", "captureAcknowledgement", "release"].map(name => [name, (...args) => store[name](...args)]));
+  const canRead = () => session.key() != null && session.snapshot().capabilities?.canRead === true;
+  return createNoteController({ ...adapters, drafts, sessionKey: session.key, captureSession: session.capture, canRead,
+    reloadRequired: () => session.state.reloadRequired, ownerScope: () => identityOwnerKey(session.snapshot()),
+    ownerCurrent: () => identityOwnerKey(session.snapshot()) === owner,
+    rebindReader: () => {
+      const current = session.snapshot().principal;
+      if (!canRead() || principal?.kind === "account" && current?.kind === "account" && principal.id !== current.id) return false;
+      store.release(); store = makeDrafts(); owner = identityOwnerKey(session.snapshot()); principal = current; return true;
+    } });
+}
 
 /** Owns a mounted note's workflow. Views supply route/context readers, effects
  * and an editor port; all decisions and buffer ownership remain here. */
@@ -56,10 +74,11 @@ export function createNoteController({
   canRead = () => true,
   captureSession,
   reloadRequired = () => false,
+  ownerCurrent, rebindReader = () => false,
+  ownerScope = () => getContext().capabilities ? identityOwnerKey(getContext()) : sessionKey(),
 }) {
   const noteScope = ref(sessionKey());
   const lifetime = createSessionContext({ key: sessionKey });
-  const ownerScope = () => getContext().capabilities ? identityOwnerKey(getContext()) : sessionKey();
   const canModify = computed(() => !reloadRequired() && noteScope.value === sessionKey() && (getContext().capabilities ? getContext().capabilities.canEdit === true : getContext().authType != authTypes.readOnly));
   const editorReadOnly = computed(() => !!reloadRequired());
   const isNewNote = computed(() => !getContext().path);
@@ -649,6 +668,10 @@ export function createNoteController({
   const stopIdentity = watch(sessionKey, () => {
     lifetime.advanceProjection(); externalRead = null; clearEditTimers();
     pendingVaultEntry = null; pendingVaultReset = false;
+    if (ownerCurrent && !ownerCurrent() && !isDirty() && !queueState.value.unresolved && rebindReader()) editMode.value = false;
+    if (ownerCurrent?.() && sessionKey() != null && getContext().capabilities?.canEdit === true && !queueState.value.unresolved) {
+      noteScope.value = sessionKey(); saveOwner.adoptAuthority();
+    }
     if (!editMode.value && !queueState.value.unresolved) {
       note.value = {}; previewHtml.value = ""; loadStatus.value = "loading";
       if (mounted && sessionKey() != null) void init();

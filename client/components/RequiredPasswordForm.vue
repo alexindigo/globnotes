@@ -19,6 +19,7 @@
   </IdentityDialog>
 </template>
 <script setup>
+import { computed } from 'vue';
 import PasswordField from './PasswordField.vue';
 import CustomButton from './CustomButton.vue';
 import CurrentCredentialFields from './CurrentCredentialFields.vue';
@@ -26,5 +27,5 @@ import IdentityDialog from './IdentityDialog.vue';
 import SettingsActions from './SettingsActions.vue';
 import SettingRow from './settings/SettingRow.vue';
 const props = defineProps({ controller:{type:Object,required:true} });
-const state = props.controller.state;
+const state = computed(() => props.controller.state);
 </script>

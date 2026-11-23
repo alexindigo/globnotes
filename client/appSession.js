@@ -6,7 +6,8 @@ import { authTypes } from "./constants.js";
 import { getToastOptions } from "./helpers.js";
 import { refreshNoteIndex } from "./noteIndex.js";
 import { refreshPluginRuntimeCatalog, stopPluginRuntime } from "./pluginRuntime.js";
-import { resolveParticipants, retainUnsavedWork } from "./sessionActions.js";
+import { hasUnsavedWork, resolveParticipants, retainUnsavedWork } from "./sessionActions.js";
+import { requestIdentityReauthentication } from "./reauthentication.js";
 import { clearStoredToken, createIdentityTokenStorage } from "./tokenStorage.js";
 import { identitySessionKey } from "./appSessionPolicy.js";
 import { createOperationOwner } from "./operationOwner.js";
@@ -18,37 +19,58 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   transport, http, resolve = resolveParticipants, startRuntime = () => {}, stopRuntime = stopPluginRuntime,
   setChangesSession = () => {}, setBrowseSession = () => {}, clearBrowseData = () => {}, refreshNotes = () => {},
   applyBrand = applyBrandToDocument, navigate = () => {}, failed = () => {},
-  reloadPage = () => window.location.reload() } = {}) {
+  reloadPage = () => window.location.reload(),
+  recover, outage = () => {}, retainedWork = hasUnsavedWork, reauthenticate = requestIdentityReauthentication, currentRoute = () => null } = {}) {
   const ready = ref(false), valid = ref(false), reloadRequired = ref(null);
   let latestRead, transitionPending = null, documentAccount = null, locking = false, loginProof = null;
+  let acceptedSignIn = null, releaseRecovery = null, authorityRead = null, credentialHandoff = null;
+  function cancelSignIn() { const previous = acceptedSignIn; acceptedSignIn = null; previous?.resolve(null); }
+  function matchesSignIn(fresh) {
+    const own = acceptedSignIn;
+    return !!own && own.current() &&
+      fresh.principal?.kind === "account" && fresh.principal.login === own.login &&
+      (!own.accepted || own.accepted.id === fresh.principal.id && own.accepted.generation === fresh.sessionGeneration);
+  }
+  function completeSignIn() {
+    const own = acceptedSignIn, fresh = config();
+    if (!valid.value || !matchesSignIn(fresh)) return;
+    own.accepted = { id: fresh.principal.id, generation: fresh.sessionGeneration };
+    const current = own.current.bind(() => acceptedSignIn, () => config().principal?.id, () => config().sessionGeneration);
+    own.resolve(Object.freeze({ principal: Object.freeze({ ...fresh.principal }), current: () => valid.value && current() }));
+  }
   const key = () => valid.value ? identitySessionKey(config()) : null;
   const context = createSessionContext({ key, tokens, isOpen: () => !reloadRequired.value });
   const unavailable = () => context.disposed || locking || !!reloadRequired.value;
-  const { capture } = context;
-  const io = transport ?? createIdentityApi({ http, context, onAuthorityFailure(error, current) {
-    retainUnsavedWork();
-    if (!current() || !retire()) return;
-    if ((error.response?.status ?? error.status) === 403) void refresh();
-  } });
+  const { capture, captureCredential } = context;
+  const io = transport ?? createIdentityApi({ http, context, onAuthorityFailure: authorityChanged });
   const attempt = createOperationOwner({ owner: Object.freeze({}),
-      dispatch: intent => intent === "logout" ? resolve("logout") : intent === "login" ? resolve("login") : io.getConfig(),
+      dispatch: intent => intent === "logout" ? resolve("logout") : intent === "login" ? resolve("login") :
+        intent?.kind === "accepted-sign-in" ? intent.accepted : io.getConfig(intent?.options),
+      cancel: cancelSignIn,
       channels: {
         config: { deliver: value => { value.accepted = adopt(value.fresh, value.onTransition); } },
         failed: { deliver: failed },
         navigate: { deliver: value => { value.navigation = navigate(value.target); } },
       },
     });
-  function retire(onTransition = () => {}, closing = false) {
-    loginProof = null;
+  function retire({ preserveSignIn = false, onTransition = () => {}, closing = false } = {}) {
+    if (context.disposed && !closing) return false;
     const current = closing ? () => true : context.advanceProjection();
     onTransition(current);
+    if (!preserveSignIn) cancelSignIn();
+    const release = releaseRecovery; releaseRecovery = null;
+    const wasValid = valid.value;
+    loginProof = null;
     valid.value = false;
     // Every external callback may replace the credential or projection.
     if (!current()) return false;
+    release?.(); if (!current()) return false;
     stopRuntime(); if (!current()) return false;
     setChangesSession(null); if (!current()) return false;
     setBrowseSession(null); if (!current()) return false;
-    clearBrowseData(); return current();
+    clearBrowseData(); if (!current()) return false;
+    if (wasValid && !closing) setConfig({ ...config(), capabilities: Object.fromEntries(Object.keys(config().capabilities ?? {}).map(name => [name, false])) });
+    return current();
   }
   function adopt(fresh, onTransition = () => {}) {
     if (unavailable()) return false;
@@ -68,7 +90,8 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     }
     const changed = !valid.value || identitySessionKey(fresh) !== key();
     let adopting = context.captureTransition();
-    if (changed && !retire(current => { adopting = current; onTransition(current); })) return false;
+    if (changed && !retire({ preserveSignIn: matchesSignIn(fresh), onTransition: current => { adopting = current; onTransition(current); } })) return false;
+    if (acceptedSignIn && !matchesSignIn(fresh)) cancelSignIn();
     setConfig(fresh); if (!adopting()) return false;
     valid.value = true; if (!adopting()) return false;
     ready.value = true; if (!adopting()) return false;
@@ -83,25 +106,64 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
         refreshNotes();
       }
     }
+    if (adopting()) completeSignIn();
     return adopting();
   }
-  async function refresh({ accepted = false } = {}) {
+  function retainAndRetire(current, options) {
+    retainUnsavedWork();
+    return current() && retire(options);
+  }
+  function beginRecovery() {
+    if (!recover || releaseRecovery || context.disposed) return;
+    if (valid.value && !retainAndRetire(capture(), { preserveSignIn: true })) return;
+    const current = context.captureTransition();
+    // Reserve before an injected reconnect owner can immediately revalidate.
+    const slot = { release: null }; releaseRecovery = () => slot.release?.();
+    const release = recover({ current, async revalidate(signal) {
+      if (await refresh({ recovery: true, signal })) return "accepted";
+      return current() ? "retry" : "retired";
+    } });
+    if (current() && releaseRecovery) slot.release = release;
+    else release();
+  }
+  async function refresh({ accepted = false, recovery = false, signal } = {}) {
     if (unavailable()) return false;
     latestRead = {};
     const current = context.captureTransition().bind(() => latestRead);
     const owner = attempt, operation = owner.operation("recovery", current);
     let failureCurrent = current;
     try {
-      const response = await owner.dispatch(operation, "config");
+      const response = await owner.dispatch(operation, { kind: "config", options: { signal } });
       const receipt = { fresh: response.value, onTransition: next => { failureCurrent = next.bind(() => latestRead); } };
       if (!owner.deliver(operation, "config", receipt) || !receipt.accepted) return false;
       return accepted ? Object.freeze({ current: capture(), principal: Object.freeze({ ...receipt.fresh.principal }) }) : true;
     } catch (error) {
       if (!failureCurrent()) return false;
+      const status = error.response?.status ?? error.status;
+      if (status === 401 || recovery && status === 403) {
+        if (!retainAndRetire(failureCurrent)) return false;
+        if (!credentialHandoff?.current() && status === 401) {
+          const completing = context.captureTransition();
+          if (retainedWork()) { if (completing()) reauthenticate(); }
+          else {
+            if (!completing()) return false;
+            ready.value = true;
+            if (currentRoute()?.name !== "login") owner.deliver(operation, "navigate", { target: { name: "login" } }, completing);
+          }
+        }
+        return false;
+      }
+      // A loaded outage retires disclosure, not the initial-load error screen.
+      // Logout/recovery already retired it; do not invalidate that original
+      // completion merely because its anonymous revalidation is unavailable.
       if (ready.value) {
-        retainUnsavedWork();
-        if (failureCurrent() && valid.value) retire();
-      } else owner.deliver(operation, "failed", error, failureCurrent);
+        if (valid.value && !retainAndRetire(failureCurrent, { preserveSignIn: true })) return false;
+        const recovering = context.captureTransition();
+        if (!recovery) { outage(error); if (recovering()) beginRecovery(); }
+      }
+      else owner.deliver(operation, "failed", error, failureCurrent);
+      if (recovery) throw error;
+      if (!releaseRecovery) cancelSignIn();
       return false;
     } finally { await owner.release(operation); }
   }
@@ -126,6 +188,42 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   const stopSharedSignIn = tokens.subscribeSharedSignIn?.(token => {
     if (replaceCredential(() => tokens.acceptSharedSignIn(token))) void refresh();
   });
+  function signIn(token, { persist = false, login } = {}) {
+    if (unavailable() || token !== tokens.getStoredToken() && !acceptToken(token, persist)) return Promise.resolve(null);
+    cancelSignIn();
+    let resolve;
+    const accepted = new Promise(done => { resolve = done; });
+    const own = { current: captureCredential(), login: login.trim().toLowerCase(), resolve, accepted: null };
+    acceptedSignIn = own;
+    const operation = attempt.operation("recovery");
+    const pending = attempt.dispatch(operation, { kind: "accepted-sign-in", accepted })
+      .then(handle => handle.value).finally(() => attempt.release(operation));
+    void refresh();
+    return pending;
+  }
+  function authorityChanged(error, originating = capture()) {
+    if (!originating()) return Promise.resolve(false);
+    if (credentialHandoff?.current()) { credentialHandoff.deferred = true; return Promise.resolve(false); }
+    if (authorityRead?.current()) return authorityRead.pending;
+    retainUnsavedWork();
+    if (!originating()) return Promise.resolve(false);
+    if ((error?.response?.status ?? error?.status) !== 403 && !retire({ preserveSignIn: !error })) return Promise.resolve(false);
+    const read = { current: capture() };
+    authorityRead = read;
+    read.pending = refresh().finally(() => { if (authorityRead === read) authorityRead = null; });
+    return read.pending;
+  }
+  function beginCredentialHandoff() {
+    const handoff = credentialHandoff?.current() ? credentialHandoff : { current: captureCredential(), count: 0, deferred: false };
+    credentialHandoff = handoff; handoff.count++;
+    let ended = false;
+    return () => {
+      if (ended) return; ended = true;
+      if (--handoff.count || credentialHandoff !== handoff) return;
+      credentialHandoff = null;
+      if (handoff.deferred && handoff.current()) void authorityChanged();
+    };
+  }
   function logout() {
     if (unavailable()) return Promise.resolve(false);
     if (transitionPending?.current()) return transitionPending.pending;
@@ -149,18 +247,20 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     return transition.pending;
   }
   function reload() { if (reloadRequired.value) reloadPage(); }
-  return Object.freeze({ state: readonly(reactive({ ready, valid, reloadRequired })), key, capture,
-    load: refresh, refresh, acceptProjection: () => refresh({ accepted: true }), adopt, invalidate: () => !unavailable() && retire(), beforeSignIn, acceptToken, logout, transport: io, tokens,
+  return Object.freeze({ state: readonly(reactive({ ready, valid, reloadRequired })), key, capture, captureCredential,
+    load: refresh, refresh, acceptProjection: () => refresh({ accepted: true }), adopt, invalidate: () => !unavailable() && retire(), beforeSignIn, acceptToken, signIn, logout, transport: io, tokens,
+    authorityChanged, beginCredentialHandoff,
+    isDisposed: () => context.disposed,
     hasWork: () => attempt.hasWork(), settle: () => attempt.settle(),
     snapshot: () => config(),
     retainLoginProof(proof, accepted) {
       if (!context.disposed && key() != null && (!accepted || accepted.current())) loginProof = { proof: { username: proof.username, password: proof.password }, current: capture() };
     },
     consumeLoginProof() {
-      const saved = loginProof; loginProof = null;
-      return saved?.current() ? saved.proof : null;
+      const proof = loginProof; loginProof = null;
+      return proof?.current() ? proof.proof : null;
     },
-    dispose() { if (!context.disposed) { stopSharedSignIn?.(); context.dispose(); retire(undefined, true); } return attempt.dispose(); },
+    dispose() { if (!context.disposed) { stopSharedSignIn?.(); context.dispose(); retire({ closing: true }); } return attempt.dispose(); },
   });
 }
 

@@ -40,6 +40,7 @@
   </SettingsPage>
 </template>
 <script setup>
+import { computed } from 'vue';
 import SettingsPage from './SettingsPage.vue';
 import SettingRow from './SettingRow.vue';
 import AccessLevelField from './AccessLevelField.vue';
@@ -50,7 +51,7 @@ import TextInput from '../TextInput.vue';
 import PasswordField from '../PasswordField.vue';
 import { tabClose } from '../../icons.js';
 const props = defineProps({ controller: { type: Object, required: true } });
-const state = props.controller.state;
+const state = computed(() => props.controller.presentation);
 </script>
 <style scoped>
 .access-list { border-top: 1px solid rgb(var(--theme-border)); }

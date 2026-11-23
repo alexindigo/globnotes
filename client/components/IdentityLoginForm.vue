@@ -19,11 +19,12 @@
   </form>
 </template>
 <script setup>
+import { computed } from 'vue';
 import TextInput from './TextInput.vue';
 import PasswordField from './PasswordField.vue';
 import CustomButton from './CustomButton.vue';
 import Logo from './Logo.vue';
 import SettingRow from './settings/SettingRow.vue';
 const props = defineProps({ controller:{type:Object,required:true}, dialog:Boolean });
-const state = props.controller.state;
+const state = computed(() => props.controller.state);
 </script>

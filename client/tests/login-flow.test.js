@@ -42,6 +42,12 @@ describe("login flow", () => {
     request.resolve("token"); await first;
     expect(order).toEqual(["store", "authenticated"]); expect(s.navigate).not.toHaveBeenCalled();
   });
+  it("keeps internal token acceptance out of the just-proven credential handoff", async () => {
+    const authenticated = vi.fn(), s = setup({ requestToken: async () => "token", persistToken() {}, authenticated });
+    await s.flow.logIn();
+    expect(authenticated.mock.calls).toEqual([[{ username: "user", password: "secret" }]]);
+    await s.flow.dispose();
+  });
 
   it("uses the current Remember Me and redirect values on acknowledgement, not submission", async () => {
     let resolve;

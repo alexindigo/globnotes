@@ -16,7 +16,7 @@ const credentialFields = ["currentPassword", "currentTotp", "newPassword", "conf
 export function createAccountSettingsState({ read = getOwnAccount, write = patchOwnAccount,
   enrol = postAccountTotpEnrolment, token = getStoredToken, sessionKey = token,
   resolve = resolveParticipants, clearToken = clearStoredToken, signedOut = () => {},
-  logout = async () => false, retire = retainUnsavedWork, copy, consumeProof,
+  logout = async () => false, retire = retainUnsavedWork, copy, consumeProof, beginHandoff = () => () => {},
 } = {}) {
   const fields = reactive({ view: null, activity: idle, dialog: null, confirmation: null,
     currentPassword: "", currentTotp: "", newPassword: "", confirmPassword: "", newTotpCode: "" });
@@ -177,6 +177,7 @@ export function createAccountSettingsState({ read = getOwnAccount, write = patch
     if (!admit() || request.token !== token()) return Promise.resolve(false);
     const operation = owner.operation("retained");
     fields.activity = { kind: "busy", message: request.required ? "Changing your password..." : "Changing your credentials..." };
+    const finishHandoff = beginHandoff();
     pending = (async () => {
       let final = idle;
       try {
@@ -202,7 +203,10 @@ export function createAccountSettingsState({ read = getOwnAccount, write = patch
           }
         } else if (owner.complete(operation, { operation, uncertain: true })) await signingOut;
         return false;
-      } finally { await owner.release(operation); pending = null; fields.activity = final; }
+      } finally {
+        try { await owner.release(operation); }
+        finally { pending = null; fields.activity = final; finishHandoff(); }
+      }
     })();
     return pending;
   }
@@ -238,7 +242,9 @@ export function createAccountSettingsState({ read = getOwnAccount, write = patch
     },
     copyKey: () => admit() && !fields.confirmation && enrollment.copyKey(),
     logout: () => admit() && !fields.confirmation && logout(),
+    retainedWork: () => (fields.locked && !fields.loading) || !!fields.currentPassword || !!fields.currentTotp || !!fields.newPassword || !!fields.confirmPassword || !!fields.dialog || !!fields.confirmation || !!enrollment.state.candidate,
     hasWork: () => fields.locked || owner.hasWork() || !!fields.newPassword || !!enrollment.state.candidate,
+    discard() { if (fields.locked) return false; erase(); fields.activity = idle; return true; },
     async settle() { if (pending) await pending; await owner.settle(); await enrollment.settle(); return true; },
     revoke() { revoked = true; owner.revoke(); enrollment.clear(); },
     dispose() { disposed = true; ticket++; erase(); return owner.dispose(); },

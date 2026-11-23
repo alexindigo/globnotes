@@ -14,7 +14,7 @@ export function createReauthentication({ invalidate = () => {}, restored = () =>
     return true;
   }
   return Object.freeze({
-    request() {
+    request({ invalidate: retire = invalidate, restored: restore = restored } = {}) {
       if (pending) return pending.completion;
       const entry = { id: ++serial };
       entry.completion = new Promise(resolve => { entry.resolve = resolve; });
@@ -24,11 +24,11 @@ export function createReauthentication({ invalidate = () => {}, restored = () =>
         cancel: () => finish(entry, false),
         authenticated() {
           if (!current(entry)) return Promise.resolve(false);
-          return entry.restoring ??= Promise.resolve().then(restored).catch(report).then(() => finish(entry, true));
+          return entry.restoring ??= Promise.resolve().then(restore).catch(report).then(() => finish(entry, true));
         },
       });
       // Retire old credential-owned work before offering a new login.
-      Promise.resolve().then(invalidate).then(() => { if (current(entry)) changed(presentation); })
+      Promise.resolve().then(retire).then(() => { if (current(entry)) changed(presentation); })
         .catch(error => { report(error); finish(entry, false); });
       return entry.completion;
     },
@@ -51,3 +51,6 @@ const coordinator = createReauthentication({
   },
 });
 export const requestReauthentication = () => coordinator.request();
+// The capability session has already retired its own runtime; acceptance of
+// its new projection is the only path that can install the replacement.
+export const requestIdentityReauthentication = () => coordinator.request({ invalidate() {}, restored() {} });

@@ -31,8 +31,8 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
   const draining = new Set(), cleanupErrors = [];
   const revisions = new Map();
   const metadataTopics = { conflicts: TOPICS.VAULT_CONFLICTS, drivers: TOPICS.VAULT_DRIVERS };
-  let cursorOwner = { key: sessionKey ? null : undefined };
-  const live = () => !disposed && owners > 0 && pageActive && cursorOwner.key !== null && (!sessionKey || sessionKey() === cursorOwner.key);
+  let cursorOwner = { key: sessionKey ? null : undefined }, revalidation = null;
+  const live = () => !disposed && pageActive && (revalidation ? revalidation.current() : owners > 0 && cursorOwner.key !== null && (!sessionKey || sessionKey() === cursorOwner.key));
   function retire() {
     const old = connection; connection = null; connected = false;
     if (!old) return;
@@ -49,7 +49,8 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     retire();
     // Cleanup may reenter restart/acquire; the replacement it installed wins.
     if (connection || !live()) return;
-    const mode = polling ? "poll" : "stream";
+    const recovery = revalidation;
+    const mode = recovery ? "recovery" : polling ? "poll" : "stream";
     // Completed polls continue one observation lifetime. Real reconnects and
     // page/owner restarts must deliver a fresh snapshot even at the same revision.
     if (!continuePoll) revisions.clear();
@@ -93,9 +94,9 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     };
     const operationOwner = createOperationOwner({
       owner: Object.freeze({}),
-      dispatch: (options, delivery) => open({ ...options, signal: abort.signal,
+      dispatch: (options, delivery) => recovery ? recovery.revalidate(abort.signal) : open({ ...options, signal: abort.signal,
         onEvent: value => delivery.deliver("event", value), onClose: reason => delivery.deliver("close", reason) }),
-      release: disposer => disposer?.(),
+      release: disposer => { if (!recovery) return disposer?.(); },
       cancel() {
         const scheduled = timer; timer = null;
         if (scheduled?.ready) clearTimer(scheduled.handle);
@@ -128,10 +129,16 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     connection = operationOwner;
     // The cursor lifetime is installed before dialing; the transport owns any
     // independent credential fence. No callback can replace a pending slot.
-    current = bindContext(live, () => cursorOwner, () => connection);
+    current = bindContext(live, () => cursorOwner, () => connection, () => revalidation);
     const operation = operationOwner.operation("live", current);
     try {
-      await operationOwner.dispatch(operation, { since: seq, poll: mode === "poll" });
+      const result = await operationOwner.dispatch(operation, { since: seq, poll: mode === "poll" });
+      if (recovery) {
+        if (!current()) return;
+        if (result.value === "retry") reconnect();
+        else { revalidation = null; retire(); }
+        return;
+      }
       const opened = now();
       if (current()) { connected = true; openedAt = opened; }
     } catch (error) {
@@ -157,6 +164,17 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     return Object.freeze({ errors: Object.freeze([...cleanupErrors]) });
   }
   return {
+    revalidate(task) {
+      if (disposed) throw new Error("Vault changes owner is disposed");
+      revalidation = task; attempts = 0;
+      retire();
+      if (revalidation === task && live()) connect();
+      return () => {
+        if (revalidation !== task) return;
+        revalidation = null; retire();
+        if (live()) connect();
+      };
+    },
     setSession(next) {
       if (disposed || next === cursorOwner.key) return;
       // Publish the replacement before cancellation can reenter. A newer
@@ -173,7 +191,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     settle,
     dispose() {
       if (disposal) return disposal;
-      disposed = true; owners = 0;
+      disposed = true; owners = 0; revalidation = null;
       disposal = Promise.resolve().then(settle);
       unsubscribe(); retire();
       return disposal;
@@ -182,7 +200,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
       if (disposed) throw new Error("Vault changes owner is disposed");
       if (++owners === 1) connect();
       let released = false;
-      return () => { if (released || disposed) return; released = true; if (--owners === 0) retire(); };
+      return () => { if (released || disposed) return; released = true; if (--owners === 0 && !revalidation) retire(); };
     },
     state: () => ({ owners, seq, polling, attempts, visible: lifetime.state().visible, connected }),
   };

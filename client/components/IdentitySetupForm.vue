@@ -21,6 +21,7 @@
   </form>
 </template>
 <script setup>
+import { computed } from 'vue';
 import TextInput from './TextInput.vue';
 import PasswordField from './PasswordField.vue';
 import CustomButton from './CustomButton.vue';
@@ -29,7 +30,7 @@ import SettingRow from './settings/SettingRow.vue';
 import AuthenticatorEnrollment from './AuthenticatorEnrollment.vue';
 import { identitySetupLevels } from '../setupFormState.js';
 const props = defineProps({ controller:{type:Object,required:true} });
-const state = props.controller.state;
+const state = computed(() => props.controller.state);
 </script>
 <style scoped>
 .identity-setup { min-height:100%; font-size:14px; }

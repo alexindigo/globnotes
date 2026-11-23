@@ -54,6 +54,7 @@ export function createIdentityApi({ tokens, sessionKey, context = createSessionC
       dispatch: (value, delivery) => open({ ...value, request, readToken: () => token, basePrefix: prefix, isCurrent: current,
         onEvent: event => delivery.deliver("event", event), onClose: reason => delivery.deliver("close", reason) }),
       release: close => close?.(),
+      // EOF and body faults belong to the reconnect owner.
       channels: { event: { deliver: value => options.onEvent?.(value) }, close: { deliver: value => options.onClose?.(value) },
         failure: { deliver: error => onAuthorityFailure(error, current) } },
     });
@@ -67,7 +68,7 @@ export function createIdentityApi({ tokens, sessionKey, context = createSessionC
   }
   return Object.freeze({ read: (path, options) => exchange("read", path, undefined, options),
     write: (method, path, data, options) => exchange(method, path, data, options),
-    getConfig: () => exchange("read", "config", undefined, undefined, true), getStatus: () => exchange("read", "auth/check"),
+     getConfig: options => exchange("read", "config", undefined, options, true), getStatus: () => exchange("read", "auth-check"),
     async getToken(username, password, totp) {
       const { current } = context.transport(true);
       const token = (await post("token", { username, password, ...(totp ? { totp } : {}) })).data.access_token;

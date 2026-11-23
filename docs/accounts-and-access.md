@@ -17,6 +17,14 @@ ACL owners; reopening validates the complete set and preserves changed passwords
 and grants. Fixture preparation does not enable production routes or reimplement
 driver startup, native clocks or build copying.
 
+The prepared browser composition is `client/identityApplication.js`, with
+`identitySettings.js` composing Account and Access forms. It installs no routes
+or global transport. Clean forms can follow a new account session; dirty forms
+and original pending writes stay with their captured account and token until
+resolved. Sign-in and setup wait for the accepted account, while loaded-session
+recovery reuses the vault reconnect owner without keeping retired permissions.
+Reader plugin discovery uses the reader catalog, not the Admin manifest.
+
 Accounts belong to the instance metadata root supplied by configuration, not a
 vault. `accounts.json` contains versioned records, stable account IDs, normalized
 unique logins and an initialized marker. Empty initialized state never means a

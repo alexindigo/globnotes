@@ -7,10 +7,12 @@
  * H1 → basename), and the buffer version tracks typing.
  */
 
-import { currentBrandName } from "./brand.js";
+import { watch } from "vue";
+import { brandVersion, currentBrandName } from "./brand.js";
 import { subscribe, TOPICS } from "./bus/index.js";
 
 let noteTitle = null;
+let stopBrand, stopNote;
 
 function compose() {
   document.title = noteTitle
@@ -27,9 +29,11 @@ export function setDocTitleBase() {
 }
 
 export function initDocTitle() {
-  subscribe(TOPICS.NOTE_TITLE_CHANGED, ({ title }) => {
+  stopBrand?.(); stopNote?.();
+  stopNote = subscribe(TOPICS.NOTE_TITLE_CHANGED, ({ title }) => {
     noteTitle = title ?? null;
     compose();
   });
+  stopBrand = watch(brandVersion, compose, { flush: "sync" });
   compose();
 }

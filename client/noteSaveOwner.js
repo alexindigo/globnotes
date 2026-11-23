@@ -387,6 +387,7 @@ export function createNoteSaveOwner({
   }
 
   return { state, queueState: () => queue?.state(), persistDraft, start, reset, end, dispose,
+    adoptAuthority() { if (queue?.state().unresolved || getState().canEdit === false || readOwnerScope() !== ownerScope) return false; authority = captureAuthority(capture()); return true; },
     adopt: note => queue?.adopt(note) ?? false,
     observeBuffer,
     save, rename, latestSubmitted, contentNeedsSave, settle, discard, resolve, saveForNavigation, confirmRename, cancelRename, revokeRenamePrompt,
