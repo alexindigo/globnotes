@@ -45,6 +45,7 @@ export interface AccountState {
   readonly version: 1;
   readonly revision: number;
   readonly initialized: boolean;
+  readonly configuredSeedPending?: true;
   readonly updateId: string | null;
   readonly accounts: readonly Account[];
   readonly provisioning: readonly ProvisioningOutcome[];
@@ -99,12 +100,26 @@ export function validateState(value: unknown): AccountState {
       "updateId",
       "accounts",
       "provisioning",
+      ...(Object.hasOwn(value, "configuredSeedPending")
+        ? ["configuredSeedPending"]
+        : []),
     ]) || value.version !== 1 || !integer(value.revision) ||
     typeof value.initialized !== "boolean" ||
     !(value.updateId === null || identity(value.updateId)) ||
     !Array.isArray(value.accounts) || !Array.isArray(value.provisioning)
   ) throw new IdentityStateError();
   const accounts = value.accounts.map(validateAccount);
+  if (Object.hasOwn(value, "configuredSeedPending")) {
+    const [seed] = accounts;
+    if (
+      value.configuredSeedPending !== true || !value.initialized ||
+      value.revision !== 1 || !identity(value.updateId) ||
+      accounts.length !== 1 || value.provisioning.length !== 0 ||
+      seed.credentialRevision !== 0 || seed.credentialUpdateId !== null ||
+      seed.passwordChangeRequired || seed.totpKey !== null ||
+      Object.hasOwn(seed, "totpKeyEncoding") || seed.lastTotpStep !== null
+    ) throw new IdentityStateError();
+  }
   if (
     new Set(accounts.map((a) => a.id)).size !== accounts.length ||
     new Set(accounts.map((a) => a.login)).size !== accounts.length ||

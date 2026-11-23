@@ -221,7 +221,7 @@ interface CredentialStore {
     lease: OperationLease<"live">,
   ): Account;
   publish(transition: PreparedCredentialTransition): void;
-  create(prepared: PreparedAccount): void;
+  create(prepared: PreparedAccount, configured?: true): void;
   participant(prepared: PreparedAccount, setId: string): PublicationParticipant;
 }
 interface ProofRecord {
@@ -806,18 +806,24 @@ export function bindAccountCredentials(
     ) {
       return prepareAccount("offline", authority, request, signal);
     },
-    publishPreparedAccount(prepared: PreparedAccount): AccountIdentity {
+    publishPreparedAccount(
+      prepared: PreparedAccount,
+      configured?: true,
+    ): AccountIdentity {
       const value = preparedAccounts.get(prepared);
       // Confirmed setup credentials are published with the creator ACL, never
       // through the pre-existing credential-only path.
-      if (!value || value.phase !== "prepared" || value.enrollment) {
+      if (
+        !value || value.phase !== "prepared" || value.enrollment ||
+        configured && value.purpose !== "initial"
+      ) {
         throw new IdentityStateError();
       }
       value.phase = "publishing";
       try {
         value.guard();
         const result = store.identity(value.account);
-        store.create(prepared);
+        store.create(prepared, configured);
         return result;
       } finally {
         value.phase = "finished";

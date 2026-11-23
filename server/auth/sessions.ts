@@ -22,6 +22,7 @@ import { bindGuardedSink } from "../internal/guarded_sink.ts";
 import {
   assertOperationLease,
   createOperationLease,
+  type OperationLease,
 } from "../operation_lease.ts";
 import {
   fields,
@@ -38,13 +39,23 @@ interface SessionState {
   readonly revision: number;
   readonly signingRevision: number;
   readonly signingKey: string | null;
+  readonly configuredSeedId?: string;
 }
 function validate(value: unknown): SessionState {
   if (
     !record(value) ||
-    !fields(value, ["version", "revision", "signingRevision", "signingKey"]) ||
+    !fields(value, [
+      "version",
+      "revision",
+      "signingRevision",
+      "signingKey",
+      ...(Object.hasOwn(value, "configuredSeedId") ? ["configuredSeedId"] : []),
+    ]) ||
     value.version !== 1 || !integer(value.revision) ||
     !integer(value.signingRevision) ||
+    (Object.hasOwn(value, "configuredSeedId") &&
+      (!identity(value.configuredSeedId) || value.revision !== 1 ||
+        value.signingRevision !== 1 || value.signingKey === null)) ||
     !(value.signingKey === null ||
       (typeof value.signingKey === "string" &&
         /^[0-9a-f]{64}$/.test(value.signingKey)))
@@ -104,17 +115,23 @@ export class SessionRepository {
   prepareParents(): void {
     this.#file.prepareParents();
   }
-  initialize(): void {
+  initialize(configuredSeedId?: string, lease?: OperationLease<"live">): void {
     const expected = this.capture();
     if (expected.persistence.raw !== null) throw new IdentityStateError();
     const signingKey = [...crypto.getRandomValues(new Uint8Array(32))]
       .map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    this.#file.commit({
-      version: 1,
-      revision: 1,
-      signingRevision: 1,
-      signingKey,
-    }, expected);
+    this.#file.commit(
+      {
+        version: 1,
+        revision: 1,
+        signingRevision: 1,
+        signingKey,
+        ...(configuredSeedId === undefined ? {} : { configuredSeedId }),
+      },
+      expected,
+      undefined,
+      lease ? [lease] : [],
+    );
   }
   current(): SessionState & { readonly signingKey: string } {
     const state = this.capture().value;

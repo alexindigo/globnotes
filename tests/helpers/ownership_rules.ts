@@ -52,6 +52,7 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
       "tests/identity_provisioning_test.ts",
       "server/auth/bootstrap.ts",
       "server/auth/cli.ts",
+      "server/auth/instance.ts",
       "tests/helpers/identity_bootstrap.ts",
       "tests/helpers/identity_fixture.ts",
       "tests/identity_cli_test.ts",
@@ -140,6 +141,7 @@ export const PUBLICATION_OWNERSHIP: OwnershipRules = {
     ...OPERATION_OWNERSHIP.modules,
     "server/auth/transaction.ts": [
       "server/auth/bootstrap.ts",
+      "server/auth/instance.ts",
       "tests/helpers/identity_workflows.ts",
       "tests/identity_composition_provisioning_test.ts",
       "tests/identity_provisioning_test.ts",
@@ -147,6 +149,7 @@ export const PUBLICATION_OWNERSHIP: OwnershipRules = {
       "tests/identity_transaction_test.ts",
       "tests/identity_durability_test.ts",
       "tests/identity_bootstrap_test.ts",
+      "tests/identity_instance_startup_test.ts",
       "tests/identity_cli_test.ts",
     ],
     [PARTICIPANT_COMPLETION]: [
@@ -307,6 +310,7 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
       "server/auth/bootstrap.ts",
       "server/auth/provisioning.ts",
       "server/auth/cli.ts",
+      "server/auth/instance.ts",
       "server/config/loader.ts",
       "tests/identity_cli_test.ts",
       "server/auth/sessions.ts",
@@ -352,6 +356,7 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
     [OFFLINE_RECOVERY]: [
       "server/auth/transaction.ts",
       "server/auth/cli.ts",
+      "server/auth/instance.ts",
       CREDENTIAL_ENGINE,
       PREPARATION_HELPER,
       "tests/recorded_publication_test.ts",
@@ -361,6 +366,7 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
       "tests/helpers/identity_workflows.ts",
       "tests/identity_provisioning_test.ts",
       "tests/identity_fixture_preparation_test.ts",
+      "tests/identity_instance_startup_test.ts",
       "tests/identity_bootstrap_test.ts",
       "tests/helpers/identity_fixture.ts",
       "tests/helpers/identity_bootstrap.ts",
@@ -421,6 +427,7 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
     [IDENTITY_HELPER]: [
       "tests/identity_token_handler_test.ts",
       "tests/identity_fixture_preparation_test.ts",
+      "tests/identity_instance_startup_test.ts",
       "tests/identity_vault_binding_test.ts",
       "tests/identity_vault_binding_creation_test.ts",
       "tests/helpers/identity_workflows.ts",

@@ -149,6 +149,12 @@ Deno.test("identity transaction: exact account/marker and creator ACL settle bef
     const events: unknown[] = [];
     const f = transactionContext(root, scope, (phase) => {
       events.push(phase);
+      if (phase === "journal-unlinked") {
+        assertThrows(
+          () => Deno.statSync(`${root}/identity-transaction.json`),
+          Deno.errors.NotFound,
+        );
+      }
       assertThrows(
         () => f.transaction.assertReady(),
         IdentityTransactionUnavailable,
@@ -174,6 +180,7 @@ Deno.test("identity transaction: exact account/marker and creator ACL settle bef
       "decided",
       "installed",
       "retiring",
+      "journal-unlinked",
     ]);
     f.transaction.assertReady();
     assertEquals(f.accounts.capture().value, {

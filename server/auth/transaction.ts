@@ -438,6 +438,8 @@ export class IdentityTransaction {
       this.#unlinked = { set, phase };
     }
     if (this.#unlinked) {
+      this.#checkpoint("journal-unlinked");
+      assertOperationLease(this.#lease, "live");
       syncOwnedStoredDirectory(dirname(this.#saved.binding.target), this.#root);
       this.#journal.assertUnchanged(this.#saved);
     }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { dirname, join } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
+import { verifyPassword } from "../helpers.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
 import type { OperationLease } from "../operation_lease.ts";
 import {
@@ -71,7 +72,7 @@ export function validateAccountIdentity(value: unknown): AccountIdentity {
 declare const directoryBrand: unique symbol;
 export interface AccountDirectorySnapshot {
   readonly [directoryBrand]: true;
-  readonly value: Omit<AccountState, "accounts"> & {
+  readonly value: Omit<AccountState, "accounts" | "configuredSeedPending"> & {
     readonly accounts: readonly AccountIdentity[];
   };
 }
@@ -148,7 +149,7 @@ export class AccountRepository {
             [prepared.lease],
           );
         },
-        create: (prepared) => {
+        create: (prepared, configured) => {
           const value = owner.resolvePreparedAccount(prepared);
           const account = validateAccount(value.account);
           const expected = value.snapshot;
@@ -156,6 +157,7 @@ export class AccountRepository {
             {
               ...expected.value,
               initialized: true,
+              ...(configured ? { configuredSeedPending: true as const } : {}),
               revision: expected.value.revision + 1,
               updateId: value.updateId,
               accounts: [...expected.value.accounts, account],
@@ -248,10 +250,14 @@ export class AccountRepository {
   }
   #directorySnapshot(snapshot: AccountSnapshot): AccountDirectorySnapshot {
     if (snapshot !== this.#directory?.stored) {
+      const { configuredSeedPending, ...stored } = snapshot.value;
       const value = Object.freeze({
-        ...snapshot.value,
+        ...stored,
+        initialized: stored.initialized && !configuredSeedPending,
         accounts: Object.freeze(
-          snapshot.value.accounts.map((account) => this.#identity(account)),
+          configuredSeedPending
+            ? []
+            : stored.accounts.map((account) => this.#identity(account)),
         ),
       });
       this.#directory = {
@@ -306,17 +312,45 @@ export class AccountRepository {
   prepareParents(): void {
     this.#file.prepareParents();
   }
+  /** Match the exact pending first account without disclosing its verifier or
+   * turning it into an authenticatable account. Claim only this snapshot. */
+  async verifyConfiguredSeed(login: string, password: string) {
+    const before = this.#file.capture();
+    const { configuredSeedPending, ...ready } = before.value;
+    const seed = ready.accounts[0];
+    if (
+      !configuredSeedPending || seed.login !== normalizeLogin(login) ||
+      !await verifyPassword(password, seed.passwordHash)
+    ) return null;
+    this.#file.assertUnchanged(before);
+    return Object.freeze({
+      id: ready.updateId!,
+      assertPending: () => this.#file.assertUnchanged(before),
+      activate: (lease: OperationLease<"live">) => {
+        this.#file.commit(
+          { ...ready, revision: ready.revision + 1 },
+          before,
+          undefined,
+          [lease],
+        );
+      },
+    });
+  }
   get initialized(): boolean {
-    return this.#file.capture().value.initialized;
+    return this.capture().value.initialized;
   }
   #byId(id: string): Account | null {
-    return this.#file.capture().value.accounts.find((a) => a.id === id) ?? null;
+    const value = this.#file.capture().value;
+    return value.configuredSeedPending
+      ? null
+      : value.accounts.find((a) => a.id === id) ?? null;
   }
   #byLogin(login: string): Account | null {
     const normalized = normalizeLogin(login);
-    return this.#file.capture().value.accounts.find((a) =>
-      a.login === normalized
-    ) ?? null;
+    const value = this.#file.capture().value;
+    return value.configuredSeedPending
+      ? null
+      : value.accounts.find((a) => a.login === normalized) ?? null;
   }
   byId(id: string): AccountIdentity | null {
     return this.capture().value.accounts.find((a) => a.id === id) ?? null;

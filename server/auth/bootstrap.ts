@@ -91,6 +91,10 @@ export function openIdentityTransaction(
   lease: OperationLease<"live">,
   authority: OfflineRecoveryAuthority,
   vaultId?: string,
+  options: {
+    retain?: (transaction: IdentityTransaction) => void;
+    checkpoint?: (phase: string) => void;
+  } = {},
 ) {
   IdentityTransaction.assertUnowned(accounts.root);
   const raw =
@@ -113,6 +117,7 @@ export function openIdentityTransaction(
   const transaction = new IdentityTransaction(accounts, acl, {
     vaultRoot,
     lease,
+    checkpoint: options.checkpoint,
   });
   try {
     transaction.recover(authority);
@@ -120,6 +125,7 @@ export function openIdentityTransaction(
     try {
       transaction.close();
     } catch (cleanup) {
+      options.retain?.(transaction);
       throw new IdentityTransactionUnavailable({
         cause: new AggregateError(
           [cause, cleanup],
@@ -137,6 +143,7 @@ export class IdentityBootstrap {
   readonly #ownedTransaction: IdentityTransaction | undefined;
   readonly #lease: OperationLease<"live">;
   readonly #legacy: () => boolean;
+  readonly #assertSeedTarget: () => void;
   readonly #first: Readonly<{ login: string; password: string }> | undefined;
   readonly #target: Readonly<{ acl: AclRepository; root: string }> | undefined;
   #source: ReturnType<typeof bindAccountPreparationAuthority> | undefined;
@@ -164,11 +171,13 @@ export class IdentityBootstrap {
       target?: { acl: AclRepository; root: string };
       first?: { login: string; password: string };
       transaction?: IdentityTransaction;
+      assertSeedTarget?: () => void;
     },
   ) {
     if (sessions.accounts !== accounts) throw new IdentityRecoveryError();
     this.#lease = options.lease;
     this.#legacy = options.legacy.bind(options);
+    this.#assertSeedTarget = options.assertSeedTarget ?? (() => {});
     this.#first = options.first
       ? Object.freeze(structuredClone(options.first))
       : undefined;
@@ -413,29 +422,71 @@ export class IdentityBootstrap {
     if (failed) throw failure;
     return result!;
   }
-  async provisionConfigured(): Promise<void> {
-    if (!this.#first?.login || this.state() === "ready") return;
-    if (this.#busy || this.state() !== "fresh") {
-      throw new IdentityRecoveryError();
-    }
+  async provisionConfigured(
+    checkpoint: (phase: "account" | "signing" | "active") => void = () => {},
+  ): Promise<void> {
+    const state = this.state();
+    if (!this.#first?.login || state === "ready") return;
+    if (this.#busy) throw new IdentityRecoveryError();
     this.#busy = true;
     this.#configured = true;
     try {
-      this.accounts.prepareParents();
-      this.sessions.signing.prepareParents();
-      const prepared = await this.accounts.credentials.prepareInitialAccount(
-        this.#authority(),
-        {
-          login: this.#first.login,
-          password: this.#first.password,
-          updateId: createUuid(),
-        },
-      );
-      this.#fresh();
-      this.sessions.signing.initialize();
-      this.#signing = this.sessions.signing.capture();
-      this.#publishing = true;
-      this.accounts.credentials.publishPreparedAccount(prepared.prepared);
+      const assertTarget = () => {
+        this.transaction?.assertReady();
+        if (
+          this.#legacy() || this.#target?.acl.capture().persistence.raw != null
+        ) throw new IdentityRecoveryError();
+        this.#target?.acl.assertUnchanged();
+        this.#assertSeedTarget();
+      };
+      assertTarget();
+      const { login, password } = this.#first;
+      const signing = this.sessions.signing;
+      if (state === "fresh") {
+        this.accounts.prepareParents();
+        signing.prepareParents();
+        const prepared = await this.accounts.credentials.prepareInitialAccount(
+          this.#authority(),
+          { login, password, updateId: createUuid() },
+        );
+        this.#fresh();
+        assertTarget();
+        this.accounts.credentials.publishPreparedAccount(
+          prepared.prepared,
+          true,
+        );
+        checkpoint("account");
+      }
+      const pending = await this.accounts.verifyConfiguredSeed(login, password);
+      if (!pending) throw new IdentityRecoveryError();
+      const lease = createOperationLease("live", [() => {
+        assertTarget();
+        pending.assertPending();
+        return undefined;
+      }], [this.#lease]);
+      try {
+        lease.lease.assertCurrent();
+        if (signing.capture().persistence.raw === null) {
+          signing.initialize(pending.id, lease.lease);
+          checkpoint("signing");
+        }
+        const expected = signing.capture();
+        if (expected.value.configuredSeedId !== pending.id) {
+          throw new IdentityRecoveryError();
+        }
+        const activate = createOperationLease("live", [() => {
+          signing.assertUnchanged(expected);
+          return undefined;
+        }], [lease.lease]);
+        try {
+          pending.activate(activate.lease);
+        } finally {
+          activate.retire();
+        }
+        checkpoint("active");
+      } finally {
+        lease.retire();
+      }
     } finally {
       this.#busy = false;
       this.#publishing = false;
