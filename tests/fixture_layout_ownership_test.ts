@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { publicScenario } from "./helpers/fixture_scenarios.ts";
+import {
+  accountScenario,
+  publicScenario,
+} from "./helpers/fixture_scenarios.ts";
 import {
   assert,
   assertEquals,
@@ -441,6 +444,53 @@ for (const required of [false, true]) {
     });
   });
 }
+
+Deno.test("native fixture scenario: prefix boot merges a partial legacy seed into the existing public Edit record", () =>
+  fixtureScope(async (scope) => {
+    const input = await nativeLayout(scope);
+    const plugin = `${input.state}/plugins/gps08`;
+    await Deno.mkdir(plugin, { recursive: true });
+    await Deno.writeTextFile(
+      `${plugin}/manifest.json`,
+      JSON.stringify({
+        id: "gps08",
+        runtime: { server: "service.js" },
+      }),
+    );
+    await Deno.writeTextFile(
+      `${plugin}/service.js`,
+      `export function activate(ctx) {
+      ctx.commands.register({ id: 'consume', label: 'Consume', target: 'server' }, () => null);
+    }`,
+    );
+    await Deno.writeTextFile(
+      `${input.state}/plugins.json`,
+      JSON.stringify({ enabled: ["gps08"], autoEnable: false }),
+    );
+    const filename = `${input.state}/config.json`;
+    const previous = { auth_type: "none", unrelated_fixture: { kept: true } };
+    await Deno.writeTextFile(filename, JSON.stringify(previous));
+    const server = (await scope.acquire(() =>
+      bootPrefixAuthFixture({
+        ...input,
+        prefix: "/notes",
+        setup: false,
+        fixtureScenario: accountScenario(publicScenario().identity, {
+          read_only_settings: true,
+        }),
+      }), (server) => server.close())).value;
+    const config = await fetch(`${server.baseUrl}/notes/_/api/config`);
+    const { authType, settingsWritable } = await config.json();
+    assertEquals([config.status, authType, settingsWritable], [
+      200,
+      "none",
+      false,
+    ]);
+    assertEquals(JSON.parse(await Deno.readTextFile(filename)), {
+      ...previous,
+      read_only_settings: true,
+    });
+  }));
 
 Deno.test("native layout review: failed log acquisition preserves existing evidence and reaps before rejection", async () => {
   await fixtureScope(async (scope) => {

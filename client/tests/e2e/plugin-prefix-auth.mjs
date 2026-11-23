@@ -3,7 +3,8 @@ import { nativeSession } from "./native-cdp-session.mjs";
 import { PREFIX_AUTH_CASES, parsePrefixAuthArguments } from "./prefix-auth-cases.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { bootPrefixAuthFixture } from "./prefix-auth-fixture.mjs";
-import { hashPassword } from "../../../server/helpers.ts";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
+import { setupScenario } from "../../../tests/helpers/fixture_scenarios.ts";
 import { SignJWT } from "jose";
 
 let options;
@@ -101,7 +102,8 @@ async function fixture(prefix, mode) {
   const vault = await Deno.makeTempDir({ prefix: `gps08-${label}-vault-` }), state = await metadataDirectory({ prefix: `gps08-${label}-state-` });
   const secret = crypto.randomUUID();
   await Deno.writeTextFile(`${vault}/Seed.md`, seed);
-  if (mode !== "setup") await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: mode, ...(mode === "password" ? { username, password_hash: await hashPassword(password), secret_key: secret } : {}) }));
+  const scenario = nativeAccountScenario(mode === "password" ? { account: { login: username, password } } : { everybody: mode === "read_only" ? "view" : "edit" });
+  const fixtureInput = mode === "setup" ? { fixtureScenario: setupScenario() } : await nativeFixtureInput(scenario, {}, { signingKey: mode === "password" ? secret : undefined });
   await Deno.mkdir(`${state}/plugins/gps08/endpoints/query`, { recursive: true });
   await Deno.mkdir(`${state}/plugins/gps08/endpoints/counts`);
   await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["gps08"], autoEnable: false }));
@@ -113,8 +115,8 @@ async function fixture(prefix, mode) {
   await Deno.writeTextFile(`${state}/plugins/gps08/custom-browser-entry.js`, "import * as sdk from '@globnotes/plugin-sdk';import * as milk from '@milkdown/utils';export async function activate(ctx){window.__gps08Runtime={sdk,milk,version:sdk.PLUGIN_SDK_VERSION,message:(await ctx.settings.read('preferences')).values.message};let output;ctx.commands.register({id:'browser-consumer',label:'GPS08 browser settings consumer',target:'browser'},async()=>{const message=(await ctx.settings.read('preferences')).values.message;if(!output){output=document.createElement('div');output.setAttribute('data-gps08-consumer','');document.body.prepend(output);}output.textContent=message;return message;});ctx.register(()=>{output?.remove();delete window.__gps08Runtime;window.__gps08Disposed=(window.__gps08Disposed??0)+1;});}");
   await Deno.writeTextFile(`${state}/plugins/gps08/custom-editor-entry.js`, "import * as sdk from '@globnotes/plugin-sdk';import * as milk from '@milkdown/utils';window.__gps08Editor={sdk,milk,version:sdk.PLUGIN_SDK_VERSION};export default [];");
   const bootstrap = mode === "password" ? await signed(secret, "1h") : null;
-  current = { label, directory, vault, state, secret, prefix, mode, responses: [], sessions: [], streams: [], token: bootstrap, closed: false };
-  current.server = await bootPrefixAuthFixture({ directory, vault, state, prefix, setup: mode === "setup", headers: bootstrap ? { authorization: `Bearer ${bootstrap}` } : {} });
+  current = { label, directory, vault, state, secret, prefix, mode, scenario, responses: [], sessions: [], streams: [], token: bootstrap, closed: false };
+  current.server = await bootPrefixAuthFixture({ ...fixtureInput, directory, vault, state, prefix, setup: mode === "setup", headers: bootstrap ? { authorization: `Bearer ${bootstrap}` } : {} });
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) }); current.session = session; current.sessions.push(session);
   // GPS08_LOGIN_BOUNDARY_DIAGNOSTIC: normalized wire/navigation, no credentials.
   current.wire = [];

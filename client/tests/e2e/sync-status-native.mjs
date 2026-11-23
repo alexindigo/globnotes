@@ -4,6 +4,7 @@ import { bootServer } from "../../../tests/helpers/boot.ts";
 import { fileURLToPath } from "node:url";
 import { memoryRemote } from "../../../tests/helpers/memory_remote.ts";
 import { applicationServer, bindAddress, httpOrigin } from "./http-origin.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { ICON_PATHS } from "../../icons.js";
@@ -55,7 +56,8 @@ async function geometry() {
   assert(value.labels.every(space=>space==="nowrap"),"A panel label can wrap");
 }
 try {
-   server=(await scope.acquire(()=>bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,fixtureAuth:{auth_type:"none"},GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},{...applicationServer(),denoArgs:["--import",fileURLToPath(new URL("../../../tests/helpers/sync_status_preload.ts",import.meta.url))]}),server=>server.close())).value;
+   const scenarioInput=await nativeFixtureInput(nativeAccountScenario());
+   server=(await scope.acquire(()=>bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,...scenarioInput,GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},{...applicationServer(),denoArgs:["--import",fileURLToPath(new URL("../../../tests/helpers/sync_status_preload.ts",import.meta.url))]}),server=>server.close())).value;
    control=syncStatusChannel(controlDirectory,{label:"Sync status server",exit:server.exited});
   const catalog=await api("plugin-host");await api("plugin-host/globnotes-test-driver/enabled","PUT",{enabled:true,revision:catalog.policy.revision,signature:catalog.policy.signature});
   const permission=await api("plugin-host/globnotes-test-driver/permissions");await api("plugin-host/globnotes-test-driver/permissions","PUT",{revision:permission.revision,signature:permission.signature,requestSourceKey:permission.requestSourceKey,requestSourceRevision:permission.requestSourceRevision,allowNetwork:true,approvedNetwork:permission.requestedNetwork,approvedImports:[]});

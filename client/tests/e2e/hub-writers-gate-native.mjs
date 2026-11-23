@@ -4,6 +4,7 @@
 // then succeeds. Plain HTTP on the test domain, real filesystem writes.
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 
 const assert = (condition, message) => { if (!condition) throw Error(message); };
@@ -33,7 +34,7 @@ async function confirmDelete() {
 try {
   await shellWrite("Doomed", "loaded text\n");
   server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: `${directory}/state`,
-    fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
+    ...await nativeFixtureInput(nativeAccountScenario()), GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   let held = null;
   session.page.onEvent(event => {

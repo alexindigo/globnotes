@@ -6,6 +6,7 @@ import { clickReady } from "./native-actions.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { closeClipboardWitness, readClipboardText } from "./native-clipboard.mjs";
 import { closeNativeCase, createNativeCaseLifetime, createNativeFailureReporter, finalizeNativeCase, runNativeCase } from "./native-case-finalization.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 export const CHAIN = ["readme", "rendering/code-blocks", "rendering/math", "rendering/callouts", "rendering/highlights", "rendering/mermaid", "rendering/frontmatter", "links/wiki-links", "links/embeds", "folders/dad/recipes/soup", "folders/mom/ideas", "rename-me/moving-note"];
@@ -16,7 +17,7 @@ export async function createFixture(name, directory, { empty = false } = {}) {
   await Deno.mkdir(directory, { mode: 0o700 });
   const vault = directory + "/vault", state = directory + "/state/globnotes";
   await Deno.mkdir(vault); await Deno.mkdir(state, { recursive: true });
-  await Deno.writeTextFile(state + "/config.json", JSON.stringify({ auth_type: "none", brand_name: "Native Test Notes" }), { createNew: true });
+  const fixtureInput = await nativeFixtureInput(nativeAccountScenario(), { brand_name: "Native Test Notes" });
   await Deno.writeTextFile(state + "/config.toml", '[brand]\nname="Native Test Notes"\n', { createNew: true });
   const image = await Deno.readFile(ROOT + "/client/assets/apple-touch-icon.png");
   const special = {
@@ -47,7 +48,7 @@ export async function createFixture(name, directory, { empty = false } = {}) {
   }
   let server, session;
   try {
-    server = await bootServer(vault, state, { logsDir: directory });
+    server = await bootServer(vault, state, { ...fixtureInput, logsDir: directory });
     session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
     const baseUrl = server.baseUrl;
     const writes = [];

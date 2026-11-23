@@ -4,7 +4,7 @@ import { createNoteResponseGate } from "./native-response-gate.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
-import { hashPassword } from "../../../server/helpers.ts";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { SignJWT } from "jose";
 
 let options;
@@ -30,14 +30,13 @@ async function setup(label, { password = false, create = false } = {}) {
   const state = await metadataDirectory({ prefix: `fifo-${label}-state-` });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
   const secret = crypto.randomUUID();
-  await Deno.writeTextFile(`${state}/config.json`, JSON.stringify(password
-    ? { auth_type: "password", username: "fifo-user", password_hash: await hashPassword("fifo-secret"), secret_key: secret }
-    : { auth_type: "none" }));
+  const scenario = nativeAccountScenario(password ? { account: { login: "fifo-user", password: "fifo-secret" } } : {});
+  const fixtureInput = await nativeFixtureInput(scenario, {}, { signingKey: password ? secret : undefined });
   await Deno.mkdir(`${state}/plugins/fifo-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/manifest.json`, JSON.stringify({ id: "fifo-guard", runtime: { server: "service.js" }, hooks: ["pre-save"] }));
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => (fact.proposed?.content ?? '').includes('FIFO-GUARD') ? {cancel:true,reason:'FIFO guard protection'} : {cancel:false}); }");
   const token = password ? await new SignJWT({ sub: "fifo-user" }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  const server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const server = await bootServer(vault, state, { ...fixtureInput, env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
   current = { label, directory, vault, state, server, records: [], baseUrl: server.baseUrl };
   owned.push(current);
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) }); current.session = session;

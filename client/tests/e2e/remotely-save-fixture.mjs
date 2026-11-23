@@ -5,6 +5,7 @@ import { remotelySaveRemote } from "../../../tests/helpers/remotely_save_remote.
 import { createCodec } from "../../../plugins/globnotes-remotely-save/crypto.js";
 import { referenceCodecs, referenceStore } from "../../../tests/interop/remotely_save_reference.mjs";
 import { applicationServer } from "./http-origin.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
@@ -64,7 +65,7 @@ export async function remotelySaveCase(backend, mode, run) {
       await Deno.writeTextFile(`${vault}/Collision.md`, "local collision\n");
       await put("Collision.md", "remote collision\n");
       await put("Live.md", "first\n\nlast\n");
-      server = await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,fixtureAuth:{auth_type:"none"},GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"}, applicationServer());
+      server = await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,...await nativeFixtureInput(nativeAccountScenario()),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"}, applicationServer());
       async function api(route, method="GET", body) {
         const response = await fetch(`${server.baseUrl}/_/api/${route}`, {method,headers:{"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
         const raw = await response.text(); packets.push(raw);

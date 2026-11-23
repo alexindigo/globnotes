@@ -23,11 +23,11 @@ async function setup(name, { view = false, readonly = false, create = false } = 
   const state = await metadataDirectory({ prefix: "owner-guards-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
   await Deno.writeTextFile(`${vault}/Other.md`, "Other content.\n");
-  await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: readonly ? "read_only" : "none" }));
+  const fixtureInput = await nativeFixtureInput(nativeAccountScenario({ everybody: readonly ? "view" : "edit" }));
   await Deno.mkdir(`${state}/plugins/owner-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/owner-guard/manifest.json`, JSON.stringify({ id: "owner-guard", runtime: { server: "service.js" }, hooks: ["pre-save"] }));
   await Deno.writeTextFile(`${state}/plugins/owner-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => fact.proposed.content.includes('OWNER-GUARD') ? {cancel:true,reason:'Owned guard rejection'} : {cancel:false}); }");
-  const server = await bootServer(vault, state, { logsDir: directory });
+  const server = await bootServer(vault, state, { ...fixtureInput, logsDir: directory });
   current = { name, directory, vault, state, server, records: [], reads: [] };
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) }); current.session = session;
   const gate = await createNoteResponseGate(session);
@@ -185,4 +185,4 @@ finally {
   ] });
 }
 if (failure) throw failure;
-import { metadataDirectory } from "./config-fixture.mjs";
+import { metadataDirectory, nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";

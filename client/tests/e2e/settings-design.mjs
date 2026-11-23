@@ -153,7 +153,7 @@ try {
   await record('every-page-dialog-matrix',await exerciseSettingsSurfaces({port:cdpPort,directory:`${artifacts}/surfaces`}));
   vault = await Deno.makeTempDir({ prefix: "settings-design-vault-" }); state = await metadataDirectory({ prefix: "settings-design-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
-  await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: "none" }));
+  const fixtureInput = await nativeFixtureInput(nativeAccountScenario());
   await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ revision: 0, autoEnable: true, disabled: [disabled.id] }));
   await manifest(multi,{"service.js":"export function activate(){}",
     'browser.js':"export function activate(ctx){const button=document.createElement('button');button.type='button';button.dataset.legacyPermissions='';button.textContent='Open legacy permissions';button.style.cssText='position:fixed;top:16px;right:16px;z-index:25';button.onclick=()=>ctx.actions.dispatch('app:open-settings',{page:'core:plugin-permissions:design-multi'});document.body.append(button);ctx.register(()=>button.remove());}"}); await manifest(disabled); await manifest(coreNamed);
@@ -162,7 +162,7 @@ try {
   await manifest(attentionPlugin,{'service.js':"export function activate(ctx){ctx.commands.register({id:'attention',label:'Queue waiting decision',target:'server'},()=>ctx.permissions.requestAccess({kind:'network',hosts:['attention.example:443'],reason:'Settings waiting-decision consumer'}));}"});
   await manifest(failed, { "service.js": "export function activate(){throw Error('Design deliberate runtime failure');}" });
   await manifest(zero, { "main.js": "export function getSelectors(){return [];}" });
-  server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get("TMPDIR") }, logsDir: artifacts, allowFailed: true });
+  server = await bootServer(vault, state, { ...fixtureInput, env: { TMPDIR:Deno.env.get("TMPDIR") }, logsDir: artifacts, allowFailed: true });
   session = await nativeSession({ port:cdpPort });
   await Deno.writeTextFile(`${artifacts}/ownership.json`, JSON.stringify({ vault, state, pid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
   stopObserver = session.page.onEvent(event => {
@@ -370,4 +370,4 @@ finally {
 }
 if (failure) throw failure;
 console.log(`SETTINGS DESIGN OK (${outcomes.length} inventory/navigation outcomes)`);
-import { metadataDirectory } from "./config-fixture.mjs";
+import { metadataDirectory, nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";

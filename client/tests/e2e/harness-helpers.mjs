@@ -13,15 +13,19 @@ import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const configFile = resolve(dirname(fileURLToPath(import.meta.url)), "../../../deno.json");
 
-export async function bootServer(vault, stateDir, { env = {}, logsDir = "", allowFailed = false, headers = {}, onServer = () => {}, denoArgs = [], build } = {}) {
+/** @param {string} vault
+ * @param {string} stateDir
+ * @param {{fixtureScenario?: import('../../../tests/helpers/fixture_scenarios.ts').FixtureScenario, env?: Record<string,string>, logsDir?: string, allowFailed?: boolean, headers?: Record<string,string>, onServer?: (server: import('../../../tests/helpers/boot.ts').TestServer) => void, denoArgs?: string[], build?: Parameters<typeof launchServer>[1]['build']}} [options] */
+export async function bootServer(vault, stateDir, { fixtureScenario, env = {}, logsDir = "", allowFailed = false, headers = {}, onServer = () => {}, denoArgs = [], build } = {}) {
   const environment = { ...env }, requestHeaders = { ...headers };
   const prefix = environment.GLOBNOTES__SERVER_PATHPREFIX ?? "";
   const hostname = bindAddress();
   // Reuse the owner of port-0 binding, private build/cwd and clean child env.
   const server = await launchServer({
-      ...environment,
-        GLOBNOTES_GLOBNOTES_PATH: resolve(vault),
-        GLOBNOTES__METADATA_PATH: metadataBase(resolve(vault), resolve(stateDir)),
+    ...environment,
+    fixtureScenario,
+    GLOBNOTES_GLOBNOTES_PATH: resolve(vault),
+    GLOBNOTES__METADATA_PATH: metadataBase(resolve(vault), resolve(stateDir)),
   }, { host: hostname, origin: httpOrigin, build, denoArgs: ["--cached-only", "--frozen", `--config=${configFile}`, ...denoArgs] });
   const logs = server.output;
   let closing;
@@ -57,7 +61,7 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir = "", allo
     throw error;
   }
   return {
-    baseUrl,
+    baseUrl, fixtureIdentity: server.fixtureIdentity,
     close, pid: server.pid, logs, status: server.status, exited: server.exited,
   };
 }

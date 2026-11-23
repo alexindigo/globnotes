@@ -7,7 +7,9 @@ import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { awaitHealthy, awaitPluginReady } from "./harness-helpers.mjs";
 import { PERMISSION_CASES, parseFixtureArguments } from "./native-fixture-cases.mjs";
 import { done, failed, pending, waitUntil } from "../../../tests/helpers/wait.ts";
-import { metadataBase } from "./config-fixture.mjs";
+import { metadataBase, nativeAccountScenario, nativeFixtureInput, publishNativeLegacyAuth } from "./config-fixture.mjs";
+import { storedScenario } from "../../../tests/helpers/fixture_scenarios.ts";
+import { testEnvironment } from "../../../tests/helpers/environment.ts";
 import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
 import { assertEquals } from "@std/assert";
 
@@ -34,6 +36,9 @@ async function operatorSession() {
 }
 
 async function launch(fixture) {
+  // The separate import parent retains its existing launch permissions.
+  const prepared = testEnvironment({ fixtureScenario: fixture.launchCount === 0 ? fixture.fixtureScenario : storedScenario(fixture.fixtureScenario) });
+  if (prepared.fixtureAuth) await publishNativeLegacyAuth(fixture.vault, fixture.state, ROOT, prepared);
   const cwd = await createServerWorkingDirectory();
   const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
   const args = ["run", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env",
@@ -50,7 +55,7 @@ async function launch(fixture) {
   await Deno.writeTextFile(`${fixture.directory}/parent-${fixture.launchCount}.json`, JSON.stringify({ pid: child.pid, args, cwd, isolatedImportParent: fixture.importParent }, null, 2));
   let exited = false, closed = false;
   const status = child.status.then(result => { exited = true; return result; });
-  const owner = { child, base, args, async close() {
+  const owner = { child, base, args, fixtureIdentity: prepared.fixtureIdentity, async close() {
     if (closed) return; closed = true;
     try { if (!exited) child.kill("SIGTERM"); await status; await Promise.all(drains); }
     finally { await Deno.remove(cwd, { recursive: true }); }
@@ -65,7 +70,7 @@ async function fixture(name, { importParent = false, gateSaves = false, guardSav
   const directory = `${artifacts}/${name}`; await Deno.mkdir(directory);
   const root = await Deno.makeTempDir({ prefix: "permissions-native-" }), vault = `${root}/vault`, state = `${root}/state/globnotes`;
   await Deno.mkdir(vault); await Deno.mkdir(state, { recursive: true }); await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
-  await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: "none" }));
+  const { fixtureScenario } = await nativeFixtureInput(nativeAccountScenario());
   let traffic = 0, moduleTraffic = 0, extraTraffic = 0, guardEntered = false;
   const guardRelease = Promise.withResolvers();
   const receiver = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async request => {
@@ -101,7 +106,7 @@ async function fixture(name, { importParent = false, gateSaves = false, guardSav
   await Deno.writeTextFile(`${disabled}/manifest.json`, JSON.stringify({ id: "disabled-editor", name: "Disabled custom editor", client: { entry: "other-editor.js" }, runsInBrowser: false }));
   await Deno.writeTextFile(`${disabled}/other-editor.js`, "export default [];");
   await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ disabled: ["disabled-editor"] }));
-  const value = { name, directory, root, vault, state, authority, receiver, extraReceiver, extraAuthority, importParent, privateLock: `${root}/import-control.lock`, launchCount: 0,
+  const value = { name, directory, root, vault, state, fixtureScenario, authority, receiver, extraReceiver, extraAuthority, importParent, privateLock: `${root}/import-control.lock`, launchCount: 0,
     traffic: () => traffic, moduleTraffic: () => moduleTraffic, extraTraffic: () => extraTraffic, sessions: [] };
   value.guardEntered = () => guardEntered; value.releaseGuard = guardRelease.resolve;
   if (importParent) await Deno.copyFile(`${ROOT}/deno.lock`, value.privateLock);
@@ -119,7 +124,7 @@ async function fixture(name, { importParent = false, gateSaves = false, guardSav
   await value.session.poll("!!document.querySelector('.toast-viewer')");
   return value;
 }
-async function json(path, init) {
+async function json(path, init = {}) {
   const response = await fetch(`${current.server.base}/_/api/${path}`, { ...init, signal: AbortSignal.timeout(5000) });
   const body = await response.json(); return { status: response.status, body };
 }

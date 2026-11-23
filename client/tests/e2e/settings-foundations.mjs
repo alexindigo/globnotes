@@ -6,7 +6,8 @@ import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { awaitHealthy, bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
-import { metadataBase, metadataDirectory } from "./config-fixture.mjs";
+import { metadataBase, metadataDirectory, nativeAccountScenario, nativeFixtureInput, publishNativeLegacyAuth } from "./config-fixture.mjs";
+import { testEnvironment } from "../../../tests/helpers/environment.ts";
 import { parse as parseToml } from "@std/toml";
 
 let options;
@@ -31,8 +32,10 @@ const permissionPath = "/_/api/plugin-host/foundation-guard/permissions";
 // The permission-warning fixture needs an actually unavailable import parent.
 // Match the existing feature-owned plugin-permissions.mjs parent-launch pattern;
 // bootServer's general default and the production runtime remain unchanged.
-async function bootWarningServer(vault, state, logsDir) {
+async function bootWarningServer(vault, state, logsDir, fixtureInput) {
+  const fixture = testEnvironment(fixtureInput);
   const root = fileURLToPath(new URL("../../..", import.meta.url));
+  if (fixture.fixtureAuth) await publishNativeLegacyAuth(vault, state, root, fixture);
   const { host, origin } = applicationServer();
   const listener = Deno.listen({ hostname: host, port: 0 });
   const port = listener.addr.port; listener.close();
@@ -69,7 +72,7 @@ async function bootWarningServer(vault, state, logsDir) {
       return pending(catalog.plugins);
     }, { label: "Owned warning fixture plugin readiness", intervalMs: 100, children: [watchChild(child)] });
   } catch (error) { await close(); throw error; }
-  return { pid: child.pid, baseUrl, close };
+  return { pid: child.pid, baseUrl, close, fixtureIdentity: fixture.fixtureIdentity };
 }
 async function record(name, detail) {
   const outcome = { name, ...detail };
@@ -210,7 +213,7 @@ try {
   vault = await Deno.makeTempDir({ prefix: "settings-foundations-vault-" });
   state = await metadataDirectory({ prefix: "settings-foundations-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
-  await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: "none", brand_name: "Foundation seed" }));
+  const fixtureInput = await nativeFixtureInput(nativeAccountScenario(), { brand_name: "Foundation seed" });
   await Deno.writeTextFile(`${state}/config.toml`, '[brand]\nname="Foundation seed"\n');
   await Deno.mkdir(`${state}/plugins/foundation-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/manifest.json`, JSON.stringify({
@@ -220,7 +223,7 @@ try {
   }));
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/service.js`, "export function activate(ctx){ctx.hooks.on('pre-save',()=>({cancel:false}));ctx.commands.register({id:'request',label:'Request foundation consent',target:'server'},()=>ctx.permissions.requestAccess({kind:'network',hosts:true,reason:'Foundation broad-access warning consumer'}));}");
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/browser.js`, "export function activate(){}");
-  server = await bootWarningServer(vault, state, artifacts);
+  server = await bootWarningServer(vault, state, artifacts, fixtureInput);
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   await Deno.writeTextFile(`${artifacts}/ownership.json`, JSON.stringify({ vault, state, server: { pid: server.pid, baseUrl: server.baseUrl }, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
   removeObserver = session.page.onEvent(event => {
@@ -421,11 +424,11 @@ try {
   vault = await Deno.makeTempDir({ prefix: "settings-foundations-readonly-vault-" });
   state = await metadataDirectory({ prefix: "settings-foundations-readonly-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
-  await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: "none", read_only_settings: true }));
+  const readonlyInput = await nativeFixtureInput(nativeAccountScenario({ settingsWritable: false }));
   await Deno.mkdir(`${state}/plugins/foundation-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/manifest.json`, JSON.stringify({ id: "foundation-guard", name: "Foundation request warning", runtime: { server: "service.js" }, capabilities: { network: true, imports: false } }));
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/service.js`, "export async function activate(ctx){await ctx.permissions.requestAccess({kind:'network',hosts:true,reason:'Foundation read-only broad-access warning consumer'});}");
-  server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: readonlyArtifacts });
+  server = await bootServer(vault, state, { ...readonlyInput, env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: readonlyArtifacts });
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   await Deno.writeTextFile(`${readonlyArtifacts}/ownership.json`, JSON.stringify({ vault, state, serverPid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
   const readonlyWrites = [];

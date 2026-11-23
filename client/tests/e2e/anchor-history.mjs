@@ -3,6 +3,7 @@
 // history/repro checks fail (that's the pin), the guard checks pass on both.
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
@@ -48,7 +49,7 @@ function check(name, cond, detail = "") {
 
 const server = await bootServer({
   GLOBNOTES_GLOBNOTES_PATH: vault,
-  fixtureAuth: { auth_type: "none" },
+  ...await nativeFixtureInput(nativeAccountScenario()),
   GLOBNOTES__SERVER_PATHPREFIX: "",
 }, applicationServer());
 const browser = await launchBrowser({ port: CDP_PORT });

@@ -55,15 +55,24 @@ export function signedInScenario(
     everybody: options.everybody ?? "none",
     grants: { [person.login]: options.level ?? "admin" },
   }, {
+    ...legacyAccountFields(person, fixturePasswordHash(person.password)),
+    secret_key,
+  });
+}
+
+export function legacyAccountFields(
+  person: IdentityFixturePayload["people"][number],
+  passwordHash: string,
+): StoredConfig {
+  return {
     auth_type: person.totpKey ? "totp" : "password",
     username: person.login,
-    password_hash: fixturePasswordHash(person.password),
-    secret_key,
+    password_hash: passwordHash,
     ...(person.totpKey ? { totp_key: person.totpKey } : {}),
     ...(person.totpKeyEncoding
       ? { totp_key_encoding: person.totpKeyEncoding }
       : {}),
-  });
+  };
 }
 
 /** No account records are prepared for an actual first-install scenario. */

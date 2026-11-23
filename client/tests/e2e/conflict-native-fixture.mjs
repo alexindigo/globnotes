@@ -1,5 +1,6 @@
 // Feature-owned real server/files and native input. No browser-only conflict state.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { applicationServer } from "./http-origin.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { assert } from "./test-outcomes.mjs";
@@ -52,7 +53,7 @@ export async function conflictCase(name, run, { prefix = "", env = {} } = {}) {
     }
   }
   try {
-    server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: `${directory}/state`, fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: prefix, ...env }, applicationServer());
+    server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: `${directory}/state`, ...await nativeFixtureInput(nativeAccountScenario()), GLOBNOTES__SERVER_PATHPREFIX: prefix, ...env }, applicationServer());
     session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335), height: 1100 });
     session.page.onEvent(event => {
       if (event.method === "Network.requestWillBeSent" && /\/conflicts\/[^/]+\/resolve$/.test(event.params.request.url)) {
@@ -62,7 +63,7 @@ export async function conflictCase(name, run, { prefix = "", env = {} } = {}) {
     const f = { directory, vault, state, prefix, api, create, capture, session, writes, results,
       url: path => `${server.baseUrl}${prefix}${path}`,
       server: () => server,
-      async restart(extra = {}) { await server.close(); server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: `${directory}/state`, fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: prefix, ...env, ...extra }, applicationServer()); },
+      async restart({ scenario = nativeAccountScenario(), ...extra } = {}) { await server.close(); server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: `${directory}/state`, ...await nativeFixtureInput(scenario), GLOBNOTES__SERVER_PATHPREFIX: prefix, ...env, ...extra }, applicationServer()); },
       async peer() { const peer = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) }); peers.push(peer); return peer; },
       async holdResolutionResponse(row) {
         let response;

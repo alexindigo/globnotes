@@ -10,6 +10,8 @@ import { publishRecord, readRecord, waitForRecord } from "../../../tests/helpers
 import { copyRepositorySources } from "../../../tests/helpers/repository_sources.ts";
 import { repositoryBuild } from "../../../tests/helpers/completed_build.ts";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
+import { storedScenario } from "../../../tests/helpers/fixture_scenarios.ts";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
 const retargetPreload = `${ROOT}/tests/helpers/backup_retarget_preload.ts`;
@@ -112,7 +114,8 @@ if (options.controls) {
     const directory = `${current.directory}/backend-${++current.generation}`; await Deno.mkdir(directory);
     const admitted = Promise.withResolvers(), observation = new AbortController();
     const samples = []; let finished = false;
-    const boot = bootServer(current.vault, current.state, { build, env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory, onServer: server => admitted.resolve(server), denoArgs: current.label === "retarget" ? ["--preload", retargetPreload] : [] });
+    const fixtureScenario = current.generation === 1 ? current.fixtureScenario : storedScenario(current.fixtureScenario);
+    const boot = bootServer(current.vault, current.state, { fixtureScenario, build, env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory, onServer: server => admitted.resolve(server), denoArgs: current.label === "retarget" ? ["--preload", retargetPreload] : [] });
     const observe = (async () => {
       const owner = await admitted.promise;
       assert(owner.vault === current.vault, "Startup observation must own this fixture");
@@ -143,7 +146,7 @@ if (options.controls) {
     await Deno.mkdir(current.vault); await Deno.mkdir(current.state, { recursive: true });
     await Deno.mkdir(`${current.vault}/misplaced`); await Deno.mkdir(`${current.vault}/dedicated`);
     await Deno.writeTextFile(`${current.vault}/Note.md`, "A");
-    await publishRecord(`${current.state}/config.json`, JSON.stringify({ auth_type: "none", ...(label === "settings-lock" ? { read_only_settings: true } : {}) }));
+    ({ fixtureScenario: current.fixtureScenario } = await nativeFixtureInput(nativeAccountScenario(label === "settings-lock" ? { settingsWritable: false } : {})));
     if (seed) { await Deno.mkdir(`${current.state}/plugin-data/globnotes-backup`, { recursive: true }); await publishRecord(`${current.state}/plugin-data/globnotes-backup/settings.json`, JSON.stringify({ schemaVersion: 1, revision: 1, values: { backup: seed } })); }
     if (["recovery", "cleanup", "retarget"].includes(label)) {
       const plugin = `${current.state}/plugins/globnotes-backup`; await copyRepositorySources("backup-plugin", plugin);

@@ -6,7 +6,7 @@ import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { bootServer, captureNativeDiagnostics } from "./harness-helpers.mjs";
 import { REVIEW_REPAIR_CASES, parseReviewRepairArguments } from "./review-repair-cases.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
-import { hashPassword } from "../../../server/helpers.ts";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 import { createNativeTotpClock } from "./native-totp-fixture.mjs";
 import { fixtureScope } from "../../../tests/helpers/fixture_scope.ts";
@@ -98,8 +98,9 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
   const directory = `${artifacts}/${label}`, vault = `${directory}/vault`, state = `${directory}/state/globnotes`, pluginDir = `${state}/plugins/review`;
   await Deno.mkdir(vault, { recursive: true }); await Deno.mkdir(pluginDir, { recursive: true });
   await Deno.writeTextFile(`${vault}/Seed.md`, "Review seed.\n");
-  const config = protectedAccount ? { auth_type: "password", username, password_hash: await hashPassword(password), secret_key: crypto.randomUUID(), unrelated_fixture: { retained: true } } : { auth_type: "none" };
-  await Deno.writeTextFile(`${state}/config.json`, JSON.stringify(config));
+   const scenario = nativeAccountScenario(protectedAccount ? { account: { login: username, password } } : {});
+   const { fixtureScenario } = await nativeFixtureInput(scenario, protectedAccount ? { unrelated_fixture: { retained: true } } : {});
+   const config = fixtureScenario.legacyAuth;
   const descriptor = key => ({ id: "preferences", label: "Repair preferences", renderer: { kind: "declarative-v1", version: 1 }, fields: [{ key, label: key.toUpperCase(), type: "text", default: `${key}-default` }] });
   const manifest = { id: "review", name: "Review fixture", runtime: { server: "service.js", ...(browser ? { client: "browser.js" } : {}) }, capabilities: { network: false, imports: false, read: [], write: [] }, settings: [descriptor("message")] };
   await Deno.writeTextFile(`${pluginDir}/manifest.json`, JSON.stringify(manifest));
@@ -122,7 +123,7 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
     headers = { authorization: `Bearer ${token}` };
   }
    if (label === "access-conflict") current.totpClock = (await scope.acquire(() => createNativeTotpClock(directory), clock => clock.close())).value;
-   current.server = (await scope.acquire(() => bootServer(vault, state, { logsDir: directory, headers, denoArgs: current.totpClock?.denoArgs }), server => server.close())).value;
+   current.server = (await scope.acquire(() => bootServer(vault, state, { fixtureScenario, logsDir: directory, headers, denoArgs: current.totpClock?.denoArgs }), server => server.close())).value;
     current.proxy = (await scope.acquire(() => Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, repairRequestHandler(scope, async (request, signal) => {
     const url = new URL(request.url);
     if (url.pathname === "/fixture/browser-A") {

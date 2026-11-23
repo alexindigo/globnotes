@@ -1,5 +1,6 @@
 // M5-owned real HTTP provider, Worker plugin, disk and native browser input.
 import { bootServer } from "../../../tests/helpers/boot.ts";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { memoryRemote } from "../../../tests/helpers/memory_remote.ts";
 import { applicationServer, bindAddress, httpOrigin } from "./http-origin.mjs";
@@ -40,7 +41,7 @@ export async function syncCase(name, run) {
     for(const [name,clip]of Object.entries(regions)) {const crop=await session.send("Page.captureScreenshot",{format:"png",clip});await Deno.writeFile(`${directory}/review/${label}-${name}.png`,Uint8Array.from(atob(crop.data),c=>c.charCodeAt(0)));}
   }
   try {
-    server=await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,fixtureAuth:{auth_type:"none"},GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},applicationServer());
+    server=await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,...await nativeFixtureInput(nativeAccountScenario()),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},applicationServer());
     const catalog=await api("plugin-host");await api("plugin-host/globnotes-test-driver/enabled","PUT",{enabled:true,revision:catalog.policy.revision,signature:catalog.policy.signature});
     const permission=await api("plugin-host/globnotes-test-driver/permissions");
     await api("plugin-host/globnotes-test-driver/permissions","PUT",{revision:permission.revision,signature:permission.signature,requestSourceKey:permission.requestSourceKey,requestSourceRevision:permission.requestSourceRevision,allowNetwork:true,approvedNetwork:permission.requestedNetwork,approvedImports:[]});

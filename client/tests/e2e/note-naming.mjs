@@ -3,6 +3,7 @@
 // shows the title live; the sidebar shows the filename after save.
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
@@ -20,7 +21,7 @@ let server = null;
 let browser = null;
 let failure;
 try {
-  server = await bootServer({ fixtureAuth: { auth_type: "none" } }, applicationServer());
+  server = await bootServer(await nativeFixtureInput(nativeAccountScenario()), applicationServer());
   browser = await launchBrowser({ port: CDP_PORT });
   const page = await connect({ port: CDP_PORT, binding: browser });
 

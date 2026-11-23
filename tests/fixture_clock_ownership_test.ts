@@ -80,25 +80,23 @@ for (const captureFails of [false, true]) {
         }
       `,
       );
+      const configUrl = new URL("../deno.json", import.meta.url);
+      const projectImports = JSON.parse(
+        await Deno.readTextFile(configUrl),
+      ).imports;
       await Deno.writeTextFile(
         imports,
         JSON.stringify({
           imports: {
             "@std/encoding/base32": "jsr:@std/encoding@^1.0.11/base32",
+            // The standalone import map needs the credential helper's package
+            // subpath explicitly. Keep it on the project's locked dependency.
+            "otplib/core.js": `${projectImports.otplib}/core.js`,
             ...Object.fromEntries(
-              Object.entries(
-                JSON.parse(
-                  await Deno.readTextFile(
-                    new URL("../deno.json", import.meta.url),
-                  ),
-                ).imports,
-              ).map(([key, value]) => [
+              Object.entries(projectImports).map(([key, value]) => [
                 key,
                 String(value).startsWith(".")
-                  ? new URL(
-                    String(value),
-                    new URL("../deno.json", import.meta.url),
-                  ).href
+                  ? new URL(String(value), configUrl).href
                   : value,
               ]),
             ),

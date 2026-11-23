@@ -4,6 +4,7 @@
 // the line-numbers gutter stays aligned with its code lines.
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
@@ -40,7 +41,7 @@ function check(name, cond, detail = "") {
 }
 
 const server = await bootServer({
-  GLOBNOTES_GLOBNOTES_PATH: vault, fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: "",
+  GLOBNOTES_GLOBNOTES_PATH: vault, ...await nativeFixtureInput(nativeAccountScenario()), GLOBNOTES__SERVER_PATHPREFIX: "",
 }, applicationServer());
 const browser = await launchBrowser({ port: CDP_PORT });
 try {

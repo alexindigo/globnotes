@@ -1,7 +1,7 @@
 // Revoke an actual session through the server's access API. Native login reuses
 // the form, preserves the mounted editor and retries the original base to disk.
 import { bootServer } from "../../../tests/helpers/boot.ts";
-import { hashPassword } from "../../../server/helpers.ts";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { applicationServer } from "./http-origin.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { assert } from "./test-outcomes.mjs";
@@ -14,8 +14,8 @@ const base = "first\n\nmiddle\n\nlast\n", username = "reauth-fixture";
 let password = "initial-fixture-password", server, session;
 const writes = [], results = [];
 await Deno.writeTextFile(vault + "/AuthNote.md", base);
-await Deno.writeTextFile(state + "/config.json", JSON.stringify({ auth_type: "password", username,
-  password_hash: await hashPassword(password), secret_key: crypto.randomUUID() }));
+const scenario = nativeAccountScenario({ account: { login: username, password } });
+const fixtureInput = await nativeFixtureInput(scenario);
 const until = (predicate, label) => waitUntil(async () => await predicate() ? done() : pending({ label }), { label, intervalMs: 50 });
 async function fill(selector, value) {
   await session.click(selector);
@@ -57,7 +57,7 @@ async function capture(name) {
   }
 }
 try {
-  server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: directory + "/state", GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
+  server = await bootServer({ ...fixtureInput, GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: directory + "/state", GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   session.page.onEvent(event => {
     if (event.method === "Network.requestWillBeSent" && event.params.request.method === "PATCH") writes.push({ id: event.params.requestId, body: JSON.parse(event.params.request.postData) });

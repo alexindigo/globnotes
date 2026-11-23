@@ -4,7 +4,7 @@ import { showSidebar } from './sidebar-navigation-native.mjs';
 import { createServerWorkingDirectory } from '../../../tests/helpers/boot.ts';
 import { awaitHealthy, bootServer } from './harness-helpers.mjs';
 import { applicationServer, assertHttpTestUrl } from './http-origin.mjs';
-import { hashPassword } from '../../../server/helpers.ts';
+import { nativeAccountScenario, nativeFixtureInput } from './config-fixture.mjs';
 import { SignJWT } from 'jose';
 import { waitForAccessSummary } from './settings-access-native.mjs';
 import { assertSettingsActionHierarchy, assertSettingsHeaderRuleEdge, assertSettingRowAlignment, assertSettingsVisualLanes, assertSettingsPaneEdges, assertSettingsProseMeasure, assertSettingsUiRules } from './settings-frame-native.mjs';
@@ -60,8 +60,9 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
     const logs=`${directory}/${name}`;await Deno.mkdir(logs);
     const vault=await Deno.makeTempDir({prefix:'settings-surfaces-vault-'}),state=await metadataDirectory({prefix:'settings-surfaces-state-'});
     await Deno.writeTextFile(`${vault}/Note.md`,'# Surface matrix\n');await Deno.mkdir(`${vault}/Archive`);
-    const config=name==='protected'?{auth_type:'password',username:'surface-user',password_hash:await hashPassword('surface-password'),secret_key:crypto.randomUUID()}:{auth_type:'none',brand_name:'Surface notes'};
-    if(name!=='first-run')await Deno.writeTextFile(`${state}/config.json`,JSON.stringify(config));
+    const scenario=nativeAccountScenario(name==='protected'?{account:{login:'surface-user',password:'surface-password'}}:{});
+    const {fixtureScenario}=await nativeFixtureInput(scenario,name==='protected'?{}:{brand_name:'Surface notes'});
+    const config=fixtureScenario.legacyAuth;
     if(config.brand_name)await Deno.writeTextFile(`${state}/config.toml`, `[brand]\nname=${JSON.stringify(config.brand_name)}\n`);
     if(name==='main'){
       const plugin=`${state}/plugins/surface-probe`;await Deno.mkdir(plugin,{recursive:true});
@@ -78,7 +79,7 @@ export async function exerciseSettingsSurfaces({port,directory,matrix=cells,fixt
       await awaitHealthy(server.baseUrl,{label:'Surface first-run health',child});
     }else{
       const jwt=name==='protected'?await new SignJWT({sub:config.username}).setProtectedHeader({alg:'HS256'}).setExpirationTime('1h').sign(new TextEncoder().encode(config.secret_key)):null;
-      server=await bootServer(vault,state,{env:{TMPDIR:Deno.env.get('TMPDIR')},logsDir:logs,headers:jwt?{authorization:`Bearer ${jwt}`}:{}});
+      server=await bootServer(vault,state,{fixtureScenario,env:{TMPDIR:Deno.env.get('TMPDIR')},logsDir:logs,headers:jwt?{authorization:`Bearer ${jwt}`}:{}});
     }
     session=await nativeSession({port});owners.push({name,vault,state,pid:server.pid,cwd:server.cwd,origin:server.baseUrl,targetId:session.targetId});
   }

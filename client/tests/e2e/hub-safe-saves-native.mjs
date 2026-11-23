@@ -1,6 +1,7 @@
 // M2 consumer proof: actual filesystem writes, normal HTTP, real editor ports.
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { applicationServer } from "./http-origin.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 
 const assert = (condition, message) => { if (!condition) throw Error(message); };
@@ -45,7 +46,7 @@ try {
   await shellWrite("Viewing", "initial viewing text\n");
   for (const mode of ["Source", "WYSIWYG", "Preview"]) await shellWrite(`M2-${mode}`, base);
   server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: `${directory}/state`,
-    fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
+    ...await nativeFixtureInput(nativeAccountScenario()), GLOBNOTES__SERVER_PATHPREFIX: "" }, applicationServer());
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   session.page.onEvent(event => {
     if (event.method === "Network.requestWillBeSent" && event.params.request.method === "PATCH") {

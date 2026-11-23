@@ -2,6 +2,7 @@
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { done, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { connect } from "./cdp.mjs";
 import { tabSave, tabToggleLeft, tabToggleRight } from "../../icons.js";
 import { join } from "node:path";
@@ -266,7 +267,7 @@ try {
   await Deno.writeTextFile(join(vault, `${title}.md`), fixture);
   server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "none" },
+    ...await nativeFixtureInput(nativeAccountScenario()),
     GLOBNOTES__SERVER_PATHPREFIX: "",
   }, applicationServer());
   console.log(`button-icons artifacts: ${artifacts}`);

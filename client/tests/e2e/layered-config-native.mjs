@@ -6,6 +6,8 @@ import { createSettingsRestartFixture } from "./settings-restart-fixture.mjs";
 import { showSidebar } from './sidebar-navigation-native.mjs';
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { assert } from "./test-outcomes.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
+import { storedScenario } from "../../../tests/helpers/fixture_scenarios.ts";
 
 const directory = `${Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "layered-config-native-" })}/consumers`;
 const multilineValue = 'first\n  second\n\n    third\n' + 'unbroken'.repeat(80);
@@ -13,7 +15,7 @@ await Deno.mkdir(directory, { recursive: true });
 const vault = `${directory}/notes`, state = `${directory}/metadata/globnotes`, file = `${state}/config.toml`;
 await Deno.mkdir(vault); await Deno.mkdir(`${state}/plugins/layered-probe`, { recursive: true });
 await Deno.writeTextFile(`${vault}/NativeConsumer.md`, "# Native consumer\n\nSaved setting consumer.\n");
-await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: "none" }));
+const { fixtureScenario } = await nativeFixtureInput(nativeAccountScenario());
 await Deno.writeTextFile(file, '[brand]\nname="Initial saved name"\naccent="#123456"\n[quickaccess]\ntitle="TOML quick access consumer"\nlimit=1\n');
 await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["layered-probe"], autoEnable: false }));
 await Deno.writeTextFile(`${state}/plugins/layered-probe/manifest.json`, JSON.stringify({
@@ -25,7 +27,7 @@ let server, session, failure, environment = { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOEN
 const results = [];
 async function launch(count) {
   const logsDir = `${directory}/backend-${count}`; await Deno.mkdir(logsDir);
-  return bootServer(vault, state, { env: environment, logsDir });
+  return bootServer(vault, state, { fixtureScenario: count === 1 ? fixtureScenario : storedScenario(fixtureScenario), env: environment, logsDir });
 }
 async function api(route, method = "GET", body) {
   const response = await fetch(`${server.baseUrl}/_/api/${route}`, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });

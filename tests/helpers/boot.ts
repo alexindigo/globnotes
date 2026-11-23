@@ -22,6 +22,8 @@ import { testEnvironment } from "./environment.ts";
 import { publishRecord } from "./process_records.ts";
 import { boundOperation } from "./owned_operation.ts";
 import type { StoredConfig } from "../../server/config.ts";
+import type { FixtureEnvironment } from "./environment.ts";
+import type { FixtureScope } from "./fixture_scope.ts";
 import {
   admitLayout,
   bindLayout,
@@ -33,6 +35,30 @@ import {
 } from "./fixture_layout.ts";
 import type { CompletedBuild } from "./completed_build.ts";
 import type { IdentityFixturePayload } from "./identity_fixture.ts";
+
+/** Publish the captured compatibility seed over the existing layout record.
+ * No seed (including storedScenario) leaves metadata creation to boot. */
+export async function publishLegacyFixtureAuth(
+  layout: FixtureLayout,
+  scope: FixtureScope,
+  fixture: FixtureEnvironment,
+): Promise<void> {
+  const seed = fixture.fixtureAuth;
+  if (seed === undefined) return;
+  await prepareFixtureMetadata(layout, scope);
+  await admitLayout(layout, scope, async (signal) => {
+    const filename = path.join(layout.metadata, "config.json");
+    let saved: StoredConfig = {};
+    try {
+      saved = JSON.parse(await Deno.readTextFile(filename));
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    await publishRecord(filename, JSON.stringify({ ...saved, ...seed }), {
+      signal,
+    });
+  });
+}
 
 const SERVER_MAIN = path.fromFileUrl(
   new URL("../../server/main.ts", import.meta.url),
@@ -197,25 +223,8 @@ export async function bootServer(
         env[key] = layout.environment[key];
       }
     }
-    const vault = layout.vault, metadata = layout.metadata;
-    if (fixture.fixtureAuth) {
-      await prepareFixtureMetadata(layout, scope);
-      await admitLayout(layout, scope, async (signal) => {
-        let saved: StoredConfig = {};
-        try {
-          saved = JSON.parse(
-            await Deno.readTextFile(path.join(metadata, "config.json")),
-          );
-        } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) throw error;
-        }
-        await publishRecord(
-          path.join(metadata, "config.json"),
-          JSON.stringify({ ...saved, ...fixture.fixtureAuth }),
-          { signal },
-        );
-      });
-    }
+    const vault = layout.vault;
+    await publishLegacyFixtureAuth(layout, scope, fixture);
     const args = [
       "run",
       "--unstable-worker-options",

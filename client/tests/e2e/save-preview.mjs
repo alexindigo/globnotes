@@ -2,6 +2,7 @@
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { done, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { applicationServer } from "./http-origin.mjs";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { connect } from "./cdp.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
@@ -91,7 +92,7 @@ try {
   }
   server = await bootServer({
     GLOBNOTES_GLOBNOTES_PATH: vault,
-    fixtureAuth: { auth_type: "none" }, GLOBNOTES__SERVER_PATHPREFIX: "",
+    ...await nativeFixtureInput(nativeAccountScenario()), GLOBNOTES__SERVER_PATHPREFIX: "",
   }, applicationServer());
   await ownPage();
   console.log(JSON.stringify({ source: import.meta.url, vault, artifacts,

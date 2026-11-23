@@ -3,7 +3,8 @@ import { nativeSession } from "./native-cdp-session.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer } from "./harness-helpers.mjs";
 import { SETTINGS_UI_CASES, parseFixtureArguments } from "./native-fixture-cases.mjs";
-import { hashPassword } from "../../../server/helpers.ts";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
+import { storedScenario } from "../../../tests/helpers/fixture_scenarios.ts";
 import { SignJWT } from "jose";
 import { exerciseInlineSettings } from "./settings-inline-native.mjs";
 import { exerciseSettingsGeometry } from "./settings-geometry-native.mjs";
@@ -37,10 +38,8 @@ async function fixture(kind, label) {
   state = await metadataDirectory({ prefix: `settings-ui-${label}-state-` });
   await Deno.writeTextFile(`${vault}/NoteA.md`, label === "menu-parity" ? "Seed content.\n\n```text\nfirst code line\nsecond code line\n```\n" : label.startsWith("editor-") ? "---\nstatus: seed\ntags: [native]\n---\n\nSeed editor content.\n" : "Seed content.\n");
   const secret = crypto.randomUUID();
-  const config = kind === "password"
-    ? { auth_type: "password", username, password_hash: await hashPassword(password), secret_key: secret }
-    : { auth_type: "none" };
-  await Deno.writeTextFile(`${state}/config.json`, JSON.stringify(config));
+  const scenario = nativeAccountScenario(kind === "password" ? { account: { login: username, password } } : {});
+  const { fixtureScenario } = await nativeFixtureInput(scenario, {}, { signingKey: kind === "password" ? secret : undefined });
   await Deno.mkdir(`${state}/plugins/session-guard`, { recursive: true });
   const inline = ["inline-core", "cross-browser", "pending-recovery", "menu-parity", "editor-source", "editor-wysiwyg"].includes(label);
   await Deno.writeTextFile(`${state}/plugins/session-guard/manifest.json`, JSON.stringify({ id: "session-guard", runtime: { server: "service.js", ...(inline ? { client: "browser.js" } : {}) }, hooks: ["pre-save", ...(label === "cross-browser" ? ["on-save"] : [])],
@@ -68,10 +67,10 @@ async function fixture(kind, label) {
   const token = kind === "password" ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
   const directory = `${artifacts}/${label}`;
   await Deno.mkdir(directory);
-  server = await bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  server = await bootServer(vault, state, { fixtureScenario, env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
   if (label === "cross-browser") server = createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
     const logsDir=`${directory}/backend-${count}`;await Deno.mkdir(logsDir);
-    return bootServer(vault,state,{env:{TMPDIR:Deno.env.get('TMPDIR')},logsDir,headers:{authorization:`Bearer ${token}`}});
+    return bootServer(vault,state,{fixtureScenario:storedScenario(fixtureScenario),env:{TMPDIR:Deno.env.get('TMPDIR')},logsDir,headers:{authorization:`Bearer ${token}`}});
   } });
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
   const owned = { label, directory, vault, state, server, session, closed: false };

@@ -37,7 +37,7 @@ async function setup(label) {
   const state = await metadataDirectory({ prefix: `gps05-${label}-state-` });
   await Deno.writeTextFile(`${vault}/NoteA.md`, seed);
   await Deno.writeFile(`${vault}/asset.bin`, bytes);
-  await Deno.writeTextFile(`${state}/config.json`, JSON.stringify({ auth_type: "none" }));
+  const fixtureInput = await nativeFixtureInput(nativeAccountScenario());
   for (const [id, hooks] of [["native-guard", ["pre-save", "pre-delete"]], ["native-observer", ["on-save"]]]) {
     await Deno.mkdir(`${state}/plugins/${id}`, { recursive: true });
     await Deno.writeTextFile(`${state}/plugins/${id}/manifest.json`, JSON.stringify({ id, runtime: { server: "service.js" }, hooks, settings: [{ id: "preferences", label: id === "native-guard" ? "Guard preferences" : "Observer preferences", renderer: { kind: "declarative-v1", version: 1 }, fields: [{ key: "enabled", label: "Enabled preference", type: "toggle", default: true }] }] }));
@@ -45,7 +45,7 @@ async function setup(label) {
       ? "let saves=0,deletes=0;export function activate(ctx){ctx.hooks.on('pre-save',()=>{saves++;return {cancel:true,reason:'GPS05 native Save protection'};});ctx.hooks.on('pre-delete',()=>{deletes++;return {cancel:true,reason:'GPS05 native Delete protection'};});ctx.commands.register({id:'counts',label:'Guard counts',target:'server'},()=>({saves,deletes}));}"
       : "let saves=0;export function activate(ctx){ctx.hooks.on('on-save',()=>{saves++;});ctx.commands.register({id:'counts',label:'Observer counts',target:'server'},()=>({saves}));}");
   }
-  const server = await bootServer(vault, state, { logsDir: directory });
+  const server = await bootServer(vault, state, { ...fixtureInput, logsDir: directory });
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
   current = { label, directory, vault, state, server, session, requests: [], responses: [], navigation: [], closed: false };
   await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({ label, vault, state, serverPid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
@@ -172,4 +172,4 @@ await finalizeNativeCase({
   }] : [],
 });
 if (failure) throw failure;
-import { metadataDirectory } from "./config-fixture.mjs";
+import { metadataDirectory, nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";

@@ -6,7 +6,8 @@ import { visibleElement } from "./native-actions.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { awaitHealthy, bootServer } from "./harness-helpers.mjs";
 import { ACCESS_SETTINGS_CASES, parseFixtureArguments } from "./native-fixture-cases.mjs";
-import { hashPassword } from "../../../server/helpers.ts";
+import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
+import { storedScenario } from "../../../tests/helpers/fixture_scenarios.ts";
 import { createNativeTotpClock } from "./native-totp-fixture.mjs";
 import { SignJWT } from "jose";
 import { createSettingsRestartFixture } from "./settings-restart-fixture.mjs";
@@ -53,8 +54,9 @@ async function fixture(label, protectedMode) {
   const secret = crypto.randomUUID();
   const setup = protectedMode === "setup", totp = protectedMode === "totp", protectedAccount = !setup && !!protectedMode;
   const prefix = label.includes("prefixed") ? "/notes" : "";
-  const config = protectedAccount ? { auth_type: totp ? "totp" : "password", ...(totp ? { totp_key: crypto.randomUUID() } : {}), username, password_hash: await hashPassword(password), secret_key: secret, brand_name: "Native retained brand", unrelated_fixture: { kept: true } } : label === "locked-controls" ? { auth_type: "none", brand_name: "Native locked brand", brand_accent: "#aabbcc", unrelated_fixture: { kept: true } } : { auth_type: "none" };
-  if (!setup) await Deno.writeTextFile(`${state}/config.json`, JSON.stringify(config));
+  const scenario = nativeAccountScenario(protectedAccount ? { account: { login: username, password, ...(totp ? { totpKey: crypto.randomUUID() } : {}) } } : {});
+  const { fixtureScenario } = await nativeFixtureInput(scenario, protectedAccount ? { brand_name: "Native retained brand", unrelated_fixture: { kept: true } } : label === "locked-controls" ? { brand_name: "Native locked brand", brand_accent: "#aabbcc", unrelated_fixture: { kept: true } } : {}, { signingKey: protectedAccount ? secret : undefined });
+  const config = fixtureScenario.legacyAuth;
   if (config.brand_name) await Deno.writeTextFile(`${state}/config.toml`, `[brand]\nname=${JSON.stringify(config.brand_name)}\naccent=${JSON.stringify(config.brand_accent ?? "")}\n`);
   if (["public-lock", "peer-policy", "locked-controls"].includes(label)) {
     await Deno.mkdir(`${state}/plugins/access-workflow`, { recursive: true });
@@ -64,13 +66,13 @@ async function fixture(label, protectedMode) {
   }
   const token = protectedAccount ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
   const totpClock = totp || label === "totp-in-place" ? (await scope.acquire(() => createNativeTotpClock(directory), clock => clock.close())).value : null;
-  let server = (await scope.acquire(() => setup ? bootFirstRun(vault, state, directory, prefix) : bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), ...(label === "locked-controls" ? {} : { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }), GLOBNOTES__SERVER_PATHPREFIX: prefix }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {}, denoArgs: totpClock?.denoArgs }), server => server.close())).value;
+  let server = (await scope.acquire(() => setup ? bootFirstRun(vault, state, directory, prefix) : bootServer(vault, state, { fixtureScenario, env: { TMPDIR:Deno.env.get('TMPDIR'), ...(label === "locked-controls" ? {} : { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }), GLOBNOTES__SERVER_PATHPREFIX: prefix }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {}, denoArgs: totpClock?.denoArgs }), server => server.close())).value;
   if (label === "peer-policy") server = (await scope.acquire(() => createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
     const logsDir = `${directory}/backend-${count}`; await Deno.mkdir(logsDir);
-    return bootServer(vault, state, { env: { TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }, logsDir });
+    return bootServer(vault, state, { fixtureScenario: storedScenario(fixtureScenario), env: { TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }, logsDir });
   } }), server => server.close())).value;
   const session = (await scope.acquire(() => nativeSession({ port }), session => session.close())).value;
-  owned = { label, directory, vault, state, server, session, prefix, totpClock, close: () => lifetime.close(), closed: false, initial: config };
+  owned = { label, directory, vault, state, server, session, prefix, totpClock, scenario, close: () => lifetime.close(), closed: false, initial: config };
   fixtures.push(owned);
   await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({ label, vault, state, pid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
   });
