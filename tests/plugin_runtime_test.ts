@@ -486,56 +486,54 @@ Deno.test("plugin runtime: service sync is delivered once without a rendering po
 });
 
 Deno.test("plugin runtime: bounded FIFO queue and guard lane that never waits behind it", async () => {
-  const fixture = await pluginFixture();
+  const f = await reviewGuardLaneFixture(1);
   try {
-    const dir = await fixture.install("queue", {
-      runtime: { server: "service.js" },
-      hooks: ["pre-save"],
-    }, {
-      "service.js": `let guards = 0; export function activate(ctx) {
-      ctx.commands.register({ id: 'hold', label: 'Hold', target: 'server' }, async () => { await new Promise((resolve) => setTimeout(resolve, 60)); return guards; });
-      ctx.hooks.on('pre-save', () => { guards++; });
-    }`,
-    });
-    const host = new PluginHost(
-      readManifest(dir),
-      fixture.vault,
-      () => Promise.resolve(null),
-      1,
-      { role: "service", limits: { queuedJobs: 1, preHookMs: 10 } },
+    const held = f.hold("active"), active = f.invoke("active", false, true);
+    await bounded(
+      held.reached.promise,
+      "ordinary command entered its held RPC",
     );
-    try {
-      await host.start();
-      const command = [...host.registrations].find(([, r]) =>
-        r.kind === "command"
-      )![0];
-      const guard = [...host.registrations].find(([, r]) =>
-        r.kind === "hook"
-      )![0];
-      const active = host.invoke(command, []);
-      // Guard lane (phase 3): pre-hook invocations dispatch immediately
-      // even while a command occupies the FIFO lane — observers/commands
-      // can never make protection wait behind them.
-      const guarded = host.invoke(guard, [{}], true);
-      // One queued non-pre job fills the bounded queue (queuedJobs: 1);
-      // the next admission is rejected — not silently accepted.
-      const queued = host.invoke(command, []);
-      await assertRejects(
-        () => host.invoke(command, []),
-        Error,
-        "queue is full",
-      );
-      assertEquals(await guarded, undefined, "guard ran without queueing");
-      await active; // may observe the increment — the lanes are concurrent
-      assertEquals(await queued, 1);
-      // The guard incremented exactly once — no duplicate fired later.
-      assertEquals(await host.invoke(command, []), 1);
-      assertEquals(host.available, true);
-    } finally {
-      host.stop();
-    }
+    // Capture only the guard's unchanged admission deadline. This proves lane
+    // ordering, not a 10 ms host/Worker round trip on a contended CI runner.
+    const guarded = controlledInvocation(
+      () => f.invoke("guard", true, false, 10),
+      10,
+    );
+    const queued = f.invoke("queued");
+    assertEquals(await f.invoke("overflow"), {
+      ok: false,
+      detail: "PluginContractError: plugin service queue is full",
+    });
+    assertEquals(
+      await bounded(guarded.result, "guard result while the FIFO head is held"),
+      { ok: true, value: { label: "guard", normal: [], guards: ["guard"] } },
+    );
+    assertEquals(guarded.cancelled(), true);
+    assertEquals(f.host.settlement(["ordinary"]).pending, 2);
+    held.release.resolve();
+    assertEquals(await active, {
+      ok: true,
+      value: { label: "active", normal: ["active"], guards: ["guard"] },
+    });
+    assertEquals(await queued, {
+      ok: true,
+      value: {
+        label: "queued",
+        normal: ["active", "queued"],
+        guards: ["guard"],
+      },
+    });
+    assertEquals(await f.invoke("inspect"), {
+      ok: true,
+      value: {
+        label: "inspect",
+        normal: ["active", "queued", "inspect"],
+        guards: ["guard"],
+      },
+    });
+    assertEquals(f.host.available, true);
   } finally {
-    await fixture.dispose();
+    await f.close();
   }
 });
 
