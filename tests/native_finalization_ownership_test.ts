@@ -6,6 +6,8 @@ import {
   assertStrictEquals,
 } from "@std/assert";
 import { finalizeNativeCase } from "../client/tests/e2e/native-case-finalization.mjs";
+import { bounded } from "./helpers/worker_liveness.ts";
+import { workMilestone } from "./helpers/product_settlement.ts";
 
 Deno.test("native review: thenable report and cleanup capture then once at the consumer", async () => {
   const reads = [0, 0], order: string[] = [];
@@ -56,11 +58,16 @@ for (let failing = 0; failing < 4; failing++) {
       await Promise.resolve();
       if (i === failing) throw failure;
     });
-    const error = await finalizeNativeCase({
-      error: primary,
-      report: callbacks[0],
-      cleanup: callbacks.slice(1),
-    }).catch((error) => error);
+    const error = await assertRejects(
+      () =>
+        finalizeNativeCase({
+          error: primary,
+          report: callbacks[0],
+          cleanup: callbacks.slice(1),
+        }),
+      AggregateError,
+      "Native diagnostics or cleanup failed",
+    );
     assertEquals(order, [0, 1, 2, 3]);
     assertInstanceOf(error, AggregateError);
     assertEquals(error.errors, [primary, failure]);
@@ -75,15 +82,20 @@ Deno.test("native finalization: every failure is preserved once in original orde
     new Error("browser"),
     new Error("child"),
   ];
-  const error = await finalizeNativeCase({
-    error: failures[0],
-    report: () => {
-      throw failures[1];
-    },
-    cleanup: failures.slice(2).map((error) => () => {
-      throw error;
-    }),
-  }).catch((error) => error);
+  const error = await assertRejects(
+    () =>
+      finalizeNativeCase({
+        error: failures[0],
+        report: () => {
+          throw failures[1];
+        },
+        cleanup: failures.slice(2).map((error) => () => {
+          throw error;
+        }),
+      }),
+    AggregateError,
+    "Native diagnostics or cleanup failed",
+  );
   assertInstanceOf(error, AggregateError);
   assertEquals(error.errors, failures);
   assertStrictEquals(error.cause, failures[0]);
@@ -93,13 +105,17 @@ Deno.test("native finalization: prior error stays caller-owned only when finaliz
   const primary = new Error("original case");
   await finalizeNativeCase({ error: primary });
   let closed = 0;
-  const error = await (async () => {
-    try {
-      throw primary;
-    } finally {
-      await finalizeNativeCase({ error: primary, cleanup: [() => closed++] });
-    }
-  })().catch((error) => error);
+  const error = await assertRejects(
+    async () => {
+      try {
+        throw primary;
+      } finally {
+        await finalizeNativeCase({ error: primary, cleanup: [() => closed++] });
+      }
+    },
+    Error,
+    "original case",
+  );
   assertStrictEquals(error, primary);
   assertEquals(closed, 1);
   const single = await assertRejects(() =>
@@ -125,19 +141,44 @@ Deno.test("native finalization: report rejection releases while a later finalize
   const held = Promise.withResolvers<void>(),
     entered = Promise.withResolvers<void>();
   const primary = new Error("report rejected"), order: string[] = [];
-  const finishing = finalizeNativeCase({
-    report: () => {
-      throw primary;
-    },
-    cleanup: [async () => {
-      order.push("held close");
-      entered.resolve();
-      await held.promise;
-    }, () => order.push("last close")],
-  }).catch((error) => error);
-  await entered.promise;
-  assertEquals(order, ["held close"]);
+  const finishing = assertRejects(
+    () =>
+      finalizeNativeCase({
+        report: () => {
+          throw primary;
+        },
+        cleanup: [async () => {
+          order.push("held close");
+          entered.resolve();
+          await held.promise;
+        }, () => order.push("last close")],
+      }),
+    Error,
+    "report rejected",
+  );
+  let failure: [] | [unknown] = [];
+  try {
+    await bounded(
+      workMilestone(
+        finishing,
+        entered.promise,
+        "native held finalizer entered",
+      ),
+      "native finalizer entry",
+    );
+    assertEquals(order, ["held close"]);
+  } catch (error) {
+    failure = [error];
+  }
   held.resolve();
-  assertStrictEquals(await finishing, primary);
+  try {
+    assertStrictEquals(
+      await bounded(finishing, "native finalizer rescue join"),
+      primary,
+    );
+  } catch (error) {
+    if (!failure.length) failure = [error];
+  }
+  if (failure.length) throw failure[0];
   assertEquals(order, ["held close", "last close"]);
 });

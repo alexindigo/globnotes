@@ -5,7 +5,7 @@ import { nativeSession } from "./native-cdp-session.mjs";
 import { clickReady } from "./native-actions.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { closeClipboardWitness, readClipboardText } from "./native-clipboard.mjs";
-import { closeNativeCase, createNativeCaseLifetime } from "./native-case-finalization.mjs";
+import { closeNativeCase, createNativeCaseLifetime, createNativeFailureReporter, finalizeNativeCase, runNativeCase } from "./native-case-finalization.mjs";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 export const CHAIN = ["readme", "rendering/code-blocks", "rendering/math", "rendering/callouts", "rendering/highlights", "rendering/mermaid", "rendering/frontmatter", "links/wiki-links", "links/embeds", "folders/dad/recipes/soup", "folders/mom/ideas", "rename-me/moving-note"];
@@ -86,12 +86,11 @@ export async function createFixture(name, directory, { empty = false } = {}) {
     };
     await page.addInitScript('for(const [key,value] of [["sidebarVisible","false"],["sidebarRecent","false"]])if(localStorage.getItem(key)===null)localStorage.setItem(key,value);');
     await Deno.writeTextFile(directory + "/ownership.json", JSON.stringify({ name, vault, state, baseUrl, pid: server.pid, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
-    const lifetime = createNativeCaseLifetime(async () => { releaseWire(); try { await closeClipboardWitness(session); } finally { try { await session.close(); } finally { await server.close(); } } });
+    const lifetime = createNativeCaseLifetime(() => finalizeNativeCase({ cleanup: [releaseWire, () => closeClipboardWitness(session), () => session.close(), () => server.close()] }));
     return { name, directory, vault, state, server, page, session, baseUrl, api, image, writes,
       ownScope: lifetime.ownScope, close: lifetime.close };
   } catch (error) {
-    if (session) await session.close();
-    if (server) await server.close();
+    await finalizeNativeCase({ error, cleanup: [() => session?.close(), () => server?.close()] });
     throw error;
   }
 }
@@ -100,40 +99,26 @@ export async function runCase(name, exercise, options = {}) {
   const parent = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "globnotes-native-" });
   await Deno.mkdir(parent, { recursive: true, mode: 0o700 });
   const directory = parent + "/" + name;
-  let fixture, failure, interrupted = false;
-  let reporting = Promise.resolve(), closing, written = false;
-  const failures = [];
-  const describeFailure = error => ({ message: String(error), ...(error instanceof AggregateError ? { errors: error.errors.map(describeFailure) } : {}) });
-  const reportFailure = error => {
-    if (failures.includes(error)) return reporting;
-    failures.push(error);
-    const write = async () => {
+  let fixture, closing, interrupted = false;
+  const reporter = createNativeFailureReporter(async () => {
       let observed;
       try { observed = await fixture.page.evaluate("({url:location.href,body:document.body.innerText,selection:getSelection().toString()})"); }
       catch (captureError) { observed = { error: String(captureError) }; }
-      await Deno.writeTextFile(directory + "/failure.json", JSON.stringify({ name, error: String(failures[0]), failures: failures.map(describeFailure), pageErrors: fixture.page.pageErrors, writes: fixture.writes, observed }, null, 2), { createNew: !written });
-      written = true;
-    };
-    return reporting = reporting.then(write, write);
-  };
-  const close = () => closing ??= closeNativeCase(() => fixture.close(), reportFailure, () => reporting);
+      return { observed, pageErrors: fixture.page.pageErrors, writes: fixture.writes };
+  }, (record, options) => Deno.writeTextFile(directory + "/failure.json", JSON.stringify({ name, ...record }, null, 2), options));
+  const reportFailure = error => fixture ? reporter.report(error) : undefined;
+  const close = () => closing ??= closeNativeCase(() => fixture.close(), reportFailure, reporter.settle);
   const terminate = () => {
     interrupted = true;
     if (fixture) void close().finally(() => Deno.exit(1));
   };
   Deno.addSignalListener("SIGTERM", terminate);
-  try {
+  return await runNativeCase({ run: async () => {
     fixture = await createFixture(name, directory, options);
     assert(!interrupted, "Native case interrupted before admission");
     const consumer = await exercise(fixture);
     assert(fixture.page.pageErrors.length === 0, "Unexpected native page exception");
     await Deno.writeTextFile(directory + "/result.json", JSON.stringify({ name, passed: true, consumer }, null, 2), { createNew: true });
-  } catch (error) {
-    failure = error;
-    if (fixture) await reportFailure(error);
-  } finally {
-    if (fixture) await close();
-    Deno.removeSignalListener("SIGTERM", terminate);
-  }
-  if (failure) throw failure;
+  }, reportFailure, close: () => fixture ? close() : undefined,
+    detach: () => Deno.removeSignalListener("SIGTERM", terminate) });
 }
