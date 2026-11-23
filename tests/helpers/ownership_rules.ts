@@ -360,6 +360,7 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
     [PREPARATION_HELPER]: [
       "tests/helpers/identity_workflows.ts",
       "tests/identity_provisioning_test.ts",
+      "tests/identity_fixture_preparation_test.ts",
       "tests/identity_bootstrap_test.ts",
       "tests/helpers/identity_fixture.ts",
       "tests/helpers/identity_bootstrap.ts",
@@ -419,6 +420,9 @@ export const ADOPTION_OWNERSHIP: OwnershipRules = {
     ],
     [IDENTITY_HELPER]: [
       "tests/identity_token_handler_test.ts",
+      "tests/identity_fixture_preparation_test.ts",
+      "tests/identity_vault_binding_test.ts",
+      "tests/identity_vault_binding_creation_test.ts",
       "tests/helpers/identity_workflows.ts",
       "tests/identity_provisioning_test.ts",
       "tests/identity_plugin_viewer_test.ts",

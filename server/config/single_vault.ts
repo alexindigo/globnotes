@@ -9,6 +9,19 @@ import {
 import { instanceMetadataPath, vaultMetadataPath } from "./paths.ts";
 import type { InstanceConfig } from "./schema.ts";
 import { VaultConfigStore } from "./vault.ts";
+import { openSingleVaultBinding } from "./vault_binding.ts";
+
+/** Prepared injection only; the active runtime does not yet bind account ACLs. */
+export function singleVaultIdentity(
+  settings: ReturnType<typeof singleVaultSettings>,
+  assertOwnership: () => void,
+) {
+  return openSingleVaultBinding(
+    settings.instancePath,
+    `${settings.statePath}/access.json`,
+    assertOwnership,
+  );
+}
 
 export const singleVaultBindings: Sources["vaults"] = (
   instance: InstanceConfig,

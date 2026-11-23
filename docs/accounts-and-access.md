@@ -3,6 +3,20 @@
 Preparatory v3 owners, not yet the production identity path. The current auth
 bridge remains active until the coordinated identity cutover.
 
+The single-vault binding adapter is also prepared, not called at startup yet.
+When explicitly injected under instance ownership it preserves `single-vault.json`
+or adopts a valid existing ACL ID without rewriting that ACL. Corrupt or
+disagreeing records require operator recovery. The existing publication owner
+holds and discards only the exact unpublished candidate; it never cleans up a
+competing record or foreign replacement.
+
+Account-backed test inputs use `prepareIdentityBoot(layout, scope, payload)`
+beside the unchanged legacy boot adapter. The issued fixture layout owns roots,
+builds and runtime custody. Preparation uses the real account import, signing and
+ACL owners; reopening validates the complete set and preserves changed passwords
+and grants. Fixture preparation does not enable production routes or reimplement
+driver startup, native clocks or build copying.
+
 Accounts belong to the instance metadata root supplied by configuration, not a
 vault. `accounts.json` contains versioned records, stable account IDs, normalized
 unique logins and an initialized marker. Empty initialized state never means a

@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { AccountRepository } from "../../server/auth/accounts.ts";
+import {
+  AccountRepository,
+  normalizeLogin,
+} from "../../server/auth/accounts.ts";
 import {
   type AccessLevel,
   AclRepository,
   type EverybodyLevel,
+  validateAcl,
 } from "../../server/auth/acl.ts";
 import {
   InstanceSessions,
@@ -18,78 +22,221 @@ import { importFixtureAccount } from "./account_preparation.ts";
 import { fixturePasswordHash } from "./config.ts";
 import type { FixtureScope } from "./fixture_scope.ts";
 import { signIn } from "./session_delivery.ts";
+import { loadInstanceConfig } from "../../server/config/loader.ts";
+import {
+  singleVaultBindings,
+  singleVaultSettings,
+} from "../../server/config/single_vault.ts";
+import {
+  admitLayout,
+  bindLayout,
+  type FixtureLayout,
+  layoutEnvironment,
+} from "./fixture_layout.ts";
 
-/** Explicit v3 inputs, alongside the still-active legacy fixtures. */
-export async function seedIdentityRecords(input: {
-  scope: FixtureScope;
-  instancePath: string;
-  vaultPath: string;
+/** Serializable account inputs, independent of the active legacy boot adapter. */
+export interface IdentityFixturePayload {
   vaultId: string;
-  people: readonly {
-    login: string;
-    password: string;
-    totpKey?: string;
-    temporary?: boolean;
-  }[];
+  people: readonly (
+    & {
+      login: string;
+      password: string;
+      temporary?: boolean;
+    }
+    & (
+      | { totpKey?: string; totpKeyEncoding?: undefined }
+      | { totpKey: string; totpKeyEncoding: "base32" }
+    )
+  )[];
   everybody: EverybodyLevel;
   grants: Readonly<Record<string, AccessLevel>>;
   declaredAdmin?: string;
-}) {
-  const accounts = new AccountRepository(input.instancePath);
-  input.scope.onCancel(() => accounts.retireCredentials());
-  if (
-    accounts.initialized || accounts.capture().value.revision !== 0 ||
-    input.people.length === 0
-  ) {
-    throw new Error(
-      "Identity fixture requires fresh stores and explicit people.",
-    );
+}
+type IdentityFixtureInput = IdentityFixturePayload & {
+  scope: FixtureScope;
+  instancePath: string;
+  vaultPath: string;
+};
+export function identityFixturePayload(
+  input: IdentityFixturePayload,
+): IdentityFixturePayload {
+  return structuredClone(input);
+}
+
+/** No roots or children are allocated here: P03/P15 retain that custody. This
+ * prepares data beside the old boot adapter; I14c alone switches its callers. */
+const preparedLayouts = new WeakMap<FixtureLayout, {
+  scope: FixtureScope;
+  pending: ReturnType<typeof prepareLayoutRecords>;
+}>();
+export async function prepareIdentityBoot(
+  layout: FixtureLayout,
+  scope: FixtureScope,
+  payload: IdentityFixturePayload,
+) {
+  const captured = identityFixturePayload(payload);
+  bindLayout(layout, scope);
+  scope.assertCurrent();
+  const existing = preparedLayouts.get(layout);
+  if (existing) {
+    if (existing.scope === scope) return await existing.pending;
+    throw new Error("Identity fixture layout is already borrowed.");
   }
-  const openAcl = () =>
-    new AclRepository(input.vaultPath, input.vaultId, {
-      accounts,
-      declaredAdmin: input.declaredAdmin,
-    });
-  const assertFreshAcl = (snapshot: ReturnType<AclRepository["capture"]>) => {
-    if (snapshot.persistence.raw !== null) {
-      throw new Error("Identity fixture requires a fresh ACL.");
-    }
+  const pending = prepareLayoutRecords(layout, scope, captured);
+  const slot = { scope, pending };
+  const release = () => {
+    if (preparedLayouts.get(layout) === slot) preparedLayouts.delete(layout);
   };
-  assertFreshAcl(openAcl().capture());
-  accounts.prepareParents();
-  // Preparation can establish the account-root binding used by the ACL.
-  const acl = openAcl();
-  const initialAcl = acl.capture();
-  assertFreshAcl(initialAcl);
-  const signing = new SessionRepository(input.instancePath);
-  if (signing.capture().persistence.raw !== null) {
-    throw new Error("Identity fixture requires fresh signing state.");
+  scope.defer(release);
+  preparedLayouts.set(layout, slot);
+  try {
+    return await pending;
+  } catch (error) {
+    release();
+    throw error;
   }
-  signing.initialize();
-  for (const person of input.people) {
-    const account = await prepareFixtureAccount(person.login, person.password, {
-      temporary: person.temporary,
-      hash: (password) => Promise.resolve(fixturePasswordHash(password)),
+}
+
+async function prepareLayoutRecords(
+  layout: FixtureLayout,
+  scope: FixtureScope,
+  captured: IdentityFixturePayload,
+) {
+  return (await admitLayout(layout, scope, async () => {
+    const env = { ...layoutEnvironment(layout) };
+    const loaded = loadInstanceConfig({
+      env,
+      overlayPath: null,
+      vaults: singleVaultBindings,
     });
-    importFixtureAccount(accounts, {
-      ...account,
-      totpKey: person.totpKey ?? null,
+    const paths = singleVaultSettings(loaded, env);
+    if (
+      paths.notesPath !== layout.vault || paths.statePath !== layout.metadata
+    ) {
+      throw new Error("Identity preparation cannot replace its owned layout.");
+    }
+    const records = await openIdentityFixture({
+      ...captured,
+      scope,
+      instancePath: paths.instancePath,
+      vaultPath: paths.statePath,
     });
-  }
-  const grants = Object.fromEntries(
-    Object.entries(input.grants).map(([login, level]) => {
-      const account = accounts.byLogin(login);
-      if (!account) {
+    return { env, paths, ...records };
+  })).value;
+}
+
+export function seedIdentityRecords(input: IdentityFixtureInput) {
+  return identityRecords(input, false);
+}
+/** Reopening validates all stores without resetting passwords, codes or grants. */
+export function openIdentityFixture(input: IdentityFixtureInput) {
+  return identityRecords(input, true);
+}
+async function identityRecords(source: IdentityFixtureInput, reopen: boolean) {
+  const { scope, ...values } = source;
+  const input = structuredClone(values);
+  return (await scope.admit(async () => {
+    const accounts = new AccountRepository(input.instancePath);
+    scope.onCancel(() => accounts.retireCredentials());
+    const openAcl = () =>
+      new AclRepository(input.vaultPath, input.vaultId, {
+        accounts,
+        declaredAdmin: input.declaredAdmin,
+      });
+    const assertFreshAcl = (snapshot: ReturnType<AclRepository["capture"]>) => {
+      if (snapshot.persistence.raw !== null) {
+        throw new Error("Identity fixture requires a fresh ACL.");
+      }
+    };
+    if (!reopen) assertFreshAcl(openAcl().capture());
+    // Prepare the shared instance parent before sibling owners capture it.
+    // Otherwise its legitimate creation invalidates their absent-path CAS.
+    accounts.prepareParents();
+    const signing = new SessionRepository(input.instancePath);
+    const acl = openAcl();
+    const initialAcl = acl.capture();
+    if (!reopen) assertFreshAcl(initialAcl);
+    // The account directory intentionally contains no raw persistence record.
+    // Check presence only; all contents are validated by the real repository.
+    let accountFile = false;
+    try {
+      Deno.lstatSync(`${accounts.root}/accounts.json`);
+      accountFile = true;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    const present = [
+      accountFile,
+      signing.capture().persistence.raw !== null,
+      initialAcl.persistence.raw !== null,
+    ];
+    if (reopen && present.every(Boolean)) {
+      if (!accounts.initialized) {
+        throw new Error("Incomplete identity fixture.");
+      }
+      signing.current();
+      return { accounts, signing, acl };
+    }
+    if (present.some(Boolean) || input.people.length === 0) {
+      throw new Error(
+        reopen
+          ? "Incomplete identity fixture."
+          : "Identity fixture requires fresh stores and explicit people.",
+      );
+    }
+    const logins = input.people.map((person) => normalizeLogin(person.login));
+    if (new Set(logins).size !== logins.length) {
+      throw new Error("Identity fixture requires distinct people.");
+    }
+    for (const login of Object.keys(input.grants)) {
+      if (!logins.includes(normalizeLogin(login))) {
         throw new Error("Fixture grant requires an explicit person.");
       }
-      return [account.id, level];
-    }),
-  );
-  acl.save({ everybody: input.everybody, grants }, initialAcl, {
-    updateId: createUuid(),
-    actorId: null,
-  });
-  return { accounts, signing, acl };
+    }
+    // Hash before publishing any record; cancellation retains the original work
+    // and retires aggregate credentials before the scope releases its roots.
+    const prepared = [];
+    for (const person of input.people) {
+      const account = await prepareFixtureAccount(
+        person.login,
+        person.password,
+        {
+          temporary: person.temporary,
+          hash: (password) => Promise.resolve(fixturePasswordHash(password)),
+          authenticator: {
+            totpKey: person.totpKey ?? null,
+            ...(person.totpKeyEncoding === undefined
+              ? {}
+              : { totpKeyEncoding: person.totpKeyEncoding }),
+          },
+        },
+      );
+      scope.assertCurrent();
+      prepared.push(account);
+    }
+    const ids = new Map(prepared.map((account) => [account.login, account.id]));
+    const grants = Object.fromEntries(
+      Object.entries(input.grants).map(
+        ([login, level]) => [ids.get(normalizeLogin(login))!, level],
+      ),
+    );
+    const next = validateAcl({
+      version: 1,
+      vaultId: input.vaultId,
+      revision: 1,
+      updateId: createUuid(),
+      updateActorId: null,
+      everybody: input.everybody,
+      grants,
+    }, input.vaultId);
+    signing.initialize();
+    for (const account of prepared) importFixtureAccount(accounts, account);
+    acl.save({ everybody: next.everybody, grants: next.grants }, initialAcl, {
+      updateId: next.updateId!,
+      actorId: null,
+    });
+    return { accounts, signing, acl };
+  })).value;
 }
 
 export async function identityHttpFixture(

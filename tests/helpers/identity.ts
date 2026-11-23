@@ -4,6 +4,7 @@ import {
   type Account,
   type AccountState,
   normalizeLogin,
+  validateAccount,
 } from "../../server/auth/internal/account_record.ts";
 import type { AccountRepository } from "../../server/auth/accounts.ts";
 import { hashPassword } from "../../server/helpers.ts";
@@ -56,14 +57,16 @@ export async function prepareFixtureAccount(
   options: {
     temporary?: boolean;
     hash?: (password: string) => Promise<string>;
+    authenticator?: Pick<Account, "totpKey" | "totpKeyEncoding">;
   } = {},
 ): Promise<Account> {
-  return identityAccount({
+  return validateAccount(identityAccount({
     id: createUuid(),
     login: normalizeLogin(login),
     passwordHash: await (options.hash ?? hashPassword)(password),
     passwordChangeRequired: options.temporary ?? false,
-  });
+    ...options.authenticator,
+  }));
 }
 export async function identityFixture(
   run: (root: string, scope: FixtureScope) => Promise<void> | void,
