@@ -480,7 +480,8 @@ export const BROWSER_OPERATION_OWNERSHIP: OwnershipRules = {
     ...PRODUCT_OWNERSHIP.roots,
     Promise: {
       members: ["resolve", "reject", "all", "allSettled"],
-      ownedMembers: { withResolvers: [BROWSER_OPERATION_OWNER] },
+      ownedConstructors: [BROWSER_OPERATION_OWNER],
+      ownedMembers: { withResolvers: [] },
     },
     ...Object.fromEntries(
       ["fetch", "navigator", "localStorage", "sessionStorage", "crypto"].map(
@@ -504,6 +505,18 @@ export const BROWSER_OPERATION_OWNERSHIP: OwnershipRules = {
   modules: {
     ...PRODUCT_OWNERSHIP.modules,
     [RESOURCE_CORE]: [BROWSER_OPERATION_OWNER],
+  },
+};
+/** The compatibility contract temporarily removes the newer API and restores
+ * it in the same synchronous boundary; product code cannot acquire it. */
+const BROWSER_OPERATION_TEST_OWNERSHIP: OwnershipRules = {
+  ...PRODUCT_OWNERSHIP,
+  roots: {
+    ...PRODUCT_OWNERSHIP.roots,
+    Promise: {
+      members: ["resolve", "reject", "all", "allSettled"],
+      ownedMembers: { withResolvers: [BROWSER_OPERATION_CONTRACT] },
+    },
   },
 };
 
@@ -807,6 +820,8 @@ export function registeredOwnership(sources: SourceModule[]) {
         : source.file === BROWSER_OPERATION_OWNER ||
             source.file === BROWSER_OPERATION_PILOT
         ? BROWSER_OPERATION_OWNERSHIP
+        : source.file === BROWSER_OPERATION_CONTRACT
+        ? BROWSER_OPERATION_TEST_OWNERSHIP
         : source.file === CONTENDER_ADAPTER
         ? OPERATION_ADAPTER_OWNERSHIP
         : source.file === CONTENDER_PILOT || source.file === CONTENDER_GUARD

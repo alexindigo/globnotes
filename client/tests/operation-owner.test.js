@@ -7,6 +7,84 @@ const workflow = () => Object.freeze({});
 const create = adapters => createOperationOwner({ owner: workflow(), dispatch: value => value, ...adapters });
 
 describe("plain operation owner", () => {
+  it("dispatches with Promise.withResolvers unavailable on the configured browser targets", async () => {
+    const saved = Promise.withResolvers;
+    const events = [], owner = create({ dispatch(value) { events.push(value); return value; } });
+    let work;
+    try {
+      Promise.withResolvers = undefined;
+      work = owner.dispatch(owner.operation(), "compatible");
+    } finally {
+      Promise.withResolvers = saved;
+    }
+    expect((await work).value).toBe("compatible");
+    expect(events).toEqual(["compatible"]);
+    expect((await owner.dispose()).errors).toEqual([]);
+  });
+
+  for (const order of [["A", "B"], ["B", "A"]]) {
+    it(`publishes independent live dispatches in their actual ${order.join(" then ")} completion order`, async () => {
+      const events = [];
+      let holdA, holdB;
+      const owner = create({ async dispatch(value) {
+        events.push(["dispatch", value]); await (value === "A" ? holdA() : holdB()); return value;
+      }, release: value => events.push(["release", value]) });
+      const a = owner.operation(), b = owner.operation();
+      await heldOperation({ label: "dispatch A", owner: () => owner.identity, progress: { kind: "controlled", clock: "external" } },
+        boundary => { holdA = boundary; return owner.dispatch(a, "A"); }, async originalA => {
+          await originalA.reached();
+          await heldOperation({ label: "dispatch B", owner: () => owner.identity, progress: { kind: "controlled", clock: "external" } },
+            boundary => { holdB = boundary; return owner.dispatch(b, "B"); }, async originalB => {
+              await originalB.reached();
+              const operations = { A: originalA, B: originalB };
+              for (const name of order) events.push(["received", (await operations[name].result()).value]);
+            });
+        });
+      expect((await owner.dispose()).errors).toEqual([]);
+      expect(events).toEqual([["dispatch", "A"], ["dispatch", "B"], ["received", order[0]], ["received", order[1]],
+        ["release", "B"], ["release", "A"]]);
+    });
+  }
+
+  for (const cleanupFails of [false, true]) {
+  it(`rejects and releases an older result while newer cleanup blocks disposal (cleanupFails=${cleanupFails})`, async () => {
+    const events = [], cleanup = new Error("discard cleanup");
+    let holdA, holdCleanup;
+    const owner = create({ async dispatch(value) {
+      events.push(["dispatch", value]); if (value === "A") await holdA(); return value;
+    }, async release(value) {
+      events.push(["release-start", value]); if (value === "B") await holdCleanup(); events.push(["release-end", value]);
+      if (value === "A" && cleanupFails) throw cleanup;
+    } });
+    const a = owner.operation(), b = owner.operation();
+    await heldOperation({ label: "pending dispatch A", owner: () => owner.identity, progress: { kind: "controlled", clock: "external" } },
+      boundary => { holdA = boundary; return owner.dispatch(a, "A"); }, async originalA => {
+        await originalA.reached();
+        expect((await owner.dispatch(b, "B")).value).toBe("B");
+        const settlement = owner.settle();
+        await heldOperation({ label: "newer cleanup B", owner: () => owner.identity, progress: { kind: "controlled", clock: "external" } },
+          boundary => { holdCleanup = boundary; return owner.dispose(); }, async disposal => {
+            await disposal.reached();
+            let failure;
+            await expect(originalA.result().catch(error => { failure = error; throw error; })).rejects.toBeInstanceOf(cleanupFails ? AggregateError : OwnershipError);
+            const retired = cleanupFails ? failure.cause : failure;
+            expect(retired).toBeInstanceOf(OwnershipError); expect(retired.message).toBe("Owner is retired");
+            if (cleanupFails) { expect(failure.errors).toEqual([retired, cleanup]); expect(failure.errors[1]).toBe(cleanup); }
+            const outcomes = await settlement;
+            expect(outcomes).toEqual([{ status: "rejected", reason: failure }]);
+            expect(outcomes[0].reason).toBe(failure);
+            expect(events).toEqual([["dispatch", "A"], ["dispatch", "B"], ["release-start", "B"],
+              ["release-start", "A"], ["release-end", "A"]]);
+            const report = await disposal.result();
+            expect(report.errors).toEqual(cleanupFails ? [cleanup] : []);
+            if (cleanupFails) expect(report.errors[0]).toBe(cleanup);
+          });
+      });
+    expect(events).toEqual([["dispatch", "A"], ["dispatch", "B"], ["release-start", "B"],
+      ["release-start", "A"], ["release-end", "A"], ["release-end", "B"]]);
+  });
+  }
+
   it("requires an immutable non-null owner and rejects forged/cross-owner handles through promises", async () => {
     for (const owner of [null, undefined, {}, "owner"]) {
       expect(() => create({ owner })).toThrow(new TypeError("Operation owner requires a non-null immutable workflow identity"));

@@ -71,6 +71,24 @@ Deno.test("G5 registration: the browser pilot cannot bypass custody or browser c
     )]),
     [],
   );
+  assertEquals(
+    registeredOwnership([
+      input("new Promise(() => {});", BROWSER_OPERATION_OWNER),
+    ]),
+    [],
+  );
+  assertEquals(
+    registeredOwnership([
+      input("Promise.withResolvers();", BROWSER_OPERATION_OWNER),
+    ]).map((site) => site.capability),
+    ["Promise.withResolvers"],
+  );
+  assertEquals(
+    registeredOwnership([
+      input("new Promise(() => {});", BROWSER_OPERATION_PILOT),
+    ]).map((site) => site.capability),
+    ["Promise.*"],
+  );
   const sources: SourceModule[] = [
     input('export * from "engine";', "client/raw-bridge.mjs"),
     {

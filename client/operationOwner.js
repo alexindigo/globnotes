@@ -80,35 +80,53 @@ export function createOperationOwner(adapters) {
       issued.set(operation, { mode, scope, resource, started: false, dispatched: false, completed: false, released: false });
       return operation;
     },
-    async dispatch(operation, intent) {
-      const entry = record(operation);
-      custody.assertCurrent(); permission.assertCurrent();
-      if (entry.started || entry.released) throw new OwnershipError("Operation has already been dispatched or released");
-      entry.started = true;
+    dispatch(operation, intent) {
       // Publish the exact work join before transport/preparation can reenter
-      // hasWork/settle. This is accounting, not another dispatch queue.
-      const job = Promise.withResolvers();
-      pending.add(job.promise);
-      // Reserve custody before transport entry. Keep values in the P02 handle;
-      // returning a bare thenable value across this await would assimilate it.
-      const work = entry.scope.acquire(() => {
-        const prepared = prepareIntent(intent);
-        if (!prepared || typeof prepared !== "object") throw new TypeError("Dispatch requires a value envelope");
-        const then = prepared.then;
-        if (typeof then === "function") throw new TypeError("Dispatch preparation must be synchronous");
-        const value = prepared.value;
+      // hasWork/settle. Use the Promise constructor supported by the build target.
+      let resolve, reject;
+      const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+      const fail = error => { pending.delete(promise); reject(error); };
+      try {
+        const entry = record(operation);
         custody.assertCurrent(); permission.assertCurrent();
-        if (entry.released) throw new OwnershipError("Operation has been released");
-        entry.dispatched = true;
-        return dispatch(value, Object.freeze({
-          operation,
-          deliver: (name, value) => deliver(operation, name, value, false),
-          complete: value => deliver(operation, null, value, true),
-        }));
-      }, release);
-      work.then(job.resolve, job.reject);
-      try { return await job.promise; }
-      finally { pending.delete(job.promise); }
+        if (entry.started || entry.released) throw new OwnershipError("Operation has already been dispatched or released");
+        entry.started = true;
+        pending.add(promise);
+        // Reserve custody before transport entry. Keep values in the P02 handle;
+        // returning a bare thenable value across this await would assimilate it.
+        const work = entry.scope.acquire(() => {
+          const prepared = prepareIntent(intent);
+          if (!prepared || typeof prepared !== "object") throw new TypeError("Dispatch requires a value envelope");
+          const then = prepared.then;
+          if (typeof then === "function") throw new TypeError("Dispatch preparation must be synchronous");
+          const value = prepared.value;
+          custody.assertCurrent(); permission.assertCurrent();
+          if (entry.released) throw new OwnershipError("Operation has been released");
+          entry.dispatched = true;
+          return dispatch(value, Object.freeze({
+            operation,
+            deliver: (name, value) => deliver(operation, name, value, false),
+            complete: value => deliver(operation, null, value, true),
+          }));
+        }, release);
+        work.then(handle => {
+          if (!current(entry, true)) {
+            const primary = new OwnershipError(custody.retired || !entry.released ? "Owner is retired" : "Operation has been released");
+            entry.released = true;
+            // A later child's slow cleanup must not lend this child its live
+            // parent. P02 discards the exact original result before rejection.
+            entry.scope.releaseAll().then(report => {
+              try { report.throwIfFailed(primary); } catch (error) { fail(error); }
+            }, fail);
+            return;
+          }
+          pending.delete(promise);
+          // Final delivery fence above; return this promise directly, with no
+          // later await/continuation that could publish a retired result.
+          resolve(handle);
+        }, fail);
+      } catch (error) { fail(error); }
+      return promise;
     },
     deliver: (operation, name, value) => deliver(operation, name, value, false),
     complete: (operation, value) => deliver(operation, null, value, true),

@@ -473,6 +473,18 @@ and `release` reject through promises. Dispatch returns a P02 owned value handle
 Preparation returns `{ value }`; getters are inspected before the final fence,
 and thenable data stays inside that envelope. Transport adapters must capture
 request facts in preparation, not select replacement credentials during dispatch.
+The dispatch promise itself is the result-delivery boundary: it rechecks the
+workflow and exact operation immediately before fulfillment, without a later
+async wrapper. Retired results are released through their P02 child scope even
+when a newer child's cleanup is still blocking parent disposal; `settle()` sees
+the same rejection and cleanup errors. Independent live operations may complete
+in either order and are not silently turned into a latest-wins scheduler.
+
+The owner uses a constructor-based deferred, not `Promise.withResolvers`. This
+matches Vite 8's default baseline build targets (Chrome/Edge 111, Firefox 114,
+Safari/iOS 16.4); Vite transforms syntax but does not polyfill newer runtime APIs.
+The exact constructor owner and the synchronous compatibility-test override are
+registered separately; product references to `Promise.withResolvers` reject.
 
 `revoke()` fences live delivery and new dispatch. An already dispatched retained,
 outcome or recovery operation can accept one matching `complete` callback, but

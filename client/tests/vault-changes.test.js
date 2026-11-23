@@ -9,6 +9,29 @@ import { heldOperation } from "../../tests/helpers/owned_operation.ts";
 afterEach(() => vi.useRealTimers());
 const flush = () => vi.advanceTimersByTimeAsync(0);
 describe("vault change owner", () => {
+  it("discards a timer registered across reentrant restart without overwriting the replacement", async () => {
+    const calls = [], timers = [], cleared = [];
+    let owner;
+    owner = createVaultChanges({
+      open: async options => { calls.push(options); return () => {}; },
+      setTimer(callback, delay) {
+        const handle = { id: timers.length, callback, delay }; timers.push(handle);
+        if (handle.id === 0) { owner.restart(); calls[1].onClose("ended"); }
+        return handle;
+      },
+      clearTimer: handle => cleared.push(handle.id),
+    });
+    const release = owner.acquire(); await owner.settle();
+    calls[0].onClose("ended"); await owner.settle();
+    calls[1].onClose("ended");
+    expect([calls.map(call => call.since), timers.map(timer => timer.delay), cleared]).toEqual([[0, 0], [500, 1000], [0]]);
+    timers[0].callback();
+    timers[1].callback(); await owner.settle();
+    expect(calls.map(call => call.since)).toEqual([0, 0, 0]);
+    release(); expect((await owner.settle()).errors).toEqual([]);
+    expect(cleared).toEqual([0]);
+  });
+
   it("fences each callback and cursor when publication synchronously restarts the owner", async () => {
     const calls = [], events = [];
     const owner = createVaultChanges({

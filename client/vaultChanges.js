@@ -72,14 +72,33 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
         delay = Math.min(MAX_DELAY_MS, 500 * 2 ** Math.min(attempts++, 6));
       }
       const continuePoll = reason === "poll" && polling;
-      timer = setTimer(() => { if (!current()) return; timer = null; connect(continuePoll); }, delay);
+      // Reserve the slot before an injected timer can reenter. A replacement
+      // connection or synchronous firing owns its own slot, never this handle.
+      const scheduled = { ready: false, handle: undefined };
+      timer = scheduled;
+      try {
+        const handle = setTimer(() => {
+          if (!current() || timer !== scheduled) return;
+          timer = null; connect(continuePoll);
+        }, delay);
+        if (current() && timer === scheduled) {
+          scheduled.handle = handle; scheduled.ready = true;
+        } else clearTimer(handle);
+      } catch (error) {
+        if (timer === scheduled) timer = null;
+        throw error;
+      }
     };
     const operationOwner = createOperationOwner({
       owner: Object.freeze({}),
       dispatch: (options, delivery) => open({ ...options, signal: abort.signal,
         onEvent: value => delivery.deliver("event", value), onClose: reason => delivery.deliver("close", reason) }),
       release: disposer => disposer?.(),
-      cancel() { clearTimer(timer); timer = null; abort.abort(); },
+      cancel() {
+        const scheduled = timer; timer = null;
+        if (scheduled?.ready) clearTimer(scheduled.handle);
+        abort.abort();
+      },
       channels: {
         event: {
           // Snapshot all event fields before the adapter's final delivery fence.
