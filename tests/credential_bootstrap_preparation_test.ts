@@ -10,6 +10,7 @@ import { AclRepository } from "../server/auth/acl.ts";
 import {
   type AccountParticipantReceipt,
   AuthenticationError,
+  type InitialAccountPreparationRequest,
   type PreparedAccount,
 } from "../server/auth/account_credentials.ts";
 import { settledPublication } from "../server/config/internal/participant_completion.ts";
@@ -778,6 +779,32 @@ const setupOptions = {
   now: () => SETUP_NOW,
   renderQr: (uri: string) => Promise.resolve(`qr:${uri}`),
 };
+
+Deno.test("setup enrollment: an explicit undefined authenticator is rejected without writes", () => {
+  let hashes = 0;
+  return preparationFixture(async (f) => {
+    const source = f.authority("initial");
+    const before = f.accounts.capture();
+    const request = { ...f.request(), authenticator: undefined };
+    // @ts-expect-error A known undefined property is not a password-only request.
+    const invalidRequest: InitialAccountPreparationRequest = request;
+    await assertRejects(
+      () =>
+        f.accounts.credentials.prepareInitialAccount(source, invalidRequest),
+      IdentityStateError,
+      INVALID,
+    );
+    assertEquals(hashes, 0);
+    assertStrictEquals(f.accounts.capture(), before);
+    assertEquals([...Deno.readDirSync(f.root)], []);
+  }, {
+    ...setupOptions,
+    hash: (password) => {
+      hashes++;
+      return Promise.resolve(fixturePasswordHash(password));
+    },
+  });
+});
 
 function withEnrolledSetupPair(
   accounts: AccountRepository,

@@ -144,15 +144,19 @@ declare const preparedAccountBrand: unique symbol;
 export interface PreparedAccount {
   readonly [preparedAccountBrand]: true;
 }
-export interface AccountPreparationRequest {
+export type AccountPreparationRequest = {
   readonly login: string;
   readonly password: string;
   readonly updateId: string;
-}
-export interface InitialAccountPreparationRequest
-  extends AccountPreparationRequest {
-  readonly authenticator?: Readonly<{ key: string; code: string }>;
-}
+};
+// Unlike an optional `never` property, the password-only arm excludes a
+// present `authenticator: undefined` without exactOptionalPropertyTypes.
+export type InitialAccountPreparationRequest =
+  & AccountPreparationRequest
+  & (
+    | { readonly [field: `authenticator${string}`]: never }
+    | { readonly authenticator: Readonly<{ key: string; code: string }> }
+  );
 export interface OfflineAccountRequest {
   readonly accountId: string;
   readonly credentialRevision: number;
