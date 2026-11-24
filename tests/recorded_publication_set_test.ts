@@ -37,15 +37,18 @@ function prepareReservationJournal(root: string, setId: string) {
 }
 
 for (
-  const failure of [
-    "none",
-    "validation",
-    "byte mismatch",
-    "publication",
-    "journal retirement",
+  const [failure, withUnrelatedHold] of [
+    ["none", true],
+    ["validation", true],
+    ["validation", false],
+    ["byte mismatch", true],
+    ["byte mismatch", false],
+    ["publication", true],
+    ["journal retirement", true],
   ] as const
 ) {
-  Deno.test(`publication reservation custody after recovery outcome: ${failure}`, () => {
+  const holdLabel = withUnrelatedHold ? "" : " without an unrelated hold";
+  Deno.test(`publication reservation custody after recovery outcome: ${failure}${holdLabel}`, () => {
     const root = Deno.makeTempDirSync();
     const lifetime = createOperationLease("live", [() => undefined], []);
     const { lease } = lifetime;
@@ -72,9 +75,10 @@ for (
         }
       };
 
-      // A separate hold on the very same target must survive settlement.
-      const unrelated = owner(paths[0]);
-      const unrelatedHandle = unrelated.prepareParticipant(
+      // A same-target hold must survive settlement, but admission failures
+      // also run without it so recovery alone must fence both targets.
+      const unrelated = withUnrelatedHold ? owner(paths[0]) : undefined;
+      const unrelatedHandle = unrelated?.prepareParticipant(
         4,
         unrelated.capture(),
         lease,
@@ -193,12 +197,14 @@ for (
           );
         }
         assertEquals(replay.release().state, "committed");
-        assertThrows(
-          () => write(ordinary[0], 3),
-          PublicationSetUnavailable,
-          unavailable,
-        );
-        unrelatedHandle.discard();
+        if (unrelatedHandle) {
+          assertThrows(
+            () => write(ordinary[0], 3),
+            PublicationSetUnavailable,
+            unavailable,
+          );
+          unrelatedHandle.discard();
+        }
         assertEquals(ordinary.map((target) => write(target, 3)), [
           "committed",
           "committed",
