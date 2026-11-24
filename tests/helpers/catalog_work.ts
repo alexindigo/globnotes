@@ -51,6 +51,23 @@ export function captureWork(
   };
 }
 
+/** A new baseline may not absorb work admitted after the captured fence. */
+export function captureSettledWork(
+  plugin: CatalogPlugin,
+  selected: readonly Lane[] = lanes,
+): WorkFence {
+  const baseline = captureWork(plugin, selected);
+  for (const lane of selected) {
+    const { pending, admitted, settled } = plugin.work![lane];
+    if (pending !== 0 || settled !== admitted) {
+      throw Error(
+        `plugin '${plugin.id}' ${lane} work still pending at baseline`,
+      );
+    }
+  }
+  return baseline;
+}
+
 export class CatalogWorkFailure extends Error {
   constructor(readonly plugin: CatalogPlugin, readonly fence: WorkFence) {
     super(`plugin '${plugin.id}' work failed: ${JSON.stringify(plugin)}`);
@@ -58,8 +75,9 @@ export class CatalogWorkFailure extends Error {
   }
 }
 
-/** Conservative success: any intervening failure rejects, including later work.
- * This is not an attribution/receipt API. */
+/** Conservative success: any unexpected failure rejects, including later work.
+ * A negative control may project exact expected failures from a settled
+ * baseline; it must verify the failure's identity separately. */
 export function workFenceSettled(
   plugin: CatalogPlugin | undefined,
   fence: WorkFence,

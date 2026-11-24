@@ -781,7 +781,7 @@ is separate and must retain its product consumer assertions.
 | 9 | Manually advanced clocks, background work and whole manager/policy barriers | Fixture containment remains where automatic product deadline progression is disabled or no whole-work bound exists; known native call milestones are converted separately |
 | 10 | Real filesystem `fs_deadline` | Unchanged: an actual product failure, not a competing readiness verdict |
 | 11 | Browser DOM and external process/transport readiness | Existing readiness remains |
-| 12 | Native backup idle in `client/tests/e2e/backup-plugin.mjs` | Capture a generation-qualified ordinary/versioning fence from the catalogue; wait on existing invalidation events, reject intervening failure counts, then inspect private status once and assert exact backup bytes |
+| 12 | Native backup idle in `client/tests/e2e/backup-plugin.mjs` | The shared backup observer waits on one generation-qualified ordinary/versioning fence, checks expected work and private status, and only then records its next failure baseline. Cases still assert exact backup bytes and other consumer outcomes. |
 | 13 | `helpers/plugin_ready.ts` catalogue-only startup and native `harness-helpers.mjs` | Shared HTTP observer follows admitted startup under its own product deadline; only unbounded admission/publication retains readiness |
 
 `product_settlement_test.ts` covers fixed cohorts, independent lanes, normal
@@ -798,12 +798,20 @@ finish; neither capture nor idle observation is retried.
 
 `helpers/catalog_work.ts` opens the existing event stream before reading, keeps a
 fixed generation/fence and conservatively rejects changes in cumulative lane or
-delivery failures. Failure counts survive diagnostic eviction. Native backup
-boots settle the named recovery job before recording the baseline for fixture
-actions. The recovery mutation expects that job alone to fail with a family
-conflict, then still has to fail the ring-cleanup assertion. The deliberately
-interrupted capture and alien-slot cases likewise acknowledge only their expected
-terminal callback failure. None retries the operation or waits for a new cohort.
+delivery failures. Failure counts survive diagnostic eviction. The shared native
+backup observer declares exact failure deltas before waiting, never samples a
+baseline from readiness or a save acknowledgement, and rejects a baseline if
+newer selected work is still pending. A broken recovery must report its named
+startup job's family conflict and still fail the ring-cleanup assertion. Aliases
+and retarget must each settle the first successful capture, then observe the
+second capture's exact error and prove the settings and physical slots. The
+deliberately interrupted captures and alien-slot fixture use the same observer.
+None retries the operation or waits for a new cohort.
+
+Retarget holds one marker RPC in its owned server at the second capture's
+publication boundary. The fixture observes that capture pending, changes the
+alias, and atomically publishes release. The server watches that record; the
+Worker does not launch repeated asynchronous filesystem reads while held.
 
 `plugin_work_summary_test.ts` and `catalog_work_test.ts` cover the additive public
 shape, startup separation, independent/contiguous lanes, overflow/queued expiry,

@@ -5,12 +5,12 @@ import { fileURLToPath } from "node:url";
 import { bootServer } from "./harness-helpers.mjs";
 import { executeChild } from "./legacy-native-suite.mjs";
 import { BACKUP_CASES } from "./native-fixture-cases.mjs";
-import { captureWork, catalogPluginReady, catalogWorkSettled, CatalogWorkFailure } from "../../../tests/helpers/catalog_work.ts";
-import { recordBackupNegative, requireBackupNegative } from "../helpers/backup-controls.js";
+import { openBackupWork, recordBackupNegative, requireBackupNegative } from "../helpers/backup-controls.js";
 import { publishRecord, readRecord, waitForRecord } from "../../../tests/helpers/process_records.ts";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
+const retargetPreload = `${ROOT}/tests/helpers/backup_retarget_preload.ts`;
 const kinds = ["count", "order", "location", "preimage", "pin", "recovery", "aliases", "distinct", "retarget", "cleanup"];
 const options = { artifacts: null, controls: false, case: null, negative: false, variant: null }, seen = new Set();
 for (let index = 0; index < Deno.args.length; index++) {
@@ -88,43 +88,14 @@ if (options.controls) {
   console.log("BACKUP PLUGIN CONTROLS OK", JSON.stringify(outcomes));
 } else {
   const outcomes = [], fixtures = [];
-  const backupLanes = ["ordinary", "versioning"];
   let current;
   async function api(route, method = "GET", body) {
     const response = await fetch(current.server.baseUrl + route, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
     return { status: response.status, body: await response.json() };
   }
   const settings = () => api("/_/api/plugin-host/globnotes-backup/settings/backup");
-  // Capture host-owned work once; later admissions cannot extend its fence.
-  async function status(expectFailure = false) {
-    let rejected = false;
-    try {
-      await catalogWorkSettled(current.server, "globnotes-backup", { lanes: backupLanes, baseline: current.workBaseline });
-    } catch (error) {
-      if (!expectFailure) {
-        const failure = Error(`BACKUP_NATIVE_${current.label}: ${error.message}`, { cause: error });
-        failure.workBaseline = structuredClone(current.workBaseline);
-        throw failure;
-      }
-      assert(error instanceof CatalogWorkFailure, "Expected a returned callback failure, not owner loss or deadline");
-      // These cases deliberately throw from their first versioning callback.
-      // Acknowledge exactly that terminal failure, never an arbitrary new baseline.
-      const entry = error.plugin;
-      equal(entry.work.generation, current.workBaseline.generation, "Expected-failure owner retained");
-      equal(entry.deliveryFailures, current.workBaseline.deliveryFailures + 1, "Exactly one expected delivery failure");
-      for (const lane of backupLanes) {
-        equal(entry.work[lane].failures, current.workBaseline.lanes[lane].failures + (lane === "versioning" ? 1 : 0), "Only the injected callback failed");
-        assert(entry.work[lane].settled >= error.fence.lanes[lane].admitted, "Expected-failure captured cohort is terminal without extending its fence");
-      }
-      equal(entry.work.versioning.lastFailure.code, "plugin_work_failed", "Ordinary callback rejection, not product deadline");
-      current.workBaseline = captureWork(entry, backupLanes);
-      rejected = true;
-    }
-    assert(!expectFailure || rejected, "The deliberate callback failure was not observed");
-    const latest = await api("/_/api/plugins/globnotes-backup/status");
-    if (latest.status === 200) equal(latest.body?.pendingJobs, 0, "Host work settled without the expected backup idle outcome");
-    return latest;
-  }
+  const readStatus = () => api("/_/api/plugins/globnotes-backup/status");
+  const status = () => current.work.status();
   async function picture(name, session = current.session) {
     const { data } = await session.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
     await publishRecord(`${current.directory}/${name}.png`, Uint8Array.from(atob(data), c => c.charCodeAt(0)), { createNew: true });
@@ -143,11 +114,11 @@ if (options.controls) {
     await finalizeNativeCase({ cleanup: [() => closeSession(fixture), () => closeServer(fixture)] });
     fixture.closed = true;
   }
-  async function launch(env, { expectRecoveryConflict = false } = {}) {
+  async function launch(env) {
     const directory = `${current.directory}/backend-${++current.generation}`; await Deno.mkdir(directory);
     const admitted = Promise.withResolvers(), observation = new AbortController();
     const samples = []; let finished = false;
-    const boot = bootServer(current.vault, current.state, { env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory, onServer: server => admitted.resolve(server) });
+    const boot = bootServer(current.vault, current.state, { env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory, onServer: server => admitted.resolve(server), denoArgs: current.label === "retarget" ? ["--preload", retargetPreload] : [] });
     const observe = (async () => {
       const owner = await admitted.promise;
       assert(owner.vault === current.vault, "Startup observation must own this fixture");
@@ -166,20 +137,7 @@ if (options.controls) {
       current.server = await boot;
       current.serverClosed = false;
       current.servers.push({ pid: current.server.pid, baseUrl: current.server.baseUrl, directory });
-      const ready = await catalogPluginReady(current.server, "globnotes-backup");
-      // Ready admits recovery but does not settle it. Check the fresh generation's
-      // expected outcome instead of sampling a failure baseline mid-recovery.
-      const expected = {
-        generation: ready.work.generation, deliveryFailures: 0,
-        lanes: { ordinary: { admitted: 1, failures: expectRecoveryConflict ? 1 : 0 }, versioning: { admitted: 0, failures: 0 } },
-      };
-      const settled = await catalogWorkSettled(current.server, "globnotes-backup", { lanes: backupLanes, baseline: expected });
-      const baseline = captureWork(settled, backupLanes);
-      equal(baseline, expected, "Only the owned backup recovery job ran before fixture actions");
-      equal(settled.jobs, [expectRecoveryConflict
-        ? { id: "backup-recovery", state: "failed", code: "plugin_job_failed" }
-        : { id: "backup-recovery", state: "succeeded" }], "Expected backup recovery job outcome");
-      current.workBaseline = baseline;
+      current.work = await openBackupWork(current.server, { kind: current.label, negative: options.negative, restarted: current.generation > 1, readStatus });
     }
     finally { finished = true; observation.abort(); admitted.resolve({ baseUrl: null, vault: current.vault }); await observe; await publishRecord(`${directory}/startup-catalogs.json`, JSON.stringify(samples, null, 2), { createNew: true }); }
   }
@@ -206,7 +164,8 @@ if (options.controls) {
             rename:async(from,to)=>{const stat=await fs.stat(from,options);await fs.rename(from,to,{...options,sourceToken:stat.token,destination:{kind:'absent'}});},
             remove:async(path)=>{const stat=await fs.stat(path,options);if(stat)await fs.remove(path,{...options,token:stat.token});}
           });
-          await new Promise((resolve,reject)=>{const release=this.ctx.timers.setInterval(async()=>{try{const path=join(workspace.location,'retarget-release');if(await fs.stat(path,options) && JSON.parse(new TextDecoder().decode(await fs.readFile(path,options))).release===true){release();resolve();}}catch(error){release();reject(error);}},10);});
+          const release=await fs.stat(join(workspace.location,'retarget-release'),options);
+          if(release?.kind!=='file')throw new BackupError('native_retarget_release_missing');
         }`;
       const mutated = (label === "retarget" ? 'import { publishRecord as publishNativeRecord } from "./native-record-publication.ts";\n' : '') + text.replace(target, injection);
       await publishRecord(file, mutated);
@@ -250,12 +209,12 @@ if (options.controls) {
     await session.key("Enter", { windowsVirtualKeyCode: 13 });
     await session.poll(`fetch('/_/api/plugin-host/globnotes-backup/settings/backup').then(r=>r.json()).then(v=>v.values.basePath===${JSON.stringify(value)})`);
   }
-  async function save(path, value, expectFailure = false) {
+  async function save(path, value, during) {
     const read = await api(`/_/api/notes/${path}`);
     const ack = await api(`/_/api/notes/${path}`, "PATCH", { newContent: value, base: { kind: "version", version: read.body.version } });
     equal(ack.status, 200, "managed save acknowledgement");
     equal(await Deno.readTextFile(`${current.vault}/${path}.md`), value, "live saved bytes");
-    const settled = await status(expectFailure); equal(settled.status, 200, "actual plugin status endpoint"); return settled.body;
+    return (await current.work.afterCapture(during)).body;
   }
   async function ring(root, path, expected, kind) {
     const observed = [];
@@ -274,9 +233,9 @@ if (options.controls) {
     await closeFixture(current);
     outcomes.push({ label, completed: true, directory: current.directory });
   }
-  async function restart(env = {}, recovery) {
+  async function restart(env = {}) {
     await publishRecord(`${current.directory}/restart-${current.generation}-before.json`, JSON.stringify({ settings: await settings(), status: await status(), live: await Deno.readTextFile(`${current.vault}/Note.md`) }, null, 2), { createNew: true });
-    await closeServer(current); await launch(env, recovery);
+    await closeServer(current); await launch(env);
     await current.session.goto(`${current.server.baseUrl}/Note`); await current.session.poll("!!document.querySelector('.toast-viewer')");
     await current.session.evaluate("document.fonts.ready.then(()=>true)");
   }
@@ -342,14 +301,12 @@ if (options.controls) {
         }
         await finish(kind, { root, persistedFallback: raw.values.backup.basePath });
       } else if (["recovery", "cleanup"].includes(kind)) {
-        await fixture(kind); const failed = await save("Note", "B", true);
+        await fixture(kind); const failed = await save("Note", "B");
         assert(failed.pendingRecovery, `BACKUP_NATIVE_${kind}: interruption recorded`);
         const active = `${current.vault}/.globnotes-backup/active.json`, journal = JSON.parse(await Deno.readTextFile(active));
         await publishRecord(`${current.directory}/interrupted-journal.json`, JSON.stringify(journal, null, 2), { createNew: true });
-        const expectRecoveryConflict = kind === "recovery" && options.negative;
-        const live = await Deno.readTextFile(`${current.vault}/Note.md`); await restart({}, { expectRecoveryConflict });
+        const live = await Deno.readTextFile(`${current.vault}/Note.md`); await restart();
         const recovered = (await status()).body;
-        if (expectRecoveryConflict) equal(recovered.lastError, { code: "backup_family_conflict" }, "Only the recovery mutation's expected conflict may reach the cleanup assertion");
         assert(!recovered.pendingRecovery, `BACKUP_NATIVE_${kind}: ring-committed cleanup completed without duplicate capture`);
         const cleanup = [];
         for (const file of [active, ...journal.stages.map(stage => stage.file)]) {
@@ -374,22 +331,22 @@ if (options.controls) {
         const first = `${current.vault}/first`, second = `${current.vault}/second`, alias = `${current.vault}/alias`;
         await Deno.mkdir(first); await Deno.mkdir(second); await Deno.symlink(first, alias);
         await open(); await base(alias); await closeSettings(); await save("Note", "B");
-        {
-          const read = await api("/_/api/notes/Note");
-          equal((await api("/_/api/notes/Note", "PATCH", { newContent: "C", base: { kind: "version", version: read.body.version } })).status, 200, "BACKUP_NATIVE_retarget: original ACK before deferred publication");
-          const work = catalogWorkSettled(current.server, "globnotes-backup", { lanes: backupLanes, baseline: current.workBaseline });
+        const settled = await save("Note", "C", async owner => {
           const workspace = `${current.vault}/.globnotes-backup`;
           await waitForRecord(workspace, "retarget-ready", () => { const value = readRecord(`${workspace}/retarget-ready`); return value?.ready === true ? value : null; }, [
             { label: "backup server", exit: current.server.exited },
-            { label: "captured backup invocation", exit: work.then(() => ({code:0}), () => ({code:1})) },
+            owner,
           ]);
-          Deno.removeSync(alias); Deno.symlinkSync(second, alias); publishRecord(`${workspace}/retarget-release`, '{"release":true}');
-          const settled = (await status()).body;
-          assert(!settled.pendingRecovery, "BACKUP_NATIVE_retarget: pinned transaction completes under surviving static authority");
-          await ring(first, "Note", ["B", "A"], kind); await ring(second, "Note", [], kind);
-          await finish(kind, { first, second, alias, settled, pinnedPlacement: true });
-          await work;
-        }
+          const held = (await api("/_/api/plugin-host")).body.plugins.find(plugin => plugin.id === "globnotes-backup").work;
+          equal(held.versioning, { admitted: 2, settled: 1, pending: 1, failures: 0, lastFailure: null },
+            "BACKUP_NATIVE_retarget: second capture held before publication");
+          Deno.removeSync(alias); Deno.symlinkSync(second, alias);
+          await publishRecord(`${workspace}/retarget-release`, '{"release":true}');
+          await publishRecord(`${current.directory}/retarget-at-release.json`, JSON.stringify(held, null, 2), { createNew: true });
+        });
+        assert(!settled.pendingRecovery, "BACKUP_NATIVE_retarget: pinned transaction completes under surviving static authority");
+        await ring(first, "Note", ["B", "A"], kind); await ring(second, "Note", [], kind);
+        await finish(kind, { first, second, alias, settled, pinnedPlacement: true });
       } else if (kind === "failure") {
         await fixture(kind); await Deno.writeTextFile(`${current.vault}/Note.md.0.bak`, "alien");
         const session = current.session;
@@ -398,7 +355,7 @@ if (options.controls) {
         await session.poll("document.querySelector('.cm-content')?.textContent.includes('successful saved text')");
         await session.evaluate("window.__backupEditor=document.querySelector('.cm-content');window.__backupUrl=location.href;true");
         await session.button("Save", ".content-column"); await session.poll("fetch('/_/api/notes/Note').then(r=>r.json()).then(v=>v.content==='successful saved text\\n')");
-        const failed = (await status(true)).body; assert(failed.failed > 0 && failed.lastError.code === "backup_alien_slot", "BACKUP_NATIVE_failure: failed backup is visible");
+        const failed = (await current.work.afterCapture()).body;
         equal(await Deno.readTextFile(`${current.vault}/Note.md`), "successful saved text\n", "BACKUP_NATIVE_failure: successful ACK and bytes survive");
         equal(await Deno.readTextFile(`${current.vault}/Note.md.0.bak`), "alien", "BACKUP_NATIVE_failure: alien unchanged");
         await session.click(".cm-content"); await session.key("End", { windowsVirtualKeyCode: 35 }); await session.type("dirty retained");
@@ -431,9 +388,9 @@ if (options.controls) {
           // Raw reads retain the original failed fence instead of re-entering it.
           const catalog = (await api("/_/api/plugin-host")).body.plugins.find(plugin => plugin.id === "globnotes-backup");
           const readSlot = path => Deno.readTextFile(path).catch(error => { if (error instanceof Deno.errors.NotFound) return null; throw error; });
-          const state = { catalog, settings: await settings(), status: await api("/_/api/plugins/globnotes-backup/status"), vault: current.vault,
+          const state = { catalog, settings: await settings(), status: await readStatus(), vault: current.vault,
             live: await Deno.readTextFile(`${current.vault}/Note.md`), firstSlot: await Deno.readTextFile(`${current.vault}/Note.md.0.bak`).catch(error => { if (error instanceof Deno.errors.NotFound) return null; throw error; }),
-            targetId: current.session.targetId, browserContextId: current.session.browserContextId, servers: current.servers };
+            targetId: current.session?.targetId, browserContextId: current.session?.browserContextId, servers: current.servers };
           if (options.case === "retarget") state.retarget = {
             aliasTarget: await Deno.readLink(`${current.vault}/alias`),
             firstSlot: await readSlot(`${current.vault}/first/Note.md.0.bak`), secondSlot: await readSlot(`${current.vault}/second/Note.md.0.bak`),

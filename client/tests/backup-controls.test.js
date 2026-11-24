@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import { BACKUP_CONTROL_FAILURES, backupControlReason, recordBackupNegative, requireBackupNegative } from "./helpers/backup-controls.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { BACKUP_CONTROL_FAILURES, backupControlReason, openBackupWork, recordBackupNegative, requireBackupNegative } from "./helpers/backup-controls.js";
 
 function aliasFailure() {
-  const error = Object.assign(new Error("BACKUP_NATIVE_aliases: plugin 'globnotes-backup' work failed: observed catalogue"), {
-    workBaseline: { generation: "owner", deliveryFailures: 0, lanes: { ordinary: { admitted: 1, failures: 0 }, versioning: { admitted: 0, failures: 0 } } },
+  const error = Object.assign(new Error(BACKUP_CONTROL_FAILURES.aliases), {
+    workBaseline: { generation: "owner", deliveryFailures: 0, lanes: { ordinary: { admitted: 1, failures: 0 }, versioning: { admitted: 1, failures: 0 } } },
   });
   const diagnostics = {
     catalog: { status: "ready", deliveryFailures: 1, work: { generation: "owner", ordinary: { failures: 0, pending: 0 }, versioning: {
@@ -14,6 +14,91 @@ function aliasFailure() {
   };
   return { error, diagnostics };
 }
+
+function catalogueFixture() {
+  const server = { baseUrl: "http://globnotes.test:4321" };
+  const lane = () => ({ admitted: 0, settled: 0, pending: 0, failures: 0, lastFailure: null });
+  const work = { generation: "owner", startup: { state: "succeeded" }, ordinary: lane(), versioning: lane(), guard: lane() };
+  const plugin = { id: "globnotes-backup", status: "ready", deliveryFailures: 0, work,
+    jobs: [{ id: "backup-recovery", state: "succeeded" }] };
+  const privateStatus = { status: 200, body: { pendingJobs: 0, failed: 0, lastError: null } };
+  const readStatus = vi.fn(() => structuredClone(privateStatus));
+  const listeners = new Set();
+  const invalidation = new TextEncoder().encode("event: invalidate\ndata: {}\n\n");
+  let subscriptions = 0, readBarrier;
+  vi.stubGlobal("fetch", vi.fn(async (url, { signal }) => {
+    if (url.endsWith("/events")) {
+      subscriptions++;
+      return new Response(new ReadableStream({ start(stream) {
+        listeners.add(stream);
+        signal.addEventListener("abort", () => { listeners.delete(stream); stream.close(); }, { once: true });
+      }}));
+    }
+    const response = Response.json({ plugins: [plugin] });
+    if (readBarrier?.subscription === subscriptions) readBarrier.resolve();
+    return response;
+  }));
+  return { server, plugin, work, privateStatus, readStatus,
+    nextRead(subscription) {
+      readBarrier = { subscription, ...Promise.withResolvers() };
+      return readBarrier.promise;
+    },
+    invalidate() { for (const stream of listeners) stream.enqueue(invalidation); },
+  };
+}
+
+describe("backup work baselines", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps ready-with-recovery-pending out of the failure baseline", async () => {
+    const f = catalogueFixture();
+    Object.assign(f.work.ordinary, { admitted: 1, pending: 1 });
+    f.plugin.jobs[0].state = "running";
+    const selected = f.nextRead(2);
+    const opening = openBackupWork(f.server, { kind: "recovery", negative: true, restarted: true, readStatus: f.readStatus });
+    await selected;
+    expect(f.readStatus).not.toHaveBeenCalled();
+    Object.assign(f.work.ordinary, { settled: 1, pending: 0, failures: 1, lastFailure: { sequence: 1, code: "plugin_work_failed" } });
+    Object.assign(f.plugin.jobs[0], { state: "failed", code: "plugin_job_failed" });
+    Object.assign(f.privateStatus.body, { failed: 1, lastError: { code: "backup_family_conflict" } });
+    f.invalidate();
+    const backup = await opening;
+    expect(await backup.status()).toEqual(f.privateStatus);
+    expect(f.readStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["aliases", "backup_alien_slot", true],
+    ["retarget", "backup_owned_slot_conflict", true],
+    ["retarget", "fs_busy", false],
+  ])("settles %s before attributing %s to the mutation", async (kind, code, intended) => {
+    const f = catalogueFixture();
+    Object.assign(f.work.ordinary, { admitted: 1, settled: 1 });
+    const backup = await openBackupWork(f.server, { kind, negative: true, readStatus: f.readStatus });
+    Object.assign(f.work.versioning, { admitted: 1, settled: 1 });
+    await backup.afterCapture();
+
+    Object.assign(f.work.versioning, { admitted: 2, pending: 1 });
+    const selected = f.nextRead(4);
+    const failed = backup.afterCapture().catch(error => error);
+    await selected;
+    expect(f.readStatus).toHaveBeenCalledTimes(2);
+    f.plugin.deliveryFailures++;
+    Object.assign(f.work.versioning, { settled: 2, pending: 0, failures: 1, lastFailure: { sequence: 2, code: "plugin_work_failed" } });
+    Object.assign(f.privateStatus.body, { failed: 1, lastError: { code } });
+    f.invalidate();
+    const error = await failed;
+    if (intended) {
+      expect(error.message).toBe(BACKUP_CONTROL_FAILURES[kind]);
+      expect(error.workBaseline).toEqual({ generation: "owner", deliveryFailures: 0,
+        lanes: { ordinary: { admitted: 1, failures: 0 }, versioning: { admitted: 1, failures: 0 } } });
+    } else {
+      expect(error.message).toContain("expected 1 private failures (backup_owned_slot_conflict)");
+      expect(error.workBaseline).toBeUndefined();
+    }
+    expect(f.readStatus).toHaveBeenCalledTimes(3);
+  });
+});
 
 describe("backup mutation outcome ownership", () => {
   it("accepts every other control only for its own intended consumer assertion", () => {
@@ -37,8 +122,10 @@ describe("backup mutation outcome ownership", () => {
       data => data.firstSlot = "unrelated bytes",
       data => data.catalog.work.ordinary.failures = 1,
     ]) { const data = structuredClone(diagnostics); change(data); expect(backupControlReason("aliases", error, data)).toBeNull(); }
-    error.workBaseline.lanes.versioning.admitted = 2;
-    expect(backupControlReason("aliases", error, diagnostics)).toBeNull();
+    for (const admitted of [0, 2]) {
+      error.workBaseline.lanes.versioning.admitted = admitted;
+      expect(backupControlReason("aliases", error, diagnostics)).toBeNull();
+    }
   });
   it("writes the original outcome even when diagnostics and cleanup fail, attempting every owner", async () => {
     const error = new Error(BACKUP_CONTROL_FAILURES.count), write = vi.fn(), server = vi.fn();
@@ -52,7 +139,7 @@ describe("backup mutation outcome ownership", () => {
   });
   it("accepts retarget only after a successful first publication and the observed retarget barrier", () => {
     const { error, diagnostics } = aliasFailure();
-    error.message = "BACKUP_NATIVE_retarget: plugin 'globnotes-backup' work failed: observed catalogue";
+    error.message = BACKUP_CONTROL_FAILURES.retarget;
     diagnostics.vault = "/owned/vault";
     diagnostics.status.body.lastError.code = "backup_owned_slot_conflict";
     diagnostics.status.body.pendingRecovery = true;
@@ -102,6 +189,7 @@ describe("backup mutation outcome ownership", () => {
     const result = { code: 1, stderr: new TextEncoder().encode(error.message), timedOut: false };
     expect(await requireBackupNegative("aliases", result, () => record)).toBe(record);
     await expect(requireBackupNegative("aliases", result, () => ({ ...record, reason: "unrelated" }))).rejects.toThrow("did not prove its intended failure");
+    await expect(requireBackupNegative("aliases", result, () => ({ ...record, detail: "unrelated", reason: null }))).rejects.toThrow("did not prove its intended failure");
     await expect(requireBackupNegative("aliases", { ...result, code: 0 }, () => record)).rejects.toThrow("did not prove its intended failure");
     await expect(requireBackupNegative("aliases", { ...result, timedOut: true }, () => record)).rejects.toThrow("did not prove its intended failure");
     await expect(requireBackupNegative("aliases", result, () => null)).rejects.toThrow("BACKUP_NATIVE_aliases");

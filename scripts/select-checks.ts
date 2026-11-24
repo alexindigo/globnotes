@@ -114,6 +114,7 @@ export const OWNERSHIP_SELECTION = {
       "tests/helpers/record_publication.ts",
       "tests/helpers/sync_status_control.ts",
       "tests/helpers/sync_status_preload.ts",
+      "tests/helpers/backup_retarget_preload.ts",
       "tests/helpers/ownership_record_sites.json",
       "client/tests/e2e/sync-status-native.mjs",
       "client/tests/e2e/backup-plugin.mjs",

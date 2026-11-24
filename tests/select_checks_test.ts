@@ -141,6 +141,7 @@ const OWNERS = [
       ...SCOPE_INPUTS,
       "tests/helpers/sync_status_control.ts",
       "tests/helpers/sync_status_preload.ts",
+      "tests/helpers/backup_retarget_preload.ts",
       "tests/helpers/process_records.ts",
       "tests/helpers/record_publication.ts",
       "tests/helpers/record_schema.ts",

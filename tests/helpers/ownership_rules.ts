@@ -533,6 +533,7 @@ export const RECORD_MODULE_RULES = {
   [RECORD_CHANNEL]: [
     "tests/recorded_publication_set_test.ts",
     SYNC_CONTROL,
+    "tests/helpers/backup_retarget_preload.ts",
     "tests/helpers/record_schema.ts",
     "tests/owned_record_channel_test.ts",
     DRIVER_STARTUP,

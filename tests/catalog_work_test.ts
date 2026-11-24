@@ -3,6 +3,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import {
+  captureSettledWork,
   captureWork,
   type CatalogPlugin,
   catalogPluginReady,
@@ -70,6 +71,24 @@ Deno.test("catalogue work: later admissions cannot extend a fence or hide interv
     Error,
     "work failed",
   );
+});
+
+Deno.test("catalogue work: a settled fence cannot supply a baseline while newer selected work is pending", () => {
+  const current = plugin();
+  const fence = captureWork(current, ["versioning"]);
+  Object.assign(current.work!.versioning, { admitted: 3, settled: 2 });
+  assertEquals(workFenceSettled(current, fence), true);
+  assertThrows(
+    () => captureSettledWork(current, ["versioning"]),
+    Error,
+    "plugin 'test' versioning work still pending at baseline",
+  );
+  Object.assign(current.work!.versioning, { settled: 3, pending: 0 });
+  assertEquals(captureSettledWork(current, ["versioning"]), {
+    generation: "original",
+    deliveryFailures: 0,
+    lanes: { versioning: { admitted: 3, failures: 0 } },
+  });
 });
 
 Deno.test("catalogue work: a versioning failure waits for the captured ordinary cohort", () => {
