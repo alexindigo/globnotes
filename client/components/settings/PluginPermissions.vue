@@ -24,7 +24,8 @@
       <p>Permission status unavailable.</p>
       <CustomButton size="settings" v-if="view.canReviewStatus" type="button" label="Check current status" variant="secondary" wrap-label @click="onReview(view.id)" />
     </div>
-    <p v-if="view.reloadText" class="permission-quiet">{{ view.reloadText }}</p>
+    <!-- Keep the scroll extent stable when reload finishes, even below the controls. -->
+    <StatusLine :message="view.reloadText" class="permission-quiet" />
     <p v-if="view.error" class="text-theme-danger settings-help" role="alert">{{ view.error }}</p>
     <div v-if="view.recovery" class="permission-recovery">
       <p class="text-theme-warning">{{ view.recovery.text }}</p>
@@ -38,6 +39,7 @@ import SettingsSection from './SettingsSection.vue';
 import Toggle from '../Toggle.vue';
 import CustomButton from '../CustomButton.vue';
 import SettingsActions from '../SettingsActions.vue';
+import StatusLine from '../StatusLine.vue';
 defineProps({ view:Object, onMaster:Function, onHost:Function, onReview:Function, onRetry:Function, onDiscard:Function });
 </script>
 <style scoped>

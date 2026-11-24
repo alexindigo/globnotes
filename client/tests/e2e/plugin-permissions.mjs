@@ -9,6 +9,7 @@ import { PERMISSION_CASES, parseFixtureArguments } from "./native-fixture-cases.
 import { done, failed, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { metadataBase } from "./config-fixture.mjs";
 import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
+import { assertEquals } from "@std/assert";
 
 let options;
 try { options = parseFixtureArguments("plugin-permissions", Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -163,6 +164,62 @@ async function master(session = current.session) {
   await committed(value => value.allowNetwork === !before.allowNetwork && value.revision > before.revision, "explicit master change"); await readyReload();
 }
 function rowSelector(kind) { return `[data-plugin-inventory-id=networked] [data-permission-kind=${kind}][data-permission-scope="host:${current.authority}"]`; }
+async function removeAcrossReload(session = current.session) {
+  // Hold the browser's catalogue reads, not the durable write or Worker reload.
+  // The PUT acknowledgement makes Remove actionable before the catalogue catches up.
+  const send = session.page.send;
+  const held = [], continuations = [];
+  let holding = true, boundary, error;
+  function continueRead(requestId) {
+    const work = send("Fetch.continueRequest", { requestId });
+    continuations.push(work);
+    work.catch(() => {});
+  }
+  const stop = session.page.onEvent(event => {
+    if (event.method !== "Fetch.requestPaused") return;
+    if (holding) held.push(event.params.requestId);
+    else continueRead(event.params.requestId);
+  });
+  const observe = `(()=>{
+    const row=document.querySelector(${JSON.stringify(rowSelector("network"))});
+    const pane=row.closest('[data-settings-content]');
+    const reload=[...row.closest('[data-plugin-permission-panel]').querySelectorAll('p')]
+      .find(el=>el.textContent.startsWith('Server reload:'))?.textContent??'';
+    return {reload,rect:row.querySelector('button')?.getBoundingClientRect().toJSON(),
+      scrollTop:pane.scrollTop,scrollHeight:pane.scrollHeight,clientHeight:pane.clientHeight};
+  })()`;
+  try {
+    await send("Fetch.enable", { patterns: [{ urlPattern: `${current.entryBase}/_/api/plugin-host`, requestStage: "Request" }] });
+    await master(session);
+    assert((await invoke("networked", "fetch")).status === 200 && current.traffic() === 2, "on did not restore remembered requested approval");
+    await waitUntil(() => held.length ? done() : pending(), { label: "browser catalogue request held during permission reload" });
+    await session.poll(`(()=>{const state=${observe};return !!state.rect&&!!state.reload;})()`);
+    session.page.send = async (method, params) => {
+      // Release after the native helper's last geometry sample, but before
+      // pointerup. No synthetic click, replay or artificial layout change.
+      if (!boundary && method === "Input.dispatchMouseEvent" && params.type === "mouseReleased") {
+        boundary = {};
+        boundary.before = await session.evaluate(observe);
+        holding = false;
+        held.splice(0).forEach(continueRead);
+        boundary.after = await session.poll(`(()=>{const state=${observe};return !state.reload&&state.rect?state:false;})()`);
+      }
+      return send(method, params);
+    };
+    await session.button("Remove", rowSelector("network"));
+    assert(boundary?.before.reload && boundary.before.scrollTop === boundary.before.scrollHeight - boundary.before.clientHeight, "Remove did not start at the scroll boundary with reload status visible");
+    assertEquals(boundary.after.rect, boundary.before.rect, "Reload completion moved the actionable Remove button");
+  } catch (failure) {
+    error = failure;
+    throw failure;
+  } finally {
+    session.page.send = send;
+    await finalizeNativeCase({ error,
+      report: () => boundary && Deno.writeTextFile(`${current.directory}/permission-reload-gesture.json`, JSON.stringify(boundary, null, 2)),
+      cleanup: [stop, () => send("Fetch.disable"), () => Promise.all(continuations)],
+    });
+  }
+}
 async function closeReview(session = current.session) { await session.click('[data-plugin-inventory-id=networked] button[aria-expanded]'); await session.poll("!document.querySelector('[data-plugin-inventory-id=networked] [data-plugin-permission-panel]')"); }
 async function capture(label, session = current.session) {
   const { data } = await session.send("Page.captureScreenshot", { format: "png" });
@@ -218,8 +275,8 @@ try {
   await outcome("PERMISSIONS-03 NETWORK ONLY OK", { traffic: current.traffic(), moduleTraffic: current.moduleTraffic(), unrelated, browserNonce });
   await master(); value = await view(); assert(!value.allowNetwork && value.approvedNetwork.length === 1, "off discarded approval");
   assert((await invoke("networked", "fetch")).status === 500 && current.traffic() === 1, "off retained raw authority");
-  await master(); assert((await invoke("networked", "fetch")).status === 200 && current.traffic() === 2, "on did not restore remembered requested approval");
-  await current.session.button("Remove", rowSelector("network")); await committed(value => !value.approvedNetwork.length, "delete approval"); await readyReload(); value = await view();
+   await removeAcrossReload();
+   await committed(value => !value.approvedNetwork.length, "delete approval"); await readyReload(); value = await view();
   assert(!value.approvedNetwork.length && value.rows.some(row => row.kind === "network" && row.requested && !row.approved), "delete lost request or retained approval");
   assert((await invoke("networked", "fetch")).status === 500 && current.traffic() === 2, "delete failed to revoke traffic");
   await current.session.button("Approve", rowSelector("imports")); await committed(value => value.approvedImports.length === 1, "import approval"); await readyReload(); value = await view();
