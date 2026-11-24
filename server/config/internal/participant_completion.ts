@@ -7,7 +7,7 @@ export interface SettledPublicationSet {
 }
 const issued = new WeakMap<object, {
   readonly settled: () => SettledPublicationSet;
-  readonly peers: Set<object>;
+  readonly peerRequirements: ((members: readonly object[]) => boolean)[];
 }>();
 export function registerParticipantCompletion(
   participant: object,
@@ -16,23 +16,48 @@ export function registerParticipantCompletion(
   if (issued.has(participant)) {
     throw new TypeError("Participant already bound.");
   }
-  issued.set(participant, { settled, peers: new Set() });
+  issued.set(participant, { settled, peerRequirements: [] });
 }
-export function requirePublicationPeer(
-  participant: object,
-  peer: object,
-): void {
-  const binding = issued.get(participant);
-  if (!binding || !issued.has(peer) || participant === peer) {
-    throw new TypeError("Publication requires issued distinct peers.");
+
+/** Both endpoints acquire the same requirement on registration, even if the
+ * opposite endpoint hasn't been prepared yet. Only native handles can bind. */
+export function definePublicationPeerPair<L extends object, R extends object>(
+  matches: (left: L, right: R) => boolean,
+) {
+  const left = new WeakMap<object, L>();
+  const right = new WeakMap<object, R>();
+  function bind<T extends object, U extends object>(
+    participant: object,
+    facts: T,
+    own: WeakMap<object, T>,
+    opposite: WeakMap<object, U>,
+    match: (ownFacts: T, peerFacts: U) => boolean,
+  ) {
+    const binding = issued.get(participant);
+    if (!binding || own.has(participant) || opposite.has(participant)) {
+      throw new TypeError("Publication requires issued distinct peers.");
+    }
+    own.set(participant, facts);
+    binding.peerRequirements.push((members) =>
+      members.some((member) => {
+        const peer = opposite.get(member);
+        return peer !== undefined && match(facts, peer);
+      })
+    );
   }
-  binding.peers.add(peer);
+  return Object.freeze({
+    left: (participant: object, facts: L) =>
+      bind(participant, facts, left, right, matches),
+    right: (participant: object, facts: R) =>
+      bind(participant, facts, right, left, (r, l) => matches(l, r)),
+  });
 }
+
 export function assertPublicationPeers(members: readonly object[]): void {
   for (const participant of members) {
     const binding = issued.get(participant);
     if (
-      !binding || [...binding.peers].find((peer) => !members.includes(peer))
+      !binding || !binding.peerRequirements.every((require) => require(members))
     ) {
       throw new TypeError("Publication set is missing a required peer.");
     }

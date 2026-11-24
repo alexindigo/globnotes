@@ -34,7 +34,24 @@ const INVALID = "Invalid identity state; original bytes retained.";
 const UNAVAILABLE =
   "Publication set is unavailable; settlement or recovery is required.";
 const CONFLICT = "Stored configuration changed before commit.";
+const MISSING_PEER = "Publication set is missing a required peer.";
 const journalPath = (root: string) => `${root}/journal.json`;
+
+function assertMissingPeer(
+  root: string,
+  parts: readonly PublicationParticipant[],
+) {
+  let unexpected: ReturnType<typeof createPublicationSet> | undefined;
+  try {
+    assertThrows(
+      () => unexpected = createPublicationSet(SET, parts, journalPath(root)),
+      TypeError,
+      MISSING_PEER,
+    );
+  } finally {
+    unexpected?.discard();
+  }
+}
 
 for (const everybody of ["none", "view", "edit"] as const) {
   Deno.test(`account participation: inert preparation, exact settled setup pair and restart sign-in (${everybody})`, () =>
@@ -62,12 +79,14 @@ for (const everybody of ["none", "view", "edit"] as const) {
             SET,
           ),
         );
+        if (everybody === "none") assertMissingPeer(f.root, [parts[0]]);
         parts.push(
           f.accounts.credentials.prepareAccountParticipant(
             prepared.prepared,
             SET,
           ),
         );
+        if (everybody === "none") assertMissingPeer(f.root, [parts[1]]);
         assertEquals(parts.map((part) => Object.keys(part)), [["discard"], [
           "discard",
         ]]);
@@ -218,15 +237,40 @@ for (const action of ["standalone", "set"] as const) {
         f.authority("initial"),
         f.request(),
       );
-      const part = f.accounts.credentials.prepareAccountParticipant(
-        prepared.prepared,
-        SET,
-      );
+      const parts: PublicationParticipant[] = [];
+      const lifetime = createOperationLease("live", [() => undefined]);
       try {
-        if (action === "standalone") part.discard();
-        else createPublicationSet(SET, [part], journalPath(f.root)).discard();
+        parts.push(
+          f.accounts.credentials.prepareAccountParticipant(
+            prepared.prepared,
+            SET,
+          ),
+        );
+        if (action === "standalone") {
+          assertMissingPeer(f.root, parts);
+          parts[0].discard();
+        } else {
+          const acl = new AclRepository(`${f.root}/vault`, VAULT_A, {
+            accounts: f.accounts,
+          });
+          acl.prepareParents();
+          const aclBefore = acl.capture();
+          parts.push(acl.prepareInitialParticipant(
+            prepared.identity,
+            "none",
+            aclBefore,
+            lifetime.lease,
+            SET,
+          ));
+          createPublicationSet(SET, parts, journalPath(f.root)).discard();
+          assertStrictEquals(acl.capture(), aclBefore);
+          assertEquals([...Deno.readDirSync(`${f.root}/vault`)], []);
+        }
         assertStrictEquals(f.accounts.capture(), before);
-        assertEquals([...Deno.readDirSync(f.root)].map((e) => e.name), []);
+        assertEquals(
+          [...Deno.readDirSync(f.root)].map((e) => e.name),
+          action === "standalone" ? [] : ["vault"],
+        );
         assertThrows(
           () =>
             f.accounts.credentials.prepareAccountParticipant(
@@ -237,7 +281,8 @@ for (const action of ["standalone", "set"] as const) {
           INVALID,
         );
       } finally {
-        part.discard();
+        for (const part of parts) part.discard();
+        lifetime.retire();
       }
     }));
 }
@@ -298,13 +343,31 @@ for (
         f.request(),
         abort.signal,
       );
+      const acl = new AclRepository(`${f.root}/vault`, VAULT_A, {
+        accounts: f.accounts,
+      });
+      acl.prepareParents();
+      const aclBefore = acl.capture();
       const part = f.accounts.credentials.prepareAccountParticipant(
         prepared.prepared,
         SET,
       );
+      const lifetime = createOperationLease("live", [() => undefined]);
       try {
-        const set = createPublicationSet(SET, [part], journalPath(f.root));
+        const access = acl.prepareInitialParticipant(
+          prepared.identity,
+          "none",
+          aclBefore,
+          lifetime.lease,
+          SET,
+        );
+        let set: ReturnType<typeof createPublicationSet> | undefined;
         try {
+          const pair = set = createPublicationSet(
+            SET,
+            [part, access],
+            journalPath(f.root),
+          );
           if (boundary === "abort") abort.abort();
           if (boundary === "authority") f.retire();
           if (boundary === "aggregate") f.accounts.retireCredentials();
@@ -313,35 +376,38 @@ for (
           }
           if (boundary === "abort") {
             assertThrows(
-              () => set.decide(),
+              () => pair.decide(),
               AuthenticationError,
               "Invalid authentication credentials.",
             );
           } else if (boundary === "external") {
             assertThrows(
-              () => set.decide(),
+              () => pair.decide(),
               StoredConfigConflict,
               CONFLICT,
             );
           } else {
             assertThrows(
-              () => set.decide(),
+              () => pair.decide(),
               OwnershipError,
               "Owner is retired",
             );
           }
           assertThrows(
-            () => set.publish(),
+            () => pair.publish(),
             PublicationSetUnavailable,
             UNAVAILABLE,
           );
         } finally {
-          set.discard();
+          set?.discard();
+          access.discard();
         }
       } finally {
         part.discard();
+        lifetime.retire();
       }
       assertEquals(f.accounts.capture().value.accounts, []);
+      assertStrictEquals(acl.capture(), aclBefore);
       if (boundary === "external") {
         assertEquals(
           Deno.readTextFileSync(`${f.root}/accounts.json`),
@@ -350,6 +416,44 @@ for (
       }
     }));
 }
+
+Deno.test("account participation: setup refuses an ACL for a different creator", () =>
+  preparationFixture(async (f) => {
+    const creator = await f.accounts.credentials.prepareInitialAccount(
+      f.authority("initial"),
+      f.request(),
+    );
+    const other = await f.accounts.credentials.prepareInitialAccount(
+      f.authority("initial"),
+      f.request({ login: "other" }),
+    );
+    const acl = new AclRepository(`${f.root}/vault`, VAULT_A, {
+      accounts: f.accounts,
+    });
+    acl.prepareParents();
+    const parts: PublicationParticipant[] = [];
+    const lifetime = createOperationLease("live", [() => undefined]);
+    try {
+      parts.push(acl.prepareInitialParticipant(
+        other.identity,
+        "none",
+        acl.capture(),
+        lifetime.lease,
+        SET,
+      ));
+      parts.push(
+        f.accounts.credentials.prepareAccountParticipant(creator.prepared, SET),
+      );
+      assertMissingPeer(f.root, parts);
+    } finally {
+      for (const part of parts) part.discard();
+      lifetime.retire();
+    }
+    assertEquals([
+      f.accounts.capture().value.accounts,
+      acl.capture().value.grants,
+    ], [[], {}]);
+  }));
 
 Deno.test("account participation: recipient receipt requires its exact ACL peer and commits one account-marker-receipt replacement", () =>
   preparationFixture(async (f) => {
@@ -375,6 +479,7 @@ Deno.test("account participation: recipient receipt requires its exact ACL peer 
     let account: PublicationParticipant | undefined;
     let set: ReturnType<typeof createPublicationSet> | undefined;
     try {
+      assertMissingPeer(f.root, [grant]);
       account = f.accounts.credentials.prepareAccountParticipant(
         recipient.prepared,
         SET,
@@ -385,11 +490,7 @@ Deno.test("account participation: recipient receipt requires its exact ACL peer 
           payloadHash: "a".repeat(64),
         },
       );
-      assertThrows(
-        () => createPublicationSet(SET, [account!], journalPath(f.root)),
-        TypeError,
-        "Publication set is missing a required peer.",
-      );
+      assertMissingPeer(f.root, [account]);
       set = createPublicationSet(SET, [account, grant], journalPath(f.root));
       set.decide();
       assertEquals(set.publish().state, "committed");

@@ -7,8 +7,11 @@ import type {
 } from "./account_record.ts";
 import type { PublicationParticipant } from "../../config/owned_publication.ts";
 import { assertPublicationAuthority } from "../../internal/publication_validation.ts";
-import { requirePublicationPeer } from "../../config/internal/participant_completion.ts";
-import { accountAclParticipant } from "./account_participation.ts";
+import {
+  accountAclParticipant,
+  registerInitialAccountParticipant,
+  registerRecipientAccountParticipant,
+} from "./account_participation.ts";
 import { reduceAccountCredentials } from "./credential_reducer.ts";
 import { hashPassword, verifyPassword } from "../../helpers.ts";
 import { AuthenticationError } from "../account_credentials.ts";
@@ -668,7 +671,10 @@ export function bindAccountCredentials(
       let issued = false;
       try {
         assertPublicationAuthority(value.operation.lease, store.root, setId);
-        if (value.purpose === "recipient" && receipt === undefined) {
+        if (
+          value.purpose === "import" ||
+          (value.purpose === "recipient" && receipt === undefined)
+        ) {
           throw new IdentityStateError();
         }
         let peer: PublicationParticipant | undefined;
@@ -718,7 +724,13 @@ export function bindAccountCredentials(
         assertPublicationAuthority(value.operation.lease, store.root, setId);
         value.validation.transferred = true;
         const participant = store.participant(prepared, setId);
-        if (peer) requirePublicationPeer(participant, peer);
+        if (peer) registerRecipientAccountParticipant(participant, peer);
+        else {
+          registerInitialAccountParticipant(participant, {
+            credentials,
+            accountId: value.account.id,
+          });
+        }
         value.phase = "participating";
         issued = true;
         return participant;

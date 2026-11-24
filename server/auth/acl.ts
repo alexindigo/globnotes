@@ -128,13 +128,9 @@ export class AclRepository {
     );
     registerAuthorityReader(this, (context) => {
       const snapshot = authorityRead<AclSnapshot>(this.#file, context);
-      const accounts = authorityRead<AccountDirectorySnapshot>(
-        this.#accounts,
-        context,
-      );
       const adminId = this.#adminLogin
-        ? accounts.value.accounts.find((a) => a.login === this.#adminLogin)
-          ?.id ?? null
+        ? authorityRead<AccountDirectorySnapshot>(this.#accounts, context)
+          .value.accounts.find((a) => a.login === this.#adminLogin)?.id ?? null
         : null;
       return {
         snapshot,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { AclRepository } from "../server/auth/acl.ts";
 import { InstanceAuthority } from "../server/auth/authority.ts";
 import { bindAccountPreparationAuthority } from "../server/auth/internal/account_credentials.ts";
@@ -9,14 +10,23 @@ import {
 } from "../server/config/owned_publication.ts";
 import { PublicationSetUnavailable } from "../server/config/publication_outcome.ts";
 import { createOperationLease } from "../server/operation_lease.ts";
-import { preparationFixture } from "./helpers/account_preparation.ts";
-import { VAULT_A } from "./helpers/identity.ts";
+import {
+  preparationContext,
+  preparationFixture,
+} from "./helpers/account_preparation.ts";
+import {
+  identityFixture,
+  UPDATE,
+  VAULT_A,
+  VAULT_B,
+} from "./helpers/identity.ts";
+import { spawnOwnedChild } from "./helpers/owned_child.ts";
 import { signIn } from "./helpers/session_delivery.ts";
 import { OwnershipError } from "../shared/ownership.js";
 import { HttpError } from "@pathfinder/pathfinder";
 import { OperationError } from "../server/plugins/errors.ts";
 import { StoredConfigConflict } from "../server/config/publication_outcome.ts";
-import { InstanceSessions } from "../server/auth/sessions.ts";
+import { GUEST, InstanceSessions } from "../server/auth/sessions.ts";
 import type {
   AuthorityCallback,
   AuthorityReadContext,
@@ -27,6 +37,66 @@ import type { AuthorityVault } from "../server/auth/authority.ts";
 const SET = "00000000-0000-4000-8000-000000000071";
 const unavailable =
   "Publication set is unavailable; settlement or recovery is required.";
+
+Deno.test("participant authority: ACL without a declared Admin does not need a held account directory", () =>
+  preparationFixture(async (f) => {
+    const acl = new AclRepository(`${f.root}/vault`, VAULT_A, {
+      accounts: f.accounts,
+    });
+    acl.prepareParents();
+    acl.save({ everybody: "view", grants: {} }, acl.capture(), {
+      updateId: UPDATE,
+      actorId: null,
+    });
+    const target = new AclRepository(`${f.root}/target`, VAULT_B, {
+      accounts: f.accounts,
+    });
+    target.prepareParents();
+    const prepared = await f.accounts.credentials.prepareInitialAccount(
+      f.authority("initial"),
+      f.request(),
+    );
+    const lifetime = createOperationLease("live", [() => undefined]);
+    const vault = {
+      identity: {},
+      id: VAULT_A,
+      acl,
+      lifecycle: { epoch: 0, operational: () => true },
+    };
+    let account: PublicationParticipant | undefined;
+    let access: PublicationParticipant | undefined;
+    try {
+      const guest = new InstanceAuthority(
+        f.sessions,
+        () => vault,
+        lifetime.lease,
+      )
+        .lease(GUEST, "readVault");
+      account = f.accounts.credentials.prepareAccountParticipant(
+        prepared.prepared,
+        SET,
+      );
+      assertThrows(
+        () => f.accounts.capture(),
+        PublicationSetUnavailable,
+        unavailable,
+      );
+      const before = target.capture();
+      access = target.prepareInitialParticipant(
+        prepared.identity,
+        "none",
+        before,
+        guest.lease,
+        UPDATE,
+      );
+      access.discard();
+      assertStrictEquals(target.capture(), before);
+    } finally {
+      access?.discard();
+      account?.discard();
+      lifetime.retire();
+    }
+  }));
 
 for (
   const mode of [
@@ -52,8 +122,8 @@ for (
     "reentrant outside",
   ] as const
 ) {
-  Deno.test(`participant authority: actual Admin grant/account pair ${mode}`, () =>
-    preparationFixture(async (f) => {
+  const exercise = (fixture: typeof preparationFixture) =>
+    fixture(async (f) => {
       const alice = await f.createInitial();
       f.signing.initialize();
       let now = 1_800_000_000_000;
@@ -384,9 +454,11 @@ for (
             unavailable,
           );
           assertEquals(
-            JSON.parse(Deno.readTextFileSync(`${f.root}/accounts.json`))
-              .accounts.length,
-            1,
+            [
+              Deno.readTextFileSync(`${f.root}/accounts.json`),
+              Deno.readTextFileSync(`${f.root}/vault/access.json`),
+            ],
+            [accountBytes, aclBefore.persistence.raw],
           );
           return;
         }
@@ -430,7 +502,52 @@ for (
         for (const part of parts) part.discard();
         lifetime.retire();
       }
-    }));
+    });
+  if (import.meta.main) {
+    if (mode === "retired publication") {
+      const [root] = Deno.args;
+      if (!root) throw new Error("Expected the parent fixture root.");
+      await exercise(async (run) => {
+        const fixture = preparationContext(root, {});
+        try {
+          await run(fixture);
+        } finally {
+          fixture.retire();
+          fixture.accounts.retireCredentials();
+        }
+      });
+    }
+  } else {
+    Deno.test(`participant authority: actual Admin grant/account pair ${mode}`, () =>
+      mode !== "retired publication"
+        ? exercise(preparationFixture)
+        : identityFixture(async (root, scope) => {
+          // A decided set must remain fenced for recovery; its open candidates
+          // belong to this child until exit. Reap it before removing the root.
+          const child = (await spawnOwnedChild(scope, Deno.execPath(), {
+            args: [
+              "run",
+              "--allow-read",
+              "--allow-write",
+              "--allow-env",
+              fromFileUrl(import.meta.url),
+              root,
+            ],
+            stdout: "null",
+            stderr: "piped",
+          })).value;
+          const [status, stderr] = await Promise.all([
+            child.exited,
+            new Response(child.stderr).text(),
+          ]);
+          assertEquals([status.success, status.code, status.signal, stderr], [
+            true,
+            0,
+            null,
+            "",
+          ]);
+        }));
+  }
 }
 
 Deno.test("authority callback contract: validation callback calls require an issued read context", () => {

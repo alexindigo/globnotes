@@ -125,7 +125,7 @@ export const PUBLICATION_OWNERSHIP: OwnershipRules = {
     ...OPERATION_OWNERSHIP.modules,
     [PARTICIPANT_COMPLETION]: [
       PUBLICATION_OWNER,
-      "server/auth/internal/account_credentials.ts",
+      ACCOUNT_PARTICIPATION,
       "tests/credential_bootstrap_preparation_test.ts",
     ],
     [ACCOUNT_PARTICIPATION]: [
