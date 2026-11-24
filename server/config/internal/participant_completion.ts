@@ -9,6 +9,7 @@ const issued = new WeakMap<object, {
   readonly settled: () => SettledPublicationSet;
   readonly peerRequirements: ((members: readonly object[]) => boolean)[];
 }>();
+/** The native set owns settlement and revalidates every member's binding. */
 export function registerParticipantCompletion(
   participant: object,
   settled: () => SettledPublicationSet,

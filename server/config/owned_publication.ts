@@ -75,7 +75,7 @@ interface SetFence {
   phase: SetPhase;
   decided: boolean;
   validating?: boolean;
-  completion?: SettledPublicationSet;
+  settledCompletion?: () => SettledPublicationSet;
 }
 interface ParticipantState {
   readonly owner: object;
@@ -85,6 +85,7 @@ interface ParticipantState {
   readonly notify: () => undefined;
   readonly writes: WriteReservation;
   available(): void;
+  assertCurrentBinding(): void;
   hold(fence: SetFence): void;
   fence?: SetFence;
 }
@@ -242,10 +243,16 @@ export function createPublicationSet(
   const lifetime = createOwnershipScope();
   const fence: SetFence = { phase: "prepared", decided: members[0].decided };
   const validation = setValidation(fence);
-  fence.completion = Object.freeze({
+  const completion = Object.freeze({
     identity: lifetime.identity,
     members: Object.freeze(capturedHandles),
   });
+  // A completion is current only while every installed native binding holds.
+  fence.settledCompletion = () => {
+    if (fence.phase !== "settled") throw new PublicationSetUnavailable();
+    for (const member of members) member.assertCurrentBinding();
+    return completion;
+  };
   for (const member of members) {
     member.fence = fence;
     member.writes.seal(fence, binding);
@@ -416,6 +423,10 @@ export function createOwnedPublication<T>(
           !(recovered ? writes.canRecover() : writes.ownedBy(reservation))
         ) throw new PublicationSetUnavailable();
       },
+      assertCurrentBinding: () => {
+        assertAvailable();
+        store.assertUnchanged(candidate.record.after);
+      },
       hold: (fence) => {
         held = fence;
       },
@@ -442,14 +453,9 @@ export function createOwnedPublication<T>(
     }) as PublicationParticipant;
     participants.set(handle, state);
     registerParticipantCompletion(handle, () => {
-      if (state.fence?.phase !== "settled" || !state.fence.completion) {
-        throw new PublicationSetUnavailable();
-      }
-      assertAvailable();
-      // A settled historical set is not authority to disclose a later account
-      // or ACL replacement. Recheck the exact published binding as well.
-      store.assertUnchanged(candidate.record.after);
-      return state.fence.completion;
+      const settledCompletion = state.fence?.settledCompletion;
+      if (!settledCompletion) throw new PublicationSetUnavailable();
+      return settledCompletion();
     });
     return handle;
   };

@@ -212,15 +212,6 @@ for (const everybody of ["none", "view", "edit"] as const) {
           IdentityStateError,
           INVALID,
         );
-        const raw = Deno.readTextFileSync(`${f.root}/accounts.json`);
-        Deno.writeTextFileSync(`${f.root}/replacement`, raw);
-        Deno.renameSync(`${f.root}/replacement`, `${f.root}/accounts.json`);
-        assertThrows(
-          () => settledPublication(parts[1]),
-          StoredConfigConflict,
-          CONFLICT,
-        );
-        assertEquals(Deno.readTextFileSync(`${f.root}/accounts.json`), raw);
       } finally {
         set?.discard();
         for (const part of parts) part.discard();
@@ -228,6 +219,62 @@ for (const everybody of ["none", "view", "edit"] as const) {
       }
     }));
 }
+
+Deno.test("account participation: replacing the second member with identical bytes invalidates every completion lookup", () =>
+  preparationFixture(async (f) => {
+    const prepared = await f.accounts.credentials.prepareInitialAccount(
+      f.authority("initial"),
+      f.request(),
+    );
+    const acl = new AclRepository(`${f.root}/vault`, VAULT_A, {
+      accounts: f.accounts,
+    });
+    acl.prepareParents();
+    const lifetime = createOperationLease("live", [() => undefined]);
+    const parts: PublicationParticipant[] = [];
+    let set: ReturnType<typeof createPublicationSet> | undefined;
+    try {
+      parts.push(acl.prepareInitialParticipant(
+        prepared.identity,
+        "none",
+        acl.capture(),
+        lifetime.lease,
+        SET,
+      ));
+      parts.push(
+        f.accounts.credentials.prepareAccountParticipant(
+          prepared.prepared,
+          SET,
+        ),
+      );
+      set = createPublicationSet(SET, parts, journalPath(f.root));
+      set.decide();
+      assertEquals(set.publish().state, "committed");
+      assertEquals(set.release().state, "committed");
+      assertStrictEquals(
+        settledPublication(parts[0]),
+        settledPublication(parts[1]),
+      );
+
+      const file = `${f.root}/accounts.json`;
+      const replacement = `${f.root}/replacement`;
+      const raw = Deno.readTextFileSync(file);
+      Deno.writeTextFileSync(replacement, raw);
+      Deno.renameSync(replacement, file);
+      for (const part of parts) {
+        assertThrows(
+          () => settledPublication(part),
+          StoredConfigConflict,
+          CONFLICT,
+        );
+      }
+      assertEquals(Deno.readTextFileSync(file), raw);
+    } finally {
+      set?.discard();
+      for (const part of parts) part.discard();
+      lifetime.retire();
+    }
+  }));
 
 for (const action of ["standalone", "set"] as const) {
   Deno.test(`account participation: undecided ${action} discard restores exact before state but never reuses preparation`, () =>
