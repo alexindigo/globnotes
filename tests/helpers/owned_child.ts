@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { type FixtureScope, fixtureScope } from "./fixture_scope.ts";
 import type { OwnedResource } from "../../shared/ownership.js";
-import { type ChildOptions, command, spawnCommandGroup } from "./process.ts";
+import {
+  type ChildOptions,
+  spawnCommand,
+  spawnCommandGroup,
+} from "./process.ts";
 
 /** Low-level scheduling port for contract controls, never a whole-driver clock. */
 export interface ChildSignalClock {
@@ -31,20 +35,28 @@ export interface OwnedChild {
  * alone does not retire this owner: descendants can still hold its pipes. */
 export async function captureOwnedCommand(
   scope: FixtureScope,
-  ...[program, options]: Parameters<typeof spawnCommandGroup>
+  program: string | URL,
+  options: Pick<ChildOptions, "args" | "cwd" | "env">,
 ) {
   return (await scope.admit(async (signal) => {
-    const launchOptions = { ...options };
     let running: ReturnType<typeof spawnCommandGroup> | undefined;
     scope.onCancel(() => running?.kill());
-    running = spawnCommandGroup(program, launchOptions);
+    running = spawnCommandGroup(program, options, signal);
     const { child } = running;
-    const [status, stdout, stderr] = await Promise.allSettled([
-      child.status,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    running = undefined;
+    let output;
+    try {
+      // Native spawn can still read arguments after the pre-spawn fence. If
+      // that retires the scope, the hook fired before it could see the group.
+      if (signal.aborted) running.kill();
+    } finally {
+      output = await Promise.allSettled([
+        child.status,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      running = undefined;
+    }
+    const [status, stdout, stderr] = output;
     signal.throwIfAborted();
     if (status.status === "rejected") throw status.reason;
     if (stdout.status === "rejected") throw stdout.reason;
@@ -72,7 +84,9 @@ export function spawnOwnedChild(
     // Admission must fence caller getters before they run, and acquisition
     // keeps their failures on the same rejection channel as spawn failures.
     const setSignal = scheduler.set.bind(scheduler);
-    const child = command(program, launchOptions).spawn();
+    // If native spawn itself retires the scope, the reserved acquisition's
+    // disposer reaps and closes the unclaimed pipes before it rejects.
+    const child = spawnCommand(program, launchOptions, scope.signal);
     const timers = new Set<() => void>();
     let settled = false, status: Deno.CommandStatus | null = null;
     const retire = () => {

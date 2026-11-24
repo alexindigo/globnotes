@@ -400,6 +400,7 @@ export const FIXTURE_OWNERSHIP: OwnershipRules = {
       PLUGIN_OPERATIONS,
       "tests/fixture_scope_test.ts",
       "tests/native_fixture_scope_test.ts",
+      "tests/owned_child_test.ts",
       "tests/fixture_clock_ownership_test.ts",
       "tests/helpers/hub_fixture.ts",
       "tests/helpers/plugin_lifecycle.ts",

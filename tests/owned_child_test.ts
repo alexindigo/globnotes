@@ -7,11 +7,16 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
-import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
+import {
+  createFixtureScope,
+  type FixtureScope,
+  fixtureScope,
+} from "./helpers/fixture_scope_engine.ts";
 import { OwnershipError } from "../shared/ownership.js";
 import { bootServer, type TestServer } from "./helpers/boot.ts";
 import { buildClient } from "./helpers/completed_build.ts";
 import {
+  captureOwnedCommand,
   type ChildSignalClock,
   type OwnedChild,
   spawnOwnedChild,
@@ -63,6 +68,112 @@ async function absent(pid: number) {
   assertEquals(result.success, false);
   assert(new TextDecoder().decode(result.stderr).includes("No such process"));
 }
+
+for (const launch of [captureOwnedCommand, spawnOwnedChild]) {
+  Deno.test(`child owner: ${launch.name} does not spawn after an environment getter retires its scope`, async () => {
+    const lifetime = createFixtureScope();
+    let closing: Promise<void> | undefined;
+    const work = launch(lifetime.scope, "/nonexistent/cancelled-child", {
+      env: {
+        get FIXTURE_VALUE() {
+          closing = lifetime.close();
+          return "unused";
+        },
+      },
+    });
+    try {
+      assert(closing);
+      const error = await assertRejects(
+        () => work,
+        OwnershipError,
+        "Fixture scope retired",
+      );
+      assertStrictEquals(error, lifetime.scope.signal.reason);
+      await bounded(closing, "construction cancellation without spawn");
+    } finally {
+      await lifetime.close();
+    }
+  });
+}
+
+Deno.test("child owner: capture kills and joins a group cancelled during native spawn", async () => {
+  const lifetime = createFixtureScope();
+  let closing: Promise<void> | undefined;
+  const args = ["-c", 'kill -STOP "$$"'];
+  // Native argument capture runs inside spawn, after the last pre-spawn check.
+  Object.defineProperty(args, 0, {
+    get() {
+      closing = lifetime.close();
+      return "-c";
+    },
+  });
+  const statusDescriptor = Object.getOwnPropertyDescriptor(
+    Deno.ChildProcess.prototype,
+    "status",
+  )!;
+  const text = Response.prototype.text;
+  let child: Deno.ChildProcess | undefined;
+  let status: Deno.CommandStatus | undefined;
+  const drained: string[] = [];
+  let work!: ReturnType<typeof captureOwnedCommand>;
+  try {
+    Object.defineProperty(Deno.ChildProcess.prototype, "status", {
+      ...statusDescriptor,
+      get() {
+        child = this;
+        return (statusDescriptor.get!.call(this) as Promise<Deno.CommandStatus>)
+          .then((result) => status = result);
+      },
+    });
+    Response.prototype.text = async function () {
+      const value = await text.call(this);
+      drained.push(value);
+      return value;
+    };
+    work = captureOwnedCommand(lifetime.scope, "bash", { args });
+    work.catch(() => {});
+  } finally {
+    Object.defineProperty(
+      Deno.ChildProcess.prototype,
+      "status",
+      statusDescriptor,
+    );
+    Response.prototype.text = text;
+  }
+  try {
+    assert(closing);
+    await bounded(closing, "cancelled group status and pipe drain");
+    const error = await assertRejects(
+      () => work,
+      OwnershipError,
+      "Fixture scope retired",
+    );
+    assertStrictEquals(error, lifetime.scope.signal.reason);
+    assertEquals([status, drained], [
+      { success: false, code: 137, signal: "SIGKILL" },
+      ["", ""],
+    ]);
+  } finally {
+    // Rescue a regressed owner only after the containment verdict.
+    if (child && !status) child.kill("SIGKILL");
+    await lifetime.close();
+  }
+});
+
+Deno.test("child owner: normal capture returns status and both streams", async () => {
+  await fixtureScope(async (scope) => {
+    assertEquals(
+      await captureOwnedCommand(scope, "bash", {
+        args: ["-c", "printf out; printf err >&2; exit 17"],
+      }),
+      {
+        status: { success: false, code: 17, signal: null },
+        stdout: "out",
+        stderr: "err",
+      },
+    );
+  });
+});
 
 Deno.test("child owner review: retired and failed acquisition reject without escaped children", async () => {
   let scope!: FixtureScope;

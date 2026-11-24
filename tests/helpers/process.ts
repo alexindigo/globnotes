@@ -59,16 +59,28 @@ export function command(
   });
 }
 
+/** Fence scoped launches after command construction, which can run getters. */
+export function spawnCommand(
+  program: string | URL,
+  options: ChildOptions,
+  signal: AbortSignal,
+): Deno.ChildProcess {
+  const launch = command(program, options);
+  signal.throwIfAborted();
+  return launch.spawn();
+}
+
 /** Start a command in its own POSIX session so its descendants inherit a
  * group that can be signalled even after the original process exits. */
 export function spawnCommandGroup(
   program: string | URL,
   { args, cwd, env }: Pick<ChildOptions, "args" | "cwd" | "env">,
+  signal: AbortSignal,
 ) {
   if (Deno.build.os === "windows") {
     throw new TypeError("Owned command groups require POSIX process groups");
   }
-  const child = command(program, {
+  const child = spawnCommand(program, {
     args,
     cwd,
     env,
@@ -76,7 +88,7 @@ export function spawnCommandGroup(
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
-  }).spawn();
+  }, signal);
   return {
     child,
     kill() {
