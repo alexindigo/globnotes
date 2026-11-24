@@ -483,8 +483,10 @@ in either order and are not silently turned into a latest-wins scheduler.
 The owner uses a constructor-based deferred, not `Promise.withResolvers`. This
 matches Vite 8's default baseline build targets (Chrome/Edge 111, Firefox 114,
 Safari/iOS 16.4); Vite transforms syntax but does not polyfill newer runtime APIs.
-The exact constructor owner and the synchronous compatibility-test override are
-registered separately; product references to `Promise.withResolvers` reject.
+The G5 real-source check rejects `Promise.withResolvers` references in
+`client/operationOwner.js` and `client/vaultChanges.js` and registers the
+synchronous compatibility override separately for
+`client/tests/operation-owner.test.js`. It does not check other client files.
 
 `revoke()` fences live delivery and new dispatch. An already dispatched retained,
 outcome or recovery operation can accept one matching `complete` callback, but
