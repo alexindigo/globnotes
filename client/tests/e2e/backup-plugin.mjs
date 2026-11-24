@@ -88,6 +88,7 @@ if (options.controls) {
   console.log("BACKUP PLUGIN CONTROLS OK", JSON.stringify(outcomes));
 } else {
   const outcomes = [], fixtures = [];
+  const backupLanes = ["ordinary", "versioning"];
   let current;
   async function api(route, method = "GET", body) {
     const response = await fetch(current.server.baseUrl + route, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
@@ -98,7 +99,7 @@ if (options.controls) {
   async function status(expectFailure = false) {
     let rejected = false;
     try {
-      await catalogWorkSettled(current.server, "globnotes-backup", { lanes: ["ordinary", "versioning"], baseline: current.workBaseline });
+      await catalogWorkSettled(current.server, "globnotes-backup", { lanes: backupLanes, baseline: current.workBaseline });
     } catch (error) {
       if (!expectFailure) {
         const failure = Error(`BACKUP_NATIVE_${current.label}: ${error.message}`, { cause: error });
@@ -111,12 +112,12 @@ if (options.controls) {
       const entry = error.plugin;
       equal(entry.work.generation, current.workBaseline.generation, "Expected-failure owner retained");
       equal(entry.deliveryFailures, current.workBaseline.deliveryFailures + 1, "Exactly one expected delivery failure");
-      for (const lane of ["ordinary", "versioning"]) {
+      for (const lane of backupLanes) {
         equal(entry.work[lane].failures, current.workBaseline.lanes[lane].failures + (lane === "versioning" ? 1 : 0), "Only the injected callback failed");
         assert(entry.work[lane].settled >= error.fence.lanes[lane].admitted, "Expected-failure captured cohort is terminal without extending its fence");
       }
       equal(entry.work.versioning.lastFailure.code, "plugin_work_failed", "Ordinary callback rejection, not product deadline");
-      current.workBaseline = captureWork(entry, ["ordinary", "versioning"]);
+      current.workBaseline = captureWork(entry, backupLanes);
       rejected = true;
     }
     assert(!expectFailure || rejected, "The deliberate callback failure was not observed");
@@ -142,7 +143,7 @@ if (options.controls) {
     await finalizeNativeCase({ cleanup: [() => closeSession(fixture), () => closeServer(fixture)] });
     fixture.closed = true;
   }
-  async function launch(env) {
+  async function launch(env, { expectRecoveryConflict = false } = {}) {
     const directory = `${current.directory}/backend-${++current.generation}`; await Deno.mkdir(directory);
     const admitted = Promise.withResolvers(), observation = new AbortController();
     const samples = []; let finished = false;
@@ -164,10 +165,23 @@ if (options.controls) {
     try {
       current.server = await boot;
       current.serverClosed = false;
-      current.workBaseline = captureWork(await catalogPluginReady(current.server, "globnotes-backup"), ["ordinary", "versioning"]);
+      current.servers.push({ pid: current.server.pid, baseUrl: current.server.baseUrl, directory });
+      const ready = await catalogPluginReady(current.server, "globnotes-backup");
+      // Ready admits recovery but does not settle it. Check the fresh generation's
+      // expected outcome instead of sampling a failure baseline mid-recovery.
+      const expected = {
+        generation: ready.work.generation, deliveryFailures: 0,
+        lanes: { ordinary: { admitted: 1, failures: expectRecoveryConflict ? 1 : 0 }, versioning: { admitted: 0, failures: 0 } },
+      };
+      const settled = await catalogWorkSettled(current.server, "globnotes-backup", { lanes: backupLanes, baseline: expected });
+      const baseline = captureWork(settled, backupLanes);
+      equal(baseline, expected, "Only the owned backup recovery job ran before fixture actions");
+      equal(settled.jobs, [expectRecoveryConflict
+        ? { id: "backup-recovery", state: "failed", code: "plugin_job_failed" }
+        : { id: "backup-recovery", state: "succeeded" }], "Expected backup recovery job outcome");
+      current.workBaseline = baseline;
     }
     finally { finished = true; observation.abort(); admitted.resolve({ baseUrl: null, vault: current.vault }); await observe; await publishRecord(`${directory}/startup-catalogs.json`, JSON.stringify(samples, null, 2), { createNew: true }); }
-    current.servers.push({ pid: current.server.pid, baseUrl: current.server.baseUrl, directory });
   }
   async function fixture(label, env = {}, seed = null) {
     assert(fixtures.every(item => item.closed), "A prior fixture still owns resources");
@@ -260,9 +274,9 @@ if (options.controls) {
     await closeFixture(current);
     outcomes.push({ label, completed: true, directory: current.directory });
   }
-  async function restart(env = {}) {
+  async function restart(env = {}, recovery) {
     await publishRecord(`${current.directory}/restart-${current.generation}-before.json`, JSON.stringify({ settings: await settings(), status: await status(), live: await Deno.readTextFile(`${current.vault}/Note.md`) }, null, 2), { createNew: true });
-    await closeServer(current); await launch(env);
+    await closeServer(current); await launch(env, recovery);
     await current.session.goto(`${current.server.baseUrl}/Note`); await current.session.poll("!!document.querySelector('.toast-viewer')");
     await current.session.evaluate("document.fonts.ready.then(()=>true)");
   }
@@ -332,8 +346,10 @@ if (options.controls) {
         assert(failed.pendingRecovery, `BACKUP_NATIVE_${kind}: interruption recorded`);
         const active = `${current.vault}/.globnotes-backup/active.json`, journal = JSON.parse(await Deno.readTextFile(active));
         await publishRecord(`${current.directory}/interrupted-journal.json`, JSON.stringify(journal, null, 2), { createNew: true });
-        const live = await Deno.readTextFile(`${current.vault}/Note.md`); await restart();
+        const expectRecoveryConflict = kind === "recovery" && options.negative;
+        const live = await Deno.readTextFile(`${current.vault}/Note.md`); await restart({}, { expectRecoveryConflict });
         const recovered = (await status()).body;
+        if (expectRecoveryConflict) equal(recovered.lastError, { code: "backup_family_conflict" }, "Only the recovery mutation's expected conflict may reach the cleanup assertion");
         assert(!recovered.pendingRecovery, `BACKUP_NATIVE_${kind}: ring-committed cleanup completed without duplicate capture`);
         const cleanup = [];
         for (const file of [active, ...journal.stages.map(stage => stage.file)]) {
@@ -361,7 +377,7 @@ if (options.controls) {
         {
           const read = await api("/_/api/notes/Note");
           equal((await api("/_/api/notes/Note", "PATCH", { newContent: "C", base: { kind: "version", version: read.body.version } })).status, 200, "BACKUP_NATIVE_retarget: original ACK before deferred publication");
-          const work = catalogWorkSettled(current.server, "globnotes-backup", { lanes: ["ordinary", "versioning"], baseline: current.workBaseline });
+          const work = catalogWorkSettled(current.server, "globnotes-backup", { lanes: backupLanes, baseline: current.workBaseline });
           const workspace = `${current.vault}/.globnotes-backup`;
           await waitForRecord(workspace, "retarget-ready", () => { const value = readRecord(`${workspace}/retarget-ready`); return value?.ready === true ? value : null; }, [
             { label: "backup server", exit: current.server.exited },

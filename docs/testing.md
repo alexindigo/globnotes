@@ -798,10 +798,12 @@ finish; neither capture nor idle observation is retried.
 
 `helpers/catalog_work.ts` opens the existing event stream before reading, keeps a
 fixed generation/fence and conservatively rejects changes in cumulative lane or
-delivery failures. Failure counts survive diagnostic eviction. Deliberately
-failing native recovery/alien-slot cases acknowledge exactly their one expected
-terminal callback failure, not arbitrary intervening failures, before inspecting
-the private status. They neither retry the operation nor await a new cohort.
+delivery failures. Failure counts survive diagnostic eviction. Native backup
+boots settle the named recovery job before recording the baseline for fixture
+actions. The recovery mutation expects that job alone to fail with a family
+conflict, then still has to fail the ring-cleanup assertion. The deliberately
+interrupted capture and alien-slot cases likewise acknowledge only their expected
+terminal callback failure. None retries the operation or waits for a new cohort.
 
 `plugin_work_summary_test.ts` and `catalog_work_test.ts` cover the additive public
 shape, startup separation, independent/contiguous lanes, overflow/queued expiry,
