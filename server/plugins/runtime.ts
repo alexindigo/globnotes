@@ -132,6 +132,8 @@ export class PluginRuntime implements Versioning {
   private reconciliation = Promise.resolve();
   private catalogVersion = 0;
   private settlementChanged = Promise.withResolvers<void>();
+  // An entry can lose its generation before the admitted startup I/O settles.
+  private readonly activations = new Set<Promise<void>>();
   private readonly retirements = new Set<Promise<void>>();
   readonly limits: PluginLimits;
 
@@ -280,6 +282,7 @@ export class PluginRuntime implements Versioning {
     manifest: PluginManifest,
     recovery?: NetworkPolicy,
   ) {
+    if (this.closed) return;
     entry.status = "starting";
     const activation = {};
     entry.activation = activation;
@@ -291,7 +294,8 @@ export class PluginRuntime implements Versioning {
       this.adapters.ownerEnabled?.(manifest.id) !== false;
     let candidate: PluginHost | null = null;
     const reportedJobFailures = new Set<string>();
-    entry.starting = (async () => {
+    const starting = Promise.resolve().then(async () => {
+      if (!currentActivation()) return;
       let policy = await this.adapters.network?.policy(manifest.id);
       if (!currentActivation()) return;
       if (this.adapters.network) {
@@ -588,7 +592,7 @@ export class PluginRuntime implements Versioning {
         });
       }
       this.changed();
-    })().catch((error) => {
+    }).catch((error) => {
       candidate?.stop();
       if (!currentActivation()) return;
       entry.changes?.stop();
@@ -608,6 +612,10 @@ export class PluginRuntime implements Versioning {
         error instanceof Error ? error.message : "activation failed",
       );
     });
+    entry.starting = starting;
+    this.activations.add(starting);
+    const settled = () => this.activations.delete(starting);
+    starting.then(settled, settled);
   }
   ownerIds(): string[] {
     return [...this.entries.keys()];
@@ -1233,10 +1241,16 @@ export class PluginRuntime implements Versioning {
   async close(): Promise<void> {
     this.closed = true;
     await this.reconciliation.catch(() => undefined);
-    await Promise.all(
-      [...this.entries.values()].map((entry) => this.unload(entry)),
-    );
-    await Promise.all([...this.retirements]);
+    try {
+      await Promise.all(
+        [...this.entries.values()].map((entry) => this.unload(entry)),
+      );
+      await Promise.all([...this.retirements]);
+    } finally {
+      // Stopping a host revokes its generation, not permission-ledger I/O that
+      // activation already started. Join it even if a host release failed.
+      await Promise.allSettled(this.activations);
+    }
   }
   /** Access transitions revoke old generations synchronously before config changes. */
   suspend(): void {

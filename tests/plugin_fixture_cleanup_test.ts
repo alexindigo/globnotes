@@ -1017,7 +1017,9 @@ for (
     "report",
   ]
 ) {
-  Deno.test(`fixture operations ownership: ${failure} releases preparation and every later owner`, async () => {
+  const name =
+    `fixture operations ownership: ${failure} releases preparation and every later owner`;
+  fixtureTest(name, async (testScope) => {
     const primary = new Error(`operations ${failure}`),
       cleanup = new Error(`close ${failure}`);
     const previous = { ...state };
@@ -1040,6 +1042,10 @@ for (
     };
     let scope: FixtureScope | undefined, mkdir = 0;
     let restoring = false;
+    const ledger = failure === "reconcile"
+      ? { entered: fixtureGate(testScope), release: fixtureGate(testScope) }
+      : undefined;
+    let policyWork: Promise<unknown> | undefined;
     const delivery = new WorkerDeliveryGate();
     delivery.holdHeartbeat = false;
     Object.assign = ((target: object, ...sources: object[]) => {
@@ -1068,15 +1074,21 @@ for (
       return root;
     };
     Deno.mkdir = async (path, options) => {
+      if (ledger && String(path).endsWith("/plugin-network")) {
+        ledger.entered.resolve();
+        await ledger.release.promise;
+      }
       if (roots.some((root) => String(path).startsWith(root))) {
         mkdir++;
         if (
-          failure === `mkdir-${mkdir}` || (failure === "install" && mkdir === 3)
+          failure === `mkdir-${mkdir}` ||
+          (failure === "install" && mkdir === 3)
         ) throw primary;
       }
       await originals.mkdir(path, options);
     };
     Deno.remove = async (path, options) => {
+      if (ledger && roots.includes(String(path))) events.push("remove-start");
       await originals.remove(path, options);
       if (roots.includes(String(path))) {
         events.push("root");
@@ -1097,6 +1109,17 @@ for (
       managers.push(this);
       const runtime = originals.configure.apply(this, args);
       runtimes.push(runtime);
+      if (ledger) {
+        const policy = this.network.policy.bind(this.network);
+        this.network.policy = (id) => {
+          const work = policy(id).then((result) => {
+            events.push("ledger");
+            return result;
+          });
+          policyWork = work;
+          return work;
+        };
+      }
       if (failure === "configure") throw primary;
       return runtime;
     };
@@ -1107,10 +1130,20 @@ for (
     };
     PluginRuntime.prototype.reconcile = async function () {
       await originals.reconcile.call(this);
-      if (failure === "reconcile") throw primary;
+      if (ledger) {
+        await bounded(
+          ledger.entered.promise,
+          "permission ledger mkdir entered",
+        );
+        throw primary;
+      }
     };
     PluginRuntime.prototype.close = async function () {
-      await originals.runtimeClose.call(this);
+      const closing = originals.runtimeClose.call(this);
+      // Cancellation has already suspended the runtime. Let the real ledger I/O
+      // finish now, but do not make the fixture itself join it.
+      ledger?.release.resolve();
+      await closing;
       restoring = true;
       events.push("runtime");
       if (failure === "runtime-close") throw cleanup;
@@ -1140,6 +1173,18 @@ for (
       } else assertEquals(error, primary);
       assertEquals({ ...state }, previous);
       if (scope) assertEquals(scope.size, 0);
+      if (runtimes.length) {
+        assertEquals(events, [
+          ...ledger ? ["ledger"] : [],
+          "runtime",
+          "manager",
+          "hub",
+          ...ledger ? ["remove-start"] : [],
+          failure === "report" ? "report" : "root",
+        ]);
+        assertEquals(runtimes[0].commands(), []);
+      }
+      if (ledger) assertEquals(delivery.workers, []);
       // Observe all outcomes before rescue cleanup: a leaked hub/root/Worker
       // cannot be made green by the finally below.
       for (const root of roots) {
@@ -1148,19 +1193,11 @@ for (
       }
       for (const hub of hubs) assertThrows(() => hub.store.files());
       assert(delivery.workers.every((worker) => worker.terminated > 0));
-      if (runtimes.length) {
-        assertEquals(events, [
-          "runtime",
-          "manager",
-          "hub",
-          failure === "report" ? "report" : "root",
-        ]);
-        assertEquals(runtimes[0].commands(), []);
-      }
       if (roots.length) {
         assertEquals(events.at(-1), failure === "report" ? "report" : "root");
       }
     } finally {
+      ledger?.release.resolve();
       Deno.makeTempDir = originals.temp;
       Object.assign = originals.assign;
       console.log = originals.log;
@@ -1183,6 +1220,7 @@ for (
         }
         cleanup.defer(() => delivery.restore());
         cleanup.defer(() => restoreState(previous));
+        cleanup.defer(() => policyWork?.catch(() => {}));
         for (const hub of hubs) {
           cleanup.defer(() => {
             try {
