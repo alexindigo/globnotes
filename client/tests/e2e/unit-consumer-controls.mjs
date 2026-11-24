@@ -4,16 +4,32 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../../..", import.meta.url));
 const artifacts = Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "globnotes-unit-controls-" });
 await Deno.mkdir(artifacts, { recursive: true, mode: 0o700 });
-async function copySource(source, destination, relative = "") {
-  await Deno.mkdir(destination);
-  for await (const entry of Deno.readDir(source)) {
-    const path = relative ? relative + "/" + entry.name : entry.name;
-    if (["node_modules", "client/dist", "client/.vite"].includes(path)) continue;
-    assert(!entry.isSymlink, "Unexpected source symlink: " + path);
-    if (entry.isDirectory) await copySource(source + "/" + entry.name, destination + "/" + entry.name, path);
-    else await Deno.copyFile(source + "/" + entry.name, destination + "/" + entry.name);
+// The unit controls need client configuration and source, not a live checkout
+// snapshot. In particular Vite's temporary config files are not inputs.
+const configuration = ["deno.json", "deno.lock", "vitest.config.mjs", "tailwind.config.js"];
+const sourceTrees = ["client", "shared"];
+const sourceExtensions = /\.(?:js|ts|vue|json|css|html|svg|png|ico|otf|ttf)$/;
+
+async function copyUnitControlSources(source, destination) {
+  async function copyFile(relative) {
+    if (!(await Deno.lstat(`${source}/${relative}`)).isFile) throw Error(`Not a source file: ${relative}`);
+    await Deno.copyFile(`${source}/${relative}`, `${destination}/${relative}`);
   }
+  async function copyTree(relative) {
+    if (!(await Deno.lstat(`${source}/${relative}`)).isDirectory) throw Error(`Not a source directory: ${relative}`);
+    await Deno.mkdir(`${destination}/${relative}`);
+    for await (const entry of Deno.readDir(`${source}/${relative}`)) {
+      const path = `${relative}/${entry.name}`;
+      if (entry.name.startsWith(".") || ["dist", "node_modules"].includes(entry.name) || path === "client/tests/e2e") continue;
+      if (entry.isDirectory) await copyTree(path);
+      else if (sourceExtensions.test(entry.name)) await copyFile(path);
+    }
+  }
+  await Deno.mkdir(destination);
+  for (const file of configuration) await copyFile(file);
+  for (const tree of sourceTrees) await copyTree(tree);
 }
+
 const controls = [
   { name: "milkdown-action", file: "client/keybindings/editor-keymap.js", old: "return pmKeymap(bindings);", broken: "return pmKeymap({});", test: "client/tests/keybinding-conflicts.test.js", title: "Milkdown's installed layer action wins over a conflicting default without editing the document" },
   { name: "default-tab", file: "client/components/Modal.vue", old: "if (props.trapFocus && rootEl.value) {", broken: "if (rootEl.value) {", test: "client/tests/modal.test.js", title: "does not trap Tab by default" },
@@ -22,7 +38,7 @@ const controls = [
 const outcomes = [];
 for (const control of controls) {
   const directory = artifacts + "/" + control.name;
-  await copySource(root, directory);
+  await copyUnitControlSources(root, directory);
   await Deno.symlink(root + "/node_modules", directory + "/node_modules", { type: "dir" });
   const path = directory + "/" + control.file, original = await Deno.readTextFile(path);
   assert(original.split(control.old).length === 2, control.name + ": mutation context is not unique");
