@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { type FixtureScope, fixtureScope } from "./fixture_scope.ts";
 import type { OwnedResource } from "../../shared/ownership.js";
-import { type ChildOptions, command } from "./process.ts";
+import { type ChildOptions, command, spawnCommandGroup } from "./process.ts";
 
 /** Low-level scheduling port for contract controls, never a whole-driver clock. */
 export interface ChildSignalClock {
@@ -25,6 +25,32 @@ export interface OwnedChild {
   signalAfter(milliseconds: number, signal: Deno.Signal): () => void;
   terminate(graceMs: number): Promise<Deno.CommandStatus>;
   reap(): Promise<Deno.CommandStatus>;
+}
+
+/** Own a finite command and its output together. Exit of the direct child
+ * alone does not retire this owner: descendants can still hold its pipes. */
+export async function captureOwnedCommand(
+  scope: FixtureScope,
+  ...[program, options]: Parameters<typeof spawnCommandGroup>
+) {
+  return (await scope.admit(async (signal) => {
+    const launchOptions = { ...options };
+    let running: ReturnType<typeof spawnCommandGroup> | undefined;
+    scope.onCancel(() => running?.kill());
+    running = spawnCommandGroup(program, launchOptions);
+    const { child } = running;
+    const [status, stdout, stderr] = await Promise.allSettled([
+      child.status,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    running = undefined;
+    signal.throwIfAborted();
+    if (status.status === "rejected") throw status.reason;
+    if (stdout.status === "rejected") throw stdout.reason;
+    if (stderr.status === "rejected") throw stderr.reason;
+    return { status: status.value, stdout: stdout.value, stderr: stderr.value };
+  })).value;
 }
 
 /** Only child execution is owned here. Pipe consumption and mandatory result

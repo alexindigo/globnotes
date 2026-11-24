@@ -2,7 +2,7 @@
 import * as path from "@std/path";
 import type { FixtureScope } from "./fixture_scope.ts";
 import { createFixtureScope, ownFixtureScope } from "./fixture_scope_engine.ts";
-import { spawnOwnedChild } from "./owned_child.ts";
+import { captureOwnedCommand } from "./owned_child.ts";
 import { DENO } from "./process_values.ts";
 
 const repository = path.fromFileUrl(new URL("../../", import.meta.url));
@@ -123,25 +123,18 @@ function startClientBuild(borrower?: FixtureScope): ClientBuildJob {
   let issued = false;
   const completion = lifetime.run(async (scope) => {
     const build = await completeBuild(scope, async (output, signal) => {
-      // Join existing stream consumption after the actual child has been reaped.
-      let drains: Promise<unknown> = Promise.resolve();
-      scope.defer(() => drains);
-      const child = (await spawnOwnedChild(scope, DENO, {
-        args: ["task", "build:client", "--outDir", output],
-        cwd: repository,
-        stdout: "piped",
-        stderr: "piped",
-      })).value;
-      const stdout = new Response(child.stdout).text(),
-        stderr = new Response(child.stderr).text();
-      drains = Promise.all([stdout, stderr]);
-      const status = await child.exited;
-      await drains;
-      // A reaped child's nonzero status is the cancellation, not a build failure.
+      const { status, stdout, stderr } = await captureOwnedCommand(
+        scope,
+        DENO,
+        {
+          args: ["task", "build:client", "--outDir", output],
+          cwd: repository,
+        },
+      );
       signal.throwIfAborted();
       if (!status.success) {
         throw new Error(
-          `Client build failed (${status.code}): ${await stderr}\n${await stdout}`,
+          `Client build failed (${status.code}): ${stderr}\n${stdout}`,
         );
       }
     });

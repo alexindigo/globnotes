@@ -58,3 +58,33 @@ export function command(
     env: childEnvironment(options.env),
   });
 }
+
+/** Start a command in its own POSIX session so its descendants inherit a
+ * group that can be signalled even after the original process exits. */
+export function spawnCommandGroup(
+  program: string | URL,
+  { args, cwd, env }: Pick<ChildOptions, "args" | "cwd" | "env">,
+) {
+  if (Deno.build.os === "windows") {
+    throw new TypeError("Owned command groups require POSIX process groups");
+  }
+  const child = command(program, {
+    args,
+    cwd,
+    env,
+    detached: true,
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  return {
+    child,
+    kill() {
+      try {
+        Deno.kill(-child.pid, "SIGKILL");
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      }
+    },
+  };
+}

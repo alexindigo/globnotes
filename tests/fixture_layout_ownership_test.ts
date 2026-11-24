@@ -286,33 +286,73 @@ Deno.test("build review: every borrower of an in-flight cached build can cancel 
   });
 });
 
-Deno.test("build review: cancelling a spawned production build reports its cancellation, not a build failure", async () => {
-  await fixtureScope(async (cleanup) => {
+fixtureTest(
+  "build review: cancelling a spawned production build reports its cancellation, not a build failure",
+  async (cleanup) => {
     const lifetime = createFixtureScope();
     cleanup.defer(() => lifetime.close());
-    const work = repositoryBuild(lifetime.scope, { required: true });
-    work.catch(() => {});
-    // Observe this process's actual build child; the pattern excludes the probe.
-    const spawned = waitUntil(async () => {
+    const created = fixtureGate<string>(cleanup);
+    const mkdtemp = Deno.makeTempDir;
+    const signalCompiler = async (
+      output: string,
+      signal: "STOP" | "KILL" | "0",
+    ) => {
       const probe = (await spawnOwnedChild(cleanup, "bash", {
         args: [
           "-c",
-          'for d in /proc/[0-9]*; do read -r _ _ _ ppid _ < "$d/stat" 2>/dev/null || continue; [ "$ppid" = "$1" ] || continue; tr "\\0" " " < "$d/cmdline" 2>/dev/null | grep -q -- "build[:]client" && exit 0; done; exit 1',
-          "production-build-child",
-          String(Deno.pid),
+          `for file in /proc/[0-9]*/cmdline; do
+            args=()
+            mapfile -d '' -t args 2>/dev/null < "$file" || continue
+            [[ \${#args[@]} -ge 3 && "\${args[-3]}" == build && "\${args[-2]}" == --outDir && "\${args[-1]}" == "$1" ]] || continue
+            pid=\${file#/proc/}
+            kill -"$2" "\${pid%/cmdline}" 2>/dev/null && exit 0
+          done
+          exit 1`,
+          "production-build-compiler",
+          output,
+          signal,
         ],
         stdout: "null",
         stderr: "null",
       })).value;
-      return (await probe.exited).success
-        ? done()
-        : pending({ spawned: false });
-    }, { label: "production build child spawned" });
-    await workMilestone(work, spawned, "production build child spawned");
-    await bounded(lifetime.close(), "spawned production cancellation");
-    await assertRejects(() => work, OwnershipError, "Fixture scope retired");
-  });
-});
+      return (await probe.exited).success;
+    };
+    let output: string | undefined;
+    try {
+      // Qualify the actual compiler by this job's unique output directory, not
+      // by the test runner PID (other parallel workers run the same build task).
+      Deno.makeTempDir = async (options) => {
+        const root = await mkdtemp(options);
+        if (options?.prefix === "globnotes-build-") created.resolve(root);
+        return root;
+      };
+      const work = repositoryBuild(lifetime.scope, { required: true });
+      work.catch(() => {});
+      const root = await workMilestone(work, created.promise, "build root");
+      const directory = output = path.join(root, "dist");
+      const held = waitUntil(
+        async () =>
+          await signalCompiler(directory, "STOP")
+            ? done()
+            : pending({ output: directory }),
+        { label: "production compiler holds its output pipes" },
+      );
+      await workMilestone(
+        work,
+        held,
+        "production compiler holds its output pipes",
+      );
+      await bounded(lifetime.close(), "spawned production cancellation");
+      await assertRejects(() => work, OwnershipError, "Fixture scope retired");
+      assertEquals(await signalCompiler(directory, "0"), false);
+      await absentRoot(root);
+    } finally {
+      Deno.makeTempDir = mkdtemp;
+      // A failing cancellation must not strand the deliberately stopped child.
+      if (output) await signalCompiler(output, "KILL");
+    }
+  },
+);
 
 Deno.test("build review: a borrower arriving after producer cancellation starts a fresh producer", async () => {
   await fixtureScope(async (cleanup) => {
