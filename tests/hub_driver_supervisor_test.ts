@@ -7,7 +7,6 @@ import {
   assertRejects,
   assertStrictEquals,
 } from "@std/assert";
-import { AuthType } from "./helpers/config.ts";
 import { driverControl } from "../server/hub/drivers/api.ts";
 import { VaultHub } from "../server/hub/hub.ts";
 import { pathfinder, type PathfinderRequest } from "@pathfinder/pathfinder";
@@ -29,14 +28,22 @@ import { memoryRemote } from "./helpers/memory_remote.ts";
 import { pluginSettled } from "./helpers/plugin_ready.ts";
 import { identityHttpFixture } from "./helpers/identity_fixture.ts";
 import { signIn } from "./helpers/session_delivery.ts";
+import { createUuid } from "../shared/uuid.ts";
 
 const guard = () => {};
 async function fixture(
   source = minimalDriver,
   network: string[] | false = false,
   declaration: Record<string, unknown> = driverDeclaration,
+  http = false,
 ) {
-  const f = await hubOperationsFixture();
+  let writable = true;
+  const f = await hubOperationsFixture(
+    {},
+    http ? { httpEverybody: "edit" } : {
+      serviceWritable: () => writable,
+    },
+  );
   const dir = `${f.config.statePath}/plugins/test-driver`;
   Deno.mkdirSync(dir, { recursive: true });
   Deno.writeTextFileSync(
@@ -120,6 +127,10 @@ async function fixture(
   };
   return {
     ...f,
+    revokeServiceWrites() {
+      writable = false;
+      f.lifecycle.bumpEpoch();
+    },
     dir,
     manager,
     supervisor,
@@ -139,7 +150,8 @@ async function fixture(
 
 Deno.test("driver control: a committed removal keeps its receipt after Admin access ends", () =>
   identityHttpFixture(async (identity) => {
-    const f = (await identity.scope.acquire(fixture, (fixture) =>
+    const f = (await identity.scope.acquire(() =>
+      fixture(undefined, undefined, undefined, true), (fixture) =>
       fixture.close())).value;
     const instance = await f.create();
     const dir = `${identity.root}/routes`;
@@ -165,14 +177,18 @@ Deno.test("driver control: a committed removal keeps its receipt after Admin acc
     const app = await pathfinder({
       roots: [dir],
       app: {
-        auth: identity.auth,
+        auth: f.identity!.composition.auth,
         afterRemoval() {
           assertEquals(f.supervisor.peers.instance(instance.id), null);
-          identity.policy("none");
+          const acl = f.identity!.acl;
+          acl.save({ everybody: "none", grants: {} }, acl.capture(), {
+            updateId: createUuid(),
+            actorId: null,
+          });
         },
       },
     });
-    const alice = await signIn(identity.sessions, {
+    const alice = await signIn(f.identity!.sessions, {
       username: "alice",
       password: "password",
     });
@@ -705,8 +721,7 @@ for (
           policy.metadata,
         );
       } else if (mode === "access") {
-        f.config.authType = AuthType.READ_ONLY;
-        f.lifecycle.bumpEpoch();
+        f.revokeServiceWrites();
       } else if (mode === "secret") {
         const current = f.supervisor.peers.instance(instance.id)!;
         await f.supervisor.secret(
@@ -834,7 +849,11 @@ Deno.test("driver supervisor: closing fences Workers before key storage closes",
 });
 
 Deno.test("driver API: original settings authority crosses a held request body", async () => {
-  const f = await fixture();
+  const f = await fixture(undefined, undefined, undefined, true);
+  const admin = await signIn(f.identity!.sessions, {
+    username: "alice",
+    password: "password",
+  });
   const entered = Promise.withResolvers<void>();
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const stream = new ReadableStream<Uint8Array>({
@@ -845,6 +864,7 @@ Deno.test("driver API: original settings authority crosses a held request body",
   const request = new Request("http://globnotes.test/_/api/drivers", {
     method: "POST",
     body: stream,
+    headers: { authorization: `Bearer ${admin.access_token}` },
   });
   const body = request.body!;
   const reader = body.getReader.bind(body);
@@ -858,6 +878,7 @@ Deno.test("driver API: original settings authority crosses a held request body",
       { _raw: request } as PathfinderRequest,
       (owner, body, check) => owner.create(body, check),
     );
+    void creating.catch(() => undefined);
     // The body owner is acquired only after settingsWriteGuard captured authority.
     await entered.promise;
     f.lifecycle.bumpEpoch();
@@ -867,7 +888,9 @@ Deno.test("driver API: original settings authority crosses a held request body",
       ),
     );
     controller.close();
-    await assertRejects(() => creating!, Error);
+    const denied = await creating;
+    assertEquals(denied.status, 409);
+    assertEquals((await denied.json()).code, "operation_conflict");
     assertEquals(f.supervisor.peers.instances(), []);
   } finally {
     await creating?.catch(() => undefined);

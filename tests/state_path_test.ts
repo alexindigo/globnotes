@@ -7,6 +7,15 @@
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
 import { bootServer } from "./helpers/boot.ts";
+import { createUuid } from "../shared/uuid.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
+
+const initialAccount = () => ({
+  username: "alice",
+  password: "password",
+  everybody: "edit",
+  updateId: createUuid(),
+});
 
 Deno.test("state dir: GLOBNOTES__METADATA_PATH selects per-vault metadata", async (t) => {
   const vault = await Deno.makeTempDir({ prefix: "gn-vault-" });
@@ -21,10 +30,14 @@ Deno.test("state dir: GLOBNOTES__METADATA_PATH selects per-vault metadata", asyn
       const res = await fetch(`${server.baseUrl}/_/api/setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "none" }),
+        body: JSON.stringify(initialAccount()),
       });
       assertEquals(res.status, 200);
-      assert(Deno.statSync(path.join(stateDir, "config.json")).isFile);
+      assert(Deno.statSync(path.join(stateDir, "access.json")).isFile);
+      assert(
+        Deno.statSync(path.join(metadataBase, "_", "accounts.json")).isFile,
+      );
+      await res.body?.cancel();
       // The vault must NOT grow a .globnotes dir.
       let legacy = false;
       try {
@@ -58,10 +71,13 @@ Deno.test("state dir: GLOBNOTES__METADATA_PATH selects per-vault metadata", asyn
           { type: "image/svg+xml" },
         ),
       );
-      const up = await fetch(`${server.baseUrl}/_/api/brand`, {
-        method: "POST",
-        body: form,
-      });
+      const up = await (await fixtureAdmin(server)).fetch(
+        `${server.baseUrl}/_/api/brand`,
+        {
+          method: "POST",
+          body: form,
+        },
+      );
       assert(up.ok);
       assert(
         Deno.statSync(path.join(stateDir, "brand", "icon.svg")).isFile,
@@ -79,7 +95,9 @@ Deno.test("state dir: GLOBNOTES__METADATA_PATH selects per-vault metadata", asyn
         JSON.stringify({ id: "testplug", name: "Test Plug" }),
       );
       Deno.writeTextFileSync(path.join(dir, "main.js"), "export {};\n");
-      const res = await fetch(`${server.baseUrl}/_/api/plugins`);
+      const res = await (await fixtureAdmin(server)).fetch(
+        `${server.baseUrl}/_/api/plugins`,
+      );
       assertEquals(res.status, 200);
       const plugins = await res.json();
       assert(
@@ -145,11 +163,13 @@ Deno.test("state dir: unset var keeps the legacy vault layout", async () => {
     const res = await fetch(`${server.baseUrl}/_/api/setup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "none" }),
+      body: JSON.stringify(initialAccount()),
     });
     assertEquals(res.status, 200);
     assert(
-      Deno.statSync(path.join(vault, ".globnotes", "config.json")).isFile,
+      Deno.statSync(
+        path.join(server.layout.instance, ".globnotes", "accounts.json"),
+      ).isFile,
     );
     assert(
       Deno.statSync(path.join(vault, ".globnotes", "index.sqlite")).isFile,

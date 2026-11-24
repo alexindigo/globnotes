@@ -59,7 +59,7 @@ including reentrant delivery; `note:edit-start`,
 | 13 | `search-menu:close` | `{}` | `SearchResults.vue` sort-menu hide |
 | 14 | `modal:open` | `{ name }` | `Modal.vue` visibility watch |
 | 15 | `modal:close` | `{ name }` | `Modal.vue` visibility watch |
-| 16 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme |
+| 16 | `theme:change` | `{ id, resolvedId, mode }` | `themes.js` applyTheme, on a new selection or effective palette |
 | 17 | `plugin:toggle` | `{ id, enabled }` | `pluginSettings.js` legacy preference publisher |
 | 18 | `plugin:auto-enable` | `{ enabled }` | `pluginSettings.js` legacy preference publisher |
 | 19 | `settings:line-numbers` | `{ value }` | `pluginSettings.js` saveViewLineNumbers |

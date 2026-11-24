@@ -19,6 +19,9 @@ import {
 } from "./contracts.ts";
 import type { PluginRuntime } from "./runtime.ts";
 import type { ViewerAuthority } from "../auth/authority.ts";
+import { AdmissionRefusal } from "../auth/admission_refusal.ts";
+import { OperationError } from "./errors.ts";
+import type { InvocationOptions } from "./host.ts";
 
 export type EndpointOutcome =
   | { kind: "response"; response: PluginHttpResponse }
@@ -216,6 +219,7 @@ export class PluginEndpoints {
     admission: Extract<EndpointAdmission, { kind: "admitted" }>,
     request: PluginHttpRequest,
     viewer?: ViewerAuthority,
+    requestDispatch?: InvocationOptions["requestDispatch"],
   ): Promise<EndpointOutcome> {
     const runtime = this.runtime();
     if (
@@ -233,9 +237,14 @@ export class PluginEndpoints {
           params: admission.params,
         }],
         viewer,
+        requestDispatch,
       );
       return { kind: "response", response: normalizeEndpointResult(value) };
-    } catch {
+    } catch (error) {
+      if (
+        requestDispatch &&
+        (error instanceof AdmissionRefusal || error instanceof OperationError)
+      ) throw error;
       return { kind: "unavailable" };
     }
   }

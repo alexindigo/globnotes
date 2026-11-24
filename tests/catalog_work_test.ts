@@ -2,6 +2,7 @@
 import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import {
   captureSettledWork,
@@ -297,7 +298,9 @@ Deno.test("catalogue work: real HTTP invalidation settles admitted work without 
   });
   let observer: Awaited<ReturnType<typeof observeCatalog>> | undefined;
   try {
-    const initial = await catalogPluginReady(server, "http-work"),
+    const admin = await fixtureAdmin(server);
+    const { headers } = admin;
+    const initial = await catalogPluginReady(server, "http-work", { headers }),
       baseline = captureWork(initial);
     await Deno.writeTextFile(`${fixture.vault}/Note.md`, "old");
     const read = await (await fetch(`${server.baseUrl}/_/api/notes/Note`))
@@ -312,13 +315,14 @@ Deno.test("catalogue work: real HTTP invalidation settles admitted work without 
     });
     assertEquals(save.status, 200);
     await save.body?.cancel();
-    observer = await observeCatalog(server);
+    observer = await observeCatalog(server, { headers });
     const before = (await observer.read()).find((item) =>
       item.id === "http-work"
     )!;
     assertEquals(before.work!.versioning.pending, 1);
     const changed = observer.changed;
     const waiting = catalogWorkSettled(server, "http-work", {
+      headers,
       lanes: ["versioning"],
       baseline,
     });
@@ -355,9 +359,10 @@ Deno.test("catalogue work: real HTTP invalidation settles admitted work without 
     assertEquals(held.work!.versioning.pending, 1);
     assertEquals(workFenceSettled(held, old), false);
     for (const enabled of [false, true]) {
-      const catalog = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
-        .json();
-      const response = await fetch(
+      const catalog =
+        await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
+          .json();
+      const response = await admin.fetch(
         `${server.baseUrl}/_/api/plugin-host/http-work/enabled`,
         {
           method: "PUT",
@@ -378,7 +383,7 @@ Deno.test("catalogue work: real HTTP invalidation settles admitted work without 
         );
       }
     }
-    const fresh = await catalogPluginReady(server, "http-work");
+    const fresh = await catalogPluginReady(server, "http-work", { headers });
     assert(fresh.work!.generation !== old.generation);
     assertEquals(fresh.work!.versioning.admitted, 0);
     let replacement = fresh;
@@ -406,6 +411,7 @@ Deno.test("catalogue work: real HTTP invalidation settles admitted work without 
       assertEquals(replacingRelease.status, 200);
       await replacingRelease.body?.cancel();
       replacement = await catalogWorkSettled(server, "http-work", {
+        headers,
         baseline: captureWork(fresh),
       });
     }
@@ -421,6 +427,7 @@ Deno.test("catalogue work: real HTTP invalidation settles admitted work without 
     await assertRejects(
       () =>
         catalogWorkSettled(server, "http-work", {
+          headers,
           baseline: old,
         }),
       Error,
@@ -446,12 +453,14 @@ Deno.test("catalogue work: a hung service job fails through its real product dea
     fixtureScenario: publicScenario(),
   });
   try {
-    const initial = await catalogPluginReady(server, "http-hung");
+    const { headers } = await fixtureAdmin(server);
+    const initial = await catalogPluginReady(server, "http-hung", { headers });
     assertEquals(initial.work!.startup.state, "succeeded");
     assertEquals(initial.work!.ordinary.pending, 1);
     await assertRejects(
       () =>
         catalogWorkSettled(server, "http-hung", {
+          headers,
           baseline: captureWork(initial),
         }),
       Error,

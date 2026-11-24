@@ -1,43 +1,47 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { apiErrorHandler, getToken } from "./api.js";
-import { authTypes } from "./constants.js";
+import { apiErrorHandler } from "./api.js";
 import { getToastOptions } from "./helpers.js";
-import { storeToken } from "./tokenStorage.js";
 import { createOperationOwner } from "./operationOwner.js";
 import { bindContext } from "./sessionContext.js";
 import { reactive, readonly } from "vue";
 
-export function createIdentityLoginFlow({ session, ...adapters }) {
-  let acceptedToken, acceptedPersist;
-  return createLoginFlow({ ...adapters, identity: true,
+export function createIdentityLoginFlow({ session, recovery, ...adapters }) {
+  let disposed = false, acceptedToken, acceptedPersist;
+  const isCurrent = () => !disposed && (adapters.isCurrent?.() ?? true) && (!recovery || recovery.isCurrent());
+  const flow = createLoginFlow({ ...adapters, isCurrent,
     requestToken: session.transport.getToken,
     persistToken(token, persist) {
       if (session.acceptToken(token, persist) === false) return false;
       acceptedToken = token; acceptedPersist = persist; return true;
     },
-    acceptIdentity: async (proof, acceptContext) => {
-      const accepted = session.signIn ? await session.signIn(acceptedToken, { login: proof.username, persist: acceptedPersist }) :
-        await session.acceptProjection();
-      if (!accepted) return;
+    authenticated: async (proof, acceptContext) => {
+      if (!isCurrent()) return;
+      const accepted = await session.signIn(acceptedToken, { login: proof.username, persist: acceptedPersist });
+      if (!accepted || !isCurrent()) return;
       const current = acceptContext(accepted.current);
       if (!current()) return;
       const required = accepted.principal.passwordChangeRequired === true;
-      const target = required ? { name: "account" } : adapters.redirect?.() || { name: "home" };
+      const accountLanding = required || !recovery && !session.snapshot().capabilities.canRead;
+      const target = accountLanding ? { name: "account" } : adapters.redirect?.() || { name: "home" };
       if (!current()) return;
       if (required) { session.retainLoginProof(proof, accepted); if (current()) await adapters.navigate(target); }
+      else if (accountLanding) { await adapters.authenticated?.(); if (current()) await adapters.navigate(target); }
       else await (adapters.authenticated ? adapters.authenticated() : adapters.navigate(target));
     },
-    beforeSignIn: session.beforeSignIn, capture: session.capture,
+    // A retained operation is already owned by recovery. Making it settle for
+    // departure here would require the very credential this form is obtaining.
+    beforeSignIn: recovery ? recovery.isCurrent : session.beforeSignIn, capture: session.capture,
   });
+  return { ...flow, dispose() { disposed = true; return flow.dispose(); } };
 }
 
 /** One transient password/code form for the page and public-note dialog. */
-export function createIdentityLoginState({ session, navigate, redirect = () => null, authenticated, toast, reportError } = {}) {
+export function createIdentityLoginState({ session, recovery, navigate, redirect = () => null, authenticated, isCurrent = () => true, toast, reportError } = {}) {
   const fields = reactive({ username: "", password: "", totp: "", rememberMe: false, step: "password", busy: false });
   let disposed = false;
   const erase = () => { fields.password = ""; fields.totp = ""; };
-  const flow = createIdentityLoginFlow({ session, navigate, redirect, authenticated, toast, reportError,
-    credentials: () => fields, isCurrent: () => !disposed,
+  const flow = createIdentityLoginFlow({ session, recovery, navigate, redirect, authenticated, toast, reportError,
+    credentials: () => fields, isCurrent: () => !disposed && isCurrent(),
     clearAccepted: erase,
     clearCredentials() { if (fields.step === "authenticator") fields.totp = ""; else erase(); },
     challenge(error) {
@@ -63,13 +67,12 @@ export function loginError(error) {
 }
 
 /** Form inputs stay in the view; token ownership and login decisions live here. */
-export function createLoginFlow({
-  credentials, clearCredentials, redirect, navigate, toast,
-  requestToken = getToken, persistToken = storeToken, reportError = apiErrorHandler,
-  authenticated, acceptIdentity, isCurrent = () => true, identity = false,
-  beforeSignIn, capture = () => isCurrent, challenge, clearAccepted = clearCredentials,
+function createLoginFlow({
+  credentials, clearCredentials, toast,
+  requestToken, persistToken, reportError = apiErrorHandler,
+  authenticated, isCurrent, beforeSignIn, capture, challenge, clearAccepted = clearCredentials,
 } = {}) {
-  let pending = null, active = null, current, tokenAccepted = false, completing, disposed = false, acceptedProof, challenged;
+  let pending = null, active = null, current, tokenAccepted = false, completing, acceptedProof, challenged = false, disposed = false;
   const acceptContext = session => current = bindContext(() => !disposed && isCurrent() && session());
   const channel = (prepare, deliver) => ({ prepare: value => ({ value: prepare(value) }), deliver });
   const owner = createOperationOwner({ owner: Object.freeze({}),
@@ -79,7 +82,7 @@ export function createLoginFlow({
       return { value: fields };
     },
     async dispatch(fields) {
-      if (beforeSignIn && !await beforeSignIn()) return null;
+      if (!await beforeSignIn()) return null;
       if (!current()) return null;
       return requestToken(fields.username, fields.password, fields.totp);
     },
@@ -91,21 +94,13 @@ export function createLoginFlow({
         // phase captures it, never an arbitrary token selected at later dispatch.
         acceptContext(capture());
       }),
-      complete: channel(() => authenticated || acceptIdentity ? acceptedProof : redirect() || { name: "home" }, target => {
-        completing = acceptIdentity ? acceptIdentity(target, acceptContext) : authenticated ? authenticated(target) : navigate(target);
-      }),
+      complete: channel(() => acceptedProof, proof => { completing = authenticated(proof, acceptContext); }),
       clear: { deliver: () => clearCredentials() },
       accepted: { deliver: () => clearAccepted() },
       challenge: { deliver: error => { challenged = challenge?.(error) === true; } },
       error: { deliver: error => { const message = loginError(error); if (message) toast.add(message); else reportError(error, toast); } },
     },
   });
-  function init(authType) {
-    if (!identity && authType === authTypes.none) {
-      if (authenticated) authenticated(); else navigate({ name: "home" });
-    }
-  }
-
   function logIn() {
     if (active || disposed || !isCurrent()) return pending;
     acceptContext(capture()); tokenAccepted = false;
@@ -114,7 +109,7 @@ export function createLoginFlow({
       .then(result => {
         if (result.value === null || !owner.deliver(operation, "token", result.value) || !tokenAccepted) return;
         if (owner.deliver(operation, "complete", null, current)) {
-          if (identity) owner.deliver(operation, "accepted", null, current);
+          owner.deliver(operation, "accepted", null, current);
           return completing;
         }
       })
@@ -122,13 +117,13 @@ export function createLoginFlow({
         challenged = false;
         owner.deliver(operation, "challenge", error, current);
         if (challenged) return;
-        if (!identity || !tokenAccepted) owner.deliver(operation, "clear", null, current);
+        if (!tokenAccepted) owner.deliver(operation, "clear", null, current);
         owner.deliver(operation, "error", error, current);
       }).finally(async () => { acceptedProof = null; await owner.release(operation); active = null; pending = null; });
     return pending;
   }
 
-  return { init, logIn, hasWork: () => pending !== null || owner.hasWork(),
+  return { logIn, hasWork: () => pending !== null || owner.hasWork(),
     async settle() { if (pending) await pending; return owner.settle(); },
     dispose() { disposed = true; return owner.dispose(); } };
 }

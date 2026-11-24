@@ -7,7 +7,8 @@
  * config at runtime.
  */
 
-import type { LocalAuth } from "./auth/local.ts";
+import type { InstanceIdentity } from "./auth/instance.ts";
+import { OperationError } from "./plugins/errors.ts";
 import type { GlobalConfig } from "./config.ts";
 import type { FileServing } from "./files/file_serving.ts";
 import type { McpEndpoint } from "./mcp/endpoint.ts";
@@ -76,8 +77,7 @@ export interface Indexer {
 
 export interface ServerState {
   config: GlobalConfig;
-  /** null when auth is disabled (none/read-only) or setup is incomplete. */
-  auth: LocalAuth | null;
+  identity: InstanceIdentity | null;
   notes: FileSystemNotes;
   indexer: Indexer | null;
   hub: VaultHub | null;
@@ -109,6 +109,7 @@ export interface ServerState {
 // Assigned by initState() before the server starts listening; endpoints only
 // run after that, so the assertion is safe.
 export const state: ServerState = {
+  identity: null,
   lifecycle: null,
   operations: null,
   actions: null,
@@ -124,7 +125,7 @@ export const state: ServerState = {
 
 export function initState(
   config: GlobalConfig,
-  auth: LocalAuth | null,
+  identity: InstanceIdentity | null,
   notes: FileSystemNotes,
   indexer: Indexer | null,
   files: FileServing,
@@ -132,7 +133,7 @@ export function initState(
   hub: VaultHub | null = null,
 ): void {
   state.config = config;
-  state.auth = auth;
+  state.identity = identity;
   state.notes = notes;
   state.indexer = indexer;
   state.files = files;
@@ -140,7 +141,8 @@ export function initState(
   state.hub = hub;
   state.drivers = null;
   state.metadata = null;
-  state.lifecycle = null;
+  const lifecycle = identity?.composition.lifecycle ?? null;
+  state.lifecycle = lifecycle;
   state.operations = null;
   state.actions = null;
   state.pluginData = null;
@@ -148,4 +150,17 @@ export function initState(
   state.pluginNetwork = null;
   state.version = null;
   state.mcp = null;
+  identity?.bindActive((operationId) => {
+    if (
+      state.identity !== identity || state.config !== config ||
+      state.lifecycle !== lifecycle
+    ) {
+      throw new OperationError(
+        409,
+        "operation_conflict",
+        "Active account or vault owners changed while this operation was pending.",
+        { operationId },
+      );
+    }
+  });
 }

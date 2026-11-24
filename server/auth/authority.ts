@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { HttpError } from "@pathfinder/pathfinder";
+import { AdmissionRefusal } from "./admission_refusal.ts";
 import { StoredConfigConflict } from "../config/file_store.ts";
 import { OperationError } from "../plugins/errors.ts";
 import {
@@ -81,12 +82,10 @@ export interface VaultAuthorityLease
   readonly viewer: ViewerAuthority;
 }
 function unauthorized(): never {
-  throw new HttpError(401, "Invalid authentication credentials.", {
-    "WWW-Authenticate": "Bearer",
-  });
+  throw new AdmissionRefusal("credentials_refused");
 }
 const forbidden = () => {
-  throw new HttpError(403, "This account cannot perform that operation.");
+  throw new AdmissionRefusal("operation_not_permitted");
 };
 function changed(operationId?: string): never {
   throw new OperationError(
@@ -171,10 +170,39 @@ export class InstanceAuthority {
       exact?: AuthorityCallback<void>;
     } = {},
   ): AuthorityDisclosure {
+    return this.acknowledgment(
+      this.#vaultOutcomeLease(actor, vault, options, snapshot),
+    );
+  }
+  /** Exact update result: authenticate the original actor and concrete target,
+   * but do not infer the original commit from the current ACL revision. */
+  vaultUpdateReceipt(
+    actor: AccountPrincipal,
+    vault: AuthorityVault,
+    signal?: AbortSignal,
+  ) {
+    const lease = this.#vaultOutcomeLease(actor, vault, { signal });
+    return () => {
+      lease.assertCurrent();
+      const capabilities = this.capabilities(actor, vault);
+      lease.assertCurrent();
+      return capabilities;
+    };
+  }
+  #vaultOutcomeLease(
+    actor: AccountPrincipal,
+    vault: AuthorityVault,
+    options: {
+      signal?: AbortSignal;
+      admin?: VaultAuthorityLease;
+      exact?: AuthorityCallback<void>;
+    },
+    snapshot?: AclSnapshot,
+  ): OperationLease<"outcome"> {
     const { signal, admin, exact } = options;
     const principal = Object.freeze({ ...actor });
     const { acl, lifecycle } = vault, epoch = lifecycle.epoch;
-    const policy = withAuthorityContext(
+    const policy = snapshot && withAuthorityContext(
       undefined,
       (context) => context.acl(acl).policyKey,
     );
@@ -190,17 +218,22 @@ export class InstanceAuthority {
             throw new HttpError(503, "Vault unavailable.");
           }
           exact?.(context);
-          context.assertAclUnchanged(acl, snapshot);
           if (
-            lifecycle.epoch !== epoch || context.acl(acl).policyKey !== policy
+            lifecycle.epoch !== epoch
           ) {
             throw new StoredConfigConflict();
+          }
+          if (snapshot) {
+            context.assertAclUnchanged(acl, snapshot);
+            if (
+              context.acl(acl).policyKey !== policy
+            ) throw new StoredConfigConflict();
           }
           signal?.throwIfAborted();
           return undefined;
         }),
     ], admin ? [admin.lease] : [this.lifetime]);
-    return this.acknowledgment(lease);
+    return lease;
   }
   capabilities(
     principal: Principal,
@@ -295,12 +328,14 @@ export class InstanceAuthority {
    * This is preparation, not permission: binding still evaluates the principal. */
   prepareLease(
     operation: VaultOperation,
+    deliveryLifetime?: OperationLease<"live">,
   ): (principal: Principal) => VaultAuthorityLease {
-    return this.#prepareLease(operation);
+    return this.#prepareLease(operation, undefined, deliveryLifetime);
   }
   #prepareLease(
     operation: VaultOperation,
     boundVault?: AuthorityVault,
+    deliveryLifetime?: OperationLease<"live">,
   ): (principal: Principal) => VaultAuthorityLease {
     const lifetime = this.lifetime;
     assertOperationLease(lifetime, "live");
@@ -336,7 +371,7 @@ export class InstanceAuthority {
       const allows = (context: AuthorityReadContext) => {
         this.#principal(principal, context);
         if (!vault.lifecycle.operational(context)) {
-          throw new HttpError(503, "Vault unavailable.");
+          throw new AdmissionRefusal("setup_required");
         }
         if (principal.kind === "account" && principal.passwordChangeRequired) {
           forbidden();
@@ -370,11 +405,20 @@ export class InstanceAuthority {
         }
         allows(context);
       };
-      const { lease } = createOperationLease("live", [
+      const { lease: admission } = createOperationLease("live", [
         (id, native) =>
           withAuthorityContext(native, (context) => guard(context, id)),
       ], [lifetime]);
-      const viewer = this.#bindViewer(principal, vault, lease);
+      // Delivery ends with the HTTP request. A continuation retains this same
+      // admitted capture, but follows instance/vault authority, not the wire.
+      const lease = deliveryLifetime
+        ? createOperationLease("live", [() => {}], [
+          admission,
+          deliveryLifetime,
+        ])
+          .lease
+        : admission;
+      const viewer = this.#bindViewer(principal, vault, admission);
       const assertCurrent = lease.assertCurrent;
       assertCurrent();
       return Object.freeze({

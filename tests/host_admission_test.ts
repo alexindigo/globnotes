@@ -23,7 +23,8 @@ import {
   rebindingWarning,
 } from "../server/host_admission.ts";
 import { GlobalConfig } from "./helpers/config.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
+import { fixtureLifecycle } from "./helpers/config.ts";
+import { createUuid } from "../shared/uuid.ts";
 import { bootServer, type TestServer } from "./helpers/boot.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
@@ -162,23 +163,26 @@ Deno.test("host admission: unset admits every request; set refuses with 421", as
 });
 
 Deno.test("host admission: the rebinding warning", () => {
-  const open = (authType: string | null, setupRequired = false) => ({
+  const open = (
+    everybody: "edit" | "view" | "none",
+    setupRequired = false,
+  ) => ({
     setupRequired,
-    authType,
+    everybody,
     allowedHosts: null,
   });
-  const none = rebindingWarning(open("none"))!;
-  assert(none.includes("DNS rebinding"), none);
-  assert(none.includes("GLOBNOTES__SERVER_ALLOWEDHOSTS"), none);
-  assert(none.includes("change them"), none);
-  const readOnly = rebindingWarning(open("read_only"))!;
-  assert(readOnly.includes("read_only mode") && !readOnly.includes("change"));
-  for (const quiet of [open("password"), open("totp"), open(null, true)]) {
+  const edit = rebindingWarning(open("edit"))!;
+  assert(edit.includes("DNS rebinding"), edit);
+  assert(edit.includes("GLOBNOTES__SERVER_ALLOWEDHOSTS"), edit);
+  assert(edit.includes("change them"), edit);
+  const view = rebindingWarning(open("view"))!;
+  assert(view.includes("View access") && !view.includes("change them"));
+  for (const quiet of [open("none"), open("edit", true)]) {
     assertEquals(rebindingWarning(quiet), null, JSON.stringify(quiet));
   }
   assertEquals(
     rebindingWarning({
-      ...open("none"),
+      ...open("edit"),
       allowedHosts: [{ host: "a.home", port: null }],
     }),
     null,
@@ -188,30 +192,30 @@ Deno.test("host admission: the rebinding warning", () => {
 Deno.test("host admission: one warning per transition into exposure (PR #28 review)", () => {
   const warnings: string[] = [];
   const warner = createRebindingWarner((message) => warnings.push(message));
-  const step = (authType: string | null, setupRequired = false) => {
-    warner.update({ setupRequired, authType, allowedHosts: null });
+  const step = (everybody: "edit" | "view" | "none", setupRequired = false) => {
+    warner.update({ setupRequired, everybody, allowedHosts: null });
     return warnings.length;
   };
-  assertEquals(step(null, true), 0, "setup pending: not exposed");
-  assertEquals(step("none"), 1, "setup completed as none");
-  assertEquals(step("none"), 1, "still none: no repeat");
-  assertEquals(step("read_only"), 2, "none -> read_only");
-  assertEquals(step("password"), 2, "a login: not exposed");
-  assertEquals(step("read_only"), 3, "password -> read_only");
+  assertEquals(step("edit", true), 0, "setup pending: not exposed");
+  assertEquals(step("edit"), 1, "setup completed as Edit");
+  assertEquals(step("edit"), 1, "still Edit: no repeat");
+  assertEquals(step("view"), 2, "Edit -> View");
+  assertEquals(step("none"), 2, "None: not exposed");
+  assertEquals(step("view"), 3, "None -> View");
   warner.update({
     setupRequired: false,
-    authType: "none",
+    everybody: "edit",
     allowedHosts: [{ host: "globnotes.home", port: null }],
   });
   assertEquals(warnings.length, 3, "an allow-list: not exposed");
-  assert(warnings[1].includes("read_only mode"), warnings[1]);
+  assert(warnings[1].includes("View access"), warnings[1]);
 });
 
 Deno.test("host admission: access-policy changes notify their listeners", () => {
   const config = new GlobalConfig(testEnvironment({
     fixtureScenario: publicScenario(),
   }));
-  const lifecycle = new PluginLifecycle(config);
+  const lifecycle = fixtureLifecycle(config);
   let calls = 0;
   const stop = lifecycle.onPolicyChange(() => calls++);
   lifecycle.onPolicyChange(() => {
@@ -414,13 +418,17 @@ Deno.test("host admission: applies before the path prefix", async () => {
 Deno.test("host admission: setup and access changes into exposure warn at runtime (PR #28 review)", async () => {
   // Started with setup pending: no warning yet.
   const server = await bootServer({});
+  let token: string | undefined;
   const warnings = () =>
     (server.output.stdout + server.output.stderr).split("DNS rebinding")
       .length - 1;
   const api = async (route: string, method = "GET", data?: unknown) => {
     const response = await fetch(`${server.baseUrl}/_/api/${route}`, {
       method,
-      headers: data === undefined ? {} : { "content-type": "application/json" },
+      headers: {
+        ...(data === undefined ? {} : { "content-type": "application/json" }),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
       ...(data === undefined ? {} : { body: JSON.stringify(data) }),
     });
     const text = await response.text();
@@ -433,19 +441,28 @@ Deno.test("host admission: setup and access changes into exposure warn at runtim
     );
   try {
     assertEquals(warnings(), 0, "setup pending");
-    assertEquals((await api("setup", "POST", { mode: "none" })).status, 200);
-    await warned(1, "a warning after setup completes as none");
+    const setup = await api("setup", "POST", {
+      username: "owner",
+      password: "fixture-password",
+      everybody: "edit",
+      updateId: createUuid(),
+    });
+    assertEquals(setup.status, 200);
+    token = setup.body.access_token;
+    await warned(1, "a warning after setup completes as Edit");
     const view = (await api("access")).body;
     const changed = await api("access", "PUT", {
-      mode: "read_only",
+      everybody: "view",
+      grants: view.grants,
+      updateId: createUuid(),
       revision: view.revision,
       signature: view.signature,
     });
     assertEquals(changed.status, 200, JSON.stringify(changed.body));
-    await warned(2, "a warning after the access change to read_only");
+    await warned(2, "a warning after the access change to View");
     assert(
       (server.output.stdout + server.output.stderr).includes(
-        "No login is needed (read_only mode)",
+        "Everybody else has View access",
       ),
     );
     // A request after the change: still two (one per transition).

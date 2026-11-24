@@ -13,243 +13,162 @@ import {
   enrollmentWithBytes,
 } from "./helpers/credential_commands.ts";
 import { ACCOUNT_A } from "./helpers/identity.ts";
-import {
-  LegacyTotpEnrollments,
-  pendingTotpEnrollments,
-} from "../server/auth/totp_enrolment.ts";
-import { accessView, updateAccess } from "../server/auth/access.ts";
+import { accountRouteFixture } from "./helpers/account_route_fixture.ts";
+import { setupScenario } from "./helpers/fixture_scenarios.ts";
+import { bootstrapContext } from "./helpers/identity_bootstrap.ts";
+import { StoredConfigConflict } from "../server/config/file_store.ts";
+import { createUuid } from "../shared/uuid.ts";
 import { heldOperation } from "./helpers/owned_operation.ts";
-import { assertThrows } from "@std/assert";
 import { HttpError } from "@pathfinder/pathfinder";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import { identityFixture } from "./helpers/identity.ts";
 import { GlobalConfig } from "./helpers/config.ts";
-import { testEnvironment } from "./helpers/environment.ts";
 import { state } from "../server/state.ts";
 import setup from "../server/api/endpoints/_/api/setup/post.ts";
 
-Deno.test("legacy setup: held body cannot adopt a replacement configuration", () =>
-  identityFixture(async (root) => {
-    const previous = { ...state };
-    const original = new GlobalConfig(
-      testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: `${root}/original` }),
-    );
-    const replacement = new GlobalConfig(
-      testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: `${root}/replacement` }),
-    );
-    state.config = original;
-    state.auth = null;
-    state.lifecycle = null;
-    try {
-      await heldOperation({
-        label: "setup body owner",
-        progress: { kind: "controlled", clock: "manual" },
-        owner: () => original,
-      }, (hold) =>
-        setup({
-          body: {
-            text: async () => {
-              await hold();
-              return '{"mode":"none"}';
-            },
-          },
-        } as unknown as PathfinderRequest), async (held) => {
-        await held.reached();
-        state.config = replacement;
-        const before = [
-          original.storedConfigText(),
-          replacement.storedConfigText(),
-        ];
-        await assertRejects(() => held.result(), HttpError, "HTTP 409");
-        assertEquals([
-          original.storedConfigText(),
-          replacement.storedConfigText(),
-        ], before);
-        assertEquals([original.setupRequired, replacement.setupRequired], [
-          true,
-          true,
-        ]);
-      });
-    } finally {
-      Object.assign(state, previous);
-      for (const key of ["config", "auth", "lifecycle"]) {
-        if (!Object.hasOwn(previous, key)) Reflect.deleteProperty(state, key);
+Deno.test("setup: held body cannot adopt replacement owners", () =>
+  accountRouteFixture(async (original) => {
+    const { identity } = original;
+    const records = () => [
+      identity.accounts.capture(),
+      identity.signing.capture(),
+      identity.acl.capture(),
+    ];
+    const before = records();
+    await heldOperation({
+      label: "setup body owner",
+      progress: { kind: "controlled", clock: "manual" },
+      owner: () => identity,
+    }, (hold) => {
+      const raw = new Request("http://fixture/_/api/setup", { method: "POST" });
+      raw.text = async () => {
+        await hold();
+        return JSON.stringify({
+          username: "alice",
+          password: "password",
+          everybody: "none",
+          updateId: createUuid(),
+        });
+      };
+      return setup({ _raw: raw } as PathfinderRequest);
+    }, async (held) => {
+      await held.reached();
+      const replacement = new GlobalConfig(original.config.resolved);
+      state.config = replacement;
+      try {
+        await assertRejects(
+          () => held.result(),
+          Error,
+          "Active account or vault owners changed",
+        );
+        assertEquals(records(), before);
+      } finally {
+        state.config = original.config;
       }
-    }
-  }));
+      assertEquals(identity.bootstrap.status(), { setupRequired: true });
+    });
+  }, { scenario: setupScenario() }));
 
 // Main-side command contracts corresponding to the repository cases described
 // in structure-credentials.md. No later OwnAccount workflow is imported here.
-Deno.test("legacy enrollment: new setup issuance retires held QR work without discarding its replacement", async () => {
-  let render = (uri: string) => Promise.resolve(`qr:${uri}`);
-  const pending = new LegacyTotpEnrollments((uri) => render(uri));
-  let heldKey = "";
-  await heldOperation({
-    label: "legacy QR generation",
-    progress: { kind: "controlled", clock: "external" },
-    owner: () => pending,
-  }, (hold) => {
-    render = async (uri) => {
-      heldKey = new URL(uri).searchParams.get("secret")!;
-      await hold();
-      return `qr:${uri}`;
-    };
-    return pending.issue("setup", "alice");
-  }, async (held) => {
-    await held.reached();
-    render = (uri) => Promise.resolve(`qr:${uri}`);
-    const current = await pending.issue("setup", "alice");
-    assertEquals([current.key, current.qr], [
-      current.secret,
-      `qr:${current.uri}`,
-    ]);
-    await assertRejects(
-      () => held.result(),
-      HttpError,
-      "HTTP 422",
-    );
-    await pending.discard("setup", heldKey);
-    assertEquals(
-      assertThrows(
-        () => pending.confirm("setup", current.key, ""),
-        HttpError,
-        "HTTP 400",
-      ).status,
-      400,
-    );
-    const error = assertThrows(
-      () => pending.confirm("access", current.key, "123456"),
-      HttpError,
-      "HTTP 422",
-    );
-    assertEquals(error.status, 422);
-    await pending.discard("setup", current.key);
-    assertThrows(
-      () => pending.confirm("setup", current.key, "123456"),
-      HttpError,
-      "HTTP 422",
-    );
-  });
-});
-
-for (const lane of ["setup", "access"] as const) {
-  Deno.test(`legacy enrollment: issuance in the other lane does not retire a held ${lane} renderer`, async () => {
+Deno.test("setup enrollment: replacing an in-flight candidate retires its QR work", () =>
+  identityFixture(async (root, scope) => {
     let render = (uri: string) => Promise.resolve(`qr:${uri}`);
-    const pending = new LegacyTotpEnrollments((uri) => render(uri));
+    const { bootstrap: pending } = bootstrapContext(root, scope, {
+      renderQr: (uri) => render(uri),
+    });
+    let heldKey = "";
     await heldOperation({
-      label: "independent legacy QR attempts",
+      label: "setup QR generation",
       progress: { kind: "controlled", clock: "external" },
       owner: () => pending,
     }, (hold) => {
       render = async (uri) => {
+        heldKey = new URL(uri).searchParams.get("secret")!;
         await hold();
         return `qr:${uri}`;
       };
-      return pending.issue(lane, "alice");
+      return pending.enrolment("alice");
     }, async (held) => {
       await held.reached();
       render = (uri) => Promise.resolve(`qr:${uri}`);
-      const otherLane = lane === "setup" ? "access" : "setup";
-      const peer = await pending.issue(otherLane, "bob");
-      const original = await held.result();
+      const current = await pending.enrolment("bob");
+      assertEquals([current.key, current.qr], [
+        current.secret,
+        `qr:${current.uri}`,
+      ]);
+      await assertRejects(() => held.result());
       for (
-        const [issuer, bundle] of [[lane, original], [otherLane, peer]] as const
+        const [username, key] of [["alice", heldKey], ["alice", current.key]]
       ) {
-        assertEquals([bundle.key, bundle.qr], [
-          bundle.secret,
-          `qr:${bundle.uri}`,
-        ]);
-        assertEquals(
-          assertThrows(
-            () => pending.confirm(issuer, bundle.key, ""),
-            HttpError,
-            "HTTP 400",
-          ).status,
-          400,
+        const error = await assertRejects(
+          () =>
+            pending.setup({
+              username,
+              password: "password",
+              everybody: "none",
+              updateId: createUuid(),
+              totp: { key, code: "123456" },
+            }),
+          HttpError,
+          "HTTP 422",
         );
-        await pending.discard(issuer, bundle.key);
+        assertEquals(error.status, 422);
+        assertEquals(pending.status(), { setupRequired: true });
       }
     });
-  });
-  Deno.test(`legacy enrollment: ${lane} retains only its latest attempt regardless of the requested login label`, async () => {
-    const pending = new LegacyTotpEnrollments((uri) =>
-      Promise.resolve(`qr:${uri}`)
-    );
-    const first = await pending.issue(lane, "alice");
-    const sameUser = await pending.issue(lane, "alice");
-    const otherUser = await pending.issue(lane, "bob");
-    for (const bundle of [first, sameUser]) {
-      const error = assertThrows(
-        () => pending.confirm(lane, bundle.key, ""),
-        HttpError,
-        "HTTP 422",
-      );
-      assertEquals(error.status, 422);
-    }
-    await pending.discard(lane, sameUser.key);
-    assertEquals(
-      assertThrows(
-        () => pending.confirm(lane, otherUser.key, ""),
-        HttpError,
-        "HTTP 400",
-      ).status,
-      400,
-    );
-    await pending.discard(lane, otherUser.key);
-    assertThrows(
-      () => pending.confirm(lane, otherUser.key, ""),
-      HttpError,
-      "HTTP 422",
-    );
-  });
-}
+  }));
 
-for (const changed of [false, true]) {
-  Deno.test(`legacy enrollment: ${changed ? "changed" : "no-op"} peer Access save cannot retire an enrollment attempt`, () =>
-    identityFixture(async (root) => {
-      const previous = { ...state };
-      const config = new GlobalConfig(
-        testEnvironment({ GLOBNOTES_GLOBNOTES_PATH: root }),
-      );
-      config.saveStoredConfig({ auth_type: "none" });
-      config.authType = "none" as typeof config.authType;
-      config.setupRequired = false;
-      state.config = config;
-      state.auth = null;
-      state.lifecycle = null;
-      const pending = pendingTotpEnrollments(config);
-      const bundle = await pending.issue("access", "alice");
-      try {
-        const view = await accessView();
-        const result = await updateAccess(
-          new Request("http://fixture/", { method: "PUT" }),
-          {
-            mode: changed ? "password" : "none",
-            ...(changed ? { username: "bob", password: "peer password" } : {}),
-            revision: view.revision,
-            signature: view.signature,
-          },
-        );
-        assertEquals([result.view.revision, result.requiresLogin], [
-          view.revision + 1,
-          changed,
+for (const same of [false, true]) {
+  Deno.test(`own account QR: ${same ? "same account supersedes" : "peer does not retire"} the held candidate`, async () => {
+    let render = (uri: string) => Promise.resolve(`qr:${uri}`);
+    await credentialCommandFixture(async (fixture) => {
+      fixture.addPeer();
+      const alice = await signIn(fixture.sessions, {
+        username: "alice",
+        password: "password",
+      });
+      const peer = same ? alice : await signIn(fixture.sessions, {
+        username: "bob",
+        password: "password",
+      });
+      const workflow = fixture.ownAccount;
+      await heldOperation({
+        label: "own account QR",
+        progress: { kind: "controlled", clock: "external" },
+        owner: () => workflow,
+      }, (hold) => {
+        render = async (uri) => {
+          await hold();
+          return `qr:${uri}`;
+        };
+        return workflow.enrolment(alice.principal);
+      }, async (held) => {
+        await held.reached();
+        render = (uri) => Promise.resolve(`qr:${uri}`);
+        const current = await new Response(
+          await workflow.enrolment(peer.principal),
+        ).json();
+        assertEquals([current.key, current.qr], [
+          current.secret,
+          `qr:${current.uri}`,
         ]);
-        assertEquals(
-          assertThrows(
-            () => pending.confirm("access", bundle.key, ""),
-            HttpError,
-            "HTTP 400",
-          ).status,
-          400,
-        );
-      } finally {
-        await pending.discard("access", bundle.key);
-        Object.assign(state, previous);
-        for (const key of ["config", "auth", "lifecycle"]) {
-          if (!Object.hasOwn(previous, key)) Reflect.deleteProperty(state, key);
+        if (same) {
+          await assertRejects(
+            () => held.result(),
+            StoredConfigConflict,
+            "Stored configuration changed before commit.",
+          );
+        } else {
+          const original = await new Response(await held.result()).json();
+          assertEquals([original.key, original.qr], [
+            original.secret,
+            `qr:${original.uri}`,
+          ]);
         }
-      }
-    }));
+      });
+    }, { renderQr: (uri) => render(uri) });
+  });
 }
 Deno.test("credential transition shape: no encoding-only patch, stored key patch, supplied step or hash enters the command vocabulary", () =>
   credentialCommandFixture(async (f) => {

@@ -7,7 +7,10 @@ import {
   assertThrows,
 } from "@std/assert";
 import { openInstanceIdentity } from "../server/auth/instance.ts";
-import { IdentityRecoveryError } from "../server/auth/bootstrap.ts";
+import {
+  IdentityMigrationRequired,
+  IdentityRecoveryError,
+} from "../server/auth/bootstrap.ts";
 import { IdentityOwnershipError } from "../server/auth/ownership.ts";
 import { IdentityTransactionUnavailable } from "../server/auth/transaction.ts";
 import { IdentityStateError } from "../server/auth/records.ts";
@@ -373,10 +376,13 @@ for (
       const config = configuration(root, true);
       const filename = `${config.statePath}/config.json`;
       Deno.writeTextFileSync(filename, contents);
+      const migration = contents !== "{bad";
       await assertRejects(
         () => opened(scope, config),
-        IdentityRecoveryError,
-        recovery,
+        migration ? IdentityMigrationRequired : IdentityRecoveryError,
+        migration
+          ? "Account migration required; public setup is unavailable."
+          : recovery,
       );
       assertEquals([
         present(filename),

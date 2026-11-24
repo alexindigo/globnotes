@@ -1,6 +1,8 @@
 // Feature-owned real server/files and native input. No browser-only conflict state.
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
+import { nativeFixtureAdmin } from "./fixtures.mjs";
+import { identityTokenScope } from "../../../shared/identity_token.ts";
 import { applicationServer } from "./http-origin.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { assert } from "./test-outcomes.mjs";
@@ -14,11 +16,24 @@ export async function conflictCase(name, run, { prefix = "", env = {} } = {}) {
   await Deno.mkdir(vault, { recursive: true });
   let server, session;
   const writes = [], results = [], peers = [];
-  async function api(path, method = "GET", body) {
-    const token = session ? await session.evaluate("location.protocol==='http:' ? sessionStorage.getItem('token') || localStorage.getItem('token') : null") : null;
+  const tokenRead = `sessionStorage.getItem(${JSON.stringify(identityTokenScope(prefix).key)})`;
+  async function request(path, method, body, headers) {
     const response = await fetch(`${server.baseUrl}${prefix}/_/api/${path}`, { method,
-      headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
+      headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
     const result = await response.json(); assert(response.ok, `${method} ${path}: ${response.status} ${JSON.stringify(result)}`); return result;
+  }
+  async function api(path, method = "GET", body) {
+    const token = session ? await session.evaluate(`location.protocol==='http:' ? ${tokenRead} : null`) : null;
+    return request(path, method, body, token ? { authorization: `Bearer ${token}` } : {});
+  }
+  async function setEverybody(everybody) {
+    const { headers } = await nativeFixtureAdmin(server, { prefix });
+    const { revision, signature, grants } = await request("access", "GET", undefined, headers);
+    const updateId = crypto.randomUUID();
+    const receipt = await request("access", "PUT", { everybody, revision, signature, grants, updateId }, headers);
+    assert(receipt.committed && receipt.updateId === updateId, "Admin did not commit the exact ACL change");
+    const observed = await request("access", "GET", undefined, headers);
+    assert(observed.everybody === everybody, "Committed ACL did not read back");
   }
   async function create(label) {
     const base = "first\n\nmiddle\n\nlast\n", outside = `outside ${label}\n\nmiddle\n\nlast\n`, mine = `mine ${label}\n\nmiddle\n\nlast\n`;
@@ -60,7 +75,7 @@ export async function conflictCase(name, run, { prefix = "", env = {} } = {}) {
         writes.push(JSON.parse(event.params.request.postData));
       }
     });
-    const f = { directory, vault, state, prefix, api, create, capture, session, writes, results,
+    const f = { directory, vault, state, prefix, api, create, capture, session, writes, results, setEverybody, tokenRead,
       url: path => `${server.baseUrl}${prefix}${path}`,
       server: () => server,
       async restart({ scenario = nativeAccountScenario(), ...extra } = {}) { await server.close(); server = await bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: `${directory}/state`, ...await nativeFixtureInput(scenario), GLOBNOTES__SERVER_PATHPREFIX: prefix, ...env, ...extra }, applicationServer()); },
@@ -84,9 +99,12 @@ export async function conflictCase(name, run, { prefix = "", env = {} } = {}) {
         };
       },
       async login(username, password) {
-        await session.poll("!!document.querySelector('#username')");
-        await session.click("#username"); await session.type(username); await session.click("#password"); await session.type(password); await session.button("Log In");
-        await session.poll("!document.querySelector('#username')");
+        await session.click("#identity-login-name"); await session.type(username);
+        await session.click("#identity-login-password"); await session.type(password);
+        await session.button("Continue", ".identity-login");
+        await session.poll(`!!${tokenRead} && !document.querySelector('#identity-login-name')`);
+        const proof = await api("auth-check");
+        assert(proof.principal?.login === username && proof.capabilities.canManageVault, "Conflict review did not sign in as the named Admin");
       },
       async compare(row) {
         await session.goto(f.url(`/_/conflicts/${row.id}`));

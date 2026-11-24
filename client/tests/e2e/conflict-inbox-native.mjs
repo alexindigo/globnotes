@@ -1,5 +1,4 @@
 import { conflictCase, assert, until } from "./conflict-native-fixture.mjs";
-import { nativeAccountScenario } from "./config-fixture.mjs";
 
 await conflictCase("conflict-inbox-native", async f => {
   const s = f.session;
@@ -95,8 +94,12 @@ await conflictCase("conflict-inbox-native", async f => {
     await f.detailCount(0); await s.click('.conflicts-page > a'); await f.inboxCount(0);
     f.results.push({ pollingMetadataOnlyClosure: true, unchangedPollingReads: baseline, quietPolls: polls - firstPolls, sseBlocked: blocked });
   } finally { release(); await s.send("Fetch.disable"); }
-  await f.restart(); const readonly = await f.create("ReadOnly"); await f.restart({ scenario: nativeAccountScenario({ everybody: "view" }) });
-  await s.goto(f.url(`/_/conflicts/${readonly.id}`)); await s.poll("!!document.querySelector('.conflict-comparison')");
+  await f.restart(); const readonly = await f.create("ReadOnly");
+  await f.setEverybody("view"); await f.restart();
+  await f.compare(readonly);
+  const guest = await f.api("config");
+  assert(guest.principal?.kind === "guest" && guest.capabilities.canRead && !guest.capabilities.canEdit && !guest.capabilities.canManageVault,
+    `Expected Guest View after restarting persisted ACL: ${JSON.stringify(guest)}`);
   assert(!await s.evaluate("[...document.querySelectorAll('.conflicts-page button')].some(b=>/^(Keep |Edit a merge|Save merge)/.test(b.textContent))"), "Read-only shows mutation controls");
-  f.results.push({ readOnlyComparison: true });
+  f.results.push({ readOnlyComparison: true, principal: guest.principal, capabilities: guest.capabilities });
 }, { prefix: "/prefix" });

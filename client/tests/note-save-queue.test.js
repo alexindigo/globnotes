@@ -43,6 +43,22 @@ describe("per-note save FIFO", () => {
     expect(queue.state()).toMatchObject({ acknowledged: { path: "P", content: "A" }, rebaseConflict: false, failure: null });
     expect([changed.mock.calls, failed.mock.calls]).toEqual([[], []]);
   });
+  it("keeps an idle departure current through acknowledged cleanup but not a new submission", async () => {
+    const cleaning = deferred(), finished = deferred(), changed = vi.fn();
+    const { queue, sent } = fixture({ changed, drained: () => { finished.resolve(); return cleaning.promise; } });
+    queue.submit(snapshot("new")); await flushPromises();
+    try {
+      await ack(sent[0]); await finished.promise;
+      const current = queue.captureDeparture();
+      expect(queue.state().jobs.map(job => job.phase)).toEqual(["acknowledged"]);
+      expect(current()).toBe(true);
+      cleaning.resolve(); await flushPromises();
+      expect(queue.state().jobs).toEqual([]);
+      expect(current()).toBe(true);
+      queue.submit(snapshot("newer"));
+      expect(current()).toBe(false);
+    } finally { cleaning.resolve(); }
+  });
   it("records a receipt without making its missing private body the next save base", async () => {
     const releaseSend = vi.fn();
     const { queue, sent, adapters } = fixture({ releaseSend });
@@ -59,7 +75,7 @@ describe("per-note save FIFO", () => {
   });
   it.each(["preparing", "sending"])("only the current authentication rejection can resume its retained job (%s)", async phase => {
     let rejected = false;
-    const auth = { response: { status: 401, data: { detail: "Invalid authentication credentials" } } };
+    const auth = { response: { status: 401, data: { code: "credentials_refused" } } };
     const { queue, sent } = fixture({ prepare: () => {
       if (phase === "preparing" && !rejected) { rejected = true; throw auth; }
       return { fileRefs: "none" };
@@ -79,7 +95,7 @@ describe("per-note save FIFO", () => {
   it("an authentication answer after the observation deadline cannot authorize replay", async () => {
     vi.useFakeTimers(); const { queue, sent } = fixture({ observationMs: 10 });
     queue.submit(snapshot("A")); await vi.advanceTimersByTimeAsync(0); await vi.advanceTimersByTimeAsync(10);
-    sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await vi.advanceTimersByTimeAsync(0);
+    sent[0].reject({ response: { status: 401, data: { code: "credentials_refused" } } }); await vi.advanceTimersByTimeAsync(0);
     expect(queue.state().failure.authenticationRequired).toBe(false);
     expect(queue.resumeAfterAuthentication(queue.state().failure.serial)).toBe(false); expect(sent).toHaveLength(1);
   });

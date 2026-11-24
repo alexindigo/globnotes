@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { HttpError } from "@pathfinder/pathfinder";
-import { AuthType } from "../server/config.ts";
 import { brandBlock } from "../server/brand.ts";
+import { publicProvenance } from "../server/config/projection.ts";
 import { AccountRepository } from "../server/auth/accounts.ts";
 import {
   InstanceSessions,
@@ -21,12 +21,51 @@ import { withIdentityComposition } from "./helpers/identity_scope.ts";
 import { resetFixturePassword } from "./helpers/account_preparation.ts";
 import { identityFixture, VAULT_A } from "./helpers/identity.ts";
 import { fixturePage } from "./helpers/plugin_fixture.ts";
+import { PluginContractError } from "../server/plugins/contracts.ts";
 
 const NEXT_UPDATE = "00000000-0000-4000-8000-000000000016";
 type Scope = Parameters<Parameters<typeof withIdentityComposition>[0]>[0];
 const json = async (response: Promise<Response>) =>
   await (await response).json();
 const guestRequest = () => new Request("http://globnotes.test/_/api/status");
+
+Deno.test("identity projections: a disabled browser contribution cannot deliver its prepared settings to an admitted reader", () =>
+  withIdentityComposition(async (f) => {
+    f.policy("view");
+    const { manager, data } = f.operations;
+    const get = () =>
+      f.composition.responses.pluginSettings(
+        f.request(),
+        data,
+        "projection",
+        fixturePage.id,
+      );
+    assertEquals(
+      (await json(get())).values,
+      Object.fromEntries(
+        fixturePage.fields.map(({ key, default: value }) => [key, value]),
+      ),
+    );
+    const prepared = await get();
+    const lease = await f.composition.auth.readLease(f.request());
+    await manager.policy.setEnabled(
+      "projection",
+      false,
+      (await manager.policy.read()).metadata,
+    );
+    lease.assertCurrent();
+    const error = await assertRejects(
+      () => prepared.json(),
+      PluginContractError,
+      "Plugin browser contribution changed.",
+    );
+    assertEquals([error.status, error.code], [
+      409,
+      "plugin_settings_source_conflict",
+    ]);
+    const refused = await assertRejects(get, HttpError, "HTTP 403");
+    assertEquals(refused.status, 403);
+  }, { browser: true }));
 
 function expectedStatus(f: Scope, capabilities: {
   canRead: boolean;
@@ -80,6 +119,7 @@ Deno.test("identity projections: View config and catalog are allowlisted reader 
       quickAccessSort: config.quickAccessSort,
       quickAccessLimit: config.quickAccessLimit,
       brand: JSON.parse(JSON.stringify(brandBlock(config))),
+      provenance: publicProvenance(config),
     });
     assertEquals(text.includes(f.token.access_token), false);
     const [listed] = f.operations.manager.listPlugins();
@@ -290,8 +330,6 @@ Deno.test("identity projections: an instance admission never gains vault fields 
 
 Deno.test("identity composition: View and None callers do not retire approved background service authority", () =>
   withIdentityComposition(async (f) => {
-    // The explicit instance service input supersedes the legacy mode bridge.
-    f.operations.config.authType = AuthType.READ_ONLY;
     const outcomes = [];
     for (const level of ["view", "none"] as const) {
       f.policy(level);
@@ -357,7 +395,6 @@ Deno.test("identity composition: a borrowed lifecycle must use its instance's re
     };
     for (
       const lifecycle of [
-        new PluginLifecycle(config),
         new PluginLifecycle(
           config,
           identityServiceEligibility(

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-export const operation = "manageVault";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
-import { updateAccess } from "@server/auth/access.ts";
-import { settingsWriteGuard } from "@server/auth/middleware.ts";
-import { readRequestJson } from "@server/auth/request_json.ts";
-export default async function (request: PathfinderRequest) {
-  const guard = await settingsWriteGuard(request._raw);
-  return await updateAccess(
-    request._raw,
-    await readRequestJson(request.body),
-    guard,
-  );
-}
+import { vaultAccessHandlers } from "@server/auth/access.ts";
+import { identityHttp, ownOutcomeResponse } from "@server/auth/http_policy.ts";
+import { state } from "@server/state.ts";
+export const operation = "manageVault";
+export default identityHttp(async (request: PathfinderRequest) => {
+  const identity = state.identity!;
+  const response = await vaultAccessHandlers(
+    identity.access,
+    identity.composition.auth.principal,
+  ).put(request._raw);
+  return response.ok ? ownOutcomeResponse(response) : response;
+});

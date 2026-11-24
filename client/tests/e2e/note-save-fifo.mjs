@@ -5,7 +5,7 @@ import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { bootServer, parseArguments } from "./harness-helpers.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
-import { SignJWT } from "jose";
+import { signInNative, openNativeSettings } from "./settings-access-native.mjs";
 
 let options;
 try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -29,14 +29,12 @@ async function setup(label, { password = false, create = false } = {}) {
   const vault = await Deno.makeTempDir({ prefix: `fifo-${label}-vault-` });
   const state = await metadataDirectory({ prefix: `fifo-${label}-state-` });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
-  const secret = crypto.randomUUID();
   const scenario = nativeAccountScenario(password ? { account: { login: "fifo-user", password: "fifo-secret" } } : {});
-  const fixtureInput = await nativeFixtureInput(scenario, {}, { signingKey: password ? secret : undefined });
+  const fixtureInput = await nativeFixtureInput(scenario);
   await Deno.mkdir(`${state}/plugins/fifo-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/manifest.json`, JSON.stringify({ id: "fifo-guard", runtime: { server: "service.js" }, hooks: ["pre-save"] }));
   await Deno.writeTextFile(`${state}/plugins/fifo-guard/service.js`, "export function activate(ctx) { ctx.hooks.on('pre-save', fact => (fact.proposed?.content ?? '').includes('FIFO-GUARD') ? {cancel:true,reason:'FIFO guard protection'} : {cancel:false}); }");
-  const token = password ? await new SignJWT({ sub: "fifo-user" }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  const server = await bootServer(vault, state, { ...fixtureInput, env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const server = await bootServer(vault, state, { ...fixtureInput, env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory });
   current = { label, directory, vault, state, server, records: [], baseUrl: server.baseUrl };
   owned.push(current);
   const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) }); current.session = session;
@@ -44,10 +42,7 @@ async function setup(label, { password = false, create = false } = {}) {
   const baseUrl = server.baseUrl;
   Object.assign(current, { gate, records: gate.records, baseUrl, maxActive: gate.maxActive });
   await session.goto(`${baseUrl}/${create ? "_/new" : "NoteA"}`);
-  if (password) {
-    await session.poll("!!document.querySelector('#username')");
-    await session.click("#username"); await session.type("fifo-user"); await session.click("#password"); await session.type("fifo-secret"); await session.button("Log In");
-  }
+  if (password) await signInNative(session, server, { login: "fifo-user", password: "fifo-secret" }, { returnPath: "/NoteA" });
   await session.poll(create ? "!!document.querySelector('.cm-content')" : "!!document.querySelector('.toast-viewer')");
   if (!create) { await session.button("Edit", ".content-column"); await session.button("Source", ".content-column"); }
   if (create) {
@@ -173,19 +168,20 @@ try {
   }
   for (const action of ["logout", "finish"]) {
     await setup(`pending-${action}`, { password: true }); await text("FIFO-pending-A"); await save(); await request(0);
-    await current.session.evaluate("window.__fifoToken = sessionStorage.getItem('token'); true");
-    await current.session.click('[title="Open sidebar"]'); await current.session.poll("!!document.querySelector('[aria-label=Settings]')"); await current.session.click('[aria-label="Settings"]'); await current.session.button(action === "logout" ? "Account" : "Access");
+    await current.session.evaluate("window.__fifoToken = sessionStorage.getItem('globnotes:session:root'); true");
+    await openNativeSettings(current.session, "core:account");
     if (action === "logout") await current.session.button("Log out");
     else {
-      await waitForAccessSummary(current.session); await current.session.button("Change access…"); await current.session.poll("!!document.querySelector('#access-current-password') && document.querySelector('#setup-mode-read_only')?.disabled===false");
-      await current.session.click("#access-current-password"); await current.session.type("fifo-secret");
-      await current.session.click("#setup-mode-read_only"); await current.session.button("Save access settings");
+      await current.session.poll("!!document.querySelector('#account-current-password')");
+      for(const [selector,value] of [['#account-current-password','fifo-secret'],['#account-new-password','fifo-private'],['#account-confirm-password','fifo-private']]){await current.session.click(selector);await current.session.type(value);}
+      await current.session.button('Change password');
     }
-    assert(await current.session.evaluate("sessionStorage.getItem('token') === window.__fifoToken && !!document.querySelector('.cm-content')"), "Pending handoff revoked credentials/editor");
+    assert(await current.session.evaluate("sessionStorage.getItem('globnotes:session:root') === window.__fifoToken && !!document.querySelector('.cm-content')"), "Pending handoff revoked credentials/editor");
     await release(0);
-    await current.session.poll(action === "logout" ? "!!document.querySelector('#username') && sessionStorage.getItem('token') === null" : "!document.querySelector('#setup-title') && location.pathname === '/'");
+    if(action==='finish'){await current.session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Change password and log out?')");await current.session.button('Change and log out','[data-modal-top=true]');}
+    await current.session.poll("!!document.querySelector('#identity-login-name') && sessionStorage.getItem('globnotes:session:root') === null");
     const disk = await Deno.readTextFile(`${current.vault}/NoteA.md`); assert(disk.includes("FIFO-pending-A"), "Handoff did not wait for acknowledged disk content");
-    if (action === "finish") assert(JSON.parse(await Deno.readTextFile(`${current.state}/config.json`)).auth_type === "read_only", "Finish did not persist its approved auth transition");
+    if(action==='finish'){const response=await fetch(current.server.baseUrl+'/_/api/token',{method:'POST',body:JSON.stringify({username:'fifo-user',password:'fifo-private'})});assert(response.status===200,'Credential transition persisted only after save');await response.body?.cancel();}
     await finishCase();
   }
   console.log("NOTE SAVE FIFO OK");
@@ -199,5 +195,4 @@ finally {
   ]) });
 }
 if (failure) throw failure;
-import { waitForAccessSummary } from './settings-access-native.mjs';
 import { metadataDirectory } from "./config-fixture.mjs";

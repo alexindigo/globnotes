@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assertEquals } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
+import { createUuid } from "../shared/uuid.ts";
 
 /** Fresh metadata preparation must not look like out-of-band configuration edits. */
 Deno.test("config bootstrap: first branding save after fresh setup retains valid parent binding", async () => {
@@ -12,14 +13,20 @@ Deno.test("config bootstrap: first branding save after fresh setup retains valid
     const setup = await fetch(`${server.baseUrl}/_/api/setup`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "none", readOnlySettings: false }),
+      body: JSON.stringify({
+        username: "alice",
+        password: "password",
+        everybody: "edit",
+        updateId: createUuid(),
+      }),
     });
     assertEquals(setup.status, 200);
-    await setup.body?.cancel();
+    const { access_token } = await setup.json();
     const form = new FormData();
     form.append("name", "First saved brand");
     const response = await fetch(`${server.baseUrl}/_/api/brand`, {
       method: "POST",
+      headers: { authorization: `Bearer ${access_token}` },
       body: form,
     });
     const body = await response.json();

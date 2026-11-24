@@ -15,6 +15,7 @@ import type { PluginRuntime } from "../server/plugins/runtime.ts";
 import { state } from "../server/state.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 import {
   done,
   failed,
@@ -458,6 +459,7 @@ async function endpointFixture(prefix = "", invalid?: "grammar" | "shape") {
     GLOBNOTES__SERVER_PATHPREFIX: prefix,
   });
   const base = `${server.baseUrl}${prefix}`;
+  const admin = await fixtureAdmin(server, prefix);
   type Entry = { id: string; status: string; diagnostics: unknown[] };
   let current: Entry;
   try {
@@ -466,7 +468,7 @@ async function endpointFixture(prefix = "", invalid?: "grammar" | "shape") {
     // other terminal state fails at once; both states are always reported.
     const expected = invalid ? "failed" : "ready";
     current = await waitUntil(async (signal) => {
-      const catalog = await (await fetch(`${base}/_/api/plugin-host`, {
+      const catalog = await (await admin.fetch(`${base}/_/api/plugin-host`, {
         signal,
       })).json();
       const find = (id: string) =>

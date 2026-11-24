@@ -11,7 +11,7 @@ import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import * as path from "@std/path";
-import { AuthType, GlobalConfig } from "./helpers/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import {
@@ -555,7 +555,7 @@ Deno.test("plugins: pluginRpc resolves against real state", async () => {
     assertEquals(hits.length, 1);
     assertEquals(hits[0].path, "hello");
 
-    assertEquals(config.authType, AuthType.NONE);
+    assertEquals(config.fixtureIdentity?.everybody, "edit");
   } finally {
     await Deno.remove(vault, { recursive: true });
   }

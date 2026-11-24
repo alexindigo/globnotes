@@ -262,11 +262,12 @@ export const SECRET_OWNERSHIP: OwnershipRules = {
     ...PUBLICATION_OWNERSHIP.modules,
     [SECRET_CODEC]: [
       "server/auth/accounts.ts",
-      "server/auth/local.ts",
       "server/auth/internal/account_credentials.ts",
       "tests/credential_proof_test.ts",
       "tests/credential_secret_test.ts",
       "tests/identity_totp_test.ts",
+      "tests/totp_test.ts",
+      "tests/native_totp_fixture_test.ts",
       "server/auth/totp_enrolment.ts",
       "tests/helpers/credential_commands.ts",
       "server/auth/internal/account_record.ts",

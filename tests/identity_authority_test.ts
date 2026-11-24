@@ -45,11 +45,10 @@ import {
   InstanceSessions,
   SessionRepository,
 } from "../server/auth/sessions.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import { VaultConfigStore } from "../server/config/vault.ts";
 import { BoundFileStore } from "../server/config/file_store.ts";
-import { GlobalConfig } from "./helpers/config.ts";
+import { fixtureLifecycle, GlobalConfig } from "./helpers/config.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import {
   identityFixture,
@@ -393,7 +392,7 @@ async function scope(root: string, owner: FixtureScope) {
     fixtureStatePath: metadata,
     fixtureScenario: publicScenario(),
   }));
-  const lifecycle = new PluginLifecycle(config);
+  const lifecycle = fixtureLifecycle(config);
   const acl = new AclRepository(metadata, VAULT_A, { accounts: base.accounts });
   acl.initializeForCreator(base.alice, "none");
   const target: AuthorityVault = { identity: {}, id: VAULT_A, acl, lifecycle };
@@ -843,7 +842,7 @@ function replaceP05Owner(
       });
       break;
     case "lifecycle-owner":
-      f.select({ ...f.target, lifecycle: new PluginLifecycle(f.config) });
+      f.select({ ...f.target, lifecycle: fixtureLifecycle(f.config) });
       break;
     case "epoch":
       f.lifecycle.bumpEpoch();

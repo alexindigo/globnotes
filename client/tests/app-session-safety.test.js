@@ -1,38 +1,47 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { watch } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { createMemoryHistory, createRouter } from "vue-router";
+import { createMemoryHistory, createRouter, isNavigationFailure } from "vue-router";
 import App from "../App.vue";
 import NoteView from "../views/Note.vue";
-import { useGlobalStore } from "../globalStore.js";
+import LogIn from "../views/LogIn.vue";
+import Setup from "../views/Setup.vue";
 import { hasUnsavedWork } from "../sessionActions.js";
 import { dispatchAction } from "../keybindings/dispatcher.js";
-import { publish, TOPICS } from "../bus/index.js";
+import { publish, subscribe, TOPICS } from "../bus/index.js";
 import { getStoredToken, storeToken } from "../tokenStorage.js";
-import { getConfig, updateNote, resetSetup, postSetup, putAccessSettings, postAccessTotpEnrolment, getPluginPermissions, getPluginPermissionRequests, decidePluginPermissionRequest, putPluginEnabled, getPluginSettings, putPluginSettings } from "../api.js";
-import { pluginCatalog } from "../pluginRuntime.js";
+import { getConfig, getToken, updateNote, postIdentitySetup, putIdentityAccess, patchOwnAccount, getOwnAccount, postAccountTotpEnrolment, getIdentityAccess, getPluginHostCatalog, getPluginPermissions, getPluginPermissionRequests, decidePluginPermissionRequest, putPluginEnabled, getPluginSettings, putPluginSettings } from "../api.js";
+import { pluginCatalog, refreshPluginRuntimeCatalog } from "../pluginRuntime.js";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import SettingsModal from "../components/SettingsModal.vue";
+import { IDENTITY_APPLICATION } from "../identityApplication.js";
+import { reauthenticationRequest } from "../reauthentication.js";
+import { accountProjection, identityFixtureIO, scopedDraftKey } from "./helpers/account-projection.js";
 
-const state = vi.hoisted(() => ({ router: null }));
-vi.mock("../router.js", () => ({ default: {
+const state = vi.hoisted(() => ({ router: null, http: null }));
+vi.mock("../router.js", () => ({ bindIdentityRouteSession: () => () => {}, default: {
   get currentRoute() { return state.router.currentRoute; },
   get options() { return state.router.options; },
   push(...args) { return state.router.push(...args); },
   replace(...args) { return state.router.replace(...args); },
 } }));
 vi.mock("primevue/usetoast", () => ({ useToast: () => ({ add: vi.fn() }) }));
-vi.mock("../pluginRuntime.js", async () => {
-  const { ref } = await import("vue");
-  const pluginCatalog = ref(null);
-  return { pluginCatalog, startPluginRuntime: vi.fn(), stopPluginRuntime: vi.fn(),
-    refreshPluginRuntimeCatalog: vi.fn(async () => ({ status: "accepted", catalog: pluginCatalog.value })),
-    capturePluginCatalogOwnership: vi.fn(() => ({ current: () => true })), acknowledgePluginPolicy: vi.fn(() => true) };
+vi.mock("axios", async importOriginal => {
+  const { default: axios } = await importOriginal();
+  return { default: { ...axios, create: options => axios.create({ ...options,
+    adapter: config => state.http ? state.http(config) : axios.getAdapter(axios.defaults.adapter)(config),
+  }) } };
 });
-vi.mock("../api.js", () => ({
+vi.mock("../api.js", async importOriginal => {
+  const api = await importOriginal();
+  return {
+  ...api,
+  createIdentityApi: options => state.http ? api.createIdentityApi(options) :
+    identityFixtureIO({ getConfig, getToken, getPluginHostCatalog, getNoteIndex: async () => [{ path: "NoteA" }] }),
   getDrivers: vi.fn(async () => ({revision:0,instances:[],plugins:[]})),
   getConflicts: vi.fn(async () => ({ revision: 0, total: 0, conflicts: [] })),
-  getConfig: vi.fn(), getNote: vi.fn(async path => ({ path, content: "Seed\n" })),
+  getConfig: vi.fn(), getToken: vi.fn(), getNote: vi.fn(async path => ({ path, content: "Seed\n" })),
   getNoteIndex: vi.fn(async () => [{ path: "NoteA" }]), getPlugins: vi.fn(async () => []),
   getRenderedHtml: vi.fn(async () => "<p>Seed</p>"), getTree: vi.fn(async () => []),
   getIndexStatus: vi.fn(async () => ({ syncing: false })), getNotes: vi.fn(async () => []),
@@ -41,45 +50,85 @@ vi.mock("../api.js", () => ({
   getPluginHostCatalog: vi.fn(async () => ({ plugins: [] })), getPluginSettings: vi.fn(),
   putPluginSettings: vi.fn(), putPluginPolicy: vi.fn(), putPluginEnabled: vi.fn(),
   getPluginPermissions: vi.fn(), putPluginPermissions: vi.fn(), getPluginPermissionRequests: vi.fn(async () => []), decidePluginPermissionRequest: vi.fn(),
-  invokePluginCommand: vi.fn(), postSetup: vi.fn(), resetSetup: vi.fn(), postTotpEnrolment: vi.fn(), postBrand: vi.fn(),
-  getAccessSettings: vi.fn(async () => ({ mode: "none", username: "", totpEnabled: false, settingsWritable: true, revision: 0, signature: "initial", pinned: {} })),
-  putAccessSettings: vi.fn(async () => ({ view: { mode: "read_only", settingsWritable: false, revision: 1, pinned: {} }, requiresLogin: false })), postAccessTotpEnrolment: vi.fn(),
-}));
+  invokePluginCommand: vi.fn(), postIdentitySetup: vi.fn(), postBrand: vi.fn(),
+  getOwnAccount: vi.fn(), patchOwnAccount: vi.fn(), postAccountTotpEnrolment: vi.fn(),
+  getIdentityAccess: vi.fn(), putIdentityAccess: vi.fn(),
+  };
+});
 vi.mock("../themes.js", async () => {
   const { ref } = await import("vue");
   return { currentTheme: ref("system"), THEMES: [], themePreviews:()=>[{id:'system',label:'System',nowShowing:'Globnotes Light',pair:[]}], initTheme: vi.fn(), setTheme: vi.fn(), currentThemeLabel: ref("System"), resolvedTheme: ref({}) };
 });
-vi.mock("../brand.js", () => ({ applyBrandToDocument: vi.fn(), currentBrandName: () => "globnotes", brandRevision: { value: 0 } }));
-let wrapper;
-beforeEach(async () => {
+vi.mock("../brand.js", async importOriginal => ({ ...await importOriginal(), applyBrandToDocument: vi.fn() }));
+const accountToken = "session-fixture-token";
+const guestView = () => accountProjection({ guest: true, level: "view" });
+const stubs = { SidebarPanel: true, SyncBanner: true, PrimeToast: true, QuickSwitcher: true, CommandPalette: true };
+let wrapper, app;
+beforeEach(() => {
+  vi.resetAllMocks();
   localStorage.clear();
   sessionStorage.clear();
   document.body.innerHTML = "";
   window.history.replaceState(null, "", "/NoteA");
+  getPluginHostCatalog.mockResolvedValue({ plugins: [] });
+  getPluginPermissionRequests.mockResolvedValue([]);
+  updateNote.mockResolvedValue({ path: "NoteA", content: "Seed\n" });
+  getOwnAccount.mockResolvedValue({ login: "alice", credentialRevision: 1, totpEnabled: false, passwordChangeRequired: false });
+  getIdentityAccess.mockResolvedValue({ vaultId: "fixture", revision: 1, signature: "acl1", everybody: "edit",
+    grants: { alice: "admin" }, named: [{ id: "alice", login: "alice", level: "admin" }], declaredAdmin: { accountId: null, pinned: false } });
+  putIdentityAccess.mockImplementation(async ({ updateId }) => ({ committed: true, updateId }));
+});
+async function mountApp({ projection = accountProjection(), path = "/NoteA" } = {}) {
+  if (projection.principal.kind === "account") storeToken(accountToken, true);
+  getConfig.mockImplementation(async () =>
+    projection.principal.kind === "guest" || getStoredToken() === accountToken ? projection : guestView());
   const pinia = createPinia();
   setActivePinia(pinia);
-  getConfig.mockResolvedValue({ authType: "none", setupRequired: false, brand: {} });
-  pluginCatalog.value = null;
-  getPluginPermissionRequests.mockResolvedValue([]);
-  getPluginPermissions.mockReset();
-  decidePluginPermissionRequest.mockReset();
-  updateNote.mockResolvedValue({ path: "NoteA", content: "Seed\n" });
   state.router = createRouter({ history: createMemoryHistory(), routes: [
     { path: "/", name: "home", component: { template: "<p>Home</p>" } },
-    { path: "/_/login", name: "login", component: { template: "<p>Login</p>" } },
+    { path: "/_/login", name: "login", component: LogIn },
+    { path: "/_/setup", name: "setup", component: Setup },
+    { path: "/_/new", name: "new", component: NoteView },
+    { path: "/_/search", name: "search", component: { template: "<p>Search</p>" } },
+    { path: "/_/conflicts", name: "conflicts", component: { template: "<p>Conflicts</p>" } },
     { path: "/:path(.*)", name: "note", component: NoteView, props: true },
   ] });
-  await state.router.push("/NoteA");
+  await state.router.push(path);
   await state.router.isReady();
   wrapper = mount(App, { attachTo: document.body, global: {
     plugins: [pinia, state.router], directives: { focus: { mounted: el => el.focus() } },
-    stubs: { NavBar: true, SidebarPanel: true, SyncBanner: true, PrimeToast: true, QuickSwitcher: true, CommandPalette: true },
+    stubs,
   } });
+  app = wrapper.vm.$.provides[IDENTITY_APPLICATION];
   await flushPromises();
+}
+afterEach(async () => {
+  wrapper?.unmount(); wrapper = null;
+  if (app) (await app.dispose()).throwIfFailed();
+  app = null;
+  state.http = null;
+  vi.unstubAllGlobals();
 });
-afterEach(() => { wrapper?.unmount(); wrapper = null; pluginCatalog.value = null; vi.clearAllMocks(); });
 const visibleButton = (text, scope = document) => [...scope.querySelectorAll("button")].find(button => button.textContent.trim() === text && button.style.display !== "none");
 const decisionButton = text => visibleButton(text, document.querySelector('[data-modal-top="true"]'));
+async function openSettings(page) { dispatchAction(TOPICS.APP_OPEN_SETTINGS, { page }); await flushPromises(); }
+async function setInput(selector, value) {
+  const field = document.querySelector(selector); expect(field).not.toBeNull();
+  field.value = value; field.dispatchEvent(new Event("input", { bubbles: true })); await flushPromises();
+}
+async function saveGuestView() {
+  const field = document.querySelector("#access-everybody"); expect(field).not.toBeNull();
+  field.value = JSON.stringify("view"); field.dispatchEvent(new Event("change", { bubbles: true })); await flushPromises();
+  visibleButton("Save access").click(); await flushPromises();
+}
+async function publishCatalog(catalog) {
+  getPluginHostCatalog.mockResolvedValue(catalog);
+  expect((await refreshPluginRuntimeCatalog()).status).toBe("accepted");
+  await flushPromises();
+}
+const rootCatalog = () => ({ policy: { revision: 0, signature: "p0", effectiveAutoEnable: true }, plugins: [
+  { id: "inventory", name: "Inventory", enabled: true, runtime: {}, pages: [], blocking: { actions: [] } },
+] });
 async function editImmediately() {
   visibleButton("Edit").click();
   await flushPromises();
@@ -93,20 +142,23 @@ async function editImmediately() {
 }
 
 describe("real App/Note session integration", () => {
-  it("optional wizard open/dismiss preserves the same immediate dirty editor", async () => {
+  it("optional guest sign-in open/dismiss preserves the same immediate dirty editor", async () => {
+    await mountApp({ projection: accountProjection({ guest: true, level: "edit" }) });
     const content = await editImmediately();
-    useGlobalStore().setupWizardRequested = true;
-    await flushPromises();
+    visibleButton("Sign in").click(); await flushPromises();
+    expect(document.querySelector("#identity-login-name")).not.toBeNull();
     expect(document.querySelector(".cm-content")).toBe(content);
     expect(content.textContent).toContain("immediate dirty marker");
-    document.querySelector('[aria-label="Dismiss setup"]').click();
+    document.querySelector('[data-modal-top="true"] [aria-label="Close"]').click();
     await flushPromises();
     expect(document.querySelector(".cm-content")).toBe(content);
     expect(hasUnsavedWork()).toBe(true);
   });
 
   it("a retained resumed draft is dirty before the display debounce", async () => {
-    localStorage.setItem("NoteA", "resumed draft\n");
+    const projection = accountProjection();
+    localStorage.setItem(scopedDraftKey(projection, "NoteA"), JSON.stringify({ value: "resumed draft\n", order: 0 }));
+    await mountApp({ projection });
     visibleButton("Edit").click();
     await flushPromises();
     visibleButton("Resume Draft").click();
@@ -116,6 +168,7 @@ describe("real App/Note session integration", () => {
   });
 
   it("Note teardown removes its participant rather than leaving stale dirty work", async () => {
+    await mountApp();
     await editImmediately();
     expect(hasUnsavedWork()).toBe(true);
     wrapper.unmount();
@@ -124,8 +177,8 @@ describe("real App/Note session integration", () => {
   });
 
   it.each(["Cancel", "Discard", "Save"])("Logout %s resolves immediate typing before clearing credentials", async choice => {
-    useGlobalStore().config.authType = "password";
-    storeToken("session-fixture-token", true);
+    await mountApp();
+    expect(pluginCatalog.value).toEqual({ plugins: [] });
     localStorage.setItem("unrelated-preference", "preserve-me");
     const content = await editImmediately();
     updateNote.mockImplementation(async (path, newPath, text) => {
@@ -138,8 +191,11 @@ describe("real App/Note session integration", () => {
     await flushPromises();
     expect(getStoredToken()).toBe("session-fixture-token");
     expect(document.body.textContent).toContain("Save Changes");
+    const routeResults = [];
+    const stop = state.router.afterEach((to, from, failure) => routeResults.push([from.name, to.name, isNavigationFailure(failure) && failure.type]));
     decisionButton(choice).click();
     await flushPromises();
+    stop();
     if (choice === "Cancel") {
       expect(getStoredToken()).toBe("session-fixture-token");
       expect(document.querySelector(".cm-content")).toBe(content);
@@ -147,6 +203,7 @@ describe("real App/Note session integration", () => {
       expect(state.router.currentRoute.value.name).toBe("note");
     } else {
       expect(getStoredToken()).toBeNull();
+      expect(routeResults).toEqual([["note", "login", false]]);
       expect(state.router.currentRoute.value.name).toBe("login");
     }
     expect(updateNote).toHaveBeenCalledTimes(choice === "Save" ? 1 : 0);
@@ -154,8 +211,7 @@ describe("real App/Note session integration", () => {
   });
 
   it("blocked Logout Save keeps credentials, editor and Settings mounted", async () => {
-    useGlobalStore().config.authType = "password";
-    storeToken("session-fixture-token", true);
+    await mountApp();
     const content = await editImmediately();
     updateNote.mockRejectedValue({ response: { status: 503, data: { code: "plugin_guard_failed" } } });
     dispatchAction(TOPICS.APP_OPEN_SETTINGS, { page: "core:account" });
@@ -170,45 +226,145 @@ describe("real App/Note session integration", () => {
     expect(hasUnsavedWork()).toBe(true);
   });
 
-  it("one Escape cancels the Note decision without dismissing the pending wizard", async () => {
+  it("one Escape cancels the Note decision without dismissing the pending Access choices", async () => {
+    await mountApp();
     const content = await editImmediately();
-    useGlobalStore().setupWizardRequested = true;
-    await flushPromises();
-    document.querySelector("#setup-mode-read_only").click();
-    await flushPromises();
-    document.querySelector("button[type=submit]").click();
-    await flushPromises();
+    await openSettings("core:access");
+    await saveGuestView();
     expect(document.body.textContent).toContain("Save Changes");
     const prompt = document.querySelector('[data-modal-top="true"]');
     expect(prompt.closest("[inert]")).toBeNull();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
     await flushPromises();
-    expect(document.querySelector("#setup-title")).not.toBeNull();
+    expect(document.querySelector("#settings-modal-title")).not.toBeNull();
+    expect(document.querySelector("#access-everybody").selectedOptions[0].textContent).toBe("View");
     expect(document.querySelector(".cm-content")).toBe(content);
-    expect(resetSetup).not.toHaveBeenCalled();
-    expect(postSetup).not.toHaveBeenCalled();
+    expect(postIdentitySetup).not.toHaveBeenCalled();
+    expect(putIdentityAccess).not.toHaveBeenCalled();
   });
 
   it("Logout cannot clear credentials while an already-admitted toolbar Save is unresolved", async () => {
-    useGlobalStore().config.authType = "password";
-    storeToken("session-fixture-token", true);
+    await mountApp();
     const content = await editImmediately();
-    updateNote.mockImplementation(() => new Promise(() => {}));
-    visibleButton("Save").click();
-    await flushPromises();
-    expect(updateNote).toHaveBeenCalledTimes(1);
-    dispatchAction(TOPICS.APP_OPEN_SETTINGS, { page: "core:account" });
-    await flushPromises();
-    visibleButton("Log out").click();
-    await flushPromises();
-    // The write has neither succeeded nor failed yet. Revoking its current
-    // credentials or destroying its buffer here cannot be a safe handoff.
-    const liveEditor = document.querySelector(".cm-content");
-    expect({ token: getStoredToken(), sameEditor: liveEditor === content, bufferVisible: liveEditor?.textContent.includes("immediate dirty marker") ?? false, route: state.router.currentRoute.value.name }).toEqual({ token: "session-fixture-token", sameEditor: true, bufferVisible: true, route: "note" });
+    let acknowledge;
+    updateNote.mockImplementation((_, path, text) => new Promise(resolve => { acknowledge = () => resolve({ path, content: text }); }));
+    try {
+      visibleButton("Save").click();
+      await flushPromises();
+      expect(updateNote).toHaveBeenCalledTimes(1);
+      await openSettings("core:account");
+      visibleButton("Log out").click();
+      await flushPromises();
+      // The write has neither succeeded nor failed yet. Revoking its current
+      // credentials or destroying its buffer here cannot be a safe handoff.
+      const liveEditor = document.querySelector(".cm-content");
+      expect({ token: getStoredToken(), sameEditor: liveEditor === content, bufferVisible: liveEditor?.textContent.includes("immediate dirty marker") ?? false, route: state.router.currentRoute.value.name }).toEqual({ token: accountToken, sameEditor: true, bufferVisible: true, route: "note" });
+    } finally { acknowledge?.(); await flushPromises(); }
+  });
+
+  it("stream retirement before the Save refusal still retries only that Save with its original base after sign-in", async () => {
+    const original = accountProjection(), draft = scopedDraftKey(original, "NoteA"), restoredToken = "restored-token";
+    const restored = accountProjection({ generation: "restored-session" });
+    const refusal = { response: { status: 401, data: { code: "credentials_refused" } } };
+    const wire = Promise.withResolvers(), wireEntered = Promise.withResolvers();
+    const config = Promise.withResolvers(), configEntered = Promise.withResolvers();
+    const stream = Promise.withResolvers(), opened = Promise.withResolvers(), closed = Promise.withResolvers();
+    const saved = Promise.withResolvers(), writes = [], proofs = [];
+    let revoked = false;
+    // Keep Axios requests, authenticated SSE close, and all session/recovery
+    // consumers real. Only model the server's response/stream boundaries.
+    const { updateNote: sendSave } = await vi.importActual("../api.js");
+    updateNote.mockImplementation(sendSave);
+    state.http = async request => {
+      const bearer = request.headers.get("Authorization");
+      switch (`${request.method} ${request.url}`) {
+        case "get config":
+          if (bearer === `Bearer ${restoredToken}`) return { data: restored };
+          if (!revoked && bearer === `Bearer ${accountToken}`) return { data: original };
+          configEntered.resolve();
+          return config.promise;
+        case "get plugin-host": return { data: { plugins: [] } };
+        case "get note-index": return { data: [{ path: "NoteA" }] };
+        case "post token": {
+          const proof = JSON.parse(request.data);
+          proofs.push(proof);
+          if (proof.password !== "valid") throw refusal;
+          return { data: { access_token: restoredToken } };
+        }
+        case "patch notes/NoteA": {
+          const body = JSON.parse(request.data);
+          writes.push({ bearer, body, params: request.params });
+          if (writes.length === 1) { wireEntered.resolve(); return wire.promise; }
+          return { data: { path: body.newPath, content: body.newContent } };
+        }
+        default: throw Error(`Unexpected request: ${request.method} ${request.url}`);
+      }
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url, { headers }) => {
+      if (revoked && headers.authorization === `Bearer ${accountToken}`) return new Response(null, { status: 401 });
+      return new Response(new ReadableStream({
+      start(controller) {
+        if (url.startsWith("/_/api/changes?") && headers.authorization === `Bearer ${accountToken}`) stream.resolve(controller);
+      },
+      }), { headers: { "content-type": "text/event-stream" } });
+    }));
+    const stop = watch(reauthenticationRequest, request => (request ? opened : closed).resolve());
+    const off = subscribe(TOPICS.NOTE_SAVE, saved.resolve);
+
+    async function submit(password) {
+      const form = document.querySelector("[data-reauthentication] form");
+      expect(form).not.toBeNull();
+      await setInput("#identity-login-name", original.principal.login);
+      await setInput("#identity-login-password", password);
+      form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+      await flushPromises();
+    }
+    try {
+      await mountApp();
+      const content = await editImmediately();
+      const captured = { newPath: "NoteA", newContent: "immediate dirty marker\n", baseContent: "Seed\n" };
+      const write = token => ({ bearer: `Bearer ${token}`, body: captured, params: { file_refs: "none" } });
+      visibleButton("Save").click();
+      await wireEntered.promise;
+      expect(writes).toEqual([write(accountToken)]);
+      revoked = true;
+      (await stream.promise).close();
+      await configEntered.promise;
+      expect(app.session.key()).toBeNull();
+      wire.reject(refusal);
+      await flushPromises();
+      expect(document.querySelector("[data-note-save-status]").textContent).toContain("Sign in to finish saving");
+      config.reject(refusal);
+      await opened.promise;
+      await submit("wrong");
+      expect({ proofs, departure: document.body.textContent.includes("Save Changes"), writes }).toEqual({
+        proofs: [{ username: "alice", password: "wrong" }], departure: false, writes: [write(accountToken)],
+      });
+      expect(document.querySelector(".cm-content")).toBe(content);
+      expect(content.textContent).toContain("immediate dirty marker");
+      expect(JSON.parse(localStorage.getItem(draft))?.value).toBe("immediate dirty marker\n");
+      expect(state.router.currentRoute.value.path).toBe("/NoteA");
+      await submit("valid");
+      expect(proofs).toEqual([{ username: "alice", password: "wrong" }, { username: "alice", password: "valid" }]);
+      expect(getStoredToken()).toBe(restoredToken);
+      await closed.promise; await flushPromises();
+      expect(writes).toEqual([write(accountToken), write(restoredToken)]);
+      expect(await saved.promise).toEqual({ path: "NoteA" });
+      expect(document.querySelector("[data-reauthentication]")).toBeNull();
+      expect(document.body.textContent).not.toContain("Save Changes");
+      expect(document.querySelector(".cm-content")).toBe(content);
+      expect(state.router.currentRoute.value.path).toBe("/NoteA");
+      expect(hasUnsavedWork()).toBe(false);
+      expect(localStorage.getItem(draft)).toBeNull();
+    } finally {
+      stop(); off();
+      wire.resolve(); config.resolve();
+      visibleButton("Cancel", document.querySelector("[data-reauthentication]") ?? document.createElement("div"))?.click();
+    }
   });
 
   it("Logout waits for A/B and then asks about newer unsent D", async () => {
-    useGlobalStore().config.authType = "password"; storeToken("session-fixture-token", true);
+    await mountApp();
     await editImmediately();
     const pending = [];
     updateNote.mockImplementation((path, target, text) => new Promise(resolve => pending.push({ resolve, text, target })));
@@ -225,7 +381,7 @@ describe("real App/Note session integration", () => {
   });
 
   it("a failure encountered by Logout aborts, but a later known-settled attempt permits disclosed Discard", async () => {
-    useGlobalStore().config.authType = "password"; storeToken("session-fixture-token", true);
+    await mountApp();
     await editImmediately(); let reject;
     updateNote.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
     visibleButton("Save").click(); await flushPromises();
@@ -239,75 +395,98 @@ describe("real App/Note session integration", () => {
   });
 
   it("an unknown dispatched outcome never permits Logout or a Discard shortcut", async () => {
-    useGlobalStore().config.authType = "password"; storeToken("session-fixture-token", true);
+    await mountApp();
     await editImmediately(); updateNote.mockRejectedValue(new Error("transport lost"));
     visibleButton("Save").click(); await flushPromises();
     dispatchAction(TOPICS.APP_OPEN_SETTINGS, { page: "core:account" }); await flushPromises(); visibleButton("Log out").click(); await flushPromises();
     expect(getStoredToken()).toBe("session-fixture-token"); expect(document.body.textContent).not.toContain("Save Changes"); expect(document.querySelector(".cm-content")).not.toBeNull();
   });
 
-  it("Access Finish keeps the in-place update pending until the foreground Save succeeds", async () => {
+  it("Save access keeps the in-place update pending until the foreground Save succeeds", async () => {
+    await mountApp();
     await editImmediately(); let acknowledge;
     updateNote.mockImplementation((path, target, text) => new Promise(resolve => { acknowledge = () => resolve({ path: target, content: text }); }));
     visibleButton("Save").click(); await flushPromises();
-    useGlobalStore().setupWizardRequested = true; await flushPromises();
-    document.querySelector("#setup-mode-read_only").click(); await flushPromises(); document.querySelector("button[type=submit]").click(); await flushPromises();
-    expect(resetSetup).not.toHaveBeenCalled(); expect(postSetup).not.toHaveBeenCalled();
-    expect(putAccessSettings).not.toHaveBeenCalled();
+    await openSettings("core:access");
+    await saveGuestView();
+    expect(postIdentitySetup).not.toHaveBeenCalled();
+    expect(putIdentityAccess).not.toHaveBeenCalled();
     acknowledge(); await flushPromises();
-    expect(resetSetup).not.toHaveBeenCalled(); expect(postSetup).not.toHaveBeenCalled();
-    expect(putAccessSettings).toHaveBeenCalledTimes(1);
+    expect(postIdentitySetup).not.toHaveBeenCalled();
+    expect(putIdentityAccess).toHaveBeenCalledExactlyOnceWith({ revision: 1, signature: "acl1", everybody: "view",
+      grants: { alice: "admin" }, updateId: expect.any(String) }, { token: accountToken });
+    expect(document.body.textContent).toContain("Access saved.");
+    expect(state.router.currentRoute.value.name).toBe("note");
   });
   it("direct editor action publication cannot save behind the real Settings dialog", async () => {
+    await mountApp();
     const content=await editImmediately(); dispatchAction(TOPICS.APP_OPEN_SETTINGS,{page:'core:appearance'}); await flushPromises();
     publish(TOPICS.EDITOR_SAVE); await flushPromises();
     expect(updateNote).not.toHaveBeenCalled(); expect(document.querySelector('.cm-content')).toBe(content); expect(content.textContent).toContain('immediate dirty marker');
   });
-  it("a confirmed 2FA receipt switches to the correct login policy without waiting for another config request", async () => {
-    storeToken("obsolete-session-fixture", true); localStorage.setItem("unrelated-preference", "retained");
-    useGlobalStore().setupWizardRequested = true; await flushPromises();
-    document.querySelector("#setup-mode-password").click(); await flushPromises();
-    const input = async (selector, value) => { const field = document.querySelector(selector); field.value = value; field.dispatchEvent(new Event("input", { bubbles: true })); await flushPromises(); };
-    await input("#setup-username", "new-account"); await input("#setup-password", "new-password");
-    postAccessTotpEnrolment.mockResolvedValue({ key: "fixture-new-key", qr: "data:image/png;base64,test", secret: "fixture-secret" });
-    document.querySelector("#setup-totp").click(); await flushPromises();
-    await input("#setup-totp-code", "123456");
-    putAccessSettings.mockResolvedValueOnce({ view: { mode: "password", username: "new-account", totpEnabled: true, settingsWritable: true, revision: 1, pinned: {} }, requiresLogin: true });
-    getConfig.mockImplementationOnce(() => new Promise(() => {}));
-    document.querySelector('[aria-labelledby="setup-title"] form').dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); await flushPromises();
-    expect(useGlobalStore().config.authType).toBe("totp");
-    expect(state.router.currentRoute.value.name).toBe("login"); expect(getStoredToken()).toBeNull();
-    expect(localStorage.getItem("unrelated-preference")).toBe("retained");
+  it("a confirmed change of authenticator signs out before config replies; the next sign-in follows the account challenge", async () => {
+    await mountApp();
+    localStorage.setItem("unrelated-preference", "retained");
+    await openSettings("core:account");
+    postAccountTotpEnrolment.mockResolvedValue({ key: "fixture-new-key", qr: "data:image/png;base64,test", secret: "fixture-secret" });
+    visibleButton("Add authenticator").click(); await flushPromises();
+    await setInput("#account-dialog-current-password", "current-password");
+    await setInput("#account-new-code", "123456");
+    document.querySelector('[data-modal-top="true"] form').dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flushPromises();
+    patchOwnAccount.mockImplementation(async ({ updateId }) => ({ requiresLogin: true, updateId }));
+    let reply;
+    const pendingConfig = new Promise(resolve => { reply = resolve; });
+    getConfig.mockImplementation(() => pendingConfig);
+    try {
+      decisionButton("Change and log out").click(); await flushPromises();
+      expect(patchOwnAccount).toHaveBeenCalledExactlyOnceWith({ revision: 1, updateId: expect.any(String), currentPassword: "current-password",
+        totp: { enabled: true, key: "fixture-new-key", code: "123456" } }, { token: accountToken });
+      expect(state.router.currentRoute.value.name).toBe("login"); expect(getStoredToken()).toBeNull();
+      getToken.mockRejectedValueOnce({ response: { status: 401, data: { code: "authenticator_required" } } });
+      await setInput("#identity-login-name", "alice"); await setInput("#identity-login-password", "current-password");
+      visibleButton("Continue").click(); await flushPromises();
+      expect(getToken).toHaveBeenCalledExactlyOnceWith("alice", "current-password", "");
+      expect(document.querySelector("#identity-login-code")).not.toBeNull();
+      expect(localStorage.getItem("unrelated-preference")).toBe("retained");
+    } finally { reply(guestView()); await flushPromises(); }
   });
   it("review repairs: R13 an uncertain inventory response aborts real App Logout and preserves credentials after late success", async () => {
+    await mountApp();
     vi.useFakeTimers(); let resolve;
-    useGlobalStore().config.authType = "password"; storeToken("inventory-held-session", true);
-    pluginCatalog.value = { policy: { revision: 0, signature: "p0", effectiveAutoEnable: true }, plugins: [{ id: "inventory", name: "Inventory", enabled: true, runtime: {}, pages: [], blocking: { actions: [] } }] };
+    await publishCatalog(rootCatalog());
     putPluginEnabled.mockImplementation(() => new Promise(done => { resolve = done; }));
     try {
       dispatchAction(TOPICS.APP_OPEN_SETTINGS, { page: "core:plugins" }); await flushPromises();
       document.querySelector('[data-plugin-inventory-id="inventory"] button').click(); await flushPromises();
       wrapper.findComponent(SettingsModal).vm.$emit("logout"); await vi.advanceTimersByTimeAsync(5001); await flushPromises();
-      expect(getStoredToken()).toBe("inventory-held-session"); expect(state.router.currentRoute.value.name).toBe("note");
+      expect(getStoredToken()).toBe(accountToken); expect(state.router.currentRoute.value.name).toBe("note");
       expect(document.querySelector('#settings-modal-title')).not.toBeNull();
       resolve({ policy: { revision: 1, signature: "p1" } }); await flushPromises();
-      expect(getStoredToken()).toBe("inventory-held-session"); expect(state.router.currentRoute.value.name).toBe("note");
+      expect(getStoredToken()).toBe(accountToken); expect(state.router.currentRoute.value.name).toBe("note");
       expect(putPluginEnabled).toHaveBeenCalledTimes(1);
     } finally { resolve?.({ policy: { revision: 1, signature: "p1" } }); vi.useRealTimers(); await flushPromises(); }
   });
   it("review repairs: R13 Access submission cannot overtake an inventory wire and late ACK does not resume its failed handoff", async () => {
+    await mountApp();
     vi.useFakeTimers(); let resolve;
-    pluginCatalog.value = { policy: { revision: 0, signature: "p0", effectiveAutoEnable: true }, plugins: [{ id: "inventory", name: "Inventory", enabled: true, runtime: {}, pages: [], blocking: { actions: [] } }] };
+    await publishCatalog(rootCatalog());
     putPluginEnabled.mockImplementation(() => new Promise(done => { resolve = done; }));
     try {
       dispatchAction(TOPICS.APP_OPEN_SETTINGS, { page: "core:plugins" }); await flushPromises();
       document.querySelector('[data-plugin-inventory-id="inventory"] button').click(); await flushPromises();
-      useGlobalStore().setupWizardRequested = true; await flushPromises();
-      document.querySelector('#setup-mode-read_only').click(); await flushPromises();
-      document.querySelector('[aria-labelledby="setup-title"] form').dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      await vi.advanceTimersByTimeAsync(5001); await flushPromises(); expect(putAccessSettings).not.toHaveBeenCalled();
+      expect(putPluginEnabled).toHaveBeenCalledTimes(1);
+      // The current UI will not switch away from a held inventory write. Drive
+      // the same App-owned Access intent directly to exercise its own fence.
+      const { access } = wrapper.findComponent(SettingsModal).props("identityControllers");
+      await access.load(); access.setEverybody("view");
+      expect(access.state.canSave).toBe(true);
+      const submission = access.requestCommit();
+      await vi.advanceTimersByTimeAsync(5001); await flushPromises();
+      expect(await submission).toBe(false); expect(putIdentityAccess).not.toHaveBeenCalled();
       resolve({ policy: { revision: 1, signature: "p1" } }); await flushPromises();
-      expect(putAccessSettings).not.toHaveBeenCalled(); expect(document.querySelector('#setup-title')).not.toBeNull();
+      expect(putIdentityAccess).not.toHaveBeenCalled();
+      expect([access.state.dirty, access.state.everybody, getStoredToken(), state.router.currentRoute.value.name]).toEqual([true, "view", accountToken, "note"]);
       expect(putPluginEnabled).toHaveBeenCalledTimes(1);
     } finally { resolve?.({ policy: { revision: 1, signature: "p1" } }); vi.useRealTimers(); await flushPromises(); }
   });
@@ -323,14 +502,16 @@ describe("real App permission prompt ownership", () => {
       rows: [], pendingRequests: [request], reload: { state: "none", fingerprint: "none" }, runsInBrowser: true, browserComponents: ["runtime"] };
     getPluginPermissions.mockResolvedValue(view);
     getPluginPermissionRequests.mockResolvedValue([request]);
-    pluginCatalog.value = { plugins: [{ id: "p", name: "Prompt plugin", enabled: true, runtime: { server: true, client: true }, permissions: view, pages: [] }] };
-    return { request, view };
+    const catalog = { plugins: [{ id: "p", name: "Prompt plugin", enabled: true, runtime: { server: true }, permissions: view, pages: [] }] };
+    return { request, view, catalog };
   }
 
   it("Escape defers one request, restores the underlying Settings focus and grants nothing", async () => {
+    await mountApp();
     dispatchAction(TOPICS.APP_OPEN_SETTINGS, { page: "core:plugins" }); await flushPromises();
     const opener = document.activeElement;
-    permissionFixture(); await flushPromises();
+    const { catalog } = permissionFixture();
+    await publishCatalog(catalog);
     const prompt = document.querySelector('[data-modal-top="true"]');
     expect(prompt.textContent).toContain("Prompt plugin asks for network access");
     expect(prompt.contains(document.activeElement)).toBe(true);
@@ -342,13 +523,14 @@ describe("real App permission prompt ownership", () => {
     expect(document.querySelector('#permission-request-title')).toBeNull();
     expect(document.activeElement).toBe(opener);
     expect(document.querySelector('#settings-modal-title')).not.toBeNull();
-    pluginCatalog.value = { ...pluginCatalog.value }; await flushPromises();
+    await publishCatalog(catalog);
     expect(document.querySelector('#permission-request-title')).toBeNull();
     expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
   });
 
   it("Deny persists only the request decision and never selects master or grants", async () => {
-    const { view } = permissionFixture(); await flushPromises();
+    await mountApp();
+    const { view, catalog } = permissionFixture(); await publishCatalog(catalog);
     decidePluginPermissionRequest.mockResolvedValue({ view: { ...view, revision: 3, signature: "v3", pendingRequests: [] } });
     getPluginPermissionRequests.mockResolvedValue([]);
     decisionButton("Deny").click(); await flushPromises();
@@ -357,11 +539,13 @@ describe("real App permission prompt ownership", () => {
     expect(document.querySelector('#permission-request-title')).toBeNull();
   });
   it('Needs attention opens a postponed request over an invalid plugin draft without page/tab departure', async () => {
-    permissionFixture(); await flushPromises();
+    await mountApp();
+    const { catalog } = permissionFixture();
+    await publishCatalog(catalog);
     document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',cancelable:true})); await flushPromises();
     const definition=id=>({id,label:id,renderer:{kind:'declarative-v1',version:1},fields:[{key:'limit',label:'Limit',type:'number',min:1,default:5}]});
     getPluginSettings.mockResolvedValue({revision:0,values:{limit:5}});
-    pluginCatalog.value={...pluginCatalog.value,plugins:[{...pluginCatalog.value.plugins[0],pages:[definition('settings'),definition('other')]}]}; await flushPromises();
+    await publishCatalog({ plugins: [{ ...catalog.plugins[0], pages: [definition('settings'), definition('other')] }] });
     dispatchAction(TOPICS.APP_OPEN_SETTINGS,{page:'plugin:p:settings'}); await flushPromises();
     const input=document.querySelector('#settings-field-limit'); expect(input).not.toBeNull();
     input.value=''; input.dispatchEvent(new Event('input',{bubbles:true})); await flushPromises();
@@ -379,23 +563,25 @@ describe("real App permission prompt ownership", () => {
   });
 
   it("source retirement closes an old prompt before any stale decision can be sent", async () => {
-    const { view } = permissionFixture(); await flushPromises();
+    await mountApp();
+    const { view, catalog } = permissionFixture(); await publishCatalog(catalog);
     expect(document.querySelector('#permission-request-title')).not.toBeNull();
     const source = { ...view.source, key: "source-B", revision: 2, codeFingerprint: "code-B" };
     const replacement = { ...view, source, requestSourceKey: source.key, requestSourceRevision: 2, pendingRequests: [] };
     getPluginPermissions.mockResolvedValue(replacement); getPluginPermissionRequests.mockResolvedValue([]);
-    pluginCatalog.value = { plugins: [{ ...pluginCatalog.value.plugins[0], permissions: replacement }] }; await flushPromises();
+    await publishCatalog({ plugins: [{ ...catalog.plugins[0], permissions: replacement }] });
     expect(document.querySelector('#permission-request-title')).toBeNull();
     expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
   });
 
   it("catalogue removal retires a prompt immediately even while pending-request refresh is unresolved", async () => {
-    const { request } = permissionFixture(); await flushPromises();
+    await mountApp();
+    const { request, catalog } = permissionFixture(); await publishCatalog(catalog);
     expect(document.querySelector('#permission-request-title')).not.toBeNull();
     expect(getPluginPermissions).toHaveBeenCalledTimes(1);
     let reply;
     getPluginPermissionRequests.mockImplementation(() => new Promise(resolve => { reply = resolve; }));
-    pluginCatalog.value = { plugins: [] }; await flushPromises();
+    await publishCatalog({ plugins: [] });
     expect(document.querySelector('#permission-request-title')).toBeNull();
     reply([request]); await flushPromises();
     expect(document.querySelector('#permission-request-title')).toBeNull();
@@ -404,28 +590,40 @@ describe("real App permission prompt ownership", () => {
   });
 
   it("initial route readiness re-admits pending review after fencing a load from the previous route", async () => {
-    await state.router.push({ name: "home" }); await flushPromises();
-    const { view } = permissionFixture();
+    await mountApp({ path: "/" });
+    const { view, catalog } = permissionFixture();
     let resolve;
     const earlier = new Promise(done => { resolve = done; });
     getPluginPermissions.mockImplementationOnce(() => earlier).mockResolvedValue(view);
     try {
-      await flushPromises();
+      await publishCatalog(catalog);
       expect(getPluginPermissions).toHaveBeenCalledTimes(1);
       await state.router.push('/NoteA'); await flushPromises();
       expect(document.querySelector('#permission-request-title')).not.toBeNull();
       expect(getPluginPermissions).toHaveBeenCalledTimes(2);
       expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
     } finally { resolve(view); await flushPromises(); }
+    expect(document.querySelector('#permission-request-title')).not.toBeNull();
+    expect(getPluginPermissions).toHaveBeenCalledTimes(2);
   });
 
   it("mandatory setup keeps requests pending and a late request load cannot reopen after login teardown", async () => {
-    useGlobalStore().config.setupRequired = true; await flushPromises();
-    const { view } = permissionFixture(); await flushPromises();
+    const unconfigured = accountProjection({ guest: true, level: "none", setupRequired: true });
+    await mountApp({ projection: unconfigured, path: "/_/setup" });
+    const { view, catalog } = permissionFixture();
+    expect(document.querySelector('#identity-setup-title')).not.toBeNull();
     expect(document.querySelector('#permission-request-title')).toBeNull();
+    expect(getPluginHostCatalog).not.toHaveBeenCalled();
+    expect(getPluginPermissionRequests).not.toHaveBeenCalled();
+    expect(getPluginPermissions).not.toHaveBeenCalled();
+    getPluginHostCatalog.mockResolvedValue(catalog);
     let resolve;
     getPluginPermissions.mockImplementation(() => new Promise(done => { resolve = done; }));
-    useGlobalStore().config.setupRequired = false; await flushPromises();
+    postIdentitySetup.mockResolvedValue({ access_token: accountToken });
+    getConfig.mockImplementation(async () => getStoredToken() === accountToken ? accountProjection() : unconfigured);
+    await setInput("#setup-login", "alice"); await setInput("#setup-password", "setup-account-password");
+    visibleButton("Finish setup").click(); await flushPromises();
+    expect(state.router.currentRoute.value.name).toBe("home");
     expect(resolve).toBeTypeOf("function");
     await state.router.push({ name: "login" }); await flushPromises();
     resolve(view); await flushPromises();
@@ -433,46 +631,52 @@ describe("real App permission prompt ownership", () => {
     expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
   });
 
-  it("read-only review disables every decision and the Plugins notice discloses browser trust", async () => {
-    useGlobalStore().config.authType = "read_only";
-    permissionFixture(); await flushPromises();
-    const prompt = document.querySelector('[data-modal-top="true"]');
-    expect(prompt.textContent).toContain("Read-only session");
-    expect(decisionButton("Deny").disabled).toBe(true);
-    expect(decisionButton("Approve").disabled).toBe(true);
-    expect(prompt.textContent).toContain("Approvals are separate from the plugin’s requested access");
-    decisionButton('Review later').click(); await flushPromises();
-    dispatchAction(TOPICS.APP_OPEN_SETTINGS,{page:'core:plugins'}); await flushPromises();
-    const trust=document.querySelector('[data-plugin-trust-notice]');
-    trust.querySelector('summary').click(); await flushPromises();
-    expect(trust.textContent).toContain('trusted same-origin application code');
+  it("a View guest only receives the reader plugin catalogue and cannot review or decide requests", async () => {
+    const { catalog } = permissionFixture();
+    const [plugin] = catalog.plugins;
+    const reader = { id: plugin.id, name: plugin.name, enabled: true, runtime: { client: false } };
+    getPluginHostCatalog.mockResolvedValue({ plugins: [reader] });
+    await mountApp({ projection: guestView() });
+    expect(pluginCatalog.value.plugins).toEqual([reader]);
+    expect(document.querySelector('#permission-request-title')).toBeNull();
+    await openSettings('core:plugins');
+    expect(document.querySelector('[data-settings-attention]')).toBeNull();
+    expect(visibleButton('Deny')).toBeUndefined();
+    expect(visibleButton('Approve')).toBeUndefined();
+    expect(document.querySelector('[data-settings-nav-id="core:plugins"], [data-plugin-trust-notice]')).toBeNull();
+    expect(getPluginPermissionRequests).not.toHaveBeenCalled();
+    expect(getPluginPermissions).not.toHaveBeenCalled();
     expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
   });
 
   it("review repairs: R26 a late automatic load postpones behind Access and retries only after its dialog closes", async () => {
+    await mountApp();
+    await openSettings("core:access");
     let resolve; const held = new Promise(done => { resolve = done; });
     getPluginPermissions.mockImplementationOnce(() => held);
-    const { view } = permissionFixture(); await flushPromises();
+    const { view, catalog } = permissionFixture(); await publishCatalog(catalog);
     expect(getPluginPermissions).toHaveBeenCalledTimes(1);
-    useGlobalStore().setupWizardRequested = true; await flushPromises();
+    visibleButton("Add existing account").click(); await flushPromises();
+    expect(document.querySelector('[data-modal-top="true"]').textContent).toContain("Add existing account");
     resolve(view); await flushPromises();
     expect(document.querySelector('#permission-request-title')).toBeNull();
-    expect(document.querySelector('[data-modal-top="true"]').textContent).toContain("Access settings");
+    expect(document.querySelector('[data-modal-top="true"]').textContent).toContain("Add existing account");
     expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
-    document.querySelector('[aria-label="Dismiss setup"]').click(); await flushPromises();
+    document.querySelector('[data-modal-top="true"] [aria-label="Close"]').click(); await flushPromises();
     expect(document.querySelector('#permission-request-title')).not.toBeNull();
     expect(getPluginPermissions).toHaveBeenCalledTimes(2); expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
   });
 
   it("review repairs: R26 a real unrelated confirmation owns focus across the held load without deferring the request", async () => {
+    await mountApp();
     let resolve; const held = new Promise(done => { resolve = done; });
     getPluginPermissions.mockImplementationOnce(() => held);
-    const { view } = permissionFixture(); await flushPromises();
+    const { view, catalog } = permissionFixture(); await publishCatalog(catalog);
     // VTU installs a process-global VNode transformer at each mount. Keep the
     // same unrelated chrome stubs when mounting this real second dialog.
     const blocker = mount(ConfirmModal, { props: { modelValue: true, title: "Owned confirmation", message: "Keep this decision first" }, attachTo: document.body,
       global: { directives: { focus: { mounted: el => el.focus() } },
-        stubs: { NavBar: true, SidebarPanel: true, SyncBanner: true, PrimeToast: true, QuickSwitcher: true, CommandPalette: true } } });
+        stubs } });
     try {
       await flushPromises(); const focus = document.activeElement;
       resolve(view); await flushPromises();
@@ -486,11 +690,13 @@ describe("real App permission prompt ownership", () => {
   });
 
   it("review repairs: R26 failed permission load cannot open from cached catalogue state", async () => {
+    await mountApp();
     getPluginPermissions.mockRejectedValueOnce(Error("unavailable permission read"));
-    permissionFixture(); await flushPromises();
+    const { catalog } = permissionFixture();
+    await publishCatalog(catalog);
     expect(document.querySelector('#permission-request-title')).toBeNull();
     expect(decidePluginPermissionRequest).not.toHaveBeenCalled();
-    pluginCatalog.value = { ...pluginCatalog.value }; await flushPromises();
+    await publishCatalog(catalog);
     expect(document.querySelector('#permission-request-title')).not.toBeNull();
     expect(getPluginPermissions).toHaveBeenCalledTimes(2);
   });

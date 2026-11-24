@@ -3,6 +3,7 @@ import { publicScenario } from "./fixture_scenarios.ts";
 import { assert, assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { bootServer } from "./boot.ts";
+import { fixtureAdmin } from "./fixture_http.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
 import { copyRepositorySources } from "./repository_sources.ts";
 
@@ -23,8 +24,9 @@ export async function remotelySaveServerFixture(authorities: string[]) {
   };
   let server = await bootServer(env);
   const packets: string[] = [], logs: string[] = [];
+  let admin = await fixtureAdmin(server);
   async function call(route: string, method = "GET", body?: unknown) {
-    const response = await fetch(`${server.baseUrl}/_/api/${route}`, {
+    const response = await admin.fetch(`${server.baseUrl}/_/api/${route}`, {
       method,
       headers: { "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -132,6 +134,7 @@ export async function remotelySaveServerFixture(authorities: string[]) {
       await server.close();
       logs.push(server.output.stdout, server.output.stderr);
       server = await bootServer(env);
+      admin = await fixtureAdmin(server);
     },
     async close() {
       await server.close();

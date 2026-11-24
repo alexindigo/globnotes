@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isReadonly, reactive, ref } from "vue";
+import { createMemoryHistory, createRouter } from "vue-router";
 import { heldOperation } from "../../tests/helpers/owned_operation.ts";
 import { createIdentityNoteController, createNoteController } from "../noteController.js";
 import { createIdentityAppSession } from "../appSession.js";
@@ -26,10 +27,17 @@ beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks(); updateNote.mockReset(
 afterEach(() => { controllers.splice(0).forEach(controller => controller.dispose()); vi.clearAllTimers(); vi.useRealTimers(); });
 
 function fixture(overrides = {}, contextValues = {}) {
-  const context = reactive({ path: "folder/P", query: {}, authType: "none", notePaths: ["b/B", "a/A", "Root", "b/C"], ...contextValues });
+  const context = reactive({ path: "folder/P", query: {}, capabilities: { canEdit: true }, notePaths: ["b/B", "a/A", "Root", "b/C"], ...contextValues });
   const location = { pathname: "/folder/P", search: "", hash: "" };
-  const router = { options: { history: { base: "" } }, currentRoute: { value: { fullPath: "/folder/P#source" } },
-    push: vi.fn(), replace: vi.fn(async path => { router.currentRoute.value.fullPath = path; }) };
+  let afterEach;
+  const router = { options: { history: { base: "" } }, currentRoute: { value: { fullPath: "/folder/P" } },
+    afterEach: callback => { afterEach = callback; return () => { afterEach = undefined; }; },
+    push: vi.fn(target => {
+      if (typeof target === "string") {
+        router.currentRoute.value.fullPath = target;
+        location.hash = target.includes("#") ? target.slice(target.indexOf("#")) : "";
+      }
+    }), replace: vi.fn(async path => { router.currentRoute.value.fullPath = path; }) };
   const drafts = { load: vi.fn(() => null), release: vi.fn(), save: vi.fn(), clear: vi.fn(), clearAcknowledged: vi.fn() };
   const preview = { schedule: vi.fn(), cancel: vi.fn(), dispose: vi.fn() };
   const handlers = new Map(), unsubs = [];
@@ -61,7 +69,13 @@ function fixture(overrides = {}, contextValues = {}) {
   const input = value => { text = value; controller.onEditorInput(); };
   const to = (path = "Other", hash = "") => ({ name: "note", params: { path }, query: {}, hash, fullPath: `/${path}${hash}` });
   return { controller, context, location, router, drafts, preview, adapters, port, enter, input, to,
-    participant: () => participant, handlers, unsubs, unregister };
+    participant: () => participant, handlers, unsubs, unregister,
+    commitRoute: target => { router.currentRoute.value = target; afterEach?.(target); },
+    admitDeparture: target => router.push.mockImplementationOnce(async url => {
+      expect(url).toBe(target.fullPath);
+      expect(await controller.gateNavigation(target)).toBe(true);
+      afterEach?.(target);
+    }) };
 }
 
 describe("note workflow ownership", () => {
@@ -114,7 +128,7 @@ describe("note workflow ownership", () => {
     await f.controller.mount(); f.enter(); f.input("first");
     updateNote.mockImplementationOnce(async () => {
       valid.value = false;
-      throw { response: { status: 401, data: { detail: "Invalid authentication credentials" } } };
+      throw { response: { status: 401, data: { code: "credentials_refused" } } };
     }).mockResolvedValueOnce({ path: "folder/P", content: "first" });
     const receipt = f.controller.saveHandler();
     await vi.advanceTimersByTimeAsync(0);
@@ -133,6 +147,42 @@ describe("note workflow ownership", () => {
     } else {
       expect(f.controller.state.canModify).toBe(false);
     }
+  });
+
+  it.each(["renewed Edit", "renewed View", "foreign vault"])("a Save during the reauthentication gap remains local until %s", async renewal => {
+    const current = ref(projection()), live = ref(true), login = deferred();
+    const sessionKey = () => live.value ? identitySessionKey(current.value) : null;
+    const requestAuthentication = vi.fn().mockResolvedValueOnce(false).mockReturnValueOnce(login.promise);
+    const f = fixture({ sessionKey, requestAuthentication }, projection());
+    await f.controller.mount(); f.enter(); f.input("first");
+    updateNote.mockImplementationOnce(async () => {
+      live.value = false;
+      f.context.capabilities.canEdit = false;
+      throw { response: { status: 401, data: { code: "credentials_refused" } } };
+    }).mockResolvedValueOnce({ path: "folder/P", content: "first" })
+      .mockResolvedValueOnce({ path: "folder/P", content: "second" });
+    const first = f.controller.saveHandler();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requestAuthentication).toHaveBeenCalledTimes(1);
+    expect(f.controller.state.canModify).toBe(false);
+    f.input("second");
+    const second = f.controller.saveHandler();
+    expect(second).toMatchObject({ held: true });
+    f.input("third, not submitted");
+    await vi.advanceTimersByTimeAsync(0);
+    const initial = ["folder/P", "folder/P", "first", "none", "Seed"];
+    expect(updateNote.mock.calls).toEqual([initial]);
+    expect(requestAuthentication).toHaveBeenCalledTimes(2);
+    const restored = projection("alice", renewal === "foreign vault" ? "foreign" : "vault", "renewed");
+    restored.capabilities.canEdit = renewal !== "renewed View";
+    Object.assign(f.context, restored); current.value = restored; live.value = true; login.resolve(true);
+    await vi.advanceTimersByTimeAsync(0);
+    if (renewal === "renewed Edit") {
+      expect(updateNote.mock.calls).toEqual([initial, initial, ["folder/P", "folder/P", "second", "none", "first"]]);
+      expect(await first.completion).toMatchObject({ status: "acknowledged" });
+      expect(await second.completion).toMatchObject({ status: "acknowledged" });
+    } else expect(updateNote.mock.calls).toEqual([initial]);
+    expect(f.controller.currentBuffer()).toBe("third, not submitted");
   });
 
   it("conflict copy metadata is reachable only within its originating account and vault", async () => {
@@ -198,6 +248,137 @@ describe("note workflow ownership", () => {
     expect(f.controller.state.note.version).toBe("v2");
     await f.controller.deleteConfirmedHandler();
     expect(f.adapters.remove).toHaveBeenCalledExactlyOnceWith("folder/P", "v1");
+  });
+  it("publishes editor entry and exit only after the router commits them", async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: "/:path(.*)", name: "note", component: {} },
+    ] });
+    await router.push("/folder/P");
+    const f = fixture({ router, getLocation: () => ({ pathname: router.currentRoute.value.path, search: "", hash: router.currentRoute.value.hash }) });
+    await f.controller.mount();
+    let hold = deferred(), entered = deferred();
+    router.beforeEach(async to => { entered.resolve(to.fullPath); return await hold.promise; });
+    router.beforeResolve(f.controller.gateNavigation);
+    const entering = f.controller.toggleEditModeHandler();
+    expect(await entered.promise).toBe("/folder/P#source");
+    try {
+      expect([router.currentRoute.value.fullPath, f.controller.state.editMode]).toEqual(["/folder/P", false]);
+    } finally { hold.resolve(true); await entering; }
+    expect([router.currentRoute.value.fullPath, f.controller.state.editMode]).toEqual(["/folder/P#source", true]);
+    hold = deferred(); entered = deferred();
+    const exiting = f.controller.toggleEditModeHandler();
+    expect(await entered.promise).toBe("/folder/P");
+    try {
+      expect([router.currentRoute.value.fullPath, f.controller.state.editMode]).toEqual(["/folder/P#source", true]);
+    } finally { hold.resolve(false); await exiting; }
+    expect([router.currentRoute.value.fullPath, f.controller.state.editMode]).toEqual(["/folder/P#source", true]);
+    hold = deferred(); entered = deferred();
+    const retry = f.controller.toggleEditModeHandler();
+    expect(await entered.promise).toBe("/folder/P");
+    hold.resolve(true); await retry;
+    expect([router.currentRoute.value.fullPath, f.controller.state.editMode]).toEqual(["/folder/P", false]);
+  });
+  it.each(["entry", "history", "mode"])("retired Edit admission cannot commit the %s fragment", async intent => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/:path(.*)", name: "note", component: {} }] });
+    const from = intent === "mode" ? "/folder/P#source" : "/folder/P";
+    await router.push(from);
+    const location = () => ({ pathname: router.currentRoute.value.path, search: "", hash: router.currentRoute.value.hash });
+    const f = fixture({ router, getLocation: location });
+    await f.controller.mount();
+    const entered = deferred(), hold = deferred();
+    router.beforeEach(f.controller.gateNavigation);
+    router.beforeEach(to => { entered.resolve(to.fullPath); return hold.promise; });
+    const navigation = intent === "entry" ? f.controller.toggleEditModeHandler()
+      : intent === "mode" ? f.controller.setEditorMode("wysiwyg") : router.push("/folder/P#edit");
+    try {
+      expect(await entered.promise).toBe(intent === "entry" ? "/folder/P#source" : "/folder/P#edit");
+      f.context.capabilities.canEdit = false;
+    } finally { hold.resolve(true); await navigation; }
+    expect(router.currentRoute.value.fullPath).toBe(from);
+    expect(f.controller.state.editMode).toBe(intent === "mode");
+    if (intent === "mode") expect(f.controller.state.editorMode).toBe("markdown");
+  });
+  it("Save and Close retains the acknowledged editor when the viewer route is refused", async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/:path(.*)", name: "note", component: {} }] });
+    await router.push("/folder/P#source");
+    const location = () => ({ pathname: router.currentRoute.value.path, search: "", hash: router.currentRoute.value.hash });
+    const f = fixture({ router, getLocation: location });
+    await f.controller.mount(); f.controller.registerEditor(f.port); f.input("Saved content");
+    updateNote.mockResolvedValueOnce({ path: "folder/P", content: "Saved content" });
+    const hold = deferred(), entered = deferred();
+    router.beforeEach(f.controller.gateNavigation);
+    const stop = router.beforeEach(to => { entered.resolve(to.fullPath); return hold.promise; });
+    const exit = f.controller.saveHandler(true);
+    try {
+      expect(await entered.promise).toBe("/folder/P");
+      expect([f.controller.state.editMode, f.controller.isDirty()]).toEqual([true, false]);
+    } finally { hold.resolve(false); await exit; stop(); }
+    expect(await exit).toBe(false);
+    expect([router.currentRoute.value.fullPath, f.controller.state.editMode, f.controller.currentBuffer()])
+      .toEqual(["/folder/P#source", true, "Saved content"]);
+    expect(await f.controller.toggleEditModeHandler()).toBe(true);
+    expect([router.currentRoute.value.fullPath, f.controller.state.editMode]).toEqual(["/folder/P", false]);
+    expect(updateNote).toHaveBeenCalledOnce();
+  });
+  it("does not apply an admitted history effect if a later guard rejects it", async () => {
+    const route = "/folder/P";
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: "/:path(.*)", name: "note", component: {} },
+    ] });
+    await router.push(route);
+    const f = fixture({ router, getLocation: () => ({ pathname: router.currentRoute.value.path, search: "", hash: router.currentRoute.value.hash }) });
+    await f.controller.mount();
+    router.beforeEach(f.controller.gateNavigation);
+    const entered = deferred(), hold = deferred();
+    const removeGuard = router.beforeResolve(to => { entered.resolve(to.fullPath); return hold.promise; });
+    const opening = router.push(route + "#edit");
+    expect(await entered.promise).toBe(route + "#edit");
+    try {
+      expect([router.currentRoute.value.fullPath, f.controller.state.editMode]).toEqual([route, false]);
+    } finally { hold.resolve(false); await opening; removeGuard(); }
+    expect([router.currentRoute.value.fullPath, f.controller.state.editMode]).toEqual([route, false]);
+    await router.push(route + "#edit");
+    expect([router.currentRoute.value.fullPath, f.controller.state.editMode, f.controller.state.editorMode]).toEqual([route + "#edit", true, "wysiwyg"]);
+  });
+  it.each(["clean", "discarded"])("typing during admission cancels a %s editor departure", async status => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: "/", name: "home", component: {} }, { path: "/:path(.*)", name: "note", component: {} },
+    ] });
+    await router.push("/folder/P#source");
+    const location = () => ({ pathname: router.currentRoute.value.path, search: "", hash: router.currentRoute.value.hash });
+    const f = fixture({ router, getLocation: location });
+    await f.controller.mount(); f.controller.registerEditor(f.port);
+    router.beforeEach(f.controller.gateNavigation);
+    const hold = deferred(), entered = deferred();
+    router.beforeEach(to => { if (to.name === "home") { entered.resolve(to.fullPath); return hold.promise; } });
+    let departure;
+    if (status === "discarded") {
+      f.input("Original draft"); await router.push("/");
+      expect(f.controller.state.isSaveChangesModalVisible).toBe(true);
+      const after = deferred(), stop = router.afterEach((to, _, failure) => { if (to.name === "home") after.resolve(failure); });
+      f.controller.onSaveChoice("discard"); departure = after.promise.finally(stop);
+    } else departure = router.push("/");
+    try {
+      expect(await entered.promise).toBe("/");
+      f.input("New input while the router is waiting");
+    } finally { hold.resolve(true); }
+    expect(await departure).toBeTruthy();
+    expect([router.currentRoute.value.fullPath, f.controller.state.editMode, f.controller.currentBuffer(), f.controller.isDirty()])
+      .toEqual(["/folder/P#source", true, "New input while the router is waiting", true]);
+  });
+  it("leaves a discarded unsaved new note without a second decision", async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: "/", name: "home", component: {} }, { path: "/_/new", name: "new", component: {} },
+    ] });
+    await router.push("/_/new");
+    const f = fixture({ router }, { path: undefined, query: {} });
+    await f.controller.mount(); f.controller.registerEditor(f.port); f.input("Unsaved");
+    router.beforeEach(f.controller.gateNavigation);
+    const closing = f.controller.toggleEditModeHandler();
+    await flush(); expect(f.controller.state.isSaveChangesModalVisible).toBe(true);
+    f.controller.onSaveChoice("discard"); await closing;
+    expect([router.currentRoute.value.name, f.controller.state.editMode, f.controller.state.isSaveChangesModalVisible, f.controller.isDirty()])
+      .toEqual(["home", false, false, false]);
   });
   it("a clean identity reader hands off from guest to account and rereads under that owner", async () => {
     vi.useRealTimers();
@@ -298,13 +479,14 @@ describe("note workflow ownership", () => {
   it("the same dirty note survives actual session outage and held reconnect revalidation", async () => {
     vi.useRealTimers();
     const config = ref({ principal: { kind: "account", id: "alice", login: "alice" }, accountId: "alice", vaultId: "vault", sessionGeneration: "alice", authorityRevision: 0, capabilities: { canRead: true, canEdit: true } });
-    const restored = { ...config.value }, originalKey = identitySessionKey(restored); let session, hold, reads = 0;
+    const restored = { ...config.value }, originalProjection = identitySessionKey(restored); let session, hold, reads = 0;
     const changes = createVaultChanges({ sessionKey: () => session.key() });
     session = createIdentityAppSession({ config: () => config.value, setConfig: value => { config.value = value; },
       tokens: { getStoredToken: () => "alice-token", isCurrentTokenStored: () => false }, transport: { getConfig: async () => {
         if (reads++ === 0) throw Object.assign(new Error("restart"), { status: 503 }); await hold(); return restored;
       } }, stopRuntime() {}, applyBrand() {}, setChangesSession: changes.setSession, recover: changes.revalidate });
     session.adopt(config.value);
+    const originalKey = session.key(), originalAuthority = session.capture();
     const f = fixture({ createController: adapters => createIdentityNoteController({ session, ...adapters }),
       getContext: () => ({ path: "folder/P", query: {}, notePaths: [], capabilities: config.value.capabilities }) });
     try {
@@ -315,7 +497,9 @@ describe("note workflow ownership", () => {
         await work.reached(); expect([session.state.valid, f.controller.currentBuffer(), f.controller.state.editMode, f.controller.state.canModify]).toEqual([false, "Retained through restart", true, false]);
         expect(await work.result()).toBe(false);
         expect([session.state.valid, f.controller.currentBuffer(), f.controller.state.editMode, f.controller.state.canModify, f.controller.isDirty(), f.adapters.read.mock.calls]).toEqual([true, "Retained through restart", true, true, true, [["folder/P"]]]);
-        expect(session.key()).toBe(originalKey);
+        // Cutover includes the local projection lifetime in the live key.
+        expect([identitySessionKey(session.snapshot()), session.key() === originalKey, originalAuthority()])
+          .toEqual([originalProjection, false, false]);
         updateNote.mockResolvedValueOnce({ path: "folder/P", content: "Retained through restart" });
         expect(await f.controller.saveHandler().completion).toMatchObject({ status: "acknowledged" });
         expect(updateNote.mock.calls).toEqual([["folder/P", "folder/P", "Retained through restart", "none", "Seed"]]);
@@ -481,8 +665,11 @@ describe("note workflow ownership", () => {
       expect(f.controller.state.saveFeedback).toBe(notice);
       if (exit === "session") expect(f.participant().discard()).toBe(true);
       else if (exit === "navigation") {
-        expect(await f.controller.gateNavigation(f.to())).toBe(false);
+        const target = f.to();
+        expect(await f.controller.gateNavigation(target)).toBe(false);
+        f.admitDeparture(target);
         f.controller.onSaveChoice("discard");
+        await flush();
       } else {
         f.controller.toggleEditModeHandler(); await flush();
         f.controller.onSaveChoice("discard"); await flush();
@@ -706,7 +893,7 @@ describe("note workflow ownership", () => {
     expect(f.controller.isDirty()).toBe(choice === "resume");
   });
   it("read-only fragment entry remains viewing and action toggle declines", async () => {
-    const f = fixture({}, { authType: "read_only" }); f.location.hash = "#source";
+    const f = fixture({}, { capabilities: { canEdit: false } }); f.location.hash = "#source";
     await f.controller.mount(); f.handlers.get(TOPICS.EDITOR_TOGGLE_EDIT)();
     expect(f.controller.state.editMode).toBe(false);
   });
@@ -745,7 +932,9 @@ describe("note workflow ownership", () => {
     updateNote.mockImplementation(async (source, path, content) => ({ path, content }));
     const f = fixture(); await f.controller.mount(); f.enter(); f.input("Work");
     f.location.hash = "#source"; f.router.push.mockClear();
-    expect(await f.controller.gateNavigation(f.to())).toBe(false);
+    const target = f.to();
+    expect(await f.controller.gateNavigation(target)).toBe(false);
+    if (choice !== "cancel") f.admitDeparture(target);
     expect(f.controller.state.isSaveChangesModalVisible).toBe(true);
     f.controller.onSaveChoice(choice); await flush();
     expect(f.controller.state.editMode).toBe(choice === "cancel");
@@ -941,19 +1130,21 @@ describe("note workflow ownership", () => {
     expect(f.router.replace).toHaveBeenCalledExactlyOnceWith(target.fullPath);
     expect(f.port.selectLine).not.toHaveBeenCalled();
     expect(await f.controller.gateNavigation(target)).toBe(true);
+    f.commitRoute(target); await flush();
     expect(f.port.selectLine).toHaveBeenCalledExactlyOnceWith({ from: 3, to: 3 });
   });
-  it("publishes mode and exit state before their own push guards without replaying effects", async () => {
+  it("publishes mode and exit state after their own push guards without replaying effects", async () => {
     const f = fixture(); await f.controller.mount(); f.enter(); f.location.hash = "#source";
     f.router.push.mockImplementation(async fullPath => {
       const hash = fullPath.includes("#") ? fullPath.slice(fullPath.indexOf("#")) : "";
-      expect(f.controller.state.editMode).toBe(!!hash);
-      if (hash) expect(f.controller.state.editorMode).toBe("wysiwyg");
+      expect(f.controller.state.editMode).toBe(true);
+      expect(f.controller.state.editorMode).toBe(hash ? "markdown" : "wysiwyg");
       expect(await f.controller.gateNavigation(f.to("folder/P", hash))).toBe(true);
       f.router.currentRoute.value.fullPath = fullPath;
       f.location.hash = hash;
     });
     f.controller.setEditorMode("wysiwyg"); await flush();
+    expect(f.controller.state.editorMode).toBe("wysiwyg");
     expect(f.port.selectLine).not.toHaveBeenCalled();
     f.controller.toggleEditModeHandler(); await flush();
     expect(f.router.push).toHaveBeenLastCalledWith("/folder/P");

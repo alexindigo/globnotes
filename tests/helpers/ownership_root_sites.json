@@ -1,45 +1,5 @@
 [
   {
-    "file": "client/tests/e2e/access-extra-states.mjs",
-    "capability": "Deno.exit",
-    "line": 11,
-    "source": "Deno.exit",
-    "context": "try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }",
-    "family": "native-process-control"
-  },
-  {
-    "file": "client/tests/e2e/access-extra-states.mjs",
-    "capability": "Deno.exit",
-    "line": 12,
-    "source": "Deno.exit",
-    "context": "if (options.help) { console.log(\"Usage: access-extra-states.mjs --artifacts <directory>\"); Deno.exit(0); }",
-    "family": "native-process-control"
-  },
-  {
-    "file": "client/tests/e2e/access-extra-states.mjs",
-    "capability": "Deno.exit",
-    "line": 13,
-    "source": "Deno.exit",
-    "context": "if (!options.artifacts) { console.error(\"--artifacts is required\"); Deno.exit(2); }",
-    "family": "native-process-control"
-  },
-  {
-    "file": "client/tests/e2e/access-settings.mjs",
-    "capability": "Deno.exit",
-    "line": 19,
-    "source": "Deno.exit",
-    "context": "try { options = parseFixtureArguments(\"access-settings\", Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }",
-    "family": "native-process-control"
-  },
-  {
-    "file": "client/tests/e2e/access-settings.mjs",
-    "capability": "Deno.exit",
-    "line": 20,
-    "source": "Deno.exit",
-    "context": "if (options.help) { console.log(\"Usage: access-settings.mjs [--artifacts <directory>] [--help]\"); Deno.exit(0); }",
-    "family": "native-process-control"
-  },
-  {
     "file": "client/tests/e2e/generic-plugin-system.mjs",
     "capability": "Deno.exit",
     "line": 9,

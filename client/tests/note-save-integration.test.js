@@ -12,6 +12,15 @@ import { Note } from "../classes.js";
 import { dispatchAction } from "../keybindings/dispatcher.js";
 import { TOPICS } from "../bus/index.js";
 import { getStoredToken, isCurrentTokenStored, storeToken } from "../tokenStorage.js";
+import { identityOwnerKey } from "../../shared/identity_session.ts";
+
+const projection = {
+  principal: { kind: "account", id: "alice", login: "alice" }, accountId: "alice",
+  vaultId: "fixture", sessionGeneration: "fixture-session", authorityRevision: 1,
+  capabilities: { canRead: true, canEdit: true, canManageVault: true, canManageOwnAccount: true },
+  setupRequired: false, brand: {},
+};
+const draftKey = path => `globnotes:draft:identity:${encodeURIComponent(JSON.stringify(["", identityOwnerKey(projection)]))}:${encodeURIComponent(path)}`;
 
 const holder = vi.hoisted(() => ({ router: null }));
 const deferredWys = vi.hoisted(() => ({ ready: false, content: "" }));
@@ -23,21 +32,21 @@ vi.mock("../components/WysiwygEditor.vue", async () => {
     return () => h("div", { class: "deferred-wys" });
   } }) };
 });
-vi.mock("../router.js", () => ({ default: {
+vi.mock("../router.js", () => ({ bindIdentityRouteSession: () => () => {}, default: {
   get currentRoute() { return holder.router.currentRoute; },
   get options() { return holder.router.options; },
   push(...args) { return holder.router.push(...args); },
   replace(...args) { return holder.router.replace(...args); },
 } }));
 vi.mock("primevue/usetoast", () => ({ useToast: () => toastConsumer }));
-vi.mock("../pluginRuntime.js", async () => {
-  const { ref } = await import("vue");
-  const pluginCatalog = ref(null);
-  return { pluginCatalog, startPluginRuntime: vi.fn(), stopPluginRuntime: vi.fn(),
-    refreshPluginRuntimeCatalog: vi.fn(async () => ({ status: "accepted", catalog: pluginCatalog.value })),
-    capturePluginCatalogOwnership: vi.fn(() => ({ current: () => true })), acknowledgePluginPolicy: vi.fn(() => true) };
-});
 vi.mock("../api.js", async importOriginal => ({
+  ...await importOriginal(),
+  createIdentityApi: () => ({
+    getConfig: (...args) => getConfig(...args),
+    read: async name => name === "plugin-host" ? { plugins: [] } : [{ path: "NoteA" }],
+    openPluginHostEvents: async () => () => {},
+    openVaultChanges: async () => () => {},
+  }),
   getDrivers: vi.fn(async () => ({revision:0,instances:[],plugins:[]})),
   getConflicts: vi.fn(async () => ({ revision: 0, total: 0, conflicts: [] })),
   getConfig: vi.fn(), getNote: vi.fn(async path => ({ path, content: "Seed\n", version: `v-${path}` })),
@@ -49,8 +58,7 @@ vi.mock("../api.js", async importOriginal => ({
   getPluginHostCatalog: vi.fn(async () => ({ plugins: [] })), getPluginSettings: vi.fn(),
   putPluginSettings: vi.fn(), putPluginPolicy: vi.fn(), putPluginEnabled: vi.fn(),
   getPluginPermissions: vi.fn(), putPluginPermissions: vi.fn(), getPluginPermissionRequests: vi.fn(async () => []), decidePluginPermissionRequest: vi.fn(),
-  invokePluginCommand: vi.fn(), postSetup: vi.fn(), resetSetup: vi.fn(), postTotpEnrolment: vi.fn(), postBrand: vi.fn(),
-  getAccessSettings: vi.fn(), putAccessSettings: vi.fn(), postAccessTotpEnrolment: vi.fn(),
+  invokePluginCommand: vi.fn(), postBrand: vi.fn(),
 }));
 vi.mock("../themes.js", async () => {
   const { ref } = await import("vue");
@@ -64,12 +72,13 @@ function deferred() { let resolve, reject; const promise = new Promise((yes, no)
 beforeEach(async () => {
   setDefaultEditorMode("markdown");
   localStorage.clear(); sessionStorage.clear(); document.body.innerHTML = "";
+  storeToken("auth-token");
   window.history.replaceState(null, "", "/NoteA");
   window.onbeforeunload = null;
   pending = [];
   deferredWys.ready = false; deferredWys.content = "";
   vi.clearAllMocks();
-  getConfig.mockResolvedValue({ authType: "none", setupRequired: false, brand: {} });
+  getConfig.mockResolvedValue(projection);
   previewRename.mockResolvedValue([]);
   deleteNote.mockResolvedValue({});
   for (const transport of [updateNote, createNote]) transport.mockImplementation((...args) => {
@@ -466,32 +475,34 @@ describe("foreground FIFO through the real Note", () => {
       expect(document.body.textContent).not.toContain("Draft Detected");
       await content("token note work");
       await vi.advanceTimersByTimeAsync(1000);
-      expect((persist ? localStorage : sessionStorage).getItem("globnotes:draft:token")).toBe("token note work");
+      expect(JSON.parse((persist ? localStorage : sessionStorage).getItem(draftKey("token")))?.value).toBe("token note work");
       expect(getStoredToken()).toBe("auth-token");
       expect(isCurrentTokenStored()).toBe(persist);
       await clickSave();
       expect(pending[0].args).toEqual(["token", "token", "token note work", "none", "Seed\n"]);
       await acknowledge(0, "token", "token note work");
       expect(live()).toBe("token note work");
-      expect((persist ? localStorage : sessionStorage).getItem("globnotes:draft:token")).toBeNull();
+      expect((persist ? localStorage : sessionStorage).getItem(draftKey("token"))).toBeNull();
       expect(getStoredToken()).toBe("auth-token");
       expect(isCurrentTokenStored()).toBe(persist);
     } finally { vi.useRealTimers(); }
   });
 
-  it("the real Note resumes migrated legacy bytes and removes only the acknowledged draft", async () => {
-    sessionStorage.setItem("NoteA", "legacy unsaved work");
+  it("the real Note resumes the account draft without adopting ambiguous legacy bytes", async () => {
+    sessionStorage.setItem("NoteA", "unscoped legacy draft");
+    sessionStorage.setItem(draftKey("NoteA"), JSON.stringify({ value: "account draft", order: 0 }));
     await enter();
     expect(document.body.textContent).toContain("Draft Detected");
-    expect(sessionStorage.getItem("NoteA")).toBeNull();
-    expect(sessionStorage.getItem("globnotes:draft:NoteA")).toBe("legacy unsaved work");
+    expect(sessionStorage.getItem("NoteA")).toBe("unscoped legacy draft");
+    expect(JSON.parse(sessionStorage.getItem(draftKey("NoteA")))?.value).toBe("account draft");
     button("Resume Draft", document.querySelector('[data-modal-top="true"]')).click(); await flushPromises();
-    expect(live()).toBe("legacy unsaved work");
+    expect(live()).toBe("account draft");
     expect(hasUnsavedWork()).toBe(true);
     await clickSave();
-    expect(pending[0].args[2]).toBe("legacy unsaved work");
-    await acknowledge(0, "NoteA", "legacy unsaved work");
-    expect(sessionStorage.getItem("globnotes:draft:NoteA")).toBeNull();
+    expect(pending[0].args[2]).toBe("account draft");
+    await acknowledge(0, "NoteA", "account draft");
+    expect(sessionStorage.getItem(draftKey("NoteA"))).toBeNull();
+    expect(sessionStorage.getItem("NoteA")).toBe("unscoped legacy draft");
     expect(hasUnsavedWork()).toBe(false);
   });
 
@@ -500,9 +511,9 @@ describe("foreground FIFO through the real Note", () => {
     try {
       await enter(); await content("A"); await clickSave(); await content("D");
       await vi.advanceTimersByTimeAsync(1000);
-      const before = sessionStorage.getItem("globnotes:draft:NoteA"); expect(before).toBe("D");
+      const before = sessionStorage.getItem(draftKey("NoteA")); expect(JSON.parse(before)?.value).toBe("D");
       await acknowledge(0, "NoteA", "A");
-      expect(sessionStorage.getItem("globnotes:draft:NoteA")).toBe("D"); expect(live()).toBe("D");
+      expect(sessionStorage.getItem(draftKey("NoteA"))).toBe(before); expect(live()).toBe("D");
     } finally { vi.useRealTimers(); }
   });
 

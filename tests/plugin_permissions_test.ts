@@ -8,12 +8,11 @@ import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
-import { GlobalConfig } from "./helpers/config.ts";
+import { fixtureLifecycle, GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginActions } from "../server/plugins/actions.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { servicePluginRpc } from "../server/plugins/rpc.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
@@ -25,7 +24,7 @@ import { pluginSettled } from "./helpers/plugin_ready.ts";
 async function serviceBundle(opts: {
   manifest: Record<string, unknown>;
   service: string;
-  authType?: string;
+  serviceWritable?: boolean;
   stateInVault?: boolean;
   retain?: boolean;
 }) {
@@ -34,10 +33,7 @@ async function serviceBundle(opts: {
   const env = {
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-    fixtureScenario: publicScenario(
-      opts.authType === "read_only" ? "view" : "edit",
-      { auth_type: opts.authType ?? "none" },
-    ),
+    fixtureScenario: publicScenario(),
   };
   const environment = testEnvironment(env);
   const config = new GlobalConfig(environment);
@@ -63,7 +59,11 @@ async function serviceBundle(opts: {
     },
   );
   initState(config, null, notes, indexer, files, manager);
-  const lifecycle = new PluginLifecycle(config);
+  let operational = true;
+  const lifecycle = fixtureLifecycle(config, {
+    operational: () => operational,
+    writable: () => opts.serviceWritable !== false,
+  });
   const operations = new NoteOperations({
     notes,
     files,
@@ -99,6 +99,11 @@ async function serviceBundle(opts: {
     lifecycle,
     manager,
     indexer,
+    retireService() {
+      operational = false;
+      lifecycle.bumpEpoch();
+      runtime.suspend();
+    },
     async dispose() {
       await runtime.close();
       manager.stop();
@@ -391,7 +396,7 @@ Deno.test("permissions: mediated reads honor grants and reserved state is withhe
 
 Deno.test("permissions: read-only vault denies plugin data and file writes but keeps reads", async () => {
   const b = await serviceBundle({
-    authType: "read_only",
+    serviceWritable: false,
     manifest: { runtime: { server: "service.js" } },
     service: `export function activate(ctx) {
       const attempt = async (fn) => { try { return { ok: await fn() }; } catch (e) { return { error: e.message }; } };
@@ -416,7 +421,7 @@ Deno.test("permissions: read-only vault denies plugin data and file writes but k
   }
 });
 
-Deno.test("permissions: setup-pending revokes runtime; writes after reset are rejected", async () => {
+Deno.test("permissions: service ineligibility revokes runtime and rejects writes", async () => {
   const b = await serviceBundle({
     manifest: { runtime: { server: "service.js" } },
     service: `export function activate(ctx) {
@@ -429,12 +434,7 @@ Deno.test("permissions: setup-pending revokes runtime; writes after reset are re
   });
   try {
     assertEquals(await b.runtime.invokeCommand("svc", "write", {}), "written");
-    // Access transition: epoch first, old generations terminated.
-    b.lifecycle.bumpEpoch();
-    b.runtime.suspend();
-    // Setup becomes pending (config mutated as the reset endpoint does).
-    state.config.setupRequired = true;
-    state.config.authType = null;
+    b.retireService();
     await b.runtime.reconcile();
     assertEquals(b.runtime.status("svc")?.status, "discovered");
     await assertRejectsMessage(

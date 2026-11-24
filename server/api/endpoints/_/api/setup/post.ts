@@ -1,173 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-export const operation = "public";
-
-/**
- * POST /_/api/setup — complete first-run setup: disable auth, read-only
- * mode, or create a password. Public by design (it only runs once).
- * Ported from the Python server's post_setup with identical behavior.
- */
-
-import { LocalAuth } from "@server/auth/local.ts";
-import { readRequestJson } from "@server/auth/request_json.ts";
-import { pendingTotpEnrollments } from "@server/auth/totp_enrolment.ts";
-import { AuthType, StoredConfigConflict } from "@server/config.ts";
-import { hashPassword } from "@server/helpers.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
+import { bootstrapHandlers } from "@server/auth/bootstrap.ts";
+import { identityHttp } from "@server/auth/http_policy.ts";
 import { logger } from "@server/logger.ts";
 import { state } from "@server/state.ts";
 
-export const auth = false;
-
-interface SetupRequest {
-  mode?: string;
-  username?: string;
-  password?: string;
-  /** Wizard TOTP enrolment: the minted key echoed back, plus the current
-   * code proving the user recorded it. Both absent ⇒ plain password. */
-  totpKey?: string;
-  totpCode?: string;
-  readOnlySettings?: boolean;
-}
-
-export default async function (
-  request: PathfinderRequest,
-): Promise<{ setupRequired: boolean }> {
-  const config = state.config;
-  if (!config.setupRequired) {
-    throw new HttpError(409, "Setup has already been completed.");
+export const operation = "public";
+export default identityHttp(async (request: PathfinderRequest) => {
+  const { identity, plugins } = state;
+  if (!identity!.bootstrap.status().setupRequired) {
+    throw new HttpError(409, "Setup is already complete.");
   }
-  const data = (await readRequestJson(request.body)) as SetupRequest;
-  logger.info(
-    `Setup attempt: mode=${data.mode} ` +
-      `username=${data.username ?? "(none)"} ` +
-      `passwordLength=${data.password?.length ?? 0}`,
+  const response = await bootstrapHandlers(identity!.bootstrap).post(
+    request._raw,
   );
-  const snapshot = config.captureStoredConfig();
-  const base = snapshot.raw === null ? null : JSON.parse(snapshot.raw);
-  if (JSON.stringify(base) !== JSON.stringify(config.storedConfig)) {
-    throw new HttpError(
-      409,
-      "Configuration changed before setup; deployment bytes retained.",
-    );
-  }
-  if (
-    data.readOnlySettings !== undefined &&
-    typeof data.readOnlySettings !== "boolean"
-  ) throw new HttpError(422, "readOnlySettings must be a boolean.");
-  const complete = async () => {
-    let enrollment:
-      | ReturnType<
-        ReturnType<typeof pendingTotpEnrollments>["confirm"]
-      >
-      | undefined;
-    if (state.config !== config || !config.setupRequired) {
-      throw new HttpError(409, "Setup has already been completed.");
-    }
-    try {
-      config.assertStoredConfigUnchanged(snapshot);
-      // Setup replaces the authenticator as a whole, never inheriting metadata
-      // from an unfinished setup record. Newly confirmed candidates are marked.
-      if (base) {
-        delete base.totp_key;
-        delete base.totp_key_encoding;
-      }
-      if (data.mode === "none") {
-        config.saveStoredConfig({
-          ...base,
-          auth_type: AuthType.NONE,
-          read_only_settings: data.readOnlySettings ?? false,
-        }, snapshot);
-        config.authType = AuthType.NONE;
-        config.setupRequired = false;
-        logger.warning(
-          "Authentication disabled via first-run setup. Anyone who can " +
-            "reach this server can read and modify notes.",
-        );
-      } else if (data.mode === "read_only") {
-        config.saveStoredConfig({
-          ...base,
-          auth_type: AuthType.READ_ONLY,
-        }, snapshot);
-        config.authType = AuthType.READ_ONLY;
-        config.setupRequired = false;
-        logger.info(
-          "Read-only mode enabled via first-run setup. Notes can be " +
-            "browsed and searched but not modified.",
-        );
-      } else if (data.mode === "password") {
-        if (!data.username || !data.password) {
-          throw new HttpError(400, "Username and password are required.");
-        }
-        enrollment = data.totpKey === undefined
-          ? undefined
-          : pendingTotpEnrollments(config).confirm(
-            "setup",
-            data.totpKey,
-            data.totpCode,
-          );
-        const authType = enrollment ? AuthType.TOTP : AuthType.PASSWORD;
-        const secretKey = [...crypto.getRandomValues(new Uint8Array(32))]
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("");
-        const passwordHash = await hashPassword(data.password);
-        if (state.config !== config || !config.setupRequired) {
-          throw new HttpError(
-            409,
-            "Setup changed while password preparation was pending.",
-          );
-        }
-        enrollment?.assertCurrent();
-        config.saveStoredConfig({
-          ...base,
-          auth_type: authType,
-          username: data.username.toLowerCase(),
-          password_hash: passwordHash,
-          secret_key: secretKey,
-          ...(data.totpKey !== undefined
-            ? {
-              totp_key: data.totpKey,
-              totp_key_encoding: enrollment!.encoding,
-            }
-            : {}),
-        }, snapshot);
-        config.authType = authType;
-        config.setupRequired = false;
-        state.auth = new LocalAuth(config);
-        if (authType === AuthType.TOTP) {
-          // The enrolment code is spent — don't accept it as a first login.
-          state.auth.markTotpUsed(data.totpCode!);
-        }
-      } else {
-        // FastAPI rejects a non-Literal mode with 422.
-        throw new HttpError(422, "Invalid setup mode.");
-      }
-    } catch (err) {
-      if (err instanceof StoredConfigConflict) {
-        throw new HttpError(
-          409,
-          "Configuration changed while setup was pending; original deployment retained.",
-        );
-      }
-      if (err instanceof HttpError) throw err;
-      logger.error(
-        `Setup failed (${data.mode}): ${
-          err instanceof Error ? err.stack : err
-        }`,
-      );
-      throw err;
-    }
-
-    logger.info(`Setup completed: mode=${data.mode}`);
-    // New access policy: invalidate captured epochs, then start eligible
-    // service contributions for the completed vault.
-    state.lifecycle?.bumpEpoch();
-    state.plugins?.runtime?.reconcile().catch((e) =>
-      logger.error(`plugin runtime reconciliation failed: ${e}`)
-    );
-    await enrollment?.complete();
-    return { setupRequired: config.setupRequired };
-  };
-  return state.lifecycle
-    ? await state.lifecycle.gate.run(complete)
-    : await complete();
-}
+  // Service readiness is separate from delivering the committed sign-in result.
+  void plugins?.reconcileOwners().catch((error) =>
+    logger.error("plugin owner reconciliation failed", error)
+  );
+  response.headers.set("cache-control", "no-store");
+  return response;
+});

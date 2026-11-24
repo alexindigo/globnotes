@@ -1,143 +1,152 @@
-// Callback-injected actual Settings/permission/local-preference consumers.
-import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
-import { showSidebar } from './sidebar-navigation-native.mjs';
-export async function exerciseLockedControls({ session, api, baseUrl, state, vault, openAccess, closeSidebar, capture }) {
-  const assert = (value, message) => { if (!value) throw Error(message); };
-  const id = "access-workflow", settingsRoute = `plugin-host/${id}/settings/preferences`;
-  const seeded = await api(settingsRoute, "PUT", { values: { message: "locked retained settings consumer", limit: 5 }, revision: 0 });
-  assert(seeded.status === 200, "Locked-controls settings seed rejected");
-  const requested = (await api(`plugin-host/${id}/permissions`)).body;
-  const remembered = requested.requestedNetwork.find(scope => scope.authority === "127.0.0.1:9");
-  assert(remembered && requested.requestedNetwork.length === 2, "Expected two inert requested hosts");
-  const permissionSeed = await api(`plugin-host/${id}/permissions`, "PUT", { revision: requested.revision, signature: requested.signature, requestSourceKey: requested.requestSourceKey, requestSourceRevision: requested.requestSourceRevision, allowNetwork: false, approvedNetwork: [remembered], approvedImports: [] });
-  assert(permissionSeed.status === 200 && !permissionSeed.body.view.allowNetwork, "Remembered master-off approval seed failed");
-  const owner = (await api(`plugin-host/${id}/commands/report`, "POST", {})).body.result.owner;
-  const beforeCatalog = (await api("plugin-host")).body;
-  assert(beforeCatalog.policy.autoEnableSource === "vault" && beforeCatalog.policy.effectiveAutoEnable === false, "Auto-enable fixture is unexpectedly environment-pinned");
-  await openAccess(); await session.click("#setup-read-only-settings"); await session.click("#setup-ack"); await session.button("Save access settings");
-  await session.poll("!document.querySelector('#setup-title')");
-  assert((await api("config")).body.settingsWritable === false, "Native controls fixture did not lock settings");
-  const files = ["config.json", "plugins.json", `plugin-data/${id}/settings.json`];
-  if ([...Deno.readDirSync(state)].some(entry => entry.name === "config.toml")) files.push("config.toml");
-  const retained = Object.fromEntries(await Promise.all(files.map(async file => [file, await Deno.readTextFile(`${state}/${file}`)])));
-  const writes = [];
-  const stop = session.page.onEvent(event => {
-    if (event.method !== "Network.requestWillBeSent") return;
-    const request = event.params.request, path = new URL(request.url).pathname;
-    if (request.method !== "GET" && /^\/_\/api\/(brand(?:\/|$)|access(?:\/|$)|setup(?:\/|$)|plugin-host\/(policy(?:\/|$)|[^/]+\/(enabled|settings|permissions|permission-requests)(?:\/|$)))/.test(path)) writes.push({ path, method: request.method });
-  });
-  async function open() {
-    await showSidebar(session);
-    await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
+// An Edit browser never borrows its independent Admin auditor's authority.
+import {done,pending,waitUntil} from '../../../tests/helpers/wait.ts';
+import { bootServer, nativeFixtureAdmin } from './harness-helpers.mjs';
+import { bootServer as launchFresh } from '../../../tests/helpers/boot.ts';
+import { applicationServer } from './http-origin.mjs';
+import { nativeAccountScenario, nativeFixtureInput } from './config-fixture.mjs';
+import { storedScenario } from '../../../tests/helpers/fixture_scenarios.ts';
+import { createSettingsRestartFixture } from './settings-restart-fixture.mjs';
+import { createNativeTotpClock } from './native-totp-fixture.mjs';
+import { nativeSession } from './native-cdp-session.mjs';
+import { encodeBase32 } from '@std/encoding/base32';
+import { commitNativeAccess, fillNativeInput, openNativeSettings, selectAccessLevel, signInNative, tokenExpression } from './settings-access-native.mjs';
+
+// Password-only observer signs in via nativeFixtureAdmin; Chromium uses only
+// credentials it acquired at the visible form. Keep the observer Admin even
+// when the subject demotes themselves.
+export const fixtureTotpSecret = key => encodeBase32(new TextEncoder().encode(key)).replace(/=+$/, '');
+export async function bootExtraAccessFixture(scope, directory, {
+  fresh = false, prefix = '', everybody = 'none', totpKey, timed = !!totpKey,
+  prepare, env = {}, restart = false, autoEnable = false,
+} = {}) {
+    const vault = `${directory}/vault`, metadata = `${directory}/state`, state = `${metadata}/globnotes`;
+    await Deno.mkdir(vault, { recursive: true });
+    await Deno.mkdir(state, { recursive: true });
+    await Deno.writeTextFile(`${vault}/Seed.md`, 'Native seed.\n');
+    const login = 'native-owner', password = 'native-password';
+    const account = { login, password, ...(totpKey ? { totpKey } : {}) };
+    const scenario = nativeAccountScenario({ account, everybody });
+    scenario.identity.people.unshift({ login: 'access-auditor', password: 'native-auditor-password' });
+    scenario.identity.grants['access-auditor'] = 'admin';
+    const { fixtureScenario } = await nativeFixtureInput(scenario);
+    const clock = timed ? (await scope.acquire(() => createNativeTotpClock(directory), value => value.close())).value : null;
+    await prepare?.({ state, vault });
+    const environment = { GLOBNOTES__SERVER_PATHPREFIX: prefix, ...(!autoEnable ? { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: 'false' } : {}), ...env };
+    const owner = (await scope.acquire(() => fresh
+      ? launchFresh({ ...environment, GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: metadata }, applicationServer())
+      : bootServer(vault, state, { fixtureScenario, env: environment, logsDir: directory, denoArgs: clock?.denoArgs }), value => value.close())).value;
+    const server = restart ? (await scope.acquire(() => createSettingsRestartFixture({ initialServer: owner, directory, launch: async count => {
+      const logsDir = `${directory}/backend-${count}`;
+      await Deno.mkdir(logsDir);
+      return await bootServer(vault, state, { fixtureScenario: storedScenario(fixtureScenario), env: environment, logsDir, denoArgs: clock?.denoArgs });
+    } }), value => value.close())).value : owner;
+    const admin = fresh ? null : await nativeFixtureAdmin(owner);
+    const session = (await scope.acquire(() => nativeSession({ port: Number(Deno.env.get('CDP_PORT') ?? 9335) }), value => value.close())).value;
+    const url = path => `${server.baseUrl}${prefix}${path}`;
+    let token = null;
+    const api = async (route, method = 'GET', body, credential = token) => {
+      const response = await fetch(url(`/_/api/${route}`), {
+        method, body: body === undefined ? undefined : JSON.stringify(body),
+        headers: { ...(credential ? { authorization: `Bearer ${credential}` } : {}), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        signal: AbortSignal.timeout(5000),
+      });
+      const text = await response.text();
+      return { status: response.status, body: text && response.headers.get('content-type')?.includes('application/json') ? JSON.parse(text) : text };
+    };
+    async function signIn(secret = password, totp, returnPath = '/Seed') {
+      ({ token } = await signInNative(session, server, { login, password: secret, totp }, { prefix, returnPath }));
+    }
+    await session.goto(url(fresh ? '/' : '/Seed'));
+    if (fresh) await session.poll("!!document.querySelector('#setup-login')");
+    else {
+      if (totpKey) await clock.loginCode(fixtureTotpSecret(totpKey), [], code => signIn(password, code));
+      else await signIn();
+      await session.poll("document.querySelector('.toast-viewer')?.textContent.includes('Native seed.')");
+    }
+    async function edit(text) {
+      if (await session.evaluate("!!document.querySelector('#settings-modal-title')")) await session.click('[aria-label="Close settings"]');
+      if (await session.evaluate("document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width>0")) await session.click('[title="Close sidebar"]');
+      if (!await session.evaluate("!!document.querySelector('.cm-content[contenteditable=true]')")) {
+        await session.button('Edit', '.content-column');
+        await session.button('Source', '.content-column');
+      }
+      await fillNativeInputEditor(session, text);
+    }
+    return { vault, state, accountsFile: `${metadata}/_/accounts.json`, directory, clock, session, server, url, login, password, api, signIn, edit,
+      get token() { return token; },
+      async readToken() { token = await session.evaluate(tokenExpression(prefix)); return token; },
+      adminApi: (route, method, body) => api(route, method, body, admin.token),
+      settings: (id = 'core:account') => openNativeSettings(session, id),
+      fill: (selector, value) => fillNativeInput(session, selector, value),
+      select: (selector, value) => selectAccessLevel(session, selector, value),
+      commitAccess: action => commitNativeAccess(session, url('/_/api/access'), action),
+      async capture(label) {
+        const { data } = await session.send('Page.captureScreenshot', { format: 'png' });
+        await Deno.writeFile(`${directory}/${label}.png`, Uint8Array.from(atob(data), char => char.charCodeAt(0)));
+      },
+    };
+}
+
+async function fillNativeInputEditor(session, text) {
+  await session.click('.cm-content[contenteditable=true]');
+  await session.key('a', { modifiers: 2, code: 'KeyA', windowsVirtualKeyCode: 65 });
+  await session.type(text);
+  await session.poll(`[...document.querySelectorAll('.cm-content .cm-line')].map(line=>line.textContent).join('\\n')===${JSON.stringify(text)}`);
+  await session.poll("(()=>{const line=document.querySelector('.cm-activeLineGutter')?.textContent.trim();return !!line&&location.hash==='#source:L'+line;})()");
+}
+export async function exerciseLockedControls({fixture:f,capture}) {
+  const assert=(value,message)=>{if(!value)throw Error(message);};
+  const {session:s,state,vault}=f,id='access-workflow',settingsRoute=`plugin-host/${id}/settings/preferences`;
+  const audit = f.adminApi;
+  const seeded=await audit(settingsRoute,'PUT',{values:{message:'locked retained settings consumer',limit:5},revision:0});assert(seeded.status===200,'Settings seeded');
+  const requested=(await audit(`plugin-host/${id}/permissions`)).body,remembered=requested.requestedNetwork.find(scope=>scope.authority==='127.0.0.1:9');
+  assert(remembered&&requested.requestedNetwork.length===2,'Two real inert requested hosts');
+  const approved=await audit(`plugin-host/${id}/permissions`,'PUT',{revision:requested.revision,signature:requested.signature,requestSourceKey:requested.requestSourceKey,requestSourceRevision:requested.requestSourceRevision,allowNetwork:false,approvedNetwork:[remembered],approvedImports:[]});assert(approved.status===200&&!approved.body.view.allowNetwork,'Master-off remembered approval');
+  const owner=(await audit(`plugin-host/${id}/commands/report`,'POST',{})).body.result.owner;
+  await f.settings('core:access');const view=(await audit('access')).body,self=view.named.find(row=>row.login===f.login).id;
+   await f.select(`#access-${self}`,'edit');await s.button('Save access');await s.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Remove your Admin access?')");await f.commitAccess(()=>s.button('Change my access to Edit','[data-modal-top=true]'));
+  const demoted = await f.api('auth-check');
+  assert(demoted.status===200 && demoted.body.capabilities.canEdit && !demoted.body.capabilities.canManageVault,'Browser has Edit, no Admin');
+  await Deno.writeTextFile(`${f.directory}/demoted-auth-check.json`, JSON.stringify(demoted, null, 2), { createNew: true });
+  await s.poll("!document.querySelector('[data-settings-nav-id=\"core:access\"]')");
+  const files=['access.json','plugins.json',`plugin-data/${id}/settings.json`,`plugin-network/${id}.json`];
+  const writes=[],stop=s.page.onEvent(event=>{if(event.method==='Network.requestWillBeSent'&&event.params.request.method!=='GET'&&/\/_\/api\/(brand|access|setup|plugin-host\/(policy|[^/]+\/(enabled|settings|permissions|permission-requests)))/.test(event.params.request.url))writes.push(event.params.request.url);});
+  assert(await s.evaluate("!document.querySelector('[data-settings-nav-id=\"core:branding\"],[data-settings-nav-id=\"core:plugins\"],[data-settings-nav-id=\"plugin:access-workflow\"]')"),'Private admin pages are not projected to Edit');
+  await capture('locked-admin-controls');
+  const publication=await audit(`plugin-host/${id}/commands/request`,'POST',{});assert(publication.status===200&&publication.body.result.requestId,'Independent Worker request publication');
+  const requestId=publication.body.result.requestId,permission=(await audit(`plugin-host/${id}/permissions`)).body,catalog=(await audit('plugin-host')).body;
+  // The Admin's request publication legitimately updates this ledger. Capture
+  // its bytes after that admitted work, before all denied/personal actions.
+  const bytes=Object.fromEntries(await Promise.all(files.map(async file=>[file,await Deno.readTextFile(`${state}/${file}`)])));
+  const controls={revision:permission.revision,signature:permission.signature,requestSourceKey:permission.requestSourceKey,requestSourceRevision:permission.requestSourceRevision,allowNetwork:true,approvedNetwork:permission.requestedNetwork,approvedImports:[]};
+  const rejected=[];
+  for(const [route,method,body] of [['plugin-host/policy','PUT',{autoEnable:true,revision:catalog.policy.revision,signature:catalog.policy.signature}],[`plugin-host/${id}/enabled`,'PUT',{enabled:false,revision:catalog.policy.revision,signature:catalog.policy.signature}],[settingsRoute,'PUT',{values:{message:'blocked direct settings',limit:5},revision:seeded.body.revision}],[`plugin-host/${id}/permissions`,'PUT',controls],[`plugin-host/${id}/permission-requests/${requestId}/decision`,'POST',{...controls,decision:'approve'}],['access','PUT',{everybody:'edit',grants:view.grants,revision:view.revision,signature:view.signature,updateId:crypto.randomUUID()}]]){assert((await f.api(route,method,body)).status===403,`Edit denied ${route}`);rejected.push(route);}
+  for(const route of [settingsRoute,`plugin-host/${id}/permissions`,'access'])assert((await f.api(route)).status===403,`Private read denied ${route}`);
+  const reader=(await f.api('plugin-host')).body;assert(Object.keys(reader.policy).join()==='revision'&&!JSON.stringify(reader).includes('locked retained settings consumer'),'Reader catalog excludes administrative policy/settings');
+  const form=new FormData();form.append('name','blocked direct branding');const brand=await fetch(f.url('/_/api/brand'),{method:'POST',headers:{authorization:`Bearer ${f.token}`},body:form});assert(brand.status===403,'Direct brand denied');await brand.body?.cancel();
+  assert(!await s.evaluate("!!document.querySelector('#permission-request-title')"),'No Admin permission request disclosure to Edit');
+  assert((await audit('plugin-host/permission-requests')).body.some(row=>row.id===requestId&&row.state==='pending'),'Request stays pending');
+  await f.settings('core:appearance');await s.click('[data-theme-id="globnotes-dark"]');await s.poll("localStorage.getItem('globnotes-theme')==='globnotes-dark'&&document.body.classList.contains('dark')");
+  await s.button('Editor');await s.click('[data-modal-top=true] button.group');await s.poll("localStorage.getItem('viewLineNumbers')==='true'");
+  await s.button('Diagnostics');await s.click('[data-modal-top=true] button.group');await s.poll("localStorage.getItem('debug')==='true'&&document.body.innerText.includes('debug:change')");
+  await s.button('Keybindings');await s.button('Custom');await s.click('[data-command-binding="app:open-settings"] button');await s.key('g',{code:'KeyG',modifiers:3,windowsVirtualKeyCode:71});await s.poll("document.querySelector('[data-command-binding=\"app:open-settings\"]')?.textContent.includes('Ctrl+Alt+G')");
+  const text='Locked controls public note consumer\n';await f.edit(text);await s.button('Save','.content-column');
+  await waitUntil(async()=>await Deno.readTextFile(`${vault}/Seed.md`)===text?done():pending(),{label:'Edit note reaches disk',intervalMs:50});
+  // Both committed saves publish host-owned facts, not viewer invocations.
+  async function persistedHook(content, label) {
+    const report=await waitUntil(async()=>{const value=(await audit(`plugin-host/${id}/commands/report`,'POST',{})).body.result;return value.content===content?done(value):pending(value);},{label,intervalMs:50});
+    assert(report.owner===owner&&report.message==='locked retained settings consumer','Same background owner consumes retained settings');
+    const {values}=JSON.parse(await Deno.readTextFile(`${state}/plugin-data/${id}/data.json`));
+    assert(values.content===content&&values.message===report.message,'Private data persisted with retained settings');
   }
-  async function close() {
-    await session.click('[aria-label="Close settings"]'); await session.poll("!document.querySelector('#settings-modal-title')");
-  }
-  async function disabledButton(text, scope) {
-     assert(await session.read(scope, `(()=>{const scopes=[...document.querySelectorAll(${JSON.stringify(scope)})];if(scopes.length!==1)return false;const controls=[...scopes[0].querySelectorAll('button')].filter(button=>button.textContent.trim()===${JSON.stringify(text)});return controls.length===1 && controls.every(button=>button.disabled);})()`), `${text}: expected exactly one disabled mutation action`);
-  }
-  async function lockedSwitch(scope, expected) {
-     assert(await session.read(scope, `(()=>{const scopes=[...document.querySelectorAll(${JSON.stringify(scope)})];if(scopes.length!==1)return false;const values=[...scopes[0].querySelectorAll('.setting-row-control > .settings-text')];return values.length===1 && values[0].textContent.trim()===${JSON.stringify(expected)} && scopes[0].querySelectorAll('input,button,select,textarea').length===0;})()`), `${scope}: expected exactly one retained policy value and no mutation control`);
-  }
-  async function hiddenButton(text, scope, witness, count) {
-     assert(await session.read(scope, `(()=>{const scopes=[...document.querySelectorAll(${JSON.stringify(scope)})];if(scopes.length!==1)return false;const values=[...scopes[0].querySelectorAll(${JSON.stringify(witness)})],controls=[...scopes[0].querySelectorAll('input,button,select,textarea')];return values.length>0 && values.length===${count} && values.every(value=>value.textContent.trim().length>0) && controls.length===0;})()`), `${text}: expected retained value rows and hidden mutation controls`);
-  }
-  async function hiddenPluginToggle(scope) {
-     assert(await session.read(scope, `(()=>{const scopes=[...document.querySelectorAll(${JSON.stringify(scope)})];if(scopes.length!==1)return false;const row=scopes[0].closest('[data-plugin-inventory-id=access-workflow]'),names=[...row.querySelectorAll('.plugin-row-name')],actions=[...scopes[0].querySelectorAll('button')],values=[...scopes[0].querySelectorAll('.plugin-row-toggle-lane > .settings-text')];return names.length===1 && names[0].textContent.trim()==='access-workflow' && actions.length===1 && actions[0].textContent.trim()==='Open settings' && scopes[0].querySelectorAll('input,button,select,textarea').length===1 && values.length===1 && values[0].textContent.trim()==='On' && getComputedStyle(values[0]).color===getComputedStyle(row.querySelector('.plugin-row-name')).color;})()`), 'Expected the retained plugin On value and settings action, without an unavailable toggle or muted value');
-  }
-  async function lockedField(selector, expected) {
-    const expression = `(()=>{const fields=[...document.querySelectorAll(${JSON.stringify(selector)})];if(fields.length!==1)return false;const el=fields[0];return {value:el.textContent.trim(),blocked:el.matches('span[aria-labelledby]')};})()`;
-    await session.poll(`(()=>{const field=${expression};return field && field.value===${JSON.stringify(expected)};})()`);
-    const field = await session.evaluate(expression);
-    assert(field.value === expected && field.blocked, `${selector}: locked value or mutation boundary changed`);
-  }
-  await open(); await session.button("Branding");
-  await lockedField('#brand-name', 'Native locked brand');
-  await lockedField('#brand-accent', '#aabbcc');
-  assert(await session.read('[data-branding-settings]', "(()=>{const page=document.querySelector('[data-branding-settings]'),values=[...page.querySelectorAll('.setting-row-control span.settings-help')];return page.querySelectorAll('.setting-row').length===4 && values.length===2 && values.map(value=>value.textContent.trim()).sort().join('|')==='No custom icon.|No custom logo.' && page.querySelectorAll('input[type=file]').length===0;})()"), "Expected both retained branding asset rows and hidden uploads");
-  await hiddenButton("Save branding", "[data-branding-settings]", '#brand-name,#brand-accent', 2); await hiddenButton("Reset branding…", "[data-branding-settings]", '#brand-name,#brand-accent', 2);
-  await capture("locked-branding-controls");
-  await session.button("Plugins");
-  await session.poll("!!document.querySelector('[data-plugin-inventory-id=access-workflow]')");
-  await lockedSwitch('[data-plugin-inventory] > .setting-row', 'Off');
-  await hiddenPluginToggle('[data-plugin-inventory-id=access-workflow] .plugin-row-actions');
-  await capture("locked-plugin-policy-controls");
-  await session.click('[data-settings-nav-id="plugin:access-workflow"]');
-  await lockedField('#settings-field-message', 'locked retained settings consumer');
-  await lockedField('#settings-field-limit', '5');
-  await capture("locked-declarative-controls");
-  await session.button('Plugins','[aria-label="Settings pages"]');
-  await session.click('[data-plugin-inventory-id=access-workflow] button[aria-expanded]');
-  await session.poll("!!document.querySelector('[data-plugin-permission-panel] [data-permission-scope=\"host:127.0.0.1:9\"]')");
-  await lockedSwitch('[data-plugin-permission-panel] > .setting-row', 'Off');
-  await hiddenButton("Remove", '[data-permission-scope="host:127.0.0.1:9"]', '.permission-host-line > span', 2);
-  await hiddenButton("Approve", '[data-permission-scope="host:127.0.0.1:10"]', '.permission-host-line > span', 2);
-  await capture("locked-permission-controls");
-  const publication = await api(`plugin-host/${id}/commands/request`, "POST", {});
-  assert(publication.status === 200 && publication.body.result.requestId, "Settings lock blocked normal Worker request publication");
-  const requestId = publication.body.result.requestId;
-   await session.poll("!!document.querySelector('#permission-request-title') && document.querySelector('[data-modal-top=true]')?.textContent.includes('Native locked request fixture')");
-  assert(await session.evaluate("(()=>{const choices=document.querySelector('[data-permission-request-choices]');if(!choices)return false;const inputs=[...choices.querySelectorAll('input[type=checkbox]')],toggles=[...choices.querySelectorAll('button[role=switch]')];return inputs.length===1 && toggles.length===1 && [...inputs,...toggles].every(input=>input.disabled);})()"), "Expected the disabled requested-host choice and network control");
-  await disabledButton("Deny", "[data-modal-top=true]"); await disabledButton("Approve", "[data-modal-top=true]");
-  await capture("locked-permission-request-decisions");
-  await session.button("Review later", "[data-modal-top=true]"); await session.poll("!document.querySelector('#permission-request-title')");
-  const permissionView = (await api(`plugin-host/${id}/permissions`)).body;
-  const ledgerFile = `${state}/plugin-network/${id}.json`, ledger = await Deno.readTextFile(ledgerFile);
-  const catalog = (await api("plugin-host")).body, view = (await api("access")).body;
-  const controls = { revision: permissionView.revision, signature: permissionView.signature, requestSourceKey: permissionView.requestSourceKey, requestSourceRevision: permissionView.requestSourceRevision, allowNetwork: true, approvedNetwork: permissionView.requestedNetwork, approvedImports: [] };
-  const rejected = [];
-  for (const [route, method, body] of [["plugin-host/policy", "PUT", { autoEnable: true, revision: catalog.policy.revision, signature: catalog.policy.signature }], [`plugin-host/${id}/enabled`, "PUT", { enabled: false, revision: catalog.policy.revision, signature: catalog.policy.signature }], [settingsRoute, "PUT", { values: { message: "blocked direct settings", limit: 5 }, revision: seeded.body.revision }], [`plugin-host/${id}/permissions`, "PUT", controls], [`plugin-host/${id}/permission-requests/${requestId}/decision`, "POST", { ...controls, decision: "approve" }], ["access", "PUT", { mode: "none", readOnlySettings: false, revision: view.revision, signature: view.signature }], ["access/totp-enrolment", "POST", {}], ["setup/reset", "POST", {}]]) {
-    const result = await api(route, method, body); assert(result.status === 403, `Locked real mutation escaped: ${route}`); rejected.push(route);
-  }
-  const form = new FormData(); form.append("name", "blocked direct branding");
-  const brand = await fetch(`${baseUrl}/_/api/brand`, { method: "POST", body: form, signal: AbortSignal.timeout(5000) });
-  assert(brand.status === 403, "Locked real branding mutation escaped"); await brand.body?.cancel(); rejected.push("brand");
-  for (const file of files) assert(await Deno.readTextFile(`${state}/${file}`) === retained[file], `Locked settings API/UI changed ${file}`);
-  assert(await Deno.readTextFile(ledgerFile) === ledger, "Locked approval/decision changed the real ledger");
-  assert((await api("plugin-host/permission-requests")).body.some(request => request.id === requestId && request.state === "pending"), "Readonly review silently decided the actual request");
-  assert(writes.length === 0, "Disabled UI issued a covered settings mutation");
-  await session.button("Access");
-   assert(!await session.read('[data-access-summary]', "[...document.querySelectorAll('[data-modal-top=true] button')].some(button=>button.textContent.trim()==='Change access…')"), "Locked Access exposes self-unlock");
-  await session.button("Appearance"); await session.click('[data-theme-id="globnotes-dark"]');
-  await session.poll("localStorage.getItem('globnotes-theme')==='globnotes-dark'&&document.body.classList.contains('dark')");
-  await session.button("Editor"); await session.click('[data-modal-top=true] button.group');
-  await session.poll("localStorage.getItem('viewLineNumbers')==='true'&&document.querySelectorAll('.toast-viewer .line-numbers-rows>span').length>=2");
-  await session.button("Diagnostics"); await session.click('[data-modal-top=true] button.group');
-  await session.poll("localStorage.getItem('debug')==='true'&&document.body.innerText.includes('debug:change')");
-  await session.button("Keybindings"); await session.button("Custom"); await session.click('[data-command-binding="app:open-settings"] button');
-  await session.key("g", { code: "KeyG", modifiers: 3, windowsVirtualKeyCode: 71 });
-   await session.poll("document.querySelector('[data-command-binding=\"app:open-settings\"]')?.textContent.includes('Ctrl+Alt+G')");
-  await close();
-  await closeSidebar();
-  await session.key("g", { code: "KeyG", modifiers: 3, windowsVirtualKeyCode: 71 }); await session.poll("!!document.querySelector('#settings-modal-title')");
-  assert(await session.evaluate("document.querySelectorAll('#settings-modal-title').length===1"), "Locked local remap did not reach the one Settings handler"); await close();
-  await closeSidebar();
-  await session.button("Edit", ".content-column"); await session.button("Source", ".content-column");
-  await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')"); await session.click(".cm-content"); await session.type("Locked controls public note consumer\n"); await session.button("Save", ".content-column");
-  await session.poll("fetch('/_/api/notes/Seed').then(r=>r.json()).then(note=>note.content.includes('Locked controls public note consumer'))");
-  await session.poll("(()=>{const button=[...document.querySelectorAll('.content-column button')].find(button=>button.textContent.trim()==='Save');return button?.getAttribute('aria-busy')==='false'&&!button.querySelector('.animate-spin');})()");
-  assert((await Deno.readTextFile(`${vault}/Seed.md`)).includes("Locked controls public note consumer"), "Locked controls prevented actual public note persistence");
-  const report = await waitUntil(async () => {
-    const report = (await api(`plugin-host/${id}/commands/report`, "POST", {})).body.result;
-    return report.content?.includes("Locked controls public note consumer") ? done(report) : pending(report);
-  }, { label: "Locked public hook/private-data consumer", intervalMs: 50 });
-  assert(report.owner === owner && report.message === "locked retained settings consumer", "Settings lock/local preferences replaced owner or lost real settings/hook consumer");
-  assert(JSON.parse(await Deno.readTextFile(`${state}/plugin-data/${id}/data.json`)).values.content.includes("Locked controls public note consumer"), "Locked workflow private data did not persist");
-  const sourceUrl = await session.evaluate("location.href");
-  await session.evaluate("window.__lockedPreferencesDocument='before-reload';true");
-  await session.send("Page.reload");
-  await session.poll("window.__lockedPreferencesDocument===undefined&&document.readyState==='complete'&&!!document.querySelector('.cm-content')&&document.querySelector('.cm-content').textContent.includes('Locked controls public note consumer')");
-  assert(await session.evaluate(`location.href===${JSON.stringify(sourceUrl)}`), "Reload did not retain the Source URL/editor ownership");
-  assert(await session.evaluate("localStorage.getItem('globnotes-theme')==='globnotes-dark'&&localStorage.getItem('viewLineNumbers')==='true'&&localStorage.getItem('debug')==='true'&&localStorage.getItem('globnotes-keybindings')==='custom'&&JSON.parse(localStorage.getItem('globnotes-keybindings-custom'))['app:open-settings'].other==='Ctrl+Alt+G'"), "Locked-public local preferences/remap did not persist across reload");
-  // Review-later is browser-lifetime deferral, not a persisted decision. A
-  // fresh document legitimately reviews the still-pending readonly request.
-  await session.poll("!!document.querySelector('#permission-request-title')");
-  await session.button("Review later", "[data-modal-top=true]"); await session.poll("!document.querySelector('#permission-request-title')");
-  await closeSidebar();
-  await session.button("Edit", ".content-column");
-  await session.poll("!!document.querySelector('.toast-viewer')&&!document.querySelector('.cm-content')&&document.body.classList.contains('dark')&&document.querySelectorAll('.toast-viewer .line-numbers-rows>span').length>=2");
-  await session.key("g", { code: "KeyG", modifiers: 3, windowsVirtualKeyCode: 71 }); await session.poll("!!document.querySelector('#settings-modal-title')"); await close();
-  for (const file of files) assert(await Deno.readTextFile(`${state}/${file}`) === retained[file], `Local preferences changed vault-owned ${file}`);
-  assert(writes.length === 0, "Local preferences caused a covered backend settings write"); stop();
-  return { realCoveredApisDenied: rejected, realConfigPolicySettingsBytesRetained: true, actualPermissionLedgerRetained: true, requestPublishedWhileLocked: true, readonlyRequestStillPending: true, disabledUiMutationRequests: writes, localThemeRemapLineNumbersDebugConsumedAndReloaded: true, publicNoteApiAndDiskConsumer: true, sameWorkflowOwner: true, settingsDrivenHookAndPrivateDataConsumer: true };
+  await persistedHook(text,'Edit browser save reaches plugin private data');
+  const external='Locked controls external note consumer\n';
+  await Deno.writeTextFile(`${vault}/Background.md`,external);
+  await persistedHook(external,'External save independently reaches plugin private data');
+  const sourceUrl=await s.evaluate('location.href');await s.send('Page.reload');await s.poll("document.readyState==='complete'&&document.querySelector('.cm-content')?.textContent.includes('Locked controls public note consumer')");
+  assert(await s.evaluate(`location.href===${JSON.stringify(sourceUrl)}&&localStorage.getItem('globnotes-theme')==='globnotes-dark'&&localStorage.getItem('viewLineNumbers')==='true'&&localStorage.getItem('debug')==='true'&&localStorage.getItem('globnotes-keybindings')==='custom'&&JSON.parse(localStorage.getItem('globnotes-keybindings-custom'))['app:open-settings'].other==='Ctrl+Alt+G'`),'Personal preferences and Source URL survive reload');
+  await s.key('g',{code:'KeyG',modifiers:3,windowsVirtualKeyCode:71});await s.poll("!!document.querySelector('#settings-modal-title')");
+  for(const file of files)assert(await Deno.readTextFile(`${state}/${file}`)===bytes[file],`Denied/personal actions preserve ${file}`);
+  assert(writes.length===0,'UI/personal preferences send no administrative mutation');stop();
+  return {realCoveredApisDenied:rejected,privateAdminProjectionDenied:true,realConfigPolicySettingsBytesRetained:true,actualPermissionLedgerRetained:true,requestPublishedWhileLocked:true,readonlyRequestStillPending:true,disabledUiMutationRequests:writes,localThemeRemapLineNumbersDebugConsumedAndReloaded:true,publicNoteApiAndDiskConsumer:true,editSaveHookPrivateDataPersisted:true,sameWorkflowOwner:true,independentExternalSaveHook:true,settingsDrivenHookAndPrivateDataConsumer:true};
 }

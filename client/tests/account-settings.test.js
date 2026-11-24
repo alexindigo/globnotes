@@ -239,3 +239,79 @@ it("copy is single-admission and disposal hides late feedback", async () => {
   const closing = f.controller.dispose(); held.resolve(); await first; await closing;
   expect([copy.mock.calls, f.controller.state.enrollment.feedback]).toEqual([[[candidate.secret]], ""]);
 });
+it("setup validates both credentials and the optional six-digit proof before any publication", async () => {
+  const beforeCommit = vi.fn(async () => true), submit = vi.fn(), readStatus = vi.fn();
+  const c = owned(createIdentitySetupFormState({ beforeCommit, submit, readStatus, enrol: async () => candidate }));
+  expect([c.state.username, c.state.password, c.state.everybody, c.state.totpEnabled, c.state.busy]).toEqual(["", "", "view", false, false]);
+  for (const [username, password] of [["", ""], ["", "literal"], ["alice", ""]]) {
+    c.setField("username", username); c.setField("password", password);
+    expect([await c.finish(), c.state.error]).toEqual([false, "Enter a login name and password."]);
+  }
+  c.setField("password", "literal"); await c.toggleAuthenticator(); c.setField("totpCode", "12345");
+  expect([await c.finish(), c.state.error, c.state.enrollment.candidate]).toEqual([false, "Confirm the new authenticator with its six-digit code.", candidate]);
+  for (const level of ["none", "edit", "view"]) c.setField("everybody", level);
+  expect([c.state.username, c.state.password, c.state.totpCode, beforeCommit.mock.calls, submit.mock.calls, readStatus.mock.calls]).toEqual(["alice", "literal", "12345", [], [], []]);
+});
+it("setup owns one literal submission through preparation, wire and handoff", async () => {
+  const authorization = Promise.withResolvers(), wire = Promise.withResolvers(), handoff = Promise.withResolvers();
+  const sent = Promise.withResolvers(), acknowledged = Promise.withResolvers();
+  const submit = vi.fn(payload => { sent.resolve(payload); return wire.promise; });
+  const completed = vi.fn(result => { acknowledged.resolve(result); return handoff.promise; });
+  const c = owned(createIdentitySetupFormState({ beforeCommit: () => authorization.promise, submit, completed, enrol: async () => candidate }));
+  c.setField("username", " Alice "); c.setField("password", " literal "); c.setField("everybody", "edit");
+  await c.toggleAuthenticator(); c.setField("totpCode", "012345");
+  const attempt = c.finish();
+  try {
+    expect([c.finish(), c.state.busy, submit.mock.calls]).toEqual([attempt, true, []]);
+    c.setField("password", "discarded edit"); expect(await c.toggleAuthenticator()).toBe(false);
+    authorization.resolve(true); const payload = await sent.promise;
+    expect(submit.mock.calls).toEqual([[{ username: " Alice ", password: " literal ", everybody: "edit", updateId: payload.updateId, totp: { key: candidate.key, code: "012345" } }]]);
+    expect(c.finish()).toBe(attempt);
+    wire.resolve({ access_token: "new" }); await acknowledged.promise;
+    expect([c.state.busy, c.finish(), completed.mock.calls]).toEqual([true, attempt, [[{ access_token: "new" }]]]);
+  } finally { authorization.resolve(false); wire.resolve(null); handoff.resolve(); }
+  expect([await attempt, c.state.busy, c.state.password, c.state.enrollment.candidate]).toEqual([true, false, "", null]);
+});
+it.each([false, true])("setup never sends after cancelled preparation or disposal (%s)", async dispose => {
+  const authorization = Promise.withResolvers(), submit = vi.fn(), completed = vi.fn();
+  const c = owned(createIdentitySetupFormState({ beforeCommit: () => authorization.promise, submit, completed }));
+  c.setField("username", "alice"); c.setField("password", "literal"); const result = c.finish();
+  const closing = dispose ? c.dispose() : null;
+  authorization.resolve(dispose);
+  expect([await result, c.state.busy, c.state.username, c.state.password, submit.mock.calls, completed.mock.calls]).toEqual([false, false, "alice", dispose ? "" : "literal", [], []]);
+  await closing;
+});
+it("definite setup rejection retains the credentials, guest choice and issued candidate for correction", async () => {
+  const submit = vi.fn(async () => { throw { status: 422 }; }), readStatus = vi.fn(), completed = vi.fn();
+  const c = owned(createIdentitySetupFormState({ submit, readStatus, completed, enrol: async () => candidate }));
+  c.setField("username", "alice"); c.setField("password", "literal"); c.setField("everybody", "none");
+  await c.toggleAuthenticator(); c.setField("totpCode", "111111");
+  expect(await c.finish()).toBe(false);
+  expect(c.state).toMatchObject({ busy: false, error: "Setup could not finish. Check your details and try again.", username: "alice", password: "literal", everybody: "none", enrollment: { candidate } });
+  c.setField("totpCode", "222222"); expect(c.state.totpCode).toBe("222222");
+  expect([submit.mock.calls.length, readStatus.mock.calls, completed.mock.calls]).toEqual([1, [], []]);
+});
+it("disabled setup enrollment retires its pending candidate and permits only the new candidate", async () => {
+  const entered = Promise.withResolvers(), stale = Promise.withResolvers(), fresh = { ...candidate, qr: "data:image/png;base64,fresh" };
+  const enrol = vi.fn().mockImplementationOnce(() => { entered.resolve(); return stale.promise; }).mockResolvedValueOnce(fresh);
+  const submit = vi.fn(), c = owned(createIdentitySetupFormState({ enrol, submit }));
+  c.setField("username", "alice"); const first = c.toggleAuthenticator();
+  try {
+    await entered.promise;
+    await c.toggleAuthenticator(); expect([c.state.totpEnabled, c.state.enrollment.candidate, c.state.totpCode]).toEqual([false, null, ""]);
+    const replacement = c.toggleAuthenticator();
+    expect([enrol.mock.calls, c.state.enrollment.candidate]).toEqual([[['alice']], null]);
+    stale.resolve(candidate); expect(await first).toBe(false);
+    expect(await replacement).toBe(true);
+    expect([c.state.totpEnabled, c.state.enrollment.candidate, enrol.mock.calls, submit.mock.calls]).toEqual([true, fresh, [["alice"], ["alice"]], []]);
+  } finally { stale.resolve(candidate); }
+});
+it("an enrollment failure offers a new attempt without exposing a failed candidate", async () => {
+  const enrol = vi.fn().mockRejectedValueOnce(Error("refused")).mockResolvedValueOnce(candidate);
+  const submit = vi.fn(), c = owned(createIdentitySetupFormState({ enrol, submit }));
+  c.setField("username", "alice");
+  expect(await c.toggleAuthenticator()).toBe(false);
+  expect(c.state.enrollment).toMatchObject({ candidate: null, busy: false, error: "Could not prepare the authenticator. Please try again." });
+  await c.toggleAuthenticator(); await c.toggleAuthenticator();
+  expect([c.state.enrollment.candidate, c.state.enrollment.error, enrol.mock.calls, submit.mock.calls]).toEqual([candidate, "", [["alice"], ["alice"]], []]);
+});

@@ -134,6 +134,36 @@ describe("caret URL debounce", () => {
 });
 
 describe("canonical save route and acknowledgement token", () => {
+  it("does not navigate for an existing note save just because its caret fragment is newer", async () => {
+    const { sync, router, location } = fixture();
+    location.hash = "#source:L1";
+    router.currentRoute.value.fullPath = "/Folder/My%20note?x=one&x=two#source:L1";
+    await sync.canonicalSaveRoute(snapshot, "Folder/My note");
+    expect(router.replace.mock.calls).toEqual([]);
+    expect(router.currentRoute.value.fullPath).toBe("/Folder/My%20note?x=one&x=two#source:L1");
+    expect(sync.state().acknowledgementTransition).toBeNull();
+  });
+
+  it("does not publish caret replacements over an admitted rename", async () => {
+    vi.useFakeTimers();
+    const { sync, router, current, setPath } = fixture();
+    const replacement = deferred();
+    router.replace.mockImplementationOnce(() => replacement.promise);
+    sync.scheduleCaretSync();
+    const renaming = sync.canonicalSaveRoute(snapshot, "Renamed");
+    current.editorLine = { from: 7, to: 7 };
+    sync.scheduleCaretSync();
+    try {
+      await vi.advanceTimersByTimeAsync(120);
+      expect(router.replace.mock.calls).toEqual([["/Renamed#source:L2-4"]]);
+    } finally {
+      setPath("Renamed");
+      router.currentRoute.value.fullPath = "/Renamed#source:L2-4";
+      replacement.resolve();
+      await renaming;
+    }
+  });
+
   it("an already canonical route creates no transition or router write", async () => {
     const { sync, router } = fixture(); router.currentRoute.value.fullPath = "/Canonical#source:L2-4";
     await sync.canonicalSaveRoute(snapshot, "Canonical");
@@ -197,5 +227,21 @@ describe("canonical save route and acknowledgement token", () => {
     const { sync, router } = fixture(); router.replace.mockResolvedValueOnce(undefined);
     await expect(sync.canonicalSaveRoute(snapshot, "Canonical")).rejects.toThrow("Save committed, but its canonical route could not be applied. Work is retained.");
     expect(sync.state().acknowledgementTransition).toBeNull();
+  });
+  it("defers a manual mode change until a committed save owns the new route", async () => {
+    const { sync, router, setPath } = fixture(), hold = deferred(), effect = vi.fn();
+    router.replace.mockImplementationOnce(async fullPath => {
+      await hold.promise;
+      sync.consumeAcknowledgementGuard();
+      router.currentRoute.value = { fullPath };
+    });
+    router.push.mockImplementationOnce(async fullPath => { router.currentRoute.value = { fullPath }; });
+    const saved = sync.canonicalSaveRoute(snapshot, "Renamed");
+    const changed = sync.changeFragment({ mode: "edit" }, effect, () => true);
+    expect(router.push).not.toHaveBeenCalled(); expect(effect).not.toHaveBeenCalled();
+    hold.resolve(); await saved; await changed;
+    expect(router.push).toHaveBeenCalledExactlyOnceWith("/Renamed#edit");
+    expect(effect).toHaveBeenCalledTimes(1);
+    setPath("Renamed"); expect(sync.consumeAcknowledgedResource("Renamed", snapshot.sessionId)).toBe(true);
   });
 });

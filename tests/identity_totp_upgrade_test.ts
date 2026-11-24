@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { signIn } from "./helpers/session_delivery.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
+import {
+  setupScenario,
+  signedInScenario,
+} from "./helpers/fixture_scenarios.ts";
 import { encodeBase32 } from "@std/encoding/base32";
 import { AccountRepository } from "../server/auth/accounts.ts";
 import { reduceAccountCredentials } from "../server/auth/internal/credential_reducer.ts";
@@ -155,202 +159,130 @@ Deno.test("stored TOTP upgrade: effective legacy aliases retain the persisted re
     );
   }));
 
-for (const lane of ["access", "setup"]) {
-  Deno.test(`stored TOTP replacement: legacy ${lane} confirms only its issued canonical replacement and removes both fields`, () =>
-    identityFixture(async (vault, rootScope) => {
-      await Deno.mkdir(`${vault}/.globnotes`);
-      const path = `${vault}/.globnotes/config.json`;
-      const oldKey = "A".repeat(32);
-      await Deno.writeTextFile(
-        path,
-        JSON.stringify({
-          ...(lane === "access" ? { auth_type: "totp" } : {}),
-          username: "alice",
-          password_hash: fixturePasswordHash("password"),
-          secret_key: "stored-secret-key",
-          totp_key: oldKey,
-          totp_key_encoding: "base32",
-        }),
-      );
-      const clock = await rootScope.acquire(
-        () => createNativeTotpClock(vault, NOW),
-        (clock) => clock.close(),
-      );
-      const server = await rootScope.acquire(
-        () =>
-          bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault }, {
-            denoArgs: clock.value.denoArgs,
+for (const setup of [false, true]) {
+  Deno.test(`stored TOTP: ${setup ? "first setup" : "existing account"} installs only the latest issued key and Account removes it across restart`, () =>
+    identityFixture(async (vault, scope) => {
+      const oldKey = "A".repeat(32), username = "alice", password = "password";
+      const clock = (await scope.acquire(() =>
+        createNativeTotpClock(vault, NOW), (clock) =>
+        clock.close())).value;
+      const env = {
+        GLOBNOTES_GLOBNOTES_PATH: vault,
+        GLOBNOTES__VAULTS_BASEPATH: vault,
+        ...setup ? {} : {
+          fixtureScenario: signedInScenario({
+            login: username,
+            password,
+            totpKey: oldKey,
+            totpKeyEncoding: "base32",
           }),
-        (server) => server.close(),
-      );
-      const call = async (
-        route: string,
+        },
+      };
+      const boot = () =>
+        scope.acquire(() =>
+          bootServer(env, { denoArgs: clock.denoArgs }), (server) =>
+          server.close());
+      let server = (await boot()).value;
+      const file = `${vault}/.globnotes/accounts.json`;
+      async function call(
+        path: string,
         method = "GET",
         data?: unknown,
         token?: string,
-      ) => {
-        const response = await fetch(`${server.value.baseUrl}/_/api/${route}`, {
+      ) {
+        const response = await fetch(`${server.baseUrl}/_/api/${path}`, {
           method,
           headers: {
             "content-type": "application/json",
             ...(token ? { authorization: `Bearer ${token}` } : {}),
           },
-          ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+          body: data === undefined ? undefined : JSON.stringify(data),
         });
         return { status: response.status, body: await response.json() };
-      };
-      const login = (code = "") =>
-        call("token", "POST", {
-          username: "alice",
-          password: "password" + code,
-        });
+      }
+      const login = (totp?: string) =>
+        call("token", "POST", { username, password, totp });
       let token: string | undefined;
-      const oldCode = await clock.value.code(oldKey);
-      if (lane === "access") {
-        const initial = await login(oldCode);
-        assertEquals(initial.status, 200);
-        token = initial.body.access_token;
-        await clock.value.advanceStep();
+      if (!setup) {
+        const before = await login(await clock.code(oldKey));
+        assertEquals(before.status, 200);
+        token = before.body.access_token;
+        await clock.advanceStep();
       }
-      const enrollment = await call(`${lane}/totp-enrolment`, "POST", {
-        username: "alice",
-      }, token);
-      assertEquals(enrollment.status, 200);
-      const replacement = await call(`${lane}/totp-enrolment`, "POST", {
-        username: "alice",
-      }, token);
-      assertEquals(replacement.status, 200);
-      const newKey = replacement.body.key;
-      const newSecret = replacement.body.secret;
-      assertEquals(newKey, newSecret);
-      const newCode = await clock.value.code(newSecret);
-      const current = lane === "access"
-        ? (await call("access", "GET", undefined, token)).body
-        : null;
-      const change = {
-        mode: "password",
-        username: "alice",
-        ...(lane === "setup" ? { password: "password" } : {
-          revision: current.revision,
-          signature: current.signature,
-          currentPassword: "password",
-          currentTotp: await clock.value.code(oldKey),
-        }),
-        totpEnabled: true,
-        totpKey: newKey,
-        totpCode: newCode,
-      };
-      const original = await Deno.readTextFile(path);
-      for (const rejectedKey of ["unissued raw key", enrollment.body.key]) {
-        const rejected = await call(lane, lane === "access" ? "PUT" : "POST", {
-          ...change,
-          totpKey: rejectedKey,
-        }, token);
-        assertEquals(rejected.status, 422);
-        assertEquals(await Deno.readTextFile(path), original);
-      }
-      // The current candidate still requires its own code.
-      const wrongProof = await call(lane, lane === "access" ? "PUT" : "POST", {
-        ...change,
-        totpCode: "",
-      }, token);
-      assertEquals(wrongProof.status, 400);
-      assertEquals(await Deno.readTextFile(path), original);
-      const replaced = await call(
-        lane,
-        lane === "access" ? "PUT" : "POST",
-        change,
-        token,
-      );
-      assertEquals(
-        replaced.status,
+      const route = setup ? "setup" : "account",
+        method = setup ? "POST" : "PATCH";
+      const enroll = () =>
+        call(
+          `${route}/totp-enrolment`,
+          "POST",
+          setup ? { username } : undefined,
+          token,
+        );
+      const previous = await enroll(), current = await enroll();
+      assertEquals([previous.status, current.status, current.body.key], [
         200,
-        JSON.stringify({ response: replaced.body, logs: server.value.logs() }),
-      );
-      const saved = JSON.parse(await Deno.readTextFile(path));
-      assertEquals([saved.totp_key, saved.totp_key_encoding], [
-        newKey,
+        200,
+        current.body.secret,
+      ]);
+      const code = await clock.code(current.body.secret);
+      const original = setup ? null : await Deno.readTextFile(file);
+      const update = setup ? { username, password, everybody: "none" } : {
+        revision: (await call("account", "GET", undefined, token)).body
+          .credentialRevision,
+        currentPassword: password,
+        currentTotp: await clock.code(oldKey),
+      };
+      const change = (key: string, confirmation: string) =>
+        call(route, method, {
+          ...update,
+          updateId: crypto.randomUUID(),
+          totp: { key, code: confirmation, ...setup ? {} : { enabled: true } },
+        }, token);
+      for (const key of ["unissued raw key", previous.body.key]) {
+        const stale = await change(key, code);
+        assertEquals(stale.status, 422);
+        if (setup) {
+          await assertRejects(() =>
+            Deno.readTextFile(file), Deno.errors.NotFound);
+        } else assertEquals(await Deno.readTextFile(file), original);
+      }
+      const replaced = await change(current.body.key, code);
+      assertEquals(replaced.status, 200);
+      const [account] = JSON.parse(await Deno.readTextFile(file)).accounts;
+      assertEquals([account.totpKey, account.totpKeyEncoding], [
+        current.body.key,
         "base32",
       ]);
-      await clock.value.advanceStep();
-      const signedIn = await login(await clock.value.code(newSecret));
-      assertEquals(signedIn.status, 200);
-      token = signedIn.body.access_token;
-      assertEquals(
-        (await call("auth-check", "GET", undefined, token)).status,
-        200,
-      );
-      let view = (await call("access", "GET", undefined, token)).body;
-      let activeSecret = newSecret;
-      await clock.value.advanceStep();
-      if (lane === "access") {
-        const beforeReuse = await Deno.readTextFile(path);
-        const replacement = {
-          mode: "password",
-          totpEnabled: true,
-          revision: view.revision,
-          signature: view.signature,
-          currentPassword: "password",
-          currentTotp: await clock.value.code(newSecret),
-        };
-        const consumed = await call("access", "PUT", {
-          ...replacement,
-          totpKey: newKey,
-          totpCode: await clock.value.code(newSecret),
-        }, token);
-        assertEquals(consumed.status, 422);
-        assertEquals(await Deno.readTextFile(path), beforeReuse);
-        const peer = await call("access/totp-enrolment", "POST", {
-          username: "alice",
-        }, token);
-        assertEquals(peer.status, 200);
-        const peerCompletion = await call("access", "PUT", {
-          ...replacement,
-          totpKey: peer.body.key,
-          totpCode: await clock.value.code(peer.body.secret),
-        }, token);
-        assertEquals(peerCompletion.status, 200);
-        const peerSaved = JSON.parse(await Deno.readTextFile(path));
-        assertEquals([peerSaved.totp_key, peerSaved.totp_key_encoding], [
-          peer.body.key,
-          "base32",
-        ]);
-        activeSecret = peer.body.secret;
-        await clock.value.advanceStep();
-        const peerSignIn = await login(await clock.value.code(activeSecret));
-        assertEquals(peerSignIn.status, 200);
-        token = peerSignIn.body.access_token;
-        view = (await call("access", "GET", undefined, token)).body;
-        await clock.value.advanceStep();
+      assertEquals((await login(code)).status, 401);
+      if (token) {
+        assertEquals(
+          (await call("account", "GET", undefined, token)).status,
+          401,
+        );
       }
-      const removed = await call("access", "PUT", {
-        mode: "password",
-        totpEnabled: false,
-        revision: view.revision,
-        signature: view.signature,
-        currentPassword: "password",
-        currentTotp: await clock.value.code(activeSecret),
+      await clock.advanceStep();
+      const signed = await login(await clock.code(current.body.secret));
+      assertEquals(signed.status, 200);
+      token = signed.body.access_token;
+      await clock.advanceStep();
+      const remove = await call("account", "PATCH", {
+        revision: (await call("account", "GET", undefined, token)).body
+          .credentialRevision,
+        updateId: crypto.randomUUID(),
+        currentPassword: password,
+        currentTotp: await clock.code(current.body.secret),
+        totp: { enabled: false },
       }, token);
-      assertEquals(removed.status, 200);
-      const cleared = JSON.parse(await Deno.readTextFile(path));
-      assertEquals(
-        [
-          Object.hasOwn(cleared, "totp_key"),
-          Object.hasOwn(cleared, "totp_key_encoding"),
-        ],
-        [false, false],
-      );
-      const passwordOnly = await login();
-      assertEquals(passwordOnly.status, 200);
-      assertEquals(
-        (await call(
-          "auth-check",
-          "GET",
-          undefined,
-          passwordOnly.body.access_token,
-        )).status,
-        200,
-      );
+      assertEquals(remove.status, 200);
+      const [cleared] = JSON.parse(await Deno.readTextFile(file)).accounts;
+      assertEquals([
+        cleared.totpKey,
+        cleared.totpKeyEncoding,
+        cleared.lastTotpStep,
+      ], [null, undefined, null]);
+      await server.close();
+      server = (await boot()).value;
+      assertEquals((await login()).status, 200);
     }));
 }
 
@@ -505,95 +437,143 @@ for (
       assertEquals(reset.lastTotpStep, saved.lastTotpStep);
     }));
 
-  Deno.test(`stored TOTP upgrade: legacy cold-start sign-in reads note without rewriting ${JSON.stringify(stored)}`, () =>
-    identityFixture(async (vault, rootScope) => {
-      await Deno.mkdir(`${vault}/.globnotes`);
-      const path = `${vault}/.globnotes/config.json`;
-      const bytes = JSON.stringify(
-        {
-          auth_type: "totp",
-          username: "alice",
-          password_hash: fixturePasswordHash("password"),
-          secret_key: "stored-secret-key",
-          totp_key: stored.key,
-          ...("encoding" in stored
-            ? { totp_key_encoding: stored.encoding }
-            : {}),
-        },
-        null,
-        2,
-      ) + "\n";
-      await Deno.writeTextFile(path, bytes);
-      await Deno.writeTextFile(
-        `${vault}/SecretProbe.md`,
-        "# Secret Probe\n\nOriginal authenticator note bytes.\n",
-      );
-      const clock = await rootScope.acquire(
-        () => createNativeTotpClock(vault, NOW),
-        (clock) => clock.close(),
-      );
-      for (const restart of [false, true]) {
-        await fixtureScope(async (scope) => {
-          const server = await scope.acquire(
+  for (const afterImport of [false, true]) {
+    Deno.test(`stored TOTP upgrade: ${afterImport ? "sign-in after import reads notes across restart" : "unimported legacy install refuses to start"} ${JSON.stringify(stored)}`, () =>
+      identityFixture(async (vault, rootScope) => {
+        await Deno.mkdir(`${vault}/.globnotes`);
+        const path = `${vault}/.globnotes/config.json`;
+        const bytes = JSON.stringify(
+          {
+            auth_type: "totp",
+            username: "alice",
+            password_hash: fixturePasswordHash("password"),
+            secret_key: "stored-secret-key",
+            totp_key: stored.key,
+            ...("encoding" in stored
+              ? { totp_key_encoding: stored.encoding }
+              : {}),
+          },
+          null,
+          2,
+        ) + "\n";
+        await Deno.writeTextFile(path, bytes);
+        await Deno.writeTextFile(
+          `${vault}/SecretProbe.md`,
+          "# Secret Probe\n\nOriginal authenticator note bytes.\n",
+        );
+        const inputs = {
+          GLOBNOTES__VAULTS_BASEPATH: vault,
+          GLOBNOTES_GLOBNOTES_PATH: vault,
+          fixtureScenario: afterImport
+            ? signedInScenario({
+              login: "alice",
+              password: "password",
+              totpKey: stored.key,
+              ...("encoding" in stored
+                ? { totpKeyEncoding: stored.encoding }
+                : {}),
+            })
+            : setupScenario(),
+        };
+        if (!afterImport) {
+          let readiness = 0;
+          await assertRejects(
             () =>
-              bootServer({ GLOBNOTES_GLOBNOTES_PATH: vault }, {
-                denoArgs: clock.value.denoArgs,
+              bootServer(inputs, {
+                healthFetch(...args) {
+                  readiness++;
+                  return fetch(...args);
+                },
               }),
-            (server) => server.close(),
+            Error,
+            "exit code 1). stderr:\nAccount migration required; public setup is unavailable.",
           );
-          await rootScope.admit(async () => {
-            assertEquals(await Deno.readTextFile(path), bytes);
-            const denied = await fetch(
-              `${server.value.baseUrl}/_/api/notes/SecretProbe`,
-            );
-            await denied.body?.cancel();
-            assertEquals(denied.status, 401);
-            const secret = stored.encoding === "base32"
-              ? stored.key
-              : base32(utf8(stored.key));
-            const code = await authenticatorCode(secret, clock.value.now());
-            const response = await fetch(
-              `${server.value.baseUrl}/_/api/token`,
-              {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({
-                  username: "alice",
-                  password: "password" + code,
+          assertEquals(readiness, 0);
+          assertEquals(await Deno.readTextFile(path), bytes);
+          return;
+        }
+        const clock = await rootScope.acquire(
+          () => createNativeTotpClock(vault, NOW),
+          (clock) => clock.close(),
+        );
+        const secret = stored.encoding === "base32"
+          ? stored.key
+          : base32(utf8(stored.key));
+        const signInAt = async (url: string, now: number) =>
+          fetch(`${url}/_/api/token`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              username: "alice",
+              password: "password",
+              totp: await authenticatorCode(secret, now),
+            }),
+          });
+        for (const restart of [false, true]) {
+          await fixtureScope(async (scope) => {
+            const server = await scope.acquire(
+              () =>
+                bootServer(inputs, {
+                  denoArgs: clock.value.denoArgs,
                 }),
-              },
+              (server) => server.close(),
             );
-            const result = await response.json();
-            assertEquals(
-              response.status,
-              200,
-              JSON.stringify({ restart, result }),
-            );
-            assert(typeof result.access_token === "string");
-            const note = await fetch(
-              `${server.value.baseUrl}/_/api/notes/SecretProbe`,
-              { headers: { Authorization: `Bearer ${result.access_token}` } },
-            );
-            const content = await note.json();
-            assertEquals(note.status, 200);
-            assertEquals(
-              content.content,
-              "# Secret Probe\n\nOriginal authenticator note bytes.\n",
-            );
-            const replay = await fetch(`${server.value.baseUrl}/_/api/token`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                username: "alice",
-                password: "password" + code,
-              }),
-            });
-            await replay.body?.cancel();
-            assertEquals(replay.status, 401);
-            assertEquals(await Deno.readTextFile(path), bytes);
-          }, scope);
-        });
-      }
-      assertEquals(await Deno.readTextFile(path), bytes);
-    }));
+            await rootScope.admit(async () => {
+              assertEquals(await Deno.readTextFile(path), bytes);
+              const denied = await fetch(
+                `${server.value.baseUrl}/_/api/notes/SecretProbe`,
+              );
+              await denied.body?.cancel();
+              assertEquals(denied.status, 403);
+              if (restart) {
+                const replay = await signInAt(
+                  server.value.baseUrl,
+                  clock.value.now(),
+                );
+                assertEquals(replay.status, 401);
+                await replay.body?.cancel();
+                await clock.value.advanceStep();
+              }
+              const response = await signInAt(
+                server.value.baseUrl,
+                clock.value.now(),
+              );
+              const result = await response.json();
+              assertEquals(
+                response.status,
+                200,
+                JSON.stringify({ restart, result }),
+              );
+              assert(typeof result.access_token === "string");
+              const note = await fetch(
+                `${server.value.baseUrl}/_/api/notes/SecretProbe`,
+                { headers: { Authorization: `Bearer ${result.access_token}` } },
+              );
+              const content = await note.json();
+              assertEquals(note.status, 200);
+              assertEquals(
+                content.content,
+                "# Secret Probe\n\nOriginal authenticator note bytes.\n",
+              );
+              const replay = await signInAt(
+                server.value.baseUrl,
+                clock.value.now(),
+              );
+              await replay.body?.cancel();
+              assertEquals(replay.status, 401);
+              assertEquals(await Deno.readTextFile(path), bytes);
+            }, scope);
+          });
+        }
+        const imported = JSON.parse(
+          await Deno.readTextFile(`${vault}/.globnotes/accounts.json`),
+        ).accounts[0];
+        assertEquals([
+          imported.totpKey,
+          imported.totpKeyEncoding,
+          Object.hasOwn(imported, "totpKeyEncoding"),
+        ], [stored.key, stored.encoding, "encoding" in stored]);
+        assertEquals(await Deno.readTextFile(path), bytes);
+      }));
+  }
 }

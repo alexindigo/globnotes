@@ -332,7 +332,7 @@ Deno.test("writer registry: plugin actions refuse a missing base and honour a st
 });
 
 Deno.test("writer registry: every resolution action and REST writer refuses missing/stale pair bases", async () => {
-  const f = await hubOperationsFixture();
+  const f = await hubOperationsFixture({}, { httpEverybody: "edit" });
   try {
     Deno.writeTextFileSync(`${f.vault}/original.md`, "keeper");
     Deno.writeTextFileSync(`${f.vault}/copy.md`, "loser");
@@ -386,7 +386,7 @@ Deno.test("writer registry: every resolution action and REST writer refuses miss
                 { method: "POST" },
               ),
               params: { id: "reviewed" },
-              body: { json: () => Promise.resolve(body) },
+              body: { text: () => Promise.resolve(JSON.stringify(body)) },
             } as unknown as PathfinderRequest<{ id: string }>,
           );
           assertEquals(response.status, missing ? 428 : 409);

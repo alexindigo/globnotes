@@ -1,13 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-vi.mock("../api.js", () => ({ openVaultChanges: vi.fn() }));
-import { acquireVaultChanges, createVaultChanges, HIDDEN_GRACE_MS, MAX_DELAY_MS, STABLE_MS, STREAM_RETRY_MS,
+import { acquireVaultChanges, bindVaultChanges, createVaultChanges, HIDDEN_GRACE_MS, MAX_DELAY_MS, STABLE_MS, STREAM_RETRY_MS,
   TERMINAL_STATUSES } from "../vaultChanges.js";
-import { openVaultChanges } from "../api.js";
+import { connectionLifetime } from "../connectionLifetime.js";
+import { identitySessionKey } from "../../shared/identity_session.ts";
+import { accountProjection } from "./helpers/account-projection.js";
 import { TOPICS } from "../bus/index.js";
 import { heldOperation } from "../../tests/helpers/owned_operation.ts";
 
 afterEach(() => vi.useRealTimers());
 const flush = () => vi.advanceTimersByTimeAsync(0);
+function bindAccountChanges(open) {
+  const key = identitySessionKey(accountProjection());
+  const owner = createVaultChanges({ sessionKey: () => key, lifetime: connectionLifetime, open });
+  owner.setSession(key);
+  return { owner, unbind: bindVaultChanges(owner) };
+}
 describe("vault change owner", () => {
   it("discards a timer registered across reentrant restart without overwriting the replacement", async () => {
     const calls = [], timers = [], cleared = [];
@@ -119,16 +126,16 @@ describe("vault change owner", () => {
     expect(calls).toHaveLength(2); expect(calls[1].since).toBe(7);
     first(); second(); expect(disposers[1]).toHaveBeenCalledTimes(1);
   });
-  it("the app singleton releases pagehide streams and reconnects after pageshow", async () => {
+  it("the App-bound account stream releases on pagehide and reconnects after pageshow", async () => {
     vi.useFakeTimers(); const closes = [], calls = [];
-    openVaultChanges.mockImplementation(async options => { calls.push(options); const close = vi.fn(); closes.push(close); return close; });
+    const { owner, unbind } = bindAccountChanges(async options => { calls.push(options); const close = vi.fn(); closes.push(close); return close; });
     const release = acquireVaultChanges(); await flush();
     try {
       window.dispatchEvent(new Event("pagehide"));
       expect(calls[0].signal.aborted).toBe(true); expect(closes[0]).toHaveBeenCalledTimes(1);
       window.dispatchEvent(new Event("pageshow")); await flush();
       expect(calls).toHaveLength(2);
-    } finally { release(); window.dispatchEvent(new Event("pageshow")); }
+    } finally { release(); unbind(); await owner.dispose(); window.dispatchEvent(new Event("pageshow")); }
   });
   it("shares one connection, publishes once, resumes the cursor, and fences retired delivery", async () => {
     vi.useFakeTimers();
@@ -264,9 +271,9 @@ describe("vault change owner", () => {
     expect(h.calls).toHaveLength(2); expect(h.calls[1].since).toBe(7);
     other(); release();
   });
-  it("the app singleton follows document visibility", async () => {
+  it("the App-bound account stream follows document visibility", async () => {
     vi.useFakeTimers(); const calls = [];
-    openVaultChanges.mockImplementation(async options => { calls.push(options); return vi.fn(); });
+    const { owner, unbind } = bindAccountChanges(async options => { calls.push(options); return vi.fn(); });
     let state = "visible";
     const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
@@ -278,7 +285,7 @@ describe("vault change owner", () => {
       state = "visible"; document.dispatchEvent(new Event("visibilitychange")); await flush();
       expect(calls).toHaveLength(2); expect(calls[1].signal.aborted).toBe(false);
     } finally {
-      release(); delete document.visibilityState;
+      release(); unbind(); await owner.dispose(); delete document.visibilityState;
       if (descriptor) Object.defineProperty(Document.prototype, "visibilityState", descriptor);
       document.dispatchEvent(new Event("visibilitychange"));
     }

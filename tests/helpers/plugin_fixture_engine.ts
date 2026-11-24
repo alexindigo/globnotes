@@ -49,6 +49,19 @@ export async function pluginFixture(options: { stateInVault?: boolean } = {}) {
   );
 }
 
+/** Compatibility for callers that explicitly close a constructed plugin
+ * bundle. Construct its nested resources inside the plugin root's lifetime. */
+export async function preparePluginFixture<T>(
+  prepare: (fixture: ScopedPluginFixture, scope: FixtureScope) => Promise<T>,
+  options: { retain?: boolean } = {},
+) {
+  const owner = createFixtureScope();
+  return await owner.prepare(async (scope) => ({
+    value: await prepare(await scopedPluginFixture(scope, options), scope),
+    close: () => owner.close(),
+  }));
+}
+
 /** Internal construction port: root custody belongs to the enclosing scenario
  * before any directory preparation. Retention leaves evidence, not live work. */
 export async function scopedPluginFixture(

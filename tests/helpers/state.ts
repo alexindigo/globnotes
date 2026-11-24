@@ -5,12 +5,12 @@ import { publicScenario } from "./fixture_scenarios.ts";
 /** In-process server state for unit-level tests (no subprocess boot). */
 
 import { gatedNotes } from "./storage.ts";
-import { GlobalConfig } from "./config.ts";
+import { fixtureLifecycle, GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
 import { subscribeIndex } from "../../server/hub/subscribers.ts";
 import { NoteOperations } from "../../server/notes/operations.ts";
-import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
+import type { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
 import { testEnvironment, testServices } from "./environment.ts";
 import { fixtureApiOrigin } from "./plugin_fixture.ts";
@@ -99,7 +99,7 @@ export function setupState(
     testServices(env).hub,
   );
   subscribeIndex(hub, indexer);
-  const lifecycle = new PluginLifecycle(config);
+  const lifecycle = fixtureLifecycle(config);
   const runtime = {
     limits: { preOperationMs: 5000 },
     guard: () => [],

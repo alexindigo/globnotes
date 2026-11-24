@@ -17,6 +17,7 @@ export async function hubDriverFixture(
     native?: boolean;
     changeLimit?: number;
     maxBatch?: number;
+    httpEverybody?: "view" | "edit";
   } = {},
 ) {
   const owner = createFixtureScope();
@@ -24,6 +25,7 @@ export async function hubDriverFixture(
     const f = (await scope.acquire(() =>
       hubOperationsFixture({}, {
         changeLimit: options.changeLimit,
+        httpEverybody: options.httpEverybody,
       }), (fixture) => fixture.close())).value;
     const root = new URL(
       "../fixtures/plugins/globnotes-test-driver/",

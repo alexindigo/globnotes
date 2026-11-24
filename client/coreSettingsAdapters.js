@@ -24,7 +24,7 @@ async function observe(wire, message = "Branding write outcome is unknown; revie
 }
 
 /** Core effects and retained File drafts. Pages receive only snapshots/callbacks. */
-export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, writeBrand, readBrand }) {
+export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, writeBrand, readBrand, sessionKey = () => "settings" }) {
   const prefix = readPathPrefix();
   const state = reactive({ loaded: false, committed: {}, name: "", accent: "#38bdf8", accentTouched: false, accentCleared: false,
     picked: { logo: null, icon: null }, urls: { logo: null, icon: null }, remove: { logo: false, icon: false }, versions: { name: 0, accent: 0, logo: 0, icon: 0 },
@@ -67,14 +67,18 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
   function discardFile(slot) { if (!writable()) return; state.versions[slot]++; releaseUrl(slot); state.picked[slot] = null; }
   function removeFile(slot) { if (!writable()) return; state.versions[slot]++; state.remove[slot] = true; }
   function acknowledge(submitted, fresh) {
-    state.committed = copy(fresh); state.reload++; applyBrand(fresh); publish(TOPICS.BRAND_CHANGE, fresh);
-    if (state.versions.name === submitted.versions.name) state.name = fresh.name ?? "";
-    if (state.versions.accent === submitted.versions.accent) { state.accent = fresh.accent ?? "#38bdf8"; state.accentTouched = false; state.accentCleared = false; }
+    const projection = fresh.committed !== true;
+    if (projection) {
+      state.committed = copy(fresh); state.reload++; applyBrand(fresh); publish(TOPICS.BRAND_CHANGE, fresh);
+    }
+    if (state.versions.name === submitted.versions.name) state.name = state.committed.name ?? "";
+    if (state.versions.accent === submitted.versions.accent) { state.accent = state.committed.accent ?? "#38bdf8"; state.accentTouched = false; state.accentCleared = false; }
     for (const slot of slots) if (state.versions[slot] === submitted.versions[slot]) { releaseUrl(slot); state.picked[slot] = null; state.remove[slot] = false; }
     state.unknown = false; state.readBack = false; state.error = ""; uncertain = null;
   }
   async function saveBrand(reset = false) {
-    if (!writable() || state.pending || state.inFlight || state.reviewing || (state.unknown && !state.readBack)) return false;
+    const session = sessionKey(), current = () => !disposed && session === sessionKey();
+    if (session == null || !writable() || state.pending || state.inFlight || state.reviewing || (state.unknown && !state.readBack)) return false;
     if (!reset && blockedEdits()) return false;
     const submitted = { versions: { ...state.versions }, reset }, form = new FormData();
     if (reset) { if(canEdit('name'))form.append("name", ""); if(canEdit('accent'))form.append("accent", ""); form.append("removeLogo", "true"); form.append("removeIcon", "true"); }
@@ -84,20 +88,31 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
       for (const slot of slots) { if (state.picked[slot]) form.append(slot, state.picked[slot]); if (state.remove[slot]) form.append(slot === "logo" ? "removeLogo" : "removeIcon", "true"); }
     }
     state.pending = true; state.inFlight = true; state.error = ""; state.readBack = false;
-    let observed = false;
-    wire = Promise.resolve().then(() => writeBrand(form));
-    wire.then(fresh => { if (!observed && !disposed && state.unknown) acknowledge(submitted, fresh); }, () => {})
-      .finally(() => { state.inFlight = false; }).catch(() => {});
-    try { const fresh = await observe(wire); observed = true; if (disposed) return false; acknowledge(submitted, fresh); return true; }
-    catch (error) { if (!disposed) { state.error = error.response?.data?.detail ?? error.message; state.unknown = true; uncertain = { submitted, form }; } return false; }
-    finally { state.pending = false; }
+    let observed = false, receiptOnly = false;
+    const settle = fresh => {
+      receiptOnly = fresh.committed === true;
+      acknowledge(submitted, fresh);
+    };
+    const refreshAfterReceipt = () => {
+      if (receiptOnly && current() && writable() && !state.pending && !state.inFlight && !brandDirty()) {
+        receiptOnly = false;
+        void reviewBrand();
+      }
+    };
+    wire = Promise.resolve().then(() => current() && writable() ? writeBrand(form) : null);
+    wire.then(fresh => { if (fresh && !observed && current() && state.unknown) settle(fresh); }, () => {})
+      .finally(() => { state.inFlight = false; refreshAfterReceipt(); }).catch(() => {});
+    try { const fresh = await observe(wire); observed = true; if (!current() || !fresh) return false; settle(fresh); return true; }
+    catch (error) { if (current()) { state.error = error.response?.data?.detail ?? error.message; state.unknown = true; uncertain = { submitted, form }; } return false; }
+    finally { state.pending = false; refreshAfterReceipt(); }
   }
   async function reviewBrand() {
-    if (state.inFlight || state.pending || state.reviewing || disposed) return false;
+    const session = sessionKey(), current = () => !disposed && session === sessionKey();
+    if (session == null || state.inFlight || state.pending || state.reviewing || disposed) return false;
     state.reviewing = true;
     try {
-      const fresh = await observe(Promise.resolve().then(() => readBrand()), "Current branding could not be read within the deadline; your choices are retained.");
-      if (disposed) return false;
+      const fresh = await observe(Promise.resolve().then(() => current() ? readBrand() : null), "Current branding could not be read within the deadline; your choices are retained.");
+      if (!current() || !fresh) return false;
       const old = state.committed;
       if (state.name === (old.name ?? "")) state.name = fresh.name ?? "";
       const accentRequested = uncertain?.form.get("accent");
@@ -118,7 +133,7 @@ export function createCoreSettingsAdapters({ getBrand, applyBrand, writable, wri
       state.committed = copy(fresh); state.reload++; applyBrand(fresh); publish(TOPICS.BRAND_CHANGE, fresh);
       state.unknown = false; state.readBack = true; state.error = ""; uncertain = null;
       return true;
-    } catch (error) { state.error = error.message; return false; }
+    } catch (error) { if (current()) state.error = error.message; return false; }
     finally { state.reviewing = false; }
   }
   async function settle() { if (state.inFlight) { try { await observe(wire); } catch {} } return !state.inFlight && !state.pending && !state.reviewing && !state.unknown; }

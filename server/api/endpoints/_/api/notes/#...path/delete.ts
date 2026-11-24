@@ -8,38 +8,41 @@ import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 import { parseBase } from "@server/hub/gate.ts";
 import { noteMutationLease } from "@server/auth/middleware.ts";
+import { deliverAdmissionRefusals } from "@server/auth/admission_refusal.ts";
 import { committedJson } from "@server/auth/http_policy.ts";
 
-export default async function (request: PathfinderRequest<{ path: string }>) {
-  try {
-    const lease = await noteMutationLease(request._raw);
-    // The version the caller read: a changed note is not deleted.
-    const version = request.query.get("base_version");
-    let base;
-    if (version !== null) {
-      try {
-        base = parseBase({ kind: "version", version });
-      } catch (error) {
-        throw new HttpError(400, (error as Error).message);
+export default deliverAdmissionRefusals(
+  async (request: PathfinderRequest<{ path: string }>) => {
+    try {
+      const lease = await noteMutationLease(request._raw);
+      // The version the caller read: a changed note is not deleted.
+      const version = request.query.get("base_version");
+      let base;
+      if (version !== null) {
+        try {
+          base = parseBase({ kind: "version", version });
+        } catch (error) {
+          throw new HttpError(400, (error as Error).message);
+        }
       }
+      await state.operations!.deleteNote(
+        request.params.path,
+        { origin: "api", lease },
+        undefined,
+        undefined,
+        undefined,
+        base,
+      );
+    } catch (e) {
+      if (e instanceof OperationError) return toOperationResponse(e);
+      if (e instanceof InvalidPathError) {
+        throw new HttpError(400, invalid_note_path);
+      }
+      if (e instanceof NoteNotFoundError) {
+        throw new HttpError(404, note_not_found);
+      }
+      throw e;
     }
-    await state.operations!.deleteNote(
-      request.params.path,
-      { origin: "api", lease },
-      undefined,
-      undefined,
-      undefined,
-      base,
-    );
-  } catch (e) {
-    if (e instanceof OperationError) return toOperationResponse(e);
-    if (e instanceof InvalidPathError) {
-      throw new HttpError(400, invalid_note_path);
-    }
-    if (e instanceof NoteNotFoundError) {
-      throw new HttpError(404, note_not_found);
-    }
-    throw e;
-  }
-  return committedJson(null);
-}
+    return committedJson(null);
+  },
+);

@@ -10,6 +10,7 @@ import { identityFixture, storedAccount, UPDATE } from "./helpers/identity.ts";
 import { bootstrapContext } from "./helpers/identity_bootstrap.ts";
 import {
   bootstrapHandlers,
+  IdentityMigrationRequired,
   IdentityRecoveryError,
   legacyIdentityPresent,
   openIdentityTransaction,
@@ -238,16 +239,22 @@ for (
           actorId: null,
         });
       }
-      assertThrows(() => f.bootstrap.status(), IdentityRecoveryError, recovery);
+      const errorType = state === "legacy"
+        ? IdentityMigrationRequired
+        : IdentityRecoveryError;
+      const message = state === "legacy"
+        ? "Account migration required; public setup is unavailable."
+        : recovery;
+      assertThrows(() => f.bootstrap.status(), errorType, message);
       await assertRejects(
         () => f.bootstrap.setup(input()),
-        IdentityRecoveryError,
-        recovery,
+        errorType,
+        message,
       );
       await assertRejects(
         () => f.bootstrap.enrolment("alice"),
-        IdentityRecoveryError,
-        recovery,
+        errorType,
+        message,
       );
     }));
 }
@@ -437,7 +444,14 @@ Deno.test("identity bootstrap: actual legacy/corrupt input remains intact, and a
       const f = bootstrapContext(root, scope, {
         legacy: () => legacyIdentityPresent([filename]),
       });
-      assertThrows(() => f.bootstrap.status(), IdentityRecoveryError, recovery);
+      const migration = bytes !== "{bad";
+      assertThrows(
+        () => f.bootstrap.status(),
+        migration ? IdentityMigrationRequired : IdentityRecoveryError,
+        migration
+          ? "Account migration required; public setup is unavailable."
+          : recovery,
+      );
       assertEquals(Deno.readTextFileSync(filename), bytes);
       f.retire();
     }

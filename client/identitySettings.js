@@ -11,15 +11,16 @@ import { createOwnershipScope } from "../shared/ownership.js";
 // revision. New writes still require the controller's live permission checks.
 function retainedScope(session, account, vault) {
   const token = session.tokens.getStoredToken();
-  const credential = session.captureCredential?.();
+  const credentialCurrent = session.captureCredential?.() ?? (() => session.tokens.getStoredToken() === token);
   const key = account == null ? null : JSON.stringify([account, vault]);
-  return () => account != null && (credential?.() ?? true) && session.key() != null && session.snapshot().accountId === account &&
-    session.tokens.getStoredToken() === token &&
+  return () => account != null && session.key() != null && session.snapshot().accountId === account &&
+    credentialCurrent() &&
     (vault == null || session.snapshot().vaultId == null || session.snapshot().vaultId === vault) ? key : null;
 }
 
 function accountAdapters({ session, navigate, toast, account = {} }) {
   return { ...account, token: () => session.isDisposed?.() ? null : session.tokens.getStoredToken(),
+    captureCredential: session.captureCredential,
     clearToken: () => session.tokens.clearStoredToken(), retire: session.invalidate,
     logout: session.logout, consumeProof: session.consumeLoginProof,
     beginHandoff: session.beginCredentialHandoff,
@@ -91,7 +92,8 @@ export function createIdentitySettingsControllers({ session, config = session.sn
   const departurePages = () => work().map(kind => ({ page: { label: kind === "account" ? "Your account" : "Access" },
     canSave: kind === "access" && active.value.access.state.canSave,
     uncertain: kind === "access" && (active.value.access.state.unknown || active.value.access.state.provisioningUnknown) }));
-  return Object.freeze({ get account() { return active.value.account; }, get access() { return active.value.access; },
+  return Object.freeze({ sessionKey: session.key, captureSession: session.capture, captureCredential: session.captureCredential,
+    get account() { return active.value.account; }, get access() { return active.value.access; },
     retainedWork, work, hasWork: () => work().length > 0, departurePages,
     async settle() {
       const group = active.value;

@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import type { PathfinderRequest } from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import changes from "../server/api/endpoints/_/api/changes/get.ts";
 import { state } from "../server/state.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import type { DriverSupervisor } from "../server/hub/drivers/supervisor.ts";
+import { createUuid } from "../shared/uuid.ts";
+import { signIn } from "./helpers/session_delivery.ts";
+import { done, pending, waitUntil } from "./helpers/wait.ts";
+import { OperationError } from "../server/plugins/errors.ts";
+
+const fixture = () => hubOperationsFixture({}, { httpEverybody: "edit" });
 
 function request(
   query = "",
@@ -39,8 +45,25 @@ async function readFrame(reader: ReadableStreamDefaultReader<Uint8Array>) {
   }
 }
 
+async function disconnected(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  assertEquals(
+    await readFrame(reader).catch((error) => {
+      assert(error instanceof OperationError);
+      assertEquals(error.code, "operation_conflict");
+      return "";
+    }),
+    "",
+  );
+}
+
+const subscriptionsGone = (count: () => number) =>
+  waitUntil(() => {
+    const observed = count();
+    return observed === 0 ? done() : pending(observed);
+  }, { label: "stream subscriptions released" });
+
 Deno.test("hub changes: polling filters hidden/state paths and returns a resumable cursor", async () => {
-  const f = await hubOperationsFixture();
+  const f = await fixture();
   try {
     Deno.mkdirSync(`${f.vault}/.hidden`);
     Deno.writeTextFileSync(`${f.vault}/.hidden/secret.md`, "secret");
@@ -67,7 +90,7 @@ Deno.test("hub changes: polling filters hidden/state paths and returns a resumab
 });
 
 Deno.test("hub changes: SSE emits live deletion, resumes by Last-Event-ID and releases one subscription", async () => {
-  const f = await hubOperationsFixture();
+  const f = await fixture();
   let subscriptions = 0;
   const subscribe = f.hub.subscribe.bind(f.hub);
   f.hub.subscribe = (fn) => {
@@ -105,7 +128,7 @@ Deno.test("hub changes: SSE emits live deletion, resumes by Last-Event-ID and re
     assert(deletion.includes('"kind":"deleted"'));
     assert(deletion.includes('"path":"note.md"'));
     await reader.cancel();
-    assertEquals(subscriptions, 0);
+    await subscriptionsGone(() => subscriptions);
     const resumed = await changes(
       request("", {
         accept: "text/event-stream",
@@ -115,7 +138,7 @@ Deno.test("hub changes: SSE emits live deletion, resumes by Last-Event-ID and re
     const replay = resumed.body!.getReader();
     assert((await readFrame(replay)).includes("event: reset"));
     await replay.cancel();
-    assertEquals(subscriptions, 0);
+    await subscriptionsGone(() => subscriptions);
     const poll = await (await changes(request(`?since=${seq}&poll=1`))).json();
     assertEquals(poll, {
       gap: true,
@@ -128,7 +151,7 @@ Deno.test("hub changes: SSE emits live deletion, resumes by Last-Event-ID and re
 });
 
 Deno.test("hub changes: retained-log gaps reset SSE and polling; normal resume replays only later entries", async () => {
-  const f = await hubOperationsFixture();
+  const f = await fixture();
   try {
     for (const path of ["one", "two", "three"]) {
       await f.operations.createNote({ path, content: path }, f.api());
@@ -162,32 +185,44 @@ Deno.test("hub changes: retained-log gaps reset SSE and polling; normal resume r
 });
 
 Deno.test("hub changes: read authorization is required and revoked streams disclose no later entries", async () => {
-  const f = await hubOperationsFixture();
+  const f = await fixture();
+  const abort = new AbortController();
   try {
-    state.auth = {
-      validateTokenMetadata: () => Promise.reject(new Error("denied")),
-    } as unknown as typeof state.auth;
-    await assertRejects(() => changes(request("?poll=1")));
-    state.auth = null;
-    const abort = new AbortController();
+    const denied = await assertRejects(() =>
+      changes(request("?poll=1", {
+        authorization: "Bearer invalid-token",
+      })), HttpError);
+    assertEquals(denied.status, 401);
     const response = await changes(
       request("", { accept: "text/event-stream" }, abort.signal),
     );
     const reader = response.body!.getReader();
-    state.auth = {
-      validateTokenMetadata: () => Promise.reject(new Error("revoked")),
-    } as unknown as typeof state.auth;
+    assertEquals(
+      await readFrame(reader),
+      'event: conflicts\ndata: {"revision":0}\n\n',
+    );
+    const acl = f.identity!.acl;
+    const before = acl.capture();
+    acl.save({ everybody: "none", grants: before.value.grants }, before, {
+      updateId: createUuid(),
+      actorId: null,
+    });
     Deno.writeTextFileSync(`${f.vault}/later.md`, "never disclosed");
     f.hub.scanNow();
-    assertEquals(await reader.read(), { value: undefined, done: true });
-    abort.abort();
+    await disconnected(reader);
+    assertEquals(
+      (await assertRejects(() => changes(request("?poll=1")), HttpError))
+        .status,
+      403,
+    );
   } finally {
+    abort.abort();
     await f.close();
   }
 });
 
 Deno.test("hub changes: metadata-only closure is emitted without a file id and both subscriptions retire", async () => {
-  const f = await hubOperationsFixture();
+  const f = await fixture();
   let subscriptions = 0;
   const subscribe = f.hub.subscribeConflicts.bind(f.hub);
   f.hub.subscribeConflicts = (callback) => {
@@ -240,7 +275,7 @@ Deno.test("hub changes: metadata-only closure is emitted without a file id and b
       { entries: [], next: seq, conflictRevision: 2 },
     );
     await reader.cancel();
-    assertEquals(subscriptions, 0);
+    await subscriptionsGone(() => subscriptions);
     const resumed = await changes(
       request(`?since=${seq}`, { accept: "text/event-stream" }),
     );
@@ -252,15 +287,15 @@ Deno.test("hub changes: metadata-only closure is emitted without a file id and b
     // A policy epoch closes both the file and metadata subscriptions.
     f.lifecycle.bumpEpoch();
     f.lifecycle.notifyInvalidation("catalog");
-    assertEquals(await replay.read(), { value: undefined, done: true });
-    assertEquals(subscriptions, 0);
+    await disconnected(replay);
+    await subscriptionsGone(() => subscriptions);
   } finally {
     await f.close();
   }
 });
 
 Deno.test("hub changes: driver metadata uses authenticated SSE/poll with independent revisions and owned cleanup", async () => {
-  const f = await hubOperationsFixture();
+  const f = await fixture();
   let revision = 17;
   const listeners = new Set<(revision: number) => void>();
   state.drivers = {
@@ -273,7 +308,13 @@ Deno.test("hub changes: driver metadata uses authenticated SSE/poll with indepen
     },
   } as DriverSupervisor;
   try {
-    const stream = await changes(request("", { accept: "text/event-stream" }));
+    const admin = await signIn(f.identity!.sessions, {
+      username: "alice",
+      password: "password",
+    });
+    const authorization = `Bearer ${admin.access_token}`;
+    const accept = "text/event-stream";
+    const stream = await changes(request("", { accept, authorization }));
     const reader = stream.body!.getReader();
     assertEquals(
       await readFrame(reader),
@@ -291,23 +332,35 @@ Deno.test("hub changes: driver metadata uses authenticated SSE/poll with indepen
       'event: drivers\ndata: {"revision":18}\n\n',
     );
     assertEquals(f.hub.sequence(), 0);
+    assertEquals(
+      await (await changes(request("?poll=1", { authorization }))).json(),
+      {
+        entries: [],
+        next: 0,
+        conflictRevision: 0,
+        driverRevision: 18,
+      },
+    );
+    assertEquals(
+      await (await changes(request("?poll=1&since=1", { authorization })))
+        .json(),
+      {
+        gap: true,
+        next: 0,
+        conflictRevision: 0,
+        driverRevision: 18,
+      },
+    );
     assertEquals(await (await changes(request("?poll=1"))).json(), {
       entries: [],
       next: 0,
       conflictRevision: 0,
-      driverRevision: 18,
-    });
-    assertEquals(await (await changes(request("?poll=1&since=1"))).json(), {
-      gap: true,
-      next: 0,
-      conflictRevision: 0,
-      driverRevision: 18,
     });
     f.lifecycle.bumpEpoch();
     f.lifecycle.notifyInvalidation("catalog");
-    assertEquals(await reader.read(), { done: true, value: undefined });
-    assertEquals(listeners.size, 0);
-    const resumed = await changes(request("", { accept: "text/event-stream" }));
+    await disconnected(reader);
+    await subscriptionsGone(() => listeners.size);
+    const resumed = await changes(request("", { accept, authorization }));
     const replay = resumed.body!.getReader();
     await readFrame(replay);
     assertEquals(
@@ -315,7 +368,7 @@ Deno.test("hub changes: driver metadata uses authenticated SSE/poll with indepen
       'event: drivers\ndata: {"revision":18}\n\n',
     );
     await replay.cancel();
-    assertEquals(listeners.size, 0);
+    await subscriptionsGone(() => listeners.size);
   } finally {
     state.drivers = null;
     await f.close();

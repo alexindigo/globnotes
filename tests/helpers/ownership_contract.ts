@@ -134,7 +134,6 @@ export const PROCESS_OWNERSHIP: OwnershipRules = {
         exit: [
           "server/main.ts",
           "server/config/cli.ts",
-          "server/auth/local.ts",
         ],
         addSignalListener: ["server/main.ts", "server/auth/cli.ts"],
         removeSignalListener: ["server/main.ts", "server/auth/cli.ts"],

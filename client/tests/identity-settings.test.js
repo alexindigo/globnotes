@@ -9,6 +9,9 @@ import AccountSettings from "../components/settings/AccountSettings.vue";
 import AccessSettings from "../components/settings/AccessSettings.vue";
 import { registerSessionParticipant, resolveParticipants } from "../sessionActions.js";
 import { createIdentityApplication } from "../identityApplication.js";
+import { createIdentityTokenStorage } from "../tokenStorage.js";
+import { accountProjection, identityFixtureIO } from "./helpers/account-projection.js";
+import { createCoreSettingsAdapters } from "../coreSettingsAdapters.js";
 
 const closes = [];
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); });
@@ -182,6 +185,53 @@ it("group disposal fences every form before a sibling's original read finishes d
     });
   });
 });
+it.each(["account", "catalogue"])("the original %s read cannot publish after re-signing in with identical token bytes", async kind => {
+  let hold;
+  const old = accountProjection(), guest = accountProjection({ guest: true, level: "view" });
+  const config = ref(old), tokens = createIdentityTokenStorage({ setCookie() {} });
+  tokens.storeToken("same-token");
+  const oldPlugin = { id: "original", name: "Original", enabled: true };
+  const catalog = vi.fn(async () => ({ plugins: [] }));
+  const app = createIdentityApplication({ config: () => config.value, setConfig: value => { config.value = value; }, tokens,
+    toast: { add() {} }, store: { notePaths: [], noteMeta: [], recentlyOpened: [] },
+    transport: identityFixtureIO({ getConfig: async () => guest, getPluginHostCatalog: catalog, getNoteIndex: async () => [] }),
+    applyBrand() {}, account: { read: async () => { await hold(); return accountView("original"); } },
+  });
+  closes.push(app.dispose); app.session.adopt(old);
+  const page = app.createAccountPage(), key = app.session.key();
+  await heldOperation(controlled(`old ${kind} reply`, app.session), boundary => {
+    hold = boundary;
+    if (kind === "account") return page.load();
+    catalog.mockImplementationOnce(async () => { await hold(); return { plugins: [oldPlugin] }; });
+    return app.readerPlugins();
+  }, async stale => {
+    await stale.reached(); expect(await app.logoutFromSettings()).toBe(true);
+    app.session.acceptToken("same-token", false); app.session.adopt(old);
+    expect(app.session.key()).not.toBe(key);
+    expect(await stale.result()).toEqual(kind === "account" ? null : []);
+    expect(page.state.view).toBeNull();
+    expect(app.session.snapshot()).toEqual(old);
+  });
+});
+it.each(["review", "save"])("a late branding %s cannot apply to a replacement account", async intent => {
+  const config = ref(configFor()), original = { name: "Original" }, stale = { name: "Alice draft" }, applyBrand = vi.fn();
+  let hold;
+  const session = createIdentityAppSession({ config: () => config.value, setConfig: value => { config.value = value; },
+    tokens: { getStoredToken: () => "alice-token" }, transport: {}, stopRuntime() {}, applyBrand() {} });
+  closes.push(session.dispose); session.adopt(config.value);
+  const response = vi.fn(async () => { await hold(); return stale; });
+  const brand = createCoreSettingsAdapters({ getBrand: () => original, writable: () => true, applyBrand,
+    sessionKey: session.key, [intent === "review" ? "readBrand" : "writeBrand"]: response });
+  closes.push(brand.dispose);
+  brand.editBrand("name", stale.name);
+  await heldOperation(controlled("old branding reply", brand), boundary => {
+    hold = boundary; return intent === "review" ? brand.reviewBrand() : brand.saveBrand();
+  }, async work => {
+    await work.reached(); session.adopt(configFor("bob"));
+    expect(await work.result()).toBe(false);
+    expect([brand.brandSnapshot().name, brand.brandSnapshot().dirty, applyBrand.mock.calls]).toEqual([stale.name, true, []]);
+  });
+});
 it("prepared application hands setup to the accepted account and reader catalog, without a manifest request", async () => {
   const config = ref({ ...configFor(null), setupRequired: true, principal: { kind: "guest" }, sessionGeneration: "guest", capabilities: { canRead: false } });
   let token = null;
@@ -199,6 +249,12 @@ it("prepared application hands setup to the accepted account and reader catalog,
   expect([token, app.session.state.valid, navigate.mock.calls, app.setup.state.password]).toEqual(["alice-token", true, [[{ name: "home" }]], ""]);
   expect(submit.mock.calls.map(([payload]) => [payload.username, payload.password, payload.everybody])).toEqual([["alice", "password", "none"]]);
   expect(await app.readerPlugins()).toEqual([{ id: "on", name: "On", version: "1", client: { editor: true } }]);
+  expect(read.mock.calls).toEqual([["plugin-host"], ["note-index"], ["plugin-host"]]);
+  expect([app.state.configReady, app.state.hasLiveConfig, app.state.noteShell]).toEqual([true, true, true]);
+  const accepted = config.value;
+  expect(app.session.acceptToken("replacement-token", false)).toBe(true);
+  expect([app.state.configReady, app.state.hasLiveConfig, app.state.noteShell, config.value]).toEqual([true, false, false, accepted]);
+  expect(await app.readerPlugins()).toEqual([]);
   expect(read.mock.calls).toEqual([["plugin-host"], ["note-index"], ["plugin-host"]]);
   const closing = app.dispose(); expect(app.dispose()).toBe(closing); expect((await closing).errors).toEqual([]);
 });

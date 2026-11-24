@@ -9,8 +9,7 @@ import {
   bounded as livenessBounded,
   WorkerDeliveryGate,
 } from "./helpers/worker_liveness.ts";
-import { GlobalConfig } from "./helpers/config.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
+import { fixtureLifecycle, GlobalConfig } from "./helpers/config.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
@@ -236,7 +235,7 @@ for (const boundary of ["operation", "per-plugin"] as const) {
       fixtureScenario: publicScenario(),
     });
     const config = new GlobalConfig(env);
-    const lifecycle = new PluginLifecycle(config);
+    const lifecycle = fixtureLifecycle(config);
     const manager = createPluginManager(
       fixture.vault,
       undefined,

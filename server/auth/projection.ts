@@ -4,6 +4,7 @@ import { brandBlock } from "../brand.ts";
 import type { PluginManager } from "../plugins/manager.ts";
 import type { StatusAdmission } from "./middleware.ts";
 import type { InstanceSessions } from "./sessions.ts";
+import { publicProvenance } from "../config/projection.ts";
 
 /** Allowlisted response values. Administrative inventories never serve as reader
  * payloads, and None never exposes a concrete vault binding. Delivery is owned
@@ -60,6 +61,7 @@ export function createIdentityProjections(adapters: {
       quickAccessSort: c.quickAccessSort,
       quickAccessLimit: c.quickAccessLimit,
       brand: brandBlock(c),
+      provenance: publicProvenance(c),
     };
   };
   return Object.freeze({

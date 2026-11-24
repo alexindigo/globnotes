@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 export const operation = "readVault";
 
-/** GET /_/api/index-status — sync progress UI banner. Public (counts only,
- * same as the Python server). */
+/** GET /_/api/index-status - vault reader sync progress. */
 
 import { state } from "@server/state.ts";
-
-export const auth = false;
 
 export default function (): {
   syncing: boolean;

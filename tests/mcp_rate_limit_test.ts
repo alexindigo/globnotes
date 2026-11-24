@@ -357,7 +357,7 @@ Deno.test("rate limit: a real server, two tokens share the account's budget", as
     assertEquals(await statuses(server.baseUrl, 2, first), [200, 200]);
     assertEquals(await statuses(server.baseUrl, 2, second), [200, 429]);
     // Unauthenticated requests are refused before the limit and not counted.
-    assertEquals(await statuses(server.baseUrl, 1), [401]);
+    assertEquals(await statuses(server.baseUrl, 1), [403]);
   } finally {
     await server.close();
   }

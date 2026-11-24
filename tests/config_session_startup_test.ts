@@ -3,12 +3,12 @@ import { assertEquals, assertRejects } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 import { publicScenario, setupScenario } from "./helpers/fixture_scenarios.ts";
 
-for (const mode of ["none", "setup", "read_only"]) {
+for (const mode of ["edit", "setup", "view"] as const) {
   Deno.test(`session startup: typed expiry supports ${mode}`, async () => {
     const server = await bootServer({
       fixtureScenario: mode === "setup"
         ? setupScenario()
-        : publicScenario(mode === "none" ? "edit" : "view"),
+        : publicScenario(mode),
       GLOBNOTES__SESSIONS_EXPIRYDAYS: "3",
     });
     try {
@@ -16,7 +16,9 @@ for (const mode of ["none", "setup", "read_only"]) {
       assertEquals(response.status, 200);
       const config = await response.json();
       assertEquals(config.setupRequired, mode === "setup");
-      assertEquals(config.authType, mode === "setup" ? null : mode);
+      assertEquals(config.principal.kind, "guest");
+      assertEquals(config.capabilities.canRead, mode !== "setup");
+      assertEquals(config.capabilities.canEdit, mode === "edit");
     } finally {
       await server.close();
     }
@@ -27,7 +29,7 @@ for (const mode of ["none", "setup", "read_only"]) {
         bootServer({
           fixtureScenario: mode === "setup"
             ? setupScenario()
-            : publicScenario(mode === "none" ? "edit" : "view"),
+            : publicScenario(mode),
           GLOBNOTES__SESSIONS_EXPIRYDAYS: "not-an-integer",
         }),
       Error,

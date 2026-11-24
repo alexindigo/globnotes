@@ -1,10 +1,10 @@
 // Actual Settings adapters, rendered viewer/debug consumers and search-sort UI.
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 import { showSidebar } from './sidebar-navigation-native.mjs';
-export async function exerciseSettingsMenu({ session, server, state }) {
+export async function exerciseSettingsMenu({ session, server, state, headers }) {
   const assert = (condition, message) => { if (!condition) throw Error(message); };
   const api = async path => {
-    const response = await fetch(`${server.baseUrl}${path}`, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${server.baseUrl}${path}`, { headers, signal: AbortSignal.timeout(5000) });
     assert(response.ok, `Menu consumer rejected ${path}`);
     return response.json();
   };
@@ -52,9 +52,11 @@ export async function exerciseSettingsMenu({ session, server, state }) {
   const on = await api("/_/api/plugin-host");
   assert(on.policy.revision === before.policy.revision + 2, "Native policy toggles were not distinct acknowledged writes");
   await session.button("Access");
-   assert(await session.read('[data-modal-top=true]', "[...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Change access…')"), "Writable no-auth Access action disappeared");
+  await session.poll("!!document.querySelector('#access-everybody')");
+    assert(await session.read('[data-modal-top=true]', "!!document.querySelector('.access-list [data-everybody-row] select') && [...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Create and add account')"), "Named Admin lost live ACL controls");
   await session.button("Account");
-   assert(await session.read('[data-modal-top=true]', "document.querySelector('[data-modal-top=true]').textContent.includes('This session has no account.') && ![...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Log out')"), "No-auth Account exposed a meaningless logout");
+  await session.poll("!!document.querySelector('#account-current-password')");
+    assert(await session.read('[data-modal-top=true]', "document.querySelector('[data-modal-top=true]').textContent.includes('session-fixture') && [...document.querySelector('[data-modal-top=true]').querySelectorAll('button')].some(button=>button.textContent.trim()==='Log out')"), "Named Account lost its identity or browser logout");
   await close();
   assert(!await session.evaluate("!!document.querySelector('[title=Menu]')"), "Obsolete floating Settings menu remains");
   // The Settings opener leaves its unpinned sidebar overlay open. Dismiss

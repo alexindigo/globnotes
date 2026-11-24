@@ -1,11 +1,23 @@
 // Feature-owned acceptance projection from actual native consumer records.
-export function accessMenuConsumers(outcomes, credentials) {
-  return outcomes.some(row => row.name.includes("confirmed-login") && row.passed) &&
-    outcomes.some(row => row.name === "native stored Access controls and fresh-proof errors retain account/editor authority" && row.passed) &&
-    credentials.retiredFieldsUnpinned === true &&
-    credentials.invalidCurrentProofRetainedConfigAndSession === true &&
-    credentials.directUnconfirmedWriteRejected === true &&
-    credentials.sameEditor === true && credentials.pageErrors?.length === 0;
+export function accessMenuConsumers(outcomes, enrollment, credentials) {
+  const passed = name => outcomes.some(row => row.name === name && row.passed === true);
+  const proved = (row, name, fields) => row?.name === name && passed(name) &&
+    fields.every(key => row[key] === true) && row.pageErrors?.length === 0;
+  return proved(enrollment, "totp-in-place", ["enrollmentCancelNoEffects", "literalDirtyBufferRetained",
+    "savedNote", "invalidEnrollmentRetainedAccountAndSession", "confirmedTotp", "revocation", "confirmedLoginAccepted"]) &&
+    proved(credentials, "pinned-credentials", ["declarationStatic", "ordinarySiblingSaved", "adminStillEffective",
+      "ownCredentialControlsEditable", "invalidCurrentProofRetainedBytesAndSession", "directUnconfirmedWriteRejected", "sameEditor"]);
+}
+
+export function prefixStreamConsumers(stream) {
+  const closed = state => state?.closed === true && Number.isFinite(state.closedAt) &&
+    typeof state.text === "string" && state.text.includes("event: hello") && !state.text.includes("event: invalidate");
+  return closed(stream.expiryStream) && stream.expiryStream.closedAt >= stream.expiry &&
+    closed(stream.securityTransitionStream) &&
+    stream.expiryNoLaterPrivateEvent === true && stream.transitionNoLaterPrivateEvent === true &&
+    stream.expiredReconnectStatus === 401 && stream.oldCredentialStatuses?.length === 3 &&
+    stream.oldCredentialStatuses.every(status => status === 401) &&
+    stream.bothNativeBrowserOwnersDisposed === true && stream.freshNativeLogin === true;
 }
 
 export async function collectProductionRows(read) {
@@ -24,9 +36,9 @@ export async function collectProductionRows(read) {
   const access = await read("access/diagnostics.json");
   require(!access.failure && access.outcomes.length >= 15 && access.outcomes.every(row => row.passed), "Native Access/TOTP matrix incomplete");
   require(menu.renderedLineNumberGutter && menu.debugDisabledPersisted && menu.existingParticipationRetained && menu.floatingMenuAbsent && menu.nativeSearchSort === "Last Modified" && theme.theme === "globnotes-dark" && brand.persisted === "Native inline brand", "Menu parity lacks real effects");
-  const credentials = await read("access/pinned-credentials/consumers.json");
-  require(accessMenuConsumers(access.outcomes, credentials), "Menu auth/TOTP consumers absent");
-  record(2, "GPS-02 MENU PARITY OK", { menu, brand, theme, accessOutcomes: access.outcomes, credentials });
+  const enrollment = await read("access/totp-in-place/consumers.json"), credentials = await read("access/pinned-credentials/consumers.json");
+  require(accessMenuConsumers(access.outcomes, enrollment, credentials), "Menu auth/TOTP consumers absent");
+  record(2, "GPS-02 MENU PARITY OK", { menu, brand, theme, accessOutcomes: access.outcomes, enrollment, credentials });
   const peers = await read("settings/cross-browser/consumers.json");
   const persistence = item(peers, "native-settings-persistence-command-and-hook-matrix");
   const stages = ["native-text-enter", "native-text-blur", "settings-reopen", "fresh-document-reload", "native-toggle", "backend-restart"];
@@ -64,7 +76,8 @@ export async function collectProductionRows(read) {
     if (mode === "password" || mode === "none") require(consumer.actualEditorSdkIdentity && consumer.actualRuntimeSdk && consumer.privateHookConsumer.content === consumer.exactApiDiskContent, "Prefix SDK/private hook consumer absent");
     if (mode === "password") {
       const stream = await read(`prefix/${name}/stream-consumers.json`);
-      require(stream.expiredReconnectStatus === 401 && stream.oldCredentialRejections === 3 && stream.bothNativeBrowserOwnersDisposed && stream.freshNativeLogin && stream.signedExpiryFrames.includes("unauthorized") && !stream.signedExpiryFrames.includes("event: invalidate") && stream.securityTransitionFrames.includes("policy-change"), "Current-auth stream outcomes missing");
+      require(prefixStreamConsumers(stream), "Current-auth stream outcomes missing");
+      consumer.stream = stream;
     }
     if (mode === "read_only") require(consumer.readonlyAdmissions === 3 && consumer.readonlyBrowserSdkConsumer, "Read-only boundary consumer missing");
     if (mode === "setup") require(consumer.setupRejections === 5 && consumer.noWorkerActivation && consumer.noBrowserRuntime, "Setup boundary consumer missing");
@@ -81,7 +94,7 @@ export async function collectProductionRows(read) {
   const geometry = await read("settings/geometry/consumers.json");
   require(geometry.length === 8 && new Set(geometry.map(row => row.label)).size === 8 && geometry.every(row => row.footer.centerDelta < 0.5 && row.footer.contained && row.footer.gearHit && row.footer.recentHit && row.dialog.contained && row.dialog.overflowX <= 1 && row.dialog.editorRetained && row.nativeFocusWrap && row.openerRestored), "Geometry/focus matrix incomplete");
   record(10, "GPS-10 GEOMETRY OK", { geometry, spatialReviewRequired: true });
-  const handoffs = ["optional-wizard-open-dismiss", ...["wizard", "logout"].flatMap(kind => ["cancel", "discard", "save", "blocked-save"].map(choice => `${kind}-${choice}`))];
+  const handoffs = ["access-panel-open-dismiss", ...["wizard", "logout"].flatMap(kind => ["cancel", "discard", "save", "blocked-save"].map(choice => `${kind}-${choice}`))];
   require(handoffs.every(name => settings.outcomes.some(row => row.name === name && row.passed)), "Missing native session handoff outcome");
   record(11, "GPS-11 SESSION HANDOFF OK", { handoffs });
   require(rows.length === 11, "Missing production acceptance row");

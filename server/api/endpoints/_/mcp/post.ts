@@ -8,8 +8,6 @@ export const operation = "mcp";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 
-export const auth = false;
-
 export default function (request: PathfinderRequest): Promise<Response> {
   if (!state.mcp) throw new HttpError(404, "Not Found");
   // The peer address as the HTTP server saw it: the rate limit's client

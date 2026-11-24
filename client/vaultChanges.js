@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { openVaultChanges } from "./api.js";
 import { publish, TOPICS } from "./bus/index.js";
-import { connectionLifetime, createConnectionLifetime } from "./connectionLifetime.js";
+import { createConnectionLifetime } from "./connectionLifetime.js";
 import { createOperationOwner } from "./operationOwner.js";
 import { bindContext } from "./sessionContext.js";
 export { HIDDEN_GRACE_MS } from "./connectionLifetime.js";
@@ -206,6 +206,10 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
   };
 }
 
-const vaultChanges = createVaultChanges({ lifetime: connectionLifetime });
-export const acquireVaultChanges = () => vaultChanges.acquire();
-export const restartVaultChanges = () => vaultChanges.restart();
+let activeChanges;
+export function bindVaultChanges(changes) {
+  activeChanges = changes;
+  return () => { if (activeChanges === changes) activeChanges = null; };
+}
+export const acquireVaultChanges = () => activeChanges?.acquire() ?? (() => {});
+export const restartVaultChanges = () => activeChanges?.restart();

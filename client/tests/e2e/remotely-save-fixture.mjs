@@ -6,6 +6,7 @@ import { createCodec } from "../../../plugins/globnotes-remotely-save/crypto.js"
 import { referenceCodecs, referenceStore } from "../../../tests/interop/remotely_save_reference.mjs";
 import { applicationServer } from "./http-origin.mjs";
 import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
+import { nativeFixtureAdmin } from "./fixtures.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
@@ -65,9 +66,12 @@ export async function remotelySaveCase(backend, mode, run) {
       await Deno.writeTextFile(`${vault}/Collision.md`, "local collision\n");
       await put("Collision.md", "remote collision\n");
       await put("Live.md", "first\n\nlast\n");
-      server = await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,...await nativeFixtureInput(nativeAccountScenario()),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"}, applicationServer());
+      const scenario = nativeAccountScenario();
+      server = await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,...await nativeFixtureInput(scenario),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"}, applicationServer());
+      const { headers: adminHeaders } = await nativeFixtureAdmin(server);
       async function api(route, method="GET", body) {
-        const response = await fetch(`${server.baseUrl}/_/api/${route}`, {method,headers:{"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+        const privileged = route === "drivers" || route.startsWith("plugin-host");
+        const response = await fetch(`${server.baseUrl}/_/api/${route}`, {method,headers:{"content-type":"application/json",...(privileged ? adminHeaders : {})},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
         const raw = await response.text(); packets.push(raw);
         assert(response.ok, `${method} ${route}: ${response.status} ${raw}`);
         return raw ? JSON.parse(raw) : null;
@@ -146,7 +150,12 @@ export async function remotelySaveCase(backend, mode, run) {
           }
         },
       };
-      await s.goto(server.baseUrl + "/"); await f.open("Plugins");
+      const { login, password: adminPassword } = scenario.identity.people[0];
+      await s.goto(server.baseUrl + "/_/login");
+      await f.fill("#identity-login-name", login); await f.fill("#identity-login-password", adminPassword);
+      await s.button("Continue", ".identity-login");
+      await s.poll("fetch('/_/api/auth-check').then(async r=>r.ok&&(await r.json()).capabilities?.canManageVault===true)");
+      await f.open("Plugins");
       // Install copies exact shipped files; enablement and broad network consent
       // are explicit native gestures, with API read-back of the actual policy.
       await s.click(`${plugin} .plugin-row-actions [role=switch]`);

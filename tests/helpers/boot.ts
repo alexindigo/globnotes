@@ -19,46 +19,20 @@ import { spawnOwnedChild } from "./owned_child.ts";
 import { createFixtureScope } from "./fixture_scope_engine.ts";
 import { done, pending, waitUntil } from "./wait.ts";
 import { testEnvironment } from "./environment.ts";
-import { publishRecord } from "./process_records.ts";
 import { boundOperation } from "./owned_operation.ts";
-import type { StoredConfig } from "../../server/config.ts";
-import type { FixtureEnvironment } from "./environment.ts";
-import type { FixtureScope } from "./fixture_scope.ts";
 import {
   admitLayout,
   bindLayout,
   type FixtureLayout,
   fixtureLayout,
   layoutEnvironment,
-  prepareFixtureMetadata,
   serverWorkingDirectory,
 } from "./fixture_layout.ts";
 import type { CompletedBuild } from "./completed_build.ts";
-import type { IdentityFixturePayload } from "./identity_fixture.ts";
-
-/** Publish the captured compatibility seed over the existing layout record.
- * No seed (including storedScenario) leaves metadata creation to boot. */
-export async function publishLegacyFixtureAuth(
-  layout: FixtureLayout,
-  scope: FixtureScope,
-  fixture: FixtureEnvironment,
-): Promise<void> {
-  const seed = fixture.fixtureAuth;
-  if (seed === undefined) return;
-  await prepareFixtureMetadata(layout, scope);
-  await admitLayout(layout, scope, async (signal) => {
-    const filename = path.join(layout.metadata, "config.json");
-    let saved: StoredConfig = {};
-    try {
-      saved = JSON.parse(await Deno.readTextFile(filename));
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
-    }
-    await publishRecord(filename, JSON.stringify({ ...saved, ...seed }), {
-      signal,
-    });
-  });
-}
+import {
+  type IdentityFixturePayload,
+  prepareIdentityBoot,
+} from "./identity_fixture.ts";
 
 const SERVER_MAIN = path.fromFileUrl(
   new URL("../../server/main.ts", import.meta.url),
@@ -73,7 +47,7 @@ export interface TestServer {
   baseUrl: string;
   vault: string;
   layout: FixtureLayout;
-  /** Prepared account input; not active production authority before I14c4. */
+  /** Account input captured by this boot, not sent to the child environment. */
   fixtureIdentity?: IdentityFixturePayload | null;
   /** The port the server bound (it chose it itself). */
   port: number;
@@ -91,6 +65,8 @@ export interface TestServer {
    * cleanup failures remain separate errors or aggregates, never that verdict. */
   close: () => Promise<void>;
 }
+
+export { fixtureSignIn } from "./fixture_sign_in.ts";
 
 /** A bare close rejection of this type certifies a self-exited process whose
  * launcher resources were released. Failed cleanup wraps it in AggregateError,
@@ -134,10 +110,6 @@ export async function bootServer(
   inputs = { ...inputs };
   if (inputs.fixtureScenario !== undefined) {
     inputs.fixtureScenario = structuredClone(inputs.fixtureScenario);
-  }
-  const initialAuth = inputs.fixtureAuth;
-  if (initialAuth && typeof initialAuth === "object") {
-    inputs.fixtureAuth = { ...initialAuth };
   }
   const {
     cwd,
@@ -224,7 +196,9 @@ export async function bootServer(
       }
     }
     const vault = layout.vault;
-    await publishLegacyFixtureAuth(layout, scope, fixture);
+    if (fixture.fixtureIdentity) {
+      await prepareIdentityBoot(layout, scope, fixture.fixtureIdentity);
+    }
     const args = [
       "run",
       "--unstable-worker-options",

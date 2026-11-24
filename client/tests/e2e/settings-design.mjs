@@ -1,8 +1,9 @@
+import { signInNative } from "./settings-access-native.mjs";
 // Feature-owned inventory/navigation consumers over the actual native application.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { editableControl } from "./native-actions.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
-import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { nativeFixtureAdmin, bootServer, parseArguments } from "./harness-helpers.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
 import { showSidebar } from './sidebar-navigation-native.mjs';
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
@@ -36,7 +37,7 @@ const coreNamed = { id: "core", name: "Core-named plugin", settings: [declaratio
 const disabled = { id: "design-disabled", name: "Disabled settings pages", settings: [declaration("disabled", "Disabled preferences")] };
 const failed = { id: "design-failed", name: "Failed runtime valid pages", runtime: { server: "service.js" }, settings: [declaration("failed", "Failed runtime preferences")] };
 const zero = { id: "design-zero", name: "No declared pages", entry: "main.js" };
-let vault, state, server, session, failure, stopObserver, heldPolicy, holdNextPolicy = false, wireError;
+let vault, state, server, session, adminHeaders, failure, stopObserver, heldPolicy, holdNextPolicy = false, wireError;
 const inspect = expression => session.evaluate(expression);
 const settled = () => inspect("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
 const cdpPort = Number(Deno.env.get("CDP_PORT"));
@@ -63,7 +64,7 @@ async function screenshot(name) {
   return path;
 }
 async function api(path) {
-  const response = await fetch(`${server.baseUrl}${path}`, { signal: AbortSignal.timeout(5000) });
+  const response = await fetch(`${server.baseUrl}${path}`, { headers: adminHeaders, signal: AbortSignal.timeout(5000) });
   assert(response.ok, `Authoritative read rejected ${path}: ${response.status}`); return response.json();
 }
 async function replace(selector, value) {
@@ -75,7 +76,7 @@ async function nav(label) {
   if (label === "Plugins") await session.poll("!!document.querySelector('[data-plugin-inventory]') || document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')");
 }
 async function invariant() {
-  const observation = await inspect("({sameEditor:document.querySelector('.cm-content')===window.__designEditor,draft:document.querySelector('.cm-content')?.textContent,expectedDraft:window.__designDraft,sameToken:sessionStorage.getItem('token')===window.__designToken,url:location.href,expectedUrl:window.__designUrl})");
+  const observation = await inspect("({sameEditor:document.querySelector('.cm-content')===window.__designEditor,draft:document.querySelector('.cm-content')?.textContent,expectedDraft:window.__designDraft,sameToken:sessionStorage.getItem('globnotes:session:root')===window.__designToken,url:location.href,expectedUrl:window.__designUrl})");
   assert(observation.sameEditor && observation.draft === observation.expectedDraft && observation.sameToken && observation.url === observation.expectedUrl, `Inventory interaction lost editor/token/URL/newer note draft: ${JSON.stringify(observation)}`);
   assert(await Deno.readTextFile(`${vault}/NoteA.md`) === "Seed content.\n", "Inventory navigation wrote the unsaved note");
   assert(!wireError, wireError);
@@ -153,7 +154,8 @@ try {
   await record('every-page-dialog-matrix',await exerciseSettingsSurfaces({port:cdpPort,directory:`${artifacts}/surfaces`}));
   vault = await Deno.makeTempDir({ prefix: "settings-design-vault-" }); state = await metadataDirectory({ prefix: "settings-design-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
-  const fixtureInput = await nativeFixtureInput(nativeAccountScenario());
+  const actor = { login: "native-admin", password: "native-admin-password" };
+  const fixtureInput = await nativeFixtureInput(nativeAccountScenario({ account: actor, everybody: "edit" }));
   await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ revision: 0, autoEnable: true, disabled: [disabled.id] }));
   await manifest(multi,{"service.js":"export function activate(){}",
     'browser.js':"export function activate(ctx){const button=document.createElement('button');button.type='button';button.dataset.legacyPermissions='';button.textContent='Open legacy permissions';button.style.cssText='position:fixed;top:16px;right:16px;z-index:25';button.onclick=()=>ctx.actions.dispatch('app:open-settings',{page:'core:plugin-permissions:design-multi'});document.body.append(button);ctx.register(()=>button.remove());}"}); await manifest(disabled); await manifest(coreNamed);
@@ -163,6 +165,7 @@ try {
   await manifest(failed, { "service.js": "export function activate(){throw Error('Design deliberate runtime failure');}" });
   await manifest(zero, { "main.js": "export function getSelectors(){return [];}" });
   server = await bootServer(vault, state, { ...fixtureInput, env: { TMPDIR:Deno.env.get("TMPDIR") }, logsDir: artifacts, allowFailed: true });
+  ({ headers: adminHeaders } = await nativeFixtureAdmin(server));
   session = await nativeSession({ port:cdpPort });
   await Deno.writeTextFile(`${artifacts}/ownership.json`, JSON.stringify({ vault, state, pid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
   stopObserver = session.page.onEvent(event => {
@@ -174,13 +177,20 @@ try {
     if (read && event.method === "Network.responseReceived") Object.assign(read, { status: response.status, responseMs: performance.now() - read.started, timing: response.timing });
     if (read && event.method === "Network.loadingFinished") read.completedMs = performance.now() - read.started;
     if (read && event.method === "Network.loadingFailed") Object.assign(read, { failedMs: performance.now() - read.started, error: event.params.errorText });
-    if (event.method === "Network.requestWillBeSent" && !["GET", "HEAD"].includes(event.params.request.method)) writes.push({ path: new URL(event.params.request.url).pathname, method: event.params.request.method, body: event.params.request.postData });
+    if (event.method === "Network.requestWillBeSent") {
+      const { origin, pathname: path } = new URL(request.url);
+      const signIn = path === "/_/api/token" && request.method === "POST";
+      if (origin === server.baseUrl && path.startsWith("/_/api/") && !signIn && !["GET", "HEAD"].includes(request.method)) {
+        writes.push({ path, method: request.method, body: request.postData });
+      }
+    }
     if (event.method !== "Fetch.requestPaused") return;
     const paused = event.params;
     if (holdNextPolicy && paused.request.method === "PUT") { holdNextPolicy = false; heldPolicy = paused; held.add(paused.requestId); }
     else session.send("Fetch.continueRequest", { requestId: paused.requestId }).catch(error => { wireError = error.message; });
   });
-  await session.goto(`${server.baseUrl}/NoteA`); await session.poll("!!document.querySelector('.toast-viewer')");
+  await session.goto(`${server.baseUrl}/NoteA`);
+  await signInNative(session, server, actor, { returnPath: "/NoteA" }); await session.poll("!!document.querySelector('.toast-viewer')");
   await open();
   assert(await inspect("!document.querySelector('[data-settings-attention]')"),'Empty attention section must be absent');
   await record('appearance-radio-palettes-persistence',await exerciseAppearanceDesign(session));
@@ -195,7 +205,7 @@ try {
   // an observed native caret/fragment before pinning the navigation invariant.
   await session.key("Home", { modifiers: 2, windowsVirtualKeyCode: 36 });
   await session.poll("location.hash==='#source:L1'");
-  await inspect("window.__designEditor=document.querySelector('.cm-content');window.__designDraft=window.__designEditor.textContent;window.__designToken=sessionStorage.getItem('token');window.__designUrl=location.href;true");
+  await inspect("window.__designEditor=document.querySelector('.cm-content');window.__designDraft=window.__designEditor.textContent;window.__designToken=sessionStorage.getItem('globnotes:session:root');window.__designUrl=location.href;true");
   await open(); await nav("Plugins");
   await record("header-rule-edge",await assertSettingsHeaderRuleEdge(session));
   const catalog = await api("/_/api/plugin-host");
@@ -293,7 +303,7 @@ try {
   await manifest({ ...multi, settings: [declaration("new", "Refreshed declaration"), ...multi.settings.slice(1)] });
   // An explicit supported policy operation publishes the actual refreshed catalog.
   const currentPolicy = await api("/_/api/plugin-host");
-  const refreshResponse = await fetch(`${server.baseUrl}/_/api/plugin-host/${zero.id}/enabled`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: false, revision: currentPolicy.policy.revision, signature: currentPolicy.policy.signature }), signal: AbortSignal.timeout(5000) });
+  const refreshResponse = await fetch(`${server.baseUrl}/_/api/plugin-host/${zero.id}/enabled`, { method: "PUT", headers: { "Content-Type": "application/json", ...adminHeaders }, body: JSON.stringify({ enabled: false, revision: currentPolicy.policy.revision, signature: currentPolicy.policy.signature }), signal: AbortSignal.timeout(5000) });
   assert(refreshResponse.ok, "Owned refresh policy operation rejected"); await refreshResponse.body?.cancel();
   const refreshedCatalog = await api("/_/api/plugin-host");
   assert(refreshedCatalog.plugins.find(plugin => plugin.id === multi.id)?.pages[0]?.id === "new", "Actual server catalog did not publish replacement definition");
@@ -335,7 +345,7 @@ try {
   }
   await record("header-version", { config: { version: appConfig.version, revision: appConfig.revision }, expected: expectedVersion, cases: headerCases });
   await session.send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
-  const requestResponse=await fetch(`${server.baseUrl}/_/api/plugin-host/${attentionPlugin.id}/commands/attention`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+  const requestResponse=await fetch(`${server.baseUrl}/_/api/plugin-host/${attentionPlugin.id}/commands/attention`,{method:'POST',headers:{'content-type':'application/json',...adminHeaders},body:'{}'});
   const requestReceipt=await requestResponse.json();
   assert(requestResponse.ok,`Attention fixture command rejected ${requestResponse.status}: ${JSON.stringify(requestReceipt)}`);
   await session.poll("!!document.querySelector('#permission-request-title')"); await session.button('Review later','[data-modal-top=true]');

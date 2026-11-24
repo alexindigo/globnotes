@@ -1,23 +1,25 @@
 # Accounts and vault access
 
-Preparatory v3 owners, not yet the production identity path. The current auth
-bridge remains active until the coordinated identity cutover.
+The v3 runtime opens instance accounts and signing state before serving. The
+single configured `globnotes` vault has its own access policy. The legacy
+authentication bridge and saved settings lock are not used. Recognized legacy
+identity data without imported accounts stops startup; this runtime does not
+provide the v2 importer or a multi-vault registry.
 
-The single-vault binding adapter is also prepared, not called at startup yet.
-When explicitly injected under instance ownership it preserves `single-vault.json`
+The single-vault binding adapter runs under instance ownership. It preserves `single-vault.json`
 or adopts a valid existing ACL ID without rewriting that ACL. Corrupt or
 disagreeing records require operator recovery. The existing publication owner
 holds and discards only the exact unpublished candidate; it never cleans up a
 competing record or foreign replacement.
 
-Account-backed test inputs use `prepareIdentityBoot(layout, scope, payload)`
-beside the unchanged legacy boot adapter. The issued fixture layout owns roots,
+Account-backed test inputs use `prepareIdentityBoot(layout, scope, payload)`.
+The issued fixture layout owns roots,
 builds and runtime custody. Preparation uses the real account import, signing and
 ACL owners; reopening validates the complete set and preserves changed passwords
-and grants. Fixture preparation does not enable production routes or reimplement
+and grants. Fixture preparation does not reimplement
 driver startup, native clocks or build copying.
 
-The prepared browser composition is `client/identityApplication.js`, with
+The browser composition is `client/identityApplication.js`, with
 `identitySettings.js` composing Account and Access forms. It installs no routes
 or global transport. Clean forms can follow a new account session; dirty forms
 and original pending writes stay with their captured account and token until
@@ -39,7 +41,7 @@ holds `identity.lock` exclusively and nonblockingly; the lock inode is never
 removed or replaced on release. Filesystem errors retain original state, not an
 empty replacement. These owners do not import or modify v2 auth JSON.
 
-The preparatory session owner stores a single instance signing key in
+The session owner stores a single instance signing key in
 `sessions.json`. HS256 JWTs contain account ID, credential/signing revisions and
 expiry, never vault grants. The configured session lifetime is injected from
 layered configuration. Password or authenticator changes revoke all of that
@@ -165,7 +167,8 @@ transaction set after both snapshots are installed and the journal is retired.
 An observer failure is reported as `notificationFailed` on the committed outcome,
 never as a rejection. Another vault's ACL has its own observers.
 
-The prepared own-account workflow maps GET, PATCH and authenticator enrollment
+The own-account workflow maps `GET/PATCH /_/api/account` and
+`POST /_/api/account/totp-enrolment`
 to the credential aggregate. It requires the current password and, when enabled,
 a fresh current authenticator code. Only the current issued enrollment can be
 confirmed. Temporary passwords must be replaced, not submitted again as the new
@@ -173,15 +176,11 @@ password. Account-local revision and update ID prevent stale or repeated changes
 No target-account field, replacement token or credential-outcome endpoint exists.
 The exact committed acknowledgment survives its own credential revocation, but
 not replacement of the captured instance lifetime. Lost replies use normal sign-in.
-These account handlers are injection-only until the coordinated cutover.
+The browser account page is `/_/account`. Sign-in uses `POST /_/api/token`;
+`GET /_/api/auth-check` reports the current safe identity and capabilities.
 
-While the legacy setup and Access screens remain active, their service owns one
-current enrollment attempt per lane and config owner through QR rendering and
-confirmation; a new issuance replaces only that lane's attempt. Newly confirmed
-secrets carry an explicit Base32 marker. Existing unmarked/raw stored secrets keep
-their historical interpretation; keeping an authenticator does not rewrite it.
 
-## Prepared projections and streams
+## Projections and streams
 
 `createIdentityComposition` takes an explicit live lifetime from its caller and
 binds one concrete ACL/vault, the instance sessions and a plugin lifecycle whose
@@ -197,22 +196,23 @@ gets enabled plugin contribution descriptors, not a filtered administrative
 inventory. None and guests without access get an instance-only status without a
 vault ID, so a later ACL change does not fence it, but credential retirement does.
 
-The prepared vault-change and plugin-event streams use the same target-bound read
+The vault-change and plugin-event streams use the same target-bound read
 lease for every poll body and SSE chunk. Readers do not receive change peers,
 driver revisions or settings/driver invalidations. An account, concrete-vault ACL
 or policy change, lifecycle epoch, session expiry, request abort or cancellation
 closes the stream and releases its listeners and timers; a request aborted before
 or during admission registers none. Retiring the composition lifetime fences
-delivery. Production still uses the legacy routes until the coordinated cutover.
+delivery.
 
-## Prepared setup and first-account seed
+## Setup and first-account seed
 
-The prepared setup workflow creates one unrestricted account, its initialized
+The setup workflow creates one unrestricted account, its initialized
 marker and its one target's explicit creator Admin plus the submitted Everybody
 else Edit/View/None level. Signing state is initialized first. Only the settled
 account/ACL pair can issue the existing session handoff; its final JSON body also
 contains `setupRequired: false`, `vaultId` and `everybody`. Enrollment alone is
-inert. No new setup route or screen is active until the coordinated cutover.
+inert. The setup screen is `/_/setup`; its routes are `GET/POST /_/api/setup`
+and `POST /_/api/setup/totp-enrolment`.
 
 The instance schema now accepts these one-time seed leaves through normal
 defaults/TOML/environment precedence:
@@ -227,8 +227,9 @@ Their environment names are `GLOBNOTES__ACCOUNTS_FIRST_LOGIN` and
 `GLOBNOTES__ACCOUNTS_FIRST_PASSWORD`. Supply both or neither; passwords retain
 their exact spaces. Diagnostics identify keys and sources, never their values.
 Protect the file/environment and remove the seed after use. JavaScript does not
-promise memory erasure. The prepared boot adapter applies it once before public
-admission; production boot wiring remains in the coordinated cutover.
+promise memory erasure. Startup applies it once before public admission. An
+interrupted configured seed can resume only with the same declaration and
+matching, still-pending records. It never enables public setup or saves a grant.
 Ready stores ignore seed changes/removal without comparing/resetting credentials
 or making a second account. Incomplete, corrupt and recognized unimported legacy
 state require explicit recovery/migration, never silent seed repair.
@@ -266,20 +267,21 @@ another command runs. Corrupt stores and unimported legacy data are not repaired
 or imported. Reset/disable revoke only that account's old tokens; other accounts
 and the signing key are unchanged.
 
-## Prepared vault access workflows
+## Vault access workflows
 
-These prepared workflows are not yet on the active route tree; the current
-Access screen keeps using the existing settings until the coordinated cutover.
+The Access screen uses `GET/PUT /_/api/access` and `GET/POST /_/api/accounts`
+on the active `globnotes` vault.
 Snapshots, exact-login resolution and edits require live Admin on that target
 vault. A named None overrides Everybody else; a declared Admin is separate and
 is never saved as a grant. There is no last-admin veto. Self-demotion returns
 only a safe acknowledgment and the actor's current capabilities. An actor-bound
-status read tells a demoted account whether its own update is current, without
-the list or another person's edit. Before sending any vault Access or
-provisioning response, the server rechecks the session, vault binding, ACL and
-operational state. Re-request a stale snapshot or exact-login result only if you
-still have Admin. If an edit acknowledgment is lost, use its actor-bound status
-read instead of replaying the edit.
+status read tells a demoted account whether its own update is still last, without
+the list, another person's edit, or history. The original PUT receipt keeps its
+commit acknowledgment across a peer ACL edit and reports the actor's capabilities
+at delivery, still fenced by the original session and concrete vault. Re-request
+a stale snapshot or exact-login result only if you still have Admin. If an edit
+acknowledgment is lost, use its actor-bound status read instead of replaying the
+edit. A negative match after a peer edit leaves the original outcome unknown.
 
 Create and add publishes the temporary account, its committed receipt and the
 named grant as one recorded decision with the target Admin checked from
@@ -318,20 +320,18 @@ acknowledgments.
 Direct and API file reads share one read lease. MCP captures each caller's own
 access and takes a per-tool lease, so a View caller keeps the read tools while
 another account can edit. Read replies are rechecked at delivery; a reply that
-carries a committed write stays its acknowledgment. These adapters are
-injection-only; the existing production composition stays active until the
-coordinated cutover.
+carries a committed write stays its acknowledgment.
 
-## Prepared browser session
+## Browser session
 
-The injected browser session derives access from the safe capability projection,
+The browser session derives access from the safe capability projection,
 not an auth mode or the presence of a token. Its live key includes account/guest,
 session generation, vault and authority revision. Reader runtime eligibility is
 separate from Admin inventory/review. Named sign-in remains available on public
 vaults, and own-account navigation does not require vault read access.
 
 `tokenStorage` owns prefix-qualified storage and cookie writes. The shared prefix
-codec supplies the default cookie name to the prepared server composition. It
+codec supplies the default cookie name to the server composition. It
 does not import, delete or fall back to old `token` keys/cookies. Cookies remain
 usable on ordinary local-domain HTTP. Browser logout clears only this instance's
 local credentials after Save/Discard/Cancel participants permit departure.
@@ -358,14 +358,9 @@ a draft retires older drafts for that note in both stores. Closing a tab with
 unsaved session-only work does not retire a remembered draft. Its original base
 is used for the normal merge or conflict path if the saved note has changed.
 
-The Settings modal already uses the Settings session factory. Its capability-aware
-branches are inactive because the existing App config does not supply `capabilities`.
-The prepared identity factories do not replace the active App/router/auth wiring;
-account screens and production identity activation belong to the coordinated cutover.
+## Account, setup and sign-in screens
 
-## Prepared account, setup and sign-in screens
-
-The prepared forms use separate password and authenticator steps. The token
+The forms use separate password and authenticator steps. The token
 adapter sends the issuer's guarded response body directly; its safe
 `authenticator_required` error appears only after a correct current password.
 A rejected code clears the attempted code, not the password needed for another
@@ -392,12 +387,11 @@ Fresh setup displays View for Everybody else and sends that exact choice, or
 the selected Edit/No access value, with the account and optional issued
 authenticator candidate. An acknowledged setup hands its session to the caller
 for the notes landing. A lost setup reply checks readiness rather than replaying
-creation. These views/controllers and the token adapter are not active routes;
-their production composition and browser acceptance remain in the cutover and
-acceptance steps.
-## Prepared Access screens
+creation.
 
-The prepared Vault Access page shows named Admin, Edit, View and No access
+## Access screens
+
+The Vault Access page shows named Admin, Edit, View and No access
 levels, followed by Everybody else (Edit, View or No access). A server-set Admin
 is explained as a static value; edits to other rows preserve its saved grant.
 Add existing changes vault access only. Create and add commits the new account
@@ -412,5 +406,4 @@ An uncertain write keeps its original ID and wire. Receipt checks never replay
 PUT or POST. A negative create result while the original POST remains pending is
 inconclusive; one matching late acknowledgment can still complete that operation.
 Temporary passwords stay only in transient form memory and clear on success or
-disposal. These controllers and views are injection-only until the coordinated
-production switch; this section does not claim the new routes are active.
+disposal.

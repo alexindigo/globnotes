@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { canCreateNote } from "../noteCreation.js";
-import { authTypes } from "../constants.js";
+import { accountProjection } from "./helpers/account-projection.js";
 
 describe("note creation policy", () => {
   it.each([
-    [authTypes.none, true], [authTypes.password, true], [authTypes.totp, true],
-    [authTypes.readOnly, false], [undefined, true],
-  ])("keeps note creation eligibility for %s", (type, allowed) => {
-    expect(canCreateNote(type)).toBe(allowed);
+    [accountProjection({ guest: true, level: "edit" }), true],
+    [accountProjection({ guest: true, level: "view" }), false],
+    [accountProjection({ level: "none" }), false],
+    [accountProjection({ level: "edit" }), true],
+    [undefined, false], ["none", false],
+  ])("uses only the projected edit capability: %j", (config, allowed) => {
+    expect(canCreateNote(config)).toBe(allowed);
   });
 });

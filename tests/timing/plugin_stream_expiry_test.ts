@@ -1,4 +1,3 @@
-import { signedInScenario } from "../helpers/fixture_scenarios.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
@@ -10,11 +9,14 @@ import { signedInScenario } from "../helpers/fixture_scenarios.ts";
  */
 
 import { assert, assertEquals } from "@std/assert";
-import { SignJWT } from "jose";
+import { signedInScenario } from "../helpers/fixture_scenarios.ts";
 import { bootServer } from "../helpers/boot.ts";
 import { ENDPOINT_PLUGIN } from "../helpers/endpoint_plugin.ts";
 import { pluginFixture } from "../helpers/plugin_fixture.ts";
 import { catalogPluginReady } from "../helpers/plugin_ready.ts";
+import { signInFixtureWithExpiry } from "../helpers/identity_fixture.ts";
+import { done, fixtureWallNow, pending, waitUntil } from "../helpers/wait.ts";
+import { bounded } from "../helpers/worker_liveness.ts";
 
 for (const invalidate of [false, true]) {
   Deno.test(`plugin api: signed expiry ${invalidate ? "rejects invalidation frames" : "closes the stream"} before heartbeat`, async () => {
@@ -24,40 +26,35 @@ for (const invalidate of [false, true]) {
       ENDPOINT_PLUGIN.manifest,
       ENDPOINT_PLUGIN.files,
     );
-    const secret = "stream-expiry-fixture-secret";
-    const token = (expiry?: number) => {
-      const jwt = new SignJWT({ sub: "stream-fixture" }).setProtectedHeader({
-        alg: "HS256",
-      });
-      return (expiry === undefined ? jwt : jwt.setExpirationTime(expiry)).sign(
-        new TextEncoder().encode(secret),
-      );
-    };
-    const durable = await token(Math.floor(Date.now() / 1000) + 120);
-    const headers = { authorization: `Bearer ${durable}` };
+    const person = { login: "stream-fixture", password: "fixture-password" };
     const server = await bootServer({
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-      fixtureScenario: signedInScenario(
-        { login: "stream-fixture", password: "fixture-password" },
-        {},
-        { secret_key: secret },
-      ),
+      fixtureScenario: signedInScenario(person),
       GLOBNOTES__SERVER_PATHPREFIX: "",
     });
     const controller = new AbortController();
     let drained: Promise<void> | undefined;
     try {
+      const root = `${fixture.metadataBase}/_`;
+      const login = (expirySeconds: number) =>
+        signInFixtureWithExpiry(
+          root,
+          { username: person.login, password: person.password },
+          expirySeconds,
+        );
+      const durable = await login(120);
+      const headers = { authorization: `Bearer ${durable.access_token}` };
       await catalogPluginReady(server, "ep", { headers });
-      const expiry = Math.floor(Date.now() / 1000) + 2;
-      const short = await token(expiry);
+      const issued = await login(2);
+      const { expiresAt } = issued.principal, short = issued.access_token;
       const res = await fetch(`${server.baseUrl}/_/api/plugin-host/events`, {
         headers: { authorization: `Bearer ${short}` },
         signal: controller.signal,
       });
       assertEquals(res.status, 200);
       const reader = res.body!.getReader(), decoder = new TextDecoder();
-      let text = "";
+      let text = "", closedAt: number | undefined;
       drained = (async () => {
         try {
           for (;;) {
@@ -66,13 +63,23 @@ for (const invalidate of [false, true]) {
             text += decoder.decode(value, { stream: true });
           }
         } catch (error) {
-          if (!controller.signal.aborted) throw error;
+          // At expiry the delivery guard can terminate the HTTP body rather
+          // than send an SSE event. Before expiry any transport error is real.
+          if (!controller.signal.aborted && fixtureWallNow() < expiresAt) {
+            throw error;
+          }
+        } finally {
+          closedAt = fixtureWallNow();
         }
       })();
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.max(0, expiry * 1000 - Date.now() + 25))
-      );
       if (invalidate) {
+        await waitUntil(() => {
+          const now = fixtureWallNow();
+          return now >= expiresAt + 25 ? done() : pending({ now, expiresAt });
+        }, {
+          label: "signed token expired before invalidation",
+          children: [server],
+        });
         const catalog =
           await (await fetch(`${server.baseUrl}/_/api/plugin-host`, {
             headers,
@@ -92,21 +99,20 @@ for (const invalidate of [false, true]) {
         assertEquals(update.status, 200);
         await update.body?.cancel();
       }
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const closed = await Promise.race([
-        drained.then(() => true),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(false), 500);
-        }),
-      ]);
-      clearTimeout(timer);
+      await bounded(
+        drained,
+        "signed stream closes at expiry",
+        Math.max(0, expiresAt + 500 - fixtureWallNow()),
+      );
       assert(
-        !text.includes("event: invalidate"),
+        !text.includes("event: invalidate") &&
+          !text.includes("event: heartbeat"),
         `Expired credential received invalidation: ${text}`,
       );
       assert(
-        closed && text.includes("event: close"),
-        `Signed token expiry did not close before heartbeat: ${text}`,
+        closedAt !== undefined && closedAt >= expiresAt &&
+          closedAt <= expiresAt + 500 && text.includes("event: hello"),
+        `Signed stream closed at ${closedAt} for expiry ${expiresAt}: ${text}`,
       );
       const rejected = await fetch(
         `${server.baseUrl}/_/api/plugin-host/events`,

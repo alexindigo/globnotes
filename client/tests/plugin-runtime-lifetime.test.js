@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { identitySessionKey } from "../../shared/identity_session.ts";
+import { accountProjection } from "./helpers/account-projection.js";
 
-const adapters = vi.hoisted(() => ({ catalog: vi.fn(), events: vi.fn(), remove: vi.fn() }));
-vi.mock("../api.js", () => ({ getPluginHostCatalog: adapters.catalog, openPluginHostEvents: adapters.events }));
-vi.mock("../commands.js", () => ({ removeCommandOwner: adapters.remove }));
-vi.mock("../pluginSdk.js", () => ({ createPluginSdk: vi.fn() }));
-let runtime;
+const adapters = { catalog: vi.fn(), events: vi.fn() };
+let runtime, unbind, session;
 let listeners;
 beforeEach(async () => {
   vi.resetModules(); vi.clearAllMocks(); listeners = [];
@@ -18,9 +17,14 @@ beforeEach(async () => {
   adapters.catalog.mockResolvedValue({ contractVersion: 1, plugins: [] });
   adapters.events.mockResolvedValue(vi.fn());
   runtime = await import("../pluginRuntime.js");
+  const { connectionLifetime } = await import("../connectionLifetime.js");
+  session = identitySessionKey(accountProjection());
+  unbind = runtime.bindPluginRuntime(runtime.createIdentityPluginRuntime({ sessionKey: () => session,
+    lifetime: connectionLifetime, readCatalog: adapters.catalog, openEvents: adapters.events }));
 });
 afterEach(() => {
   runtime.stopPluginRuntime();
+  unbind();
   for (const listener of listeners) listener.target.removeEventListener(listener.name, listener.callback, listener.options);
   vi.restoreAllMocks(); vi.useRealTimers();
 });
@@ -30,7 +34,7 @@ describe("browser document-owned runtime streams", () => {
   it("hidden tabs release plugin streams after the shared grace and refetch on show", async () => {
     vi.useFakeTimers();
     const close = vi.fn(); adapters.events.mockResolvedValue(close);
-    await runtime.startPluginRuntime();
+    await runtime.startPluginRuntime(session);
     const signal = adapters.events.mock.calls[0][0].signal;
     let visibility = "hidden";
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
@@ -54,7 +58,7 @@ describe("browser document-owned runtime streams", () => {
   });
   it("pagehide closes the admitted stream and pageshow refetches/reconnects once", async () => {
     const close = vi.fn(); adapters.events.mockResolvedValue(close);
-    await runtime.startPluginRuntime();
+    await runtime.startPluginRuntime(session);
     window.dispatchEvent(new Event("pagehide"));
     expect(close).toHaveBeenCalledTimes(1);
     window.dispatchEvent(new Event("pageshow")); await flush();
@@ -64,7 +68,7 @@ describe("browser document-owned runtime streams", () => {
   it("pagehide aborts outstanding stream admission and retires late receipts", async () => {
     let acknowledge;
     adapters.events.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
-    const starting = runtime.startPluginRuntime(); await flush();
+    const starting = runtime.startPluginRuntime(session); await flush();
     const signal = adapters.events.mock.calls[0][0].signal;
     window.dispatchEvent(new Event("pagehide"));
     expect(signal?.aborted).toBe(true);
@@ -72,7 +76,7 @@ describe("browser document-owned runtime streams", () => {
     expect(lateClose).toHaveBeenCalledTimes(1);
   });
   it("explicit stop while suspended cannot reopen contributions on pageshow", async () => {
-    await runtime.startPluginRuntime();
+    await runtime.startPluginRuntime(session);
     window.dispatchEvent(new Event("pagehide")); runtime.stopPluginRuntime();
     window.dispatchEvent(new Event("pageshow")); await flush();
     expect(adapters.events).toHaveBeenCalledTimes(1);
@@ -80,7 +84,7 @@ describe("browser document-owned runtime streams", () => {
   });
   it("stale document close callbacks do not reconnect after suspension", async () => {
     vi.useFakeTimers();
-    await runtime.startPluginRuntime();
+    await runtime.startPluginRuntime(session);
     const oldClose = adapters.events.mock.calls[0][0].onClose;
     window.dispatchEvent(new Event("pagehide")); oldClose("ended");
     await vi.advanceTimersByTimeAsync(6000);

@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { computed, reactive, readonly, ref, watch, watchEffect } from "vue";
 import { getPluginPermissions, putPluginPermissions, getPluginPermissionRequests, decidePluginPermissionRequest } from "./api.js";
-import { permissionEligibility, permissionSessionKey, permissionWritability, readerRuntimeEligibility } from "./appSessionPolicy.js";
+import { identitySessionKey, permissionEligibility, permissionWritability, readerRuntimeEligibility } from "./appSessionPolicy.js";
 import { modalStack } from "./modalState.js";
 import { createPluginPermissionController, permissionScopeKey, permissionAttentionId } from "./pluginPermissionController.js";
 import { pluginCatalog, refreshPluginRuntimeCatalog, startPluginRuntime, stopPluginRuntime } from "./pluginRuntime.js";
-import { getStoredToken } from "./tokenStorage.js";
 import { attention } from './attention.js';
 
 export const permissionRequestKey = request => request ? JSON.stringify([request.pluginId, request.id, request.state, request.kind, request.scopes, request.source.key, request.source.revision]) : null;
@@ -13,15 +12,17 @@ export const permissionRequestKey = request => request ? JSON.stringify([request
 /** App-owned permission session, fresh-read opener and retained risk decision. */
 export function createAppPermissions({
   config, configReady, routeName, setupRequested, refreshConfig,
-  catalog = pluginCatalog, modals = modalStack, token = getStoredToken,
+  sessionKey,
+  catalog = pluginCatalog, modals = modalStack,
   createPermissions = createPluginPermissionController,
   readView = getPluginPermissions, writeView = putPluginPermissions,
   readPending = getPluginPermissionRequests, decideRequest = decidePluginPermissionRequest,
   changed = refreshPluginRuntimeCatalog, startRuntime = startPluginRuntime, stopRuntime = stopPluginRuntime, attentionRegistry = attention,
 }) {
   const permissions = createPermissions({ readView, writeView, readPending, decideRequest, changed });
-  const permissionsEligible = computed(() => permissionEligibility(configReady(), config(), routeName(), token()));
-  const runtimeEligible = computed(() => readerRuntimeEligibility(configReady(), config(), routeName(), token()));
+  const session = sessionKey ?? (() => identitySessionKey(config()));
+  const permissionsEligible = computed(() => session() != null && permissionEligibility(configReady(), config(), routeName()));
+  const runtimeEligible = computed(() => readerRuntimeEligibility(configReady(), config(), routeName()));
   const permissionsWritable = computed(() => permissionWritability(permissionsEligible.value, config()));
   const activePermissionRequest = ref(null), permissionRiskVisible = ref(false), permissionRiskMessage = ref("");
   let requestOpening = 0, permissionRiskResolve = null, openingOwner = null, disposed=false;
@@ -49,7 +50,6 @@ export function createAppPermissions({
       canNarrow:permissionsWritable.value && !snapshot?.busy && !!narrowHostText.value,
     };
   });
-  const session = () => permissionSessionKey(config(), token());
   const publishedAttention=new Map();
   const stopAttention=watchEffect(()=>{
     const current=new Set();
@@ -80,7 +80,7 @@ export function createAppPermissions({
   const stopRuntimeSession = watch([runtimeEligible, session], ([active, key]) => { if (active) startRuntime(key); else stopRuntime(); });
   const stopCatalog = watch(catalog, value => {
     permissions.reconcile(value); if (permissionsEligible.value) permissions.refreshPending();
-    if (configReady()) refreshConfig();
+    if (value != null && configReady() && session() != null) refreshConfig();
   });
   function automaticOpeningEligible() {
     return permissionsEligible.value && !setupRequested() && !activePermissionRequest.value && !modals.value.some(owner => owner.name !== "settings");

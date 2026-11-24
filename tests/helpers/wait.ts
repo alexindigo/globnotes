@@ -30,6 +30,9 @@
 /** The readiness safety net for every wait in the test suites. */
 export const READINESS_MS = 15_000;
 
+/** Wall-clock evidence for a fixture whose real expiry is the assertion. */
+export const fixtureWallNow = () => Date.now();
+
 const EXPIRED = Symbol("readiness bound exceeded");
 
 export type Observation<T> =
@@ -113,7 +116,7 @@ export async function waitUntil<T>(
   options: WaitOptions,
 ): Promise<T> {
   const { label, intervalMs = 25, children = [] } = options;
-  const started = Date.now();
+  const started = fixtureWallNow();
   const deadline = started + READINESS_MS;
   const controller = new AbortController();
   const expiry = Promise.withResolvers<typeof EXPIRED>();
@@ -128,7 +131,7 @@ export async function waitUntil<T>(
       label,
       reason,
       state,
-      Date.now() - started,
+      fixtureWallNow() - started,
       cause === undefined ? undefined : { cause },
     );
   };
@@ -177,7 +180,7 @@ export async function waitUntil<T>(
         fail(observation.reason, observation.state);
       }
       last = (observation as { state: unknown }).state;
-      if (Date.now() >= deadline) exceeded();
+      if (fixtureWallNow() >= deadline) exceeded();
       const turn = Promise.withResolvers<void>();
       const pause = globalThis.setTimeout(() => turn.resolve(), intervalMs);
       const paused = await Promise.race([

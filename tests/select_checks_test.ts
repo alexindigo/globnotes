@@ -211,7 +211,9 @@ const OWNERS = [
       "tests/native_totp_fixture_test.ts",
       "tests/access_settings_test.ts",
       "tests/auth_test.ts",
-      "tests/local_auth_test.ts",
+      "tests/identity_bootstrap_test.ts",
+      "tests/identity_totp_test.ts",
+      "tests/identity_totp_upgrade_test.ts",
     ],
     native: [
       "setup-totp-desktop",

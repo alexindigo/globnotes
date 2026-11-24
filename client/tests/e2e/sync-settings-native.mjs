@@ -1,18 +1,75 @@
 import {syncCase,assert,until} from "./sync-native-fixture.mjs";
-import { assertSettingsPaneEdges, assertSettingRowAlignment, assertSettingsUiRules, assertSettingsFormRows } from './settings-frame-native.mjs';
-import { waitForAccessSummary } from './settings-access-native.mjs';
+import { assertSettingsHeaderGeometry, assertSettingsPaneEdges, assertSettingRowAlignment, assertSettingsUiRules, assertSettingsFormRows } from './settings-frame-native.mjs';
+
+// The identity Account forms and Access list have nested grid lanes. Assert
+// the pane edges on the outer bands, then measure their actual inner columns.
+async function identityPaneEdges(session, page, width) {
+  const headerGeometry = await assertSettingsHeaderGeometry(session);
+  const account = page === 'account';
+  const ready = account ? '#account-confirm-password' : '[data-everybody-row]';
+  const geometry = await session.read(['[data-settings-content]', '[data-settings-page]', ready], `(()=>{
+    const pane=document.querySelector('[data-settings-content]'),page=pane.querySelector('[data-settings-page]');
+    const box=el=>el.getBoundingClientRect().toJSON();
+    const content=el=>{const r=box(el),s=getComputedStyle(el);return {left:r.left+el.clientLeft+parseFloat(s.paddingLeft),right:r.left+el.clientLeft+el.clientWidth-parseFloat(s.paddingRight)};};
+    const row=id=>document.querySelector(id).closest('.setting-row');
+    const bands=${account ? "[...page.querySelectorAll('.setting-row-short'),row('#account-current-password').parentElement,row('#account-new-password').parentElement]" : "[...page.querySelectorAll('.access-row')]"};
+    const controlRows=${account ? "['#account-current-password','#account-new-password','#account-confirm-password'].map(id=>({field:box(row(id)),band:box(row(id).parentElement)}))" : "bands.map(band=>({field:box(band.querySelector('.setting-row')),band:content(band),action:box(band.children[1])}))"};
+    return {pane:content(pane),page:content(page),bands:bands.map(box),controlRows};
+  })()`);
+  const near = (a,b) => Math.abs(a-b) <= .5;
+  const spans = (inside,outside) => near(inside.left,outside.left) && near(inside.right,outside.right);
+  assert(spans(geometry.page,geometry.pane) && geometry.bands.length === (account ? 4 : 2) && geometry.bands.every(band=>spans(band,geometry.pane)), `${page}: identity row bands no longer span the settings pane: ${JSON.stringify(geometry)}`);
+  if (account) {
+    const [current,next,confirm] = geometry.controlRows;
+    const ends = width === 360
+      ? spans(current.field,current.band) && spans(next.field,next.band) && spans(confirm.field,confirm.band) && confirm.field.top >= next.field.bottom
+      : near(current.field.left,current.band.left) && near(current.field.width,next.field.width) && near(next.field.left,next.band.left) && near(confirm.field.right,confirm.band.right) && next.field.right < confirm.field.left && near(next.field.top,confirm.field.top) && near(next.field.width,confirm.field.width);
+    assert(ends, `Account password fields do not align or reflow in their grid: ${JSON.stringify(geometry)}`);
+  } else {
+    assert(geometry.controlRows.every(({field,action,band})=>near(field.left,band.left) && near(action.right,band.right) && field.right < action.left), `Access fields escape their content lane or overlap the action lane: ${JSON.stringify(geometry)}`);
+  }
+  return { ...geometry, rows: geometry.bands, headerGeometry };
+}
 await syncCase("sync-settings-native",async f=>{
   const s=f.session;
   f.remote.put("Welcome.md","remote welcome\n");f.remote.put("Restore.md","restore base\n");f.remote.put("Delete.md","delete base\n");
+  await f.signIn();
   // Hold the app's config acknowledgement: document.complete is earlier than
   // LoadingIndicator mounting the sidebar. Release only once open() reaches
   // its first navigation wait/action, not after an arbitrary delay.
   const held=Promise.withResolvers(),entered=Promise.withResolvers();
-  const stop=s.page.onEvent(event=>{if(event.method==='Fetch.requestPaused')held.resolve(event.params.requestId);});
+  const home=f.url('/'),configUrl=f.url('/_/api/config');
+  const {frameTree:{frame:outgoing}}=await s.send('Page.getFrameTree');
+  const requests=new Map(),configPauses=new Map();
+  let incoming;
+  function matchHeldConfig() {
+    if(!incoming)return;
+    for(const [networkId,pause] of configPauses) {
+      const request=requests.get(networkId);
+      if(pause.frameId===incoming.id&&request?.frameId===incoming.id&&request.loaderId===incoming.loaderId) {
+        held.resolve(pause.requestId);
+        return;
+      }
+    }
+  }
+  const stop=s.page.onEvent(({method,params})=>{
+    if(params?.request?.url!==configUrl||params.request.method!=='GET')return;
+    // The old document can issue an identical config request after sign-in.
+    // Join the response pause to its wire and loader, not its arrival order.
+    if(method==='Network.requestWillBeSent')requests.set(params.requestId,params);
+    else if(method==='Fetch.requestPaused'&&params.networkId)configPauses.set(params.networkId,params);
+    else return;
+    matchHeldConfig();
+  });
   const poll=s.poll,click=s.click;
   try {
     await s.send('Fetch.enable',{patterns:[{urlPattern:'*/_/api/config',requestStage:'Response'}]});
-    await s.goto(f.url('/'));const requestId=await held.promise;
+    await s.goto(home);
+    const {frameTree:{frame}}=await s.send('Page.getFrameTree');
+    assert(frame.id===outgoing.id&&frame.loaderId&&frame.loaderId!==outgoing.loaderId&&frame.url===home,'Config hold did not reach the new home document');
+    incoming=frame;
+    matchHeldConfig();
+    const requestId=await held.promise;
     assert(!await s.evaluate("!!document.querySelector('[title=\"Open sidebar\"], [aria-label=Settings]')"),'Sidebar rendered before held configuration');
     s.poll=expression=>{entered.resolve({kind:'owner-wait',expression});return poll(expression);};
     s.click=selector=>{entered.resolve({kind:'action',selector});return click(selector);};
@@ -34,10 +91,11 @@ await syncCase("sync-settings-native",async f=>{
     for(const page of ['account','access','editor','plugins','keybindings','branding']){
       await s.click(`[data-settings-nav-id="core:${page}"]`);
       await s.poll(`document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='core:${page}'`);
-      if(page==='access')await waitForAccessSummary(s);
+      if(page==='account')await s.poll("!!document.querySelector('#account-confirm-password')");
+      if(page==='access')await s.poll("!!document.querySelector('[data-everybody-row]')");
       if(page==='plugins')await s.poll("!!document.querySelector('.plugin-row-heading')");
       await s.evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
-      const edges=await assertSettingsPaneEdges(s);assert(edges.rows.length>0,`${page}: no rows observed`);await assertSettingRowAlignment(s);await assertSettingsUiRules(s);
+      const edges=page==='account'||page==='access'?await identityPaneEdges(s,page,width):await assertSettingsPaneEdges(s);assert(edges.rows.length>0,`${page}: no rows observed`);await assertSettingRowAlignment(s);await assertSettingsUiRules(s);
       const formRows=page==='branding'?await assertSettingsFormRows(s):undefined;
       if(page==='branding')assert(formRows?.length===4&&formRows.every(row=>row.stacked===(width===360)),'Expected all four Branding form rows, paired on desktop and reflowed at 360px');
       f.results.push({page,...edges,formRows});

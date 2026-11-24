@@ -8,9 +8,10 @@ import { publicScenario } from "./helpers/fixture_scenarios.ts";
  * 403. Boots real server subprocesses against temp vaults.
  */
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import * as path from "@std/path";
 import { bootServer } from "./helpers/boot.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 
 const LOGO_SVG =
   `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>`;
@@ -30,9 +31,11 @@ function formData(
 async function postBrand(
   baseUrl: string,
   fields: Record<string, string | File>,
+  headers?: HeadersInit,
 ): Promise<Response> {
   return await fetch(`${baseUrl}/_/api/brand`, {
     method: "POST",
+    headers,
     body: formData(fields),
   });
 }
@@ -58,8 +61,17 @@ async function scratchAppDir(): Promise<
 Deno.test("brand: POST round-trip", async (t) => {
   const server = await bootServer({ fixtureScenario: publicScenario() });
   try {
+    const admin = await fixtureAdmin(server);
+    const post = (fields: Parameters<typeof postBrand>[1]) =>
+      postBrand(server.baseUrl, fields, admin.headers);
+    const accountPath = path.join(
+      server.layout.instance,
+      ".globnotes",
+      "accounts.json",
+    );
+    const accountBefore = await Deno.readTextFile(accountPath);
     await t.step("sets name and accent, persists to config.toml", async () => {
-      const res = await postBrand(server.baseUrl, {
+      const res = await post({
         name: "Acme Notes",
         accent: "#ff6600",
       });
@@ -79,14 +91,14 @@ Deno.test("brand: POST round-trip", async (t) => {
         ),
       );
       assertEquals(stored.brand, { name: "Acme Notes", accent: "#ff6600" });
-      assertEquals(
-        JSON.parse(
-          await Deno.readTextFile(
+      await assertRejects(
+        () =>
+          Deno.readTextFile(
             path.join(server.vault, ".globnotes", "config.json"),
           ),
-        ),
-        { auth_type: "none" },
+        Deno.errors.NotFound,
       );
+      assertEquals(await Deno.readTextFile(accountPath), accountBefore);
     });
 
     await t.step("config endpoint reports the brand block", async () => {
@@ -103,7 +115,7 @@ Deno.test("brand: POST round-trip", async (t) => {
     });
 
     await t.step("uploads logo.svg and icon.svg", async () => {
-      const res = await postBrand(server.baseUrl, {
+      const res = await post({
         logo: new File([LOGO_SVG], "anything.svg", { type: "image/svg+xml" }),
         icon: new File([ICON_SVG], "icon.svg", { type: "image/svg+xml" }),
       });
@@ -136,7 +148,7 @@ Deno.test("brand: POST round-trip", async (t) => {
 
     await t.step("png upload accepted, svg→png replaces", async () => {
       const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-      const res = await postBrand(server.baseUrl, {
+      const res = await post({
         logo: new File([png], "logo.png", { type: "image/png" }),
       });
       assertEquals(res.status, 200);
@@ -150,19 +162,19 @@ Deno.test("brand: POST round-trip", async (t) => {
     });
 
     await t.step("non-image upload is rejected", async () => {
-      const res = await postBrand(server.baseUrl, {
+      const res = await post({
         logo: new File(["plain text"], "logo.txt", { type: "text/plain" }),
       });
       assertEquals(res.status, 400);
     });
 
     await t.step("invalid accent is rejected", async () => {
-      const res = await postBrand(server.baseUrl, { accent: "ff6600" });
+      const res = await post({ accent: "ff6600" });
       assertEquals(res.status, 400);
     });
 
     await t.step("remove flags delete the files", async () => {
-      const res = await postBrand(server.baseUrl, {
+      const res = await post({
         removeLogo: "true",
         removeIcon: "1",
       });
@@ -175,7 +187,7 @@ Deno.test("brand: POST round-trip", async (t) => {
     await t.step(
       "empty strings clear name and accent in config.toml",
       async () => {
-        const res = await postBrand(server.baseUrl, { name: "", accent: "" });
+        const res = await post({ name: "", accent: "" });
         assertEquals(res.status, 200);
         assertEquals(await res.json(), {
           name: null,

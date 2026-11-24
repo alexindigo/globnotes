@@ -7,6 +7,7 @@ import { singleVaultSettings } from "../config/single_vault.ts";
 import { captureSingleVaultBinding } from "../config/vault_binding.ts";
 import {
   IdentityBootstrap,
+  IdentityMigrationRequired,
   identityPaths,
   IdentityRecoveryError,
   legacyIdentityPresent,
@@ -230,9 +231,11 @@ if (import.meta.main) {
       abort.signal,
     );
     console.log(JSON.stringify(result));
-  } catch {
+  } catch (error) {
     console.error(
-      "Identity command refused; stop the instance and check command, configuration and identity state. No automatic repair was attempted.",
+      error instanceof IdentityMigrationRequired
+        ? error.message
+        : "Identity command refused; stop the instance and check command, configuration and identity state. No automatic repair was attempted.",
     );
     Deno.exitCode = 1;
   } finally {

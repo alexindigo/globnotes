@@ -1,176 +1,93 @@
-// Final native clipboard and Access transport/conflict/error consumers.
-import { nativeSession } from "./native-cdp-session.mjs";
+// Real plain-HTTP clipboard and retained ACL uncertainty/CAS/read-error consumers.
 import { showSidebar } from './sidebar-navigation-native.mjs';
-import { captureClipboard, closeClipboardWitness, prepareClipboardWitness, readClipboardText, restoreClipboard, writeClipboardText } from "./native-clipboard.mjs";
-import { bootServer, parseArguments } from "./harness-helpers.mjs";
-import { done as waitDone, pending as waitPending, waitUntil } from "../../../tests/helpers/wait.ts";
-import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
-import { SignJWT } from "jose";
-
-let options;
-try { options = parseArguments(Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
-if (options.help) { console.log("Usage: access-extra-states.mjs --artifacts <directory>"); Deno.exit(0); }
-if (!options.artifacts) { console.error("--artifacts is required"); Deno.exit(2); }
-const artifacts = options.artifacts; await Deno.mkdir(artifacts, { mode: 0o700 });
-const assert = (value, message) => { if (!value) throw Error(message); };
-const password = "extra-access-password", username = "extra-access-fixture";
-const outcomes = []; let current, failure;
-function wait(predicate) {
-  return waitUntil(() => predicate() ? waitDone() : waitPending({ condition: String(predicate) }), { label: "Access extra-state observation", intervalMs: 25 });
-}
-async function api(route, method = "GET", body) {
-  const response = await fetch(`${current.server.baseUrl}/_/api/${route}`, { method, headers: { ...(current.token ? { authorization: `Bearer ${current.token}` } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(5000) });
-  const text = await response.text(); return { status: response.status, body: text ? JSON.parse(text) : null };
-}
-async function fill(selector, value) {
-  const session = current.session; await session.click(selector); await session.poll(`document.activeElement===document.querySelector(${JSON.stringify(selector)}) && !document.activeElement.disabled`);
-  await session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); await session.type(value);
-  await session.poll(`document.querySelector(${JSON.stringify(selector)})?.value===${JSON.stringify(value)}`);
-}
-async function fixture(label, protectedMode = false, narrow = false) {
-  const directory = `${artifacts}/${label}`; await Deno.mkdir(directory);
-  const vault = await Deno.makeTempDir({ prefix: `access-extra-${label}-vault-` }), state = await metadataDirectory({ prefix: `access-extra-${label}-state-` });
-  const secret = crypto.randomUUID(); await Deno.writeTextFile(`${vault}/Seed.md`, "Extra-state seed.\n");
-  const scenario = nativeAccountScenario(protectedMode ? { account: { login: username, password } } : {});
-  const fixtureInput = await nativeFixtureInput(scenario, {}, { signingKey: protectedMode ? secret : undefined });
-  const token = protectedMode ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
-  const server = await bootServer(vault, state, { ...fixtureInput, env: { TMPDIR:Deno.env.get('TMPDIR'), GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
-  const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335), width: narrow ? 360 : 1280, height: narrow ? 640 : 900, dpr: narrow ? 2 : 1 });
-  current = { label, directory, vault, state, server, session, token, narrow, protectedMode, writes: [], closed: false };
-  await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({ label, vault, state, serverPid: server.pid, baseUrl: server.baseUrl, targetId: session.targetId, browserContextId: session.browserContextId }), { createNew: true });
-  await session.goto(`${server.baseUrl}/Seed`);
-  if (protectedMode) { await session.poll("!!document.querySelector('#username')"); await fill("#username", username); await fill("#password", password); await session.button("Log In"); }
-  await session.poll("!!document.querySelector('.toast-viewer')");
-  await session.button("Edit", ".content-column"); await session.button("Source", ".content-column"); await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')");
-  await session.click(".cm-content"); await session.type(`Retained ${label} buffer\n`);
-   await session.poll(`document.querySelector('.cm-content')?.textContent.includes(${JSON.stringify(label)})`);
-  await session.poll("(()=>{const line=document.querySelector('.cm-activeLineGutter')?.textContent.trim();return !!line&&location.hash==='#source:L'+line;})()");
-  await session.evaluate("window.__extraEditor=document.querySelector('.cm-content');window.__extraBuffer=window.__extraEditor.textContent;window.__extraUrl=location.href;true");
-  if (narrow) {
-    await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.button("Appearance"); await session.click('[data-theme-id="globnotes-dark"]');
-    await session.click('[aria-label="Close settings"]'); await session.click('[title="Close sidebar"]');
+import { bootExtraAccessFixture as nativeAccountFixture } from './access-lock-controls-native.mjs';
+import { finalizeNativeCase } from './native-case-finalization.mjs';
+import { fixtureScope } from './fixture-ownership.mjs';
+import {captureClipboard,closeClipboardWitness,prepareClipboardWitness,readClipboardText,restoreClipboard,writeClipboardText} from './native-clipboard.mjs';
+import {parseArguments} from './harness-helpers.mjs';
+import {done,pending,waitUntil} from '../../../tests/helpers/wait.ts';
+const options=parseArguments(Deno.args);
+if(options.help)console.log('Usage: access-extra-states.mjs --artifacts <directory>');
+else await main();
+async function main(){
+if(!options.artifacts)throw Error('--artifacts required');
+const artifacts=options.artifacts;await Deno.mkdir(artifacts,{mode:0o700});
+const assert=(value,message)=>{if(!value)throw Error(message);};
+const outcomes=[];let f,label,failure,writes;
+const wait=(fn,name)=>waitUntil(async()=>await fn()?done():pending(),{label:name,intervalMs:25});
+async function fixture(name,narrow,run){
+  await fixtureScope(async scope => {
+  label=name;const directory=`${artifacts}/${name}`;await Deno.mkdir(directory);
+  f=await nativeAccountFixture(scope,directory,{everybody:'edit'});writes=[];
+  scope.defer(()=>closeClipboardWitness(f.session));
+  try {
+  const s=f.session;if(narrow)await s.send('Emulation.setDeviceMetricsOverride',{width:360,height:640,deviceScaleFactor:2,mobile:false});
+  await f.edit(`Retained ${name} buffer`);await s.evaluate("window.extraEditor=document.querySelector('.cm-content');window.extraBuffer=window.extraEditor.textContent;window.extraUrl=location.href;true");
+  s.page.onEvent(event=>{if(event.method==='Network.requestWillBeSent'&&event.params.request.method==='PUT'&&new URL(event.params.request.url).pathname==='/_/api/access')writes.push(event.params.requestId);});
+  await run();
+  } catch(error) {
+    await finalizeNativeCase({error,report:async()=>{await f.capture('failure').catch(()=>{});await Deno.writeTextFile(`${artifacts}/failure.json`,JSON.stringify({error:String(error),label,writes,page:await f.session.evaluate('({url:location.href,body:document.body.innerText})').catch(()=>null)},null,2));}});
+    throw error;
   }
-  current.original = await Deno.readTextFile(`${state}/config.json`);
-  session.page.onEvent(event => { if (event.method === "Network.requestWillBeSent" && event.params.request.method === "PUT" && new URL(event.params.request.url).pathname === "/_/api/access") current.writes.push(event.params.requestId); });
+  });
 }
-async function open(waitForLoaded = true) {
-  const s = current.session; await showSidebar(s);
-  await s.click('[aria-label="Settings"]'); await s.button("Access"); await waitForAccessSummary(s); await s.button("Change access…");
-  await s.poll("!!document.querySelector('#setup-title')");
-  // The visible wizard initially owns a loading form. Its admitted read also
-  // selects the actual mode and focuses the radio, potentially scrolling a
-  // narrow viewport. Observe that boundary before any native setting click.
-  if (waitForLoaded) {
-    await s.poll(`document.querySelector('#setup-mode-${current.protectedMode ? "password" : "none"}')?.checked && document.querySelector('#setup-mode-password')?.disabled===false`);
-    await s.evaluate("document.fonts.ready.then(()=>true)");
-  }
-}
-async function capture(label) {
-  const s = current.session; await s.evaluate("document.fonts.ready.then(()=>true)");
-   const geometry = await s.read('[aria-labelledby=setup-title]', "(()=>{const box=document.querySelector('[aria-labelledby=setup-title]'),r=box.getBoundingClientRect();return {url:location.href,body:document.body.innerText,rect:r.toJSON(),overflowX:box.scrollWidth-box.clientWidth,contained:r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,editorRetained:document.querySelector('.cm-content')===window.__extraEditor,buffer:document.querySelector('.cm-content')?.textContent};})()");
-  assert(geometry.contained && geometry.overflowX <= 1 && geometry.editorRetained, "Extra Access state escaped/lost its owner");
-  const { data } = await s.send("Page.captureScreenshot", { format: "png" });
-  await Deno.writeFile(`${current.directory}/${label}.png`, Uint8Array.from(atob(data), char => char.charCodeAt(0)), { createNew: true });
-  await Deno.writeTextFile(`${current.directory}/${label}.json`, JSON.stringify(geometry, null, 2), { createNew: true });
-}
-async function retained() {
-   assert(await current.session.evaluate("document.querySelector('.cm-content')===window.__extraEditor && document.querySelector('.cm-content')?.textContent===window.__extraBuffer && location.href===window.__extraUrl"), "Extra Access state discarded the literal editor buffer/URL");
-}
-async function close() {
-  if (!current || current.closed) return;
-  try { await closeClipboardWitness(current.session); } finally { await current.session.close(); } await current.server.close(); current.closed = true;
-  await Deno.writeTextFile(`${current.directory}/closure.json`, JSON.stringify({ targetClosed: true, serverClosed: true, generatedFilesRetained: true }), { createNew: true });
-}
-async function done(consumers) {
-  assert(!current.session.errors.length, "Extra Access page exception");
-  await Deno.writeTextFile(`${current.directory}/consumers.json`, JSON.stringify({ name: current.label, ...consumers, writes: current.writes.length, pageErrors: current.session.errors, events: current.session.events }, null, 2), { createNew: true });
-  await close(); outcomes.push({ name: current.label, passed: true }); console.log(`ok: Access ${current.label}`);
-}
-try {
-  for (const granted of [true, false]) {
-    await fixture(granted ? "clipboard-success" : "clipboard-denied", true, !granted);
-    const s = current.session;
-    await prepareClipboardWitness(s); await open();
-    // Plain HTTP: no navigator.clipboard and no clipboard permission applies; the
-    // app copies through execCommand("copy"). The denied fixture refuses that
-    // command in the page, and the real clipboard must then stay unchanged.
-    assert(await s.evaluate("!isSecureContext && navigator.clipboard===undefined"), "Clipboard application origin is not plain insecure HTTP");
-    const prior = await captureClipboard(s);
-    const marker = `clipboard-before-${current.label}`; await writeClipboardText(s, marker);
-    if (!granted) await s.evaluate("(()=>{const native=document.execCommand;document.execCommand=function(command,...rest){return command==='copy'?false:native.call(this,command,...rest);};return true;})()");
-    assert(await s.evaluate("document.execCommand!==Document.prototype.execCommand") === !granted, "Actual copy capability differs from owned fixture setting");
-    const bundles = []; s.page.onEvent(event => { if (event.method === "Network.responseReceived" && event.params.response.url.endsWith("/access/totp-enrolment")) bundles.push(event.params.requestId); });
-    await s.click("#setup-totp"); await s.poll("document.querySelector('#setup-totp-qr img')?.naturalWidth>0");
-    assert(bundles.length === 1, "Missing actual enrolment bundle");
-    const wire = await s.send("Network.getResponseBody", { requestId: bundles[0] }); const bundle = JSON.parse(wire.base64Encoded ? atob(wire.body) : wire.body);
-    await s.click("#setup-totp-qr"); await s.poll("document.querySelector('#setup-totp-copy-feedback')?.textContent.includes('Click again')");
-    await s.click("#setup-totp-qr");
-    await s.poll(`document.querySelector('#setup-totp-copy-feedback')?.textContent===${JSON.stringify(granted ? "Setup key copied." : "Could not copy the setup key. Please try again.")}`);
-    assert(await readClipboardText(s) === (granted ? bundle.secret : marker), granted ? "Actual clipboard consumer did not receive the minted key" : "Refused copy changed the actual clipboard");
-    const beforeFocus = await s.evaluate("({active:document.activeElement?.id,caption:document.querySelector('#setup-totp-copy-feedback')?.textContent})");
-    await capture("second-click-feedback"); await s.click("#access-current-password");
-     await Deno.writeTextFile(`${current.directory}/clipboard-focus-observation.json`, JSON.stringify({ before: beforeFocus, after: await s.read('#access-current-password', "({active:document.activeElement?.id,caption:document.querySelector('#setup-totp-copy-feedback')?.textContent,hit:document.querySelector('#access-current-password')===document.elementFromPoint(...(()=>{const r=document.querySelector('#access-current-password').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2];})())})") }, null, 2), { createNew: true });
-    await s.poll("document.activeElement===document.querySelector('#access-current-password')");
-    await s.poll("!document.querySelector('#setup-totp-copy-feedback')");
-    await retained(); assert(await Deno.readTextFile(`${current.state}/config.json`) === current.original && (await api("auth-check")).status === 200, "Clipboard flow changed account/session");
-    await restoreClipboard(s, prior);
-    await done({ secondNativeClick: true, actualClipboardMatchesBundle: granted, refusedCopyLeftClipboardUnchanged: !granted, copyCapability: granted ? "available" : "refused", regularHttpOrigin: true, feedbackRemovedOnBlur: true, configAndSessionUnchanged: true, literalDirtyBufferRetained: true, priorClipboardRestored: true });
-  }
-  for (const lost of [false, true]) {
-    await fixture(lost ? "lost-receipt-review" : "unknown-held-wire", false, lost); await open();
-    const s = current.session, gate = { held: null };
-    s.page.onEvent(event => {
-      if (event.method !== "Fetch.requestPaused") return;
-      if (event.params.request.method === "PUT") gate.held = event.params;
-      else s.send("Fetch.continueRequest", { requestId: event.params.requestId }).catch(() => {});
+async function retained(){assert(await f.session.evaluate("document.querySelector('.cm-content')===window.extraEditor&&document.querySelector('.cm-content').textContent===window.extraBuffer&&location.href===window.extraUrl"),'Literal dirty editor and URL retained');}
+async function finish(consumers){assert(!f.session.errors.length,'No page errors');await f.capture('accepted-state');await Deno.writeTextFile(`${artifacts}/${label}/consumers.json`,JSON.stringify({name:label,...consumers,writes:writes.length},null,2));outcomes.push({name:label,passed:true});}
+try{
+  for(const granted of [true,false]){
+    await fixture(granted?'clipboard-success':'clipboard-denied',!granted,async()=>{const s=f.session;
+    await prepareClipboardWitness(s);await f.settings();const before=await Deno.readTextFile(f.accountsFile);
+    assert(await s.evaluate('!isSecureContext&&navigator.clipboard===undefined'),'Normal insecure HTTP copy fallback');
+    const prior=await captureClipboard(s),marker=`before-${label}`;await writeClipboardText(s,marker);
+    if(!granted)await s.evaluate("(()=>{const native=document.execCommand;document.execCommand=function(command,...rest){return command==='copy'?false:native.call(this,command,...rest);};return true;})()");
+    const bundles=[];s.page.onEvent(event=>{if(event.method==='Network.responseReceived'&&event.params.response.url.endsWith('/account/totp-enrolment'))bundles.push(event.params.requestId);});
+    await s.button('Add authenticator');await s.poll("document.querySelector('.authenticator-qr')?.naturalWidth>0");assert(bundles.length===1,'One actual enrollment');
+    const wire=await s.send('Network.getResponseBody',{requestId:bundles[0]}),bundle=JSON.parse(wire.base64Encoded?atob(wire.body):wire.body);
+    await s.button('Copy setup key');await s.poll(`document.querySelector('.authenticator-enrollment')?.textContent.includes(${JSON.stringify(granted?'Setup key copied.':'Could not copy the setup key. Please try again.')})`);
+    assert(await readClipboardText(s)===(granted?bundle.secret:marker),'Real clipboard matches copy capability');
+    await f.fill('#account-dialog-current-password','still-owned-password');await s.poll("document.activeElement===document.querySelector('#account-dialog-current-password')");
+    await retained();assert(await Deno.readTextFile(f.accountsFile)===before&&(await f.api('auth-check')).status===200,'Copy never changes credentials/session');
+    await restoreClipboard(s,prior);await finish({nativeCopyAction:true,actualClipboardMatchesBundle:granted,refusedCopyLeftClipboardUnchanged:!granted,regularHttpOrigin:true,followingFieldFocusable:true,configAndSessionUnchanged:true,literalDirtyBufferRetained:true,priorClipboardRestored:true});
     });
-    await s.send("Fetch.enable", { patterns: [{ urlPattern: "*/_/api/access", requestStage: "Response" }] });
-    await s.click("#setup-read-only-settings"); await s.click("#setup-ack"); await s.button("Save access settings");
-    await s.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Save Changes')"); await s.button("Save", '[data-modal-top="true"]');
-    await wait(() => !!gate.held); assert(gate.held.responseStatusCode === 200, "Unknown-wire operation did not really commit upstream");
-    const saved = JSON.parse(await Deno.readTextFile(`${current.state}/config.json`)); assert(saved.read_only_settings === true && saved.access_update_id, "Actual lock/receipt missing from disk");
-    if (lost) await s.send("Fetch.failRequest", { requestId: gate.held.requestId, errorReason: "ConnectionClosed" });
-    await s.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('outcome is unknown')");
-    await retained(); await capture("unknown-state");
-    assert(current.writes.length === 1, "Unknown operation replayed");
-    if (lost) {
-      await s.poll("[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Review current access')?.disabled===false"); await s.button("Review current access");
-    } else {
-       const review = await s.poll("(()=>{const button=[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Review current access');return button?{disabled:button.disabled}:false;})()");
-       assert(review.disabled, "In-flight unknown wire allowed review");
-      await s.click('[aria-label="Dismiss setup"]'); assert(await s.evaluate("!!document.querySelector('#setup-title')"), "Unknown wire dismissed its owner");
-      await s.send("Fetch.continueRequest", { requestId: gate.held.requestId });
-    }
-    await s.poll("!document.querySelector('#setup-title')"); await s.send("Fetch.disable"); await retained();
-    assert((await api("config")).body.settingsWritable === false && current.writes.length === 1, "Unknown recovery did not consume actual policy without replay");
-    assert((await Deno.readTextFile(`${current.vault}/Seed.md`)).includes(current.label), "Authorized handoff Save did not persist the retained literal buffer");
-    await done({ actualCommittedLockAndReceipt: true, unknownStateRendered: true, retainedOwnerAndBuffer: true, replayedWrites: 0, explicitReview: lost, actualPolicyConsumer: false });
   }
-  await fixture("stale-cas", false, true); await open();
-  const view = (await api("access")).body;
-  const concurrent = await api("access", "PUT", { mode: "none", readOnlySettings: false, revision: view.revision, signature: view.signature, updateId: crypto.randomUUID() }); assert(concurrent.status === 200, "Concurrent writer did not commit");
-  await current.session.click("#setup-read-only-settings"); await current.session.click("#setup-ack"); await current.session.button("Save access settings");
-  await current.session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Save Changes')"); await current.session.button("Save", '[data-modal-top="true"]');
-  await current.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('Access settings changed')");
-  await retained(); await capture("stale-response");
-   assert(await current.session.evaluate("document.querySelector('#setup-read-only-settings')?.getAttribute('aria-checked')==='true'") && (await api("config")).body.settingsWritable, "Stale error lost proposed choice or overwrote concurrent policy");
-  await done({ actualStaleMutationRejected: true, currentChoicesRetained: true, editorBufferRetained: true, concurrentPolicyRetained: true });
-  await fixture("load-error", false);
-  const s = current.session;
-  s.page.onEvent(event => { if (event.method === "Fetch.requestPaused") s.send("Fetch.fulfillRequest", { requestId: event.params.requestId, responseCode: 503, responseHeaders: [{ name: "content-type", value: "application/json" }], body: btoa(JSON.stringify({ detail: "Fixture access read unavailable" })) }).catch(() => {}); });
-  await s.send("Fetch.enable", { patterns: [{ urlPattern: "*/_/api/access", requestStage: "Response" }] }); await open(false);
-  await s.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('Fixture access read unavailable')");
-   assert(await s.read('[aria-labelledby=setup-title] button[type=submit]', "document.querySelector('[aria-labelledby=setup-title] button[type=submit]').disabled"), "Failed initial access read allowed submission");
-  await retained(); await capture("read-error"); assert(await Deno.readTextFile(`${current.state}/config.json`) === current.original, "Read error changed configuration");
-  await s.send("Fetch.disable"); await s.click('[aria-label="Dismiss setup"]'); await s.poll("!document.querySelector('#setup-title')"); await retained();
-  await done({ realReadResponseFailureRendered: true, submitUnavailable: true, configurationUnchanged: true, literalDirtyBufferRetained: true });
-  assert(outcomes.length === 6, "Missing extra Access state"); console.log("ACCESS EXTRA STATES OK (six actual consumers)");
-} catch (error) {
-  failure = error; console.error(error.stack ?? error);
-  if (current) await Deno.writeTextFile(`${current.directory}/failure.json`, JSON.stringify({ error: error.message, writes: current.writes.length, pageErrors: current.session.errors, events: current.session.events, page: await current.session.evaluate("({url:location.href,body:document.body.innerText,buffer:document.querySelector('.cm-content')?.textContent})").catch(() => null) }, null, 2), { createNew: true });
-  if (current) await capture("failure").catch(() => {});
-} finally { await close(); }
-await Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({ outcomes, failure: failure?.message, failedFixtureClosedAfterCapture: !!failure && current?.closed }), { createNew: true });
-if (failure) throw failure;
-import { waitForAccessSummary } from './settings-access-native.mjs';
-import { metadataDirectory } from "./config-fixture.mjs";
+  for(const lost of [false,true]){
+    await fixture(lost?'lost-receipt-review':'unknown-held-wire',lost,async()=>{await f.settings('core:access');const s=f.session,gate={held:null};
+    s.page.onEvent(event=>{if(event.method==='Fetch.requestPaused'){if(event.params.request.method==='PUT')gate.held=event.params;else s.send('Fetch.continueRequest',{requestId:event.params.requestId}).catch(()=>{});}});
+    await s.send('Fetch.enable',{patterns:[{urlPattern:'*/_/api/access',requestStage:'Response'}]});
+    await f.select('#access-everybody','view');await s.button('Save access');
+    await s.button('Save','[data-modal-top=true]');
+    await wait(()=>gate.held,'actual ACL response held');assert(gate.held.responseStatusCode===200,'ACL really committed');
+    const saved=JSON.parse(await Deno.readTextFile(`${f.state}/access.json`));assert(saved.everybody==='view'&&saved.updateId,'Committed ACL and receipt bytes');
+    if(lost)await s.send('Fetch.failRequest',{requestId:gate.held.requestId,errorReason:'ConnectionClosed'});
+    await s.poll("document.querySelector('[data-settings-content]')?.textContent.includes('Review current access')");await retained();await f.capture('unknown-state');assert(writes.length===1,'No automatic ACL replay');
+    if(lost){await s.poll("[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Review current access')?.disabled===false");await s.button('Review current access');}
+    else {
+      const review = await s.evaluate("(()=>{const button=[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Review current access');return button&&{disabled:button.disabled,text:button.textContent.trim()};})()");
+      await Deno.writeTextFile(`${f.directory}/held-wire.json`, JSON.stringify({ method: gate.held.request.method, status: gate.held.responseStatusCode, updateId: saved.updateId, writes: writes.length, review }, null, 2), { createNew: true });
+      assert(!review || review.disabled, 'Held wire cannot review');
+      await s.click('[aria-label="Close settings"]');assert(await s.evaluate("!!document.querySelector('#settings-modal-title')"),'Unknown wire blocks departure');await s.send('Fetch.continueRequest',{requestId:gate.held.requestId});
+    }
+    await s.poll("document.querySelector('#access-everybody')?.value===JSON.stringify('view')&&![...document.querySelectorAll('[data-settings-content] button')].some(button=>['Save access','Review current access'].includes(button.textContent.trim()))");
+    if(await s.evaluate("document.querySelector('[data-modal-top=true]')?.textContent.includes('Unsaved changes')"))await s.button('Keep editing','[data-modal-top=true]');
+    await s.send('Fetch.disable');await retained();
+    assert((await f.api('notes','POST',{path:'Denied',content:'no'},null)).status===403&&writes.length===1,'Actual guest View policy without replay');
+    assert(await Deno.readTextFile(`${f.vault}/Seed.md`)===`Retained ${label} buffer`,'Departure Save wrote the literal retained text');await finish({actualCommittedAclAndReceipt:true,unknownStateRendered:true,retainedOwnerAndBuffer:true,replayedWrites:0,explicitReview:lost,actualGuestViewConsumer:true});
+    });
+  }
+  await fixture('stale-cas',true,async()=>{await f.settings('core:access');await f.select('#access-everybody','none');const view=(await f.adminApi('access')).body;
+  assert((await f.adminApi('access','PUT',{everybody:'view',grants:view.grants,revision:view.revision,signature:view.signature,updateId:crypto.randomUUID()})).status===200,'Concurrent real writer');
+  await f.session.button('Save access');await f.session.button('Save','[data-modal-top=true]');
+  await f.session.poll("document.querySelector('[data-settings-content]')?.textContent.includes('Access was not saved.')");await retained();
+  assert(await f.session.evaluate("(()=>{const select=document.querySelector('#access-everybody');return select?select.value===JSON.stringify('none'):document.querySelector('[data-everybody-row]')?.textContent.includes('No access');})()")&&(await f.api('access')).body.everybody==='view','Stale choice retained, concurrent bytes preserved');await finish({actualStaleMutationRejected:true,currentChoicesRetained:true,editorBufferRetained:true,concurrentPolicyRetained:true});
+  });
+  await fixture('load-error',false,async()=>{const s=f.session,before=await Deno.readTextFile(`${f.state}/access.json`);
+  s.page.onEvent(event=>{if(event.method==='Fetch.requestPaused')s.send('Fetch.fulfillRequest',{requestId:event.params.requestId,responseCode:503,responseHeaders:[{name:'content-type',value:'application/json'}],body:btoa(JSON.stringify({detail:'Fixture access read unavailable'}))}).catch(()=>{});});
+  await s.send('Fetch.enable',{patterns:[{urlPattern:'*/_/api/access',requestStage:'Response'}]});
+  await showSidebar(s);await s.click('[aria-label=Settings]');await s.click('[data-settings-nav-id="core:access"]');
+  await s.poll("document.querySelector('[data-settings-content]')?.textContent.includes('Fixture access read unavailable')");assert(!await s.evaluate("[...document.querySelectorAll('[data-settings-content] button')].some(el=>el.textContent.trim()==='Save access')"),'No submit after failed load');await retained();assert(await Deno.readTextFile(`${f.state}/access.json`)===before,'Read failure no write');await s.send('Fetch.disable');await s.click('[aria-label="Close settings"]');await retained();await finish({realReadResponseFailureRendered:true,submitUnavailable:true,configurationUnchanged:true,literalDirtyBufferRetained:true});
+  });
+  assert(outcomes.length===6,'All six retained consumers');
+}catch(error){failure=error;}
+finally { await finalizeNativeCase({ error: failure, report: () => Deno.writeTextFile(`${artifacts}/diagnostics.json`, JSON.stringify({outcomes,failure:failure?.message},null,2)) }); }
+if(failure)throw failure;
+}

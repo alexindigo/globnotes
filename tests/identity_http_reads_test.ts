@@ -23,7 +23,7 @@ import { FileServing } from "../server/files/file_serving.ts";
 import { createIdentityFileGet } from "../server/api/endpoints/_/api/files/%23...path/get.ts";
 import { createIdentityCatchAll as routeCatchAll } from "../server/api/endpoints/%23...path/get.ts";
 import { createIdentityCatchAll } from "../server/catchall.ts";
-import render from "../server/api/endpoints/_/api/render/post.ts";
+import { createIdentityRender } from "../server/api/endpoints/_/api/render/post.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import {
   createMcpEndpoint,
@@ -45,10 +45,12 @@ import { fixtureScope } from "./helpers/fixture_scope.ts";
 import { fixtureGate } from "./helpers/fixture_coordination.ts";
 import { bounded } from "./helpers/worker_liveness.ts";
 import { signIn } from "./helpers/session_delivery.ts";
+import { createUuid } from "../shared/uuid.ts";
 
 Deno.test("identity HTTP writes: PATCH keeps a committed merged save but fences its note at delivery", () =>
   identityHttpFixture(async (f) => {
-    const hub = (await f.scope.acquire(hubOperationsFixture, (h) =>
+    const hub = (await f.scope.acquire(() =>
+      hubOperationsFixture({}, { httpEverybody: "edit" }), (h) =>
       h.close())).value;
     const routes = `${f.root}/routes`;
     Deno.mkdirSync(`${routes}/#...path`, { recursive: true });
@@ -68,15 +70,16 @@ Deno.test("identity HTTP writes: PATCH keeps a committed merged save but fences 
       `${routes}/#...path/patch.ts`,
       `export { default, operation } from ${JSON.stringify(patch)};`,
     );
-    const app = await pathfinder({ roots: [routes], app: { auth: f.auth } });
-    f.policy("edit");
+    const app = await pathfinder({
+      roots: [routes],
+      app: { auth: hub.identity!.composition.auth },
+    });
     const save = (baseContent: string, newContent: string) =>
       app(
         new Request("http://globnotes.test/Proof", {
           method: "PATCH",
           headers: {
             "content-type": "application/json",
-            cookie: f.request().headers.get("cookie")!,
           },
           body: JSON.stringify({ baseContent, newContent }),
         }),
@@ -94,7 +97,12 @@ Deno.test("identity HTTP writes: PATCH keeps a committed merged save but fences 
       Deno.readTextFileSync(`${hub.vault}/Proof.md`),
       "editor edit\n\nmiddle\n\nprivate peer edit\n",
     );
-    f.policy("none");
+    const acl = hub.identity!.acl;
+    acl.save(
+      { everybody: "none", grants: acl.capture().value.grants },
+      acl.capture(),
+      { updateId: createUuid(), actorId: null },
+    );
     assertEquals([committed.status, await committed.json()], [200, {
       committed: true,
       saveResult: { status: "merged" },
@@ -390,7 +398,7 @@ Deno.test("identity HTTP reads: View POST render succeeds; held render and prepa
       const response = await policy.read(
         request,
         "readVault",
-        () => render(view(request, "/_/api/render")),
+        () => createIdentityRender(f.auth)(view(request, "/_/api/render")),
       );
       assertEquals(
         await response.text(),

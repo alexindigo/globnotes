@@ -21,6 +21,27 @@ beforeEach(() => {
 afterEach(() => { adapter.dispose(); URL.createObjectURL = originalCreateUrl; URL.revokeObjectURL = originalRevokeUrl; vi.useRealTimers(); });
 
 describe("Branding unknown-outcome recovery consumers", () => {
+  it("settles its sent draft from a receipt without adopting a projection after demotion", async () => {
+    const initial = current;
+    let writable = true;
+    adapter.dispose();
+    adapter = createCoreSettingsAdapters({
+      getBrand: () => current, applyBrand: fresh => { current = fresh; },
+      writable: () => writable, readBrand,
+      writeBrand: async form => {
+        expect(form.get("name")).toBe("committed name");
+        writable = false;
+        return { committed: true };
+      },
+    });
+    adapter.loadBrand();
+    adapter.editBrand("name", "committed name");
+    expect(await adapter.saveBrand()).toBe(true);
+    expect(adapter.brandSnapshot()).toMatchObject({ dirty: false, unknown: false, name: initial.name });
+    expect(readBrand).not.toHaveBeenCalled();
+    expect(current).toBe(initial);
+  });
+
   function resetFixture(namePinned = true, accentPinned = false) {
     URL.createObjectURL = vi.fn(file => `blob:${file.name}`);
     URL.revokeObjectURL = vi.fn();

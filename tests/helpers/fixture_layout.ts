@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import * as path from "@std/path";
-import type { FixtureScope } from "./fixture_scope.ts";
+import { type FixtureScope, fixtureScope } from "./fixture_scope.ts";
 import { ownFixtureScope } from "./fixture_scope_engine.ts";
 import {
   assertCompletedBuild,
@@ -20,6 +20,21 @@ export interface FixtureLayout {
 }
 const layouts = new WeakMap<FixtureLayout, FixtureScope>();
 const retainedRoots = new Set<string>();
+
+/** A scratch root with no pre-created vault, metadata or child layout. */
+export function withFixtureDirectory<T>(
+  run: (root: string, scope: FixtureScope) => T | PromiseLike<T>,
+  prefix = "fixture-",
+): Promise<T> {
+  return fixtureScope(async (scope) => {
+    const dir = await scope.acquire(
+      () => Deno.makeTempDir({ prefix }),
+      (dir) => Deno.remove(dir, { recursive: true }),
+    );
+    return await run(dir.value, scope);
+  });
+}
+
 globalThis.addEventListener?.("unload", () => {
   const errors = [];
   for (const root of retainedRoots) {
@@ -204,7 +219,6 @@ export async function serverWorkingDirectory(): Promise<string> {
     const build = await repositoryBuild();
     if (build) {
       // No lifetime escapes this installer; the compatibility caller owns dir.
-      const { fixtureScope } = await import("./fixture_scope.ts");
       await fixtureScope((scope) => installCompletedBuild(scope, build, dir));
     }
     return dir;

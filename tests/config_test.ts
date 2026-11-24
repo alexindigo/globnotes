@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { command } from "./helpers/process.ts";
-import type { StoredConfig } from "../server/config.ts";
+import { bootServer } from "./helpers/boot.ts";
 const SERVER_DIR = new URL("../server/", import.meta.url).href;
 const VAULT = Deno.makeTempDirSync({ prefix: "globnotes-config-vault-" });
 globalThis.addEventListener(
@@ -11,7 +11,7 @@ globalThis.addEventListener(
 
 async function loadConfig(
   env: Record<string, string>,
-  stored?: StoredConfig,
+  stored?: Record<string, unknown>,
   toml?: string,
 ): Promise<Record<string, unknown>> {
   const vault = env.GLOBNOTES_GLOBNOTES_PATH!;
@@ -37,9 +37,9 @@ async function loadConfig(
   };
     const env = ${JSON.stringify(env)};
     const c = new GlobalConfig(singleVaultSettings(loadInstanceConfig({env,overlayPath:null,vaults:singleVaultBindings}),env));
-    console.log(JSON.stringify({notesPath:c.notesPath,authType:c.authType,setupRequired:c.setupRequired,pathPrefix:c.pathPrefix,
+    console.log(JSON.stringify({notesPath:c.notesPath,pathPrefix:c.pathPrefix,
       quickAccessHide:c.quickAccessHide,quickAccessTitle:c.quickAccessTitle,quickAccessTerm:c.quickAccessTerm,quickAccessSort:c.quickAccessSort,quickAccessLimit:c.quickAccessLimit,
-      autoEnablePlugins:c.autoEnablePlugins,brandName:c.brandName,brandAccent:c.brandAccent,settingsWritable:c.settingsWritable}));`;
+      autoEnablePlugins:c.autoEnablePlugins,brandName:c.brandName,brandAccent:c.brandAccent}));`;
   const result = await command(Deno.execPath(), {
     args: ["eval", script],
     env,
@@ -55,8 +55,6 @@ Deno.test("config: shipped defaults reach the resolved facade", async () => {
   const c = await loadConfig({ GLOBNOTES_GLOBNOTES_PATH: VAULT });
   assertEquals(c, {
     notesPath: VAULT,
-    authType: null,
-    setupRequired: true,
     pathPrefix: "",
     quickAccessHide: false,
     quickAccessTitle: "RECENTLY MODIFIED",
@@ -66,7 +64,6 @@ Deno.test("config: shipped defaults reach the resolved facade", async () => {
     autoEnablePlugins: true,
     brandName: null,
     brandAccent: null,
-    settingsWritable: false,
   });
 });
 Deno.test("config: explicit auto-enable false is retained", async () =>
@@ -77,17 +74,22 @@ Deno.test("config: explicit auto-enable false is retained", async () =>
     })).autoEnablePlugins,
     false,
   ));
-Deno.test("config: current private auth record retains password/read-only/public setup state", async () => {
+Deno.test("config: unimported password/read-only/public record never becomes public setup", async () => {
   const root = Deno.makeTempDirSync({ prefix: "config-auth-record-" });
   try {
     for (const mode of ["password", "read_only", "none"]) {
-      const c = await loadConfig({ GLOBNOTES_GLOBNOTES_PATH: root }, {
+      await loadConfig({ GLOBNOTES_GLOBNOTES_PATH: root }, {
         auth_type: mode,
         read_only_settings: mode === "none",
       });
-      assertEquals(c.authType, mode);
-      assertEquals(c.setupRequired, false);
-      assertEquals(c.settingsWritable, mode === "password");
+      const path = `${root}/.globnotes/config.json`;
+      const before = await Deno.readFile(path);
+      await assertRejects(
+        () => bootServer({ GLOBNOTES_GLOBNOTES_PATH: root }),
+        Error,
+        "Account migration required; public setup is unavailable.",
+      );
+      assertEquals(await Deno.readFile(path), before);
     }
   } finally {
     Deno.removeSync(root, { recursive: true });

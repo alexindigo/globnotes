@@ -3,8 +3,7 @@ import { testMetadata } from "./helpers/environment.ts";
 import { signedInScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { decodeJwt } from "jose";
-import { LocalAuth } from "../server/auth/local.ts";
-import { GlobalConfig } from "./helpers/config.ts";
+import { bootServer, fixtureSignIn } from "./helpers/boot.ts";
 import { serviceSettings } from "../server/config/consumers.ts";
 import { loadInstanceConfig } from "../server/config/loader.ts";
 import { VaultHub } from "../server/hub/hub.ts";
@@ -12,7 +11,6 @@ import { initializeLogger, logger } from "../server/logger.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { state } from "../server/state.ts";
-import { testEnvironment } from "./helpers/environment.ts";
 import { awaitIndexReady, restoreState, setupState } from "./helpers/state.ts";
 import { command } from "./helpers/process.ts";
 
@@ -140,38 +138,26 @@ Deno.test("config consumers: typed scan interval reaches the hub's actual timer"
   }
 });
 
-Deno.test("config consumers: session expiry reaches the signed JWT, independent of legacy expiry", async () => {
-  const root = Deno.makeTempDirSync({ prefix: "config-consumer-auth-" });
+Deno.test("config consumers: typed session expiry reaches the signed JWT and current principal", async () => {
+  const person = { login: "owner", password: "fixture password" };
+  const server = await bootServer({
+    fixtureScenario: signedInScenario(person),
+    GLOBNOTES__SESSIONS_EXPIRYDAYS: "2",
+  });
   try {
-    const config = new GlobalConfig(testEnvironment({
-      GLOBNOTES_GLOBNOTES_PATH: root,
-      fixtureScenario: signedInScenario(
-        { login: "owner", password: "fixture password" },
-        {},
-        {
-          secret_key: "fixture signing material",
-        },
-      ),
-      GLOBNOTES__SESSIONS_EXPIRYDAYS: "10",
-    }));
-    const auth = new LocalAuth(
-      config,
-      configured({ GLOBNOTES__SESSIONS_EXPIRYDAYS: "2" }).sessions,
-    );
     const before = Math.floor(Date.now() / 1000);
-    const token = await auth.login({
-      username: "owner",
-      password: "fixture password",
-    });
-    const payload = decodeJwt(token.access_token);
+    const token = await fixtureSignIn(server.baseUrl, person);
+    const payload = decodeJwt(token);
     const after = Math.floor(Date.now() / 1000);
     assert(payload.exp! >= before + 172800 && payload.exp! <= after + 172800);
-    assertEquals(
-      (await auth.validateTokenMetadata(token.access_token)).expiresAt,
-      payload.exp! * 1000,
-    );
+    const response = await fetch(`${server.baseUrl}/_/api/auth-check`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assertEquals(response.status, 200);
+    const { principal } = await response.json();
+    assertEquals(principal.expiresAt, payload.exp! * 1000);
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    await server.close();
   }
 });
 

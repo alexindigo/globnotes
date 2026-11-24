@@ -6,29 +6,30 @@ import { done, failed, pending, waitUntil, watchChild } from "../../../tests/hel
 import { metadataBase } from "./config-fixture.mjs";
 import { resolve } from "node:path";
 import { createFixtureScope } from "../../../tests/helpers/fixture_scope_engine.ts";
-import { fixtureLayout } from "../../../tests/helpers/fixture_layout.ts";
+import { admitLayout, fixtureLayout } from "../../../tests/helpers/fixture_layout.ts";
 import { testEnvironment } from "../../../tests/helpers/environment.ts";
 import { repositoryBuild } from "../../../tests/helpers/completed_build.ts";
 import { spawnOwnedChild } from "../../../tests/helpers/owned_child.ts";
 import { workMilestone } from "../../../tests/helpers/product_settlement.ts";
 import { boundOperation } from "../../../tests/helpers/owned_operation.ts";
 import { fixtureScope } from "../../../tests/helpers/fixture_scope.ts";
-import { publishLegacyFixtureAuth, UnexpectedServerExitError } from "../../../tests/helpers/boot.ts";
+import { fixtureSignIn, UnexpectedServerExitError } from "../../../tests/helpers/boot.ts";
+import { prepareIdentityBoot } from "../../../tests/helpers/identity_fixture.ts";
 const assert = (value, message) => { if (!value) throw Error(message); };
 const hash = async bytes => [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
 
-export async function bootPrefixAuthFixture({ directory, vault, state, prefix, setup, fixtureScenario = /** @type {import('../../../tests/helpers/fixture_scenarios.ts').FixtureScenario | undefined} */ (undefined), headers, healthFetch=fetch, catalogFetch=fetch, originDependencies }) {
+export async function bootPrefixAuthFixture({ directory, vault, state, prefix, setup, fixtureScenario = /** @type {import('../../../tests/helpers/fixture_scenarios.ts').FixtureScenario | undefined} */ (undefined), healthFetch=fetch, catalogFetch=fetch, originDependencies }) {
   const fixture=testEnvironment({fixtureScenario});
   const lifetime=createFixtureScope();
-  headers={...headers};
   const origin=testOrigin(originDependencies);
   return lifetime.prepare(async scope => {
   directory=resolve(directory);vault=resolve(vault);state=resolve(state);
    const build=(await scope.admit(()=>repositoryBuild(scope,{required:true}))).value;
   const layout=await fixtureLayout(scope,{GLOBNOTES_GLOBNOTES_PATH:vault,GLOBNOTES__METADATA_PATH:metadataBase(vault,state)},{build,artifacts:directory});
-  // This fixture owns its asset and startup observers. Keep the legacy seed
-  // on that layout and the captured account input out of the child environment.
-  await publishLegacyFixtureAuth(layout, scope, fixture);
+  // Share the boot API's account preparation while retaining the prefix
+  // fixture's owned asset copy and startup/teardown observations.
+  const prepared = fixture.fixtureIdentity ? await prepareIdentityBoot(layout, scope, fixture.fixtureIdentity) : null;
+  const admin = fixture.fixtureIdentity?.people.find(person => fixture.fixtureIdentity.grants[person.login] === "admin");
   const cwd=layout.cwd,assets=build.assets;
    await scope.admit(async signal=>{
    for (const row of assets) { signal.throwIfAborted(); assert(await hash(await Deno.readFile(`${cwd}/client/dist/${row.path}`)) === row.sha256, "Production asset copy mismatch"); }
@@ -79,7 +80,7 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
   const streamOwner=draining.then(()=>child.status);
   streamOwner.catch(()=>{});
    await scope.admit(()=>Deno.writeTextFile(`${directory}/startup-ownership.json`, JSON.stringify({ pid: child.pid, vault, state, prefix, port, cwd, sourceRoot: ROOT,instance:layout.instance }), { createNew: true }));
-  let closing,returned=false;
+  let closing,returned=false,adminToken;
   function close() {return closing??=(async()=>{
     try {
     if(!scope.signal.aborted){
@@ -102,6 +103,8 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
        }catch(error){combined.throwIfAborted();return pending({health:String(error)});}
      },{label:"Prefix fixture health",intervalMs:50,children});
      ownerGone.throwIfAborted();
+     if (admin) adminToken = await fixtureSignIn(baseUrl, admin, prefix, AbortSignal.any([scopeSignal, ownerGone]));
+     const headers = adminToken ? { authorization: `Bearer ${adminToken}` } : {};
      await waitUntil(async signal => {
        const combined=AbortSignal.any([signal,scopeSignal,ownerGone]);
        const response = await boundOperation({signal:combined,dispose:response=>combined.aborted?response.body?.cancel():undefined},signal=>catalogFetch(`${baseUrl}${prefix}/_/api/plugin-host`, { headers, signal }));
@@ -130,6 +133,6 @@ export async function bootPrefixAuthFixture({ directory, vault, state, prefix, s
      }),"Prefix fixture readiness before child exit");
     } catch (error) { const primary=drainFailure?drainFailure.error:exited.signal.aborted?exited.signal.reason:error;try{await close();}catch(cleanup){if(Object.is(cleanup,primary))throw primary;throw new AggregateError([primary,cleanup],"Prefix fixture startup and cleanup failed",{cause:primary});}throw primary; }
    ownerGone.throwIfAborted();
-  return { baseUrl, pid: child.pid, logs, close, cwd, assets, fixtureIdentity: fixture.fixtureIdentity };
+  return { baseUrl, pid: child.pid, logs, close, cwd, assets, fixtureIdentity: fixture.fixtureIdentity, adminToken, instancePath: prepared?.paths.instancePath };
   });
 }

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { walkSync } from "@std/fs";
@@ -440,29 +439,74 @@ Deno.test("driver acceptance: actual provider error strings are redacted across 
   }
 });
 
-Deno.test("driver acceptance: read-only server restart pauses persisted instances; reenable resumes without echo", async () => {
+Deno.test("driver acceptance: persisted driver starts Active with guest View; imports exact bytes without echo", async () => {
+  const remote = memoryRemote();
+  remote.put("note.md", "initial");
+  const f = await storageServerFixture([remote.authority], {
+    everybody: "view",
+    observedTime: 50000,
+  });
+  try {
+    const id = await f.add(remote.baseUrl, remote.token);
+    const original = f.server();
+    const expected = new TextEncoder().encode(
+      "\ufeff# Remote\r\nExact bytes.\r\n",
+    );
+    remote.put("note.md", expected);
+    assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "initial");
+    const writeCount = writes(remote).length;
+    const restarted = await f.restart();
+    assert((await original.exited).success);
+    assert(restarted.server.pid !== original.pid);
+    assertEquals((await restarted.initialDriver(id, "active")).state, "active");
+    assertEquals((await f.one(id)).status, "active");
+
+    const path = `${restarted.server.baseUrl}/_/api/notes/note`;
+    const read = await fetch(path);
+    assertEquals(read.status, 200);
+    const baseContent = (await read.json()).content;
+    const denied = await fetch(path, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseContent, newContent: "Guest edit" }),
+    });
+    assertEquals(denied.status, 403);
+    await denied.body?.cancel();
+    assertEquals(Deno.readFileSync(`${f.vault}/note.md`), expected);
+    equalRemote(f.vault, remote);
+    assertEquals(writes(remote).length, writeCount);
+    assertEquals(
+      metadata(f.statePath, "SELECT version FROM peer_files")[0].version,
+      versionOf(expected),
+    );
+  } finally {
+    await f.close();
+    await remote.close();
+  }
+});
+
+Deno.test("driver acceptance: Admin Off persists across server restart; reenable imports without echo", async () => {
   const remote = memoryRemote();
   remote.put("note.md", "initial");
   const f = await storageServerFixture([remote.authority]);
   try {
     const id = await f.add(remote.baseUrl, remote.token);
+    const original = f.server();
     await f.configure(id, { enabled: false });
     remote.put("note.md", "off edit");
+    remote.requests.length = 0;
+    const restarted = await f.restart();
+    assert((await original.exited).success);
+    assert(restarted.server.pid !== original.pid);
+    assertEquals((await f.one(id)).enabled, false);
     assertEquals((await f.one(id)).status, "off");
     assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "initial");
+    assertEquals(remote.requests, []);
     await f.configure(id, { enabled: true });
+    assertEquals((await f.one(id)).status, "active");
     assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "off edit");
-    const restarted = await f.restart({
-      fixtureScenario: publicScenario("view"),
-    });
-    await restarted.initialDriver(id, "paused");
-    assertEquals((await f.one(id)).status, "paused");
-    remote.put("note.md", "paused edit");
-    assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "off edit");
-    await f.restart();
-    await f.sync(id);
-    assertEquals(Deno.readTextFileSync(`${f.vault}/note.md`), "paused edit");
     equalRemote(f.vault, remote);
+    assertEquals(writes(remote), []);
     assertEquals(
       versionOf(Deno.readFileSync(`${f.vault}/note.md`)),
       metadata(f.statePath, "SELECT version FROM peer_files")[0].version,

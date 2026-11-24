@@ -16,10 +16,13 @@ import {
 import { createInstanceAuth } from "../../server/auth/middleware.ts";
 import { singleIdentityVault } from "../../server/auth/http_policy.ts";
 import { createOperationLease } from "../../server/operation_lease.ts";
+import { openInstanceIdentity } from "../../server/auth/instance.ts";
+import type { PluginManager } from "../../server/plugins/manager.ts";
+import type { GlobalConfig } from "../../server/config.ts";
 import { createUuid } from "../../shared/uuid.ts";
 import { identityFixture, prepareFixtureAccount, VAULT_A } from "./identity.ts";
 import { importFixtureAccount } from "./account_preparation.ts";
-import { fixturePasswordHash } from "./config.ts";
+import { fixturePasswordHash } from "./fixture_password.ts";
 import type { FixtureScope } from "./fixture_scope.ts";
 import { signIn } from "./session_delivery.ts";
 import { loadInstanceConfig } from "../../server/config/loader.ts";
@@ -44,7 +47,7 @@ export interface IdentityFixturePayload {
       temporary?: boolean;
     }
     & (
-      | { totpKey?: string; totpKeyEncoding?: undefined }
+      | { totpKey?: string; totpKeyEncoding?: null }
       | { totpKey: string; totpKeyEncoding: "base32" }
     )
   )[];
@@ -57,6 +60,28 @@ type IdentityFixtureInput = IdentityFixturePayload & {
   instancePath: string;
   vaultPath: string;
 };
+
+/** Real sign-in against an already seeded instance, with an explicit token
+ * lifetime. Timing consumers need no repository or signing-key access. */
+export async function signInFixtureWithExpiry(
+  instancePath: string,
+  credentials: { username: string; password: string },
+  expirySeconds: number,
+) {
+  const accounts = new AccountRepository(instancePath);
+  try {
+    return await signIn(
+      new InstanceSessions(
+        accounts,
+        new SessionRepository(instancePath),
+        { expirySeconds },
+      ),
+      credentials,
+    );
+  } finally {
+    accounts.retireCredentials();
+  }
+}
 export function identityFixturePayload(
   input: IdentityFixturePayload,
 ): IdentityFixturePayload {
@@ -127,6 +152,34 @@ async function prepareLayoutRecords(
 
 export function seedIdentityRecords(input: IdentityFixtureInput) {
   return identityRecords(input, false);
+}
+
+/** In-process route fixtures use the same open/recovery owner as the child. */
+export async function openFixtureIdentity(
+  scope: FixtureScope,
+  config: GlobalConfig,
+  payload: IdentityFixturePayload | null,
+  plugins: () => PluginManager,
+  options?: Parameters<typeof openInstanceIdentity>[3],
+) {
+  if (payload) {
+    await openIdentityFixture({
+      ...payload,
+      scope,
+      instancePath: config.resolved.instancePath,
+      vaultPath: config.statePath,
+    });
+  }
+  return (await scope.acquire(
+    () =>
+      openInstanceIdentity(
+        config,
+        plugins,
+        { version: null, revision: null },
+        options,
+      ),
+    (identity) => identity.close(),
+  )).value;
 }
 /** Reopening validates all stores without resetting passwords, codes or grants. */
 export function openIdentityFixture(input: IdentityFixtureInput) {

@@ -2,7 +2,7 @@
 import { join, resolve } from "@std/path";
 import { HttpError } from "@pathfinder/pathfinder";
 import { AccountRepository } from "./accounts.ts";
-import { AclRepository, type EverybodyLevel } from "./acl.ts";
+import { AclRepository, type EverybodyLevel, isEverybodyLevel } from "./acl.ts";
 import { InstanceSessions, type IssuedSession } from "./sessions.ts";
 import { InstanceAuthority } from "./authority.ts";
 import { bindAccountPreparationAuthority } from "./internal/account_credentials.ts";
@@ -22,13 +22,20 @@ import {
   type OperationLease,
 } from "../operation_lease.ts";
 import { fields, identity, IdentityStateError, record } from "./records.ts";
+import { readRequestJson } from "./request_json.ts";
 import type { OfflineRecoveryAuthority } from "./offline_recovery.ts";
 
 export class IdentityRecoveryError extends Error {
-  constructor() {
-    super(
+  constructor(
+    message =
       "Identity state requires offline operator recovery or explicit migration; public setup is unavailable.",
-    );
+  ) {
+    super(message);
+  }
+}
+export class IdentityMigrationRequired extends IdentityRecoveryError {
+  constructor() {
+    super("Account migration required; public setup is unavailable.");
   }
 }
 /** Inert configuration selection, shared by boot and the offline command. */
@@ -211,11 +218,13 @@ export class IdentityBootstrap {
       new BoundFileStore(join(this.accounts.root, "accounts.json")).capture()
         .raw === null;
     const signingAbsent = signing.persistence.raw === null;
+    if ((!initialized || signingAbsent) && this.#legacy()) {
+      throw new IdentityMigrationRequired();
+    }
     if (accountsAbsent && signingAbsent) {
-      if (
-        this.#legacy() ||
-        (acl && acl.persistence.raw !== null)
-      ) throw new IdentityRecoveryError();
+      if (acl && acl.persistence.raw !== null) {
+        throw new IdentityRecoveryError();
+      }
       assertOperationLease(this.#lease, "live");
       this.accounts.assertUnchanged(account);
       this.sessions.signing.assertUnchanged(signing);
@@ -287,7 +296,7 @@ export class IdentityBootstrap {
       ]) || typeof value.username !== "string" ||
       typeof value.password !== "string" || !value.password ||
       !identity(value.updateId) ||
-      !["edit", "view", "none"].includes(String(value.everybody)) ||
+      !isEverybodyLevel(value.everybody) ||
       !this.#target || !this.transaction
     ) throw new HttpError(422, "Invalid first-account setup.");
     if (
@@ -504,14 +513,17 @@ export function bootstrapHandlers(workflow: IdentityBootstrap) {
     get: () => workflow.status(),
     async post(request: Request) {
       workflow.status();
-      const issued = await workflow.setup(await request.json(), request.signal);
+      const issued = await workflow.setup(
+        await readRequestJson(request),
+        request.signal,
+      );
       return new Response(issued.body, {
         headers: { "content-type": "application/json" },
       });
     },
     async enrolment(request: Request) {
       workflow.status();
-      const input = await request.json();
+      const input = await readRequestJson(request);
       if (
         !record(input) || !fields(input, ["username"]) ||
         typeof input.username !== "string"

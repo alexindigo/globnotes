@@ -612,7 +612,7 @@ not a durable receipt, rollback, exactly-once delivery or backup guarantee.
 
 ## Deferred actions and invocation lifetime
 
-Preparatory identity callers retain a host-only viewer bound to the admitted vault
+Identity callers retain a host-only viewer bound to the admitted vault
 through render, command, endpoint, hook and action work. Managed registrations are admitted
 before arming and keep that viewer after normal handler return. Every mediated
 effect and disclosure checks live authority, intersected with plugin grants,
@@ -620,7 +620,10 @@ source and generation. Viewer-triggered writes also require the ACL revision and
 policy that admitted the request. Workers receive correlation IDs, never leases
 or identity.
 Edit permits note/file effects, not private plugin-data or permission writes.
-The old production identity adapter remains active until coordinated cutover.
+Post-commit observers of direct API and external mutations receive host facts
+under their own grants. A fact produced by an action descended from a viewer
+invocation still carries that viewer; the action cannot turn into background
+authority by publishing a fact.
 
 At most 128 retained continuation scopes exist per generation, regardless of
 which restrictions the parent carries. Overflow refuses the

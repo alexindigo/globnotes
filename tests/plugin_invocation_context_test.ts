@@ -11,8 +11,7 @@ import {
   until,
   WorkerDeliveryGate,
 } from "./helpers/worker_liveness.ts";
-import { GlobalConfig } from "./helpers/config.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
+import { fixtureLifecycle, GlobalConfig } from "./helpers/config.ts";
 import { PluginActions } from "../server/plugins/actions.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { FileServing } from "../server/files/file_serving.ts";
@@ -291,7 +290,7 @@ for (const outcome of ["qualified", "expired", "disabled"] as const) {
       fixtureScenario: publicScenario(),
     });
     const config = new GlobalConfig(env);
-    const lifecycle = new PluginLifecycle(config);
+    const lifecycle = fixtureLifecycle(config);
     let effects = 0;
     lifecycle.onFact(() => {
       effects++;

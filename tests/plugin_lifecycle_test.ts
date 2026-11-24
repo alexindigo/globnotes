@@ -11,13 +11,12 @@ import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { currentBase } from "./helpers/storage.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import * as path from "@std/path";
-import { GlobalConfig } from "./helpers/config.ts";
+import { fixtureLifecycle, GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginActions } from "../server/plugins/actions.ts";
 import { OperationError } from "../server/plugins/errors.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import type { PluginManager } from "../server/plugins/manager.ts";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
 import {
@@ -548,7 +547,7 @@ Deno.test("lifecycle: initial indexing is inventory plus on-sync, not fake creat
         },
       );
       initState(config, null, notes, indexer, files, manager);
-      const lifecycle = new PluginLifecycle(config);
+      const lifecycle = fixtureLifecycle(config);
       state.lifecycle = lifecycle;
       const operations = new NoteOperations({
         notes,

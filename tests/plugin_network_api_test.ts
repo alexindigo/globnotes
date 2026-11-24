@@ -10,6 +10,7 @@ import { assert, assertEquals } from "@std/assert";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
 import { bootServer } from "./helpers/boot.ts";
 import { catalogPluginReady } from "./helpers/plugin_ready.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 import {
   done,
   failed,
@@ -175,9 +176,15 @@ async function apiFixture(
     privateLockPath,
   );
   const prefix = extra.GLOBNOTES__SERVER_PATHPREFIX ?? "";
+  const controlsAsGuest = Object.hasOwn(extra, "fixtureScenario");
+  let admin = controlsAsGuest
+    ? null
+    : await fixtureAdmin(server, String(prefix));
   let base = `${server.baseUrl}${prefix}`;
+  const operatorFetch = (url: string, init: RequestInit) =>
+    admin ? admin.fetch(url, init) : fetch(url, init);
   const get = async (suffix: string) =>
-    await fetch(`${base}/_/api/plugin-host/${suffix}`, {
+    await operatorFetch(`${base}/_/api/plugin-host/${suffix}`, {
       signal: AbortSignal.timeout(3000),
     });
   const view = async () => {
@@ -199,21 +206,27 @@ async function apiFixture(
     ...overrides,
   });
   const put = async (body: unknown) =>
-    await fetch(`${base}/_/api/plugin-host/networked/permissions`, {
+    await operatorFetch(`${base}/_/api/plugin-host/networked/permissions`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(3000),
     });
   const invoke = async (command: string) =>
-    await fetch(`${base}/_/api/plugin-host/networked/commands/${command}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-      signal: AbortSignal.timeout(3000),
-    });
+    await operatorFetch(
+      `${base}/_/api/plugin-host/networked/commands/${command}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(3000),
+      },
+    );
   const ready = async () => {
-    await catalogPluginReady(server, "networked", { prefix: String(prefix) });
+    await catalogPluginReady(server, "networked", {
+      prefix: String(prefix),
+      headers: admin?.headers,
+    });
   };
   return {
     fixture,
@@ -232,6 +245,7 @@ async function apiFixture(
     put,
     invoke,
     ready,
+    operatorFetch,
     held: held.promise,
     releaseHeld: () => releaseHeld.resolve(),
     afterGateTraffic: () => afterGateTraffic,
@@ -244,6 +258,9 @@ async function apiFixture(
         privateLockPath,
       );
       base = `${server.baseUrl}${prefix}`;
+      admin = controlsAsGuest
+        ? null
+        : await fixtureAdmin(server, String(prefix));
     },
     async close() {
       releaseHeld.resolve();
@@ -337,7 +354,7 @@ Deno.test("review repairs: R02 settings commit stops runtime-only raw traffic wi
         } finally {
           clearTimeout(timer);
         }
-        const saved = await fetch(
+        const saved = await b.operatorFetch(
           `${b.base}/_/api/plugin-host/networked/settings/preferences`,
           {
             method: "PUT",
@@ -707,7 +724,7 @@ Deno.test("plugin network api: settings source changes retire requests and fresh
     await b.ready();
     const before = await b.view();
     const instance = (await (await b.invoke("inspect")).json()).result.instance;
-    const update = await fetch(
+    const update = await b.operatorFetch(
       `${b.base}/_/api/plugin-host/networked/settings/preferences`,
       {
         method: "PUT",
@@ -737,7 +754,7 @@ Deno.test("plugin network api: settings source changes retire requests and fresh
     assertEquals(actual.instance, instance);
     assertEquals(actual.source, changed.source);
     assertEquals(actual.settingsRevision, settings.revision);
-    const oldDecision = await fetch(
+    const oldDecision = await b.operatorFetch(
       `${b.base}/_/api/plugin-host/networked/permission-requests/${
         before.pendingRequests[0].id
       }/decision`,
@@ -835,7 +852,7 @@ Deno.test("plugin network api: explicit decisions persist terminal state without
         entry.id === request.id
       ),
     );
-    const decision = await fetch(
+    const decision = await b.operatorFetch(
       `${b.base}/_/api/plugin-host/networked/permission-requests/${request.id}/decision`,
       {
         method: "POST",
@@ -862,7 +879,7 @@ Deno.test("plugin network api: explicit decisions persist terminal state without
     assertEquals(admission.status, "denied");
     assertEquals((await b.view()).pendingRequests, []);
     assertEquals(b.traffic(), 0);
-    const approve = await fetch(
+    const approve = await b.operatorFetch(
       `${b.base}/_/api/plugin-host/networked/permission-requests/${request.id}/decision`,
       {
         method: "POST",
@@ -927,13 +944,13 @@ Deno.test("plugin network api: malformed scopes, unknown control fields and over
       await response.body?.cancel();
       assertEquals(await Deno.readTextFile(file), bytes);
     }
-    const invalid = await fetch(
+    const invalid = await b.operatorFetch(
       `${b.base}/_/api/plugin-host/networked/permissions`,
       { method: "PUT", body: "{broken", signal: AbortSignal.timeout(3000) },
     );
     assertEquals(invalid.status, 422);
     await invalid.body?.cancel();
-    const oversized = await fetch(
+    const oversized = await b.operatorFetch(
       `${b.base}/_/api/plugin-host/networked/permissions`,
       {
         method: "PUT",
@@ -999,19 +1016,19 @@ Deno.test("plugin network api: setup, password and read-only enforcement cover t
       const response = await b.get("networked/permissions");
       assertEquals(
         response.status,
-        mode === "" ? 503 : mode === "password" ? 401 : 200,
+        mode === "" ? 503 : 403,
       );
       await response.body?.cancel();
       const pending = await b.get("permission-requests");
       assertEquals(
         pending.status,
-        mode === "" ? 503 : mode === "password" ? 401 : 200,
+        mode === "" ? 503 : 403,
       );
       await pending.body?.cancel();
       const mutation = await b.put({ allowNetwork: true });
       assertEquals(
         mutation.status,
-        mode === "" ? 503 : mode === "password" ? 401 : 403,
+        mode === "" ? 503 : 403,
       );
       await mutation.body?.cancel();
       const decision = await fetch(
@@ -1025,7 +1042,7 @@ Deno.test("plugin network api: setup, password and read-only enforcement cover t
       );
       assertEquals(
         decision.status,
-        mode === "" ? 503 : mode === "password" ? 401 : 403,
+        mode === "" ? 503 : 403,
       );
       await decision.body?.cancel();
       assertEquals(b.traffic(), 0);

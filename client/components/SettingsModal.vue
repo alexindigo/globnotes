@@ -88,19 +88,6 @@
             <SettingRow v-else-if="currentPage.preference === 'diagnostics'" label="Debug notifications" help="Show diagnostic notifications in this browser while investigating a problem." short v-slot="row">
               <Toggle :id="row.id" :aria-labelledby="row.labelledby" :aria-describedby="row.describedby" :is-on="core.debugEnabled.value" @click="session.toggleDebug" />
             </SettingRow>
-            <div v-else-if="currentPage.kind === 'access'" class="flex flex-col gap-4" data-access-summary>
-              <SettingRow v-for="row in accessSummary.rows" :key="row.label" :label="row.label" as="value" short>
-                <span class="settings-text">{{ row.value }}</span>
-              </SettingRow>
-              <SettingRow label="Access settings" as="value" short
-                :help="accessSummary.loading ? 'Reading current access…' : !writable ? 'Access changes are unavailable in this session. Locked settings are recovered through deployment configuration.' : undefined"
-                :error="accessSummary.error" :role="accessSummary.loading ? 'status' : undefined">
-                <CustomButton size="settings" v-if="writable" type="button" variant="secondary" label="Change access…" @click="openAccess" />
-              </SettingRow>
-            </div>
-            <SettingRow v-else-if="currentPage.kind === 'account'" :label="accountSummary.text" :title="accountSummary.text" as="value" short>
-              <CustomButton size="settings" v-if="canLogout" type="button" variant="secondary" label="Log out" @click="$emit('logout')" />
-            </SettingRow>
             <p v-else class="settings-text text-theme-text-muted">This page has no options.</p>
           </SettingsPage>
         </div>
@@ -163,7 +150,7 @@ import SyncSettingsPage from "./SyncSettingsPage.vue";
 
 const props = defineProps({ permissionController: Object, identityControllers: Object, writable: { type: Boolean, default: false } });
 const isVisible = defineModel({ type: Boolean });
-const emit = defineEmits(["open-access", "logout"]);
+defineEmits(["logout"]);
 const globalStore = useGlobalStore();
 const modal = ref(null);
 const session = createSettingsSession({
@@ -175,20 +162,19 @@ const session = createSettingsSession({
   isVisible: () => isVisible.value,
   setVisible: value => { isVisible.value = value; },
   focus: () => modal.value?.focus(),
-  openAccess: () => emit("open-access"),
 });
 const { core, permissions, pageState, inventory, drivers,
   openSettings, selectPage, requestClose, reloadCurrentPage, decideDeparture,
    togglePluginRow, toggleAutoEnable, discardInventoryChoice, managePlugin, toggleExpansion,
    discardPermission, resolveRisk,
-  resetCoreBranding, openAccess, parentPath, closePathChoice, browseField, loadPathChoices, selectPath,
+  resetCoreBranding, parentPath, closePathChoice, browseField, loadPathChoices, selectPath,
 } = session;
-const { brandingSnapshot, keybindingSnapshot, appearanceSnapshot, driverSnapshot, accessSummary, accountSummary, attentionItems, canLogout, versionLabel, currentPageId,
+const { brandingSnapshot, keybindingSnapshot, appearanceSnapshot, driverSnapshot, attentionItems, versionLabel, currentPageId,
   riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice, pathEntries, pathChoiceError, pathLoading, pathCrumbs,
   departureVisible, departureMessage, departureCanSave, departureConfirmText,
     groupedPages, currentSnapshot, currentPage, currentPageStatus,
    pluginRows, autoEnableView, pluginPageHeader,
 } = toRefs(session.state);
 onBeforeUnmount(session.dispose);
-defineExpose({ openSettings, selectPage });
+defineExpose({ openSettings, selectPage, confirmDeparture: session.confirmDeparture });
 </script>

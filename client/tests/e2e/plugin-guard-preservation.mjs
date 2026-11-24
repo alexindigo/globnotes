@@ -1,7 +1,7 @@
 // Feature-owned native Save/Delete -> real guard -> UI/API/disk/index consumers.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
-import { bootServer, parseArguments } from "./harness-helpers.mjs";
+import { bootServer, nativeFixtureAdmin, parseArguments } from "./harness-helpers.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 
 let options;
@@ -24,10 +24,10 @@ const api = async (path, options = {}) => {
 function wait(predicate) {
   return waitUntil(() => predicate() ? done() : pending({ condition: String(predicate) }), { label: "Native mutation-response observation", intervalMs: 50 });
 }
-async function capture(label) {
-  const { data } = await current.session.send("Page.captureScreenshot", { format: "png" });
+async function capture(label, session = current.session) {
+  const { data } = await session.send("Page.captureScreenshot", { format: "png" });
   await Deno.writeFile(`${current.directory}/${label}.png`, Uint8Array.from(atob(data), char => char.charCodeAt(0)), { createNew: true });
-  await Deno.writeTextFile(`${current.directory}/${label}.json`, JSON.stringify(await current.session.evaluate("({url:location.href,body:document.body.innerText,buffer:document.querySelector('.cm-content')?.textContent,top:document.querySelector('[data-modal-top=true]')?.getBoundingClientRect().toJSON()})"), null, 2), { createNew: true });
+  await Deno.writeTextFile(`${current.directory}/${label}.json`, JSON.stringify(await session.evaluate("({url:location.href,body:document.body.innerText,buffer:document.querySelector('.cm-content')?.textContent,top:document.querySelector('[data-modal-top=true]')?.getBoundingClientRect().toJSON()})"), null, 2), { createNew: true });
 }
 async function setup(label) {
   assert(!current || current.closed, "Previous successful guard fixture still owns resources");
@@ -68,20 +68,31 @@ async function setup(label) {
   await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')");
 }
 async function badges() {
-  const { session } = current;
-  await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
-  await session.button("Plugins");
-  await session.poll("!!document.querySelector('[data-plugin-inventory-id=native-guard]') && !!document.querySelector('[data-plugin-inventory-id=native-observer]')");
-   assert(await session.read(['[data-plugin-inventory-id=native-guard]', '[data-plugin-inventory-id=native-observer]'], "document.querySelector('[data-plugin-inventory-id=native-guard]').textContent.includes('Can block: save, delete') && !document.querySelector('[data-plugin-inventory-id=native-observer]').textContent.includes('Can block:')"), "Blocking inventory badges do not distinguish pre/on-only plugins");
-  await capture("only-pre-inventory-badge");
-  await session.click('[data-settings-nav-id="plugin:native-guard"]'); await session.poll("document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='plugin:native-guard:preferences' && !!document.querySelector('#settings-field-enabled')");
-   assert(await session.read('[data-settings-content]', "document.querySelector('[data-settings-content]').textContent.includes('Can block: save, delete') && document.querySelector('[data-settings-content]').textContent.includes('Errors or timeouts')"), "Actual guard page omitted blocking consequence");
-  await capture("guard-page-badge");
-  await session.click('[data-settings-nav-id="plugin:native-observer"]'); await session.poll("document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='plugin:native-observer:preferences' && !!document.querySelector('#settings-field-enabled')");
-   assert(await session.read('[data-settings-content]', "!document.querySelector('[data-settings-content]').textContent.includes('Can block:')"), "On-only declarative page gained blocking badge");
-  await capture("observer-page-no-blocking-badge");
-  await session.click('[aria-label="Close settings"]'); await session.poll("!document.querySelector('#settings-modal-title')");
-  if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
+  const { server } = current;
+  const session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
+  try {
+    const { login, password } = nativeAccountScenario().identity.people[0];
+    await session.goto(`${server.baseUrl}/_/login?redirect=/NoteA`);
+    await session.click("#identity-login-name"); await session.type(login);
+    await session.click("#identity-login-password"); await session.type(password);
+    await session.button("Continue", ".identity-login");
+    await session.poll("location.pathname==='/NoteA' && !!document.querySelector('.toast-viewer')");
+    await session.poll("fetch('/_/api/auth-check').then(async r=>r.ok&&(await r.json()).capabilities?.canManageVault===true)");
+    await session.click('[title="Open sidebar"]'); await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
+    await session.button("Plugins");
+    await session.poll("!!document.querySelector('[data-plugin-inventory-id=native-guard]') && !!document.querySelector('[data-plugin-inventory-id=native-observer]')");
+    assert(await session.read(['[data-plugin-inventory-id=native-guard]', '[data-plugin-inventory-id=native-observer]'], "document.querySelector('[data-plugin-inventory-id=native-guard]').textContent.includes('Can block: save, delete') && !document.querySelector('[data-plugin-inventory-id=native-observer]').textContent.includes('Can block:')"), "Blocking inventory badges do not distinguish pre/on-only plugins");
+    await capture("only-pre-inventory-badge", session);
+    await session.click('[data-settings-nav-id="plugin:native-guard"]'); await session.poll("document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='plugin:native-guard:preferences' && !!document.querySelector('#settings-field-enabled')");
+    assert(await session.read('[data-settings-content]', "document.querySelector('[data-settings-content]').textContent.includes('Can block: save, delete') && document.querySelector('[data-settings-content]').textContent.includes('Errors or timeouts')"), "Actual guard page omitted blocking consequence");
+    await capture("guard-page-badge", session);
+    await session.click('[data-settings-nav-id="plugin:native-observer"]'); await session.poll("document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='plugin:native-observer:preferences' && !!document.querySelector('#settings-field-enabled')");
+    assert(await session.read('[data-settings-content]', "!document.querySelector('[data-settings-content]').textContent.includes('Can block:')"), "On-only declarative page gained blocking badge");
+    await capture("observer-page-no-blocking-badge", session);
+    await session.click('[aria-label="Close settings"]'); await session.poll("!document.querySelector('#settings-modal-title')");
+    if (await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')")) await session.click('[title="Close sidebar"]');
+    assert(!session.errors.length, "Admin inventory probe page exception");
+  } finally { await session.close(); }
 }
 async function mark() {
   const { session } = current;
@@ -115,7 +126,9 @@ async function retained(result) {
   assert(!destination, "Cancelled operation created the destination directory or moved an attachment");
   const command = id => api(`plugin-host/${id}/commands/counts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   const guard = await command("native-guard"), observer = await command("native-observer");
-  const catalog = await api("plugin-host");
+  const { headers } = await nativeFixtureAdmin(current.server);
+  const catalog = await api("plugin-host", { headers });
+  assert(catalog.status === 200, `Admin inventory rejected: ${catalog.status}`);
   await Deno.writeTextFile(`${current.directory}/actual-guard-observer-status.json`, JSON.stringify({ guard, observer, plugins: catalog.body.plugins.filter(plugin => ["native-guard", "native-observer"].includes(plugin.id)) }, null, 2), { createNew: true });
   assert(guard.status === 200 && observer.status === 200, `Actual guard/observer count consumer unavailable: ${guard.status}/${observer.status}`);
   assert(observer.body.result.saves === 0 && guard.body.result[current.label === "save" ? "saves" : "deletes"] === 1, "Cancelled operation skipped guard or ran after-save observer");

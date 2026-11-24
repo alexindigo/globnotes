@@ -3,15 +3,14 @@ import { nativeSession } from "./native-cdp-session.mjs";
 import { createNoteResponseGate } from "./native-response-gate.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { fileURLToPath } from "node:url";
-import { bindAddress, httpOrigin } from "./http-origin.mjs";
-import { awaitHealthy, awaitPluginReady } from "./harness-helpers.mjs";
+import { applicationServer } from "./http-origin.mjs";
+import { awaitPluginReady } from "./harness-helpers.mjs";
 import { PERMISSION_CASES, parseFixtureArguments } from "./native-fixture-cases.mjs";
 import { done, failed, pending, waitUntil } from "../../../tests/helpers/wait.ts";
-import { metadataBase, nativeAccountScenario, nativeFixtureInput, publishNativeLegacyAuth } from "./config-fixture.mjs";
+import { metadataBase, nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { storedScenario } from "../../../tests/helpers/fixture_scenarios.ts";
-import { testEnvironment } from "../../../tests/helpers/environment.ts";
-import { createServerWorkingDirectory } from "../../../tests/helpers/boot.ts";
 import { assertEquals } from "@std/assert";
+import { bootServer, fixtureSignIn } from "../../../tests/helpers/boot.ts";
 
 let options;
 try { options = parseFixtureArguments("plugin-permissions", Deno.args); } catch (error) { console.error(error.message); Deno.exit(2); }
@@ -37,40 +36,50 @@ async function operatorSession() {
 
 async function launch(fixture) {
   // The separate import parent retains its existing launch permissions.
-  const prepared = testEnvironment({ fixtureScenario: fixture.launchCount === 0 ? fixture.fixtureScenario : storedScenario(fixture.fixtureScenario) });
-  if (prepared.fixtureAuth) await publishNativeLegacyAuth(fixture.vault, fixture.state, ROOT, prepared);
-  const cwd = await createServerWorkingDirectory();
-  const hostname = bindAddress(), listener = Deno.listen({ hostname, port: 0 }), port = listener.addr.port; listener.close();
-  const args = ["run", `--config=${ROOT}/deno.json`, "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env",
-    ...(fixture.importParent ? [`--allow-import=jsr.io:443,${fixture.authority}`, `--lock=${fixture.privateLock}`] : []), `${ROOT}/server/main.ts`];
-  const child = new Deno.Command(Deno.execPath(), { args, cwd, stdout: "piped", stderr: "piped", clearEnv: true,
-    env: { PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-      GLOBNOTES__METADATA_PATH: metadataBase(fixture.vault, fixture.state), GLOBNOTES__SERVER_HOST: hostname, GLOBNOTES__SERVER_PORT: String(port) } }).spawn();
-  const drains = ["stdout", "stderr"].map(async name => {
-    const file = await Deno.open(`${fixture.directory}/server-${fixture.launchCount}-${name}.log`, { createNew: true, write: true });
-    try { for await (const bytes of child[name]) { let at = 0; while (at < bytes.length) at += await file.write(bytes.subarray(at)); } } finally { file.close(); }
-  });
-  fixture.launchCount++;
-  const base = httpOrigin(port);
-  await Deno.writeTextFile(`${fixture.directory}/parent-${fixture.launchCount}.json`, JSON.stringify({ pid: child.pid, args, cwd, isolatedImportParent: fixture.importParent }, null, 2));
-  let exited = false, closed = false;
-  const status = child.status.then(result => { exited = true; return result; });
-  const owner = { child, base, args, fixtureIdentity: prepared.fixtureIdentity, async close() {
-    if (closed) return; closed = true;
-    try { if (!exited) child.kill("SIGTERM"); await status; await Promise.all(drains); }
-    finally { await Deno.remove(cwd, { recursive: true }); }
+  const index = fixture.launchCount++;
+  const server = await bootServer({
+    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+    GLOBNOTES__METADATA_PATH: metadataBase(fixture.vault, fixture.state),
+    fixtureScenario: index === 0 ? fixture.fixtureScenario : storedScenario(fixture.fixtureScenario),
+  }, { ...applicationServer(), denoArgs: [`--config=${ROOT}/deno.json`,
+    ...(fixture.importParent ? [`--allow-import=jsr.io:443,${fixture.authority}`, `--lock=${fixture.privateLock}`] : [])] });
+  let closing;
+  const owner = { ...server, base: server.baseUrl, close() {
+    return closing ??= (async () => {
+      try { await server.close(); }
+      finally {
+        for (const [name, text] of Object.entries(server.logs())) {
+          await Deno.writeTextFile(`${fixture.directory}/server-${index}-${name}.log`, text, { createNew: true });
+        }
+      }
+    })();
   } };
   fixture.server = owner;
-  await awaitHealthy(base, { label: "Owned permission server health", child, intervalMs: 50 });
-  await awaitPluginReady(base, "networked", { label: "Owned permission activation", child, intervalMs: 30 });
+  await Deno.writeTextFile(`${fixture.directory}/parent-${index + 1}.json`, JSON.stringify({ pid: server.pid, args: server.args, cwd: server.layout.cwd, isolatedImportParent: fixture.importParent }, null, 2));
+  fixture.token = await fixtureSignIn(server.baseUrl, fixture.admin);
+  await awaitPluginReady(server.baseUrl, "networked", { label: "Owned permission activation", child: { pid: server.pid, status: server.exited }, logs: server.logs, headers: { authorization: `Bearer ${fixture.token}` }, intervalMs: 30 });
   return owner;
+}
+
+async function openAsAdmin(session, fixture) {
+  await session.goto(`${fixture.server.base}/_/login?redirect=/NoteA`);
+  const credentials = [["#identity-login-name", fixture.admin.login], ["#identity-login-password", fixture.admin.password]];
+  for (const [selector, value] of credentials) {
+    await session.click(selector);
+    await session.type(value);
+    await session.poll(`document.querySelector(${JSON.stringify(selector)})?.value === ${JSON.stringify(value)}`);
+  }
+  await session.button("Continue");
+  await session.poll("!!document.querySelector('.toast-viewer')");
+  await session.poll("fetch('/_/api/auth-check').then(r=>r.json()).then(status=>status.capabilities?.canManageVault===true)");
 }
 
 async function fixture(name, { importParent = false, gateSaves = false, guardSaves = false } = {}) {
   const directory = `${artifacts}/${name}`; await Deno.mkdir(directory);
   const root = await Deno.makeTempDir({ prefix: "permissions-native-" }), vault = `${root}/vault`, state = `${root}/state/globnotes`;
   await Deno.mkdir(vault); await Deno.mkdir(state, { recursive: true }); await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
-  const { fixtureScenario } = await nativeFixtureInput(nativeAccountScenario());
+  const scenario = nativeAccountScenario();
+  const { fixtureScenario } = await nativeFixtureInput(scenario);
   let traffic = 0, moduleTraffic = 0, extraTraffic = 0, guardEntered = false;
   const guardRelease = Promise.withResolvers();
   const receiver = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async request => {
@@ -106,7 +115,7 @@ async function fixture(name, { importParent = false, gateSaves = false, guardSav
   await Deno.writeTextFile(`${disabled}/manifest.json`, JSON.stringify({ id: "disabled-editor", name: "Disabled custom editor", client: { entry: "other-editor.js" }, runsInBrowser: false }));
   await Deno.writeTextFile(`${disabled}/other-editor.js`, "export default [];");
   await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ disabled: ["disabled-editor"] }));
-  const value = { name, directory, root, vault, state, fixtureScenario, authority, receiver, extraReceiver, extraAuthority, importParent, privateLock: `${root}/import-control.lock`, launchCount: 0,
+  const value = { name, directory, root, vault, state, fixtureScenario, admin: scenario.identity.people[0], authority, receiver, extraReceiver, extraAuthority, importParent, privateLock: `${root}/import-control.lock`, launchCount: 0,
     traffic: () => traffic, moduleTraffic: () => moduleTraffic, extraTraffic: () => extraTraffic, sessions: [] };
   value.guardEntered = () => guardEntered; value.releaseGuard = guardRelease.resolve;
   if (importParent) await Deno.copyFile(`${ROOT}/deno.lock`, value.privateLock);
@@ -120,12 +129,13 @@ async function fixture(name, { importParent = false, gateSaves = false, guardSav
     } });
     value.noteWrites = value.noteGate.responses;
   }
-  await value.session.goto(`${value.entryBase}/NoteA`);
-  await value.session.poll("!!document.querySelector('.toast-viewer')");
+  await openAsAdmin(value.session, value);
   return value;
 }
 async function json(path, init = {}) {
-  const response = await fetch(`${current.server.base}/_/api/${path}`, { ...init, signal: AbortSignal.timeout(5000) });
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${current.token}`);
+  const response = await fetch(`${current.server.base}/_/api/${path}`, { ...init, headers, signal: AbortSignal.timeout(5000) });
   const body = await response.json(); return { status: response.status, body };
 }
 const invoke = (id, command) => json(`plugin-host/${id}/commands/${command}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
@@ -305,7 +315,7 @@ try {
   assert((await invoke("networked", "fetch-extra")).status === 500 && current.extraTraffic() === 0, "Deny allowed receiver traffic");
   await outcome("PERMISSIONS-04 DELETE MASTER OK", { traffic: current.traffic(), requestedStillVisible: true, newAuthority: current.extraAuthority, extraTraffic: current.extraTraffic(), terminalDeniedId: deniedAgain.body.result.requestId });
   const second = await operatorSession(); current.sessions.push(second);
-  await second.goto(`${current.server.base}/NoteA`); await second.poll("!!document.querySelector('.toast-viewer')");
+  await openAsAdmin(second, current);
   if (await second.evaluate("!!document.querySelector('#permission-request-title')")) await dismissPrompt(second);
    await review(second);
    await second.poll(`document.querySelector(${JSON.stringify(rowSelector("network"))})?.textContent.includes('Approved, active')`);
@@ -316,7 +326,7 @@ try {
   assert((await invoke("networked", "fetch")).status === 200, "restarted approved consumer denied");
   await outcome("PERMISSIONS-05 RESTART TWO CONTEXTS OK", { storedNetwork: value.approvedNetwork, contextA: current.session.browserContextId, contextB: second.browserContextId });
   // Verify no browser isolation/badge suppression: the metadata remains despite master off.
-  await current.session.goto(`${current.server.base}/NoteA`); await current.session.poll("!!document.querySelector('.toast-viewer')");
+  await openAsAdmin(current.session, current);
   await review(); await master();
    assert(await current.session.read('[data-plugin-trust-notice]', "!!document.querySelector('[data-plugin-inventory-id=networked] .plugin-row-browser') && document.querySelector('[data-plugin-trust-notice]').textContent.includes('Browser/editor plugin code')"), "master off hid browser trust metadata");
   await outcome("PERMISSIONS-08 BROWSER TRUST OK", { masterOff: true, badgeVisible: true });
@@ -425,7 +435,7 @@ finally {
   const owner = current;
   await finalizeNativeCase({ error: failure, report: async () => {
     if (!failure) return;
-    const metadata = owner && { name: owner.name, serverPid: owner.server?.child.pid, baseUrl: owner.server?.base, entryBase: owner.entryBase, root: owner.root, vault: owner.vault, state: owner.state,
+    const metadata = owner && { name: owner.name, serverPid: owner.server?.pid, baseUrl: owner.server?.base, entryBase: owner.entryBase, root: owner.root, vault: owner.vault, state: owner.state,
       targetId: owner.session?.targetId, browserContextId: owner.session?.browserContextId, closed: !!owner.closed };
     const requests = owner?.noteGate?.records.map(({ release, released, ...record }) => record);
     await Deno.writeTextFile(`${artifacts}/summary.json`, JSON.stringify({ outcomes, failure: failure.stack, current: metadata, requests, completedFixtures }, null, 2));

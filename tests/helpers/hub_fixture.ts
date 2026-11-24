@@ -1,7 +1,7 @@
 import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { publicScenario } from "./fixture_scenarios.ts";
-import { GlobalConfig } from "./config.ts";
+import { fixtureLifecycle, GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { VaultHub } from "../../server/hub/hub.ts";
 import type { ChangeEntry } from "../../server/hub/types.ts";
@@ -10,17 +10,23 @@ import {
   type StorageProbes,
 } from "../../server/notes/file_system.ts";
 import { NoteOperations } from "../../server/notes/operations.ts";
-import { PluginLifecycle } from "../../server/plugins/lifecycle.ts";
 import type { PluginRuntime } from "../../server/plugins/runtime.ts";
 import { state } from "../../server/state.ts";
 import { installFixtureState } from "./state.ts";
 import { testEnvironment } from "./environment.ts";
 import { fixtureApiOrigin } from "./plugin_fixture.ts";
 import { createFixtureScope } from "./fixture_scope_engine.ts";
+import { openFixtureIdentity } from "./identity_fixture.ts";
 
 export async function hubOperationsFixture(
   probes: StorageProbes = {},
-  options: { alias?: "sibling" | "ancestor"; changeLimit?: number } = {},
+  options: {
+    alias?: "sibling" | "ancestor";
+    changeLimit?: number;
+    serviceWritable?: () => boolean;
+    /** Direct HTTP handler tests bind the same identity owner as a server. */
+    httpEverybody?: "view" | "edit";
+  } = {},
 ) {
   const owner = createFixtureScope();
   return await owner.prepare(async (scope) => {
@@ -38,8 +44,9 @@ export async function hubOperationsFixture(
     }
     const env = testEnvironment({
       GLOBNOTES_GLOBNOTES_PATH: vault,
+      GLOBNOTES__VAULTS_BASEPATH: root,
       fixtureStatePath: `${root}/state`,
-      fixtureScenario: publicScenario(),
+      fixtureScenario: publicScenario(options.httpEverybody),
     });
     const config = new GlobalConfig(env),
       notes = new FileSystemNotes(
@@ -58,17 +65,26 @@ export async function hubOperationsFixture(
         },
       ), (hub) =>
       hub.stop())).value;
+    const identity = options.httpEverybody === undefined
+      ? null
+      : await openFixtureIdentity(scope, config, config.fixtureIdentity!, () =>
+        state.plugins!);
     installFixtureState(
       scope.defer,
       config,
-      null,
+      identity,
       notes,
       null,
       files,
       null,
       hub,
     );
-    const lifecycle = new PluginLifecycle(config);
+    const lifecycle = identity?.composition.lifecycle ??
+      fixtureLifecycle(config, {
+        operational: () =>
+          true,
+        writable: options.serviceWritable ?? (() => true),
+      });
     state.lifecycle = lifecycle;
     const runtime = {
       limits: { preOperationMs: 5000 },
@@ -81,8 +97,7 @@ export async function hubOperationsFixture(
       hub,
       indexer: null,
       lifecycle,
-      runtime: () =>
-        runtime,
+      runtime: () => runtime,
     });
     state.operations = operations;
     const batches: ChangeEntry[][] = [];
@@ -92,6 +107,7 @@ export async function hubOperationsFixture(
       realVault,
       vault: config.notesPath,
       config,
+      identity,
       notes,
       files,
       lifecycle,

@@ -6,13 +6,15 @@ import { HttpError } from "@pathfinder/pathfinder";
 import { PluginContractError } from "@server/plugins/contracts.ts";
 import { state } from "@server/state.ts";
 import { settingsWriteGuard } from "@server/auth/middleware.ts";
+import { deliverAdmissionRefusals } from "@server/auth/admission_refusal.ts";
+import { readRequestObject } from "@server/auth/request_json.ts";
 
 /** PUT /_/api/plugin-host/policy — vault auto-enable default. Existing
  * inventory choices are materialized into the explicit lists first; a
  * pinned env default rejects with 409 policy_pinned. */
-export default async function (request: PathfinderRequest) {
+export default deliverAdmissionRefusals(async (request: PathfinderRequest) => {
   const guard = await settingsWriteGuard(request._raw);
-  const body = (await request.body.json()) as {
+  const body = (await readRequestObject(request.body)) as {
     autoEnable?: boolean;
     revision?: number;
     signature?: string;
@@ -40,4 +42,4 @@ export default async function (request: PathfinderRequest) {
     }
     throw e;
   }
-}
+});

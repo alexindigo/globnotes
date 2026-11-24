@@ -2,14 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { registerSessionParticipant, resolveParticipants, hasUnsavedWork } from "../sessionActions.js";
-import SetupModal from "../components/SetupModal.vue";
 import Modal from "../components/Modal.vue";
-import { postSetup, putAccessSettings, resetSetup } from "../api.js";
-
-vi.mock("../api.js", () => ({ postSetup: vi.fn(async () => ({})), resetSetup: vi.fn(), postTotpEnrolment: vi.fn(),
-  getAccessSettings: vi.fn(async () => ({ mode: "password", username: "alice", totpEnabled: false, settingsWritable: true, revision: 0, signature: "initial", pinned: {} })),
-  putAccessSettings: vi.fn(async () => ({ view: { mode: "password", username: "alice", settingsWritable: true, revision: 1, pinned: {} }, requiresLogin: true })),
-  postAccessTotpEnrolment: vi.fn(), getConfig: vi.fn() }));
 const disposers = [];
 const wrappers = [];
 afterEach(() => {
@@ -68,45 +61,7 @@ describe("session ownership and permission", () => {
   });
 });
 
-describe("wizard before-commit permission", () => {
-  async function wizard(beforeCommit) {
-    const wrapper = mountOwned(SetupModal, { props: { dismissible: true, beforeCommit } });
-    await flushPromises();
-    await wrapper.find("#setup-username").setValue("alice");
-    await wrapper.find("#setup-password").setValue("new-secret");
-    await wrapper.find("#access-current-password").setValue("old-secret");
-    return wrapper;
-  }
-
-  it("Cancel retains the wizard and credentials without resetting access", async () => {
-    const beforeCommit = vi.fn(async () => false);
-    const wrapper = await wizard(beforeCommit);
-    await wrapper.find("form").trigger("submit");
-    await flushPromises();
-    expect(beforeCommit).toHaveBeenCalledTimes(1);
-    expect(resetSetup).not.toHaveBeenCalled();
-    expect(postSetup).not.toHaveBeenCalled();
-    expect(wrapper.find("#setup-password").element.value).toBe("new-secret");
-    expect(wrapper.find("button[type=submit]").element.disabled).toBe(false);
-  });
-
-  it("waits for permission with current credentials and single-flight Finish", async () => {
-    let allow;
-    const beforeCommit = vi.fn(() => new Promise(resolve => { allow = resolve; }));
-    const wrapper = await wizard(beforeCommit);
-    await wrapper.find("form").trigger("submit");
-    await wrapper.find("form").trigger("submit");
-    await flushPromises();
-    expect(beforeCommit).toHaveBeenCalledTimes(1);
-    expect(resetSetup).not.toHaveBeenCalled();
-    allow(true);
-    await flushPromises();
-    expect(resetSetup).not.toHaveBeenCalled();
-    expect(postSetup).not.toHaveBeenCalled();
-    expect(putAccessSettings).toHaveBeenCalledTimes(1);
-    expect(wrapper.emitted("completed")).toHaveLength(1);
-  });
-
+describe("modal ownership", () => {
   it("only the newest same-labelled dialog handles Escape", async () => {
     const lower = mountOwned(Modal, { props: { modelValue: true, name: "confirm" } });
     const top = mountOwned(Modal, { props: { modelValue: true, name: "confirm" } });

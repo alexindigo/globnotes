@@ -4,8 +4,6 @@ export const operation = "public";
 /** GET /_/api/health — healthcheck. Deliberately unauthenticated,
  * same as the Python server. */
 
-export const auth = false;
-
 import { json } from "@pathfinder/pathfinder";
 
 export default function (): Response {

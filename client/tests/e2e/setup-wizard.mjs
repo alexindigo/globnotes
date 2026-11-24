@@ -8,6 +8,7 @@ import { connect, launchBrowser, stopBrowser } from "./cdp.mjs";
 import { join } from "node:path";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { assertToggleGeometry } from "./settings-frame-native.mjs";
+import { identityTokenScope } from "../../../shared/identity_token.ts";
 
 const CDP_PORT = Number(process.env.CDP_PORT || 9399);
 const ARTIFACTS = await Deno.makeTempDir({ prefix: "setup-wizard-shots-" });
@@ -29,9 +30,9 @@ function rectList(expr) {
       return { name, x: r.x, y: r.y, w: r.width, h: r.height };
     };
     const dialog = document.querySelector("[role=dialog]");
-    const rows = [...document.querySelectorAll("input[name=access-mode]")]
+    const rows = [...document.querySelectorAll("input[name=identity-everybody]")]
       .map((i) => i.closest("label"));
-    const details = document.querySelector("form .setup-details");
+    const details = document.querySelector("form .setup-columns");
     const finish = document.querySelector("button[type=submit]");
     return [
       pick("dialog", dialog),
@@ -63,9 +64,9 @@ async function twoFrames(page) {
 }
 
 async function selectMode(page, value) {
-  await page.click(`input[name=access-mode][value=${value}]`);
+  await page.click(`input[name=identity-everybody][value=${value}]`);
   await page.poll(
-     `document.querySelector('input[name=access-mode][value=${value}]')?.checked`,
+     `document.querySelector('input[name=identity-everybody][value=${value}]')?.checked`,
   );
 }
 
@@ -88,7 +89,7 @@ async function geometrySweep(page, baseUrl, viewport) {
   await twoFrames(page);
 
   const settled = {};
-  for (const mode of ["password", "read_only", "none", "password"]) {
+  for (const mode of ["none", "view", "edit", "none"]) {
     await selectMode(page, mode);
     // Normalize the dialog's internal scroll before comparing: at short
     // viewports the click's scrollIntoView shifts rects without any layout
@@ -98,9 +99,9 @@ async function geometrySweep(page, baseUrl, viewport) {
     );
     // Intermediate frames: measure right after the input lands, and after
     // two rAFs — both must equal the settled geometry (no animation).
-     const mid = await page.read(['[role=dialog]', 'form .setup-details', 'button[type=submit]'], rectList());
+     const mid = await page.read(['[role=dialog]', 'form .setup-columns', 'button[type=submit]'], rectList());
     await twoFrames(page);
-     const end = await page.read(['[role=dialog]', 'form .setup-details', 'button[type=submit]'], rectList());
+     const end = await page.read(['[role=dialog]', 'form .setup-columns', 'button[type=submit]'], rectList());
     compareRects(mid, end, `mid-frame (${viewport.w}x${viewport.h}, ${mode})`);
     if (settled.prev) {
       compareRects(settled.prev, end, `mode→${mode} (${viewport.w}x${viewport.h})`);
@@ -153,11 +154,11 @@ try {
     await geometrySweep(page, A.baseUrl, viewport);
   }
   await page.screenshot(join(ARTIFACTS, "wizard-password.png"));
-  await selectMode(page, "read_only");
+  await selectMode(page, "view");
   await page.screenshot(join(ARTIFACTS, "wizard-readonly.png"));
-  await selectMode(page, "none");
+  await selectMode(page, "edit");
   await page.screenshot(join(ARTIFACTS, "wizard-open.png"));
-  await selectMode(page, "password");
+  await selectMode(page, "none");
 
   // -- 2. Keyboard: Tab containment within the dialog -----------------------
   await page.send("Emulation.setDeviceMetricsOverride", {
@@ -169,7 +170,7 @@ try {
   const focusedRadio = await page.evaluate(
     `document.activeElement && document.activeElement.value`,
   );
-  assert(focusedRadio === "password", "initial focus on the selected radio");
+  assert(focusedRadio === "view", "initial focus on the default View radio");
   // Tab cycles: collect focus order for two full cycles — never leaves dialog.
   for (let i = 0; i < 14; i++) {
     await page.send("Input.dispatchKeyEvent", {
@@ -185,7 +186,7 @@ try {
   }
   // Arrow keys move the radio selection natively (focus must be on the group).
   await page.evaluate(
-    `document.querySelector('input[name=access-mode][value=password]').focus()`,
+    `document.querySelector('input[name=identity-everybody][value=edit]').focus()`,
   );
   await page.send("Input.dispatchKeyEvent", {
     type: "keyDown", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40,
@@ -194,13 +195,13 @@ try {
     type: "keyUp", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40,
   });
   await page.poll(
-     `document.querySelector('input[name=access-mode][value=read_only]')?.checked`,
+     `document.querySelector('input[name=identity-everybody][value=view]')?.checked`,
   );
   console.log("ok: arrow-key radio selection");
-  await selectMode(page, "password");
+  await selectMode(page, "none");
 
   // -- 3. Pending + failure with a controlled request -----------------------
-  await fillField(page, "#setup-username", "wizard-user");
+  await fillField(page, "#setup-login", "wizard-user");
   await fillField(page, "#setup-password", "wizard-pass");
    const finishBefore = await page.read('button[type=submit]', `(() => {
     const r = document.querySelector("button[type=submit]").getBoundingClientRect();
@@ -221,7 +222,7 @@ try {
   page.onEvent((msg) => {
     if (msg.method !== "Fetch.requestPaused" || !intercepting) return;
     const { requestId, request } = msg.params;
-    if (!request.url.includes("/_/api/setup")) {
+    if (request.method !== "POST" || !request.url.endsWith("/_/api/setup")) {
       reply("Fetch.continueRequest", { requestId });
       return;
     }
@@ -240,7 +241,7 @@ try {
 
   await page.click("button[type=submit]");
   await page.poll(
-     `document.querySelector("p[role=alert]")?.textContent.includes("Setup failed")`,
+     `document.querySelector("p[role=alert]")?.textContent.includes("Connection lost")`,
   );
   assert(intercepted === 1, "exactly one setup request made");
    const finishAfter = await page.read('button[type=submit]', `(() => {
@@ -253,7 +254,7 @@ try {
     "finish button size stable through failure",
   );
   const retained = await page.evaluate(
-     `document.querySelector("#setup-username")?.value`,
+     `document.querySelector("#setup-login")?.value`,
   );
   assert(retained === "wizard-user", "credentials retained after failure");
   await page.screenshot(join(ARTIFACTS, "wizard-failure.png"));
@@ -262,31 +263,21 @@ try {
   interceptMode = "slow";
   await page.click("button[type=submit]");
   await page.poll(
-     `document.querySelector("button[type=submit]")?.textContent.includes("Setting up")`,
+     `document.querySelector(".identity-setup [role=status]")?.textContent.includes("Finishing setup")`,
   );
-   const busyDisabled = await page.read('button[type=submit]',
-    `document.querySelector("button[type=submit]").disabled`,
+   const busyDisabled = await page.read('.identity-setup [role=status]',
+    `document.querySelector(".identity-setup button[type=submit]") === null`,
   );
   assert(busyDisabled, "busy state disables the action");
   slowRelease();
   interceptMode = "off";
 
-  // -- 4. Password outcome: login, fixture access, guarded data -------------
-  // The held request continuing IS the completion path — routing to login
-  // proves it landed; only then is the Fetch domain safe to disable.
-  await page.poll(`location.pathname.includes("/_/login")`, { timeout: 15000 });
+  // -- 4. Private setup: the same request signs the new Admin in and opens notes.
+  await page.poll(`location.pathname === '/' && !document.querySelector('.identity-setup')`, { timeout: 15000 });
   intercepting = false;
   await page.send("Fetch.disable");
-  console.log("ok: routed to login after password setup (no reload)");
-  await fillField(page, "#username", "wizard-user");
-  await fillField(page, "#password", "wizard-pass");
-  await page.clickText("Log In");
-  // Gate on the post-login route change — content-column exists on every
-  // page (including login), so it can't prove sign-in; the URL can.
-  await page.poll(`!location.pathname.includes("/_/login")`, {
-    timeout: 10000,
-  });
-  console.log("ok: signed in with the new credentials");
+  await page.poll(`fetch('/_/api/auth-check').then(r=>r.json()).then(s=>s.principal.login==='wizard-user' && s.capabilities.canManageVault)`);
+  console.log("ok: signed in when setup completed without reload");
   await page.goto(`${A.baseUrl}/FixtureA`);
   await page.poll(`document.body.textContent.includes("alpha")`);
   console.log("ok: fixture note readable after login");
@@ -303,7 +294,8 @@ try {
   assert(edited === 200, "authenticated edit succeeds");
   // Unauthenticated client cannot read protected data.
   const anon = await fetch(`${A.baseUrl}/_/api/notes/FixtureA`);
-  assert(anon.status === 401, "unauthenticated read rejected (401)");
+  assert(anon.status === 403, "Everybody else None denies an anonymous read");
+  await anon.body?.cancel();
   // Persistence: reload must not bring the wizard back.
   await page.reload();
   await page.poll(`document.querySelector(".content-column") !== null`);
@@ -313,13 +305,20 @@ try {
   assert(!wizardBack, "setup does not return after completion");
 
   // -- 5. Read-only outcome ---------------------------------------------------
+  // Different fixture ports share this browser's cookie scope. End A's
+  // test session before navigating to the independent fresh install B.
+  const clearSession = `(() => {sessionStorage.removeItem(${JSON.stringify(identityTokenScope("").key)}); document.cookie=${JSON.stringify(`${identityTokenScope("").cookieName}=; Path=/; Max-Age=0; SameSite=Strict`)};})()`;
+  await page.evaluate(clearSession);
   await page.goto(`${B.baseUrl}/`);
   await page.poll(`document.querySelector("[role=dialog]") !== null`);
-  await selectMode(page, "read_only");
+  await selectMode(page, "view");
+  await fillField(page, "#setup-login", "view-owner");
+  await fillField(page, "#setup-password", "view-password");
   await page.click("button[type=submit]");
-  await page.poll(`!location.pathname.includes("/_/login")`, { timeout: 15000 });
+  await page.poll(`location.pathname === '/' && !document.querySelector('.identity-setup')`, { timeout: 15000 });
   await page.poll(`document.querySelector(".content-column") !== null`);
-  console.log("ok: read-only setup lands in the app (no sign-in)");
+  // Observe actual guest View without conflating it with the setup Admin.
+  await page.evaluate(clearSession);
   await page.goto(`${B.baseUrl}/FixtureB`);
   await page.poll(`document.body.textContent.includes("bravo")`);
   console.log("ok: read-only can browse the fixture");
@@ -346,22 +345,20 @@ try {
   // -- 6. Open-access outcome -------------------------------------------------
   await page.goto(`${C.baseUrl}/`);
   await page.poll(`document.querySelector("[role=dialog]") !== null`);
-  await selectMode(page, "none");
-  // Finish stays disabled until the acknowledgement is checked.
-   const disabledBefore = await page.read('button[type=submit]',
-    `document.querySelector("button[type=submit]").disabled`,
-  );
-  assert(disabledBefore, "finish disabled until open-access acknowledgement");
-  await page.click("input[type=checkbox]");
-   const disabledAfter = await page.read('button[type=submit]',
-    `document.querySelector("button[type=submit]").disabled`,
-  );
-  assert(!disabledAfter, "finish enabled once acknowledged");
+  await selectMode(page, "edit");
   await page.click("button[type=submit]");
-  await page.poll(`document.querySelector(".content-column") !== null`, {
+  assert((await (await fetch(`${C.baseUrl}/_/api/setup`)).json()).setupRequired === true,
+    "setup cannot complete before the owner supplies credentials");
+  await fillField(page, "#setup-login", "edit-owner");
+  await fillField(page, "#setup-password", "edit-password");
+  await page.click("button[type=submit]");
+  await page.poll(`location.pathname === '/' && !document.querySelector('.identity-setup')`, {
     timeout: 15000,
   });
-  console.log("ok: open access lands in the app without sign-in");
+  await page.evaluate(clearSession);
+  await page.reload();
+  await page.poll(`fetch('/_/api/auth-check').then(r=>r.json()).then(s=>s.principal.kind==='guest' && s.capabilities.canEdit)`);
+  console.log("ok: Everybody else Edit gives guests note editing without signing in");
   // Create via the real UI path.
   await page.click('button[title="New note"]');
   await page.poll(`location.pathname.includes("/_/new")`);

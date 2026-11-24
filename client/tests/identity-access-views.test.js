@@ -3,7 +3,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
-import { createIdentityAccessSettingsState } from "../accessSettingsState.js";
+import { createIdentityAccessSettingsState } from "../identityAccessSettingsState.js";
 import AccessSettings from "../components/settings/AccessSettings.vue";
 const active = [];
 afterEach(async () => { for (const { wrapper, controller } of active.splice(0)) { wrapper.unmount(); await controller.dispose(); } document.body.innerHTML = ""; });
@@ -64,6 +64,14 @@ it("revocation makes the already rendered edit controls read-only", async () => 
   expect(wrapper.findAll("select")).toEqual([]);
   expect(wrapper.findAll("button")).toEqual([]);
   expect([controller.setLevel("sam", "none"), controller.state.grants.sam]).toEqual([false, "edit"]);
+});
+it("a stale commit freezes the existing select without dropping the proposed level", async () => {
+  const { wrapper, controller } = await render(false, { write: async () => { throw { response: { status: 409 } }; } });
+  const choice = wrapper.get("select#access-everybody");
+  await choice.setValue(JSON.stringify("none"));
+  expect(await controller.requestCommit()).toBe(false);
+  expect(wrapper.get("select#access-everybody").element).toBe(choice.element);
+  expect([choice.element.value, choice.element.disabled, controller.state.canReview]).toEqual([JSON.stringify("none"), true, true]);
 });
 it("the dialog's level and password fields forward values to the same controller", async () => {
   const { controller } = await render(); await controller.openDialog('create');

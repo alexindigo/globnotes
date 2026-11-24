@@ -9,10 +9,13 @@ import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import { assert, assertEquals } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
 import { ENDPOINT_PLUGIN } from "./helpers/endpoint_plugin.ts";
-import { pluginFixture } from "./helpers/plugin_fixture.ts";
-import eventsHandler from "../server/api/endpoints/_/api/plugin-host/events/get.ts";
-import { state } from "../server/state.ts";
-import { AuthType } from "./helpers/config.ts";
+import { pluginFixture, withPluginFixture } from "./helpers/plugin_fixture.ts";
+import { createIdentityPluginEvents } from "../server/plugins/identity_events.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
+import { accountRouteFixture } from "./helpers/account_route_fixture.ts";
+import { createUuid } from "../shared/uuid.ts";
+import { bounded } from "./helpers/worker_liveness.ts";
+import { fixtureGate } from "./helpers/fixture_coordination.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import { catalogPluginReady } from "./helpers/plugin_ready.ts";
 import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
@@ -28,22 +31,116 @@ async function pluginApiServer(opts: Record<string, string> = {}) {
     ...opts,
   });
   // Wait until the service runtime reports ready through the catalog.
-  await catalogPluginReady(server, "ep");
-  const catalog = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
-    .json();
-  return { fixture, server, catalog };
+  const admin = await fixtureAdmin(server);
+  await catalogPluginReady(server, "ep", { headers: admin.headers });
+  const catalog =
+    await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
+      .json();
+  return { fixture, server, catalog, admin };
+}
+
+for (const prefix of ["", "/notes"]) {
+  Deno.test(`plugin api: View refuses host mutations before dispatch (${prefix || "no prefix"})`, () =>
+    withPluginFixture(async (fixture, scope) => {
+      await fixture.install("ep", ENDPOINT_PLUGIN.manifest, {
+        ...ENDPOINT_PLUGIN.files,
+        "service.js": `import { enter } from './count.js';
+          export function activate(ctx) {
+            ctx.commands.register({ id: 'mutate', label: 'Mutate', target: 'server' }, async () => {
+              enter();
+              await ctx.data.save({ committed: true }, 0);
+              return 'committed';
+            });
+            ctx.commands.register({ id: 'fail', label: 'Fail', target: 'server' }, () => {
+              throw new Error('operation_not_permitted');
+            });
+          }`,
+        "count.js": `let count = 0; export const enter = () => count++;
+          export const read = () => count;`,
+        "endpoints/count/get.js": `import { read } from '../../count.js';
+          export default () => ({ count: read() });`,
+      });
+      const server = await bootServer({
+        GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+        GLOBNOTES__METADATA_PATH: fixture.metadataBase,
+        fixtureScenario: publicScenario("view"),
+        GLOBNOTES__SERVER_PATHPREFIX: prefix,
+      });
+      scope.defer(() => server.close());
+      const admin = await fixtureAdmin(server, prefix);
+      await catalogPluginReady(server, "ep", {
+        prefix,
+        headers: admin.headers,
+      });
+      const api = `${server.baseUrl}${prefix}/_/api`;
+      const host = `${api}/plugin-host`;
+      const request = (method: "POST" | "PUT") => ({
+        method,
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const readCount = async () => {
+        const response = await fetch(`${api}/plugins/ep/count`);
+        assertEquals(response.status, 200);
+        return await response.json();
+      };
+      assertEquals(await readCount(), { count: 0 });
+      const denied = [];
+      for (
+        const [route, method] of [
+          ["ep/commands/mutate", "POST"],
+          ["ep/settings/page", "PUT"],
+          ["ep/enabled", "PUT"],
+          ["ep/permissions", "PUT"],
+          ["ep/permission-requests/request/decision", "POST"],
+          ["policy", "PUT"],
+        ] as const
+      ) {
+        const response = await fetch(`${host}/${route}`, request(method));
+        denied.push([route, response.status, await response.json()]);
+      }
+      const unchanged = await readCount();
+      const adminCommand = await admin.fetch(
+        `${host}/ep/commands/mutate`,
+        request("POST"),
+      );
+      const failure = await admin.fetch(
+        `${host}/ep/commands/fail`,
+        request("POST"),
+      );
+      const refusal = {
+        detail: "This account cannot perform that operation.",
+        code: "operation_not_permitted",
+      };
+      assertEquals(denied, [
+        ["ep/commands/mutate", 403, refusal],
+        ["ep/settings/page", 403, refusal],
+        ["ep/enabled", 403, refusal],
+        ["ep/permissions", 403, refusal],
+        ["ep/permission-requests/request/decision", 403, refusal],
+        ["policy", 403, refusal],
+      ]);
+      assertEquals(unchanged, { count: 0 });
+      assertEquals([adminCommand.status, await adminCommand.json()], [200, {
+        result: "committed",
+      }]);
+      assertEquals([failure.status, await failure.json()], [500, {
+        detail: "plugin command failed",
+      }]);
+      assertEquals(await readCount(), { count: 1 });
+    }));
 }
 
 Deno.test("plugin api: root/rest routes, decoded params, query data and actual results", async () => {
-  const { fixture, server } = await pluginApiServer();
+  const { fixture, server, admin } = await pluginApiServer();
   try {
     const root = await fetch(`${server.baseUrl}/_/api/plugins/ep`);
     assertEquals(root.status, 200);
     const rootBody = await root.json();
     assertEquals(rootBody.route, "root");
     // Credentials never cross the boundary.
-    const withCreds = await fetch(`${server.baseUrl}/_/api/plugins/ep`, {
-      headers: { cookie: "token=secret", authorization: "Bearer abc" },
+    const withCreds = await admin.fetch(`${server.baseUrl}/_/api/plugins/ep`, {
+      headers: { cookie: "other-cookie=not-forwarded" },
     });
     const echo = await withCreds.json();
     const headerNames = echo.headers.map((h: string[]) => h[0].toLowerCase());
@@ -82,7 +179,7 @@ Deno.test("plugin api: root/rest routes, decoded params, query data and actual r
 });
 
 Deno.test("plugin api: 404/405/Allow semantics and disabled-plugin unavailability", async () => {
-  const { fixture, server } = await pluginApiServer();
+  const { fixture, server, admin } = await pluginApiServer();
   try {
     assertEquals(
       (await fetch(`${server.baseUrl}/_/api/plugins/ep/unknown`)).status,
@@ -113,9 +210,10 @@ Deno.test("plugin api: 404/405/Allow semantics and disabled-plugin unavailabilit
     assertEquals((await head.arrayBuffer()).byteLength, 0);
 
     // Disable through the control API: unavailable even though files remain.
-    const catalog = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
-      .json();
-    const disable = await fetch(
+    const catalog =
+      await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
+        .json();
+    const disable = await admin.fetch(
       `${server.baseUrl}/_/api/plugin-host/ep/enabled`,
       {
         method: "PUT",
@@ -134,7 +232,7 @@ Deno.test("plugin api: 404/405/Allow semantics and disabled-plugin unavailabilit
       404,
     );
     // Re-enable with a STALE signature → 409, still unavailable.
-    const stale = await fetch(
+    const stale = await admin.fetch(
       `${server.baseUrl}/_/api/plugin-host/ep/enabled`,
       {
         method: "PUT",
@@ -154,9 +252,9 @@ Deno.test("plugin api: 404/405/Allow semantics and disabled-plugin unavailabilit
     );
     // Fresh signature: available again, no duplicate registrations.
     const freshCatalog =
-      await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
+      await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
         .json();
-    const enable = await fetch(
+    const enable = await admin.fetch(
       `${server.baseUrl}/_/api/plugin-host/ep/enabled`,
       {
         method: "PUT",
@@ -204,10 +302,11 @@ Deno.test("plugin api: body bound returns 413 before plugin code runs", async ()
 });
 
 Deno.test("plugin api: host catalog, settings round-trip, commands and blocking badges", async () => {
-  const { fixture, server } = await pluginApiServer();
+  const { fixture, server, admin } = await pluginApiServer();
   try {
-    const catalog = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
-      .json();
+    const catalog =
+      await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
+        .json();
     const ep = catalog.plugins.find((p: { id: string }) => p.id === "ep");
     assertEquals(ep.status, "ready");
     assertEquals(ep.commands.map((c: { fullId: string }) => c.fullId), [
@@ -218,12 +317,12 @@ Deno.test("plugin api: host catalog, settings round-trip, commands and blocking 
     assert(!JSON.stringify(catalog).includes("data.json"));
 
     // Settings: defaults → commit → persistence revision increments.
-    const before = await (await fetch(
+    const before = await (await admin.fetch(
       `${server.baseUrl}/_/api/plugin-host/ep/settings/preferences`,
     )).json();
     assertEquals(before.values.message, "fixture");
     assertEquals(before.revision, 0);
-    const saved = await fetch(
+    const saved = await admin.fetch(
       `${server.baseUrl}/_/api/plugin-host/ep/settings/preferences`,
       {
         method: "PUT",
@@ -239,7 +338,7 @@ Deno.test("plugin api: host catalog, settings round-trip, commands and blocking 
     assertEquals(savedBody.revision, 1);
     assertEquals(savedBody.values.message, "operator");
     // Stale revision → 409; invalid value → 422.
-    const stale = await fetch(
+    const stale = await admin.fetch(
       `${server.baseUrl}/_/api/plugin-host/ep/settings/preferences`,
       {
         method: "PUT",
@@ -249,7 +348,7 @@ Deno.test("plugin api: host catalog, settings round-trip, commands and blocking 
     );
     assertEquals(stale.status, 409);
     await stale.body?.cancel();
-    const invalid = await fetch(
+    const invalid = await admin.fetch(
       `${server.baseUrl}/_/api/plugin-host/ep/settings/preferences`,
       {
         method: "PUT",
@@ -276,6 +375,22 @@ Deno.test("plugin api: host catalog, settings round-trip, commands and blocking 
     assertEquals(await command.json(), {
       result: { echoed: { hello: "world" } },
     });
+    for (
+      const [body, expected] of [
+        [undefined, [200, { result: { echoed: {} } }]],
+        ["{", [400, { detail: "Invalid JSON request body." }]],
+      ] as const
+    ) {
+      const reply = await fetch(
+        `${server.baseUrl}/_/api/plugin-host/ep/commands/echo`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        },
+      );
+      assertEquals<unknown>([reply.status, await reply.json()], expected);
+    }
     assertEquals(
       (await fetch(`${server.baseUrl}/_/api/plugin-host/ep/commands/ghost`, {
         method: "POST",
@@ -293,9 +408,9 @@ Deno.test("plugin api: host catalog, settings round-trip, commands and blocking 
         "export function activate(ctx) { ctx.hooks.on('pre-delete', () => {}); }",
     });
     // Rediscovery happens on the next catalog read after reconcile; force one.
-    const pol = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
+    const pol = await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
       .json();
-    const toggle = await fetch(
+    const toggle = await admin.fetch(
       `${server.baseUrl}/_/api/plugin-host/ep/enabled`,
       {
         method: "PUT",
@@ -309,8 +424,9 @@ Deno.test("plugin api: host catalog, settings round-trip, commands and blocking 
     );
     assertEquals(toggle.status, 200);
     await toggle.body?.cancel();
-    const catalog2 = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
-      .json();
+    const catalog2 =
+      await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
+        .json();
     const blocker = catalog2.plugins.find((p: { id: string }) =>
       p.id === "blocker"
     );
@@ -322,26 +438,9 @@ Deno.test("plugin api: host catalog, settings round-trip, commands and blocking 
 });
 
 Deno.test("plugin api: invalidation stream delivers changes and closes on policy epoch change", async () => {
-  // Not env-pinned: setup completes through the wizard flow so reset is a
-  // real access-policy transition.
-  const fixture = await pluginFixture();
-  await fixture.install("ep", ENDPOINT_PLUGIN.manifest, ENDPOINT_PLUGIN.files);
-  const server = await bootServer({
-    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-    GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-    GLOBNOTES__SERVER_PATHPREFIX: "",
-  });
+  const { fixture, server, admin } = await pluginApiServer();
+  const controller = new AbortController();
   try {
-    const setup = await fetch(`${server.baseUrl}/_/api/setup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "none" }),
-    });
-    assertEquals(setup.status, 200);
-    await setup.body?.cancel();
-    // Wait for the service runtime after setup-completion reconciliation.
-    await catalogPluginReady(server, "ep");
-    const controller = new AbortController();
     const res = await fetch(`${server.baseUrl}/_/api/plugin-host/events`, {
       signal: controller.signal,
     });
@@ -362,7 +461,10 @@ Deno.test("plugin api: invalidation stream delivers changes and closes on policy
             return done(chunk);
           }
         }
-        const { value, done: ended } = await reader.read();
+        const { value, done: ended } = await reader.read().catch((error) => {
+          if (name !== "close" || !(error instanceof TypeError)) throw error;
+          return { done: true as const, value: undefined };
+        });
         if (ended) return done(null);
         buffer += decoder.decode(value, { stream: true });
         return waitPending({ awaited: name, buffered: buffer.slice(-2000) });
@@ -370,9 +472,10 @@ Deno.test("plugin api: invalidation stream delivers changes and closes on policy
     assert(await nextEvent("hello") !== null, "no hello frame");
 
     // A catalog change produces an invalidation frame.
-    const catalog = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
-      .json();
-    const toggle = await fetch(
+    const catalog =
+      await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
+        .json();
+    const toggle = await admin.fetch(
       `${server.baseUrl}/_/api/plugin-host/ep/enabled`,
       {
         method: "PUT",
@@ -388,54 +491,67 @@ Deno.test("plugin api: invalidation stream delivers changes and closes on policy
     await toggle.body?.cancel();
     assert(await nextEvent("invalidate") !== null, "no invalidate frame");
 
-    // An in-place mode transition closes the stream without reopening setup.
-    const access = await fetch(`${server.baseUrl}/_/api/access`).then((r) =>
-      r.json()
-    );
-    const reset = await fetch(`${server.baseUrl}/_/api/access`, {
+    const access = await admin.fetch(`${server.baseUrl}/_/api/access`).then((
+      r,
+    ) => r.json());
+    const reset = await admin.fetch(`${server.baseUrl}/_/api/access`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        mode: "read_only",
+        everybody: "none",
+        grants: access.grants,
+        updateId: createUuid(),
         revision: access.revision,
         signature: access.signature,
       }),
     });
     assertEquals(reset.status, 200);
     await reset.body?.cancel();
-    const closed = await nextEvent("close");
-    assert(
-      closed !== null && closed.includes("policy-change"),
-      `stream did not close: ${closed}`,
+    // The retired lease cannot disclose even its terminal frame.
+    const closed = await bounded(
+      nextEvent("close").catch((error) => {
+        if (!(error instanceof TypeError)) throw error;
+        return null;
+      }),
+      "ACL retires plugin stream",
     );
-    controller.abort();
+    assertEquals(closed, null);
+    const refused = await fetch(`${server.baseUrl}/_/api/plugin-host/events`);
+    assertEquals(refused.status, 403);
+    await refused.body?.cancel();
   } finally {
+    controller.abort();
     await server.close();
     await fixture.dispose();
   }
 });
 
 Deno.test("plugin api: vault policy endpoint materializes inventory and honors pins", async () => {
-  const { fixture, server } = await pluginApiServer();
+  const { fixture, server, admin } = await pluginApiServer();
   try {
-    const catalog = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
-      .json();
-    const res = await fetch(`${server.baseUrl}/_/api/plugin-host/policy`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        autoEnable: false,
-        revision: catalog.policy.revision,
-        signature: catalog.policy.signature,
-      }),
-    });
+    const catalog =
+      await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
+        .json();
+    const res = await admin.fetch(
+      `${server.baseUrl}/_/api/plugin-host/policy`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          autoEnable: false,
+          revision: catalog.policy.revision,
+          signature: catalog.policy.signature,
+        }),
+      },
+    );
     assertEquals(res.status, 200);
     const body = await res.json();
     assertEquals(body.policy.effectiveAutoEnable, false);
     assertEquals(body.policy.autoEnableSource, "vault");
     // The pre-existing plugin stayed enabled (materialized explicit opt-in).
-    const after = await (await fetch(`${server.baseUrl}/_/api/plugin-host`))
-      .json();
+    const after =
+      await (await admin.fetch(`${server.baseUrl}/_/api/plugin-host`))
+        .json();
     assertEquals(
       after.plugins.find((p: { id: string }) => p.id === "ep").enabled,
       true,
@@ -446,90 +562,78 @@ Deno.test("plugin api: vault policy endpoint materializes inventory and honors p
   }
 });
 
-for (const retireWhileValidating of [false, true]) {
-  Deno.test(`plugin api: stream timing ${retireWhileValidating ? "retires pending emissions" : "serializes and coalesces invalidations"}`, async () => {
-    // This controlled validator proves emission timing/cleanup only; the
-    // preceding HTTP cases independently exercise real signed JWT authority.
-    const old = {
-      config: state.config,
-      auth: state.auth,
-      lifecycle: state.lifecycle,
-    };
-    const listeners = new Set<() => void>();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let calls = 0, active = 0, maxActive = 0;
-    const lifecycle = {
-      epoch: 1,
-      subscribeInvalidation: (listener: () => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-    };
-    state.config = {
-      setupRequired: false,
-      authType: AuthType.PASSWORD,
-    } as typeof state.config;
-    state.lifecycle = lifecycle as unknown as NonNullable<
-      typeof state.lifecycle
-    >;
-    state.auth = {
-      validateTokenMetadata: async () => {
-        calls++;
-        active++;
-        maxActive = Math.max(maxActive, active);
+for (const retire of [false, true]) {
+  Deno.test(`plugin api: real stream lease ${retire ? "retires queued emissions" : "serializes and coalesces one turn"}`, () =>
+    accountRouteFixture(
+      async ({ alice, identity, lifecycle, demoteAdmin, scope }) => {
+        const { access_token } = await alice();
+        let listeners = 0;
+        const idle = fixtureGate(scope);
+        const feed = createIdentityPluginEvents(async (raw) => {
+          const access = await identity.composition.streamAccess(raw);
+          return {
+            ...access,
+            subscribe(listener) {
+              const remove = access.subscribe(listener);
+              listeners++;
+              return () => {
+                listeners--;
+                remove();
+                idle.resolve();
+              };
+            },
+          };
+        });
+        const reader = (await feed(
+          {
+            _raw: new Request("http://fixture/_/api/plugin-host/events", {
+              headers: { authorization: `Bearer ${access_token}` },
+            }),
+          } as PathfinderRequest,
+        )).body!.getReader();
+        const readEvent = async () =>
+          new TextDecoder().decode(
+            (await bounded(reader.read(), "plugin event")).value,
+          ).split("\n")[0];
         try {
-          if (calls === 2) await gate;
-          return { expiresAt: null };
+          assertEquals(await readEvent(), "event: hello");
+          assertEquals(listeners, 1);
+          for (let i = 0; i < 50; i++) lifecycle.notifyInvalidation("catalog");
+          if (retire) {
+            demoteAdmin();
+            const read = await reader.read().then(
+              (chunk) => [chunk.done, chunk.value],
+              () => [true, undefined],
+            );
+            assertEquals(read, [true, undefined]);
+          } else {
+            const invalidate = await bounded(
+              reader.read(),
+              "coalesced catalog event",
+            );
+            assert(
+              new TextDecoder().decode(invalidate.value).includes(
+                '"domain":"catalog"',
+              ),
+            );
+            lifecycle.notifyInvalidation("settings");
+            const next = await bounded(
+              reader.read(),
+              "separate settings event",
+            );
+            assert(
+              new TextDecoder().decode(next.value).includes(
+                '"domain":"settings"',
+              ),
+            );
+          }
         } finally {
-          active--;
+          await reader.cancel().catch(() => {});
         }
+        await bounded(idle.promise, "plugin stream unsubscribes");
+        assertEquals(listeners, 0);
+        lifecycle.notifyInvalidation("catalog");
+        assertEquals(listeners, 0);
       },
-    } as unknown as NonNullable<typeof state.auth>;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    try {
-      const response = await eventsHandler({
-        _raw: new Request("http://fixture/_/api/plugin-host/events", {
-          headers: { authorization: "Bearer controlled-timing" },
-        }),
-      } as PathfinderRequest);
-      reader = response.body!.getReader();
-      const first = reader.read();
-      for (let i = 0; i < 50; i++) {
-        for (const listener of listeners) listener();
-      }
-      if (retireWhileValidating) {
-        lifecycle.epoch++;
-        for (const listener of [...listeners]) listener();
-      }
-      release();
-      const text = new TextDecoder().decode((await first).value);
-      if (retireWhileValidating) {
-        assert(text.includes("event: close") && text.includes("policy-change"));
-        assertEquals((await reader.read()).done, true);
-      } else {
-        assert(text.includes("event: hello"));
-        assert(
-          new TextDecoder().decode((await reader.read()).value).includes(
-            "event: invalidate",
-          ),
-        );
-        assertEquals(calls, 3);
-        assertEquals(maxActive, 1);
-      }
-      await reader.cancel();
-      assertEquals(listeners.size, 0);
-      const settled = calls;
-      await Promise.resolve();
-      assertEquals(calls, settled);
-    } finally {
-      release();
-      await reader?.cancel();
-      state.config = old.config;
-      state.auth = old.auth;
-      state.lifecycle = old.lifecycle;
-    }
-  });
+    ));
 }

@@ -1917,14 +1917,13 @@ for (
     }));
 }
 
-Deno.test("setup enrollment: candidate retirement after transfer rejects decision without activating TOTP", () =>
+Deno.test("setup enrollment: confirming request retirement after transfer rejects decision without activating TOTP", () =>
   preparationFixture(async (f) => {
     const source = f.authority("initial");
     const abort = new AbortController();
     const bundle = await f.accounts.credentials.beginInitialEnrollment(
       source,
       "alice",
-      abort.signal,
     );
     const prepared = await f.accounts.credentials.prepareInitialAccount(
       source,
@@ -1935,6 +1934,7 @@ Deno.test("setup enrollment: candidate retirement after transfer rejects decisio
           code: await authenticatorCode(bundle.secret, SETUP_NOW),
         },
       },
+      abort.signal,
     );
     const acl = withEnrolledSetupPair(f.accounts, prepared, (publication) => {
       abort.abort();

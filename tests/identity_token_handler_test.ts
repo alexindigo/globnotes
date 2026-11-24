@@ -72,7 +72,10 @@ Deno.test("token adapter: only proven password discloses the safe code step and 
         await next.json(),
       ], [
         401,
-        { message: "Invalid credentials." },
+        {
+          detail: "Invalid authentication credentials.",
+          code: "credentials_refused",
+        },
         401,
         { message: "Invalid credentials.", code: "authenticator_required" },
       ]);
@@ -87,7 +90,10 @@ Deno.test("token adapter: only proven password discloses the safe code step and 
       const reused = await handler(request("password", code));
       assertEquals([reused.status, await reused.json()], [
         401,
-        { message: "Invalid credentials." },
+        {
+          detail: "Invalid authentication credentials.",
+          code: "credentials_refused",
+        },
       ]);
     },
     {},

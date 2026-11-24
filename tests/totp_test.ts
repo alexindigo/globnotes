@@ -3,7 +3,7 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { encodeBase32 } from "@std/encoding/base32";
 import { totp } from "otplib";
-import { checkTotpCode } from "../server/auth/local.ts";
+import { checkTotpCode } from "../server/auth/credentials.ts";
 import {
   authenticatorCode,
   TOTP_STEP_MS,

@@ -20,7 +20,10 @@ Deno.test("driver native acceptance: failed 13-file native group writes none, th
     key: "group/6.md",
     status: 500,
   });
-  const f = await hubDriverFixture(remote, { native: true });
+  const f = await hubDriverFixture(remote, {
+    native: true,
+    httpEverybody: "view",
+  });
   const snapshots: number[] = [];
   const stream = await changes({
     _raw: new Request("http://globnotes.test/_/api/changes", {

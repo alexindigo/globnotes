@@ -128,9 +128,7 @@ export function hostAllowed(
  * exposure (GlobalConfig satisfies it). */
 export interface AccessExposure {
   setupRequired: boolean;
-  /** "none", "read_only", "password", "totp", or null while setup is
-   * pending (GlobalConfig's AuthType values). */
-  authType: string | null;
+  everybody: "none" | "view" | "edit";
   allowedHosts: readonly AllowedHost[] | null;
 }
 
@@ -139,8 +137,8 @@ export interface AccessExposure {
  * when it is not exposed (setup pending, a login, or an allow-list). */
 export function rebindingExposure(access: AccessExposure): string | null {
   if (access.setupRequired || access.allowedHosts !== null) return null;
-  return access.authType === "none" || access.authType === "read_only"
-    ? access.authType
+  return access.everybody === "edit" || access.everybody === "view"
+    ? access.everybody
     : null;
 }
 
@@ -148,10 +146,12 @@ export function rebindingExposure(access: AccessExposure): string | null {
 export function rebindingWarning(access: AccessExposure): string | null {
   const mode = rebindingExposure(access);
   if (mode === null) return null;
-  return `No login is needed (${mode} mode) and GLOBNOTES__SERVER_ALLOWEDHOSTS is ` +
+  return `Everybody else has ${
+    mode === "edit" ? "Edit" : "View"
+  } access and GLOBNOTES__SERVER_ALLOWEDHOSTS is ` +
     "unset: a web page on another site can use DNS rebinding (making its " +
     "own name resolve to this server) to read notes" +
-    (mode === "none" ? " and change them" : "") +
+    (mode === "edit" ? " and change them" : "") +
     " through the browser of anyone on this network. Set " +
     "GLOBNOTES__SERVER_ALLOWEDHOSTS to the names this server is reached by, e.g. " +
     "'globnotes.home', so it answers no other host.";

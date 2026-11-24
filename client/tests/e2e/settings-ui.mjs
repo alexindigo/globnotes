@@ -1,11 +1,11 @@
 // Corrective native UI probes; expanded at each documented checkpoint.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
-import { bootServer } from "./harness-helpers.mjs";
+import { bootServer, nativeFixtureAdmin } from "./harness-helpers.mjs";
 import { SETTINGS_UI_CASES, parseFixtureArguments } from "./native-fixture-cases.mjs";
 import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { storedScenario } from "../../../tests/helpers/fixture_scenarios.ts";
-import { SignJWT } from "jose";
+import { signInNative, openNativeSettings } from "./settings-access-native.mjs";
 import { exerciseInlineSettings } from "./settings-inline-native.mjs";
 import { exerciseSettingsGeometry } from "./settings-geometry-native.mjs";
 import { exerciseSettingsCrossBrowser } from "./settings-cross-browser-native.mjs";
@@ -37,9 +37,8 @@ async function fixture(kind, label) {
   vault = await Deno.makeTempDir({ prefix: `settings-ui-${label}-vault-` });
   state = await metadataDirectory({ prefix: `settings-ui-${label}-state-` });
   await Deno.writeTextFile(`${vault}/NoteA.md`, label === "menu-parity" ? "Seed content.\n\n```text\nfirst code line\nsecond code line\n```\n" : label.startsWith("editor-") ? "---\nstatus: seed\ntags: [native]\n---\n\nSeed editor content.\n" : "Seed content.\n");
-  const secret = crypto.randomUUID();
-  const scenario = nativeAccountScenario(kind === "password" ? { account: { login: username, password } } : {});
-  const { fixtureScenario } = await nativeFixtureInput(scenario, {}, { signingKey: kind === "password" ? secret : undefined });
+  const scenario = nativeAccountScenario({ account: { login: username, password }, everybody: kind === "password" ? "none" : "edit" });
+  const { fixtureScenario } = await nativeFixtureInput(scenario);
   await Deno.mkdir(`${state}/plugins/session-guard`, { recursive: true });
   const inline = ["inline-core", "cross-browser", "pending-recovery", "menu-parity", "editor-source", "editor-wysiwyg"].includes(label);
   await Deno.writeTextFile(`${state}/plugins/session-guard/manifest.json`, JSON.stringify({ id: "session-guard", runtime: { server: "service.js", ...(inline ? { client: "browser.js" } : {}) }, hooks: ["pre-save", ...(label === "cross-browser" ? ["on-save"] : [])],
@@ -64,16 +63,16 @@ async function fixture(kind, label) {
     ctx.commands.register({id:'consumer',label:'Native Settings Consumer'},async()=>{const settings=await ctx.settings.read('preferences');output.textContent=settings.values.message;if(!output.isConnected)document.body.append(output);return settings.values.message;});
   }`);
   if (["cross-browser", "menu-parity"].includes(label)) { await Deno.mkdir(`${state}/plugins/session-guard/endpoints/ping`, { recursive: true }); await Deno.writeTextFile(`${state}/plugins/session-guard/endpoints/ping/get.js`, "export default ()=>({available:true});"); }
-  const token = kind === "password" ? await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(secret)) : null;
   const directory = `${artifacts}/${label}`;
   await Deno.mkdir(directory);
-  server = await bootServer(vault, state, { fixtureScenario, env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  server = await bootServer(vault, state, { fixtureScenario, env: { TMPDIR:Deno.env.get('TMPDIR') }, logsDir: directory });
+  const { headers } = await nativeFixtureAdmin(server);
   if (label === "cross-browser") server = createSettingsRestartFixture({ initialServer: server, directory, launch: async count => {
     const logsDir=`${directory}/backend-${count}`;await Deno.mkdir(logsDir);
-    return bootServer(vault,state,{fixtureScenario:storedScenario(fixtureScenario),env:{TMPDIR:Deno.env.get('TMPDIR')},logsDir,headers:{authorization:`Bearer ${token}`}});
+    return bootServer(vault,state,{fixtureScenario:storedScenario(fixtureScenario),env:{TMPDIR:Deno.env.get('TMPDIR')},logsDir});
   } });
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9333) });
-  const owned = { label, directory, vault, state, server, session, closed: false };
+  const owned = { label, directory, vault, state, server, session, headers, closed: false };
   fixtures.push(owned);
   await Deno.writeTextFile(`${directory}/ownership.json`, JSON.stringify({
     label, vault, state, pid: server.pid, baseUrl: server.baseUrl,
@@ -81,12 +80,7 @@ async function fixture(kind, label) {
     activeFixtureCount: fixtures.filter(item => !item.closed).length,
   }, null, 2), { createNew: true });
   await session.goto(`${server.baseUrl}/NoteA`);
-  if (kind === "password") {
-    await session.poll("!!document.querySelector('#username')");
-    await session.click("#username"); await session.type(username);
-    await session.click("#password"); await session.type(password);
-    await session.button("Log In");
-  }
+  await signInNative(session, server, { login: username, password }, { returnPath: "/NoteA" });
   await session.poll("!!document.querySelector('.toast-viewer')");
 }
 async function edit(marker) {
@@ -95,14 +89,10 @@ async function edit(marker) {
   await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')");
   await session.click(".cm-content"); await session.type(marker + "\n");
   await session.poll(`document.querySelector('.cm-content')?.textContent.includes(${JSON.stringify(marker)})`);
-  await session.evaluate("window.__gpsEditor = document.querySelector('.cm-content'); window.__gpsToken = sessionStorage.getItem('token'); true");
+  await session.evaluate("window.__gpsEditor = document.querySelector('.cm-content'); window.__gpsToken = sessionStorage.getItem('globnotes:session:root'); true");
 }
 async function settings(page) {
-  await session.click('[title="Open sidebar"]');
-  await session.poll("!!document.querySelector('[aria-label=Settings]')");
-  await session.click('[aria-label="Settings"]');
-  await session.poll("!!document.querySelector('#settings-modal-title')");
-  await session.button(page);
+  await openNativeSettings(session, `core:${page.toLowerCase()}`);
 }
 function note() {
   return session.evaluate("fetch('/_/api/notes/NoteA').then(async r => ({status:r.status, ...(await r.json())}))");
@@ -150,13 +140,13 @@ try {
   if (selected("pending-recovery")) {
   await fixture("none", "pending-recovery");
   await edit("GPS pending dirty marker");
-  const pending = await exerciseSettingsPending({ session, server, directory: fixtures.at(-1).directory });
+  const pending = await exerciseSettingsPending({ session, server, headers: fixtures.at(-1).headers, directory: fixtures.at(-1).directory });
   await Deno.writeTextFile(`${artifacts}/pending-recovery/consumers.json`, JSON.stringify(pending, null, 2), { createNew: true });
   await record("native-pending-wire-and-lost-acknowledgement-recovery");
   }
   if (selected("menu-parity")) {
   await fixture("none", "menu-parity");
-  const menu = await exerciseSettingsMenu({ session, server, state });
+  const menu = await exerciseSettingsMenu({ session, server, state, headers: fixtures.at(-1).headers });
   await Deno.writeTextFile(`${artifacts}/menu-parity/consumers.json`, JSON.stringify(menu, null, 2), { createNew: true });
   await record("native-editor-debug-policy-and-search-sort-menu-consumers");
   }
@@ -179,14 +169,12 @@ try {
   await fixture("none", "open-dismiss");
   await edit("GPS immediate dirty marker");
   await settings("Access");
-  await waitForAccessSummary(session); await session.button("Change access…");
-  await session.poll("!!document.querySelector('#setup-title')");
-  assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Opening the optional wizard destroyed the dirty editor instance");
-   assert(await session.evaluate("document.querySelector('.cm-content')?.textContent.includes('GPS immediate dirty marker')"), "Optional wizard lost typed content");
-  await session.click('[aria-label="Dismiss setup"]');
-  await session.poll("!document.querySelector('#setup-title')");
-  assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Dismissing optional wizard replaced the editor");
-  await record("optional-wizard-open-dismiss");
+  assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Opening the Access panel destroyed the dirty editor instance");
+   assert(await session.evaluate("document.querySelector('.cm-content')?.textContent.includes('GPS immediate dirty marker')"), "Access panel lost typed content");
+  await session.click('[aria-label="Close settings"]');
+  await session.poll("!document.querySelector('#settings-modal-title')");
+  assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Dismissing Access panel replaced the editor");
+  await record("access-panel-open-dismiss");
   }
   for (const choice of ["Cancel", "Discard", "Save", "Blocked Save"]) {
     const label = `wizard-${choice.toLowerCase().replaceAll(" ", "-")}`;
@@ -195,30 +183,33 @@ try {
     const blocked = choice === "Blocked Save";
     const marker = blocked ? "GPS-blocked wizard" : `GPS ${label}`;
     await edit(marker);
-    await settings("Access");
-    await waitForAccessSummary(session); await session.button("Change access…");
-     await session.poll("!!document.querySelector('#access-current-password') && document.querySelector('#setup-username')?.disabled===false && document.querySelector('#setup-username')?.value==='session-fixture'");
-    await session.click("#setup-username"); await session.key("a", { code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 }); await session.type("new-fixture");
-    await session.click("#setup-password"); await session.type("new-fixture-secret");
-    await session.click("#access-current-password"); await session.type(password);
-    await session.button("Save access settings");
+    await settings("Account");
+    await session.poll("!!document.querySelector('#account-current-password')");
+    await session.click('#account-current-password');await session.type(password);
+    await session.click('#account-new-password');await session.type('new-fixture-secret');
+    await session.click('#account-confirm-password');await session.type('new-fixture-secret');
+    await session.button('Change password');
     await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Save Changes')");
-    assert(await session.evaluate("sessionStorage.getItem('token') === window.__gpsToken"), "Finish cleared credentials before permission");
+    assert(await session.evaluate("sessionStorage.getItem('globnotes:session:root') === window.__gpsToken"), "Finish cleared credentials before permission");
     assert((await note()).content === "Seed content.\n", "Finish mutated disk before a decision");
     await session.button(blocked ? "Save" : choice, '[data-modal-top="true"]');
     if (choice === "Cancel" || blocked) {
-      await session.poll("document.querySelector('#setup-title') && ![...document.querySelectorAll('.fixed.z-50')].some(el => el.textContent.includes('Save Changes'))");
+      await session.poll("document.querySelector('#account-current-password') && ![...document.querySelectorAll('[data-modal-top=true]')].some(el => el.textContent.includes('Save Changes'))");
       assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Aborted Finish replaced editor");
-      assert(await session.evaluate("sessionStorage.getItem('token') === window.__gpsToken"), "Aborted Finish cleared credentials");
+      assert(await session.evaluate("sessionStorage.getItem('globnotes:session:root') === window.__gpsToken"), "Aborted Finish cleared credentials");
       assert((await note()).content === "Seed content.\n", "Aborted Finish changed disk");
-      const config = JSON.parse(await Deno.readTextFile(`${state}/config.json`));
-      assert(config.username === username, "Aborted Finish reset authentication");
+      const response=await fetch(server.baseUrl+'/_/api/token',{method:'POST',body:JSON.stringify({username,password})});
+      assert(response.status===200,'Aborted change retained original credentials');await response.body?.cancel();
     } else {
-      await session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
+      await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Change password and log out?')");
+      await session.button('Change and log out','[data-modal-top=true]');
+      await session.poll("!!document.querySelector('#identity-login-name') && !document.querySelector('#settings-modal-title')");
       const disk = await Deno.readTextFile(`${vault}/NoteA.md`);
       assert(choice === "Save" ? disk.includes(marker) : disk === "Seed content.\n", "Finish Save/Discard disk outcome differs from decision");
-      const config = JSON.parse(await Deno.readTextFile(`${state}/config.json`));
-      assert(config.username === "new-fixture", "Approved Finish did not persist the new authentication");
+      for(const [secret,status] of [[password,401],['new-fixture-secret',200]]) {
+        const response=await fetch(server.baseUrl+'/_/api/token',{method:'POST',body:JSON.stringify({username,password:secret})});
+        assert(response.status===status,'Approved credential change has correct login outcome');await response.body?.cancel();
+      }
     }
     await record(label);
   }
@@ -232,16 +223,16 @@ try {
     await settings("Account");
     await session.button("Log out");
     await session.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Save Changes')");
-    assert(await session.evaluate("sessionStorage.getItem('token') === window.__gpsToken"), "Logout cleared credentials before permission");
+    assert(await session.evaluate("sessionStorage.getItem('globnotes:session:root') === window.__gpsToken"), "Logout cleared credentials before permission");
     await session.button(blocked ? "Save" : choice, '[data-modal-top="true"]');
     if (choice === "Cancel" || blocked) {
       await session.poll("!!document.querySelector('#settings-modal-title') && ![...document.querySelectorAll('.fixed.z-50')].some(el => el.textContent.includes('Save Changes'))");
       assert(await session.evaluate("document.querySelector('.cm-content') === window.__gpsEditor"), "Aborted Logout replaced editor");
-      assert(await session.evaluate("sessionStorage.getItem('token') === window.__gpsToken"), "Aborted Logout lost credentials");
+      assert(await session.evaluate("sessionStorage.getItem('globnotes:session:root') === window.__gpsToken"), "Aborted Logout lost credentials");
       assert((await note()).content === "Seed content.\n", "Aborted Logout changed disk");
     } else {
-      await session.poll("!!document.querySelector('#username') && !document.querySelector('#settings-modal-title')");
-      assert(await session.evaluate("sessionStorage.getItem('token') === null && localStorage.getItem('token') === null"), "Approved Logout retained credentials");
+      await session.poll("!!document.querySelector('#identity-login-name') && !document.querySelector('#settings-modal-title')");
+      assert(await session.evaluate("sessionStorage.getItem('globnotes:session:root') === null && localStorage.getItem('globnotes:session:root') === null"), "Approved Logout retained credentials");
       const disk = await Deno.readTextFile(`${vault}/NoteA.md`);
       assert(choice === "Save" ? disk.includes(marker) : disk === "Seed content.\n", "Logout Save/Discard disk outcome differs from decision");
     }
@@ -273,5 +264,4 @@ finally {
   });
 }
 if (failure) throw failure;
-import { waitForAccessSummary } from './settings-access-native.mjs';
 import { metadataDirectory } from "./config-fixture.mjs";

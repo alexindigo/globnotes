@@ -16,6 +16,7 @@ import { testEnvironment } from "./helpers/environment.ts";
 import { stringify } from "@std/toml";
 import { pluginSettings } from "../server/config/consumers.ts";
 import { loadInstanceConfig } from "../server/config/loader.ts";
+import { accountRouteFixture } from "./helpers/account_route_fixture.ts";
 
 for (const source of ["environment", "toml"] as const) {
   Deno.test(`backup settings: ${source} reaches the actual service settings consumer`, async () => {
@@ -111,13 +112,19 @@ for (const source of ["environment", "toml"] as const) {
         settingsContext: (id) => manager.network.settingsContext(id),
         settingsEnvironment: manager.settingsEnvironment,
       });
-      Object.assign(state, { plugins: manager, pluginData: data });
-      const http = await settingsGet(
-        {
+      const http = await accountRouteFixture(async ({ alice }) => {
+        Object.assign(state, { plugins: manager, pluginData: data });
+        const response = await settingsGet({
           params: { id: "configured", page: "preferences" },
-        } as unknown as PathfinderRequest,
-      );
-      assert(!(http instanceof Response));
+          _raw: new Request("http://fixture/", {
+            headers: {
+              authorization: `Bearer ${(await alice()).access_token}`,
+            },
+          }),
+        } as unknown as PathfinderRequest);
+        assertEquals(response.status, 200);
+        return await response.json();
+      });
       assertEquals(http.values.location, "operator-selected");
       assertEquals(http.fields.location, { source, readonly: true });
       assertEquals(http.sourceKey, result.sourceKey);

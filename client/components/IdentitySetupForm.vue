@@ -1,11 +1,11 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-only -->
 <template>
   <form class="identity-setup flex min-w-0 flex-col gap-6" @submit.prevent="controller.finish">
-    <header><h1 class="text-lg font-semibold">Set up globnotes</h1><p class="mt-2 text-sm">Create your account and choose who can use this vault.</p></header>
+    <header><h1 id="identity-setup-title" class="text-lg font-semibold">Set up globnotes</h1><p class="mt-2 text-sm">Create your account and choose who can use this vault.</p></header>
     <div class="setup-columns">
       <fieldset class="setup-visibility min-w-0" :disabled="!state.editable"><legend class="mb-4 whitespace-nowrap font-semibold">Who can see this vault?</legend>
         <p>You will be its Admin and can change this later.</p><h2 class="mt-4 whitespace-nowrap font-semibold">Everybody else</h2><p class="my-4">Visitors and people you have not added to this vault.</p>
-        <label v-for="choice in identitySetupLevels" :key="choice.level" class="setup-choice" :class="{'setup-choice-on':state.everybody === choice.level}"><input type="radio" name="identity-everybody" :value="choice.level" :checked="state.everybody === choice.level" @change="controller.setField('everybody', choice.level)" /><span><span class="whitespace-nowrap font-semibold">{{ choice.label }}</span><span class="mt-1 block text-[13px]">{{ choice.help }}</span></span></label>
+        <label v-for="choice in identitySetupLevels" :key="choice.level" class="setup-choice" :class="{'setup-choice-on':state.everybody === choice.level}"><input type="radio" name="identity-everybody" :value="choice.level" :checked="state.everybody === choice.level" v-focus="state.everybody === choice.level" @change="controller.setField('everybody', choice.level)" /><span><span class="whitespace-nowrap font-semibold">{{ choice.label }}</span><span class="mt-1 block text-[13px]">{{ choice.help }}</span></span></label>
       </fieldset>
       <fieldset class="flex min-w-0 flex-col gap-4" :disabled="!state.editable"><h2 class="whitespace-nowrap font-semibold">Create your account</h2>
         <div class="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">

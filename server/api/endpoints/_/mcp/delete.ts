@@ -7,8 +7,6 @@ export const operation = "mcp";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 
-export const auth = false;
-
 export default function (request: PathfinderRequest): Response {
   if (!state.mcp) throw new HttpError(404, "Not Found");
   return state.mcp.notAllowed(request._raw);

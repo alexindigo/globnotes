@@ -15,13 +15,14 @@ const credentialFields = ["currentPassword", "currentTotp", "newPassword", "conf
  * different lifetimes; neither may select a replacement account's credentials. */
 export function createAccountSettingsState({ read = getOwnAccount, write = patchOwnAccount,
   enrol = postAccountTotpEnrolment, token = getStoredToken, sessionKey = token,
-  resolve = resolveParticipants, clearToken = clearStoredToken, signedOut = () => {},
+  resolve = resolveParticipants, clearToken = clearStoredToken, signedOut = () => {}, captureCredential,
   logout = async () => false, retire = retainUnsavedWork, copy, consumeProof, beginHandoff = () => () => {},
 } = {}) {
   const fields = reactive({ view: null, activity: idle, dialog: null, confirmation: null,
     currentPassword: "", currentTotp: "", newPassword: "", confirmPassword: "", newTotpCode: "" });
   const form = Object.freeze({ scope: sessionKey(), token: token() });
   let ownsTemporaryProof = false;
+  const credentialCurrent = captureCredential?.() ?? (() => form.token === token());
   let disposed = false, revoked = false, ticket = 0, pending = null, proposed = null, signingOut;
   const current = () => !disposed && !revoked && form.scope != null && form.token != null && form.scope === sessionKey() && form.token === token();
   const enrollment = createAuthenticatorEnrollment({ enrol: () => enrol({ token: form.token }), copy, capture: () => current,
@@ -51,7 +52,7 @@ export function createAccountSettingsState({ read = getOwnAccount, write = patch
     }, deliver(value) { fields.view = value.view; } } },
     completion: { prepare(value) {
       const prepared = { ...value };
-      if (disposed || form.token !== token()) void owner.release(prepared.operation);
+      if (disposed || !credentialCurrent()) void owner.release(prepared.operation);
       return { value: prepared };
     }, deliver(value) { signingOut = handoff(value.uncertain); } },
   });
@@ -101,7 +102,7 @@ export function createAccountSettingsState({ read = getOwnAccount, write = patch
           // An installed proof source can detect a restricted session restored without its one-use proof.
           if (consumeProof) {
             erase(); retire();
-            if (form.token === token()) { clearToken(); await signedOut({ message: temporaryProofMessage, uncertain: false }); }
+            if (credentialCurrent()) { clearToken(); await signedOut({ message: temporaryProofMessage, uncertain: false }); }
             return null;
           }
         }
@@ -168,7 +169,7 @@ export function createAccountSettingsState({ read = getOwnAccount, write = patch
   }
   async function handoff(uncertain) {
     erase(); retire();
-    if (disposed || form.token !== token()) return;
+    if (disposed || !credentialCurrent()) return;
     clearToken();
     await signedOut({ uncertain, message: uncertain ? "Connection lost. Sign in again." : "Sign in again with your new credentials." });
   }

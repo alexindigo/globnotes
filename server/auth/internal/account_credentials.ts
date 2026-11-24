@@ -30,6 +30,7 @@ import {
   type StoredTotpSecret,
 } from "../credentials.ts";
 import {
+  CredentialInputError,
   fields,
   identity,
   IdentityStateError,
@@ -709,12 +710,20 @@ export function bindAccountCredentials(
       if (snapshot.value.initialized || snapshot.value.accounts.length !== 0) {
         throw new StoredConfigConflict();
       }
-      const operation = createOperationLease("live", [() => {
+      const operation = createOperationLease("live", [() => undefined], [
+        lifetime.lease,
+        admitted.lease,
+      ]);
+      // Rendering is request work; the successfully issued candidate is
+      // setup work, consumed by a *different* request. HTTP completion retires
+      // the former, not the latter.
+      const rendering = createOperationLease("live", [() => {
         if (signal?.aborted) throw new AuthenticationError();
         return undefined;
-      }], [lifetime.lease, admitted.lease]);
+      }], [operation.lease]);
       let attempt: InitialEnrollmentAttempt | undefined;
       try {
+        rendering.lease.assertCurrent();
         store.assertSnapshot(snapshot);
         const secret = createTotpCandidate();
         if (initialEnrollment) retireInitialEnrollment(initialEnrollment);
@@ -725,19 +734,21 @@ export function bindAccountCredentials(
           secret,
           renderQr,
         );
-        assertOperationLease(operation.lease, "live");
+        assertOperationLease(rendering.lease, "live");
         store.assertSnapshot(snapshot);
         if (initialEnrollment !== attempt || attempt.phase !== "rendering") {
           throw new StoredConfigConflict();
         }
         attempt.key = bundle.key;
         attempt.phase = "ready";
-        assertOperationLease(operation.lease, "live");
+        assertOperationLease(rendering.lease, "live");
         return bundle;
       } catch (error) {
         if (attempt) retireInitialEnrollment(attempt);
         else operation.retire();
         throw error;
+      } finally {
+        rendering.retire();
       }
     },
     /** Privileged append-only historical import, never ordinary account creation. */
@@ -1002,7 +1013,7 @@ export function bindAccountCredentials(
         initial.passwordChangeRequired &&
         (request.newPassword === undefined ||
           await verify(request.newPassword, initial.passwordHash))
-      ) throw new IdentityStateError();
+      ) throw new CredentialInputError();
       let attempt: EnrollmentAttempt | undefined;
       let confirmed: StoredAuthenticator | undefined;
       if (request.authenticator.kind === "enroll") {
@@ -1012,19 +1023,19 @@ export function bindAccountCredentials(
           attempt.revision !== initial.credentialRevision ||
           attempt.phase !== "ready" ||
           attempt.key !== request.authenticator.key
-        ) throw new IdentityStateError();
+        ) throw new CredentialInputError();
         const step = matchingStoredTotpStep(
           request.authenticator.code,
           attempt.secret,
           now(),
         );
-        if (step === null) throw new IdentityStateError();
+        if (step === null) throw new CredentialInputError();
         const old = store.authenticator(initial);
         if (
           old.kind === "totp" &&
           sameStoredTotpSecret(old.secret, attempt.secret) &&
           old.lastTotpStep !== null && step <= old.lastTotpStep
-        ) throw new IdentityStateError();
+        ) throw new CredentialInputError();
         confirmed = Object.freeze({
           kind: "totp",
           secret: attempt.secret,

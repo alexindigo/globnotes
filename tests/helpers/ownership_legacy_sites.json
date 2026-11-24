@@ -1,13 +1,5 @@
 [
   {
-    "file": "client/tests/e2e/access-settings.mjs",
-    "line": 34,
-    "capability": "Deno.Command",
-    "source": "Deno.Command",
-    "context": "const child = new Deno.Command(Deno.execPath(), { args: [\"run\", \"--cached-only\", \"--frozen\", `--config=${ROOT}/deno.json`, \"--unstable-worker-options\", \"--allow-read\", \"--allow-write\", \"--allow-net\", \"--allow-env\", `${ROOT}/server/main.ts`], cwd, clearEnv: true,",
-    "family": "native-account"
-  },
-  {
     "file": "client/tests/e2e/generic-plugin-system.mjs",
     "line": 20,
     "capability": "Deno.Command",
@@ -64,14 +56,6 @@
     "family": "native-picker"
   },
   {
-    "file": "client/tests/e2e/plugin-permissions.mjs",
-    "line": 40,
-    "capability": "Deno.Command",
-    "source": "Deno.Command",
-    "context": "const child = new Deno.Command(Deno.execPath(), { args, cwd, stdout: \"piped\", stderr: \"piped\", clearEnv: true,",
-    "family": "native-permissions"
-  },
-  {
     "file": "client/tests/e2e/runner-entrypoint-controls.mjs",
     "line": 12,
     "capability": "Deno.Command",
@@ -86,14 +70,6 @@
     "source": "Deno.Command",
     "context": "const result = await new Deno.Command(\"sh\", { args: [root + \"/client/tests/e2e/run.sh\", \"--shard\", shard], env: { DENO: executable }, stdout: \"piped\", stderr: \"piped\" }).output();",
     "family": "native-entrypoint"
-  },
-  {
-    "file": "client/tests/e2e/settings-foundations.mjs",
-    "line": 40,
-    "capability": "Deno.Command",
-    "source": "Deno.Command",
-    "context": "const child = new Deno.Command(Deno.execPath(), { args, cwd: root, clearEnv: true, stdout: \"piped\", stderr: \"piped\", env: {",
-    "family": "native-foundations"
   },
   {
     "file": "client/tests/e2e/settings-surfaces-native.mjs",

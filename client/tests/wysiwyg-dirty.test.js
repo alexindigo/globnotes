@@ -10,6 +10,8 @@ import NoteView from "../views/Note.vue";
 import { setDefaultEditorMode } from "../editorPreferences.js";
 import { getConfig, updateNote } from "../api.js";
 import { hasUnsavedWork } from "../sessionActions.js";
+import { accountProjection, identityFixtureIO } from "./helpers/account-projection.js";
+import { storeToken } from "../tokenStorage.js";
 
 import WysiwygEditorInner from "../components/WysiwygEditorInner.vue";
 import { callCommand } from "../components/milkdown-commands.js";
@@ -20,21 +22,18 @@ const milkdown = vi.hoisted(() => ({
   destroyed: null,
 }));
 const routeHolder = vi.hoisted(() => ({ router: null }));
-vi.mock("../router.js", () => ({ default: {
+vi.mock("../router.js", () => ({ bindIdentityRouteSession: () => () => {}, default: {
   get currentRoute() { return routeHolder.router.currentRoute; },
   get options() { return routeHolder.router.options; },
   push(...args) { return routeHolder.router.push(...args); },
   replace(...args) { return routeHolder.router.replace(...args); },
 } }));
 vi.mock("primevue/usetoast", () => ({ useToast: () => ({ add: vi.fn() }) }));
-vi.mock("../pluginRuntime.js", async () => {
-  const { ref } = await import("vue");
-  const pluginCatalog = ref(null);
-  return { pluginCatalog, startPluginRuntime: vi.fn(), stopPluginRuntime: vi.fn(),
-    refreshPluginRuntimeCatalog: vi.fn(async () => ({ status: "accepted", catalog: pluginCatalog.value })),
-    capturePluginCatalogOwnership: vi.fn(() => ({ current: () => true })), acknowledgePluginPolicy: vi.fn(() => true) };
-});
-vi.mock("../api.js", () => ({
+vi.mock("../api.js", async importOriginal => ({
+  ...await importOriginal(),
+  createIdentityApi: () => identityFixtureIO({
+    getConfig, getPluginHostCatalog: async () => ({ plugins: [] }), getNoteIndex: async () => [{ path: "NoteA" }],
+  }),
   getDrivers: vi.fn(async () => ({revision:0,instances:[],plugins:[]})),
   getConflicts: vi.fn(async () => ({ revision: 0, total: 0, conflicts: [] })),
   getConfig: vi.fn(), getNote: vi.fn(async path => ({ path, content: "Original" })),
@@ -46,8 +45,7 @@ vi.mock("../api.js", () => ({
   getPluginHostCatalog: vi.fn(async () => ({ plugins: [] })), getPluginSettings: vi.fn(),
   putPluginSettings: vi.fn(), putPluginPolicy: vi.fn(), putPluginEnabled: vi.fn(),
   getPluginPermissions: vi.fn(), putPluginPermissions: vi.fn(), getPluginPermissionRequests: vi.fn(async () => []), decidePluginPermissionRequest: vi.fn(),
-  invokePluginCommand: vi.fn(), postSetup: vi.fn(), resetSetup: vi.fn(), postTotpEnrolment: vi.fn(), postBrand: vi.fn(),
-  getAccessSettings: vi.fn(), putAccessSettings: vi.fn(), postAccessTotpEnrolment: vi.fn(),
+  invokePluginCommand: vi.fn(), postBrand: vi.fn(),
 }));
 vi.mock("../themes.js", async () => {
   const { ref } = await import("vue");
@@ -83,7 +81,8 @@ describe("real App/Note/Milkdown immediate dirty consumer", () => {
     localStorage.clear(); sessionStorage.clear(); document.body.innerHTML = "";
     window.history.replaceState(null, "", "/NoteA");
     milkdown.editor = milkdown.ready = milkdown.destroyed = null;
-    getConfig.mockResolvedValue({ authType: "none", setupRequired: false, brand: {} });
+    storeToken("editor-account");
+    getConfig.mockResolvedValue(accountProjection());
     updateNote.mockImplementation(async (_, path, content) => ({ path, content }));
     const pinia = createPinia(); setActivePinia(pinia);
     routeHolder.router = createRouter({ history: createMemoryHistory(), routes: [

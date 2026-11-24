@@ -6,8 +6,9 @@ import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 import { noteMutationLease } from "@server/auth/middleware.ts";
 import { committedJson } from "@server/auth/http_policy.ts";
+import { deliverAdmissionRefusals } from "@server/auth/admission_refusal.ts";
 
-export default async function (request: PathfinderRequest) {
+export default deliverAdmissionRefusals(async (request: PathfinderRequest) => {
   try {
     const lease = await noteMutationLease(request._raw);
     const oldPath = request.query.get("old_path") ?? "";
@@ -24,4 +25,4 @@ export default async function (request: PathfinderRequest) {
     throw new HttpError(500, (e as Error).message);
   }
   return committedJson(null);
-}
+});

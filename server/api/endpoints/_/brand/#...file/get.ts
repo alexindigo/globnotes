@@ -3,8 +3,7 @@ export const operation = "public";
 
 /**
  * GET /_/brand/:file* — serve the vault's brand files
- * (<vault>/.globnotes/brand/<file>) publicly: favicons, the manifest,
- * and the logo all brand surfaces that render before login. When no
+ * (<vault>/.globnotes/brand/<file>) for pre-login branding. When no
  * custom site.webmanifest exists, one is generated from the brand
  * config so the manifest always reflects the branding.
  */
@@ -14,8 +13,6 @@ import { brandDirPath, generateWebManifest } from "@server/brand.ts";
 import { guessType } from "@server/files/mimetypes.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
-
-export const auth = false;
 
 const MANIFEST_NAME = "site.webmanifest";
 

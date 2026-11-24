@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /**
- * App-wide auth middleware (the old Router.use(requireAuth)):
- * setup gate → read-only gate → token validation, skipped for routes that
- * opted out via `export const auth = false` (context.meta.auth) and for
- * 404/405 misses (context.miss — public, matching the Python server).
+ * App-wide account admission uses operation metadata, not the HTTP method.
  *
  * Dir `/_` covers the whole app space but NOT layer0's `/_status` (no
  * prefix overlap — layer0 is the package's own tree).
@@ -14,6 +11,7 @@ import { HttpError, type Middleware } from "@pathfinder/pathfinder";
 import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
 import {
   createHttpPolicy,
+  type HttpLease,
   type HttpOperation,
   type InstanceAuth,
   ownsOutcomeResponse,
@@ -21,24 +19,27 @@ import {
   replacePrivateResponse,
 } from "@server/auth/http_policy.ts";
 
-import { enforceAuth } from "@server/auth/middleware.ts";
-import { assertVaultTarget } from "@server/config/projection.ts";
-import { state } from "@server/state.ts";
+import { activeAuth } from "@server/auth/middleware.ts";
+import { AdmissionRefusal } from "@server/auth/admission_refusal.ts";
 import { logger } from "@server/logger.ts";
 
 declare module "@pathfinder/pathfinder" {
   interface Meta {
-    auth?: boolean;
     operation?: HttpOperation;
   }
 }
 
-/** Prepared only; production activation belongs to I14. */
 export function createIdentityAuthMiddleware(auth: InstanceAuth): Middleware {
   const policy = createHttpPolicy(auth);
   return async (request, context) => {
     if (context.miss !== undefined) return;
-    const lease = await policy.admit(request._raw, context.meta.operation);
+    let lease: HttpLease | null;
+    try {
+      lease = await policy.admit(request._raw, context.meta.operation);
+    } catch (error) {
+      if (error instanceof AdmissionRefusal) return error.response();
+      throw error;
+    }
     if (!lease) return;
     context.state.identityLease = lease;
     return (response) => {
@@ -51,6 +52,9 @@ export function createIdentityAuthMiddleware(auth: InstanceAuth): Middleware {
             response._raw,
             toOperationResponse(error),
           );
+        }
+        if (error instanceof AdmissionRefusal) {
+          return replacePrivateResponse(response._raw, error.response());
         }
         if (error instanceof HttpError) {
           return replacePrivateResponse(
@@ -75,7 +79,5 @@ export function createIdentityAuthMiddleware(auth: InstanceAuth): Middleware {
 
 export default (async (request, context) => {
   if (context.miss !== undefined) return; // 404/405 stay public
-  assertVaultTarget(state.config, request);
-  if (context.meta.auth === false) return; // opted-out routes
-  await enforceAuth(request._raw);
+  return await createIdentityAuthMiddleware(activeAuth())(request, context);
 }) satisfies Middleware;

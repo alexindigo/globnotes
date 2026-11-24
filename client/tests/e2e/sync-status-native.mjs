@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { memoryRemote } from "../../../tests/helpers/memory_remote.ts";
 import { applicationServer, bindAddress, httpOrigin } from "./http-origin.mjs";
 import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
+import { nativeFixtureAdmin } from "./fixtures.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { ICON_PATHS } from "../../icons.js";
@@ -22,10 +23,10 @@ await Deno.writeTextFile(`${state}/plugins/globnotes-test-driver/manifest.json`,
 await Deno.copyFile(new URL("driver.js",fixture),`${state}/plugins/globnotes-test-driver/driver.js`);
 const controlDirectory=await createSyncStatusDirectory(scope,state);
 const remote=(await scope.acquire(()=>memoryRemote({hostname:bindAddress(),token}),remote=>remote.close())).value;
-let server,s,control;
+let server,s,control,adminHeaders;
 const results=[],requests=[],seam={};
 async function api(route,method="GET",body) {
-  const response=await fetch(`${server.baseUrl}/_/api/${route}`,{method,headers:{"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+  const response=await fetch(`${server.baseUrl}/_/api/${route}`,{method,headers:{"content-type":"application/json",...(route === "notes" ? {} : adminHeaders)},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
   const value=await response.json();assert(response.ok,`${method} ${route}: ${response.status} ${JSON.stringify(value)}`);return value;
 }
 const controls=()=>control.publish(seam);
@@ -56,8 +57,9 @@ async function geometry() {
   assert(value.labels.every(space=>space==="nowrap"),"A panel label can wrap");
 }
 try {
-   const scenarioInput=await nativeFixtureInput(nativeAccountScenario());
+   const scenario=nativeAccountScenario(),scenarioInput=await nativeFixtureInput(scenario);
    server=(await scope.acquire(()=>bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,...scenarioInput,GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},{...applicationServer(),denoArgs:["--import",fileURLToPath(new URL("../../../tests/helpers/sync_status_preload.ts",import.meta.url))]}),server=>server.close())).value;
+   ({ headers: adminHeaders } = await nativeFixtureAdmin(server));
    control=syncStatusChannel(controlDirectory,{label:"Sync status server",exit:server.exited});
   const catalog=await api("plugin-host");await api("plugin-host/globnotes-test-driver/enabled","PUT",{enabled:true,revision:catalog.policy.revision,signature:catalog.policy.signature});
   const permission=await api("plugin-host/globnotes-test-driver/permissions");await api("plugin-host/globnotes-test-driver/permissions","PUT",{revision:permission.revision,signature:permission.signature,requestSourceKey:permission.requestSourceKey,requestSourceRevision:permission.requestSourceRevision,allowNetwork:true,approvedNetwork:permission.requestedNetwork,approvedImports:[]});
@@ -71,7 +73,12 @@ try {
   s=(await scope.acquire(()=>nativeSession({port:Number(Deno.env.get("CDP_PORT")??9335),width:1280,height:1000}),session=>session.close())).value;
   await s.send("Emulation.setTimezoneOverride",{timezoneId:"America/Los_Angeles"});
   s.page.onEvent(event=>{if(event.method==="Network.requestWillBeSent")requests.push({url:event.params.request.url,method:event.params.request.method});});
-  await s.goto(`${server.baseUrl}/Welcome`);
+  await s.goto(`${server.baseUrl}/_/login?redirect=/Welcome`);
+  const { login, password } = scenario.identity.people[0];
+  await s.click("#identity-login-name"); await s.type(login);
+  await s.click("#identity-login-password"); await s.type(password);
+  await s.button("Continue", ".identity-login");
+  await s.poll("location.pathname==='/Welcome' && !!document.querySelector('.toast-viewer')");
   await stateIs("tabCloud","idle");await capture("idle");
   seam.activities={office:"sending"};await controls();await sync();await stateIs("tabCloudUpload","active");
   seam.activities={office:"receiving",home:"sending"};await controls();await sync();

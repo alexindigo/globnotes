@@ -68,8 +68,10 @@ await conflictCase("conflict-review-native", async f => {
     assert(await Deno.readTextFile(`${f.vault}/${partial.path}`) === "partial response retained\n" && await f.absent(partial.copyPath), "Partial-response fixture did not retain actual effects");
     f.results.push({ injectedPartialResponseAfterActualEffects: true, draftRetained: true, noReplay: true });
   } finally { await partialResponse.dispose(); }
-  await f.restart({ scenario: nativeAccountScenario({ account: { login: "m3-fixture", password: "m3-fixture-password" } }) });
-  await s.goto(f.url("/_/conflicts")); await f.login("m3-fixture", "m3-fixture-password");
+  // On reopen, a new scenario seed cannot replace the persisted account or ACL.
+  await f.setEverybody("none"); await f.restart();
+  const { login, password } = nativeAccountScenario().identity.people[0];
+  await s.goto(f.url("/_/conflicts")); await f.login(login, password);
   const guarded = await f.create("Departure");
   await s.goto(f.url("/_/conflicts")); await f.inboxCount(1); await s.click(".conflicts-page__row"); await s.button("Edit a merge"); await f.fill("departure draft\n");
   // CDP's history command drives browser history itself. Renderer key injection
@@ -80,7 +82,7 @@ await conflictCase("conflict-review-native", async f => {
    assert(await s.evaluate("location.pathname.endsWith('/" + guarded.id + "') && document.querySelector('#conflict-merge')?.value") === "departure draft\n", "Browser Back Cancel lost URL or draft");
   await s.click('[title="Open sidebar"]'); await s.click('[aria-label="Settings"]'); await s.button("Account"); await s.button("Log out");
   await s.poll("document.querySelector('[data-modal-top=true]')?.textContent.includes('Merge draft')"); await s.button("Cancel", "[data-modal-top=true]");
-   assert(await s.evaluate("!!sessionStorage.getItem('token') && document.querySelector('#conflict-merge')?.value") === "departure draft\n", "Logout Cancel retired credentials or merge draft");
+   assert(await s.evaluate(`!!${f.tokenRead} && document.querySelector('#conflict-merge')?.value`) === "departure draft\n", "Logout Cancel retired credentials or merge draft");
   await s.click('[aria-label="Close settings"]');
   if (await s.evaluate("document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width>0")) await s.click('[title="Close sidebar"]');
   await historyMove(-1); await s.button("Discard draft", "[role=dialog]"); await f.inboxCount(1);
@@ -98,11 +100,11 @@ await conflictCase("conflict-review-native", async f => {
     // Exercise the production 60-second bound, without changing any budget or
     // aborting the admitted wire. The suite's existing 120-second child cap stays.
     await new Promise(resolve => setTimeout(resolve, 61_000));
-    assert(await s.evaluate("!!sessionStorage.getItem('token') && location.pathname.endsWith('/" + late.id + "')"), "Unknown observation let logout clear credentials");
+    assert(await s.evaluate(`!!${f.tokenRead} && location.pathname.endsWith('/${late.id}')`), "Unknown observation let logout clear credentials");
     await s.send("Fetch.continueResponse", { requestId: lateResponse }); await s.send("Fetch.disable");
     await s.poll("document.body.textContent.includes('Kept Late-logout.md.')");
      assert(!await s.read('.conflicts-page', "document.querySelector('.conflicts-page').textContent.includes('This conflict was resolved elsewhere.')"), "Own acknowledged result is labelled as outside resolution");
-    assert(await s.evaluate("!!sessionStorage.getItem('token') && location.pathname.endsWith('/" + late.id + "') && !!document.querySelector('#settings-modal-title')"), "Late acknowledgement revived aborted logout/navigation");
+    assert(await s.evaluate(`!!${f.tokenRead} && location.pathname.endsWith('/${late.id}') && !!document.querySelector('#settings-modal-title')`), "Late acknowledgement revived aborted logout/navigation");
     assert(f.writes.filter(request => request.content === "late acknowledged merge\n").length === 1 && await Deno.readTextFile(`${f.vault}/${late.path}`) === "late acknowledged merge\n" && await f.absent(late.copyPath), "Late outcome replayed or lost actual effects");
     f.results.push({ productionObservationBoundMs: 60_000, lateAcknowledgementDoesNotReviveLogout: true, actualMergeEffects: true });
   } finally { releaseLate(); await s.send("Fetch.disable"); }

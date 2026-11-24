@@ -1,8 +1,9 @@
+import { signInNative } from "./settings-access-native.mjs";
 // Observe shared appearance at real main/Settings consumers and layout at every
 // action row. No test-only render path or synthetic CSS is injected into the app.
 import { showSidebar } from './sidebar-navigation-native.mjs';
 import { nativeSession } from './native-cdp-session.mjs';
-import { bootServer } from './harness-helpers.mjs';
+import { nativeFixtureAdmin, bootServer } from './harness-helpers.mjs';
 
 export async function settingsActionZones(session) {
    return session.read('[role=dialog]', `(()=>{
@@ -62,12 +63,14 @@ export async function exercisePrimitiveOwnership({ port, directory }) {
   await Deno.mkdir(directory);
   const vault = await Deno.makeTempDir({ prefix: 'settings-primary-vault-' });
   const state = await metadataDirectory({ prefix: 'settings-primary-state-' });
-  const fixtureInput = await nativeFixtureInput(nativeAccountScenario());
+  const actor = { login: "native-admin", password: "native-admin-password" };
+  const fixtureInput = await nativeFixtureInput(nativeAccountScenario({ account: actor, everybody: "edit" }));
   const plugin = `${state}/plugins/primary-probe`;
   await Deno.mkdir(plugin, { recursive: true });
   await Deno.writeTextFile(`${plugin}/manifest.json`, JSON.stringify({ id: 'primary-probe', name: 'Primary probe', runtime: { server: 'service.js' }, capabilities: { network: true } }));
   await Deno.writeTextFile(`${plugin}/service.js`, "let n=0;export function activate(ctx){ctx.commands.register({id:'request',label:'Request',target:'server'},()=>ctx.permissions.requestAccess({kind:'network',hosts:['primary-'+(++n)+'.example:443'],reason:'Shared primary and decision-zone consumer'}));}");
   const server = await bootServer(vault, state, { ...fixtureInput, env: { TMPDIR: Deno.env.get('TMPDIR') }, logsDir: directory });
+  const { headers } = await nativeFixtureAdmin(server);
   const session = await nativeSession({ port });
   const results = [];
   let failure;
@@ -75,6 +78,7 @@ export async function exercisePrimitiveOwnership({ port, directory }) {
     for (const mode of ['light', 'dark']) {
       await session.send('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('globnotes-theme','globnotes-${mode}');` });
       await session.goto(`${server.baseUrl}/`);
+  await signInNative(session, server, actor, { returnPath: "/" });
       await session.poll("!!document.querySelector('button[data-variant=cta]') && document.fonts.status==='loaded'");
       if(await session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width"))await session.click('[title="Close sidebar"]');
       await session.poll("!!document.querySelector('[title=\"Open sidebar\"]')");
@@ -93,7 +97,7 @@ export async function exercisePrimitiveOwnership({ port, directory }) {
       const branding = await settingsActionZones(session);
       await session.button('Cancel changes','[data-branding-settings]');
       await session.poll("!document.querySelector('[data-branding-settings] [data-variant=cta]')");
-      const response = await fetch(`${server.baseUrl}/_/api/plugin-host/primary-probe/commands/request`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(10000) });
+      const response = await fetch(`${server.baseUrl}/_/api/plugin-host/primary-probe/commands/request`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw Error(`Primary fixture request rejected: ${response.status}`);
       await response.body?.cancel();
       await session.poll("!!document.querySelector('#permission-request-title')");

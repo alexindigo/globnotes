@@ -11,7 +11,7 @@
  *   - bm25 score VALUES (Whoosh vs FTS5 ranking) — presence compared
  *   - highlight TAG NAMES (Whoosh <strong class="match"> vs FTS5 <mark>)
  *   - index.html / built asset bytes (different viewer builds)
- *   - additive fields (Deno config exposes autoEnablePlugins)
+ *   - account setup and capability projection replace Python auth modes
  *
  * Usage: node scripts/parity-check.mjs
  * Requires: docker, deno in PATH.
@@ -246,8 +246,7 @@ try {
   procs.push(py);
 
   // Deno server from the worktree
-  mkdirSync(join(vaultDeno, ".globnotes"), { recursive: true });
-  writeFileSync(join(vaultDeno, ".globnotes", "config.json"), JSON.stringify({ auth_type: "none" }));
+  const firstAccount = { username: "parity-owner", password: crypto.randomUUID() };
   const deno = spawn(
     "deno",
     [
@@ -271,6 +270,18 @@ try {
 
   await waitHealth(`http://localhost:${PY_PORT}`, "python");
   await waitHealth(`http://localhost:${DENO_PORT}`, "deno");
+  // The Deno side provisions a real first account. Guest Edit then exercises
+  // the same note operations as the Python side's unauthenticated fixture.
+  const denoApi = `http://localhost:${DENO_PORT}/_/api`;
+  const setup = await fetch(`${denoApi}/setup`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...firstAccount, everybody: "edit", updateId: crypto.randomUUID() }),
+  });
+  const ready = await setup.json();
+  if (!setup.ok || ready.setupRequired !== false || !ready.access_token) {
+    throw new Error(`Deno parity fixture did not create its account: ${setup.status}`);
+  }
   await waitIndexReady(`http://localhost:${PY_PORT}`);
   await waitIndexReady(`http://localhost:${DENO_PORT}`);
 
@@ -278,18 +289,15 @@ try {
   await compareJson("health", "/_/api/health");
   await compareJson("setup", "/_/api/setup");
 
-  // Config: Deno exposes the additive autoEnablePlugins field — strip it.
   {
-    const [py, deno] = await Promise.all([
-      fetch(`http://localhost:${PY_PORT}/_/api/config`).then((r) => r.json()),
-      fetch(`http://localhost:${DENO_PORT}/_/api/config`).then((r) => r.json()),
-    ]);
-    delete deno.autoEnablePlugins;
-    check(
-      "config (common fields)",
-      JSON.stringify(normalize(py)) === JSON.stringify(normalize(deno)),
-      `\n  py:   ${JSON.stringify(py)}\n  deno: ${JSON.stringify(deno)}`,
-    );
+    const guest = await fetch(`${denoApi}/config`).then(r => r.json());
+    const admin = await fetch(`${denoApi}/auth-check`, {
+      headers: { authorization: `Bearer ${ready.access_token}` },
+    }).then(r => r.json());
+    expectedDivergence("config uses named Admin and guest Edit capabilities",
+      guest.principal?.kind === "guest" && guest.capabilities?.canRead === true &&
+      guest.capabilities?.canEdit === true && guest.capabilities?.canManageVault === false &&
+      admin.principal?.login === firstAccount.username && admin.capabilities?.canManageVault === true);
   }
 
   await compareJson("index-status shape", "/_/api/index-status");

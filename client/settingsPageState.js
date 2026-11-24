@@ -43,11 +43,13 @@ async function bounded(operation) {
 /** Records outlive rendered pages. Registry adapters own effects; this
  * controller owns drafts, request admission, revisions and decisions. */
 export function createSettingsPageState({ registry, confirm, getSession = () => null, getRecoveryScope,
-  isGuest = () => getSession() === null, captureSession, canRead = () => true, canWrite = () => true }) {
+  isGuest = () => getSession() === null, captureSession, captureCredential,
+  canRead = () => true, canWrite = () => true }) {
   const records = reactive(new Map());
   const retained = new Map();
   const requests = new Map();
   const wires = reactive(new Map());
+  const reopen = new Set();
   const lifetime = createSessionContext({ key: getSession });
   let session = getSession(), scope = getRecoveryScope?.(), guest = isGuest();
   function synchronize() {
@@ -61,6 +63,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
         const entries = Object.entries(record.drafts).filter(([key]) => record.submitted?.versions[key] !== record.versions[key]);
         if (entries.length) preserve(record, Object.fromEntries(entries));
       } else if (dirty(record) || record.uncertain) preserve(record, record.drafts, writeFailure(record));
+      if (next === null || authorized === scope) reopen.add(record.id);
     }
     for (const record of records.values()) record.retired = true;
     records.clear();
@@ -68,6 +71,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     session = next;
     scope = authorized;
     guest = nextGuest;
+    if (guest && next !== null) for (const draft of retained.values()) draft.fellBack = true;
     if (!guest) for (const [id, draft] of retained) {
       if (!scope || draft.scope !== scope) retained.delete(id);
     }
@@ -118,7 +122,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     if (!record) {
       const page = registry.find(id);
       if (!page) throw new Error(`Unavailable settings page: ${id}`);
-      record = reactive({ id, key, page, session: getSession(), recoveryScope: scope, available: page.available !== false, values: {}, revision: 0, sourceKey: undefined, fields: {}, drafts: {}, versions: {}, errors: {}, status: "unloaded", loaded: false, generation: 0, message: "", uncertain: null, writeFailed: false, changedDescriptor: null });
+      record = reactive({ id, key, page, session: getSession(), recoveryScope: scope, credentialCurrent: captureCredential?.(), available: page.available !== false, values: {}, revision: 0, sourceKey: undefined, fields: {}, drafts: {}, versions: {}, errors: {}, status: "unloaded", loaded: false, generation: 0, message: "", uncertain: null, writeFailed: false, changedDescriptor: null });
       records.set(key, record);
     }
     return record;
@@ -141,19 +145,29 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     const current=registry.find(id);
     // Draft schemas are retained; current runtime status is not schema state.
     const blocking=current ? current.blocking : record.page.blocking && {...record.page.blocking,active:false};
-    const fieldViews = Object.fromEntries((record.page.descriptor?.fields ?? []).map(field => [field.key, {
-      value:Object.hasOwn(record.drafts, field.key) ? record.drafts[field.key] : values[field.key],
-      recovered: record.recovered && Object.hasOwn(record.drafts, field.key),
-      currentValue: record.values[field.key],
-      readonly:!writable || record.session !== getSession() || !record.available || !record.loaded || !!record.fields[field.key]?.readonly,
-      error:record.errors[field.key] ?? '', pin:pinExplanation(record.fields[field.key]),
-    }]));
+    const recovery = !record.loaded && record.available && !guest && scope ? retained.get(id) : null;
+    const revalidating = recovery && recovery.scope === scope && !recovery.fellBack && recovery.credentialCurrent?.() &&
+      current && current.available !== false && JSON.stringify(current.descriptor) === JSON.stringify(recovery.page.descriptor)
+      ? recovery.values : {};
+    const fieldViews = Object.fromEntries((record.page.descriptor?.fields ?? []).map(field => {
+      const retainControl = Object.hasOwn(revalidating, field.key);
+      const raw = revalidating[field.key];
+      return [field.key, {
+        value: retainControl ? raw : Object.hasOwn(record.drafts, field.key) ? record.drafts[field.key] : values[field.key],
+        recovered: record.recovered && Object.hasOwn(record.drafts, field.key),
+        currentValue: record.values[field.key],
+        readonly: !writable || !record.available || !record.loaded || !!record.fields[field.key]?.readonly,
+        retainControl,
+        error: (retainControl ? validateSettingsInput(field, raw).error : record.errors[field.key]) ?? '', pin:pinExplanation(record.fields[field.key]),
+      }];
+    }));
     return { ...record, recoverySave: record.recovered && dirty(record), fieldViews, fieldGroups:settingsFieldGroups(record.page.descriptor ?? {}, values), retainedText:JSON.stringify(record.drafts, null, 2),
       blockingText:blocking?.actions?.length ? `${blocking.active===false ? 'Can block when on' : 'Can block'}: ${blocking.actions.join(', ')}. Errors or timeouts also cancel the action.` : '',
       recovery:{visible:record.status==='conflict'||record.status==='error'||!record.available||!!record.changedDescriptor,label:record.uncertain?'Check current status':'Retry'},
       canRetry:writable && retryAdmissible(record),
-      values, committed: record.values, dirty: dirty(record), pending: requests.has(record.key) || pendingWrite(record) || loads.has(record.key) || reviews.has(record.key), canSave: record.available && record.loaded && !blockingLoad(record) && !reviews.has(record.key) && !record.changedDescriptor && !Object.keys(record.errors).length };
+      values, committed: record.values, dirty: dirty(record), pending: requests.has(record.key) || pendingWrite(record) || loads.has(record.key) || reviews.has(record.key), canSave: writable && record.available && record.loaded && !blockingLoad(record) && !reviews.has(record.key) && !record.changedDescriptor && record.status !== "conflict" && !Object.keys(record.errors).length && !hasPinnedDraft(record) };
   }
+  const hasPinnedDraft = record => Object.keys(record.drafts).some(key => record.fields[key]?.readonly);
   // Re-read the registry at settlement: a retained D2 is not necessarily the
   // current definition. Never project old acknowledgement values as new-schema
   // data, or adopt while any original owner still has unresolved work.
@@ -195,19 +209,35 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
   function preserve(record, values, failure, older = false) {
     const previous = retained.get(record.id);
     const existing = previous?.scope === record.recoveryScope ? previous : null;
-    retained.set(record.id, { scope: record.recoveryScope,
+    retained.set(record.id, { scope: record.recoveryScope, page: record.page, credentialCurrent: record.credentialCurrent, session: record.session,
+      fellBack: existing?.fellBack, baseline: older && existing?.baseline ? existing.baseline : {
+        revision: record.revision, sourceKey: record.sourceKey, values: copy(record.values), conflict: record.status === "conflict",
+      },
       values: older ? { ...values, ...existing?.values } : { ...existing?.values, ...values }, failure: failure ?? existing?.failure });
   }
   function restore(record) {
     const recovery = retained.get(record.id);
     if (!scope || recovery?.scope !== scope || !record.loaded || !canRead(record.page)) return;
     retained.delete(record.id);
-    record.recovered = true;
-    for (const [field, value] of Object.entries(recovery.values)) {
-      if (record.page.descriptor?.fields?.some(entry => entry.key === field) && !Object.hasOwn(record.drafts, field)) edit(record.id, field, value);
+    const { baseline } = recovery;
+    const sameCredential = !recovery.fellBack && (recovery.credentialCurrent?.() ?? record.session === recovery.session);
+    const changed = baseline.conflict || baseline.revision !== record.revision ||
+      baseline.sourceKey !== undefined && baseline.sourceKey !== record.sourceKey ||
+      Object.entries(baseline.values).some(([key, value]) => value !== record.values[key]);
+    record.recovered = !sameCredential;
+    for (const field of record.page.descriptor?.fields ?? []) {
+      const key = field.key;
+      if (!Object.hasOwn(recovery.values, key) || Object.hasOwn(record.drafts, key)) continue;
+      record.drafts[key] = recovery.values[key];
+      record.versions[key] = 1;
+      const { error } = validateSettingsInput(field, recovery.values[key]);
+      if (error) record.errors[key] = error;
     }
     const failure = recovery.failure;
-    if (!failure) return;
+    if (!failure) {
+      if (sameCredential && changed) { record.status = "conflict"; record.message = "Settings changed elsewhere. Your draft is retained."; }
+      return;
+    }
     record.writeFailed = true;
     record.status = failure.status;
     record.message = failure.message;
@@ -258,7 +288,9 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     return snapshot(id);
   }
   function acknowledge(record, submitted, result) {
-    record.values = copy(result.values);
+    const projection = result.committed !== true;
+    record.values = projection ? copy(result.values) : {};
+    record.loaded = projection;
     record.revision = result.revision;
     record.sourceKey = result.sourceKey;
     record.fields = copy(result.fields ?? {});
@@ -268,7 +300,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
         delete record.errors[key];
       }
     }
-    record.status = "idle";
+    record.status = projection ? "idle" : "unloaded";
     record.message = "";
     record.uncertain = null;
     record.writeFailed = false;
@@ -292,6 +324,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
   }
   async function commit(id, key) {
     if (lifetime.disposed) return false;
+    if (!registry.find(id) && !records.has(recordKey(id))) return false;
     const record = ensure(id);
     const keyForWrite = record.key;
     if (!canRead(record.page) || !canWrite() || key !== undefined && record.recovered) return false;
@@ -304,8 +337,8 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     if (pendingWrite(record) || blockingLoad(record) || reviews.has(scope)) return false;
     if (!dirty(record)) return true;
     if (!record.loaded || !record.available || record.changedDescriptor || record.uncertain || record.status === "conflict") return false;
-    if (key ? record.errors[key] : Object.keys(record.errors).length) return false;
-    const versions = Object.fromEntries(Object.keys(record.drafts).filter(key => !record.errors[key]).map(key => [key, record.versions[key]]));
+    if (key ? record.errors[key] || record.fields[key]?.readonly : Object.keys(record.errors).length || hasPinnedDraft(record)) return false;
+    const versions = Object.fromEntries(Object.keys(record.drafts).filter(key => !record.errors[key] && !record.fields[key]?.readonly).map(key => [key, record.versions[key]]));
     if (!Object.keys(versions).length) return false;
     const submitted = { page: record.page, session: record.session, key: record.key, values: copy(envelope(record)), revision: record.revision, sourceKey: record.sourceKey, versions,
       raw: Object.fromEntries(Object.keys(versions).map(key => [key, record.drafts[key]])) };
@@ -330,6 +363,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
         if (replacement) restore(replacement);
       }
       adoptDescriptor(record);
+      if (!record.loaded && !record.retired && !record.writeFailed && current()) void load(id);
     }
     original.then(result => {
       if (!observed && mayRecordOutcome() && record.uncertain) acknowledge(record, submitted, result);
@@ -444,6 +478,9 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
         record.changedDescriptor = page;
       }
       if (!adoptDescriptor(record) && !dirty(record) && !requests.has(record.key) && !wires.has(record.key) && !loads.has(record.key) && !reviews.has(record.key) && !record.uncertain) load(record.id);
+    }
+    if (getSession() != null) for (const id of reopen) {
+      if (registry.find(id) && canRead(registry.find(id))) { reopen.delete(id); void load(id); }
     }
   }
   async function settle() {

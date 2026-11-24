@@ -23,12 +23,8 @@ import { done, pending, waitUntil } from "./helpers/wait.ts";
 import { hostInitialized } from "./helpers/product_settlement.ts";
 import { state } from "../server/state.ts";
 import { createIdentityNoteRender } from "../server/api/endpoints/_/api/render/%23...path/get.ts";
-import legacyRender, {
-  createIdentityRender,
-} from "../server/api/endpoints/_/api/render/post.ts";
-import legacyCommand, {
-  createIdentityPluginCommand,
-} from "../server/api/endpoints/_/api/plugin-host/%23id/commands/%23command/post.ts";
+import { createIdentityRender } from "../server/api/endpoints/_/api/render/post.ts";
+import { createIdentityPluginCommand } from "../server/api/endpoints/_/api/plugin-host/%23id/commands/%23command/post.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import { METADATA_LIMITS } from "../server/metadata/contracts.ts";
 import { WorkerDeliveryGate } from "./helpers/worker_liveness.ts";
@@ -77,6 +73,8 @@ async function withViewer(run: (f: ViewerFixture) => Promise<void>) {
       "service.js": source,
       "endpoints/get.js":
         `import {enteredEndpoint} from '../service.js';export default async function(request,ctx){enteredEndpoint();if(request.query.length){await ctx.readNote('gate');return 'private';}let outcome,requestId;try{requestId=(await ctx.actions.request('create',{path:'endpoint-output',content:'endpoint-live-edit',base:{kind:'absent'}})).requestId;outcome='accepted';}catch{outcome='denied';}return {outcome,requestId,headers:request.headers,snapshot:ctx.snapshot};}`,
+      "endpoints/post.js":
+        `import {enteredEndpoint} from '../service.js';export default () => {enteredEndpoint();return 'posted';};`,
     },
     fault: async (method, args, boundary) => {
       if (
@@ -185,30 +183,24 @@ function absent(filename: string): boolean {
   }
 }
 
-Deno.test("identity viewer: command parsing and outcomes match the legacy route", () =>
+Deno.test("identity viewer: active command parses once and preserves outcomes", () =>
   withViewer(async (f) => {
+    f.policy("edit");
     const raw = new Request("http://fixture/command", {
       method: "POST",
       headers: { authorization: `Bearer ${f.token.access_token}` },
     });
-    for (
-      const handler of [
-        legacyCommand,
-        createIdentityPluginCommand(f.auth, f.runtime),
-      ]
-    ) {
+    {
+      const handler = createIdentityPluginCommand(f.auth, f.runtime);
       let bodyReads = 0;
-      const request = (id: string, command: string, json?: unknown) =>
+      const request = (id: string, command: string, text = "") =>
         ({
           _raw: raw,
           params: { id, command },
           body: {
-            json: async () => {
+            text() {
               bodyReads++;
-              return await new Request(raw.url, {
-                method: "POST",
-                body: json === undefined ? null : JSON.stringify(json),
-              }).json();
+              return Promise.resolve(text);
             },
           },
         }) as unknown as PathfinderRequest;
@@ -219,26 +211,85 @@ Deno.test("identity viewer: command parsing and outcomes match the legacy route"
       );
       assertEquals([missing.status, bodyReads], [404, 0]);
       for (const payload of [undefined, null, [1, "ok"]]) {
-        const response = await handler(request(f.id, "echo", payload));
+        const response = await handler(
+          request(f.id, "echo", JSON.stringify(payload)),
+        );
         assertEquals([response.status, await response.json()], [200, {
           result: payload === undefined ? {} : payload,
         }]);
       }
+      assertEquals(bodyReads, 3);
+      const malformed = await assertRejects(
+        () => handler(request(f.id, "echo", "{")),
+        HttpError,
+        "HTTP 400",
+      );
+      assertEquals([malformed.detail, bodyReads], [
+        "Invalid JSON request body.",
+        4,
+      ]);
       const unknown = await assertRejects(
         () => handler(request(f.id, "not-registered")),
         HttpError,
         "HTTP 404",
       );
-      const failed = await assertRejects(
-        () => handler(request(f.id, "fail")),
-        HttpError,
-        "HTTP 500",
-      );
-      assertEquals([unknown.status, failed.status], [404, 500]);
+      const failed = await handler(request(f.id, "fail"));
+      assertEquals([unknown.status, failed.status, await failed.json()], [
+        404,
+        500,
+        {
+          detail: "plugin command failed",
+        },
+      ]);
     }
   }));
 
-Deno.test("identity viewer: render POST skips the same whitespace-padded IDs as the legacy route", () =>
+Deno.test("identity viewer: revoked command reply does not claim the completed side effect was refused at admission", () =>
+  withViewer(async (f) => {
+    f.policy("edit");
+    const command = createIdentityPluginCommand(f.auth, f.runtime);
+    const request = () => {
+      const raw = new Request("http://fixture/command", {
+        method: "POST",
+        body: JSON.stringify("command-receipt.bin"),
+        headers: { authorization: `Bearer ${f.token.access_token}` },
+      });
+      return {
+        _raw: raw,
+        body: raw,
+        params: { id: f.id, command: "fs-write" },
+      } as unknown as PathfinderRequest;
+    };
+    const filename = `${f.fixture.vault}/command-receipt.bin`;
+    assertEquals(absent(filename), true);
+    const route = request();
+    await heldOperation({
+      label: "command reply after filesystem commit",
+      owner: () => f.runtime,
+      progress: { kind: "product" },
+      signal: f.scope.signal,
+    }, (hold) => {
+      f.holdWrite(hold);
+      return command(route);
+    }, async (operation) => {
+      await operation.reached();
+      assertEquals(Deno.readTextFileSync(filename), "A");
+      f.identity.now = f.token.principal.expiresAt;
+      const result = await operation.result();
+      assertEquals(await result.json(), {
+        code: "plugin_outcome_unknown",
+        detail: "The plugin callback was dispatched; its outcome is unknown.",
+      });
+    });
+    const refused = await command(request());
+    assertEquals([refused.status, await refused.json()], [401, {
+      code: "credentials_refused",
+      detail: "Invalid authentication credentials.",
+    }]);
+    assertEquals(Deno.readTextFileSync(filename), "A");
+  }));
+
+Deno.test("identity viewer: render POST skips whitespace-padded plugin IDs", () =>
   withViewer(async (f) => {
     const dir = await f.fixture.install("probe", {}, {
       "main.js":
@@ -259,7 +310,8 @@ Deno.test("identity viewer: render POST skips the same whitespace-padded IDs as 
       method: "POST",
       headers: { authorization: `Bearer ${f.token.access_token}` },
     });
-    for (const handler of [legacyRender, createIdentityRender(f.auth)]) {
+    {
+      const handler = createIdentityRender(f.auth);
       const render = async (query: string) =>
         await (await handler({
           _raw: raw,
@@ -298,9 +350,9 @@ Deno.test("identity viewer: a newer ACL revision with the same grant does not au
         _raw: raw,
         params: { id: f.id, command: "fs-write" },
         body: {
-          json: async () => {
+          text: async () => {
             await hold();
-            return "acl-revision.bin";
+            return JSON.stringify("acl-revision.bin");
           },
         },
       } as unknown as PathfinderRequest), async (operation) => {
@@ -374,7 +426,31 @@ for (
         signal: f.scope.signal,
       }, async (hold) => {
         f.hold(hold);
-        assertEquals(await f.commandAsViewer("timer"), "armed");
+        if (outcome === "view") {
+          // The HTTP surface now refuses before dispatch. The retained
+          // View context still must not let a deferred RPC borrow authority.
+          assertEquals(await f.commandAsViewer("timer"), "armed");
+          return await f.command("status");
+        }
+        const transport = new AbortController();
+        const dispatch = createIdentityPluginCommand(f.auth, f.runtime);
+        const response = await dispatch({
+          _raw: new Request(
+            "http://fixture/_/api/plugin-host/viewer/commands/timer",
+            {
+              method: "POST",
+              signal: transport.signal,
+              headers: { authorization: `Bearer ${f.token.access_token}` },
+            },
+          ),
+          params: { id: f.id, command: "timer" },
+          body: { text: () => Promise.resolve("") },
+        } as unknown as PathfinderRequest);
+        assertEquals(await response.json(), { result: "armed" });
+        // Deno closes the request signal when the response was delivered.
+        transport.abort(
+          new DOMException("HTTP response delivered", "AbortError"),
+        );
         return await f.command("status");
       }, async (operation) => {
         await operation.reached();
@@ -563,6 +639,61 @@ Deno.test("identity viewer: filesystem refusal preserves effect status and no su
     });
   }));
 
+Deno.test("identity viewer: queued mutating proxy retains its admitted Edit lease through the Worker post", () =>
+  withViewer(async (f) => {
+    f.policy("edit");
+    const previous = state.pluginEndpoints;
+    f.scope.defer(() => {
+      state.pluginEndpoints = previous;
+    });
+    state.pluginEndpoints = new PluginEndpoints(() => f.runtime);
+    const request = (method: string) => {
+      const raw = new Request("http://fixture/_/api/plugins/viewer/", {
+        method,
+        headers: { authorization: `Bearer ${f.token.access_token}` },
+      });
+      return {
+        _raw: raw,
+        method,
+        params: { id: f.id },
+        query: new URLSearchParams(method === "GET" ? "hold=1" : ""),
+        headers: raw.headers,
+        body: { stream: null },
+      };
+    };
+    await heldOperation({
+      label: "hold ordinary plugin service lane",
+      owner: () => f.runtime,
+      progress: { kind: "product" },
+      signal: f.scope.signal,
+    }, (hold) => {
+      f.hold(hold);
+      return createIdentityPluginProxy(f.auth)(request("GET"));
+    }, async (running) => {
+      await running.reached();
+      const stale = createIdentityPluginProxy(f.auth, "editNotes")(
+        request("POST"),
+      );
+      stale.catch(() => {});
+      await waitUntil(async () => {
+        const work = f.runtime.settlement(f.id, ["ordinary"]);
+        if (work.pending === 2) return done();
+        await work.changed;
+        return pending(work.pending);
+      }, { label: "exact proxy queued beside held callback" });
+      f.policy("view");
+      f.viewer.assertCurrent("readVault");
+      running.release();
+      await assertRejects(
+        running.result,
+        OperationError,
+        "Access policy changed",
+      );
+      await assertRejects(() => stale, OperationError, "Access policy changed");
+      assertEquals(await f.command("endpoint-visits"), 1);
+    });
+  }));
+
 for (
   const route of ["proxy", "render-get", "render-post", "command"] as const
 ) {
@@ -670,20 +801,20 @@ Deno.test("identity viewer: fresh bundle projections, replacement and prepared r
 for (const caller of ["render-post", "command"] as const) {
   Deno.test(`identity viewer: ${caller} preserves its complete response and fences late consumption`, () =>
     withViewer(async (f) => {
-      f.policy("view");
+      f.policy(caller === "command" ? "edit" : "view");
       const invoke = () => {
         const raw = new Request(`http://fixture/_/api/${caller}`, {
           method: "POST",
           headers: { authorization: `Bearer ${f.token.access_token}` },
+          body: caller === "render-post"
+            ? "unsaved buffer"
+            : JSON.stringify({ message: "viewer echo" }),
         });
         const request = {
           _raw: raw,
           params: { id: f.id, command: "echo" },
           query: new URLSearchParams(),
-          body: {
-            text: () => Promise.resolve("unsaved buffer"),
-            json: () => Promise.resolve({ message: "viewer echo" }),
-          },
+          body: raw,
         } as unknown as PathfinderRequest;
         return caller === "render-post"
           ? createIdentityRender(f.auth)(request)
@@ -708,15 +839,22 @@ for (const caller of ["render-post", "command"] as const) {
       );
       const stale = await invoke();
       f.identity.now = f.token.principal.expiresAt;
-      const error = await assertRejects(
-        () => stale.text(),
-        HttpError,
-        "HTTP 401",
-      );
-      assertEquals([error.status, error.detail], [
-        401,
-        "Invalid authentication credentials.",
-      ]);
+      if (caller === "command") {
+        assertEquals(await stale.json(), {
+          code: "plugin_outcome_unknown",
+          detail: "The plugin callback was dispatched; its outcome is unknown.",
+        });
+      } else {
+        const error = await assertRejects(
+          () => stale.text(),
+          HttpError,
+          "HTTP 401",
+        );
+        assertEquals([error.status, error.detail], [
+          401,
+          "Invalid authentication credentials.",
+        ]);
+      }
     }));
 }
 
