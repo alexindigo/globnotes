@@ -313,20 +313,39 @@ try {
   const settingsGate = gateResponse("PUT", "/_/api/plugin-host/review/settings/preferences");
   await fill(current.session, "#settings-field-message", "D1 actual proposal"); await current.session.key("Enter", { code: "Enter", windowsVirtualKeyCode: 13 }); await until(() => settingsGate.response, "Settings PUT not held");
   assert(settingsGate.response.status === 200, "D1 did not actually persist");
+  const preAck = [];
+  async function observeD1(key, unavailable) {
+    // Observe the primary page, not a peer's acknowledgement of a policy write.
+    // The untouched sibling tab witnesses the new catalogue; the retained
+    // preferences tab cannot, since its descriptor must still be D1.
+    const fields = await current.session.poll(`(()=>{
+      const unavailable = [...document.querySelectorAll('[data-declarative-recovery] [role=status]')]
+        .some(row => row.textContent.startsWith('This page is unavailable.'));
+      const published = document.querySelector('[data-settings-tab-id="plugin:review:publication"]')?.textContent.trim();
+      if (unavailable !== ${unavailable} || (!unavailable && published !== ${JSON.stringify(key)})) return false;
+      return [...document.querySelectorAll('#settings-field-message, #settings-field-d2, #settings-field-d3')]
+        .map(field => [field.id, field.tagName, field instanceof HTMLInputElement ? field.value : field.textContent]);
+    })()`);
+    const expected = [["settings-field-message", unavailable ? "SPAN" : "INPUT", "D1 actual proposal"]];
+    assert(!settingsGate.released && JSON.stringify(fields) === JSON.stringify(expected), `Definition replacement discarded D1 owner before settlement (${key}, unavailable=${unavailable}): ${JSON.stringify(fields)}`);
+    preAck.push({ key, unavailable, fields });
+  }
   for (const key of ["d2", "d3"]) {
     await togglePeer(false);
-    current.manifest.settings = [current.descriptor(key)]; await Deno.writeTextFile(`${current.pluginDir}/manifest.json`, JSON.stringify(current.manifest));
+    await observeD1(key, true);
+    current.manifest.settings = [current.descriptor(key), { ...current.descriptor("witness"), id: "publication", label: key }];
+    await Deno.writeTextFile(`${current.pluginDir}/manifest.json`, JSON.stringify(current.manifest));
     await togglePeer(true);
     await until(async () => (await catalog()).plugins.find(plugin => plugin.id === "review").pages[0].fields[0].key === key, "Latest declared schema not installed");
+    await observeD1(key, false);
   }
-  assert(await current.session.evaluate("document.querySelector('#settings-field-message')?.value==='D1 actual proposal'"), "Definition replacement discarded D1 owner before settlement");
-  await release(settingsGate); await current.session.poll("document.querySelector('#settings-field-d3')?.value==='d3-default' && document.querySelector('#settings-field-d3').readOnly===false && !document.querySelector('#settings-field-message')");
+  await release(settingsGate); await current.session.poll("document.querySelector('#settings-field-d3')?.value==='d3-default' && document.querySelector('#settings-field-d3').readOnly===false && !document.querySelector('#settings-field-message, #settings-field-d2')");
   await fill(current.session, "#settings-field-d3", "D3 explicit consumer"); await current.session.key("Enter", { code: "Enter", windowsVirtualKeyCode: 13 });
   await until(async () => (await api("plugin-host/review/settings/preferences")).body.values.d3 === "D3 explicit consumer", "New-schema explicit commit did not persist");
   const storedSettings = JSON.parse(await Deno.readTextFile(`${current.state}/plugin-data/review/settings.json`));
   assert(JSON.stringify(storedSettings).includes("D3 explicit consumer"), "New schema has no actual disk consumer");
   assert(storedSettings.values.preferences.message === "D1 actual proposal", "New-schema save discarded the removed D1 field's stored data");
-  await capture("descriptor-d3-authoritative"); await outcome("descriptor ACK/adoption", { latestDefinition: "d3", oldACKNotUsedAsNewData: true, authoritativeDefaultLoaded: true, explicitNewValue: "D3 explicit consumer", removedD1ValueRetained: true, storedSettings }); await finish();
+  await capture("descriptor-d3-authoritative"); await outcome("descriptor ACK/adoption", { latestDefinition: "d3", preAck, oldACKNotUsedAsNewData: true, authoritativeDefaultLoaded: true, explicitNewValue: "D3 explicit consumer", removedD1ValueRetained: true, storedSettings }); await finish();
   }
 
   if (selected("postponed-prompt")) {
