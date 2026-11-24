@@ -3,28 +3,17 @@ import { assert, assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { bootServer } from "./boot.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
-
-export const remotelySaveSource = new URL(
-  "../../plugins/globnotes-remotely-save/",
-  import.meta.url,
-);
+import { copyRepositorySources } from "./repository_sources.ts";
 
 /** Installs the unmodified production plugin and uses ordinary HTTP controls.
  * Permissions are explicitly approved by this fixture, never by the driver. */
 export async function remotelySaveServerFixture(authorities: string[]) {
   const fixture = await pluginFixture();
-  const declaration = JSON.parse(
-    await Deno.readTextFile(new URL("manifest.json", remotelySaveSource)),
-  );
-  const files: Record<string, string> = {};
-  for (const entry of Deno.readDirSync(remotelySaveSource)) {
-    if (entry.isFile && entry.name.endsWith(".js")) {
-      files[entry.name] = await Deno.readTextFile(
-        new URL(entry.name, remotelySaveSource),
-      );
-    }
-  }
-  await fixture.install(declaration.id, declaration, files);
+  const directory = `${fixture.statePath}/plugins/globnotes-remotely-save`;
+  const { value: declaration } = await fixture.admit(async () => {
+    await copyRepositorySources("remotely-save-plugin", directory);
+    return JSON.parse(await Deno.readTextFile(`${directory}/manifest.json`));
+  });
   const env = {
     GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
     GLOBNOTES__METADATA_PATH: fixture.metadataBase,

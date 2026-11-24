@@ -12,12 +12,12 @@ import { showSidebar } from './sidebar-navigation-native.mjs';
 import { assert } from "./test-outcomes.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { readExportOwner, waitForDriverExport } from "./driver-export-owner.mjs";
+import { copyRepositorySources } from "../../../tests/helpers/repository_sources.ts";
 import { DatabaseSync } from "node:sqlite";
 export { assert };
 export const until = (predicate, label) => waitUntil(async () => await predicate() ? done() : pending({label}), {label, intervalMs:50});
 const utf8 = new TextEncoder(), text = new TextDecoder();
 const password = "native-only-passphrase-canary";
-const source = new URL("../../../plugins/globnotes-remotely-save/", import.meta.url);
 const plugin = '[data-plugin-inventory-id="globnotes-remotely-save"]';
 
 export async function remotelySaveCase(backend, mode, run) {
@@ -29,10 +29,7 @@ export async function remotelySaveCase(backend, mode, run) {
   {
     const label = `${backend}-${mode}`;
     const directory = `${parent}/remotely-save-native/${label}`, vault = `${directory}/vault`, state = `${vault}/.globnotes`;
-    await Deno.mkdir(`${state}/plugins/globnotes-remotely-save`, {recursive:true});
-    for (const entry of Deno.readDirSync(source)) if (entry.isFile && (entry.name.endsWith(".js") || entry.name === "manifest.json")) {
-      await Deno.copyFile(new URL(entry.name, source), `${state}/plugins/globnotes-remotely-save/${entry.name}`);
-    }
+    await copyRepositorySources("remotely-save-plugin", `${state}/plugins/globnotes-remotely-save`);
     let server, session, peer, codec, error, exportControl;
     const results = [], packets = [];
     const captures = backend === "webdav" && ["none", "rclone-base64"].includes(mode);

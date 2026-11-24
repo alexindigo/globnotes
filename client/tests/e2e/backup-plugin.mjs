@@ -7,6 +7,8 @@ import { executeChild } from "./legacy-native-suite.mjs";
 import { BACKUP_CASES } from "./native-fixture-cases.mjs";
 import { openBackupWork, recordBackupNegative, requireBackupNegative } from "../helpers/backup-controls.js";
 import { publishRecord, readRecord, waitForRecord } from "../../../tests/helpers/process_records.ts";
+import { copyRepositorySources } from "../../../tests/helpers/repository_sources.ts";
+import { repositoryBuild } from "../../../tests/helpers/completed_build.ts";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
@@ -44,22 +46,12 @@ const deltas = {
   // must succeed so this control actually exercises a later symlink retarget.
   retarget: [["const slot = state.planned[index];\n        await fs.mkdir(parent(slot.path)", "const slot = { ...state.planned[index], path: this.#slot(await fs.realPath(config.base, options), state.path, index) };\n        await fs.mkdir(parent(slot.path)"]],
 };
-async function copyTree(from, to, relative = "") {
-  await Deno.mkdir(to, { recursive: true });
-  for await (const entry of Deno.readDir(from)) {
-    const name = relative ? `${relative}/${entry.name}` : entry.name;
-    if ([".git", "node_modules", "client/.vite"].includes(name)) continue;
-    if (entry.isDirectory) await copyTree(`${from}/${entry.name}`, `${to}/${entry.name}`, name);
-    else if (entry.isSymlink) await Deno.symlink(await Deno.readLink(`${from}/${entry.name}`), `${to}/${entry.name}`);
-    else await Deno.copyFile(`${from}/${entry.name}`, `${to}/${entry.name}`);
-  }
-}
 if (options.controls) {
   const outcomes = [], original = await Deno.readTextFile(`${ROOT}/plugins/globnotes-backup/backup.js`);
   for (const kind of kinds) {
     for (const mode of ["healthy", "broken"]) {
       const directory = `${artifacts}/${kind}-${mode}`; await Deno.mkdir(directory);
-      const source = `${directory}/source`; await copyTree(ROOT, source);
+      const source = `${directory}/source`; await copyRepositorySources("backup-control", source);
       for (const name of ["deno.json", "deno.lock"]) equal(await Deno.readTextFile(`${source}/${name}`), await Deno.readTextFile(`${ROOT}/${name}`), "Locked dependency inputs must match before cache reuse");
       assert((await Deno.stat(`${ROOT}/node_modules`)).isDirectory, "Installed dependency reference unavailable");
       await Deno.symlink(`${ROOT}/node_modules`, `${source}/node_modules`);
@@ -87,6 +79,8 @@ if (options.controls) {
   await publishRecord(`${artifacts}/controls.json`, JSON.stringify({ kinds, outcomes }, null, 2), { createNew: true });
   console.log("BACKUP PLUGIN CONTROLS OK", JSON.stringify(outcomes));
 } else {
+  // Control copies have source only; do not use client/dist as a build signal.
+  const build = await repositoryBuild(undefined, { required: true });
   const outcomes = [], fixtures = [];
   let current;
   async function api(route, method = "GET", body) {
@@ -118,7 +112,7 @@ if (options.controls) {
     const directory = `${current.directory}/backend-${++current.generation}`; await Deno.mkdir(directory);
     const admitted = Promise.withResolvers(), observation = new AbortController();
     const samples = []; let finished = false;
-    const boot = bootServer(current.vault, current.state, { env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory, onServer: server => admitted.resolve(server), denoArgs: current.label === "retarget" ? ["--preload", retargetPreload] : [] });
+    const boot = bootServer(current.vault, current.state, { build, env:{...env,TMPDIR:Deno.env.get('TMPDIR')}, logsDir: directory, onServer: server => admitted.resolve(server), denoArgs: current.label === "retarget" ? ["--preload", retargetPreload] : [] });
     const observe = (async () => {
       const owner = await admitted.promise;
       assert(owner.vault === current.vault, "Startup observation must own this fixture");
@@ -152,7 +146,7 @@ if (options.controls) {
     await publishRecord(`${current.state}/config.json`, JSON.stringify({ auth_type: "none", ...(label === "settings-lock" ? { read_only_settings: true } : {}) }));
     if (seed) { await Deno.mkdir(`${current.state}/plugin-data/globnotes-backup`, { recursive: true }); await publishRecord(`${current.state}/plugin-data/globnotes-backup/settings.json`, JSON.stringify({ schemaVersion: 1, revision: 1, values: { backup: seed } })); }
     if (["recovery", "cleanup", "retarget"].includes(label)) {
-      const plugin = `${current.state}/plugins/globnotes-backup`; await copyTree(`${ROOT}/plugins/globnotes-backup`, plugin);
+      const plugin = `${current.state}/plugins/globnotes-backup`; await copyRepositorySources("backup-plugin", plugin);
       const file = `${plugin}/backup.js`, text = await Deno.readTextFile(file), target = label !== "retarget" ? "metadata = await writeRecord(fs, metadataPath, next, metadata, options);" : "const completed = [];";
       equal(text.split(target).length - 1, 1, "fault/barrier seam");
       if (label === "retarget") await publishRecord(`${plugin}/native-record-publication.ts`, await Deno.readFile(new URL("../../../tests/helpers/record_publication.ts", import.meta.url)), { createNew: true });

@@ -13,7 +13,7 @@ import { finalizeNativeCase } from "./native-case-finalization.mjs";
 
 const configFile = resolve(dirname(fileURLToPath(import.meta.url)), "../../../deno.json");
 
-export async function bootServer(vault, stateDir, { env = {}, logsDir = "", allowFailed = false, headers = {}, onServer = () => {}, denoArgs = [] } = {}) {
+export async function bootServer(vault, stateDir, { env = {}, logsDir = "", allowFailed = false, headers = {}, onServer = () => {}, denoArgs = [], build } = {}) {
   const environment = { ...env }, requestHeaders = { ...headers };
   const prefix = environment.GLOBNOTES__SERVER_PATHPREFIX ?? "";
   const hostname = bindAddress();
@@ -22,7 +22,7 @@ export async function bootServer(vault, stateDir, { env = {}, logsDir = "", allo
       ...environment,
         GLOBNOTES_GLOBNOTES_PATH: resolve(vault),
         GLOBNOTES__METADATA_PATH: metadataBase(resolve(vault), resolve(stateDir)),
-  }, { host: hostname, origin: httpOrigin, denoArgs: ["--cached-only", "--frozen", `--config=${configFile}`, ...denoArgs] });
+  }, { host: hostname, origin: httpOrigin, build, denoArgs: ["--cached-only", "--frozen", `--config=${configFile}`, ...denoArgs] });
   const logs = server.output;
   let closing;
   function close() {

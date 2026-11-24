@@ -53,6 +53,14 @@ Host `/tmp` is refused as a workspace. Examples:
 .devcontainer/run.sh --browser -- bash scripts/gates.sh --all --browser
 ```
 
+Checkout-derived test copies use the named source sets in
+`tests/helpers/repository_sources.ts`, not a walk of the working tree. `run.sh`
+supplies `/run-logs/files.z` from the Git index; for a Git-less export, provide
+that export's NUL-delimited tracked paths in the run directory's `logs/files.z`,
+as the commit hook already does. The copy uses current file bytes, so local
+edits and deliberate control mutations survive. Build output and installed
+dependencies are not source inputs; fixtures still own them separately.
+
 The launcher creates its disk-backed scratch and logs before querying the engine.
 For rootless Podman, `prepare-engine` first runs `podman info --format json` to
 initialize first-use engine/storage state, retaining `logs/engine-info.json` and

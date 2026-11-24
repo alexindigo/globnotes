@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert, assertEquals, assertFalse } from "@std/assert";
-import { copy } from "@std/fs";
 import { fromFileUrl } from "@std/path";
 import { parse, stringify } from "@std/toml";
 import {
@@ -9,6 +8,7 @@ import {
   type TestServer,
 } from "./helpers/boot.ts";
 import { command, DENO } from "./helpers/process.ts";
+import { copyRepositorySources } from "./helpers/repository_sources.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -129,14 +129,8 @@ Deno.test("config acceptance: actual startup aggregates errors and missing defau
     const app = `${root}/app`,
       notes = `${root}/notes`,
       metadata = `${root}/metadata`;
-    await Deno.mkdir(app);
     await Deno.mkdir(notes);
-    for (const dir of ["server", "shared", "defaults", "plugins"]) {
-      await copy(`${ROOT}/${dir}`, `${app}/${dir}`);
-    }
-    for (const name of ["deno.json", "deno.lock", "VERSION"]) {
-      await Deno.copyFile(`${ROOT}/${name}`, `${app}/${name}`);
-    }
+    await copyRepositorySources("config-startup", app);
     await Deno.symlink(`${ROOT}/node_modules`, `${app}/node_modules`);
     await Deno.writeTextFile(`${notes}/Retained.md`, "retained note bytes\n");
     const defaults = parse(

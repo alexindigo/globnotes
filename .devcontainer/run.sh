@@ -72,6 +72,13 @@ fi
 mkdir -p "$run_dir" "$run_dir/tmp" "$run_dir/logs" "$run_dir/artifacts"
 run_dir="$(realpath -- "$run_dir")"
 [[ "$source_dir" != /tmp && "$source_dir" != /tmp/* && "$run_dir" != /tmp && "$run_dir" != /tmp/* ]] || fail 'host /tmp is not a workspace'
+# A linked worktree's Git metadata is not mounted in the container. Supply
+# the names from the host index; the commit hook already supplies files.z
+# from the exact staged tree when it launches against a Git-less export.
+if [[ -e "$source_dir/.git" ]]; then
+    step inventory-source files.stderr.log
+    git -C "$source_dir" ls-files --cached --deduplicate -z > "$run_dir/logs/files.z" 2> "$step_log"
+fi
 # Engine initialization, builds and pulls all need disk-backed scratch and logs.
 mkdir -p "$run_dir/engine-tmp"
 export TMPDIR="$run_dir/engine-tmp"

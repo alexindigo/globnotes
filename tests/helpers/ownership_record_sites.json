@@ -32,14 +32,6 @@
     "family": "legacy-record-import"
   },
   {
-    "file": "tests/config_acceptance_test.ts",
-    "capability": "module:jsr:@std/fs@^1.0.20",
-    "line": 3,
-    "source": "\"@std/fs\"",
-    "context": "import { copy } from \"@std/fs\";",
-    "family": "legacy-record-import"
-  },
-  {
     "file": "tests/helpers/catalog_work_audit.ts",
     "capability": "module:tests/helpers/process_records.ts",
     "line": 6,
@@ -69,14 +61,6 @@
     "line": 6,
     "source": "\"./process_records.ts\"",
     "context": "import { publishRecord, readRecord } from \"./process_records.ts\";",
-    "family": "legacy-record-import"
-  },
-  {
-    "file": "tests/helpers/mcp.ts",
-    "capability": "module:jsr:@std/fs@^1.0.20",
-    "line": 6,
-    "source": "\"@std/fs\"",
-    "context": "import { copy } from \"@std/fs\";",
     "family": "legacy-record-import"
   },
   {

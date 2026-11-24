@@ -3,8 +3,6 @@
 /** Shared pieces of the MCP server tests: a server on the local test
  * domain, an SDK client for it, and copies of the fixture vault. */
 
-import { copy } from "@std/fs";
-import * as path from "@std/path";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -12,18 +10,21 @@ import {
 import { testOrigin } from "../../client/tests/e2e/http-origin.mjs";
 import { bootServer, type TestServer } from "./boot.ts";
 import { command } from "./process.ts";
+import { copyRepositorySources } from "./repository_sources.ts";
 
-export const FIXTURE_VAULT = path.fromFileUrl(
-  new URL("../fixtures/mcp/vault/", import.meta.url),
-);
 /** Notes in the fixture vault. */
 export const FIXTURE_NOTES = 25;
 
 /** A caller-owned copy of the fixture vault. */
 export async function fixtureVaultCopy(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "globnotes-mcp-vault-" });
-  await copy(FIXTURE_VAULT, dir, { overwrite: true });
-  return dir;
+  try {
+    await copyRepositorySources("mcp-vault", dir);
+    return dir;
+  } catch (error) {
+    await Deno.remove(dir, { recursive: true });
+    throw error;
+  }
 }
 
 /** The local test domain and its address (client/tests/e2e/http-origin.mjs
