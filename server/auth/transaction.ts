@@ -41,6 +41,7 @@ interface Journal extends IdentityDecision {
   readonly phase: "prepared" | "decided";
   readonly participants: readonly unknown[];
 }
+type PublicationSet = ReturnType<typeof createPublicationSet>;
 declare const identityParticipantsBrand: unique symbol;
 export interface IdentityParticipants {
   readonly [identityParticipantsBrand]: true;
@@ -58,8 +59,9 @@ export class IdentityTransactionUnavailable extends Error {
 }
 
 /** Construct and recover before exposing the repositories to normal consumers.
- * A failed transaction retains its participants' fences; reopen under exclusive
- * recovery authority rather than adopting arbitrary reread state in this process. */
+ * A failed transaction retains its participants' fences. Reopen a surviving
+ * journal under exclusive recovery authority; only the owner that unlinked it
+ * can finish an interrupted directory confirmation in this process. */
 export class IdentityTransaction {
   readonly #journal;
   readonly #accounts: AccountRepository;
@@ -69,6 +71,7 @@ export class IdentityTransaction {
   readonly #lease: OperationLease<"live">;
   readonly #checkpoint: (phase: string) => void;
   #saved: StoredConfigSnapshot;
+  #unlinked?: { set: PublicationSet; phase: Journal["phase"] };
   #ready = false;
   #active = false;
   readonly #participants = new WeakMap<IdentityParticipants, {
@@ -272,18 +275,53 @@ export class IdentityTransaction {
       operation.retire();
     }
   }
-  #retire(): void {
+  #retire(set: PublicationSet, phase: Journal["phase"]): void {
     assertOperationLease(this.#lease, "live");
     this.#assertJournal(this.#saved);
     this.#journal.assertUnchanged(this.#saved);
-    this.#checkpoint("retiring");
-    // This is the exact domain journal, not a participant or candidate writer.
-    this.#journal.assertUnchanged(this.#saved);
-    assertOperationLease(this.#lease, "live");
-    Deno.removeSync(this.#saved.binding.target);
-    syncOwnedStoredDirectory(dirname(this.#saved.binding.target), this.#root);
-    this.#saved = this.#journal.capture();
-    if (this.#saved.raw !== null) throw new IdentityStateError();
+    if (this.#saved.raw !== null) {
+      this.#checkpoint("retiring");
+      // This is the exact domain journal, not a participant or candidate writer.
+      this.#journal.assertUnchanged(this.#saved);
+      assertOperationLease(this.#lease, "live");
+      const binding = this.#saved.binding;
+      const absent = {
+        raw: null,
+        binding: {
+          ...binding,
+          nodes: binding.nodes.map((node) =>
+            node.location === binding.target
+              ? { ...node, identity: null }
+              : node
+          ),
+        },
+      };
+      Deno.removeSync(this.#saved.binding.target);
+      this.#saved = absent;
+      this.#unlinked = { set, phase };
+    }
+    if (this.#unlinked) {
+      syncOwnedStoredDirectory(dirname(this.#saved.binding.target), this.#root);
+      this.#journal.assertUnchanged(this.#saved);
+    }
+  }
+  #discardPrepared(set: PublicationSet): void {
+    set.discard(() => this.#retire(set, "prepared"));
+    this.#unlinked = undefined;
+    this.#ready = true;
+  }
+  #releaseDecided(set: PublicationSet) {
+    this.#retire(set, "decided");
+    const unlinked = this.#unlinked;
+    this.#unlinked = undefined;
+    this.#ready = true;
+    this.#active = false;
+    try {
+      return set.release();
+    } catch (cause) {
+      this.#unlinked = unlinked;
+      throw cause;
+    }
   }
   recover(authority: OfflineRecoveryAuthority): void {
     if (this.#active) throw new IdentityTransactionUnavailable();
@@ -293,6 +331,12 @@ export class IdentityTransaction {
     this.#ready = false;
     const parts: PublicationParticipant[] = [];
     try {
+      if (this.#unlinked) {
+        const { set, phase } = this.#unlinked;
+        if (phase === "prepared") this.#discardPrepared(set);
+        else this.#releaseDecided(set);
+        return;
+      }
       this.#journal.assertUnchanged(this.#saved);
       if (this.#saved.raw === null) {
         this.#ready = true;
@@ -327,18 +371,15 @@ export class IdentityTransaction {
       );
       if (value.phase === "prepared") {
         set.validate();
-        set.discard();
+        this.#discardPrepared(set);
       } else {
         set.decide();
         const outcome = set.publish();
         if (outcome.state !== "committed") {
           throw new PublicationRecoveryRequired(outcome);
         }
+        this.#releaseDecided(set);
       }
-      this.#retire();
-      this.#ready = true;
-      this.#active = false;
-      if (value.phase === "decided") set.release();
     } catch (cause) {
       this.#ready = false;
       const errors: unknown[] = [cause];
@@ -380,8 +421,8 @@ export class IdentityTransaction {
     }
     this.#active = true;
     this.#ready = false;
-    let set: ReturnType<typeof createPublicationSet> | undefined;
-    let transferred = false;
+    let set: PublicationSet | undefined;
+    let decisionAttempted = false;
     try {
       set = createPublicationSet(
         captured.operationId,
@@ -399,7 +440,7 @@ export class IdentityTransaction {
       this.#write(value, lease);
       this.#checkpoint("prepared");
       set.decide();
-      transferred = true;
+      decisionAttempted = true;
       this.#checkpoint("decision-attempt");
       this.#write({ ...value, phase: "decided" }, lease);
       this.#checkpoint("decided");
@@ -408,39 +449,22 @@ export class IdentityTransaction {
         throw new PublicationRecoveryRequired(outcome);
       }
       this.#checkpoint("installed");
-      this.#retire();
-      this.#ready = true;
-      this.#active = false;
-      return set.release();
+      return this.#releaseDecided(set);
     } catch (cause) {
       this.#ready = false;
-      if (transferred) throw new IdentityTransactionUnavailable({ cause });
-      const errors: unknown[] = [cause];
-      if (set) {
-        try {
-          set.discard();
-        } catch (error) {
-          errors.push(error);
-        }
-      } else {
-        try {
+      if (decisionAttempted) {
+        throw new IdentityTransactionUnavailable({ cause });
+      }
+      try {
+        if (set) this.#discardPrepared(set);
+        else {
           group.discard();
-        } catch (error) {
-          errors.push(error);
-        }
-      }
-      if (errors.length === 1) {
-        try {
-          if (this.#saved.raw !== null) this.#retire();
           this.#ready = true;
-        } catch (error) {
-          errors.push(error);
         }
-      }
-      if (errors.length > 1) {
+      } catch (cleanup) {
         throw new IdentityTransactionUnavailable({
           cause: new AggregateError(
-            errors,
+            [cause, cleanup],
             "Identity preparation and cleanup failed.",
             { cause },
           ),

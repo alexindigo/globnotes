@@ -260,6 +260,7 @@ export function createPublicationSet(
   }
   const ownsWrites = () => members.every((m) => m.writes.ownedBy(fence));
   let warning = false, notificationFailed = false;
+  let requiresRetirement = false;
   const receipt = (
     state: "committed" | "recovery-required",
   ): PublicationOutcome =>
@@ -349,10 +350,14 @@ export function createPublicationSet(
       }
       return receipt("committed");
     },
-    discard() {
+    discard(retireJournal?: () => void) {
       if (fence.decided || fence.phase === "discarding" || !ownsWrites()) {
         return;
       }
+      if (!retireJournal && (requiresRetirement || !journalRetired(journal))) {
+        throw new PublicationSetUnavailable();
+      }
+      if (retireJournal) requiresRetirement = true;
       const errors: unknown[] = [];
       // Revoke synchronously without admitting recovery during cleanup.
       fence.phase = "discarding";
@@ -366,6 +371,15 @@ export function createPublicationSet(
       if (errors.length) {
         fence.phase = "recovery-required";
         throw new AggregateError(errors, "Publication set cleanup failed.");
+      }
+      try {
+        // Clean up candidates while a prepared journal can still record them,
+        // but keep custody of the writes until its owner confirms retirement.
+        if (retireJournal) synchronousResult(retireJournal());
+        if (!journalRetired(journal)) throw new PublicationSetUnavailable();
+      } catch (error) {
+        fence.phase = "recovery-required";
+        throw error;
       }
       fence.phase = "discarded";
       for (const member of members) member.writes.release(fence);

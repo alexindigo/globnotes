@@ -1104,6 +1104,7 @@ Deno.test("publication recovery: journal decoder rejects an array that coerces t
         records: set.records,
       }),
     );
+    scope.defer(() => retireJournal(root));
     const journal = recordReader(
       openRecordDirectory(scope, root),
       "journal.json",
@@ -1178,8 +1179,14 @@ for (const phase of ["prepared", "decided", "half", "installed"] as const) {
         recovery.authority,
         saved.phase,
       );
-      if (saved.phase === "prepared") replay.discard();
-      else {
+      if (saved.phase === "prepared") {
+        assertThrows(
+          () => replay.discard(),
+          PublicationSetUnavailable,
+          unavailable,
+        );
+        replay.discard(() => retireJournal(root));
+      } else {
         replay.decide();
         assertEquals(replay.publish().state, "committed");
         assertThrows(
@@ -1232,7 +1239,7 @@ for (const phase of ["prepared", "decided", "half", "installed"] as const) {
       assertEquals(
         [...Deno.readDirSync(root)].map((e) => e.name).sort(),
         saved.phase === "prepared"
-          ? ["identity.lock", "journal.json"]
+          ? ["identity.lock"]
           : ["identity.lock", "one.json", "two.json"],
       );
     }));
