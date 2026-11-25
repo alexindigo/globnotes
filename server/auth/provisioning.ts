@@ -4,10 +4,16 @@ import { StoredConfigConflict } from "../config/publication_outcome.ts";
 import { OperationError } from "../plugins/errors.ts";
 import { createOperationLease } from "../operation_lease.ts";
 import type { VaultAccess } from "./access.ts";
-import { ACCESS_LEVELS, type AccessLevel } from "./acl.ts";
+import { type AccessLevel, isAccessLevel } from "./acl.ts";
 import { normalizeLogin } from "./accounts.ts";
 import { bindAccountPreparationAuthority } from "./internal/account_credentials.ts";
-import { identity, IdentityStateError, integer, record } from "./records.ts";
+import {
+  fields,
+  identity,
+  IdentityStateError,
+  integer,
+  record,
+} from "./records.ts";
 import type { AccountPrincipal, Principal } from "./sessions.ts";
 import {
   type AuthorityCallback,
@@ -39,30 +45,35 @@ function invalid(): never {
   throw new HttpError(422, "Invalid create-and-add request.");
 }
 function capture(input: unknown): ProvisioningInput {
-  const value: unknown = structuredClone(input);
+  if (!record(input) || !fields(input, FIELDS)) invalid();
+  const {
+    login: rawLogin,
+    temporaryPassword,
+    level,
+    operationId,
+    revision,
+    signature,
+  } = input;
   if (
-    !record(value) || Object.keys(value).length !== FIELDS.length ||
-    Object.keys(value).some((key) => !FIELDS.includes(key)) ||
-    typeof value.login !== "string" ||
-    typeof value.temporaryPassword !== "string" || !value.temporaryPassword ||
-    !ACCESS_LEVELS.includes(value.level as AccessLevel) ||
-    !identity(value.operationId) || !integer(value.revision) ||
-    typeof value.signature !== "string"
+    typeof rawLogin !== "string" ||
+    typeof temporaryPassword !== "string" || !temporaryPassword ||
+    !isAccessLevel(level) || !identity(operationId) || !integer(revision) ||
+    typeof signature !== "string"
   ) invalid();
   let login: string;
   try {
-    login = normalizeLogin(value.login);
+    login = normalizeLogin(rawLogin);
   } catch (error) {
     if (error instanceof IdentityStateError) invalid();
     throw error;
   }
   return Object.freeze({
     login,
-    password: value.temporaryPassword,
-    level: value.level as AccessLevel,
-    operationId: value.operationId,
-    revision: value.revision,
-    signature: value.signature,
+    password: temporaryPassword,
+    level,
+    operationId,
+    revision,
+    signature,
   });
 }
 
@@ -72,34 +83,47 @@ function capture(input: unknown): ProvisioningInput {
 export class AccountProvisioning {
   readonly access: VaultAccess;
   readonly #transaction: IdentityTransaction;
-  /** Admitted work by operation ID until its actual settlement. */
-  readonly #pending = new Map<string, Promise<void>>();
+  /** Work owns its slot until settlement. Aborted callers remove only their
+   * subscription, without leaving a reaction on the shared operation. */
+  readonly #pending = new Map<string, Set<() => void>>();
   constructor(access: VaultAccess, transaction: IdentityTransaction) {
     this.access = access;
     this.#transaction = transaction;
+  }
+  #join(operationId: string, signal?: AbortSignal): Promise<void> | undefined {
+    signal?.throwIfAborted();
+    const waiters = this.#pending.get(operationId);
+    if (!waiters) return;
+    return new Promise((resolve, reject) => {
+      const settle = () => {
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      };
+      const abort = () => {
+        waiters.delete(settle);
+        reject(signal!.reason);
+      };
+      waiters.add(settle);
+      signal?.addEventListener("abort", abort, { once: true });
+    });
   }
   async createAndAdd(
     principal: Principal,
     input: unknown,
     signal?: AbortSignal,
   ) {
-    this.access.admit(principal);
-    const actor = principal as AccountPrincipal;
+    const actor = this.access.admit(principal).principal as AccountPrincipal;
     const data = capture(input);
-    for (
-      let prior = this.#pending.get(data.operationId);
-      prior;
-      prior = this.#pending.get(data.operationId)
-    ) await prior;
-    const work = this.#create(actor, data, signal);
-    const settled = work.then(() => undefined, () => undefined);
-    this.#pending.set(data.operationId, settled);
+    let prior;
+    while ((prior = this.#join(data.operationId, signal))) await prior;
+    const waiters = new Set<() => void>();
+    this.#pending.set(data.operationId, waiters);
     try {
-      return await work;
+      return await this.#create(actor, data, signal);
     } finally {
-      if (this.#pending.get(data.operationId) === settled) {
-        this.#pending.delete(data.operationId);
-      }
+      this.#pending.delete(data.operationId);
+      for (const settle of waiters) settle();
+      waiters.clear();
     }
   }
   /** Keyed by the signing secret: receipts never hold the password or an
@@ -251,11 +275,8 @@ export class AccountProvisioning {
       throw new HttpError(422, "Invalid operation identity.");
     }
     sessions.assertCurrent(principal);
-    for (
-      let prior = this.#pending.get(operationId);
-      prior;
-      prior = this.#pending.get(operationId)
-    ) await prior;
+    let prior;
+    while ((prior = this.#join(operationId, signal))) await prior;
     this.#transaction.assertReady();
     const receipt = readAuthorityState((context) =>
       this.#receipt(operationId, context)
@@ -317,17 +338,13 @@ export class AccountProvisioning {
     signal: AbortSignal | undefined,
     exact: AuthorityCallback<void>,
   ) {
-    const { authority } = this.access;
-    const outcome = createOperationLease("outcome", [
-      () =>
-        readAuthorityState((context) => {
-          signal?.throwIfAborted();
-          context.assertPrincipal(authority.sessions, actor);
-          exact(context);
-          return undefined;
-        }),
-    ], [authority.lifetime]);
-    const disclosure = authority.acknowledgment(outcome.lease);
+    const { authority, vault } = this.access;
+    const disclosure = authority.vaultDisclosure(
+      actor,
+      vault,
+      vault.acl.capture(),
+      { signal, exact },
+    );
     return disclosure.body(disclosure.prepare(value));
   }
 }

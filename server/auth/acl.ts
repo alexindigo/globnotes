@@ -35,6 +35,9 @@ import type { OfflineRecoveryAuthority } from "./offline_recovery.ts";
 export const ACCESS_LEVELS = ["none", "view", "edit", "admin"] as const;
 export type AccessLevel = typeof ACCESS_LEVELS[number];
 export type EverybodyLevel = Exclude<AccessLevel, "admin">;
+export const isEverybodyLevel = (value: unknown): value is EverybodyLevel =>
+  typeof value === "string" &&
+  (value === "none" || value === "view" || value === "edit");
 export interface AclValues {
   readonly everybody: EverybodyLevel;
   readonly grants: Readonly<Record<string, AccessLevel>>;
@@ -47,18 +50,18 @@ export interface AclState extends AclValues {
   readonly updateActorId: string | null;
 }
 export type AclSnapshot = IdentitySnapshot<AclState>;
-const level = (value: unknown): value is AccessLevel =>
+export const isAccessLevel = (value: unknown): value is AccessLevel =>
   typeof value === "string" && ACCESS_LEVELS.includes(value as AccessLevel);
 function validateValues(value: unknown): AclValues {
   if (
     !record(value) || !fields(value, ["everybody", "grants"]) ||
-    !level(value.everybody) || value.everybody === "admin" ||
+    !isEverybodyLevel(value.everybody) ||
     !record(value.grants)
   ) {
     throw new IdentityStateError();
   }
   for (const [id, grant] of Object.entries(value.grants)) {
-    if (!identity(id) || !level(grant)) throw new IdentityStateError();
+    if (!identity(id) || !isAccessLevel(grant)) throw new IdentityStateError();
   }
   return value as unknown as AclValues;
 }

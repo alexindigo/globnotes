@@ -16,13 +16,14 @@ export type {
   PreparedAuthorityRead,
 } from "../internal/authority_disclosure.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
-import { ACCESS_LEVELS, type AclRepository } from "./acl.ts";
+import { ACCESS_LEVELS, type AclRepository, type AclSnapshot } from "./acl.ts";
 import { withAuthorityContext } from "./internal/authority_context.ts";
 import type {
   AuthorityCallback,
   AuthorityReadContext,
 } from "./authority_context.ts";
 import {
+  type AccountPrincipal,
   AuthenticationError,
   type InstanceSessions,
   type Principal,
@@ -149,6 +150,49 @@ export class InstanceAuthority {
       outcome,
     ]);
     return createAuthorityDisclosure(lease, "outcome");
+  }
+  /** Final body fence for vault access workflows, including exact receipts that
+   * may survive Admin loss. Admin-only bodies also retain their admission lease. */
+  vaultDisclosure(
+    actor: AccountPrincipal,
+    vault: AuthorityVault,
+    snapshot: AclSnapshot,
+    options: {
+      signal?: AbortSignal;
+      admin?: VaultAuthorityLease;
+      exact?: AuthorityCallback<void>;
+    } = {},
+  ): AuthorityDisclosure {
+    const { signal, admin, exact } = options;
+    const principal = Object.freeze({ ...actor });
+    const { acl, lifecycle } = vault, epoch = lifecycle.epoch;
+    const policy = withAuthorityContext(
+      undefined,
+      (context) => context.acl(acl).policyKey,
+    );
+    const { lease } = createOperationLease("outcome", [
+      () =>
+        withAuthorityContext(undefined, (context) => {
+          signal?.throwIfAborted();
+          context.assertPrincipal(this.sessions, principal);
+          if (!sameAuthorityVault(this.currentVault(context), vault)) {
+            throw new HttpError(404, "Vault unavailable.");
+          }
+          if (!lifecycle.operational(context)) {
+            throw new HttpError(503, "Vault unavailable.");
+          }
+          exact?.(context);
+          context.assertAclUnchanged(acl, snapshot);
+          if (
+            lifecycle.epoch !== epoch || context.acl(acl).policyKey !== policy
+          ) {
+            throw new StoredConfigConflict();
+          }
+          signal?.throwIfAborted();
+          return undefined;
+        }),
+    ], admin ? [admin.lease] : [this.lifetime]);
+    return this.acknowledgment(lease);
   }
   capabilities(
     principal: Principal,

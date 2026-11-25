@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "@std/assert";
 import { createUuid } from "../shared/uuid.ts";
+import { HttpError } from "@pathfinder/pathfinder";
 import { AclRepository } from "../server/auth/acl.ts";
 import { InstanceAuthority } from "../server/auth/authority.ts";
 import { VaultAccess } from "../server/auth/access.ts";
@@ -19,10 +20,13 @@ import {
   StoredConfigConflict,
 } from "../server/config/publication_outcome.ts";
 import { OperationError } from "../server/plugins/errors.ts";
+import { createOperationLease } from "../server/operation_lease.ts";
+import { recoveryForRoot } from "./helpers/account_preparation.ts";
 import { heldOperation } from "./helpers/owned_operation.ts";
 import { ownedContenders } from "./helpers/owned_contenders.ts";
 import { VAULT_B } from "./helpers/identity.ts";
 import { signIn } from "./helpers/session_delivery.ts";
+import { bounded } from "./helpers/worker_liveness.ts";
 import {
   identityWorkflowFixture,
   type IdentityWorkflows,
@@ -600,6 +604,249 @@ for (const winner of ["primary", "contender"] as const) {
     });
   }
 }
+
+for (
+  const failure of ["preparation", "group discard", "set discard"] as const
+) {
+  Deno.test(`provisioning: recovery owns grant reservations after failed ${failure}`, () =>
+    identityWorkflowFixture(async (f, scope) => {
+      const input = await request(f), before = bytes(f);
+      const acl = f.acl.capture();
+      const vault = `${f.root}/vault`;
+      let alias: string | undefined;
+      const preparationFailure = new Error("Account preparation refused.");
+      const replaceCandidate = () => {
+        const names = [...Deno.readDirSync(vault)].map((entry) => entry.name);
+        const [candidate] = names.filter((name) => name.startsWith(".config-"));
+        alias = `${vault}/${candidate}`;
+        Deno.renameSync(alias, `${vault}/held`);
+        Deno.writeTextFileSync(alias, "foreign file");
+      };
+      let armed = false;
+      const owner = createOperationLease("live", [() => {
+        if (armed) {
+          armed = false;
+          replaceCandidate();
+          throw preparationFailure;
+        }
+        return undefined;
+      }]);
+      scope.defer(() => owner.retire());
+      const prepared = await f.accounts.credentials
+        .preparePasswordOnlyRecipient(
+          bindAccountPreparationAuthority(
+            f.accounts.credentials,
+            "recipient",
+            owner.lease,
+          ),
+          {
+            login: input.login,
+            password: input.temporaryPassword,
+            updateId: input.operationId,
+          },
+        );
+      const stage = () =>
+        f.transaction.prepareRecipient(
+          f.acl,
+          prepared,
+          "edit",
+          acl,
+          { actorId: f.alice.id, payloadHash: "a".repeat(64) },
+          f.lease,
+          input.operationId,
+        );
+      const unavailable =
+        "Identity publication requires recovery; no partial state is available.";
+      try {
+        if (failure === "preparation") {
+          armed = true;
+          const error = assertThrows(
+            stage,
+            AggregateError,
+            "Identity participant preparation and cleanup failed.",
+          );
+          assertStrictEquals(error.cause, preparationFailure);
+          assertEquals(error.errors.map((reason) => reason.message), [
+            preparationFailure.message,
+            CONFLICT,
+          ]);
+        } else {
+          const group = stage();
+          replaceCandidate();
+          if (failure === "group discard") {
+            const error = assertThrows(
+              () => group.discard(),
+              AggregateError,
+              "Identity participant cleanup failed.",
+            );
+            assertEquals(error.errors.map((reason) => reason.message), [
+              CONFLICT,
+            ]);
+          } else {
+            assertThrows(
+              () =>
+                f.transaction.commit(
+                  {
+                    kind: "create-and-add",
+                    operationId: input.operationId,
+                    actorId: f.alice.id,
+                    vaultId: f.vault.id,
+                  },
+                  group,
+                  f.lease,
+                ),
+              IdentityTransactionUnavailable,
+              unavailable,
+            );
+          }
+        }
+        assertEquals(Deno.readTextFileSync(alias!), "foreign file");
+        assertEquals(bytes(f), before);
+        assertThrows(
+          () => Deno.statSync(`${f.root}/identity-transaction.json`),
+          Deno.errors.NotFound,
+          "No such file or directory",
+        );
+        assertThrows(
+          f.transaction.assertReady,
+          IdentityTransactionUnavailable,
+          unavailable,
+        );
+        assertThrows(
+          () => f.transaction.close(),
+          IdentityTransactionUnavailable,
+          unavailable,
+        );
+        assertThrows(
+          () => f.acl.capture(),
+          PublicationSetUnavailable,
+          UNAVAILABLE,
+        );
+      } finally {
+        if (alias) Deno.renameSync(`${vault}/held`, alias);
+      }
+      const recovery = recoveryForRoot(f.root);
+      try {
+        f.transaction.recover(recovery.authority);
+      } finally {
+        recovery.close();
+      }
+      assertThrows(
+        () => Deno.statSync(alias!),
+        Deno.errors.NotFound,
+        "No such file or directory",
+      );
+      f.transaction.assertReady();
+      assertEquals(
+        [bytes(f), f.acl.capture(), f.accounts.byLogin(input.login)],
+        [before, acl, null],
+      );
+      const committed = await f.read(f.provisioning.createAndAdd(f.a, input));
+      assertEquals(committed, {
+        operationId: input.operationId,
+        accountId: f.accounts.byLogin(input.login)!.id,
+        committed: true,
+      });
+    }));
+}
+
+Deno.test("provisioning validation rejects wrongly typed request fields with 422", () =>
+  identityWorkflowFixture(async (f) => {
+    const input = await request(f), before = bytes(f);
+    for (
+      const changes of [
+        { login: ["recipient"] },
+        { temporaryPassword: ["temporary"] },
+        { level: ["edit"] },
+        { operationId: [input.operationId] },
+        { revision: [input.revision] },
+        { signature: [input.signature] },
+      ]
+    ) {
+      const error = await assertRejects(
+        () => f.provisioning.createAndAdd(f.a, { ...input, ...changes }),
+        HttpError,
+        "HTTP 422",
+      );
+      assertEquals(error.status, 422, JSON.stringify(changes));
+    }
+    const review = await assertRejects(
+      () => f.provisioning.review(f.a, [input.operationId]),
+      HttpError,
+      "HTTP 422",
+    );
+    assertEquals(review.status, 422);
+    assertEquals(bytes(f), before);
+  }));
+
+Deno.test("provisioning disclosure: committed and absent receipts reject after an ACL edit", () =>
+  identityWorkflowFixture(async (f) => {
+    const input = await request(f);
+    const created = await f.provisioning.createAndAdd(f.a, input);
+    const retry = await f.provisioning.createAndAdd(f.a, input);
+    const present = await f.provisioning.review(f.a, input.operationId);
+    const absent = await f.provisioning.review(f.a, createUuid());
+    f.policy({ [f.bob.id]: "admin" });
+    for (const body of [created, retry, present, absent]) {
+      await assertRejects(() => f.read(body), StoredConfigConflict, CONFLICT);
+    }
+    assertEquals(await f.read(f.provisioning.review(f.a, input.operationId)), {
+      operationId: input.operationId,
+      accountId: f.accounts.byLogin("recipient")!.id,
+      committed: true,
+    });
+  }));
+
+Deno.test("provisioning: each aborted waiter leaves the shared operation and its nonaborting waiters intact", () => {
+  let hold: (() => Promise<void>) | undefined;
+  return identityWorkflowFixture(async (f) => {
+    const input = await request(f), before = bytes(f);
+    await heldOperation({
+      label: "shared recipient hashing",
+      owner: () => f.provisioning,
+      progress: { kind: "controlled", clock: "external" },
+    }, (h) => {
+      hold = h;
+      return f.provisioning.createAndAdd(f.a, input).then(f.read);
+    }, async (operation) => {
+      await operation.reached();
+      hold = undefined;
+      const duplicate = new AbortController(), review = new AbortController();
+      const duplicateDone = assertRejects(
+        () =>
+          bounded(
+            f.provisioning.createAndAdd(f.a, input, duplicate.signal),
+            "aborted duplicate",
+          ),
+        DOMException,
+        "duplicate stopped",
+      );
+      const reviewDone = assertRejects(
+        () =>
+          bounded(
+            f.provisioning.review(f.a, input.operationId, review.signal),
+            "aborted review",
+          ),
+        DOMException,
+        "review stopped",
+      );
+      duplicate.abort(new DOMException("duplicate stopped", "AbortError"));
+      review.abort(new DOMException("review stopped", "AbortError"));
+      await Promise.all([duplicateDone, reviewDone]);
+      assertEquals(bytes(f), before);
+      const remaining = f.provisioning.review(f.a, input.operationId).then(
+        f.read,
+      );
+      const created = await operation.result();
+      assertEquals(await remaining, created);
+      assertEquals(created, {
+        operationId: input.operationId,
+        accountId: f.accounts.byLogin("recipient")!.id,
+        committed: true,
+      });
+    });
+  }, { hashing: () => hold?.() });
+});
 
 Deno.test("provisioning: outcome waits for admitted hash settlement, then remains actor-scoped after self-demotion", () => {
   let hold: (() => Promise<void>) | undefined;

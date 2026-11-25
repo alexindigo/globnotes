@@ -87,6 +87,9 @@ export class IdentityTransaction {
   #active = false;
   #closed = false;
   #staging = 0;
+  /** Undecided reservations are retained here before discard starts. A failed
+   * discard transfers cleanup to this owner even if no journal was written. */
+  readonly #cleanup = new Set<() => void>();
   readonly #participants = new Map<IdentityParticipants, {
     readonly decision: IdentityDecision;
     readonly parts: readonly PublicationParticipant[];
@@ -150,6 +153,7 @@ export class IdentityTransaction {
     if (this.#closed) return;
     if (
       this.#active || this.#staging || this.#participants.size ||
+      this.#cleanup.size ||
       (!this.#ready && this.#saved.raw === null)
     ) throw new IdentityTransactionUnavailable();
     this.#closed = true;
@@ -157,7 +161,7 @@ export class IdentityTransaction {
   }
   readonly assertReady = () => {
     assertOperationLease(this.#lease, "live");
-    if (this.#closed || !this.#ready || this.#active) {
+    if (this.#closed || !this.#ready || this.#active || this.#cleanup.size) {
       throw new IdentityTransactionUnavailable();
     }
     this.#journal.assertUnchanged(this.#saved);
@@ -173,6 +177,25 @@ export class IdentityTransaction {
     } finally {
       this.#staging--;
     }
+  }
+  #finishCleanup(release: () => void): void {
+    release();
+    this.#cleanup.delete(release);
+  }
+  #discardOrRetain(release: () => void): void {
+    this.#cleanup.add(release);
+    this.#finishCleanup(release);
+  }
+  #discardParts(parts: readonly PublicationParticipant[]): unknown[] {
+    const errors: unknown[] = [];
+    for (const part of parts) {
+      try {
+        this.#discardOrRetain(() => part.discard());
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    return errors;
   }
   /** Register participants by asking this transaction's exact repositories.
    * A matching pathname is not provenance for another repository's installer. */
@@ -267,11 +290,10 @@ export class IdentityTransaction {
     try {
       account = prepareAccount();
     } catch (cause) {
-      try {
-        access.discard();
-      } catch (cleanup) {
+      const errors = this.#discardParts([access]);
+      if (errors.length) {
         throw new AggregateError(
-          [cause, cleanup],
+          [cause, ...errors],
           "Identity participant preparation and cleanup failed.",
           { cause },
         );
@@ -288,23 +310,15 @@ export class IdentityTransaction {
       access,
       discard: () => {
         if (binding.phase !== "prepared") return;
-        const errors: unknown[] = [];
         binding.phase = "discarded";
-        for (const part of binding.parts) {
-          try {
-            part.discard();
-          } catch (error) {
-            errors.push(error);
-          }
-        }
+        const errors = this.#discardParts(binding.parts);
+        this.#participants.delete(group);
         if (errors.length) {
-          binding.phase = "prepared";
           throw new AggregateError(
             errors,
             "Identity participant cleanup failed.",
           );
         }
-        this.#participants.delete(group);
       },
     }) as IdentityParticipants;
     this.#participants.set(group, binding);
@@ -408,8 +422,17 @@ export class IdentityTransaction {
     }
   }
   #discardPrepared(set: PublicationSet): void {
-    set.discard(() => this.#retire(set, "prepared"));
-    this.#unlinked = undefined;
+    const release = () => {
+      set.discard(() => this.#retire(set, "prepared"));
+      this.#unlinked = undefined;
+    };
+    if (this.#saved.raw !== null || this.#unlinked) {
+      // A durable journal can be recovered by the next owner; after unlink,
+      // #unlinked holds custody until directory sync and reservation release.
+      release();
+    } else {
+      this.#discardOrRetain(release);
+    }
     this.#ready = true;
   }
   #releaseDecided(set: PublicationSet) {
@@ -437,13 +460,14 @@ export class IdentityTransaction {
     this.#ready = false;
     const parts: PublicationParticipant[] = [];
     try {
+      this.#journal.assertUnchanged(this.#saved);
+      for (const release of this.#cleanup) this.#finishCleanup(release);
       if (this.#unlinked) {
         const { set, phase } = this.#unlinked;
         if (phase === "prepared") this.#discardPrepared(set);
         else this.#releaseDecided(set);
         return;
       }
-      this.#journal.assertUnchanged(this.#saved);
       if (this.#saved.raw === null) {
         this.#ready = true;
         return;
@@ -488,14 +512,7 @@ export class IdentityTransaction {
       }
     } catch (cause) {
       this.#ready = false;
-      const errors: unknown[] = [cause];
-      for (const part of parts) {
-        try {
-          part.discard();
-        } catch (error) {
-          errors.push(error);
-        }
-      }
+      const errors = [cause, ...this.#discardParts(parts)];
       throw new IdentityTransactionUnavailable({
         cause: errors.length === 1 ? cause : new AggregateError(
           errors,

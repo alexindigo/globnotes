@@ -222,7 +222,9 @@ vault. A named None overrides Everybody else; a declared Admin is separate and
 is never saved as a grant. There is no last-admin veto. Self-demotion returns
 only a safe acknowledgment and the actor's current capabilities. An actor-bound
 status read tells a demoted account whether its own update is current, without
-the list or another person's edit.
+the list or another person's edit. Before sending any vault Access or
+provisioning response, the server rechecks the session, vault binding, ACL and
+operational state; a stale response must be requested again.
 
 Create and add publishes the temporary account, its committed receipt and the
 named grant as one recorded decision with the target Admin checked from
@@ -234,4 +236,7 @@ restoring a later-removed grant. Changed payloads, another actor or vault and
 existing logins conflict. Receipts keep a keyed payload identity, never the
 temporary password or its unkeyed digest. A known-ID status read waits for the
 admitted operation to settle; a missing receipt while it hashes is not failure.
-Unresolved publication reports unavailable state, never a false noncommit.
+An aborted retry or status request stops waiting without cancelling the admitted
+operation. Unresolved publication reports unavailable state, never a false
+noncommit. If staged writes cannot be discarded before the journal is written,
+the transaction retains their reservations for offline recovery.

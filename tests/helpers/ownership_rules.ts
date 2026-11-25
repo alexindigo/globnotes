@@ -47,9 +47,9 @@ export const OPERATION_OWNERSHIP: OwnershipRules = {
   modules: {
     ...RESOURCE_OWNERSHIP.modules,
     [OPERATION_LEASE_OWNER]: [
-      "server/auth/access.ts",
       "server/auth/provisioning.ts",
       "tests/helpers/identity_workflows.ts",
+      "tests/identity_provisioning_test.ts",
       "server/auth/bootstrap.ts",
       "server/auth/cli.ts",
       "tests/helpers/identity_bootstrap.ts",
@@ -348,6 +348,7 @@ export const PREPARATION_OWNERSHIP: OwnershipRules = {
     ],
     [PREPARATION_HELPER]: [
       "tests/helpers/identity_workflows.ts",
+      "tests/identity_provisioning_test.ts",
       "tests/identity_bootstrap_test.ts",
       "tests/helpers/identity_bootstrap.ts",
       "tests/identity_cli_test.ts",

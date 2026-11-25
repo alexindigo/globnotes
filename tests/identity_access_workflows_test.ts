@@ -188,6 +188,121 @@ Deno.test("vault access: self-demotion acknowledgment and actor-bound lost-reply
     );
   }));
 
+Deno.test("vault access validation rejects wrongly typed request fields with 422", () =>
+  identityWorkflowFixture(async (f) => {
+    const view = await f.read(f.access.view(f.a));
+    const input = {
+      revision: view.revision,
+      signature: view.signature,
+      updateId: createUuid(),
+      everybody: "edit",
+      grants: { [f.alice.id]: "admin" },
+    };
+    for (
+      const changes of [
+        { everybody: { toString: null, valueOf: null } },
+        { everybody: ["edit"] },
+        { revision: [view.revision] },
+        { signature: [view.signature] },
+        { updateId: [input.updateId] },
+        { grants: [] },
+        { grants: { [f.alice.id]: ["admin"] } },
+        { additions: null },
+        { additions: [{ login: ["bob"], level: "view" }] },
+        { additions: [{ login: "bob", level: ["view"] }] },
+      ]
+    ) {
+      const error = await assertRejects(
+        () => f.access.update(f.a, { ...input, ...changes }),
+        HttpError,
+        "HTTP 422",
+      );
+      assertEquals(error.status, 422, JSON.stringify(changes));
+    }
+    assertEquals(await f.read(f.access.view(f.a)), view);
+    const resolve = assertThrows(
+      () => f.access.resolve(f.a, ["bob"]),
+      HttpError,
+      "HTTP 422",
+    );
+    const outcome = assertThrows(
+      () => f.access.outcome(f.a, [input.updateId]),
+      HttpError,
+      "HTTP 422",
+    );
+    assertEquals([resolve.status, outcome.status], [422, 422]);
+  }));
+
+for (const response of ["view", "resolve", "update", "outcome"] as const) {
+  Deno.test(`vault access disclosure: ${response} rejects when the vault stops before pull`, () =>
+    identityWorkflowFixture(async (f) => {
+      let operational = true;
+      const vault = {
+        ...f.vault,
+        lifecycle: { epoch: 0, operational: () => operational },
+      };
+      const access = new VaultAccess(
+        new InstanceAuthority(f.sessions, () => vault, f.lease),
+        vault,
+      );
+      const view = await f.read(access.view(f.a));
+      const updateId = createUuid();
+      const body = await (response === "view"
+        ? access.view(f.a)
+        : response === "resolve"
+        ? access.resolve(f.a, "bob")
+        : response === "update"
+        ? access.update(f.a, {
+          revision: view.revision,
+          signature: view.signature,
+          updateId,
+          everybody: "view",
+          grants: { [f.alice.id]: "none", [f.bob.id]: "admin" },
+        })
+        : access.outcome(f.a, updateId));
+      operational = false;
+      const error = await assertRejects(
+        () =>
+          f.read(body),
+        HttpError,
+        "HTTP 503",
+      );
+      assertEquals(error.status, 503);
+      assertEquals(
+        f.acl.capture().value.updateId,
+        response === "update" ? updateId : view.updateId,
+      );
+    }));
+}
+
+Deno.test("vault access disclosure: an unread update capability snapshot cannot outlive a later ACL edit", () =>
+  identityWorkflowFixture(async (f) => {
+    const view = await f.read(f.access.view(f.a));
+    const updateId = createUuid();
+    const body = await f.access.update(f.a, {
+      revision: view.revision,
+      signature: view.signature,
+      updateId,
+      everybody: "none",
+      grants: { [f.alice.id]: "view", [f.bob.id]: "admin" },
+    });
+    assertEquals(f.acl.effectiveLevel(f.a), "view");
+    const outcome = f.access.outcome(f.a, updateId);
+    f.policy({ [f.bob.id]: "admin" });
+    await assertRejects(() => f.read(body), StoredConfigConflict, CONFLICT);
+    await assertRejects(() => f.read(outcome), StoredConfigConflict, CONFLICT);
+    assertEquals(await f.read(f.access.outcome(f.a, updateId)), {
+      matched: false,
+      capabilities: {
+        canRead: false,
+        canEdit: false,
+        canManageVault: false,
+        canManageOwnAccount: true,
+        canCreateVault: true,
+      },
+    });
+  }));
+
 for (const cause of ["external", "cancel"] as const) {
   Deno.test(`vault access: ${cause} at commit retains bytes and memory`, () =>
     identityWorkflowFixture(async (f) => {
