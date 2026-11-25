@@ -108,6 +108,11 @@ const READINESS_ALLOWED: NonNullable<Rule["allowed"]> = [
  * pacing, none of which turns a scheduling stall into a failure. */
 const RAW_CLOCK_ALLOWED: NonNullable<Rule["allowed"]> = [
   {
+    file: "server/config/vault_binding.ts",
+    line: "createdAt: new Date(Date.now()).toISOString(),",
+    reason: "persisted binding creation timestamp, not a liveness budget",
+  },
+  {
     file: "server/auth/local.ts",
     line: "const exp = Math.floor(Date.now() / 1000) +",
     reason: "wall clock by design: a token's expiry is a real-time property",

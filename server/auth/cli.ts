@@ -3,6 +3,8 @@ import { join } from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { snapshotEnvironment } from "../environment.ts";
 import { BoundFileStore } from "../config/file_store.ts";
+import { singleVaultSettings } from "../config/single_vault.ts";
+import { bindSingleVault } from "../config/vault_binding.ts";
 import {
   IdentityBootstrap,
   identityPaths,
@@ -17,7 +19,6 @@ import {
 import { AccountRepository, normalizeLogin } from "./accounts.ts";
 import { InstanceSessions, SessionRepository } from "./sessions.ts";
 import { AclRepository } from "./acl.ts";
-import { identity, record } from "./records.ts";
 import { createOperationLease } from "../operation_lease.ts";
 
 /** Offline only. Acquire the real nonblocking owner before reading identities,
@@ -45,7 +46,7 @@ export async function runIdentityCli(
       throw new Error("Invalid command option.");
     }
     const value = key === "--password-stdin" ? "true" : flags[++i];
-    if (!value || value.startsWith("--")) {
+    if (!value) {
       throw new Error("Missing command option.");
     }
     options.set(key, value);
@@ -55,19 +56,19 @@ export async function runIdentityCli(
   }
   const login = normalizeLogin(options.get("--login")!);
   const paths = identityPaths({ env });
-  if (
-    scope === "vault" &&
-    (options.get("--vault") !== "globnotes" ||
-      Object.keys(paths.loaded.config.vaults.entries).some((name) =>
-        name !== "globnotes"
-      ))
-  ) throw new Error("Unknown or unsupported vault.");
+  if (scope === "vault" && options.get("--vault") !== "globnotes") {
+    throw new Error("Unknown or unsupported vault.");
+  }
+  const target = scope === "vault"
+    ? singleVaultSettings(paths.loaded, env)
+    : undefined;
   signal?.throwIfAborted();
   const owner = acquireOfflineRecovery(paths.instance);
   let accounts: AccountRepository | undefined;
   let bootstrap: IdentityBootstrap | undefined;
   let transaction: ReturnType<typeof openIdentityTransaction>;
   let lifetime: ReturnType<typeof createOperationLease<"live">> | undefined;
+  let recoveryLifetime: typeof lifetime;
   try {
     const recovery = assertOfflineRecovery(owner.authority, paths.instance);
     lifetime = createOperationLease("live", [() => {
@@ -75,11 +76,28 @@ export async function runIdentityCli(
       return undefined;
     }], [recovery]);
     accounts = new AccountRepository(paths.instance);
+    const bindingFile = new BoundFileStore(
+      join(paths.instance, "single-vault.json"),
+    );
+    const bindingBefore = bindingFile.capture();
+    const aclFile = join(paths.vault, "access.json");
+    // A persisted binding also constrains journal recovery. If absent, settle
+    // any journal first so the binding owner can adopt the recovered ACL ID.
+    recoveryLifetime = createOperationLease("live", [() => {
+      bindingFile.assertUnchanged(bindingBefore);
+      return undefined;
+    }], [lifetime.lease]);
+    const existing = bindingBefore.raw === null ? undefined : bindSingleVault(
+      paths.instance,
+      aclFile,
+      recoveryLifetime.lease.assertCurrent,
+    );
     transaction = openIdentityTransaction(
       accounts,
       paths.vault,
-      lifetime.lease,
+      recoveryLifetime.lease,
       owner.authority,
+      existing?.value.id,
     );
     const signing = new SessionRepository(paths.instance);
     const sessions = new InstanceSessions(accounts, signing, paths.sessions);
@@ -134,14 +152,16 @@ export async function runIdentityCli(
           request,
           signal,
         );
-      } else {
-        const raw =
-          new BoundFileStore(join(paths.vault, "access.json")).capture().raw;
-        const value: unknown = raw === null ? null : JSON.parse(raw);
-        if (!record(value) || !identity(value.vaultId)) {
-          throw new IdentityRecoveryError();
-        }
-        const acl = new AclRepository(paths.vault, value.vaultId, { accounts });
+      } else if (target) {
+        const binding = bindSingleVault(
+          target.instancePath,
+          join(target.statePath, "access.json"),
+          lifetime.lease.assertCurrent,
+          accounts,
+        );
+        const acl = new AclRepository(target.statePath, binding.value.id, {
+          accounts,
+        });
         const before = acl.capture();
         acl.save(
           {
@@ -151,12 +171,13 @@ export async function runIdentityCli(
           before,
           { updateId, actorId: null },
           () => {
-            signal?.throwIfAborted();
-            assertOfflineRecovery(owner.authority, paths.instance);
+            binding.assertCurrent();
             signing.assertUnchanged(signingBefore);
             accounts!.assertUnchanged(expected);
           },
         );
+      } else {
+        throw new Error("Invalid identity command.");
       }
     }
     return Object.freeze({
@@ -171,6 +192,7 @@ export async function runIdentityCli(
       transaction?.close();
     } finally {
       accounts?.retireCredentials();
+      recoveryLifetime?.retire();
       lifetime?.retire();
       owner.close();
     }
@@ -192,7 +214,7 @@ if (import.meta.main) {
           reader.cancel(abort.signal.reason).catch(() => {});
         };
         abort.signal.addEventListener("abort", cancelRead, { once: true });
-        const chunks: Uint8Array[] = [];
+        const chunks: Uint8Array<ArrayBuffer>[] = [];
         try {
           abort.signal.throwIfAborted();
           while (true) {

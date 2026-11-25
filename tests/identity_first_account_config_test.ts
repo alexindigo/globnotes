@@ -2,6 +2,7 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { ConfigError, loadInstanceConfig } from "../server/config/loader.ts";
 import { IdentityRecoveryError } from "../server/auth/bootstrap.ts";
+import { AclRepository } from "../server/auth/acl.ts";
 import { identityFixture, UPDATE } from "./helpers/identity.ts";
 import { bootstrapContext } from "./helpers/identity_bootstrap.ts";
 import { resetFixturePassword } from "./helpers/account_preparation.ts";
@@ -122,6 +123,14 @@ Deno.test("configured first account: ordinary sign-in, no grant or seed reapplic
       f.acl.effectiveLevel(login.principal),
       f.acl.capture().persistence.raw,
     ], [false, login.principal.accountId, "admin", null]);
+    const withoutDeclaration = new AclRepository(
+      `${root}/vault`,
+      f.acl.vaultId,
+      {
+        accounts: f.accounts,
+      },
+    );
+    assertEquals(withoutDeclaration.effectiveLevel(login.principal), "none");
     await resetFixturePassword(
       f.accounts,
       login.principal.accountId,

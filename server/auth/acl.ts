@@ -62,6 +62,14 @@ function validateValues(value: unknown): AclValues {
   }
   return value as unknown as AclValues;
 }
+export function assertKnownAclGrantees(
+  accounts: AccountRepository,
+  grants: AclValues["grants"],
+): void {
+  for (const id of Object.keys(grants)) {
+    if (!accounts.byId(id)) throw new IdentityStateError();
+  }
+}
 export function validateAcl(value: unknown, vaultId: string): AclState {
   if (
     !identity(vaultId) || !record(value) || !fields(value, [
@@ -235,9 +243,7 @@ export class AclRepository {
     guard: () => void = () => {},
   ): AclState {
     validateValues(values);
-    for (const id of Object.keys(values.grants)) {
-      if (!this.#accounts.byId(id)) throw new IdentityStateError();
-    }
+    assertKnownAclGrantees(this.#accounts, values.grants);
     // Byte signature is checked by the workflow's view, and the bound capture
     // always rechecks exact bytes/inodes, including same-byte replacement.
     return this.#file.commit(

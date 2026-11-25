@@ -202,6 +202,10 @@ administrator or permission to stop host services.
 | 3 | `account disable-totp --login NAME` | Clears authenticator/floor without changing the password |
 | 4 | `vault grant-admin --vault globnotes --login NAME` | Grants an existing account Admin on the existing configured target only |
 
+If the vault has no saved ACL, `grant-admin` starts with Everybody else set to
+None and uses the persisted single-vault ID that web setup uses. It does not
+create a notes directory or adopt another vault.
+
 Passwords arrive as one nonempty stdin line, never an argv option or printed
 result. Command summaries contain only operation/account/update identities and
 the committed result. A live owner causes immediate refusal, not queued later

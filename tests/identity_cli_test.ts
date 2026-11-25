@@ -8,6 +8,7 @@ import {
   IdentityTransactionUnavailable,
 } from "../server/auth/transaction.ts";
 import { identityPaths } from "../server/auth/bootstrap.ts";
+import { runIdentityCli } from "../server/auth/cli.ts";
 import {
   InstanceSessions,
   SessionRepository,
@@ -23,6 +24,7 @@ import {
   storedAccount,
   UPDATE,
   VAULT_A,
+  VAULT_B,
 } from "./helpers/identity.ts";
 import { fixturePasswordHash } from "./helpers/config.ts";
 import {
@@ -88,6 +90,40 @@ function context(root: string, scope: FixtureScope) {
 const create = ["account", "create", "--login", "alice", "--password-stdin"];
 const refusal =
   "Identity command refused; stop the instance and check command, configuration and identity state. No automatic repair was attempted.\n";
+
+Deno.test("identity CLI: rejects missing values, missing required options and duplicate options", async () => {
+  for (
+    const [args, message] of [
+      [["account", "disable-totp", "--login"], "Missing command option."],
+      [create.slice(0, -1), "Missing command option."],
+      [[...create.slice(0, -1), "--login", "bob"], "Invalid command option."],
+    ] as const
+  ) {
+    await assertRejects(
+      () => runIdentityCli([...args], {}, () => Promise.resolve("unused")),
+      Error,
+      message,
+    );
+  }
+});
+
+Deno.test("identity CLI: create consumes a flag-looking login operand", () =>
+  identityFixture(async (root, scope) => {
+    const f = context(root, scope);
+    const result = await f.cli([
+      "account",
+      "create",
+      "--login",
+      "--alice",
+      "--password-stdin",
+    ], "temporary\n");
+    assertEquals([result.code, result.success, result.stderr], [0, true, ""]);
+    const accounts = new AccountRepository(f.paths.instance);
+    scope.defer(() => accounts.retireCredentials());
+    assertEquals(accounts.capture().value.accounts.map((a) => a.login), [
+      "--alice",
+    ]);
+  }));
 
 Deno.test("identity CLI: fresh and ready creation is temporary, grants no vault, and private-password completion revokes the temporary token", () =>
   identityFixture(async (root, scope) => {
@@ -174,12 +210,14 @@ Deno.test("identity CLI: fresh and ready creation is temporary, grants no vault,
 Deno.test("identity CLI: reset preserves historical secret/encoding/floor, disable clears them, and grant-admin changes only the configured existing ACL", () =>
   identityFixture(async (root, scope) => {
     const f = context(root, scope);
+    Deno.mkdirSync(f.paths.notes, { recursive: true });
     const accounts = new AccountRepository(f.paths.instance);
     scope.defer(() => accounts.retireCredentials());
     const rawKey = "legacy-cli-key";
     const person = importFixtureAccount(
       accounts,
       identityAccount({
+        login: "--alice",
         passwordHash: fixturePasswordHash("private"),
         totpKey: rawKey,
         lastTotpStep: 123,
@@ -213,7 +251,7 @@ Deno.test("identity CLI: reset preserves historical secret/encoding/floor, disab
       "account",
       "reset-password",
       "--login",
-      "alice",
+      "--alice",
       "--password-stdin",
     ], "new-password\n");
     assertEquals([reset.code, reset.success, reset.stderr], [0, true, ""]);
@@ -245,7 +283,7 @@ Deno.test("identity CLI: reset preserves historical secret/encoding/floor, disab
     );
     const code = await authenticatorCode(secret, 1_700_000_000_000);
     const temporary = await signIn(sessions, {
-      username: "alice",
+      username: "--alice",
       password: "new-password",
       totp: code,
     });
@@ -254,7 +292,7 @@ Deno.test("identity CLI: reset preserves historical secret/encoding/floor, disab
       "account",
       "disable-totp",
       "--login",
-      "alice",
+      "--alice",
     ]);
     assertEquals([disabled.code, disabled.success, disabled.stderr], [
       0,
@@ -267,7 +305,7 @@ Deno.test("identity CLI: reset preserves historical secret/encoding/floor, disab
       "--vault",
       "globnotes",
       "--login",
-      "alice",
+      "--alice",
     ]);
     assertEquals([grant.code, grant.success, grant.stderr], [0, true, ""]);
     const reopened = new AccountRepository(f.paths.instance);
@@ -292,7 +330,7 @@ Deno.test("identity CLI: reset preserves historical secret/encoding/floor, disab
       "Invalid authentication credentials.",
     );
     const login = await signIn(next, {
-      username: "alice",
+      username: "--alice",
       password: "new-password",
     });
     assertEquals(
@@ -301,6 +339,123 @@ Deno.test("identity CLI: reset preserves historical secret/encoding/floor, disab
       "admin",
     );
   }));
+
+const grantAlice = [
+  "vault",
+  "grant-admin",
+  "--vault",
+  "globnotes",
+  "--login",
+  "alice",
+];
+const savedBinding = JSON.stringify({
+  version: 1,
+  id: VAULT_A,
+  createdAt: "2026-11-17T11:22:00.000Z",
+});
+
+Deno.test("identity CLI: grant-admin does not create a missing vault", () =>
+  identityFixture(async (root, scope) => {
+    const f = context(root, scope);
+    assertEquals((await f.cli(create, "temporary\n")).code, 0);
+    assertEquals(await f.cli(grantAlice), {
+      code: 1,
+      success: false,
+      stdout: "",
+      stderr: refusal,
+    });
+    assertThrows(() => Deno.statSync(f.paths.notes), Deno.errors.NotFound);
+    assertThrows(() => Deno.statSync(f.paths.vault), Deno.errors.NotFound);
+    assertThrows(
+      () => Deno.statSync(`${f.paths.instance}/single-vault.json`),
+      Deno.errors.NotFound,
+    );
+  }));
+
+for (const bound of [false, true]) {
+  Deno.test(`identity CLI: an offline-created account can be granted Admin with no ACL (binding present: ${bound})`, () =>
+    identityFixture(async (root, scope) => {
+      const f = context(root, scope);
+      Deno.mkdirSync(f.paths.notes, { recursive: true });
+      assertEquals((await f.cli(create, "temporary\n")).code, 0);
+      const bindingFile = `${f.paths.instance}/single-vault.json`;
+      if (bound) Deno.writeTextFileSync(bindingFile, savedBinding);
+      assertThrows(
+        () => Deno.statSync(`${f.paths.vault}/access.json`),
+        Deno.errors.NotFound,
+      );
+      const granted = await f.cli(grantAlice);
+      assertEquals([granted.code, granted.success, granted.stderr], [
+        0,
+        true,
+        "",
+      ]);
+      const binding = Deno.readTextFileSync(bindingFile);
+      const { id } = JSON.parse(binding);
+      if (bound) assertEquals(binding, savedBinding);
+      const accounts = new AccountRepository(f.paths.instance);
+      scope.defer(() => accounts.retireCredentials());
+      const acl = new AclRepository(f.paths.vault, id, { accounts });
+      const { accountId, updateId } = JSON.parse(granted.stdout);
+      assertEquals(acl.capture().value, {
+        version: 1,
+        vaultId: id,
+        revision: 1,
+        everybody: "none",
+        grants: { [accounts.byLogin("alice")!.id]: "admin" },
+        updateActorId: null,
+        updateId,
+      });
+      assertEquals(accountId, accounts.byLogin("alice")!.id);
+    }));
+}
+
+for (
+  const [label, raw, bound] of [
+    ["malformed JSON", "broken", false],
+    ["stored null", "null", false],
+    ["missing fields", JSON.stringify({ version: 1, vaultId: VAULT_A }), false],
+    ...[["foreign vault", VAULT_B, {}, true], ["unknown grantee", VAULT_A, {
+      [VAULT_B]: "view",
+    }, false]].map(
+      ([label, vaultId, grants, bound]) =>
+        [
+          label,
+          JSON.stringify({
+            version: 1,
+            vaultId,
+            revision: 1,
+            updateId: null,
+            updateActorId: null,
+            everybody: "view",
+            grants,
+          }),
+          bound,
+        ] as const,
+    ),
+  ] as const
+) {
+  Deno.test(`identity CLI: refuses ${label} without changing the binding or ACL`, () =>
+    identityFixture(async (root, scope) => {
+      const f = context(root, scope);
+      Deno.mkdirSync(f.paths.notes, { recursive: true });
+      assertEquals((await f.cli(create, "temporary\n")).code, 0);
+      const bindingFile = `${f.paths.instance}/single-vault.json`;
+      if (bound) Deno.writeTextFileSync(bindingFile, savedBinding);
+      const aclFile = `${f.paths.vault}/access.json`;
+      Deno.mkdirSync(f.paths.vault, { recursive: true });
+      Deno.writeTextFileSync(aclFile, raw);
+      assertEquals(await f.cli(grantAlice), {
+        code: 1,
+        success: false,
+        stdout: "",
+        stderr: refusal,
+      });
+      assertEquals(Deno.readTextFileSync(aclFile), raw);
+      if (bound) assertEquals(Deno.readTextFileSync(bindingFile), savedBinding);
+      else assertThrows(() => Deno.statSync(bindingFile), Deno.errors.NotFound);
+    }));
+}
 
 Deno.test("identity CLI: live ownership refuses immediately without queueing and permits only an explicit later retry", () =>
   identityFixture(async (root, scope) => {
