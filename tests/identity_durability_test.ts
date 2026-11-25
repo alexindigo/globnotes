@@ -45,22 +45,46 @@ Deno.test("identity transaction durability: journal retirement failure keeps the
 Deno.test("identity transaction durability: every published file is synced before exact journal removal", () =>
   identityFixture(async (root, scope) => {
     const f = transactionContext(root, scope);
-    const staged = await f.stage();
+    const stage = await f.prepareStage();
+    const vault = `${root}/vault`,
+      journal = `${root}/identity-transaction.json`;
     observeDurability((events) => {
-      assertEquals(
-        f.transaction.commit(staged.meta, staged.parts, f.lease).state,
-        "committed",
-      );
-      const publications = events.filter((e) =>
+      const staged = stage();
+      const result = f.transaction.commit(staged.meta, staged.parts, f.lease);
+      assertEquals([result.state, result.warning], ["committed", null]);
+      // Take only the identity of each random candidate from the native trace;
+      // the expected effect order, kind and destination come from the fixture.
+      const [prepared, decided, access, accounts] = events.filter((e) =>
         e.kind === "link" || e.kind === "rename"
-      );
-      assertEquals(publications.map((e) => e.file), [
-        `${root}/identity-transaction.json`,
-        `${root}/identity-transaction.json`,
-        `${root}/vault/access.json`,
-        `${root}/accounts.json`,
+      ).map((e) => e.source!);
+      assertEquals(events, [
+        { kind: "directory", file: root },
+        { kind: "directory", file: vault },
+        { kind: "directory", file: root },
+        { kind: "file", file: access },
+        { kind: "directory", file: vault },
+        { kind: "directory", file: root },
+        { kind: "directory", file: root },
+        { kind: "directory", file: root },
+        { kind: "file", file: accounts },
+        { kind: "directory", file: root },
+        { kind: "directory", file: root },
+        { kind: "directory", file: root },
+        { kind: "file", file: prepared },
+        { kind: "link", file: journal, source: prepared },
+        { kind: "directory", file: root },
+        { kind: "directory", file: root },
+        { kind: "directory", file: root },
+        { kind: "file", file: decided },
+        { kind: "rename", file: journal, source: decided },
+        { kind: "directory", file: root },
+        { kind: "link", file: `${vault}/access.json`, source: access },
+        { kind: "directory", file: vault },
+        { kind: "directory", file: root },
+        { kind: "link", file: `${root}/accounts.json`, source: accounts },
+        { kind: "directory", file: root },
+        { kind: "unlink", file: journal },
+        { kind: "directory", file: root },
       ]);
-      // Complete directory confirmation suffix proves retirement is not an unsynced unlink.
-      assertEquals(events.at(-1), { kind: "directory", file: root });
-    });
+    }, journal);
   }));

@@ -6,11 +6,13 @@ export function observeDurability(
     events: DurabilityEvent[],
     failDirectory: (file: string) => void,
   ) => void,
+  traceUnlink?: string,
 ): void {
   const open = Deno.openSync,
     mkdir = Deno.mkdirSync,
     link = Deno.linkSync,
-    rename = Deno.renameSync;
+    rename = Deno.renameSync,
+    remove = Deno.removeSync;
   const events: DurabilityEvent[] = [];
   let denied: string | undefined;
   try {
@@ -44,6 +46,14 @@ export function observeDurability(
       rename(from, to);
       events.push({ kind: "rename", file: String(to), source: String(from) });
     };
+    if (traceUnlink !== undefined) {
+      Deno.removeSync = (file, options) => {
+        remove(file, options);
+        if (String(file) === traceUnlink) {
+          events.push({ kind: "unlink", file: traceUnlink });
+        }
+      };
+    }
     run(events, (file) => {
       denied = file;
     });
@@ -52,5 +62,6 @@ export function observeDurability(
     Deno.mkdirSync = mkdir;
     Deno.linkSync = link;
     Deno.renameSync = rename;
+    Deno.removeSync = remove;
   }
 }

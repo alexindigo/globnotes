@@ -119,10 +119,14 @@ The later CLI adapter still owns paired-state classification, legacy refusal,
 configured roots, stdin and signing initialization before account publication.
 Reset-password and disable-authenticator keep their existing distinct behavior.
 
-The prepared identity transaction now records one versioned setup or create-and-add
-decision for the exact configured account and ACL roots. It transfers the sealed
-set before attempting that decision, installs both snapshots, retires the exact
-journal, then releases admission. Undecided preparation can be discarded; an
+The prepared identity transaction records one versioned `setup` decision for
+the exact configured account and ACL roots. The journal parser also accepts
+`create-and-add`, reserved here for the later vault access workflow; setup is
+the only operation `commit` can record in this unit. The transaction transfers
+the sealed set before attempting the decision, installs both snapshots, retires
+the exact journal, then releases admission. Offline recovery can finish
+discarding an undecided preparation even if cleanup already removed some or all
+of its candidates, provided both targets still match their preimages. An
 uncertain decision or incomplete settlement requires exclusive offline recovery
 before repositories are exposed. Foreign replacements and changed roots retain
 the journal as evidence. This is process-loss recovery, not a machine-power-loss

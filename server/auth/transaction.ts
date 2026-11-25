@@ -85,11 +85,13 @@ export class IdentityTransaction {
       checkpoint?: (phase: string) => void;
     },
   ) {
+    const { lease } = options;
+    assertOperationLease(lease, "live");
     this.#accounts = accounts;
     this.#acl = acl;
     this.#root = accounts.root;
     this.#vaultRoot = resolve(options.vaultRoot);
-    this.#lease = options.lease;
+    this.#lease = lease;
     const checkpoint = options.checkpoint?.bind(options);
     if (
       Object.prototype.toString.call(checkpoint) === "[object AsyncFunction]"
@@ -105,7 +107,6 @@ export class IdentityTransaction {
         throw new TypeError("Identity checkpoints must be synchronous.");
       }
     };
-    assertOperationLease(this.#lease, "live");
     this.#journal = createOwnedPublication<Journal>(
       join(this.#root, "identity-transaction.json"),
       (_value, saved) => {
@@ -126,6 +127,10 @@ export class IdentityTransaction {
     }
     this.#journal.assertUnchanged(this.#saved);
   };
+  #assertLiveCall(lease: OperationLease<"live">): void {
+    assertOperationLease(lease, "live");
+    this.assertReady();
+  }
   /** Register participants by asking this transaction's exact repositories.
    * A matching pathname is not provenance for another repository's installer. */
   prepareInitial(
@@ -137,7 +142,7 @@ export class IdentityTransaction {
     lease: OperationLease<"live">,
     operationId: string,
   ): IdentityParticipants {
-    this.assertReady();
+    this.#assertLiveCall(lease);
     const { prepared: candidate, identity: creator } = prepared;
     if (!identity(operationId)) throw new IdentityStateError();
     const access = this.#acl.prepareInitialParticipant(
@@ -320,8 +325,10 @@ export class IdentityTransaction {
         parts,
         this.#saved.binding.configured,
       );
-      if (value.phase === "prepared") set.discard();
-      else {
+      if (value.phase === "prepared") {
+        set.validate();
+        set.discard();
+      } else {
         set.decide();
         const outcome = set.publish();
         if (outcome.state !== "committed") {
@@ -358,7 +365,7 @@ export class IdentityTransaction {
     group: IdentityParticipants,
     lease: OperationLease<"live">,
   ) {
-    this.assertReady();
+    this.#assertLiveCall(lease);
     const captured = structuredClone(meta);
     const binding = this.#participants.get(group);
     if (

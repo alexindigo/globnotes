@@ -6,7 +6,10 @@ import {
   assertThrows,
 } from "@std/assert";
 import { identityFixture, UPDATE, VAULT_A } from "./helpers/identity.ts";
-import { transactionContext } from "./helpers/identity_transaction.ts";
+import {
+  identityRecoveryLease,
+  transactionContext,
+} from "./helpers/identity_transaction.ts";
 import {
   type IdentityParticipants,
   IdentityTransactionUnavailable,
@@ -89,6 +92,28 @@ for (
       ], [accountBytes, accessBytes]);
     }));
 }
+
+Deno.test("identity transaction: an issued recovery lease cannot stage or consume a setup group", () =>
+  identityFixture(async (root, scope) => {
+    const f = transactionContext(root, scope);
+    const stage = await f.prepareStage();
+    const lease = identityRecoveryLease(scope) as unknown as typeof f.lease;
+    const modeError = "Sink requires an issued operation lease of its mode";
+    assertThrows(() => stage(lease), TypeError, modeError);
+    assertEquals([...Deno.readDirSync(root)].map((e) => e.name), ["vault"]);
+    assertEquals([...Deno.readDirSync(`${root}/vault`)], []);
+    const staged = stage();
+    assertThrows(
+      () => f.transaction.commit(staged.meta, staged.parts, lease),
+      TypeError,
+      modeError,
+    );
+    f.transaction.assertReady();
+    assertEquals(
+      f.transaction.commit(staged.meta, staged.parts, f.lease).state,
+      "committed",
+    );
+  }));
 
 Deno.test("identity transaction: exact account/marker and creator ACL settle before admission", () =>
   identityFixture(async (root, scope) => {
@@ -184,6 +209,9 @@ Deno.test("identity transaction: prepared rejection discards both without public
 for (
   const phase of [
     "decision-attempt",
+    "cleanup-access",
+    "cleanup-accounts",
+    "cleanup-journal",
     "decided",
     "half",
     "installed",
@@ -215,6 +243,20 @@ for (
       // Inspect the actual terminal error, not process death as a cleanup claim.
       const error = await stderr;
       assertEquals(error.includes("IdentityTransactionUnavailable"), true);
+      if (phase === "half") {
+        assertEquals(
+          error.split("\n")[0],
+          "identity crash: first participant published",
+        );
+        assertEquals(Deno.statSync(`${root}/vault/access.json`).isFile, true);
+        assertThrows(
+          () => Deno.statSync(`${root}/accounts.json`),
+          Deno.errors.NotFound,
+          `${root}/accounts.json`,
+        );
+      }
+      const undecided = phase === "decision-attempt" ||
+        phase.startsWith("cleanup-");
       const saved = recordReader(
         openRecordDirectory(scope, root),
         "identity-transaction.json",
@@ -226,9 +268,30 @@ for (
           "setup",
           UPDATE,
           VAULT_A,
-          phase === "decision-attempt" ? "prepared" : "decided",
+          undecided ? "prepared" : "decided",
         ],
       );
+      const names = (directory: string) =>
+        [...Deno.readDirSync(directory)].map((entry) => entry.name).sort();
+      if (undecided) {
+        assertEquals(error.includes(`identity crash: ${phase}`), true);
+        const [access, accounts] =
+          (saved.participants as { candidate: string }[])
+            .map((participant) => participant.candidate);
+        assertEquals(names(root), [
+          ...(phase === "decision-attempt" || phase === "cleanup-accounts"
+            ? [accounts]
+            : []),
+          "identity-transaction.json",
+          "vault",
+        ]);
+        assertEquals(
+          names(`${root}/vault`),
+          phase === "decision-attempt" || phase === "cleanup-access"
+            ? [access]
+            : [],
+        );
+      }
       const recovery = recoveryForRoot(root);
       scope.defer(() => recovery.close());
       const f = transactionContext(root, scope);
@@ -245,12 +308,10 @@ for (
           f.accounts.capture().value.accounts.map((a) => a.login),
           f.acl.capture().value.everybody,
         ],
-        phase === "decision-attempt"
-          ? [false, [], "none"]
-          : [true, ["alice"], "view"],
+        undecided ? [false, [], "none"] : [true, ["alice"], "view"],
       );
       f.signing.initialize();
-      if (phase === "decision-attempt") {
+      if (undecided) {
         await assertRejects(
           () => signIn(f.sessions, { username: "alice", password: "password" }),
           Error,
@@ -269,10 +330,11 @@ for (
       f.transaction.recover(recovery.authority);
       assertEquals(
         [...Deno.readDirSync(root)].map((e) => e.name).sort(),
-        phase === "decision-attempt"
+        undecided
           ? ["identity.lock", "sessions.json", "vault"]
           : ["accounts.json", "identity.lock", "sessions.json", "vault"],
       );
+      if (undecided) assertEquals(names(`${root}/vault`), []);
     }));
 }
 

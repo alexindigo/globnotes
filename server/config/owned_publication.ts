@@ -300,6 +300,9 @@ export function createPublicationSet(
     records: Object.freeze(records),
     validate,
     decide() {
+      if (members.some((member) => member.candidate.discardOnly)) {
+        throw new PublicationSetUnavailable();
+      }
       validate();
       // Transfer before attempting the domain's durable decision. An uncertain
       // decision is resolved from its journal, never by ordinary scope cleanup.
@@ -549,7 +552,7 @@ export function createOwnedPublication<T>(
       let candidate: RecordedCandidate;
       const writer = recordedWriter(store);
       try {
-        candidate = writer.recover(input, authority, setId, role);
+        candidate = writer.recover(input, authority, setId, role, decision);
       } catch (error) {
         reservation.phase = "recovery-required";
         throw error;

@@ -11,6 +11,7 @@ import { createUuid } from "../../shared/uuid.ts";
 import {
   type RecordedCandidate,
   type RecordedCandidateData,
+  type RecordedDecisionPhase,
   registerPublicationWriter,
   registerRecordedWriter,
 } from "./internal/publication_port.ts";
@@ -302,8 +303,7 @@ export class BoundFileStore {
           throw error;
         }
       },
-      recover: (input, lease, setId, role) =>
-        this.#recoverRecorded(input, lease, setId, role),
+      recover: (...args) => this.#recoverRecorded(...args),
     });
   }
 
@@ -609,6 +609,7 @@ export class BoundFileStore {
     lease: OperationLease<"live"> | OperationLease<"recovery">,
     setId: string,
     role: string,
+    discardOnly = false,
   ): RecordedCandidate {
     const record: RecordedCandidateData = Object.freeze({
       version: 1,
@@ -627,6 +628,13 @@ export class BoundFileStore {
         this.assertUnchanged(candidate.snapshot);
         return;
       }
+      if (discardOnly && candidate.custody.unlinked) {
+        this.assertUnchanged(candidate.expected);
+        if (configNode(candidate.temporary).identity !== null) {
+          throw new StoredConfigConflict();
+        }
+        return;
+      }
       const original = this.#inspectCandidate(candidate.custody).identity;
       const current = configNode(candidate.temporary).identity;
       const after =
@@ -639,10 +647,12 @@ export class BoundFileStore {
         Deno.readTextFileSync(candidate.temporary) !== candidate.snapshot.raw
       ) throw new StoredConfigConflict();
       this.assertUnchanged(candidate.expected);
-      this.#assertWritable(
-        candidate.snapshot.binding.target,
-        candidate.replace,
-      );
+      if (!discardOnly) {
+        this.#assertWritable(
+          candidate.snapshot.binding.target,
+          candidate.replace,
+        );
+      }
     };
     const operation = createOperationLease(lease.mode, [() => {
       validateStorage();
@@ -663,6 +673,7 @@ export class BoundFileStore {
     return Object.freeze({
       record,
       authority: lease,
+      discardOnly,
       validateStorage,
       validate,
       detach: () => {
@@ -678,7 +689,7 @@ export class BoundFileStore {
         this.#candidates.delete(candidate.custody);
       },
       apply: () => {
-        if (busy) throw new StoredConfigConflict();
+        if (busy || discardOnly) throw new StoredConfigConflict();
         busy = true;
         try {
           // Successful replay is idempotent, but only while its exact after state
@@ -728,8 +739,13 @@ export class BoundFileStore {
     lease: OperationLease<"recovery">,
     setId: string,
     role: string,
+    decision: RecordedDecisionPhase,
   ): RecordedCandidate {
     assertOperationLease(lease, "recovery");
+    if (decision !== "prepared" && decision !== "decided") {
+      throw new TypeError("Recovery requires the recorded decision phase.");
+    }
+    const discardOnly = decision === "prepared";
     this.#recordIdentity(setId, role);
     // Round-trip first: capture getters once before any final authority fence.
     const data = JSON.parse(JSON.stringify(input)) as RecordedCandidateData;
@@ -826,20 +842,24 @@ export class BoundFileStore {
     }
     const current = this.capture();
     const published = JSON.stringify(current) === JSON.stringify(data.after);
-    if (!published && JSON.stringify(current) !== JSON.stringify(data.before)) {
+    if (
+      (published && discardOnly) ||
+      (!published && JSON.stringify(current) !== JSON.stringify(data.before))
+    ) {
       throw new StoredConfigConflict();
     }
     const temporary = path.join(path.dirname(target), data.candidate);
+    // A decided rename may have consumed its alias; an undecided cleanup may
+    // have removed it. Neither case grants the recovery owner unlink custody.
+    const alias = configNode(temporary).identity;
     const custody: CandidateCustody = {
       temporary,
       handle: undefined,
       identity: null,
       requested: false,
-      unlinked: published,
+      unlinked: alias === null,
     };
-    // Reopen without following a foreign symlink. A published rename may have
-    // consumed the alias; no descriptor or deletion authority is then needed.
-    const alias = configNode(temporary).identity;
+    // Reopen without following a foreign symlink.
     if (alias) {
       if (
         JSON.stringify(alias) !== JSON.stringify(afterIdentity) ||
@@ -847,7 +867,6 @@ export class BoundFileStore {
       ) throw new StoredConfigConflict();
       custody.handle = Deno.openSync(temporary, { read: true });
       this.#candidates.add(custody);
-      custody.unlinked = false;
       try {
         const actual = this.#inspectCandidate(custody).identity;
         if (
@@ -861,7 +880,7 @@ export class BoundFileStore {
         this.#candidates.delete(custody);
         throw error;
       }
-    } else if (!published) throw new StoredConfigConflict();
+    } else if (!published && !discardOnly) throw new StoredConfigConflict();
     const candidate: StoredCandidate = {
       temporary,
       custody,
@@ -872,7 +891,13 @@ export class BoundFileStore {
       phase: published ? "published" : "prepared",
     };
     try {
-      return this.#recordedCandidate(candidate, lease, setId, role);
+      return this.#recordedCandidate(
+        candidate,
+        lease,
+        setId,
+        role,
+        discardOnly,
+      );
     } catch (error) {
       custody.handle?.close();
       this.#candidates.delete(custody);

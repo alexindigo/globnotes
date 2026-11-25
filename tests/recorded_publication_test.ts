@@ -90,6 +90,7 @@ Deno.test("recorded candidates: admitted records are immutable and stale replay 
       recovery.authority,
       SET,
       "account",
+      "decided",
     );
     scope.defer(() => replay.discard());
     assertThrows(
@@ -110,6 +111,7 @@ Deno.test("recorded candidates: admitted records are immutable and stale replay 
           recovery.authority,
           SET,
           "account",
+          "decided",
         ),
       StoredConfigConflict,
       conflict,
@@ -138,6 +140,7 @@ Deno.test("recorded candidates: preparation leaves live bytes untouched; recover
       recovery.authority,
       SET,
       "account",
+      "decided",
     );
     scope.defer(() => replay.discard());
     assertEquals(replay.apply(), {
@@ -150,7 +153,7 @@ Deno.test("recorded candidates: preparation leaves live bytes untouched; recover
       warning: false,
     });
     const again = recordedWriter(new BoundFileStore(store.filename, root))
-      .recover(data, recovery.authority, SET, "account");
+      .recover(data, recovery.authority, SET, "account", "decided");
     scope.defer(() => again.discard());
     assertEquals(again.apply(), {
       snapshot: candidate.record.after,
@@ -173,14 +176,78 @@ Deno.test("recorded candidates: undecided recovery discards only its alias and c
       recovery.authority,
       SET,
       "account",
+      "prepared",
+    );
+    scope.defer(() => replay.discard());
+    assertThrows(() => replay.apply(), StoredConfigConflict, conflict);
+    assertEquals(
+      Deno.readTextFileSync(`${root}/${candidate.record.candidate}`),
+      raw,
     );
     replay.discard();
     replay.discard();
-    assertThrows(() => replay.apply(), OwnershipError, "Owner is retired");
     assertEquals(store.capture().raw, null);
     assertEquals([...Deno.readDirSync(root)].map((e) => e.name), [
       "identity.lock",
     ]);
+  }));
+
+Deno.test("recorded candidates: an absent undecided alias is discard-only, not decided replay evidence", () =>
+  fixture((root, scope) => {
+    const { store, candidate } = prepare(root);
+    scope.defer(() => candidate.discard());
+    candidate.discard();
+    const recovery = acquireOfflineRecovery(root);
+    scope.defer(() => recovery.close());
+    const writer = recordedWriter(store);
+    assertThrows(
+      () =>
+        writer.recover(
+          candidate.record,
+          recovery.authority,
+          SET,
+          "account",
+          "decided",
+        ),
+      StoredConfigConflict,
+      conflict,
+    );
+    const replay = writer.recover(
+      candidate.record,
+      recovery.authority,
+      SET,
+      "account",
+      "prepared",
+    );
+    scope.defer(() => replay.discard());
+    assertThrows(() => replay.apply(), StoredConfigConflict, conflict);
+    replay.discard();
+    assertEquals(store.capture().raw, null);
+    assertEquals([...Deno.readDirSync(root)].map((e) => e.name), [
+      "identity.lock",
+    ]);
+  }));
+
+Deno.test("recorded candidates: prepared recovery rejects an already published target", () =>
+  fixture((root, scope) => {
+    const { store, candidate } = prepare(root);
+    scope.defer(() => candidate.discard());
+    candidate.apply();
+    const recovery = acquireOfflineRecovery(root);
+    scope.defer(() => recovery.close());
+    assertThrows(
+      () =>
+        recordedWriter(store).recover(
+          candidate.record,
+          recovery.authority,
+          SET,
+          "account",
+          "prepared",
+        ),
+      StoredConfigConflict,
+      conflict,
+    );
+    assertEquals(store.capture(), candidate.record.after);
   }));
 
 for (const kind of ["forged", "clone", "foreign", "retired"] as const) {
@@ -206,6 +273,7 @@ for (const kind of ["forged", "clone", "foreign", "retired"] as const) {
               authority,
               SET,
               "account",
+              "decided",
             ),
           OwnershipError,
           "Owner is retired",
@@ -218,6 +286,7 @@ for (const kind of ["forged", "clone", "foreign", "retired"] as const) {
               authority,
               SET,
               "account",
+              "decided",
             ),
           TypeError,
           "Publication recovery requires the exclusive root owner.",
@@ -271,6 +340,7 @@ for (
             recovery.authority,
             SET,
             "account",
+            "prepared",
           ),
         StoredConfigConflict,
         conflict,

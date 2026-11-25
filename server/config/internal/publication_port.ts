@@ -19,6 +19,7 @@ export interface RecordedCandidateData {
 export interface RecordedCandidate {
   readonly record: RecordedCandidateData;
   readonly authority: OperationLease<"live"> | OperationLease<"recovery">;
+  readonly discardOnly: boolean;
   validateStorage(): void;
   validate(): void;
   apply(): {
@@ -28,6 +29,7 @@ export interface RecordedCandidate {
   discard(): void;
   detach(): void;
 }
+export type RecordedDecisionPhase = "prepared" | "decided";
 interface NativeRecordedWriter {
   reserveOrdinaryWrites(expected: StoredConfigSnapshot): () => void;
   prepare(
@@ -42,6 +44,7 @@ interface NativeRecordedWriter {
     lease: OperationLease<"recovery">,
     setId: string,
     role: string,
+    decision: RecordedDecisionPhase,
   ): RecordedCandidate;
 }
 const recordedWriters = new WeakMap<
@@ -82,12 +85,19 @@ export function recordedWriter(store: object) {
   return Object.freeze({
     reserveOrdinaryWrites: binding.writer.reserveOrdinaryWrites,
     prepare: binding.writer.prepare,
-    recover(input: unknown, authority: object, setId: string, role: string) {
+    recover(
+      input: unknown,
+      authority: object,
+      setId: string,
+      role: string,
+      decision: RecordedDecisionPhase,
+    ) {
       return binding.writer.recover(
         input,
         publicationRecoveryLease(authority, binding.root),
         setId,
         role,
+        decision,
       );
     },
   });

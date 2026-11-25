@@ -6,6 +6,12 @@ import { preparationContext } from "./account_preparation.ts";
 import { UPDATE, VAULT_A } from "./identity.ts";
 import type { FixtureScope } from "./fixture_scope.ts";
 
+export function identityRecoveryLease(scope: FixtureScope) {
+  const recovery = createOperationLease("recovery", [() => undefined]);
+  scope.defer(() => recovery.retire());
+  return recovery.lease;
+}
+
 /** Domain fixture composition only; P03 owns the supplied root and every owner. */
 export function transactionContext(
   root: string,
@@ -24,32 +30,34 @@ export function transactionContext(
     lease: lifetime.lease,
     checkpoint,
   });
-  const stage = async () => {
+  const prepareStage = async () => {
     f.accounts.prepareParents();
     acl.prepareParents();
     const prepared = await f.accounts.credentials.prepareInitialAccount(
       f.authority("initial"),
       f.request(),
     );
-    const before = f.accounts.capture();
-    const parts = transaction.prepareInitial(
-      prepared,
-      "view",
-      acl.capture(),
-      lifetime.lease,
-      UPDATE,
-    );
-    scope?.defer(() => parts.discard());
-    return {
-      before,
-      parts,
-      identity: prepared.identity,
-      meta: {
-        kind: "setup" as const,
-        operationId: UPDATE,
-        actorId: prepared.identity.id,
-        vaultId: VAULT_A,
-      },
+    return (lease = lifetime.lease) => {
+      const before = f.accounts.capture();
+      const parts = transaction.prepareInitial(
+        prepared,
+        "view",
+        acl.capture(),
+        lease,
+        UPDATE,
+      );
+      scope?.defer(() => parts.discard());
+      return {
+        before,
+        parts,
+        identity: prepared.identity,
+        meta: {
+          kind: "setup" as const,
+          operationId: UPDATE,
+          actorId: prepared.identity.id,
+          vaultId: VAULT_A,
+        },
+      };
     };
   };
   return {
@@ -61,6 +69,7 @@ export function transactionContext(
       lifetime.retire();
       f.retire();
     },
-    stage,
+    prepareStage,
+    stage: async () => (await prepareStage())(),
   };
 }
