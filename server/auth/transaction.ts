@@ -29,7 +29,13 @@ import {
   type EverybodyLevel,
 } from "./acl.ts";
 import type { PreparedAccount } from "./account_credentials.ts";
-import { fields, identity, IdentityStateError, record } from "./records.ts";
+import {
+  fields,
+  identity,
+  IdentityStateError,
+  parseDenseArray,
+  record,
+} from "./records.ts";
 
 export interface IdentityDecision {
   readonly kind: "setup" | "create-and-add";
@@ -349,28 +355,40 @@ export class IdentityTransaction {
       (input.phase !== "prepared" && input.phase !== "decided") ||
       (input.kind !== "setup" && input.kind !== "create-and-add") ||
       !identity(input.operationId) || !identity(input.actorId) ||
-      input.vaultId !== this.#acl.vaultId ||
-      !Array.isArray(input.participants) || input.participants.length !== 2
+      input.vaultId !== this.#acl.vaultId
     ) throw new IdentityStateError();
+    function invalid(): never {
+      throw new IdentityStateError();
+    }
     const roles = new Set<string>();
-    for (const part of input.participants) {
+    const participants = parseDenseArray(input.participants, (part) => {
       if (
         !record(part) || (part.role !== "accounts" && part.role !== "access") ||
         roles.has(part.role) || part.setId !== input.operationId ||
         part.root !== this.#root || !record(part.before) ||
         !record(part.after) ||
         !record(part.before.binding) || !record(part.after.binding)
-      ) throw new IdentityStateError();
+      ) invalid();
       const filename = part.role === "accounts"
         ? join(this.#root, "accounts.json")
         : join(this.#vaultRoot, "access.json");
       if (
         part.before.binding.configured !== filename ||
         part.after.binding.configured !== filename
-      ) throw new IdentityStateError();
+      ) invalid();
       roles.add(part.role);
-    }
-    return input as unknown as Journal;
+      return part;
+    }, invalid);
+    if (participants.length !== 2) invalid();
+    return {
+      version: input.version,
+      phase: input.phase,
+      kind: input.kind,
+      operationId: input.operationId,
+      actorId: input.actorId,
+      vaultId: input.vaultId,
+      participants,
+    };
   }
   #write(value: Journal, lease: OperationLease<"live">): void {
     const operation = createOperationLease("live", [() => undefined], [

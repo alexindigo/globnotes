@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import { HttpError } from "@pathfinder/pathfinder";
 import { createUuid } from "../shared/uuid.ts";
 import { GUEST } from "../server/auth/sessions.ts";
@@ -7,6 +12,7 @@ import { StoredConfigConflict } from "../server/config/publication_outcome.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import { InstanceAuthority } from "../server/auth/authority.ts";
 import { VaultAccess } from "../server/auth/access.ts";
+import { IdentityStateError } from "../server/auth/records.ts";
 import { identityWorkflowFixture } from "./helpers/identity_workflows.ts";
 
 const CONFLICT = "Stored configuration changed before commit.";
@@ -127,6 +133,16 @@ Deno.test("vault access: revision/signature CAS, exact-login addition and no gue
       "HTTP 409",
     );
     assertEquals(missing.status, 409);
+    const duplicate = await assertRejects(
+      () =>
+        f.access.update(f.a, {
+          ...input,
+          additions: [...input.additions, { login: " BOB ", level: "view" }],
+        }),
+      HttpError,
+      "HTTP 409",
+    );
+    assertEquals(duplicate.status, 409);
     assertEquals((await f.read(f.access.update(f.a, input))).committed, true);
     assertEquals(f.acl.effectiveLevel(f.b), "none");
     assertEquals(f.acl.effectiveLevel(GUEST), "edit");
@@ -198,6 +214,8 @@ Deno.test("vault access validation rejects wrongly typed request fields with 422
       everybody: "edit",
       grants: { [f.alice.id]: "admin" },
     };
+    const trailingHole = [{ login: "bob", level: "view" }];
+    trailingHole.length = 2;
     for (
       const changes of [
         { everybody: { toString: null, valueOf: null } },
@@ -208,6 +226,8 @@ Deno.test("vault access validation rejects wrongly typed request fields with 422
         { grants: [] },
         { grants: { [f.alice.id]: ["admin"] } },
         { additions: null },
+        { additions: new Array(1) },
+        { additions: trailingHole },
         { additions: [{ login: ["bob"], level: "view" }] },
         { additions: [{ login: "bob", level: ["view"] }] },
       ]
@@ -232,6 +252,38 @@ Deno.test("vault access validation rejects wrongly typed request fields with 422
     );
     assertEquals([resolve.status, outcome.status], [422, 422]);
   }));
+
+for (const action of ["resolve", "update"] as const) {
+  Deno.test(`vault access: ${action} propagates account directory validation errors`, () =>
+    identityWorkflowFixture(async (f) => {
+      const view = await f.read(f.access.view(f.a));
+      const before = f.acl.capture();
+      const failure = new IdentityStateError();
+      // Fail the public lookup without short-circuiting live Admin admission.
+      f.accounts.byLogin = () => {
+        throw failure;
+      };
+      const error = await assertRejects(
+        async () => {
+          if (action === "resolve") {
+            return await f.read(f.access.resolve(f.a, "bob"));
+          }
+          return await f.read(f.access.update(f.a, {
+            revision: view.revision,
+            signature: view.signature,
+            updateId: createUuid(),
+            everybody: "none",
+            grants: { [f.alice.id]: "admin" },
+            additions: [{ login: "bob", level: "view" }],
+          }));
+        },
+        IdentityStateError,
+        failure.message,
+      );
+      assertStrictEquals(error, failure);
+      assertStrictEquals(f.acl.capture(), before);
+    }));
+}
 
 for (const response of ["view", "resolve", "update", "outcome"] as const) {
   Deno.test(`vault access disclosure: ${response} rejects when the vault stops before pull`, () =>

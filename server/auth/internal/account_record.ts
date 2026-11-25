@@ -4,6 +4,7 @@ import {
   decodeStoredAuthenticator,
   type TotpKeyEncoding,
 } from "../credentials.ts";
+import { parseLoginName } from "../login_name.ts";
 import {
   fields,
   identity,
@@ -43,12 +44,8 @@ export interface AccountState {
 }
 export type AccountSnapshot = IdentitySnapshot<AccountState>;
 export function normalizeLogin(value: string): string {
-  const login = value.trim().toLowerCase();
-  const control = [...login].some((char) => {
-    const point = char.codePointAt(0)!;
-    return point < 32 || point === 127;
-  });
-  if (!login || login === "guest" || control) throw new IdentityStateError();
+  const login = parseLoginName(value);
+  if (login === null) throw new IdentityStateError();
   return login;
 }
 function validPasswordHash(value: unknown): value is string {

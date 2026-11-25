@@ -30,6 +30,21 @@ export function fields(
   return Object.keys(value).length === names.length &&
     names.every((name) => Object.hasOwn(value, name));
 }
+/** Validate untrusted arrays before handing a dense, typed list to a consumer. */
+export function parseDenseArray<T>(
+  value: unknown,
+  parseEntry: (entry: unknown) => T,
+  invalid: () => never,
+): T[] {
+  if (!Array.isArray(value)) invalid();
+  const length = value.length;
+  const entries: T[] = [];
+  for (let index = 0; index < length; index++) {
+    if (!Object.hasOwn(value, index)) invalid();
+    entries.push(parseEntry(value[index]));
+  }
+  return entries;
+}
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freeze);

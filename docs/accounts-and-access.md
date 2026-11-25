@@ -224,18 +224,23 @@ only a safe acknowledgment and the actor's current capabilities. An actor-bound
 status read tells a demoted account whether its own update is current, without
 the list or another person's edit. Before sending any vault Access or
 provisioning response, the server rechecks the session, vault binding, ACL and
-operational state; a stale response must be requested again.
+operational state. Re-request a stale snapshot or exact-login result only if you
+still have Admin. If an edit acknowledgment is lost, use its actor-bound status
+read instead of replaying the edit.
 
 Create and add publishes the temporary account, its committed receipt and the
 named grant as one recorded decision with the target Admin checked from
 preparation through that decision. Before the decision neither changes; after
 it, recovery completes both before admission. Its reply is
 `{operationId, accountId, committed: true}`, never a partial result. An exact
-retry acknowledges the original account without another password reset or
-restoring a later-removed grant. Changed payloads, another actor or vault and
-existing logins conflict. Receipts keep a keyed payload identity, never the
-temporary password or its unkeyed digest. A known-ID status read waits for the
-admitted operation to settle; a missing receipt while it hashes is not failure.
+retry requires current Admin on the same vault and acknowledges the original
+account without resetting its password or restoring a later-removed grant. A
+demoted actor who is still signed in can use the actor-bound status read with
+the original operation ID to recover that acknowledgment without Admin.
+Changed payloads, another actor or vault and existing logins conflict. Receipts
+keep a keyed payload identity, never the temporary password or its unkeyed
+digest. A known-ID status read waits for the admitted operation to settle; a
+missing receipt while it hashes is not failure.
 An aborted retry or status request stops waiting without cancelling the admitted
 operation. Unresolved publication reports unavailable state, never a false
 noncommit. If staged writes cannot be discarded before the journal is written,

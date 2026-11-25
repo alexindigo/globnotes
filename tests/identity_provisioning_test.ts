@@ -871,9 +871,21 @@ Deno.test("provisioning: outcome waits for admitted hash settlement, then remain
       assertEquals(created.committed, true);
     });
     f.policy({ [f.alice.id]: "view" });
+    const before = bytes(f);
+    const retry = await assertRejects(
+      () => f.provisioning.createAndAdd(f.a, input),
+      HttpError,
+      "HTTP 403",
+    );
+    assertEquals(retry.status, 403);
+    assertEquals(bytes(f), before);
     assertEquals(
-      (await f.read(f.provisioning.review(f.a, input.operationId))).committed,
-      true,
+      await f.read(f.provisioning.review(f.a, input.operationId)),
+      {
+        operationId: input.operationId,
+        accountId: f.accounts.byLogin("recipient")!.id,
+        committed: true,
+      },
     );
     const denied = await assertRejects(
       () => f.access.view(f.a),

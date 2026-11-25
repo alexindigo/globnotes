@@ -20,13 +20,14 @@ import {
   sameAuthorityVault,
 } from "./authority.ts";
 import { type AccessLevel, isAccessLevel, isEverybodyLevel } from "./acl.ts";
+import { parseLoginName } from "./login_name.ts";
 import type { AccountPrincipal, Principal } from "./sessions.ts";
 import { AuthenticationError } from "./account_credentials.ts";
 import {
   fields,
   identity,
-  IdentityStateError,
   integer,
+  parseDenseArray,
   record,
 } from "./records.ts";
 import { readAuthorityState } from "./authority_context.ts";
@@ -366,8 +367,7 @@ function parseAccessChange(input: unknown) {
   if (
     !integer(revision) || typeof signature !== "string" ||
     !identity(updateId) ||
-    !isEverybodyLevel(everybody) || !record(grants) ||
-    (additions !== undefined && !Array.isArray(additions))
+    !isEverybodyLevel(everybody) || !record(grants)
   ) throw new HttpError(422, "Invalid vault access change.");
   const named: Record<string, AccessLevel> = {};
   for (const [id, level] of Object.entries(grants)) {
@@ -376,16 +376,23 @@ function parseAccessChange(input: unknown) {
     }
     named[id] = level;
   }
-  const exact = ((additions ?? []) as unknown[]).map((entry) => {
-    if (!record(entry) || !fields(entry, ["login", "level"])) {
-      throw new HttpError(422, "Invalid exact-login grant.");
-    }
-    const { login, level } = entry;
-    if (typeof login !== "string" || !isAccessLevel(level)) {
-      throw new HttpError(422, "Invalid exact-login grant.");
-    }
-    return { login, level };
-  });
+  function invalidExact(): never {
+    throw new HttpError(422, "Invalid exact-login grant.");
+  }
+  const exact = parseDenseArray(
+    additions === undefined ? [] : additions,
+    (entry) => {
+      if (!record(entry) || !fields(entry, ["login", "level"])) {
+        invalidExact();
+      }
+      const { login, level } = entry;
+      if (typeof login !== "string" || !isAccessLevel(level)) {
+        invalidExact();
+      }
+      return { login, level };
+    },
+    invalidExact,
+  );
   return { revision, signature, updateId, everybody, grants: named, exact };
 }
 
@@ -413,12 +420,10 @@ export class VaultAccess {
   }
   /** Exact login only, deliberately no account-list/search operation. */
   #exact(login: string) {
-    try {
-      return this.authority.sessions.accounts.byLogin(login);
-    } catch (error) {
-      if (error instanceof IdentityStateError) return null;
-      throw error;
-    }
+    const normalized = parseLoginName(login);
+    return normalized === null
+      ? null
+      : this.authority.sessions.accounts.byLogin(normalized);
   }
   async view(principal: Principal, signal?: AbortSignal) {
     const admin = this.admit(principal);
