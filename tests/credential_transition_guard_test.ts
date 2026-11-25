@@ -95,6 +95,14 @@ Deno.test("own-account registration: the binder import grants use, not re-export
       'export * as privateEngine from "private";',
       'import {bindCredentialAuthority as bind} from "private"; export {bind};',
       'import {bindCredentialAuthority as bind} from "private"; export default bind;',
+      'import {bindCredentialAuthority as bind} from "private"; export default (bind);',
+      'import {bindCredentialAuthority as bind} from "private"; export default bind as typeof bind;',
+      'import {bindCredentialAuthority as bind} from "private"; export default bind satisfies typeof bind;',
+      'import {bindCredentialAuthority as bind} from "private"; export default <typeof bind>bind;',
+      'import {bindCredentialAuthority as bind} from "private"; export default bind!;',
+      'import {bindCredentialAuthority as bind} from "private"; export default bind<string>;',
+      'import {bindCredentialAuthority as bind} from "private"; export default ((<typeof bind>bind!) as typeof bind) satisfies typeof bind;',
+      'import {bindCredentialAuthority as bind} from "private"; export = (bind!);',
     ]
   ) {
     const sites = analyzeOwnership([{
@@ -105,12 +113,21 @@ Deno.test("own-account registration: the binder import grants use, not re-export
     assertEquals(sites.map(({ file, capability }) => ({ file, capability })), [{
       file: "server/auth/account.ts",
       capability: `module:${CREDENTIAL_ENGINE}`,
-    }]);
+    }], text);
   }
   assertEquals(
     analyzeOwnership([{
       file: "server/auth/account.ts",
       text: 'export type {CredentialAuthority} from "private";',
+      imports: { private: CREDENTIAL_ENGINE },
+    }], ADOPTION_OWNERSHIP),
+    [],
+  );
+  assertEquals(
+    analyzeOwnership([{
+      file: "server/auth/account.ts",
+      text:
+        'import {bindCredentialAuthority as bind} from "private"; (bind!)(); export default (0 as number);',
       imports: { private: CREDENTIAL_ENGINE },
     }], ADOPTION_OWNERSHIP),
     [],

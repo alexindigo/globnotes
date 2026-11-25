@@ -390,6 +390,20 @@ const moduleIdentity = (specifier: string) =>
     ? `node:${specifier}`
     : specifier;
 
+/** Ignore only syntax that preserves the underlying runtime expression. */
+function unwrapExportExpression(expression: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isExpressionWithTypeArguments(expression)
+  ) {
+    expression = expression.expression;
+  }
+  return expression;
+}
+
 export function analyzeOwnership(
   sources: SourceModule[],
   rules = PROCESS_OWNERSHIP,
@@ -472,7 +486,18 @@ export function analyzeOwnership(
         report(node.parent, "unresolved-import");
       }
     };
-    const exportedBinding = (site: ts.Node, symbol: ts.Symbol | undefined) => {
+    const exportedBinding = (
+      site: ts.ExportSpecifier | ts.ExportAssignment,
+    ) => {
+      let symbol: ts.Symbol | undefined;
+      if (ts.isExportSpecifier(site)) {
+        symbol = checker.getExportSpecifierLocalTargetSymbol(site);
+      } else {
+        const expression = unwrapExportExpression(site.expression);
+        if (ts.isIdentifier(expression)) {
+          symbol = checker.getSymbolAtLocation(expression);
+        }
+      }
       for (const declaration of symbol?.declarations ?? []) {
         for (
           let node: ts.Node | undefined = declaration;
@@ -526,19 +551,12 @@ export function analyzeOwnership(
           dependency(node.moduleSpecifier, "re-export");
         } else if (!erased && clause && ts.isNamedExports(clause)) {
           for (const specifier of clause.elements) {
-            if (!specifier.isTypeOnly) {
-              exportedBinding(
-                specifier,
-                checker.getExportSpecifierLocalTargetSymbol(specifier),
-              );
-            }
+            if (!specifier.isTypeOnly) exportedBinding(specifier);
           }
         }
         if (node.moduleSpecifier || erased) continue;
       }
-      if (ts.isExportAssignment(node) && ts.isIdentifier(node.expression)) {
-        exportedBinding(node, checker.getSymbolAtLocation(node.expression));
-      }
+      if (ts.isExportAssignment(node)) exportedBinding(node);
       if (ts.isImportEqualsDeclaration(node)) {
         if (
           !node.isTypeOnly &&
