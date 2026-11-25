@@ -11,8 +11,10 @@
  */
 
 import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import * as z from "zod/v4";
 import { logger } from "../logger.ts";
 import { describeToolError } from "./errors.ts";
+import { COMMITTED_REPLY } from "./disclosure.ts";
 import {
   createNote,
   deleteNote,
@@ -61,18 +63,25 @@ export const WRITE_TOOLS: ToolDefinition[] = [
 export interface McpAccess extends ToolContext {
   /** On a read-only instance, the tools a tools/call request names. */
   calledTools?: string[];
+  identityReplies?: boolean;
 }
 
 function register(
   server: McpServer,
   tool: ToolDefinition,
-  ctx: ToolContext,
+  ctx: McpAccess,
 ): void {
+  const outputSchema =
+    ctx.identityReplies && (tool === createNote || tool === updateNote)
+      ? tool.outputSchema.partial().extend({
+        committed: z.literal(true).optional(),
+      })
+      : tool.outputSchema;
   server.registerTool(tool.name, {
     title: tool.title,
     description: tool.description,
     inputSchema: tool.inputSchema,
-    outputSchema: tool.outputSchema,
+    outputSchema,
     annotations: tool.annotations,
   }, async (args): Promise<CallToolResult> => {
     try {
@@ -88,10 +97,13 @@ function register(
       const result = {
         content: [{ type: "text" as const, text: resultText(output) }],
         structuredContent: output.structured as Record<string, unknown>,
+        ...(ctx.identityReplies && output.receipt
+          ? { _meta: { [COMMITTED_REPLY]: output.receipt } }
+          : {}),
       };
-      // A committed write's result is its own acknowledgment, never a stale
-      // read; only read results recheck before they leave the tool.
-      if (!tool.write) {
+      // A successful write can carry both a receipt and a private projection.
+      // The transport chooses between them at emission, per reply.
+      if (!output.receipt) {
         operation?.assertCurrent();
         ctx.readLease?.assertCurrent();
       }
@@ -124,11 +136,12 @@ export function createGlobnotesMcpServer(
     capabilities: { tools: { listChanged: false } },
     instructions: INSTRUCTIONS,
   });
-  const ctx: ToolContext = {
+  const ctx: McpAccess = {
     vault: access.vault,
     lease: access.lease,
     readLease: access.readLease,
     operationLease: access.operationLease,
+    identityReplies: access.identityReplies,
   };
   for (const tool of READ_TOOLS) register(server, tool, ctx);
   for (const tool of WRITE_TOOLS) {

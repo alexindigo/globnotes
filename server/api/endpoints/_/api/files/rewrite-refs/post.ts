@@ -2,13 +2,10 @@
 export const operation = "editNotes";
 
 import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
-import {
-  HttpError,
-  json,
-  type PathfinderRequest,
-} from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 import { noteMutationLease } from "@server/auth/middleware.ts";
+import { committedJson } from "@server/auth/http_policy.ts";
 
 export default async function (request: PathfinderRequest) {
   try {
@@ -26,5 +23,5 @@ export default async function (request: PathfinderRequest) {
     if (e instanceof HttpError) throw e;
     throw new HttpError(500, (e as Error).message);
   }
-  return json(null);
+  return committedJson(null);
 }

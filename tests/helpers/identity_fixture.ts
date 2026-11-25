@@ -45,7 +45,22 @@ export async function seedIdentityRecords(input: {
       "Identity fixture requires fresh stores and explicit people.",
     );
   }
+  const openAcl = () =>
+    new AclRepository(input.vaultPath, input.vaultId, {
+      accounts,
+      declaredAdmin: input.declaredAdmin,
+    });
+  const assertFreshAcl = (snapshot: ReturnType<AclRepository["capture"]>) => {
+    if (snapshot.persistence.raw !== null) {
+      throw new Error("Identity fixture requires a fresh ACL.");
+    }
+  };
+  assertFreshAcl(openAcl().capture());
   accounts.prepareParents();
+  // Preparation can establish the account-root binding used by the ACL.
+  const acl = openAcl();
+  const initialAcl = acl.capture();
+  assertFreshAcl(initialAcl);
   const signing = new SessionRepository(input.instancePath);
   if (signing.capture().persistence.raw !== null) {
     throw new Error("Identity fixture requires fresh signing state.");
@@ -61,10 +76,6 @@ export async function seedIdentityRecords(input: {
       totpKey: person.totpKey ?? null,
     });
   }
-  const acl = new AclRepository(input.vaultPath, input.vaultId, {
-    accounts,
-    declaredAdmin: input.declaredAdmin,
-  });
   const grants = Object.fromEntries(
     Object.entries(input.grants).map(([login, level]) => {
       const account = accounts.byLogin(login);
@@ -74,7 +85,7 @@ export async function seedIdentityRecords(input: {
       return [account.id, level];
     }),
   );
-  acl.save({ everybody: input.everybody, grants }, acl.capture(), {
+  acl.save({ everybody: input.everybody, grants }, initialAcl, {
     updateId: createUuid(),
     actorId: null,
   });

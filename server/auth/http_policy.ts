@@ -24,6 +24,77 @@ export type HttpOperation = typeof HTTP_OPERATIONS[number];
 export type InstanceAuth = ReturnType<typeof createInstanceAuth>;
 export type HttpLease = InstanceAuthorityLease | VaultAuthorityLease;
 
+declare module "@pathfinder/pathfinder" {
+  interface State {
+    identityLease?: HttpLease;
+  }
+}
+
+/** Select a disclosure at the delivery boundary, not at admission. */
+export function discloseAtDelivery<T>(
+  lease: Pick<HttpLease, "assertCurrent">,
+  value: T,
+  withheld: () => T,
+): T {
+  try {
+    lease.assertCurrent();
+  } catch {
+    return withheld();
+  }
+  return value;
+}
+
+/** JSON whose wire body is decided in the consumer pull, not on construction. */
+export function deliveryJson(
+  value: () => unknown,
+  init?: ResponseInit,
+): Response {
+  const headers = new Headers(init?.headers);
+  headers.set("content-type", "application/json");
+  headers.set("cache-control", "no-store");
+  headers.delete("content-length");
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify(value())));
+        controller.close();
+      },
+    }, { highWaterMark: 0 }),
+    { ...init, headers },
+  );
+}
+
+// Mark only the exact response produced by an outcome owner; no metadata,
+// HTTP status or client header can opt a whole route out of disclosure.
+const outcomeResponses = new WeakSet<Response>();
+export function ownOutcomeResponse(response: Response): Response {
+  outcomeResponses.add(response);
+  return response;
+}
+
+export function ownsOutcomeResponse(response: Response): boolean {
+  return outcomeResponses.has(response);
+}
+
+export function committedJson(receipt: unknown, init?: ResponseInit): Response {
+  return ownOutcomeResponse(Response.json(receipt, init));
+}
+
+export function committedWithPrivateJson<T, R>(
+  lease: HttpLease | undefined,
+  value: T,
+  receipt: R,
+  init?: ResponseInit,
+): Response {
+  if (!lease) return Response.json(value, init);
+  return ownOutcomeResponse(
+    deliveryJson(
+      () => discloseAtDelivery<T | R>(lease, value, () => receipt),
+      init,
+    ),
+  );
+}
+
 /** Instance operations never consult the selected vault. */
 export function singleIdentityVault(vault: AuthorityVault) {
   return (request: Request): AuthorityVault => {

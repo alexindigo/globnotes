@@ -18,7 +18,6 @@ import { guessType } from "./files/mimetypes.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "./state.ts";
 import type { InstanceAuth } from "./auth/http_policy.ts";
-import type { VaultAuthorityLease } from "./auth/authority.ts";
 import type { FileServing } from "./files/file_serving.ts";
 import { servedFileResponse } from "./files/response.ts";
 
@@ -68,6 +67,24 @@ function isFile(p: string): boolean {
   }
 }
 
+function isDocumentNavigation(headers: Headers): boolean {
+  const mode = headers.get("sec-fetch-mode");
+  const destination = headers.get("sec-fetch-dest");
+  if (mode !== null || destination !== null) {
+    return mode === "navigate" || destination === "document";
+  }
+  return (headers.get("accept") ?? "").split(",").some((item) => {
+    const [type, ...params] = item.trim().toLowerCase().split(";");
+    return type.trim() === "text/html" &&
+      !params.some((parameter) => /^\s*q\s*=\s*0(?:\.0*)?\s*$/.test(parameter));
+  });
+}
+
+function negotiated(response: Response): Response {
+  response.headers.append("vary", "Sec-Fetch-Mode, Sec-Fetch-Dest, Accept");
+  return response;
+}
+
 export async function catchAll(request: PathfinderRequest, adapters?: {
   auth: InstanceAuth;
   files: FileServing;
@@ -97,26 +114,44 @@ export async function catchAll(request: PathfinderRequest, adapters?: {
     throw new HttpError(404, "Not Found");
   }
 
+  if (adapters) {
+    // Navigation gets a generic shell, not an answer about any vault path.
+    // Every file fetch is admitted before resolving or probing the target.
+    if (isDocumentNavigation(request.headers)) {
+      return negotiated((adapters.shell ?? serveIndex)());
+    }
+    const lease = await adapters.auth.readLease(request._raw);
+    try {
+      return negotiated(servedFileResponse(
+        adapters.files.get(vaultPath, lease.assertCurrent),
+        request._raw,
+        lease,
+      ));
+    } catch (error) {
+      if (error instanceof FileNotFoundError) {
+        throw new HttpError(404, file_not_found);
+      }
+      if (error instanceof ValueError) {
+        throw new HttpError(400, invalid_file_path);
+      }
+      throw error;
+    }
+  }
+
   const ext = path.extname(vaultPath).toLowerCase();
   if (vaultPath && ext && ext !== MARKDOWN_EXT) {
     // Looks like a file: serve it if it exists (a real 404 keeps
     // broken-image behavior honest). A note page still wins for dotted
     // titles (e.g. a note named "a/v2.1").
     try {
-      let lease: VaultAuthorityLease | undefined;
-      if (adapters) lease = await adapters.auth.readLease(request._raw);
-      else await enforceAuth(request._raw);
-      const served = (adapters?.files ?? state.files).get(
-        vaultPath,
-        lease?.assertCurrent,
-      );
-      return servedFileResponse(served, request._raw, lease);
+      await enforceAuth(request._raw);
+      return servedFileResponse(state.files.get(vaultPath), request._raw);
     } catch (e) {
       if (e instanceof FileNotFoundError) {
         if (
           !isFile(
             path.join(
-              (adapters?.files ?? state.files).storagePath,
+              state.files.storagePath,
               vaultPath + MARKDOWN_EXT,
             ),
           )
@@ -132,7 +167,7 @@ export async function catchAll(request: PathfinderRequest, adapters?: {
   }
 
   // Everything else is a note page (the client 404s unknown titles).
-  return (adapters?.shell ?? serveIndex)();
+  return serveIndex();
 }
 
 export function createIdentityCatchAll(

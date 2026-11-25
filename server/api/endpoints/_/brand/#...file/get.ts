@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-export const operation = "readVault";
+export const operation = "public";
 
 /**
  * GET /_/brand/:file* — serve the vault's brand files

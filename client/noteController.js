@@ -119,7 +119,7 @@ export function createNoteController({
   const saveFeedback = computed(() => queueState.value.failure?.authenticationRequired
     ? "Not saved. Sign in to finish saving; your edits and pending saves are retained. Press Save to sign in again."
     : queueState.value.status === "paused"
-    ? `Saving paused at submission ${queueState.value.failure?.submissionId}. ${queueState.value.queued.length} held saves; current edits are retained. ${queueState.value.failure?.certainty === 'unknown' ? 'The write outcome is unknown; do not resend it.' : queueState.value.failure?.certainty === 'known-committed' ? 'The write committed; its UI integration failed. Do not resend it.' : ''} ${queueState.value.failure?.message ?? ''}`
+    ? `Saving paused at submission ${queueState.value.failure?.submissionId}. ${queueState.value.queued.length} held saves; current edits are retained. ${queueState.value.failure?.certainty === 'unknown' ? 'The write outcome is unknown; do not resend it.' : queueState.value.failure?.certainty === 'known-committed' ? 'The write committed. Do not resend it.' : ''} ${queueState.value.failure?.message ?? ''}`
     : saving.value ? `Saving... ${queueState.value.queued.length} queued.` : vaultNotice.value);
   const saveChangesMessage = computed(() => queueState.value.unresolved
     ? "Save work is retained. Discard removes queued saves and current unsaved changes only when all sent writes have a known outcome."

@@ -10,12 +10,20 @@ import {
 } from "@server/notes/models.ts";
 import { validateNotePath } from "@server/notes/validate.ts";
 import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
-import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
+import {
+  type Context,
+  HttpError,
+  type PathfinderRequest,
+} from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 import { parseBase, parseOnStale } from "@server/hub/gate.ts";
 import { noteMutationLease } from "@server/auth/middleware.ts";
+import { committedWithPrivateJson } from "@server/auth/http_policy.ts";
 
-export default async function (request: PathfinderRequest<{ path: string }>) {
+export default async function (
+  request: PathfinderRequest<{ path: string }>,
+  context?: Context,
+) {
   try {
     const lease = await noteMutationLease(request._raw);
     const data = (await request.body.json()) as NoteUpdate;
@@ -39,12 +47,16 @@ export default async function (request: PathfinderRequest<{ path: string }>) {
     if (data.newPath !== undefined && data.newPath !== null) {
       data.newPath = validateNotePath(data.newPath, "newPath");
     }
-    return await state.operations!.updateNote(
+    const note = await state.operations!.updateNote(
       request.params.path,
       data,
       fileRefs,
       { origin: "api", lease },
     );
+    return committedWithPrivateJson(context?.state.identityLease, note, {
+      committed: true,
+      saveResult: { status: note.saveResult?.status ?? "saved" },
+    });
   } catch (e) {
     if (e instanceof OperationError) return toOperationResponse(e);
     if (e instanceof InvalidPathError) throw new HttpError(400, e.message);

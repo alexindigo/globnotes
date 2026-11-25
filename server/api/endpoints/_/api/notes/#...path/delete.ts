@@ -4,14 +4,11 @@ export const operation = "editNotes";
 import { invalid_note_path, note_not_found } from "@server/api_messages.ts";
 import { InvalidPathError, NoteNotFoundError } from "@server/notes/models.ts";
 import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
-import {
-  HttpError,
-  json,
-  type PathfinderRequest,
-} from "@pathfinder/pathfinder";
+import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 import { parseBase } from "@server/hub/gate.ts";
 import { noteMutationLease } from "@server/auth/middleware.ts";
+import { committedJson } from "@server/auth/http_policy.ts";
 
 export default async function (request: PathfinderRequest<{ path: string }>) {
   try {
@@ -44,5 +41,5 @@ export default async function (request: PathfinderRequest<{ path: string }>) {
     }
     throw e;
   }
-  return json(null);
+  return committedJson(null);
 }

@@ -7,6 +7,7 @@ import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 import { noteMutationLease } from "@server/auth/middleware.ts";
+import { committedJson } from "@server/auth/http_policy.ts";
 
 /** Upload a file into the given directory (relative to the notes
  * root), creating the directory if needed. */
@@ -20,10 +21,12 @@ export default async function (request: PathfinderRequest) {
     }
     const directory = (form.get("directory") as string | null) ?? "";
     const body = new Uint8Array(await file.arrayBuffer());
-    return await state.operations!.uploadFile(directory, file.name, body, {
-      origin: "api",
-      lease,
-    });
+    return committedJson(
+      await state.operations!.uploadFile(directory, file.name, body, {
+        origin: "api",
+        lease,
+      }),
+    );
   } catch (e) {
     if (e instanceof OperationError) return toOperationResponse(e);
     if (e instanceof ValueError) {

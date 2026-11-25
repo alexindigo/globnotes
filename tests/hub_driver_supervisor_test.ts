@@ -10,7 +10,7 @@ import {
 import { AuthType } from "./helpers/config.ts";
 import { driverControl } from "../server/hub/drivers/api.ts";
 import { VaultHub } from "../server/hub/hub.ts";
-import type { PathfinderRequest } from "@pathfinder/pathfinder";
+import { pathfinder, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { DriverSupervisor } from "../server/hub/drivers/supervisor.ts";
 import { DriverSecrets } from "../server/hub/drivers/secrets.ts";
 import { ObservedClock } from "../server/observed_time.ts";
@@ -27,6 +27,8 @@ import { done, pending, waitUntil } from "./helpers/wait.ts";
 import { fixturePage } from "./helpers/plugin_fixture.ts";
 import { memoryRemote } from "./helpers/memory_remote.ts";
 import { pluginSettled } from "./helpers/plugin_ready.ts";
+import { identityHttpFixture } from "./helpers/identity_fixture.ts";
+import { signIn } from "./helpers/session_delivery.ts";
 
 const guard = () => {};
 async function fixture(
@@ -134,6 +136,61 @@ async function fixture(
     },
   };
 }
+
+Deno.test("driver control: a committed removal keeps its receipt after Admin access ends", () =>
+  identityHttpFixture(async (identity) => {
+    const f = (await identity.scope.acquire(fixture, (fixture) =>
+      fixture.close())).value;
+    const instance = await f.create();
+    const dir = `${identity.root}/routes`;
+    Deno.mkdirSync(`${dir}/#id`, { recursive: true });
+    const auth =
+      new URL("../server/api/endpoints/_/00-auth.ts", import.meta.url).href;
+    Deno.writeTextFileSync(
+      `${dir}/00-auth.ts`,
+      `import {createIdentityAuthMiddleware} from ${
+        JSON.stringify(auth)
+      }; export default (request, context)=>createIdentityAuthMiddleware(context.app.auth)(request, context);`,
+    );
+    const route = new URL(
+      "../server/api/endpoints/_/api/drivers/%23id/delete.ts",
+      import.meta.url,
+    ).href;
+    Deno.writeTextFileSync(
+      `${dir}/#id/delete.ts`,
+      `import remove from ${JSON.stringify(route)}; export { operation } from ${
+        JSON.stringify(route)
+      }; export default async (request, context) => { const result = await remove(request); context.app.afterRemoval(); return result; };`,
+    );
+    const app = await pathfinder({
+      roots: [dir],
+      app: {
+        auth: identity.auth,
+        afterRemoval() {
+          assertEquals(f.supervisor.peers.instance(instance.id), null);
+          identity.policy("none");
+        },
+      },
+    });
+    const alice = await signIn(identity.sessions, {
+      username: "alice",
+      password: "password",
+    });
+    const response = await app(
+      new Request(`http://globnotes.test/${instance.id}`, {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${alice.access_token}`,
+        },
+        body: JSON.stringify({ revision: instance.revision }),
+      }),
+    );
+    assertEquals([response.status, await response.json()], [200, {
+      id: instance.id,
+      removed: true,
+    }]);
+  }));
 
 Deno.test("driver supervisor round3: pass result remains active after its real Worker crashes", async () => {
   await fixtureScope(async (scope) => {

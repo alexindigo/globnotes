@@ -11,13 +11,14 @@ import { HttpError, pathfinder } from "@pathfinder/pathfinder";
 import {
   createHttpPolicy,
   HTTP_OPERATIONS,
+  type HttpOperation,
 } from "../server/auth/http_policy.ts";
 import { identityHttpFixture } from "./helpers/identity_fixture.ts";
 import { heldOperation } from "./helpers/owned_operation.ts";
 import { OwnershipError } from "../shared/ownership.js";
 
 /** Review inventory, never a production policy lookup. */
-const PUBLIC_EXCEPTIONS: Record<string, string> = {
+const LEGACY_PUBLIC_EXCEPTIONS: Record<string, string> = {
   "get.ts": "SPA shell",
   "#...path/get.ts": "mixed shell/static/files; handler binds file authority",
   "_/login/get.ts": "SPA shell",
@@ -32,23 +33,112 @@ const PUBLIC_EXCEPTIONS: Record<string, string> = {
   "_/api/setup/totp-enrolment/post.ts": "fresh setup enrollment",
   "_/api/config/get.ts": "legacy bridge; prepared session-aware projection",
   "_/api/index-status/get.ts": "legacy bridge; prepared View required",
-  "_/brand/#...file/get.ts": "legacy bridge; prepared View required",
+  "_/brand/#...file/get.ts": "pre-login branding assets",
   "_/mcp/get.ts": "transport Origin and 405",
   "_/mcp/delete.ts": "transport Origin and 405",
   "_/mcp/post.ts": "transport per-tool authority",
 };
+const ROUTES: Record<HttpOperation, readonly string[]> = {
+  public: [
+    "get.ts",
+    "_/login/get.ts",
+    "_/new/get.ts",
+    "_/search/get.ts",
+    "_/conflicts/get.ts",
+    "_/conflicts/#id/get.ts",
+    "_/api/health/get.ts",
+    "_/api/token/post.ts",
+    "_/api/setup/get.ts",
+    "_/api/setup/post.ts",
+    "_/api/setup/totp-enrolment/post.ts",
+    "_/brand/#...file/get.ts",
+  ],
+  shellOrFile: ["#...path/get.ts"],
+  mcp: ["_/mcp/get.ts", "_/mcp/delete.ts", "_/mcp/post.ts"],
+  session: ["_/api/auth-check/get.ts", "_/api/config/get.ts"],
+  manageOwnAccount: [],
+  createVault: [],
+  readVault: [
+    "_/api/changes/get.ts",
+    "_/api/conflicts/get.ts",
+    "_/api/conflicts/#id/get.ts",
+    "_/api/files/#...path/get.ts",
+    "_/api/index-status/get.ts",
+    "_/api/note-index/get.ts",
+    "_/api/notes/#...path/get.ts",
+    "_/api/plugin-host/events/get.ts",
+    "_/api/plugin-host/get.ts",
+    "_/api/plugins/#id/get.ts",
+    "_/api/plugins/#id/head.ts",
+    "_/api/plugins/#id/options.ts",
+    "_/api/plugins/#id/#...route/get.ts",
+    "_/api/plugins/#id/#...route/head.ts",
+    "_/api/plugins/#id/#...route/options.ts",
+    "_/api/rename-preview/get.ts",
+    "_/api/render/#...path/get.ts",
+    "_/api/render/post.ts",
+    "_/api/search/get.ts",
+    "_/api/tags/get.ts",
+    "_/api/tree/get.ts",
+    "_/plugins.css/get.ts",
+    "_/plugins/#id/app.js/get.ts",
+    "_/plugins/#id/client.js/get.ts",
+  ],
+  editNotes: [
+    "_/api/conflicts/#id/resolve/post.ts",
+    "_/api/files/post.ts",
+    "_/api/files/rewrite-refs/post.ts",
+    "_/api/notes/#...path/delete.ts",
+    "_/api/notes/#...path/patch.ts",
+    "_/api/notes/post.ts",
+    "_/api/plugin-host/#id/commands/#command/post.ts",
+    "_/api/plugins/#id/delete.ts",
+    "_/api/plugins/#id/patch.ts",
+    "_/api/plugins/#id/post.ts",
+    "_/api/plugins/#id/put.ts",
+    "_/api/plugins/#id/#...route/delete.ts",
+    "_/api/plugins/#id/#...route/patch.ts",
+    "_/api/plugins/#id/#...route/post.ts",
+    "_/api/plugins/#id/#...route/put.ts",
+  ],
+  manageVault: [
+    "_/api/access/get.ts",
+    "_/api/access/put.ts",
+    "_/api/access/totp-enrolment/post.ts",
+    "_/api/brand/post.ts",
+    "_/api/drivers/get.ts",
+    "_/api/drivers/#id/decisions/post.ts",
+    "_/api/drivers/#id/delete.ts",
+    "_/api/drivers/#id/put.ts",
+    "_/api/drivers/#id/secrets/#key/delete.ts",
+    "_/api/drivers/#id/secrets/#key/put.ts",
+    "_/api/drivers/#id/sync/post.ts",
+    "_/api/drivers/post.ts",
+    "_/api/plugin-host/#id/enabled/put.ts",
+    "_/api/plugin-host/#id/permission-requests/#request/decision/post.ts",
+    "_/api/plugin-host/#id/permissions/get.ts",
+    "_/api/plugin-host/#id/permissions/put.ts",
+    "_/api/plugin-host/#id/settings/#page/get.ts",
+    "_/api/plugin-host/#id/settings/#page/put.ts",
+    "_/api/plugin-host/permission-requests/get.ts",
+    "_/api/plugin-host/policy/put.ts",
+    "_/api/plugins/get.ts",
+    "_/api/setup/reset/post.ts",
+  ],
+};
+const EXPECTED = Object.fromEntries(
+  Object.entries(ROUTES).flatMap(([operation, routes]) =>
+    routes.map((route) => [route, operation])
+  ),
+);
+
 function classified(file: string, source: string) {
   const operation = /export const operation = "([A-Za-z]+)";/.exec(source)?.[1];
   assert(
     HTTP_OPERATIONS.includes(operation as typeof HTTP_OPERATIONS[number]),
     `Unclassified: ${file}`,
   );
-  if (/export const auth = false/.test(source) || operation === "public") {
-    assert(
-      Object.hasOwn(PUBLIC_EXCEPTIONS, file),
-      `Unexpected public route: ${file}`,
-    );
-  }
+  assertEquals(operation, EXPECTED[file], `Wrong operation: ${file}`);
   return operation!;
 }
 
@@ -69,36 +159,24 @@ Deno.test("identity route policy: all discovered endpoints declare operations an
     }
   };
   visit("");
-  assertEquals(seen.sort(), Object.keys(PUBLIC_EXCEPTIONS).sort());
-  assertEquals(Object.keys(operations).length, 79);
-  for (
-    const [file, expected] of [
-      ["_/api/access/get.ts", "manageVault"],
-      ["_/api/drivers/get.ts", "manageVault"],
-      ["_/api/plugin-host/#id/settings/#page/get.ts", "manageVault"],
-      ["_/api/plugin-host/#id/permissions/get.ts", "manageVault"],
-      ["_/api/plugins/get.ts", "manageVault"],
-      ["_/api/render/post.ts", "readVault"],
-      ["_/api/conflicts/#id/resolve/post.ts", "editNotes"],
-      ["_/api/files/#...path/get.ts", "readVault"],
-      ["_/api/auth-check/get.ts", "session"],
-      ["#...path/get.ts", "shellOrFile"],
-    ]
-  ) assertEquals(operations[file], expected);
+  assertEquals(seen.sort(), Object.keys(LEGACY_PUBLIC_EXCEPTIONS).sort());
+  assertEquals(operations, EXPECTED);
   assertThrows(
     () => classified("new/get.ts", "export default () => 'unguarded';"),
     AssertionError,
     "Unclassified: new/get.ts",
   );
-  assertThrows(
-    () =>
-      classified(
-        "new/get.ts",
-        'export const operation = "public"; export const auth = false;',
-      ),
-    AssertionError,
-    "Unexpected public route: new/get.ts",
-  );
+  for (const bypass of ["public", "shellOrFile", "mcp"]) {
+    assertThrows(
+      () =>
+        classified(
+          "_/api/notes/#...path/get.ts",
+          `export const operation = "${bypass}";`,
+        ),
+      AssertionError,
+      "Wrong operation: _/api/notes/#...path/get.ts",
+    );
+  }
 });
 
 Deno.test("identity route policy: operation and concrete target, never method, determine access", () =>

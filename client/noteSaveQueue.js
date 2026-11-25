@@ -65,7 +65,7 @@ export function createNoteSaveQueue(adapters) {
     job.receiptSettled = true;
     job.resolve(Object.freeze(result));
   }
-  function pause(job, error, certainty, phase) {
+  function pause(job, error, certainty, phase, committedResult) {
     status = "paused";
     failureSerial++;
     // Preparation has not dispatched a write, regardless of the 401's body.
@@ -73,7 +73,9 @@ export function createNoteSaveQueue(adapters) {
     const authenticationRequired = !job.timedOut && error?.response?.status === 401 &&
       (phase === "preparing" || (phase === "sending" && error.response.data?.detail === "Invalid authentication credentials"));
     failure = { submissionId: job.snapshot.submissionId, certainty, phase, message: error?.message ?? String(error), serial: failureSerial, authenticationRequired };
-    job.outcome = Object.freeze({ status: "failed", certainty, phase });
+    job.outcome = Object.freeze(committedResult
+      ? { status: "acknowledged", result: committedResult, late: job.timedOut }
+      : { status: "failed", certainty, phase });
     if (!authenticationRequired) finishReceipt(job, job.outcome);
     notify();
     adapters.failed?.(error, job.snapshot, failure);
@@ -90,6 +92,7 @@ export function createNoteSaveQueue(adapters) {
     finally { clearTimer(timer); job.observationTimer = null; }
   }
   function validAck(result) {
+    if (result?.committed === true) return immutable(result);
     if (!result || typeof result.path !== "string" || !result.path || typeof result.content !== "string") throw new Error("Malformed Save acknowledgement; write outcome is unknown.");
     return immutable(result);
   }
@@ -136,6 +139,12 @@ export function createNoteSaveQueue(adapters) {
         }
         job.inFlight = false;
         if (disposed || job.token !== generation) break;
+        if (result.committed === true) {
+          // The effect succeeded but the current base cannot be disclosed.
+          // Preserve the draft and block all queued saves until read-back.
+          pause(job, new Error("Save committed, but the saved note is no longer available to this session. Read it again before editing."), "known-committed", "receipt", result);
+          break;
+        }
         // Known server success is recorded before applying fallible UI effects.
         acknowledged = result;
         baseContent = result.content;

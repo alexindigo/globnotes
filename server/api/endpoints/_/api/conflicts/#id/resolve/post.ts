@@ -2,6 +2,7 @@
 export const operation = "editNotes";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { noteMutationLease } from "@server/auth/middleware.ts";
+import { committedJson } from "@server/auth/http_policy.ts";
 import { ConflictStaleError } from "@server/hub/conflicts.ts";
 import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
 import { state } from "@server/state.ts";
@@ -10,7 +11,7 @@ export default async function (request: PathfinderRequest<{ id: string }>) {
   try {
     const lease = await noteMutationLease(request._raw);
     const body = await request.body.json();
-    return Response.json(
+    return committedJson(
       await state.operations!.resolveConflict(request.params.id, body, {
         origin: "api",
         lease,

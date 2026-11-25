@@ -31,17 +31,12 @@ import type { NoteMutationLease } from "../plugins/lifecycle.ts";
 import { state } from "../state.ts";
 import { formatVersion } from "../../shared/version.ts";
 import type { RateLimiter } from "./rate_limit.ts";
-import {
-  createGlobnotesMcpServer,
-  type McpAccess,
-  WRITE_TOOLS,
-} from "./server.ts";
+import { createGlobnotesMcpServer, type McpAccess } from "./server.ts";
+import { READ_ONLY_MESSAGE, ToolError } from "./errors.ts";
 import { type McpVault, stateVault } from "./vault.ts";
-import {
-  type InstanceAuth,
-  protectPrivateResponse,
-} from "../auth/http_policy.ts";
+import type { InstanceAuth } from "../auth/http_policy.ts";
 import type { VaultAuthorityLease, VaultOperation } from "../auth/authority.ts";
+import { protectMcpResponse } from "./disclosure.ts";
 
 export interface McpEndpointAdapters {
   vault: McpVault;
@@ -262,9 +257,29 @@ export function createMcpEndpoint(
       let operationLease: McpAccess["operationLease"];
       if (adapters.callerAccess) {
         const caller = await adapters.callerAccess(request);
-        lease = caller.lease;
+        const writable = adapters.writable();
+        lease = writable ? caller.lease : null;
         readLease = caller.readLease;
-        operationLease = caller.operationLease;
+        operationLease = async (operation) => {
+          if (operation !== "editNotes") {
+            return caller.operationLease(operation);
+          }
+          const assertWritable = () => {
+            if (!writable || !adapters.writable()) {
+              throw new ToolError(READ_ONLY_MESSAGE);
+            }
+          };
+          assertWritable();
+          const editing = await caller.operationLease(operation);
+          assertWritable();
+          return Object.freeze({
+            ...editing,
+            assertCurrent(operationId?: string) {
+              assertWritable();
+              editing.assertCurrent(operationId);
+            },
+          });
+        };
         subject = caller.subject;
       } else if (adapters.writable()) {
         lease = await adapters.lease(request);
@@ -281,7 +296,7 @@ export function createMcpEndpoint(
         );
       }
       const legacyEra = await isLegacyRequest(request);
-      const tools = limiter || !lease || readLease
+      const tools = limiter || !lease
         ? await calledTools(request, legacyEra)
         : [];
       if (limiter && tools.length > 0) {
@@ -310,6 +325,7 @@ export function createMcpEndpoint(
         lease,
         readLease,
         operationLease,
+        identityReplies: readLease !== undefined,
         ...(lease ? {} : { calledTools: tools }),
       };
       const authInfo: AuthInfo = {
@@ -323,15 +339,7 @@ export function createMcpEndpoint(
           ? await legacy(request, authInfo)
           : await modern.fetch(request, { authInfo })
       );
-      // Read replies are disclosed only while the caller can still read. A
-      // reply carrying a write outcome is that write's acknowledgment: refusing
-      // it after commit would report an applied change as not applied.
-      const writes = tools.filter((name) =>
-        WRITE_TOOLS.some((tool) => tool.name === name)
-      );
-      return readLease && writes.length === 0
-        ? protectPrivateResponse(readLease, response)
-        : response;
+      return readLease ? protectMcpResponse(readLease, response) : response;
     },
     notAllowed(request) {
       if (foreignOrigin(request)) {

@@ -5,7 +5,11 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
-import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
+import {
+  HttpError,
+  pathfinder,
+  type PathfinderRequest,
+} from "@pathfinder/pathfinder";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -41,6 +45,61 @@ import { fixtureScope } from "./helpers/fixture_scope.ts";
 import { fixtureGate } from "./helpers/fixture_coordination.ts";
 import { bounded } from "./helpers/worker_liveness.ts";
 import { signIn } from "./helpers/session_delivery.ts";
+
+Deno.test("identity HTTP writes: PATCH keeps a committed merged save but fences its note at delivery", () =>
+  identityHttpFixture(async (f) => {
+    const hub = (await f.scope.acquire(hubOperationsFixture, (h) =>
+      h.close())).value;
+    const routes = `${f.root}/routes`;
+    Deno.mkdirSync(`${routes}/#...path`, { recursive: true });
+    const auth =
+      new URL("../server/api/endpoints/_/00-auth.ts", import.meta.url).href;
+    Deno.writeTextFileSync(
+      `${routes}/00-auth.ts`,
+      `import { createIdentityAuthMiddleware } from ${
+        JSON.stringify(auth)
+      }; export default (request, context) => createIdentityAuthMiddleware(context.app.auth)(request, context);`,
+    );
+    const patch = new URL(
+      "../server/api/endpoints/_/api/notes/%23...path/patch.ts",
+      import.meta.url,
+    ).href;
+    Deno.writeTextFileSync(
+      `${routes}/#...path/patch.ts`,
+      `export { default, operation } from ${JSON.stringify(patch)};`,
+    );
+    const app = await pathfinder({ roots: [routes], app: { auth: f.auth } });
+    f.policy("edit");
+    const save = (baseContent: string, newContent: string) =>
+      app(
+        new Request("http://globnotes.test/Proof", {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            cookie: f.request().headers.get("cookie")!,
+          },
+          body: JSON.stringify({ baseContent, newContent }),
+        }),
+      );
+    const base = "left\n\nmiddle\n\nright\n";
+    const peer = "left\n\nmiddle\n\nprivate peer edit\n";
+    await hub.operations.createNote(
+      { path: "Proof", content: base },
+      hub.api(),
+    );
+    const current = await save(base, peer);
+    assertEquals((await current.json()).content, peer);
+    const committed = await save(base, "editor edit\n\nmiddle\n\nright\n");
+    assertEquals(
+      Deno.readTextFileSync(`${hub.vault}/Proof.md`),
+      "editor edit\n\nmiddle\n\nprivate peer edit\n",
+    );
+    f.policy("none");
+    assertEquals([committed.status, await committed.json()], [200, {
+      committed: true,
+      saveResult: { status: "merged" },
+    }]);
+  }));
 
 function view(request: Request, path: string): PathfinderRequest {
   return {
@@ -100,6 +159,11 @@ Deno.test("identity HTTP reads: direct/API/cookie/prefix/HEAD/range agree; bad b
     Deno.writeTextFileSync(`${notes}/attachment.txt`, "private attachment");
     const files = new FileServing(notes),
       get = createIdentityFileGet(f.auth, files);
+    const navigation = (headers: Record<string, string>) =>
+      f.request("GET", {
+        cookie: f.request().headers.get("cookie")!,
+        ...headers,
+      });
     assertStrictEquals(routeCatchAll, createIdentityCatchAll);
     const direct = routeCatchAll(
       f.auth,
@@ -158,10 +222,34 @@ Deno.test("identity HTTP reads: direct/API/cookie/prefix/HEAD/range agree; bad b
       );
     }
     assertEquals(errors, [403, 403, 403, 403]);
-    assertEquals(
-      await (await direct(view(f.request(), "/a-note"))).text(),
-      "public shell",
-    );
+    for (
+      const headers of [
+        { "sec-fetch-mode": "navigate" },
+        { "sec-fetch-dest": "document" },
+        { accept: "text/html,application/xhtml+xml" },
+      ] as Record<string, string>[]
+    ) {
+      for (const title of ["/a-note", "/a/v2.1", "/attachment.txt"]) {
+        const shell = await direct(view(navigation(headers), title));
+        assertEquals([shell.status, await shell.text()], [200, "public shell"]);
+      }
+    }
+    const denials = [];
+    for (const path of ["/attachment.txt", "/missing.txt"]) {
+      const error = await assertRejects(
+        () =>
+          direct(
+            view(
+              navigation({ "sec-fetch-mode": "cors", accept: "text/html" }),
+              path,
+            ),
+          ),
+        HttpError,
+        "HTTP 403",
+      );
+      denials.push([error.status, error.detail, error.headers]);
+    }
+    assertEquals(denials[0], denials[1]);
     assertEquals(
       Deno.readTextFileSync(`${notes}/attachment.txt`),
       "private attachment",
@@ -351,11 +439,12 @@ for (const modern of [false, true]) {
         hub.close())).value;
       await identityHttpFixture(async (f) => {
         const tools: string[] = [], caller = identityMcpCaller(f.auth);
+        let writable = true;
         const endpoint = (await scope.acquire(() =>
           createMcpEndpoint({
             vault: stateVault,
             writable: () =>
-              true,
+              writable,
             version: () =>
               "test",
             rateLimiter: null,
@@ -466,6 +555,26 @@ for (const modern of [false, true]) {
           "stored proof",
         );
         assertEquals(tools, ["readVault", "editNotes", "editNotes"]);
+        writable = false;
+        assertEquals((await admin.listTools()).tools.map((tool) => tool.name), [
+          "globnotes_search_notes",
+          "globnotes_get_note",
+          "globnotes_list_folder",
+          "globnotes_list_tags",
+        ]);
+        const blocked = await admin.callTool({
+          name: "globnotes_create_note",
+          arguments: { path: "Blocked", content: "deployment is read only" },
+        });
+        assertEquals([blocked.isError, blocked.content], [true, [{
+          type: "text",
+          text: READ_ONLY_MESSAGE,
+        }]]);
+        assertThrows(
+          () => Deno.statSync(`${hub.vault}/Blocked.md`),
+          Deno.errors.NotFound,
+        );
+        assertEquals(tools, ["readVault", "editNotes", "editNotes"]);
         const foreign = await endpoint.post(
           new Request("http://globnotes.test/_/mcp", {
             method: "POST",
@@ -528,7 +637,7 @@ Deno.test("identity MCP: caller-specific read path retains rate limiting", () =>
     });
   }));
 
-Deno.test("identity MCP: read replies recheck at delivery; committed write replies stay acknowledged", () =>
+Deno.test("identity MCP: a legacy batch with mixed outcomes discloses only the committed receipt after revocation", () =>
   fixtureScope(async (scope) => {
     const hub = (await scope.acquire(() =>
       hubOperationsFixture(), (hub) => hub.close())).value;
@@ -546,59 +655,77 @@ Deno.test("identity MCP: read replies recheck at delivery; committed write repli
         path: "Proof",
         content: "stored proof",
       }, hub.api());
-      const alice = await signIn(f.sessions, {
-        username: "alice",
-        password: "password",
+      f.policy("edit");
+      const call = (id: number, name: string, args: unknown) => ({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name, arguments: args },
       });
-      const call = (token: string, name: string, args: unknown) =>
-        endpoint.post(
-          new Request("http://globnotes.test/_/mcp", {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              accept: "application/json, text/event-stream",
-              "mcp-protocol-version": "2025-03-26",
-              authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: 1,
-              method: "tools/call",
-              params: { name, arguments: args },
+      const batch = await endpoint.post(
+        new Request("http://globnotes.test/_/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "mcp-protocol-version": "2025-03-26",
+            authorization: `Bearer ${f.signed.access_token}`,
+          },
+          body: JSON.stringify([
+            call(1, "globnotes_get_note", { path: "Proof" }),
+            call(2, "globnotes_create_note", {
+              path: "Created",
+              content: "written",
             }),
-          }),
-        );
-      const read = await call(f.signed.access_token, "globnotes_get_note", {
-        path: "Proof",
-      });
-      const write = await call(alice.access_token, "globnotes_create_note", {
-        path: "Created",
-        content: "written",
-      });
-      assertEquals([read.status, write.status], [200, 200]);
-      // Both replies are produced; access changes before either is delivered.
+            call(3, "globnotes_update_note", {
+              path: "Proof",
+              content: "overwrite",
+              expected_hash: "00".repeat(32),
+            }),
+          ]),
+        }),
+      );
+      assertEquals(batch.status, 200);
+      // All tool replies were produced; the HTTP body has not been consumed.
       f.policy("none");
-      const error = await assertRejects(
-        () => read.json(),
-        OperationError,
-        "Access policy changed while this operation was pending; it was not applied.",
-      );
-      assertEquals(error.code, "operation_conflict");
-      const written = await write.json() as {
-        id: number;
-        result: { isError?: boolean; structuredContent: { path: string } };
-      };
-      assertEquals(
-        [
-          written.id,
-          written.result.isError,
-          written.result.structuredContent.path,
-        ],
-        [1, undefined, "Created"],
-      );
+      const replies = await batch
+        .json() as (Record<string, unknown> & { id: number })[];
+      assertEquals(replies.sort((a, b) => a.id - b.id), [
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          error: {
+            code: -32000,
+            message: "Access ended before reply delivery.",
+          },
+        },
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          result: {
+            content: [{
+              type: "text",
+              text: 'Write committed.\n{"committed":true}',
+            }],
+            structuredContent: { committed: true },
+          },
+        },
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          error: {
+            code: -32000,
+            message: "Access ended before reply delivery.",
+          },
+        },
+      ]);
       assertEquals(
         Deno.readTextFileSync(`${hub.vault}/Created.md`),
         "written",
+      );
+      assertEquals(
+        Deno.readTextFileSync(`${hub.vault}/Proof.md`),
+        "stored proof",
       );
     });
   }));
@@ -627,4 +754,28 @@ Deno.test("identity fixture producer: explicit account/ACL inputs persist withou
     );
     assertEquals(records.accounts.initialized, true);
     assertEquals(records.signing.capture().persistence.raw === null, false);
+  }));
+
+Deno.test("identity fixture producer: refuses an existing ACL before creating credentials", () =>
+  identityFixture(async (root, scope) => {
+    const input = {
+      scope,
+      instancePath: `${root}/first`,
+      vaultPath: `${root}/metadata`,
+      vaultId: VAULT_A,
+      people: [{ login: "alice", password: "password" }],
+      everybody: "none" as const,
+      grants: { alice: "admin" as const },
+    };
+    await seedIdentityRecords(input);
+    const aclPath = `${input.vaultPath}/access.json`;
+    const original = Deno.readFileSync(aclPath);
+    const second = `${root}/second`;
+    await assertRejects(
+      () => seedIdentityRecords({ ...input, instancePath: second }),
+      Error,
+      "Identity fixture requires a fresh ACL.",
+    );
+    assertEquals(Deno.readFileSync(aclPath), original);
+    assertThrows(() => Deno.statSync(second), Deno.errors.NotFound);
   }));

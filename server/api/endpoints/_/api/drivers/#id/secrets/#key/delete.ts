@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 export const operation = "manageVault";
-import type { PathfinderRequest } from "@pathfinder/pathfinder";
+import type { Context, PathfinderRequest } from "@pathfinder/pathfinder";
 import { driverControl } from "@server/hub/drivers/api.ts";
 export default function (
   request: PathfinderRequest<{ id: string; key: string }>,
+  context?: Context,
 ) {
   return driverControl(
     request,
     (owner, body, guard) =>
       owner.secret(request.params.id, request.params.key, body, true, guard),
+    context,
   );
 }

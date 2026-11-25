@@ -14,9 +14,9 @@ import { HttpError, type Middleware } from "@pathfinder/pathfinder";
 import { OperationError, toOperationResponse } from "@server/plugins/errors.ts";
 import {
   createHttpPolicy,
-  type HttpLease,
   type HttpOperation,
   type InstanceAuth,
+  ownsOutcomeResponse,
   protectVaultResponse,
   replacePrivateResponse,
 } from "@server/auth/http_policy.ts";
@@ -30,10 +30,6 @@ declare module "@pathfinder/pathfinder" {
   interface Meta {
     auth?: boolean;
     operation?: HttpOperation;
-    disclosure?: "receipt";
-  }
-  interface State {
-    identityLease?: HttpLease;
   }
 }
 
@@ -45,12 +41,8 @@ export function createIdentityAuthMiddleware(auth: InstanceAuth): Middleware {
     const lease = await policy.admit(request._raw, context.meta.operation);
     if (!lease) return;
     context.state.identityLease = lease;
-    // The admitted mutation's own outcome sink owns its exact acknowledgment.
-    if (
-      context.meta.operation === "editNotes" ||
-      context.meta.disclosure === "receipt"
-    ) return;
     return (response) => {
+      if (ownsOutcomeResponse(response._raw)) return;
       try {
         return protectVaultResponse(lease, response._raw);
       } catch (error) {

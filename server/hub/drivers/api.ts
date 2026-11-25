@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
+import {
+  type Context,
+  HttpError,
+  type PathfinderRequest,
+} from "@pathfinder/pathfinder";
+import {
+  committedJson,
+  committedWithPrivateJson,
+} from "../../auth/http_policy.ts";
 import { settingsWriteGuard } from "../../auth/middleware.ts";
 import { processClock } from "../../observed_time.ts";
 import { PluginContractError } from "../../plugins/contracts.ts";
@@ -15,20 +23,31 @@ export async function driverControl(
     owner: DriverSupervisor,
     body: unknown,
     guard: () => void,
-  ) => Promise<unknown>,
+  ) => Promise<
+    { id: string; removed: boolean } | {
+      id: string;
+      revision: number;
+      secrets?: unknown;
+    }
+  >,
+  context?: Context,
 ): Promise<Response> {
   try {
     const guard = await settingsWriteGuard(request._raw);
     const owner = state.drivers;
     if (!owner) throw new HttpError(503, "Sync is unavailable");
     const body = await readBody(request._raw);
-    return Response.json(
-      await effect(owner, body, () => {
-        guard();
-        if (state.drivers !== owner) throw new PeerRevisionConflict();
-      }),
-      { headers: { "cache-control": "no-store" } },
-    );
+    const outcome = await effect(owner, body, () => {
+      guard();
+      if (state.drivers !== owner) throw new PeerRevisionConflict();
+    });
+    const init = { headers: { "cache-control": "no-store" } };
+    return "revision" in outcome && "secrets" in outcome
+      ? committedWithPrivateJson(context?.state.identityLease, outcome, {
+        id: outcome.id,
+        revision: outcome.revision,
+      }, init)
+      : committedJson(outcome, init);
   } catch (error) {
     if (error instanceof OperationError) {
       const response = toOperationResponse(error);

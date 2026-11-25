@@ -72,6 +72,8 @@ export interface ToolDefinition<
 export interface ToolOutput<S> {
   structured: S;
   summary: string;
+  /** Exact acknowledgment produced only after the effect succeeds. */
+  receipt?: Record<string, unknown>;
 }
 
 /**
@@ -877,6 +879,7 @@ export const createNote = defineTool({
     );
     return {
       structured: note,
+      receipt: { committed: true },
       summary: `Created note ${
         quote(note.path)
       }, last_modified ${note.last_modified}.`,
@@ -966,6 +969,7 @@ Examples: fix a typo -> path + content + expected_last_modified + expected_hash;
       }, last_modified ${structured.last_modified}${
         moved ? `; ${moved} attachment(s) moved` : ""
       }.`,
+      receipt: { committed: true },
     };
   },
 });
@@ -1017,6 +1021,7 @@ export const deleteNote = defineTool({
     );
     return {
       structured: { deleted: args.path },
+      receipt: { deleted: args.path },
       summary: `Deleted note ${quote(args.path)}.`,
     };
   },
