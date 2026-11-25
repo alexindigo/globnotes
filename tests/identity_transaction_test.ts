@@ -48,7 +48,7 @@ for (
       const f = transactionContext(root, scope), staged = await f.stage();
       const before = [...Deno.readDirSync(root)].map((e) => e.name).sort();
       const target = change === "foreign-owner"
-        ? transactionContext(root, scope)
+        ? transactionContext(`${root}/other`, scope)
         : f;
       const group = change === "clone"
         ? { ...staged.parts } as IdentityParticipants
@@ -92,6 +92,35 @@ for (
       ], [accountBytes, accessBytes]);
     }));
 }
+
+Deno.test("identity transaction: aliases share the root owner until it closes", () =>
+  identityFixture((root, scope) => {
+    const directory = `${root}/physical`;
+    const alias = `${root}/alias`;
+    Deno.mkdirSync(directory);
+    Deno.symlinkSync(directory, alias);
+    const first = transactionContext(directory, scope).transaction;
+    first.assertReady();
+    assertThrows(
+      () => transactionContext(alias, scope),
+      IdentityTransactionUnavailable,
+      unavailable,
+    );
+    first.close();
+    assertThrows(
+      first.assertReady,
+      IdentityTransactionUnavailable,
+      unavailable,
+    );
+    const next = transactionContext(alias, scope).transaction;
+    next.assertReady();
+    first.close();
+    assertThrows(
+      () => transactionContext(directory, scope),
+      IdentityTransactionUnavailable,
+      unavailable,
+    );
+  }));
 
 Deno.test("identity transaction: an issued recovery lease cannot stage or consume a setup group", () =>
   identityFixture(async (root, scope) => {
@@ -381,6 +410,7 @@ for (
       const accessInode = Deno.statSync(`${root}/vault/access.json`).ino;
       const recovery = recoveryForRoot(root);
       scope.defer(() => recovery.close());
+      f.retire();
       const next = transactionContext(root, scope);
       assertThrows(
         () => next.transaction.recover(recovery.authority),

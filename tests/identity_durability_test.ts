@@ -70,6 +70,7 @@ for (const phase of ["prepared", "decided"] as const) {
         ];
         let failed = seed;
         if (lane === "recovery") {
+          seed.retire();
           failed = transactionContext(root, scope, (point) => {
             if (point === "retiring") throw retirement;
           });
@@ -92,6 +93,7 @@ for (const phase of ["prepared", "decided"] as const) {
         assertEquals(journal.capture().raw, saved);
         assertEquals(targets.map((target) => target.capture().raw), expected);
 
+        failed.retire();
         const next = transactionContext(root, scope);
         next.transaction.recover(recovery.authority);
         next.transaction.assertReady();
@@ -134,6 +136,16 @@ for (const phase of ["prepared", "decided"] as const) {
           new BoundFileStore(journal).capture().raw,
         ], [true, "fixture directory fsync failure", null]);
         assertReserved(targets, nextBytes);
+        assertThrows(
+          () => transactionContext(root, scope),
+          IdentityTransactionUnavailable,
+          unavailable,
+        );
+        assertThrows(
+          () => f.transaction.close(),
+          IdentityTransactionUnavailable,
+          unavailable,
+        );
 
         const retryStart = events.length;
         f.transaction.recover(recovery.authority);
@@ -143,6 +155,9 @@ for (const phase of ["prepared", "decided"] as const) {
         }]);
         f.transaction.assertReady();
       }, journal);
+      f.transaction.close();
+      const next = transactionContext(root, scope);
+      next.transaction.assertReady();
       for (const target of targets) target.replace(nextBytes);
       assertEquals(targets.map((target) => target.capture().raw), [
         nextBytes,
@@ -178,6 +193,7 @@ Deno.test("identity transaction durability: journal retirement failure keeps the
     assertEquals(JSON.parse(Deno.readTextFileSync(journal)).phase, "decided");
     const recovery = recoveryForRoot(root);
     scope.defer(() => recovery.close());
+    f.retire();
     const next = transactionContext(root, scope);
     next.transaction.recover(recovery.authority);
     next.transaction.assertReady();

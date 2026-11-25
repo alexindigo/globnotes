@@ -30,6 +30,7 @@ export function transactionContext(
     lease: lifetime.lease,
     checkpoint,
   });
+  scope?.defer(() => transaction.close());
   const prepareStage = async () => {
     f.accounts.prepareParents();
     acl.prepareParents();
@@ -66,6 +67,7 @@ export function transactionContext(
     transaction,
     lease: lifetime.lease,
     retire: () => {
+      transaction.close();
       lifetime.retire();
       f.retire();
     },

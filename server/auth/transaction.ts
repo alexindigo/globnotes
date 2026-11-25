@@ -58,15 +58,18 @@ export class IdentityTransactionUnavailable extends Error {
   }
 }
 
+const ownedRoots = new Set<string>();
+
 /** Construct and recover before exposing the repositories to normal consumers.
- * A failed transaction retains its participants' fences. Reopen a surviving
- * journal under exclusive recovery authority; only the owner that unlinked it
- * can finish an interrupted directory confirmation in this process. */
+ * Each physical root has one owner in this process. Close before reopening a
+ * surviving journal under exclusive recovery authority. If the journal was
+ * already unlinked, its owner must finish retirement before it can close. */
 export class IdentityTransaction {
   readonly #journal;
   readonly #accounts: AccountRepository;
   readonly #acl: AclRepository;
   readonly #root: string;
+  readonly #physicalRoot: string;
   readonly #vaultRoot: string;
   readonly #lease: OperationLease<"live">;
   readonly #checkpoint: (phase: string) => void;
@@ -74,7 +77,9 @@ export class IdentityTransaction {
   #unlinked?: { set: PublicationSet; phase: Journal["phase"] };
   #ready = false;
   #active = false;
-  readonly #participants = new WeakMap<IdentityParticipants, {
+  #closed = false;
+  #staging = 0;
+  readonly #participants = new Map<IdentityParticipants, {
     readonly decision: IdentityDecision;
     readonly parts: readonly PublicationParticipant[];
     phase: "prepared" | "transferred" | "discarded";
@@ -110,22 +115,41 @@ export class IdentityTransaction {
         throw new TypeError("Identity checkpoints must be synchronous.");
       }
     };
-    this.#journal = createOwnedPublication<Journal>(
-      join(this.#root, "identity-transaction.json"),
-      (_value, saved) => {
-        this.#saved = saved;
-        return undefined;
-      },
-      undefined,
-      this.#root,
-    );
-    this.#saved = this.#journal.capture();
-    this.#assertJournal(this.#saved);
-    this.#ready = this.#saved.raw === null;
+    this.#physicalRoot = physicalStateRoot(this.#root);
+    if (ownedRoots.has(this.#physicalRoot)) {
+      throw new IdentityTransactionUnavailable();
+    }
+    ownedRoots.add(this.#physicalRoot);
+    try {
+      this.#journal = createOwnedPublication<Journal>(
+        join(this.#root, "identity-transaction.json"),
+        (_value, saved) => {
+          this.#saved = saved;
+          return undefined;
+        },
+        undefined,
+        this.#root,
+      );
+      this.#saved = this.#journal.capture();
+      this.#assertJournal(this.#saved);
+      this.#ready = this.#saved.raw === null;
+    } catch (cause) {
+      ownedRoots.delete(this.#physicalRoot);
+      throw cause;
+    }
+  }
+  close(): void {
+    if (this.#closed) return;
+    if (
+      this.#active || this.#staging || this.#participants.size ||
+      (!this.#ready && this.#saved.raw === null)
+    ) throw new IdentityTransactionUnavailable();
+    this.#closed = true;
+    ownedRoots.delete(this.#physicalRoot);
   }
   readonly assertReady = () => {
     assertOperationLease(this.#lease, "live");
-    if (!this.#ready || this.#active) {
+    if (this.#closed || !this.#ready || this.#active) {
       throw new IdentityTransactionUnavailable();
     }
     this.#journal.assertUnchanged(this.#saved);
@@ -133,6 +157,14 @@ export class IdentityTransaction {
   #assertLiveCall(lease: OperationLease<"live">): void {
     assertOperationLease(lease, "live");
     this.assertReady();
+  }
+  #stage<T>(run: () => T): T {
+    this.#staging++;
+    try {
+      return run();
+    } finally {
+      this.#staging--;
+    }
   }
   /** Register participants by asking this transaction's exact repositories.
    * A matching pathname is not provenance for another repository's installer. */
@@ -146,6 +178,19 @@ export class IdentityTransaction {
     operationId: string,
   ): IdentityParticipants {
     this.#assertLiveCall(lease);
+    return this.#stage(() =>
+      this.#prepareInitial(prepared, everybody, expected, lease, operationId)
+    );
+  }
+  #prepareInitial(
+    prepared: Readonly<
+      { prepared: PreparedAccount; identity: AccountIdentity }
+    >,
+    everybody: EverybodyLevel,
+    expected: AclSnapshot,
+    lease: OperationLease<"live">,
+    operationId: string,
+  ): IdentityParticipants {
     const { prepared: candidate, identity: creator } = prepared;
     if (!identity(operationId)) throw new IdentityStateError();
     const access = this.#acl.prepareInitialParticipant(
@@ -186,7 +231,7 @@ export class IdentityTransaction {
     const group = Object.freeze({
       account,
       access,
-      discard() {
+      discard: () => {
         if (binding.phase !== "prepared") return;
         const errors: unknown[] = [];
         binding.phase = "discarded";
@@ -204,6 +249,7 @@ export class IdentityTransaction {
             "Identity participant cleanup failed.",
           );
         }
+        this.#participants.delete(group);
       },
     }) as IdentityParticipants;
     this.#participants.set(group, binding);
@@ -211,8 +257,9 @@ export class IdentityTransaction {
   }
   #assertJournal(saved: StoredConfigSnapshot): void {
     if (
+      physicalStateRoot(this.#root) !== this.#physicalRoot ||
       saved.binding.target !==
-        join(physicalStateRoot(this.#root), "identity-transaction.json")
+        join(this.#physicalRoot, "identity-transaction.json")
     ) {
       throw new IdentityStateError();
     }
@@ -324,9 +371,13 @@ export class IdentityTransaction {
     }
   }
   recover(authority: OfflineRecoveryAuthority): void {
-    if (this.#active) throw new IdentityTransactionUnavailable();
     assertOfflineRecovery(authority, this.#root);
     assertOperationLease(this.#lease, "live");
+    if (
+      this.#closed || this.#active || this.#staging || this.#participants.size
+    ) {
+      throw new IdentityTransactionUnavailable();
+    }
     this.#active = true;
     this.#ready = false;
     const parts: PublicationParticipant[] = [];
@@ -430,6 +481,7 @@ export class IdentityTransaction {
         this.#saved.binding.configured,
       );
       binding.phase = "transferred";
+      this.#participants.delete(group);
       const value = this.#read({
         version: 1,
         phase: "prepared",
