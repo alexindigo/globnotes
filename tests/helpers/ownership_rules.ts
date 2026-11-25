@@ -254,7 +254,7 @@ export const ACCOUNT_REPOSITORY = "server/auth/accounts.ts";
  * out of ordinary workflows; public errors/types confer no acquisition. */
 export const PROOF_OWNERSHIP: OwnershipRules = {
   roots: SECRET_OWNERSHIP.roots,
-  privateExports: [CREDENTIAL_ENGINE],
+  callOnlyModules: [CREDENTIAL_ENGINE],
   modules: {
     ...SECRET_OWNERSHIP.modules,
     [CREDENTIAL_ENGINE]: [

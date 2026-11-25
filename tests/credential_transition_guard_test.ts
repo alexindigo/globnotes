@@ -25,6 +25,43 @@ Deno.test("credential command registration: private binders, raw ports and codec
     assertPrivateModule(module, PROOF_OWNERSHIP);
   }
 });
+
+const binderImport =
+  'import { bindCredentialAuthority as bind } from "private";';
+
+for (
+  const use of [
+    "export const exposed = bind;",
+    "const alias = bind; export { alias };",
+    "const exposed = { bind };",
+    "consume(bind);",
+    "function expose() { return bind; }",
+    "let alias; alias = bind;",
+    "const exposed = [bind];",
+    "const exposed = { ...bind };",
+    "bind.call(null);",
+    "const expose = () => bind;",
+    "(0, bind)();",
+    "bind(bind);",
+  ]
+) {
+  Deno.test(`private binder is call-only: ${use}`, () => {
+    assertEquals(
+      analyzeOwnership([{
+        file: "server/auth/account.ts",
+        text: `${binderImport}\n${use}`,
+        imports: { private: CREDENTIAL_ENGINE },
+      }], ADOPTION_OWNERSHIP),
+      [{
+        file: "server/auth/account.ts",
+        capability: `module:${CREDENTIAL_ENGINE}`,
+        line: 2,
+        source: "bind",
+        context: use,
+      }],
+    );
+  });
+}
 Deno.test("own-account registration: only the exact workflow binds commands and it gains no raw record, verifier or recovery port", () => {
   assertEquals(
     analyzeOwnership([{
@@ -86,7 +123,7 @@ Deno.test("credential command registration: trusted test binding cannot be re-ex
   ]);
 });
 
-Deno.test("own-account registration: the binder import grants use, not re-export", () => {
+Deno.test("own-account registration: private bindings and module edges cannot be exported", () => {
   for (
     const text of [
       'export {bindCredentialAuthority} from "private";',
@@ -103,6 +140,8 @@ Deno.test("own-account registration: the binder import grants use, not re-export
       'import {bindCredentialAuthority as bind} from "private"; export default bind<string>;',
       'import {bindCredentialAuthority as bind} from "private"; export default ((<typeof bind>bind!) as typeof bind) satisfies typeof bind;',
       'import {bindCredentialAuthority as bind} from "private"; export = (bind!);',
+      'export import engine = require("private");',
+      'export const exposed = import("private");',
     ]
   ) {
     const sites = analyzeOwnership([{
@@ -123,13 +162,53 @@ Deno.test("own-account registration: the binder import grants use, not re-export
     }], ADOPTION_OWNERSHIP),
     [],
   );
+});
+
+Deno.test("private binder references are resolved by symbol, not spelling", () => {
   assertEquals(
     analyzeOwnership([{
       file: "server/auth/account.ts",
-      text:
-        'import {bindCredentialAuthority as bind} from "private"; (bind!)(); export default (0 as number);',
+      text: `bind();
+        ${binderImport}
+        export const result = bind();
+        export type Binder = typeof bind;
+        export type { bind as PrivateType };
+        ((<typeof bind>bind!) as typeof bind satisfies typeof bind)();
+        (bind<string>)();
+        export default (0 as number);
+        export function shadow(bind: unknown) { return { bind }; }
+        consume({ bind: false }.bind);`,
       imports: { private: CREDENTIAL_ENGINE },
     }], ADOPTION_OWNERSHIP),
     [],
   );
+});
+
+Deno.test("call-only registration covers other private bindings and import aliases", () => {
+  const uses = [
+    ['import other from "private";', "const alias = other;", "other"],
+    ['import * as engine from "private";', "engine.bind();", "engine"],
+    ['import engine = require("private");', "consume(engine);", "engine"],
+    [
+      'import { bindAccountCredentials as other } from "private";',
+      "export { other as exposed };",
+      "other",
+    ],
+  ];
+  for (const [binding, use, source] of uses) {
+    assertEquals(
+      analyzeOwnership([{
+        file: "server/auth/account.ts",
+        text: `${binding}\n${use}`,
+        imports: { private: CREDENTIAL_ENGINE },
+      }], ADOPTION_OWNERSHIP),
+      [{
+        file: "server/auth/account.ts",
+        capability: `module:${CREDENTIAL_ENGINE}`,
+        line: 2,
+        source,
+        context: use,
+      }],
+    );
+  }
 });

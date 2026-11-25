@@ -45,8 +45,8 @@ export interface OwnershipRules {
   roots: Readonly<Record<string, RootRule>>;
   /** Resolved module identity -> exact owner modules, for every runtime form. */
   modules: Readonly<Record<string, readonly string[]>>;
-  /** Import ownership allows use, but not runtime re-export of these modules. */
-  privateExports?: readonly string[];
+  /** Runtime bindings from these modules may only be called directly. */
+  callOnlyModules?: readonly string[];
 }
 export const CHILD_OWNER = "tests/helpers/process.ts";
 const GLOBAL_MEMBERS = [
@@ -390,18 +390,21 @@ const moduleIdentity = (specifier: string) =>
     ? `node:${specifier}`
     : specifier;
 
-/** Ignore only syntax that preserves the underlying runtime expression. */
-function unwrapExportExpression(expression: ts.Expression): ts.Expression {
+/** Climb only wrappers that preserve this exact runtime expression. */
+function isDirectCallee(expression: ts.Expression): boolean {
+  let parent = expression.parent;
   while (
-    ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression) ||
-    ts.isSatisfiesExpression(expression) ||
-    ts.isTypeAssertionExpression(expression) ||
-    ts.isNonNullExpression(expression) ||
-    ts.isExpressionWithTypeArguments(expression)
+    (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent) ||
+      ts.isSatisfiesExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isExpressionWithTypeArguments(parent)) &&
+    parent.expression === expression
   ) {
-    expression = expression.expression;
+    expression = parent;
+    parent = parent.parent;
   }
-  return expression;
+  return ts.isCallExpression(parent) && parent.expression === expression;
 }
 
 export function analyzeOwnership(
@@ -459,8 +462,7 @@ export function analyzeOwnership(
     };
     const dependency = (
       node: ts.Expression,
-      kind: "import" | "dynamic" | "re-export" | "exported-binding" = "import",
-      site: ts.Node = node,
+      kind: "import" | "dynamic" | "re-export" = "import",
     ) => {
       if (!ts.isStringLiteral(node)) {
         report(node.parent, "dynamic-import.*");
@@ -474,44 +476,23 @@ export function analyzeOwnership(
           ? rules.modules[target]
           : undefined;
       if (
-        ((kind === "re-export" || kind === "exported-binding") &&
-          rules.privateExports?.includes(target)) ||
-        (kind !== "exported-binding" && owners && !owners.includes(input.file))
+        // These edges can deliver the module's values without a local binding.
+        (kind !== "import" && rules.callOnlyModules?.includes(target)) ||
+        (owners && !owners.includes(input.file))
       ) {
-        report(site, `module:${target}`);
+        report(node, `module:${target}`);
       } else if (
-        kind !== "exported-binding" && !resolved &&
-        (kind === "dynamic" || !target.startsWith("node:"))
+        !resolved && (kind === "dynamic" || !target.startsWith("node:"))
       ) {
         report(node.parent, "unresolved-import");
+      } else {
+        return target;
       }
     };
-    const exportedBinding = (
-      site: ts.ExportSpecifier | ts.ExportAssignment,
-    ) => {
-      let symbol: ts.Symbol | undefined;
-      if (ts.isExportSpecifier(site)) {
-        symbol = checker.getExportSpecifierLocalTargetSymbol(site);
-      } else {
-        const expression = unwrapExportExpression(site.expression);
-        if (ts.isIdentifier(expression)) {
-          symbol = checker.getSymbolAtLocation(expression);
-        }
-      }
-      for (const declaration of symbol?.declarations ?? []) {
-        for (
-          let node: ts.Node | undefined = declaration;
-          node;
-          node = node.parent
-        ) {
-          if (ts.isImportDeclaration(node)) {
-            if (!isErasedPosition(declaration)) {
-              dependency(node.moduleSpecifier, "exported-binding", site);
-            }
-            break;
-          }
-        }
-      }
+    const callOnlyBindings = new Map<ts.Symbol, string>();
+    const registerBinding = (name: ts.Identifier, target: string) => {
+      const symbol = checker.getSymbolAtLocation(name);
+      if (symbol) callOnlyBindings.set(symbol, target);
     };
     // Enumerate the whole AST first, with no pruning or rule-dependent returns.
     // Classification below can exempt an occurrence, never conceal descendants.
@@ -522,13 +503,11 @@ export function analyzeOwnership(
     };
     collect(ast);
     for (const node of nodes) {
-      const root = ts.isIdentifier(node) &&
-        Object.hasOwn(rules.roots, node.text);
       const importCall = ts.isCallExpression(node) &&
         node.expression.kind === ts.SyntaxKind.ImportKeyword;
       if (
-        !root && !importCall && !ts.isImportDeclaration(node) &&
-        !ts.isExportDeclaration(node) && !ts.isExportAssignment(node) &&
+        !importCall && !ts.isImportDeclaration(node) &&
+        !ts.isExportDeclaration(node) &&
         !ts.isImportEqualsDeclaration(node)
       ) continue;
       if (isErasedPosition(node)) continue;
@@ -539,7 +518,20 @@ export function analyzeOwnership(
             bindings.elements.length > 0 && bindings.elements.every((s) =>
               s.isTypeOnly
             ));
-        if (!erased) dependency(node.moduleSpecifier);
+        if (erased) continue;
+        const target = dependency(node.moduleSpecifier);
+        if (target !== undefined && rules.callOnlyModules?.includes(target)) {
+          if (clause?.name) registerBinding(clause.name, target);
+          if (bindings && ts.isNamespaceImport(bindings)) {
+            registerBinding(bindings.name, target);
+          } else if (bindings) {
+            for (const specifier of bindings.elements) {
+              if (!specifier.isTypeOnly) {
+                registerBinding(specifier.name, target);
+              }
+            }
+          }
+        }
         continue;
       }
       if (ts.isExportDeclaration(node)) {
@@ -549,35 +541,48 @@ export function analyzeOwnership(
             clause.elements.every((s) => s.isTypeOnly));
         if (!erased && node.moduleSpecifier) {
           dependency(node.moduleSpecifier, "re-export");
-        } else if (!erased && clause && ts.isNamedExports(clause)) {
-          for (const specifier of clause.elements) {
-            if (!specifier.isTypeOnly) exportedBinding(specifier);
-          }
         }
-        if (node.moduleSpecifier || erased) continue;
+        continue;
       }
-      if (ts.isExportAssignment(node)) exportedBinding(node);
       if (ts.isImportEqualsDeclaration(node)) {
         if (
           !node.isTypeOnly &&
           ts.isExternalModuleReference(node.moduleReference) &&
           node.moduleReference.expression
-        ) dependency(node.moduleReference.expression);
+        ) {
+          const exported = node.modifiers?.some((modifier) =>
+            modifier.kind === ts.SyntaxKind.ExportKeyword
+          );
+          const target = dependency(
+            node.moduleReference.expression,
+            exported ? "re-export" : "import",
+          );
+          if (target !== undefined && rules.callOnlyModules?.includes(target)) {
+            registerBinding(node.name, target);
+          }
+        }
         continue;
       }
+      if (importCall) dependency(node.arguments[0], "dynamic");
+    }
+    // Imports are registered before any use, including references above them.
+    for (const node of nodes) {
+      if (!ts.isIdentifier(node)) continue;
+      const root = Object.hasOwn(rules.roots, node.text);
       if (
-        ts.isCallExpression(node) &&
-        node.expression.kind === ts.SyntaxKind.ImportKeyword
-      ) dependency(node.arguments[0], "dynamic");
-      if (
-        ts.isIdentifier(node) && Object.hasOwn(rules.roots, node.text) &&
-        isReference(node)
-      ) {
-        const symbol = ts.isShorthandPropertyAssignment(node.parent)
-          ? checker.getShorthandAssignmentValueSymbol(node.parent)
-          : ts.isExportSpecifier(node.parent)
-          ? checker.getExportSpecifierLocalTargetSymbol(node.parent)
-          : checker.getSymbolAtLocation(node);
+        (!root && !callOnlyBindings.size) || !isReference(node) ||
+        isErasedPosition(node)
+      ) continue;
+      const symbol = ts.isShorthandPropertyAssignment(node.parent)
+        ? checker.getShorthandAssignmentValueSymbol(node.parent)
+        : ts.isExportSpecifier(node.parent)
+        ? checker.getExportSpecifierLocalTargetSymbol(node.parent)
+        : checker.getSymbolAtLocation(node);
+      const target = symbol && callOnlyBindings.get(symbol);
+      if (target !== undefined && !isDirectCallee(node)) {
+        report(node, `module:${target}`);
+      }
+      if (root) {
         // JS expando writes create synthetic Identifier declarations, not lexical shadows.
         const lexical = symbol &&
           (symbol.flags & (ts.SymbolFlags.Value | ts.SymbolFlags.Alias)) &&
