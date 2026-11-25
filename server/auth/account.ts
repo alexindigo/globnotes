@@ -5,6 +5,7 @@ import type { AuthenticatorChange } from "./account_credentials.ts";
 import { bindCredentialAuthority } from "./internal/account_credentials.ts";
 import { InstanceAuthority } from "./authority.ts";
 import { identity, integer, record } from "./records.ts";
+import { readRequestJson } from "./request_json.ts";
 import type { Principal } from "./sessions.ts";
 import { createOperationLease } from "../operation_lease.ts";
 import { StoredConfigConflict } from "../config/publication_outcome.ts";
@@ -150,7 +151,7 @@ export class OwnAccount {
     const signal = request.signal;
     const own = ownOperation(this.#authority, principal, signal);
     try {
-      return await this.#change(own, await request.json(), signal);
+      return await this.#change(own, await readRequestJson(request), signal);
     } finally {
       own.operation.retire();
     }

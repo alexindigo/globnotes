@@ -57,9 +57,8 @@ function replaced(): never {
  * inside the credential aggregate. Deleted with the old routes at cutover. */
 export class LegacyTotpEnrollments {
   readonly #render?: EnrollmentRenderer;
-  // The echoed service-issued key identifies one attempt, never a shared lane.
-  // A peer's issuance or save has no custody over that attempt.
-  readonly #pending = new Map<string, LegacyAttempt>();
+  // One slot per issuer for this config owner; the login is only a QR label.
+  readonly #pending = new Map<LegacyLane, LegacyAttempt>();
   constructor(render?: EnrollmentRenderer) {
     this.#render = render;
   }
@@ -72,7 +71,11 @@ export class LegacyTotpEnrollments {
       scope: createOwnershipScope(),
       ready: false,
     };
+    const previous = this.#pending.get(lane);
+    this.#pending.set(lane, attempt);
     try {
+      if (previous) (await previous.scope.releaseAll()).throwIfFailed();
+      if (this.#pending.get(lane) !== attempt) replaced();
       const candidate = await attempt.scope.acquire(
         () => createTotpCandidate(),
         () => {
@@ -80,34 +83,29 @@ export class LegacyTotpEnrollments {
           attempt.key = undefined;
         },
       );
+      if (this.#pending.get(lane) !== attempt) replaced();
       attempt.scope.assertCurrent();
       attempt.secret = candidate.value;
       attempt.key = storedTotpManualSecret(candidate.value);
-      if (this.#pending.has(attempt.key)) replaced();
-      this.#pending.set(attempt.key, attempt);
       const bundle = await renderAccountTotpEnrollment(
         username,
         candidate.value,
         this.#render,
       );
-      if (this.#pending.get(attempt.key) !== attempt) replaced();
+      if (this.#pending.get(lane) !== attempt) replaced();
       attempt.scope.assertCurrent();
       attempt.ready = true;
       return bundle;
     } catch (error) {
-      if (attempt.key && this.#pending.get(attempt.key) === attempt) {
-        this.#pending.delete(attempt.key);
-      }
+      if (this.#pending.get(lane) === attempt) this.#pending.delete(lane);
       (await attempt.scope.releaseAll()).throwIfFailed(error);
       throw error;
     }
   }
   confirm(lane: LegacyLane, key: unknown, code: unknown) {
-    const attempt = typeof key === "string"
-      ? this.#pending.get(key)
-      : undefined;
+    const attempt = this.#pending.get(lane);
     if (
-      !attempt?.secret || !attempt.ready || attempt.lane !== lane ||
+      !attempt?.secret || !attempt.ready ||
       typeof key !== "string" || attempt.key !== key
     ) throw new HttpError(422, "Invalid authenticator enrolment.");
     if (
@@ -123,7 +121,7 @@ export class LegacyTotpEnrollments {
       );
     }
     const assertCurrent = () => {
-      if (this.#pending.get(key) !== attempt || attempt.key !== key) {
+      if (this.#pending.get(lane) !== attempt || attempt.key !== key) {
         replaced();
       }
       attempt.scope.assertCurrent();
@@ -137,13 +135,12 @@ export class LegacyTotpEnrollments {
     });
   }
   async discard(lane: LegacyLane, key: string) {
-    const attempt = this.#pending.get(key);
-    if (attempt?.lane === lane) await this.#discard(attempt);
+    const attempt = this.#pending.get(lane);
+    if (attempt?.key === key) await this.#discard(attempt);
   }
   async #discard(attempt: LegacyAttempt) {
-    if (attempt.key && this.#pending.get(attempt.key) === attempt) {
-      this.#pending.delete(attempt.key);
-      attempt.scope.retire();
+    if (this.#pending.get(attempt.lane) === attempt) {
+      this.#pending.delete(attempt.lane);
       (await attempt.scope.releaseAll()).throwIfFailed();
     }
   }

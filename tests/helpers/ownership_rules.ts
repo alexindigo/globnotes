@@ -254,6 +254,7 @@ export const ACCOUNT_REPOSITORY = "server/auth/accounts.ts";
  * out of ordinary workflows; public errors/types confer no acquisition. */
 export const PROOF_OWNERSHIP: OwnershipRules = {
   roots: SECRET_OWNERSHIP.roots,
+  privateExports: [CREDENTIAL_ENGINE],
   modules: {
     ...SECRET_OWNERSHIP.modules,
     [CREDENTIAL_ENGINE]: [
@@ -293,7 +294,7 @@ export const PROOF_OWNERSHIP: OwnershipRules = {
 export const OFFLINE_RECOVERY = "server/auth/offline_recovery.ts";
 export const PREPARATION_HELPER = "tests/helpers/account_preparation.ts";
 export const PREPARATION_OWNERSHIP: OwnershipRules = {
-  roots: PROOF_OWNERSHIP.roots,
+  ...PROOF_OWNERSHIP,
   modules: {
     ...PROOF_OWNERSHIP.modules,
     [CREDENTIAL_ENGINE]: [
@@ -341,7 +342,7 @@ export const CREDENTIAL_REDUCER = "server/auth/internal/credential_reducer.ts";
 export const IDENTITY_HELPER = "tests/helpers/identity.ts";
 /** New privileged import/schema boundaries, separate from fixture migration. */
 export const ADOPTION_OWNERSHIP: OwnershipRules = {
-  roots: PREPARATION_OWNERSHIP.roots,
+  ...PREPARATION_OWNERSHIP,
   modules: {
     ...PREPARATION_OWNERSHIP.modules,
     [ACCOUNT_REPOSITORY]: [

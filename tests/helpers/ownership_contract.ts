@@ -45,6 +45,8 @@ export interface OwnershipRules {
   roots: Readonly<Record<string, RootRule>>;
   /** Resolved module identity -> exact owner modules, for every runtime form. */
   modules: Readonly<Record<string, readonly string[]>>;
+  /** Import ownership allows use, but not runtime re-export of these modules. */
+  privateExports?: readonly string[];
 }
 export const CHILD_OWNER = "tests/helpers/process.ts";
 const GLOBAL_MEMBERS = [
@@ -441,7 +443,11 @@ export function analyzeOwnership(
         context: input.text.split("\n")[line - 1].trim(),
       });
     };
-    const dependency = (node: ts.Expression, dynamic = false) => {
+    const dependency = (
+      node: ts.Expression,
+      kind: "import" | "dynamic" | "re-export" | "exported-binding" = "import",
+      site: ts.Node = node,
+    ) => {
       if (!ts.isStringLiteral(node)) {
         report(node.parent, "dynamic-import.*");
         return;
@@ -453,10 +459,33 @@ export function analyzeOwnership(
         owners = Object.hasOwn(rules.modules, target)
           ? rules.modules[target]
           : undefined;
-      if (owners && !owners.includes(input.file)) {
-        report(node, `module:${target}`);
-      } else if (!resolved && (dynamic || !target.startsWith("node:"))) {
+      if (
+        ((kind === "re-export" || kind === "exported-binding") &&
+          rules.privateExports?.includes(target)) ||
+        (kind !== "exported-binding" && owners && !owners.includes(input.file))
+      ) {
+        report(site, `module:${target}`);
+      } else if (
+        kind !== "exported-binding" && !resolved &&
+        (kind === "dynamic" || !target.startsWith("node:"))
+      ) {
         report(node.parent, "unresolved-import");
+      }
+    };
+    const exportedBinding = (site: ts.Node, symbol: ts.Symbol | undefined) => {
+      for (const declaration of symbol?.declarations ?? []) {
+        for (
+          let node: ts.Node | undefined = declaration;
+          node;
+          node = node.parent
+        ) {
+          if (ts.isImportDeclaration(node)) {
+            if (!isErasedPosition(declaration)) {
+              dependency(node.moduleSpecifier, "exported-binding", site);
+            }
+            break;
+          }
+        }
       }
     };
     // Enumerate the whole AST first, with no pruning or rule-dependent returns.
@@ -474,7 +503,8 @@ export function analyzeOwnership(
         node.expression.kind === ts.SyntaxKind.ImportKeyword;
       if (
         !root && !importCall && !ts.isImportDeclaration(node) &&
-        !ts.isExportDeclaration(node) && !ts.isImportEqualsDeclaration(node)
+        !ts.isExportDeclaration(node) && !ts.isExportAssignment(node) &&
+        !ts.isImportEqualsDeclaration(node)
       ) continue;
       if (isErasedPosition(node)) continue;
       if (ts.isImportDeclaration(node)) {
@@ -492,8 +522,22 @@ export function analyzeOwnership(
         const erased = node.isTypeOnly ||
           (clause && ts.isNamedExports(clause) && clause.elements.length > 0 &&
             clause.elements.every((s) => s.isTypeOnly));
-        if (!erased && node.moduleSpecifier) dependency(node.moduleSpecifier);
+        if (!erased && node.moduleSpecifier) {
+          dependency(node.moduleSpecifier, "re-export");
+        } else if (!erased && clause && ts.isNamedExports(clause)) {
+          for (const specifier of clause.elements) {
+            if (!specifier.isTypeOnly) {
+              exportedBinding(
+                specifier,
+                checker.getExportSpecifierLocalTargetSymbol(specifier),
+              );
+            }
+          }
+        }
         if (node.moduleSpecifier || erased) continue;
+      }
+      if (ts.isExportAssignment(node) && ts.isIdentifier(node.expression)) {
+        exportedBinding(node, checker.getSymbolAtLocation(node.expression));
       }
       if (ts.isImportEqualsDeclaration(node)) {
         if (
@@ -506,7 +550,7 @@ export function analyzeOwnership(
       if (
         ts.isCallExpression(node) &&
         node.expression.kind === ts.SyntaxKind.ImportKeyword
-      ) dependency(node.arguments[0], true);
+      ) dependency(node.arguments[0], "dynamic");
       if (
         ts.isIdentifier(node) && Object.hasOwn(rules.roots, node.text) &&
         isReference(node)

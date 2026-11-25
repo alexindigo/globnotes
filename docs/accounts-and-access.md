@@ -129,7 +129,8 @@ The exact committed acknowledgment survives its own credential revocation, but
 not replacement of the captured instance lifetime. Lost replies use normal sign-in.
 These account handlers are injection-only until the coordinated cutover.
 
-While the legacy setup and Access screens remain active, their service owns the
-current enrollment attempt through QR rendering and confirmation. Newly confirmed
+While the legacy setup and Access screens remain active, their service owns one
+current enrollment attempt per lane and config owner through QR rendering and
+confirmation; a new issuance replaces only that lane's attempt. Newly confirmed
 secrets carry an explicit Base32 marker. Existing unmarked/raw stored secrets keep
 their historical interpretation; keeping an authenticator does not rewrite it.

@@ -85,3 +85,34 @@ Deno.test("credential command registration: trusted test binding cannot be re-ex
     `module:${CREDENTIAL_ENGINE}`,
   ]);
 });
+
+Deno.test("own-account registration: the binder import grants use, not re-export", () => {
+  for (
+    const text of [
+      'export {bindCredentialAuthority} from "private";',
+      'export {bindCredentialAuthority as bind} from "private";',
+      'export * from "private";',
+      'export * as privateEngine from "private";',
+      'import {bindCredentialAuthority as bind} from "private"; export {bind};',
+      'import {bindCredentialAuthority as bind} from "private"; export default bind;',
+    ]
+  ) {
+    const sites = analyzeOwnership([{
+      file: "server/auth/account.ts",
+      text,
+      imports: { private: CREDENTIAL_ENGINE },
+    }], ADOPTION_OWNERSHIP);
+    assertEquals(sites.map(({ file, capability }) => ({ file, capability })), [{
+      file: "server/auth/account.ts",
+      capability: `module:${CREDENTIAL_ENGINE}`,
+    }]);
+  }
+  assertEquals(
+    analyzeOwnership([{
+      file: "server/auth/account.ts",
+      text: 'export type {CredentialAuthority} from "private";',
+      imports: { private: CREDENTIAL_ENGINE },
+    }], ADOPTION_OWNERSHIP),
+    [],
+  );
+});

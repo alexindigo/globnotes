@@ -9,6 +9,7 @@
 
 import { login_failed } from "@server/api_messages.ts";
 import type { Login, Token } from "@server/auth/models.ts";
+import { readRequestJson } from "@server/auth/request_json.ts";
 import { AuthType } from "@server/config.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { logger } from "@server/logger.ts";
@@ -26,7 +27,7 @@ export default async function (request: PathfinderRequest): Promise<Token> {
   if (state.auth === null) {
     throw new HttpError(400, "Authentication is not enabled.");
   }
-  const data = (await request.body.json()) as Login;
+  const data = (await readRequestJson(request.body)) as Login;
   try {
     const token = await state.auth.login(data);
     logger.info(`Login succeeded for username '${data.username ?? ""}'`);

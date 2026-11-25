@@ -216,12 +216,12 @@ for (const lane of ["access", "setup"]) {
         username: "alice",
       }, token);
       assertEquals(enrollment.status, 200);
-      const peer = await call(`${lane}/totp-enrolment`, "POST", {
+      const replacement = await call(`${lane}/totp-enrolment`, "POST", {
         username: "alice",
       }, token);
-      assertEquals(peer.status, 200);
-      const newKey = enrollment.body.key;
-      const newSecret = enrollment.body.secret;
+      assertEquals(replacement.status, 200);
+      const newKey = replacement.body.key;
+      const newSecret = replacement.body.secret;
       assertEquals(newKey, newSecret);
       const newCode = await clock.value.code(newSecret);
       const current = lane === "access"
@@ -241,7 +241,7 @@ for (const lane of ["access", "setup"]) {
         totpCode: newCode,
       };
       const original = await Deno.readTextFile(path);
-      for (const rejectedKey of ["unissued raw key"]) {
+      for (const rejectedKey of ["unissued raw key", enrollment.body.key]) {
         const rejected = await call(lane, lane === "access" ? "PUT" : "POST", {
           ...change,
           totpKey: rejectedKey,
@@ -249,11 +249,9 @@ for (const lane of ["access", "setup"]) {
         assertEquals(rejected.status, 422);
         assertEquals(await Deno.readTextFile(path), original);
       }
-      // Independent issuance is not retirement. The peer candidate still
-      // requires its own code; its key cannot borrow this attempt's proof.
+      // The current candidate still requires its own code.
       const wrongProof = await call(lane, lane === "access" ? "PUT" : "POST", {
         ...change,
-        totpKey: peer.body.key,
         totpCode: "",
       }, token);
       assertEquals(wrongProof.status, 400);
@@ -302,6 +300,10 @@ for (const lane of ["access", "setup"]) {
         }, token);
         assertEquals(consumed.status, 422);
         assertEquals(await Deno.readTextFile(path), beforeReuse);
+        const peer = await call("access/totp-enrolment", "POST", {
+          username: "alice",
+        }, token);
+        assertEquals(peer.status, 200);
         const peerCompletion = await call("access", "PUT", {
           ...replacement,
           totpKey: peer.body.key,

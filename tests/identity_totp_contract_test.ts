@@ -48,9 +48,9 @@ Deno.test("legacy setup: held body cannot adopt a replacement configuration", ()
       }, (hold) =>
         setup({
           body: {
-            json: async () => {
+            text: async () => {
               await hold();
-              return { mode: "none" };
+              return '{"mode":"none"}';
             },
           },
         } as unknown as PathfinderRequest), async (held) => {
@@ -80,7 +80,7 @@ Deno.test("legacy setup: held body cannot adopt a replacement configuration", ()
 
 // Main-side command contracts corresponding to the repository cases described
 // in structure-credentials.md. No later OwnAccount workflow is imported here.
-Deno.test("legacy enrollment: only explicit attempt discard retires held QR work", async () => {
+Deno.test("legacy enrollment: new setup issuance retires held QR work without discarding its replacement", async () => {
   let render = (uri: string) => Promise.resolve(`qr:${uri}`);
   const pending = new LegacyTotpEnrollments((uri) => render(uri));
   let heldKey = "";
@@ -103,11 +103,19 @@ Deno.test("legacy enrollment: only explicit attempt discard retires held QR work
       current.secret,
       `qr:${current.uri}`,
     ]);
-    await pending.discard("setup", heldKey);
     await assertRejects(
       () => held.result(),
       HttpError,
       "HTTP 422",
+    );
+    await pending.discard("setup", heldKey);
+    assertEquals(
+      assertThrows(
+        () => pending.confirm("setup", current.key, ""),
+        HttpError,
+        "HTTP 400",
+      ).status,
+      400,
     );
     const error = assertThrows(
       () => pending.confirm("access", current.key, "123456"),
@@ -125,7 +133,7 @@ Deno.test("legacy enrollment: only explicit attempt discard retires held QR work
 });
 
 for (const lane of ["setup", "access"] as const) {
-  Deno.test(`legacy enrollment: ${lane} peer issuance cannot retire a held renderer`, async () => {
+  Deno.test(`legacy enrollment: issuance in the other lane does not retire a held ${lane} renderer`, async () => {
     let render = (uri: string) => Promise.resolve(`qr:${uri}`);
     const pending = new LegacyTotpEnrollments((uri) => render(uri));
     await heldOperation({
@@ -141,61 +149,58 @@ for (const lane of ["setup", "access"] as const) {
     }, async (held) => {
       await held.reached();
       render = (uri) => Promise.resolve(`qr:${uri}`);
-      const peer = await pending.issue(lane, "bob");
+      const otherLane = lane === "setup" ? "access" : "setup";
+      const peer = await pending.issue(otherLane, "bob");
       const original = await held.result();
-      for (const bundle of [original, peer]) {
+      for (
+        const [issuer, bundle] of [[lane, original], [otherLane, peer]] as const
+      ) {
         assertEquals([bundle.key, bundle.qr], [
           bundle.secret,
           `qr:${bundle.uri}`,
         ]);
         assertEquals(
           assertThrows(
-            () => pending.confirm(lane, bundle.key, ""),
+            () => pending.confirm(issuer, bundle.key, ""),
             HttpError,
             "HTTP 400",
           ).status,
           400,
         );
-        await pending.discard(lane, bundle.key);
+        await pending.discard(issuer, bundle.key);
       }
     });
   });
-  Deno.test(`legacy enrollment: ${lane} attempts retain independent custody for the same or another login`, async () => {
+  Deno.test(`legacy enrollment: ${lane} retains only its latest attempt regardless of the requested login label`, async () => {
     const pending = new LegacyTotpEnrollments((uri) =>
       Promise.resolve(`qr:${uri}`)
     );
     const first = await pending.issue(lane, "alice");
     const sameUser = await pending.issue(lane, "alice");
     const otherUser = await pending.issue(lane, "bob");
-    for (const bundle of [first, sameUser, otherUser]) {
+    for (const bundle of [first, sameUser]) {
       const error = assertThrows(
         () => pending.confirm(lane, bundle.key, ""),
         HttpError,
-        "HTTP 400",
+        "HTTP 422",
       );
-      assertEquals(error.status, 400);
+      assertEquals(error.status, 422);
     }
-    await pending.discard(lane === "setup" ? "access" : "setup", first.key);
     await pending.discard(lane, sameUser.key);
     assertEquals(
       assertThrows(
-        () => pending.confirm(lane, sameUser.key, ""),
+        () => pending.confirm(lane, otherUser.key, ""),
         HttpError,
-        "HTTP 422",
+        "HTTP 400",
       ).status,
-      422,
+      400,
     );
-    for (const bundle of [first, otherUser]) {
-      assertEquals(
-        assertThrows(
-          () => pending.confirm(lane, bundle.key, ""),
-          HttpError,
-          "HTTP 400",
-        ).status,
-        400,
-      );
-      await pending.discard(lane, bundle.key);
-    }
+    await pending.discard(lane, otherUser.key);
+    assertThrows(
+      () => pending.confirm(lane, otherUser.key, ""),
+      HttpError,
+      "HTTP 422",
+    );
   });
 }
 

@@ -277,14 +277,14 @@ Deno.test("review repairs: R06 setup carries original config through real passwo
       }) as typeof crypto.subtle.deriveBits;
     pending = setupHandler(
       {
-        body: {
-          json: () =>
-            Promise.resolve({
-              mode: "password",
-              username: "new owner",
-              password: "fixture setup password",
-            }),
-        },
+        body: new Request("http://fixture/_/api/setup", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "password",
+            username: "new owner",
+            password: "fixture setup password",
+          }),
+        }),
       } as unknown as PathfinderRequest,
     ).then(
       () => 200,

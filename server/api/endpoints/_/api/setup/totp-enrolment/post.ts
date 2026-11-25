@@ -6,6 +6,7 @@
  * confirmed; generating it does not install an active authenticator. */
 
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
+import { readRequestJson } from "@server/auth/request_json.ts";
 import { pendingTotpEnrollments } from "@server/auth/totp_enrolment.ts";
 import { state } from "@server/state.ts";
 
@@ -18,10 +19,11 @@ export default async function (
   if (!config.setupRequired) {
     throw new HttpError(409, "Setup has already been completed.");
   }
-  const data = (await request.body.json().catch(() => ({}))) as {
-    username?: string;
-  };
-  const username = (data.username ?? "").trim() || "globnotes";
+  const body = await readRequestJson(request.body, { allowEmpty: true });
+  const username = body && typeof body === "object" && "username" in body &&
+      typeof body.username === "string"
+    ? body.username.trim() || "globnotes"
+    : "globnotes";
 
   if (state.config !== config || !config.setupRequired) {
     throw new HttpError(409, "Setup has already been completed.");

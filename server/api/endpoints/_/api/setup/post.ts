@@ -7,6 +7,7 @@
  */
 
 import { LocalAuth } from "@server/auth/local.ts";
+import { readRequestJson } from "@server/auth/request_json.ts";
 import { pendingTotpEnrollments } from "@server/auth/totp_enrolment.ts";
 import { AuthType, StoredConfigConflict } from "@server/config.ts";
 import { hashPassword } from "@server/helpers.ts";
@@ -34,7 +35,7 @@ export default async function (
   if (!config.setupRequired) {
     throw new HttpError(409, "Setup has already been completed.");
   }
-  const data = (await request.body.json()) as SetupRequest;
+  const data = (await readRequestJson(request.body)) as SetupRequest;
   logger.info(
     `Setup attempt: mode=${data.mode} ` +
       `username=${data.username ?? "(none)"} ` +

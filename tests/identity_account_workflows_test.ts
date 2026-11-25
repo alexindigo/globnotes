@@ -111,6 +111,46 @@ Deno.test("own account: safe response requires an account but no vault", () =>
     assertEquals(Object.keys(handlers).sort(), ["enrolment", "get", "patch"]);
   }));
 
+Deno.test("own account: PATCH keeps JSON syntax, command validation and body read failures distinct", () =>
+  workflowFixture(async (f, workflow) => {
+    const token = await login(f);
+    const handlers = ownAccountHandlers(
+      workflow,
+      () => Promise.resolve(token.principal),
+    );
+    const url = "http://fixture/_/api/account";
+    for (
+      const [body, status, detail] of [
+        ["{", 400, "Invalid JSON request body."],
+        ["{}", 422, "Invalid account change."],
+      ] as const
+    ) {
+      const error = await assertRejects(
+        () => handlers.patch(new Request(url, { method: "PATCH", body })),
+        HttpError,
+        `HTTP ${status}`,
+      );
+      assertEquals([error.status, error.detail], [status, detail]);
+    }
+    const reason = new SyntaxError("body source failed");
+    const request = new Request(url, {
+      method: "PATCH",
+      body: new ReadableStream({
+        start(controller) {
+          controller.error(reason);
+        },
+      }),
+    });
+    assertStrictEquals(
+      await assertRejects(
+        () => handlers.patch(request),
+        SyntaxError,
+        reason.message,
+      ),
+      reason,
+    );
+  }));
+
 Deno.test("own account: exact safe acknowledgment survives immediate self-revocation only for its committed change", () =>
   workflowFixture(async (f, workflow) => {
     importFixtureAccount(
@@ -287,9 +327,9 @@ Deno.test("own account: PATCH captures its cancellation signal once before the b
       progress: { kind: "controlled", clock: "manual" },
       owner: () => request,
     }, (hold) => {
-      request.json = async () => {
+      request.text = async () => {
         await hold();
-        return wire();
+        return JSON.stringify(wire());
       };
       return workflow.patch(token.principal, request);
     }, async (held) => {
@@ -568,9 +608,9 @@ for (const cause of ["composition", "expiry", "credentials"] as const) {
         progress: { kind: "controlled", clock: "manual" },
         owner: () => request,
       }, (hold) => {
-        request.json = async () => {
+        request.text = async () => {
           await hold();
-          return wire();
+          return JSON.stringify(wire());
         };
         return handlers.patch(request);
       }, async (held) => {
