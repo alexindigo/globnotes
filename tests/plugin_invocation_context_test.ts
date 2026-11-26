@@ -28,6 +28,57 @@ function deferred<T>() {
   return Promise.withResolvers<T>();
 }
 
+Deno.test("plugin context: an activation interval skips ticks while its callback is pending", () =>
+  withPluginFixture(async (fixture, scope) => {
+    const dir = await fixture.install("interval", {
+      runtime: { server: "service.js" },
+    }, {
+      // Drive the actual managed interval's native callback at chosen points.
+      // Only this fixture interval is intercepted; the Worker heartbeat is native.
+      "service.js": `export function activate(ctx) {
+        const original = globalThis.setInterval;
+        const gate = Promise.withResolvers(), events = [];
+        let tick, firings = 0, stop;
+        globalThis.setInterval = callback => { tick = callback; return 0; };
+        try {
+          stop = ctx.timers.setInterval(async () => {
+            const id = ++firings;
+            events.push(['start', id]);
+            await gate.promise;
+            events.push(['finish', id]);
+          }, 1);
+        } finally { globalThis.setInterval = original; }
+        ctx.commands.register({id:'observe',label:'Observe',target:'server'}, async () => {
+          const first = tick();
+          const whilePending = tick();
+          const pending = events.slice();
+          gate.resolve();
+          await Promise.all([first, whilePending]);
+          await tick();
+          await stop();
+          await tick();
+          return { pending, events };
+        });
+      }`,
+    });
+    const host = (await scope.acquire(() =>
+      new PluginHost(
+        readManifest(dir),
+        fixture.vault,
+        () => Promise.resolve(null),
+        1,
+        { role: "service" },
+      ), (host) => host.stop())).value;
+    await host.start();
+    const [handler] = [...host.registrations].find(([, value]) =>
+      value.id === "observe"
+    )!;
+    assertEquals(await host.invoke(handler, []), {
+      pending: [["start", 1]],
+      events: [["start", 1], ["finish", 1], ["start", 2], ["finish", 2]],
+    });
+  }));
+
 for (const withViewer of [false, true]) {
   Deno.test(`plugin context: a pre-hook's registered handler and timer stay restricted (viewer=${withViewer})`, () =>
     withPluginFixture(async (fixture, scope) => {

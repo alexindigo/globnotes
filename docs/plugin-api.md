@@ -628,7 +628,8 @@ registration and its originating invocation; it never substitutes background
 work. A registration arriving after its scope retired is refused without failing
 the generation. One-shots release after callback settlement or cancellation;
 repeating resources end on cancellation, credential revision/expiry or generation
-retirement. Timer firings do not overlap. Retirement releases every derived
+retirement. Each timer skips ticks while its previous firing is pending,
+including background intervals. Retirement releases every derived
 resource, even when an earlier cleanup fails. Deferred actions retain the
 handler-settlement barrier and truthful partial receipts. Independently
 host-started work remains background work; browser logout does not revoke

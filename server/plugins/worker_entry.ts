@@ -324,7 +324,7 @@ function timer(
   const release = managed((context, current) => {
     const run = async () => {
       if (!current() || busy) return;
-      if (context.kind === "continuation") busy = true;
+      busy = true;
       let firing: InvocationReference | undefined;
       try {
         if (context.kind === "continuation") {
