@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { nextTick, ref } from "vue";
 import { heldOperation } from "../../tests/helpers/owned_operation.ts";
+import { done, READINESS_MS, waitUntil } from "../../tests/helpers/wait.ts";
 import { createIdentityAppSession } from "../appSession.js";
 import { createIdentityLoginFlow } from "../loginFlow.js";
 import { identitySessionKey, permissionEligibility, readerRuntimeEligibility } from "../appSessionPolicy.js";
@@ -83,20 +84,22 @@ it("reports the initial config installation error from the adoption that owns it
 });
 
 it("navigates and completes the shared logout before anonymous config answers", async () => {
-  let release, entered;
-  const answer = new Promise(resolve => { release = resolve; });
-  const started = new Promise(resolve => { entered = resolve; });
-  const f = app({ transport: { getConfig: () => { entered(); return answer; } } });
-  const logout = f.session.logout();
-  try {
+  let hold, logout;
+  const f = app({ transport: { getConfig: async () => { await hold(); return projection(null); } } });
+  await heldOperation(controlled("logout recovery", f.session), boundary => {
+    hold = boundary;
+    logout = f.session.logout();
+    return logout.finally(() => f.session.settle());
+  }, async work => {
     expect(f.session.logout()).toBe(logout);
-    await started;
+    await work.reached();
     expect(f.events.filter(value => value === "login")).toEqual(["login"]);
-    expect(await logout).toBe(true);
+    expect(await waitUntil(async () => done(await logout), { label: "logout completion while recovery is held" })).toBe(true);
     f.session.acceptToken("bob.jwt", false); f.session.adopt(projection("bob"));
-  } finally { release(projection(null)); await f.session.settle(); }
+    await work.result();
+  });
   expect([f.current.value.accountId, f.tokens.getStoredToken()]).toEqual(["bob", "bob.jwt"]);
-});
+}, 3 * READINESS_MS);
 
 it("awaits and reports an asynchronous accepted login callback rejection", async () => {
   let resolveEntered, rejectCallback;
@@ -436,20 +439,23 @@ it.each(["openVaultChanges", "openPluginHostEvents"])("%s retires stale response
 });
 
 it("pending Settings writes settle independently without giving Bob the old acknowledgement or draft", async () => {
-  let identity = "alice", hold; const writes = [];
+  let identity = "alice", hold; const writes = [], outcomes = [];
   const page = { id: "plugin:p:settings", owner: "p", available: true, descriptor: { fields: [{ key: "text", type: "text", default: "" }] } };
   const settings = createSettingsPageState({ getSession: () => identity, confirm: async () => "cancel", registry: {
     find: () => page, read: async () => ({ values: { text: `${identity} base` }, revision: 1 }),
-    commit: async (page, values, revision) => { writes.push({ identity, values, revision }); await hold(); return { values, revision: 2 }; },
+    commit: async (page, values, revision) => { writes.push({ identity, values, revision }); await hold(); outcomes.push("wire returned"); return { values, revision: 2 }; },
   } });
   cleanups.push(() => settings.dispose()); await settings.load(page.id); settings.edit(page.id, "text", "A");
   await heldOperation(controlled("original Settings write", settings), boundary => { hold = boundary; return settings.commit(page.id); }, async work => {
     await work.reached(); settings.edit(page.id, "text", "newer retained text"); identity = "bob";
     expect(settings.pageIds()).toEqual([]);
+    const settlement = settings.settle().then(ok => { outcomes.push(["settled", ok]); });
     expect([settings.snapshot(page.id).committed, settings.snapshot(page.id).drafts]).toEqual([{}, {}]);
     await settings.load(page.id);
     expect(settings.snapshot(page.id).committed).toEqual({ text: "bob base" });
     expect(await work.result()).toBe(true);
+    await settlement;
+    expect(outcomes).toEqual(["wire returned", ["settled", true]]);
     const state = settings.snapshot(page.id);
     expect([state.committed, state.drafts, state.dirty]).toEqual([{ text: "bob base" }, {}, false]);
     expect(writes).toEqual([{ identity: "alice", values: { text: "A" }, revision: 1 }]);
@@ -457,6 +463,36 @@ it("pending Settings writes settle independently without giving Bob the old ackn
     identity = "alice";
     expect(settings.snapshot(page.id).committed).toEqual({});
     expect(settings.snapshot(page.id).drafts).toEqual({});
+  });
+});
+
+it("a retired Settings failure retains its outcome and submitted values for same-owner read-back", async () => {
+  const generation = ref("first"), writes = [];
+  const page = { id: "plugin:p:settings", available: true, descriptor: { fields: [{ key: "text", type: "text" }, { key: "other", type: "text" }] } };
+  let hold;
+  const settings = createSettingsPageState({ getSession: () => generation.value, getRecoveryScope: () => "alice/vault", registry: {
+    find: () => page, read: async () => ({ values: { text: "base", other: "base" }, revision: 1 }),
+    async commit(_, values, revision) {
+      writes.push([generation.value, values, revision]);
+      if (writes.length === 1) { await hold(); throw Error("Lost write response"); }
+      return { values, revision: revision + 1 };
+    },
+  } });
+  cleanups.push(() => settings.dispose()); await settings.load(page.id);
+  settings.edit(page.id, "text", "submitted"); settings.edit(page.id, "other", "old typing");
+  await heldOperation(controlled("old Settings failure", settings), boundary => { hold = boundary; return settings.commit(page.id); }, async work => {
+    await work.reached(); settings.edit(page.id, "other", "newer typing"); generation.value = "fresh";
+    await settings.load(page.id);
+    const settlement = settings.settle();
+    expect(await work.result()).toBe(false);
+    expect(await settlement).toBe(false);
+    const { committed, drafts, message, recovery } = settings.snapshot(page.id);
+    expect([committed, drafts, message, recovery]).toEqual([{ text: "base", other: "base" },
+      { text: "submitted", other: "newer typing" }, "Lost write response", { visible: true, label: "Check current status" }]);
+    expect(await settings.commit(page.id)).toBe(false);
+    expect(await settings.retry(page.id)).toBe(true);
+    expect(settings.snapshot(page.id).drafts).toEqual({});
+    expect(writes).toEqual([["first", { text: "submitted", other: "old typing" }, 1], ["fresh", { text: "submitted", other: "newer typing" }, 1]]);
   });
 });
 

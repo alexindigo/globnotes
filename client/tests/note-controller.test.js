@@ -4,6 +4,8 @@ import { heldOperation } from "../../tests/helpers/owned_operation.ts";
 import { createNoteController } from "../noteController.js";
 import { createNotePreview } from "../notePreview.js";
 import { createIdentityNoteDraftStore } from "../noteDrafts.js";
+import { createNoteSaveOwner } from "../noteSaveOwner.js";
+import { identitySessionKey } from "../appSessionPolicy.js";
 import { TOPICS } from "../bus/index.js";
 import { getNote, deleteNote, updateNote, createNote } from "../api.js";
 
@@ -16,7 +18,7 @@ vi.mock("../api.js", () => ({
 const controllers = [];
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
-beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks(); });
+beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks(); updateNote.mockReset(); });
 afterEach(() => { controllers.splice(0).forEach(controller => controller.dispose()); vi.clearAllTimers(); vi.useRealTimers(); });
 
 function fixture(overrides = {}, contextValues = {}) {
@@ -59,6 +61,91 @@ function fixture(overrides = {}, contextValues = {}) {
 }
 
 describe("note workflow ownership", () => {
+  const projection = (accountId = "alice", vaultId = "vault", sessionGeneration = "first") => ({
+    principal: { kind: "account" }, accountId, vaultId, sessionGeneration, capabilities: { canEdit: true },
+  });
+
+  it.each(["Seed", "dirty text"])("a rename submitting %s does not claim an unrelated destination draft", async content => {
+    const store = () => createIdentityNoteDraftStore({ prefix: "/rename", identity: projection,
+      tokens: { isCurrentTokenStored: () => true } });
+    store().save("folder/Destination", "unrelated draft", 1, "unrelated base");
+    store().save("folder/P", "Seed", 1, "Seed");
+    try {
+      const f = fixture({ drafts: store() });
+      await f.controller.mount(); f.controller.toggleEditModeHandler();
+      f.controller.setDecisionVisible("draft", false); f.controller.setEditMode();
+      f.controller.registerEditor(f.port);
+      f.controller.setBasename("Destination"); f.controller.onTitleInput();
+      if (content !== "Seed") { f.input(content); await vi.advanceTimersByTimeAsync(1000); }
+      updateNote.mockResolvedValueOnce({ path: "folder/Destination", content });
+      expect(f.controller.applyRename()).toBe(true);
+      expect(await f.participant().settlePending()).toBe(true);
+      const recovery = store();
+      expect([recovery.load("folder/P", 0), recovery.load("folder/Destination", 0), recovery.base("folder/Destination")])
+        .toEqual([null, "unrelated draft", "unrelated base"]);
+      expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/Destination", content, "none", "Seed");
+    } finally { localStorage.clear(); }
+  });
+
+  it("reports rejected draft storage while sending and acknowledging the live buffer", async () => {
+    const quota = new DOMException("Storage is full", "QuotaExceededError");
+    const drafts = { load: () => null, release() {}, base() {}, save: vi.fn(() => { throw quota; }),
+      captureAcknowledgement: vi.fn(() => completeDraft), clear() {} };
+    const completeDraft = vi.fn();
+    const f = fixture({ drafts });
+    await f.controller.mount(); f.enter(); f.input("live edit");
+    updateNote.mockResolvedValueOnce({ path: "folder/P", content: "live edit" });
+    const receipt = f.controller.saveHandler();
+    expect(await receipt.completion).toMatchObject({ status: "acknowledged" });
+    expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/P", "live edit", "none", "Seed");
+    expect(completeDraft).toHaveBeenCalledExactlyOnceWith();
+    expect(f.adapters.toast.add.mock.calls.map(([toast]) => toast.summary)).toEqual(["Local draft unavailable"]);
+  });
+
+  it.each([true, false])("only an accepted renewal of the same note scope resumes a pre-write 401 (same scope: %s)", async sameScope => {
+    const current = ref(projection()), valid = ref(true), login = deferred();
+    const sessionKey = () => valid.value ? identitySessionKey(current.value) : null;
+    const requestAuthentication = vi.fn(() => login.promise);
+    const f = fixture({ sessionKey, saveOwnerFactory: adapters => createNoteSaveOwner({ ...adapters, requestAuthentication }) }, projection());
+    await f.controller.mount(); f.enter(); f.input("first");
+    updateNote.mockImplementationOnce(async () => {
+      valid.value = false;
+      throw { response: { status: 401, data: { detail: "Invalid authentication credentials" } } };
+    }).mockResolvedValueOnce({ path: "folder/P", content: "first" });
+    const receipt = f.controller.saveHandler();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requestAuthentication).toHaveBeenCalledExactlyOnceWith();
+    f.input("newer typing");
+    current.value = projection("alice", sameScope ? "vault" : "another-vault", "renewed");
+    Object.assign(f.context, current.value); valid.value = true;
+    login.resolve(true);
+    await vi.advanceTimersByTimeAsync(0);
+    const call = ["folder/P", "folder/P", "first", "none", "Seed"];
+    expect(updateNote.mock.calls).toEqual(sameScope ? [call, call] : [call]);
+    expect(f.controller.currentBuffer()).toBe("newer typing");
+    if (sameScope) {
+      expect(await receipt.completion).toMatchObject({ status: "acknowledged" });
+      expect(f.controller.state.canModify).toBe(true);
+    } else {
+      expect(f.controller.state.canModify).toBe(false);
+    }
+  });
+
+  it("conflict copy metadata is reachable only within its originating account and vault", async () => {
+    const f = fixture({}, projection());
+    await f.controller.mount(); f.enter(); f.input("conflicting edit");
+    const path = "folder/Conflict-copy";
+    updateNote.mockResolvedValueOnce({ path, content: "conflicting edit", saveResult: { status: "conflict" } });
+    expect(await f.controller.saveHandler().completion).toMatchObject({ status: "acknowledged" });
+    const delivered = [];
+    for (const identity of [projection("bob"), projection("alice", "another-vault"), projection("alice", "vault", "renewed")]) {
+      const copy = fixture({}, { ...identity, path });
+      await copy.controller.mount(); copy.controller.openConflictOriginal();
+      delivered.push([copy.controller.state.conflictOriginal, copy.router.push.mock.calls]);
+    }
+    expect(delivered).toEqual([["", []], ["", []], ["folder/P", [[{ path: "/folder/P", hash: "" }]]]]);
+  });
+
   it("does not read or replace Alice's clean editor on Bob's vault reset", async () => {
     const identity = ref("alice");
     const read = vi.fn(async path => ({ path, content: identity.value, version: identity.value }));

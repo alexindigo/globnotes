@@ -15,19 +15,13 @@ function createQualifiedDraftStore({ local = localStorage, session = sessionStor
   // This durable marker contains numbers only. Session-only text and its base
   // stay in session storage. A vanished tab does not itself retire anything.
   const markerKey = key => `${key}:history`;
-  const metadataKey = key => `${key}:metadata`;
   const decode = text => { try { return JSON.parse(text); } catch { return null; } };
   const history = key => decode(local.getItem(markerKey(key))) ?? { latest: 0, retired: -1 };
   function read(storage, key) {
-    const value = storage.getItem(key);
-    if (value === null) return null;
-    const meta = decode(storage.getItem(metadataKey(key)));
-    return { storage, key, value, order: meta?.order ?? 0, base: meta?.base };
+    const record = decode(storage.getItem(key));
+    return typeof record?.value === "string" && Number.isSafeInteger(record.order) ? { ...record, storage, key } : null;
   }
-  function remove(record) {
-    record.storage.removeItem(record.key);
-    record.storage.removeItem(metadataKey(record.key));
-  }
+  const remove = record => record.storage.removeItem(record.key);
   function retire(key, order) {
     const old = history(key), retired = Math.max(old.retired, order);
     local.setItem(markerKey(key), JSON.stringify({ latest: old.latest, retired }));
@@ -45,9 +39,10 @@ function createQualifiedDraftStore({ local = localStorage, session = sessionStor
     if (previous?.revision === revision && previous.storage === storage && previous.order === stored?.order &&
         previous.order > old.retired && stored.value === value && stored.base === base) return;
     const order = Math.max(old.latest, old.retired) + 1;
+    // Reserve an order across both stores. Failed record replacement only
+    // leaves an unused order, never a partial draft or a new retirement.
     local.setItem(markerKey(key), JSON.stringify({ ...old, latest: order }));
-    storage.setItem(key, value);
-    storage.setItem(metadataKey(key), JSON.stringify({ order, base }));
+    storage.setItem(key, JSON.stringify({ value, base, order }));
     owned.set(key, { storage, key, value, revision, order, base });
   }
   function load(path, revision) {
@@ -73,19 +68,15 @@ function createQualifiedDraftStore({ local = localStorage, session = sessionStor
     }
     owned.clear();
   }
-  function captureAcknowledgement(revision, paths) {
+  function captureAcknowledgement(revision) {
     if (!isCurrent()) return;
-    const captured = new Map([...owned.values()].filter(record => record.revision <= revision).map(record => [record.key, record.order]));
-    // A user can submit before the draft debounce runs. Capture the order at
-    // submission, never at response time, so later drafts remain recoverable.
-    for (const path of paths.filter(Boolean)) {
-      const key = keyFor(path), existing = owned.get(key);
-      if (!existing || existing.revision <= revision) captured.set(key, history(key).latest);
-    }
-    return () => { if (isCurrent()) for (const [key, order] of captured) retire(key, order); };
+    // A proposed path grants no ownership. Acknowledgements retire only the
+    // exact generations loaded or written by this editor at submission time.
+    const captured = [...owned.values()].filter(record => record.revision <= revision);
+    return () => { if (isCurrent()) for (const { key, order } of captured) retire(key, order); };
   }
   return { save, load, base: path => owned.get(keyFor(path))?.base, clear, clearClean, captureAcknowledgement,
-    clearAcknowledged(revision) { captureAcknowledgement(revision, [])?.(); }, release: () => owned.clear() };
+    clearAcknowledged(revision) { captureAcknowledgement(revision)?.(); }, release: () => owned.clear() };
 }
 // Bare legacy keys are ambiguous: these values belong to app modules, not drafts.
 const APP_KEYS = new Set([

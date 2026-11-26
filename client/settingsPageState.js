@@ -46,6 +46,8 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
   isGuest = () => getSession() === null, captureSession, canRead = () => true, canWrite = () => true }) {
   const records = reactive(new Map());
   const retained = new Map();
+  const requests = new Map();
+  const wires = reactive(new Map());
   const lifetime = createSessionContext({ key: getSession });
   let session = getSession(), scope = getRecoveryScope?.(), guest = isGuest();
   function synchronize() {
@@ -55,9 +57,10 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     if (scope) for (const record of records.values()) {
       // A sent version belongs only to the original wire, not to the new
       // draft. Later typing and work that was never submitted may be kept.
-      const entries = Object.entries(record.drafts).filter(([key]) =>
-        record.submitted?.versions[key] !== record.versions[key]);
-      if (entries.length) retained.set(record.id, { scope, values: Object.fromEntries(entries) });
+      if (wires.has(record.key)) {
+        const entries = Object.entries(record.drafts).filter(([key]) => record.submitted?.versions[key] !== record.versions[key]);
+        if (entries.length) preserve(record, Object.fromEntries(entries));
+      } else if (dirty(record) || record.uncertain) preserve(record, record.drafts, writeFailure(record));
     }
     for (const record of records.values()) record.retired = true;
     records.clear();
@@ -72,8 +75,6 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
   const stopSession = watch(() => [getSession(), getRecoveryScope?.(), isGuest()], synchronize, { flush: "sync" });
   const recordKey = id => { synchronize(); return JSON.stringify([lifetime.generation, id]); };
   const currentRecords = () => { synchronize(); return [...records.values()]; };
-  const requests = new Map();
-  const wires = reactive(new Map());
   const loads = reactive(new Map());
   const reviews = reactive(new Map());
   const capture = () => {
@@ -117,7 +118,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     if (!record) {
       const page = registry.find(id);
       if (!page) throw new Error(`Unavailable settings page: ${id}`);
-      record = reactive({ id, key, page, session: getSession(), available: page.available !== false, values: {}, revision: 0, sourceKey: undefined, fields: {}, drafts: {}, versions: {}, errors: {}, status: "unloaded", loaded: false, generation: 0, message: "", uncertain: null, changedDescriptor: null });
+      record = reactive({ id, key, page, session: getSession(), recoveryScope: scope, available: page.available !== false, values: {}, revision: 0, sourceKey: undefined, fields: {}, drafts: {}, versions: {}, errors: {}, status: "unloaded", loaded: false, generation: 0, message: "", uncertain: null, changedDescriptor: null });
       records.set(key, record);
     }
     return record;
@@ -151,7 +152,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
       blockingText:blocking?.actions?.length ? `${blocking.active===false ? 'Can block when on' : 'Can block'}: ${blocking.actions.join(', ')}. Errors or timeouts also cancel the action.` : '',
       recovery:{visible:record.status==='conflict'||record.status==='error'||!record.available||!!record.changedDescriptor,label:record.uncertain?'Check current status':'Retry'},
       canRetry:writable && retryAdmissible(record),
-      values, committed: record.values, dirty: dirty(record), pending: requests.has(record.key) || wires.has(record.key) || loads.has(record.key) || reviews.has(record.key), canSave: record.available && record.loaded && !blockingLoad(record) && !reviews.has(record.key) && !record.changedDescriptor && !Object.keys(record.errors).length };
+      values, committed: record.values, dirty: dirty(record), pending: requests.has(record.key) || pendingWrite(record) || loads.has(record.key) || reviews.has(record.key), canSave: record.available && record.loaded && !blockingLoad(record) && !reviews.has(record.key) && !record.changedDescriptor && !Object.keys(record.errors).length };
   }
   // Re-read the registry at settlement: a retained D2 is not necessarily the
   // current definition. Never project old acknowledgement values as new-schema
@@ -191,6 +192,33 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     else delete record.errors[key];
     return snapshot(id);
   }
+  function preserve(record, values, failure, older = false) {
+    const previous = retained.get(record.id);
+    const existing = previous?.scope === record.recoveryScope ? previous : null;
+    retained.set(record.id, { scope: record.recoveryScope,
+      values: older ? { ...values, ...existing?.values } : { ...existing?.values, ...values }, failure: failure ?? existing?.failure });
+  }
+  function restore(record) {
+    const recovery = retained.get(record.id);
+    if (!scope || recovery?.scope !== scope || !record.loaded || !canRead(record.page)) return;
+    retained.delete(record.id);
+    record.recovered = true;
+    for (const [field, value] of Object.entries(recovery.values)) {
+      if (record.page.descriptor?.fields?.some(entry => entry.key === field) && !Object.hasOwn(record.drafts, field)) edit(record.id, field, value);
+    }
+    const failure = recovery.failure;
+    if (!failure) return;
+    record.status = failure.status;
+    record.message = failure.message;
+    const submitted = failure.uncertain;
+    if (submitted) {
+      // Read-back of the original write may clear only matching recovered
+      // values, never newer typing that was not part of that wire.
+      const versions = Object.fromEntries(Object.keys(submitted.versions).filter(key =>
+        Object.hasOwn(record.drafts, key) && record.drafts[key] === submitted.raw[key]).map(key => [key, record.versions[key]]));
+      record.uncertain = { ...submitted, versions };
+    }
+  }
   async function load(id) {
     if (lifetime.disposed) return snapshot(id);
     if (!registry.find(id) && !records.has(recordKey(id))) return snapshot(id);
@@ -213,14 +241,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
           record.status = "idle";
           record.loaded = true;
           record.message = "";
-          const recovery = retained.get(id);
-          if (scope && recovery?.scope === scope) {
-            retained.delete(id);
-            record.recovered = true;
-            for (const [field, value] of Object.entries(recovery.values)) {
-              if (page.descriptor?.fields?.some(entry => entry.key === field) && !Object.hasOwn(record.drafts, field)) edit(id, field, value);
-            }
-          }
+          restore(record);
         }
       } catch (error) {
         if (current()) {
@@ -250,57 +271,82 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     record.uncertain = null;
     if (!dirty(record)) record.recovered = false;
   }
+  function rejectWrite(record, submitted, error) {
+    record.status = error.response?.status === 409 ? "conflict" : "error";
+    record.message = error.response?.data?.detail ?? error.message;
+    record.uncertain = !error.clientScopeRetired && (!error.response || error.response.data?.code === "plugin_settings_source_commit_failed") ? submitted : null;
+  }
+  function writeFailure(record) {
+    return record.submitted && ["conflict", "error"].includes(record.status)
+      ? { status: record.status, message: record.message, uncertain: record.uncertain } : undefined;
+  }
+  function pendingWrite(record) {
+    return wires.has(record.key) || !!record.recoveryScope && [...wires.values()].some(entry =>
+      entry.record.id === record.id && entry.record.recoveryScope === record.recoveryScope);
+  }
   async function commit(id, key) {
     if (lifetime.disposed) return false;
     const record = ensure(id);
-    const scope = record.key;
+    const keyForWrite = record.key;
     if (!canRead(record.page) || !canWrite() || key !== undefined && record.recovered) return false;
-    if (requests.has(scope)) {
+    if (requests.has(keyForWrite)) {
       const current = captureRecord(record);
-      const result = await requests.get(scope);
+      const result = await requests.get(keyForWrite);
       if (!result || !current()) return false;
       return commit(id, key); // serial admission; an acknowledged edit is deduplicated below
     }
-    if (wires.has(scope) || blockingLoad(record) || reviews.has(scope)) return false;
+    if (pendingWrite(record) || blockingLoad(record) || reviews.has(scope)) return false;
     if (!dirty(record)) return true;
     if (!record.loaded || !record.available || record.changedDescriptor || record.uncertain || record.status === "conflict") return false;
     if (key ? record.errors[key] : Object.keys(record.errors).length) return false;
     const versions = Object.fromEntries(Object.keys(record.drafts).filter(key => !record.errors[key]).map(key => [key, record.versions[key]]));
     if (!Object.keys(versions).length) return false;
-    const submitted = { page: record.page, session: record.session, key: record.key, values: copy(envelope(record)), revision: record.revision, sourceKey: record.sourceKey, versions };
+    const submitted = { page: record.page, session: record.session, key: record.key, values: copy(envelope(record)), revision: record.revision, sourceKey: record.sourceKey, versions,
+      raw: Object.fromEntries(Object.keys(versions).map(key => [key, record.drafts[key]])) };
     record.submitted = submitted;
     ++record.generation; // late GETs cannot overwrite an admitted edit/PUT
     const current = captureRecord(record).bind(canWrite);
     record.status = "saving";
-    let observed = false;
+    let observed = false, finished = false;
     const original = wire({ ...submitted, kind: "write", current });
-    wires.set(scope, original);
+    const entry = { record, original };
+    wires.set(keyForWrite, entry);
+    const mayRecordOutcome = () => !lifetime.disposed && (current() || record.retired);
+    function finish() {
+      if (!finished || requests.has(keyForWrite) || !wires.has(keyForWrite)) return;
+      wires.delete(keyForWrite);
+      const failure = writeFailure(record);
+      // An outcome belongs to its original record even after the projection
+      // retires. Only failure recovery, never the ACK, may be re-projected.
+      if (!lifetime.disposed && record.retired && failure && record.recoveryScope && (guest || scope === record.recoveryScope)) {
+        preserve(record, record.drafts, failure, true);
+        const replacement = records.get(recordKey(id));
+        if (replacement) restore(replacement);
+      }
+      adoptDescriptor(record);
+    }
     original.then(result => {
-      if (!observed && current() && record.uncertain && wires.get(scope) === original) acknowledge(record, submitted, result);
-    }, () => { /* Unknown decisions remain retained for explicit read-back. */ })
-      .finally(() => { if (wires.get(scope) === original) wires.delete(scope); adoptDescriptor(record); })
+      if (!observed && mayRecordOutcome() && record.uncertain) acknowledge(record, submitted, result);
+    }, error => { if (!observed && mayRecordOutcome() && record.uncertain) rejectWrite(record, submitted, error); })
+      .finally(() => { finished = true; finish(); })
       .catch(() => { /* Malformed late data is not an acknowledgement. */ });
     const request = (async () => {
       try {
         const result = await bounded(() => original);
         observed = true;
-        if (current()) acknowledge(record, submitted, result);
+        if (mayRecordOutcome()) acknowledge(record, submitted, result);
         return true;
       } catch (error) {
-        if (current()) {
-          record.status = error.response?.status === 409 ? "conflict" : "error";
-          record.message = error.response?.data?.detail ?? error.message;
-          if (!error.clientScopeRetired && (!error.response || error.response.data?.code === "plugin_settings_source_commit_failed")) record.uncertain = submitted;
-        }
+        if (mayRecordOutcome()) rejectWrite(record, submitted, error);
         return false;
-      } finally { requests.delete(scope); adoptDescriptor(record); }
+      } finally { requests.delete(keyForWrite); finish(); }
     })();
-    requests.set(scope, request);
+    requests.set(keyForWrite, request);
     return request;
   }
   function retryAdmissible(record) {
     const { key } = record;
-    return !lifetime.disposed && !record.retired && canRead(record.page) && canWrite() && !wires.has(key) && !requests.has(key) && !blockingLoad(record) && !reviews.has(key) &&
+    return !lifetime.disposed && !record.retired && canRead(record.page) && canWrite() && !pendingWrite(record) && !requests.has(key) && !blockingLoad(record) && !reviews.has(key) &&
       !(loads.has(key) && record.uncertain) && record.available &&
       !!(record.uncertain || (!record.changedDescriptor && record.status !== "conflict"));
   }
@@ -352,7 +398,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     for (const { key } of selected) if (requests.has(key)) await requests.get(key);
     for (const { key } of selected) {
       if (wires.has(key)) {
-        try { await bounded(() => wires.get(key).catch(() => null)); } catch { /* Observation is not cancellation. */ }
+        try { await bounded(() => wires.get(key).original.catch(() => null)); } catch { /* Observation is not cancellation. */ }
         if (wires.has(key)) return false;
       }
     }
@@ -392,18 +438,17 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     }
   }
   async function settle() {
-    const selected = currentRecords();
-    await Promise.all(selected.map(({ key }) => requests.get(key)));
-    for (const { key } of selected) {
-      const wire = wires.get(key);
-      if (wire) try { await bounded(() => wire.catch(() => null)); } catch {}
-    }
-    return selected.every(record => !wires.has(record.key) && !record.uncertain);
+    const selected = currentRecords(), originals = [...wires.values()];
+    await Promise.all(requests.values());
+    await Promise.all(originals.map(async ({ original }) => {
+      try { await bounded(() => original.catch(() => null)); } catch { /* Observation is not cancellation. */ }
+    }));
+    return !wires.size && [...selected, ...originals.map(({ record }) => record), ...currentRecords()].every(record => !record.uncertain);
   }
   return { snapshot, edit, commit, load, retry, resolveDeparture, reconcile,
     settle,
     pageIds: () => currentRecords().map(record => record.id),
-    hasWork: () => currentRecords().some(record => dirty(record) || record.status === "saving" || wires.has(record.key) || record.uncertain),
+    hasWork: () => wires.size > 0 || currentRecords().some(record => dirty(record) || record.status === "saving" || record.uncertain),
     recoveryPages: () => currentRecords().filter(record => !record.available && dirty(record)).map(record => record.page),
     dispose() { lifetime.dispose(); stopSession(); retained.clear(); records.clear(); return operations.dispose(); },
   };

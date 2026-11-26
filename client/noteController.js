@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { computed, nextTick, reactive, readonly, ref, shallowRef, watch } from "vue";
 import { createUuid } from "../shared/uuid.ts";
+import { identityOwnerKey } from "../shared/identity_session.ts";
 import { apiErrorHandler, deleteNote, getNote } from "./api.js";
 import { Note } from "./classes.js";
 import { authTypes, params } from "./constants.js";
@@ -28,7 +29,7 @@ import { createOperationOwner } from "./operationOwner.js";
 import { bindContext, createSessionContext, retiredContext } from "./sessionContext.js";
 
 // Ephemeral tab-session metadata, retained when the Note view is unmounted.
-const conflictBanners = new Map();
+const conflictBanners = reactive(new Map());
 
 /** Owns a mounted note's workflow. Views supply route/context readers, effects
  * and an editor port; all decisions and buffer ownership remain here. */
@@ -57,6 +58,7 @@ export function createNoteController({
 }) {
   const noteScope = ref(sessionKey());
   const lifetime = createSessionContext({ key: sessionKey });
+  const ownerScope = () => getContext().capabilities ? identityOwnerKey(getContext()) : sessionKey();
   const canModify = computed(() => noteScope.value === sessionKey() && (getContext().capabilities ? getContext().capabilities.canEdit === true : getContext().authType != authTypes.readOnly));
   const isNewNote = computed(() => !getContext().path);
   const editMode = ref(false);
@@ -68,7 +70,8 @@ export function createNoteController({
   const note = ref({});
   const vaultNotice = ref("");
   let deletedElsewhere = false;
-  const conflictOriginal = computed(() => conflictBanners.get(note.value.path) ?? "");
+  const conflictKey = path => JSON.stringify([ownerScope(), path]);
+  const conflictOriginal = computed(() => ownsNote() && canRead() ? conflictBanners.get(conflictKey(note.value.path)) ?? "" : "");
   const viewerRevision = ref(0);
   const newPath = ref();
   const editBasename = ref("");
@@ -163,8 +166,17 @@ export function createNoteController({
   const saveOwner = saveOwnerFactory({
     ownerId,
     capture: captureSessionLifetime,
+    captureAfterAuthentication: originalOwner => {
+      if (!editMode.value || ownerScope() !== originalOwner) return null;
+      if (getContext().capabilities) {
+        const key = sessionKey();
+        if (key == null || getContext().capabilities.canEdit !== true) return null;
+        noteScope.value = key;
+      }
+      return captureSessionLifetime();
+    },
     getState: () => ({ note: note.value, isNewNote: isNewNote.value, requestedPath: newPath.value,
-      contentRevision: contentRevision.value, pathRevision: pathRevision.value, identity: sessionKey(), canEdit: canModify.value }),
+      contentRevision: contentRevision.value, pathRevision: pathRevision.value, identity: sessionKey(), ownerScope: ownerScope(), canEdit: canModify.value }),
     getBuffer: currentBuffer, isContentChanged: isDirty,
     applyNote: result => { note.value = new Note(result); },
     applyPath: path => { newPath.value = path; editBasename.value = basenameOf(path ?? ""); editFolder.value = directoryFromPath(path ?? ""); },
@@ -201,7 +213,7 @@ export function createNoteController({
       vaultRefreshPending = false;
       deletedElsewhere = false;
       vaultNotice.value = "";
-      if (result.saveResult?.status === "conflict") conflictBanners.set(result.path, originalPath);
+      if (result.saveResult?.status === "conflict") conflictBanners.set(conflictKey(result.path), originalPath);
       if (result.saveResult?.status === "merged") notify("Merged with changes made elsewhere", "Note merged", "success");
       if (result.saveResult?.recreated) notify(`'${result.path}' was deleted elsewhere; your save re-created it`, "Note re-created", "success");
     },
@@ -209,6 +221,7 @@ export function createNoteController({
     invalid: message => notify(message, "Invalid", "error"),
     held: () => notify("This Save was captured and held. The queue is paused; no retry or resume was performed.", "Save held", "error"),
     failed: noteSaveFailure,
+    draftFailed: error => notify(`Could not update local draft storage: ${error.message ?? error}. Server Save is still available.`, "Local draft unavailable", "warn"),
   });
 
   function registerEditor(port) {
@@ -492,14 +505,13 @@ export function createNoteController({
   function contentChangedHandler() {
     if (isDirty()) {
       unsavedChanges.value = true; setUnload(true);
-      if (drafts.base) drafts.save(newPath.value, currentBuffer(), contentRevision.value, saveOwner.baseContent?.());
-      else drafts.save(newPath.value, currentBuffer(), contentRevision.value);
+      saveOwner.persistDraft();
     } else { unsavedChanges.value = false; setUnload(false); (drafts.clearClean ?? clearDraft)(); }
   }
   function clearDraft() { drafts.clear(); }
   function loadDraft() { return drafts.load(newPath.value, contentRevision.value); }
   function openConflictOriginal() {
-    const original = conflictBanners.get(note.value.path);
+    const original = conflictOriginal.value;
     if (original) return router.push({ path: notePath(original), hash: "" });
   }
   function reviewConflict() { return router.push(reviewConflictTarget(conflictInbox, note.value.path)); }

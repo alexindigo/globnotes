@@ -326,6 +326,7 @@ a draft retires older drafts for that note in both stores. Closing a tab with
 unsaved session-only work does not retire a remembered draft. Its original base
 is used for the normal merge or conflict path if the saved note has changed.
 
-These factories and capability-aware consumers are prepared only. The existing
-App/router/auth wiring remains active; account screens and production identity
-activation belong to the coordinated cutover.
+The Settings modal already uses the Settings session factory. Its capability-aware
+branches are inactive because the existing App config does not supply `capabilities`.
+The prepared identity factories do not replace the active App/router/auth wiring;
+account screens and production identity activation belong to the coordinated cutover.
