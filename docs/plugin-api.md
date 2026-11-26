@@ -43,8 +43,10 @@ note action either.
 
 During a pre-hook, nested note/file mutations and deferred mutating action
 requests are rejected; reads and the plugin's own private data writes are
-allowed. A failed enabled guard stays an expected blocker until it recovers
-or is explicitly disabled — a crash never silently removes protection.
+allowed. Managed callbacks and timers created by a guard keep its restrictions
+regardless of how they are later dispatched. A failed enabled guard stays an
+expected blocker until it recovers or is explicitly disabled: a crash never
+silently removes protection.
 
 Guard admission has a separate bounded lane: one active and one pending guard.
 An active observer or full ordinary FIFO cannot block that lane. Ordinary work
@@ -610,8 +612,8 @@ not a durable receipt, rollback, exactly-once delivery or backup guarantee.
 
 ## Deferred actions and invocation lifetime
 
-Preparatory identity callers retain a host-only viewer and concrete vault through
-render, command, endpoint, hook and action work. Managed registrations are admitted
+Preparatory identity callers retain a host-only viewer bound to the admitted vault
+through render, command, endpoint, hook and action work. Managed registrations are admitted
 before arming and keep that viewer after normal handler return. Every mediated
 effect and disclosure checks fresh live authority, intersected with plugin grants,
 source and generation. Workers receive correlation IDs, never leases or identity.
@@ -637,9 +639,10 @@ Manifest grants, current writable policy and generation authority still apply.
 Host-dispatched commands, endpoints and hook/result callbacks each have their own
 internal invocation context. Awaiting a delay or RPC preserves that invocation;
 resolving its promise from a managed timer does not turn its continuation into
-background work. Without a viewer, managed timer callbacks remain separate
-generation-background executions. An unrelated slow observer or pre-hook cannot
-lend its protection flag or causal parent to background work.
+background work. Managed timer callbacks inherit the scheduling context's
+restrictions and causal ancestry. Unrestricted timers with no triggering fact
+run as separate generation-background executions; an unrelated slow observer
+or pre-hook cannot lend its protection flag or causal parent to background work.
 Detached native timers/continuations from a completed invocation cannot issue new
 RPCs by borrowing a later job or silently becoming background work.
 

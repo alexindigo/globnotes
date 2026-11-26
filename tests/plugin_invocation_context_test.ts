@@ -22,9 +22,82 @@ import { testEnvironment } from "./helpers/environment.ts";
 import { done, pending as waitPending, waitUntil } from "./helpers/wait.ts";
 import { workMilestone } from "./helpers/product_settlement.ts";
 import { createOperationLease } from "../server/operation_lease.ts";
+import { withPluginFixture } from "./helpers/plugin_fixture.ts";
 
 function deferred<T>() {
   return Promise.withResolvers<T>();
+}
+
+for (const withViewer of [false, true]) {
+  Deno.test(`plugin context: a pre-hook's registered handler and timer stay restricted (viewer=${withViewer})`, () =>
+    withPluginFixture(async (fixture, scope) => {
+      const dir = await fixture.install("guard-resources", {
+        runtime: { server: "service.js" },
+        hooks: ["pre-save"],
+      }, {
+        "service.js":
+          `let timer=Promise.withResolvers();export function activate(ctx){
+          const inspect = async label => {
+            await ctx.readNote(label);
+            const outcomes=[];
+            for(const operation of [()=>ctx.actions.request('create',{path:'fixture'}),()=>ctx.files.requestWrite('fixture.bin',new Uint8Array([1])),()=>ctx.fs.writeFile('fixture.bin',new Uint8Array([1]))]){
+              try { await operation(); outcomes.push('accepted'); } catch { outcomes.push('denied'); }
+            }
+            return outcomes;
+          };
+          ctx.hooks.on('pre-save',()=>{
+            ctx.commands.register({id:'callback',label:'Callback',target:'server'},inspect);
+            ctx.timers.setTimeout(async()=>timer.resolve(await inspect('timer')),0);
+          });
+          ctx.commands.register({id:'timer',label:'Timer',target:'server'},()=>timer.promise);
+        }`,
+      });
+      const reads = new Map<string, [boolean, boolean]>();
+      const writes: string[] = [];
+      const host = (await scope.acquire(() =>
+        new PluginHost(
+          readManifest(dir),
+          fixture.vault,
+          (method, args, authority) => {
+            if (method === "readNote") {
+              reads.set(String(args[0]), [authority!.pre, !!authority!.viewer]);
+            } else writes.push(method);
+            return Promise.resolve(null);
+          },
+          1,
+          { role: "service" },
+        ), (host) => host.stop())).value;
+      await host.start();
+      const handler = (name: string) =>
+        [...host.registrations].find(([, value]) => value.id === name)![0];
+      const retained = createOperationLease("retained", [() => {}]).lease;
+      const viewer = withViewer
+        ? {
+          retained,
+          operation: () =>
+            createOperationLease("live", [() => {}], [retained]).lease,
+          assertCurrent() {},
+          sessionCurrent: () => true,
+        }
+        : undefined;
+      await host.invoke(handler("pre-save"), [], true, host.limits.preHookMs, {
+        viewer,
+      });
+      assert(handler("callback"), "the originating guard registered a handler");
+      const denied = ["denied", "denied", "denied"];
+      assertEquals([
+        await host.invoke(handler("callback"), ["ordinary"]),
+        await host.invoke(handler("callback"), ["guard"], true),
+        await host.invoke(handler("timer"), []),
+      ], [denied, denied, denied]);
+      assertEquals(
+        [...reads].sort(),
+        ["guard", "ordinary", "timer"].map((
+          name,
+        ) => [name, [true, withViewer]]),
+      );
+      assertEquals(writes, []);
+    }));
 }
 async function bounded<T>(promise: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;

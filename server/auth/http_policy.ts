@@ -23,6 +23,12 @@ export const HTTP_OPERATIONS = [
 export type HttpOperation = typeof HTTP_OPERATIONS[number];
 export type InstanceAuth = ReturnType<typeof createInstanceAuth>;
 export type HttpLease = InstanceAuthorityLease | VaultAuthorityLease;
+type VaultReadOperation = "readVault" | "manageVault";
+type ReadLeases =
+  & { session: InstanceAuthorityLease }
+  & {
+    [K in VaultReadOperation]: VaultAuthorityLease;
+  };
 
 declare module "@pathfinder/pathfinder" {
   interface State {
@@ -182,6 +188,13 @@ export async function replacePrivateResponse(
 /** Discovered metadata, not a path or HTTP-method switchboard. Mixed surfaces
  * bind their own operation-qualified lease in catch-all/MCP consumers. */
 export function createHttpPolicy(auth: InstanceAuth) {
+  const readLease: {
+    [K in keyof ReadLeases]: (request: Request) => Promise<ReadLeases[K]>;
+  } = {
+    session: (request) => auth.instanceLease(request, "readInstance"),
+    readVault: (request) => auth.lease(request, "readVault"),
+    manageVault: (request) => auth.lease(request, "manageVault"),
+  };
   return Object.freeze({
     async admit(
       request: Request,
@@ -210,21 +223,20 @@ export function createHttpPolicy(auth: InstanceAuth) {
     },
     async read(
       request: Request,
-      operation: "readVault" | "manageVault",
-      prepare: () => Promise<Response>,
+      operation: VaultReadOperation,
+      prepare: (lease: VaultAuthorityLease) => Promise<Response>,
     ): Promise<Response> {
       const lease = await auth.lease(request, operation);
-      return protectPrivateResponse(lease, await prepare());
+      lease.assertCurrent();
+      return protectPrivateResponse(lease, await prepare(lease));
     },
-    async json<T>(
+    async json<T, K extends keyof ReadLeases>(
       request: Request,
-      operation: "session" | "readVault" | "manageVault",
-      prepare: () => Promise<T>,
+      operation: K,
+      prepare: (lease: ReadLeases[K]) => Promise<T>,
     ): Promise<Response> {
-      const lease = operation === "session"
-        ? await auth.instanceLease(request, "readInstance")
-        : await auth.lease(request, operation);
-      const handle = await lease.read(prepare);
+      const lease = await readLease[operation](request);
+      const handle = await lease.read(() => prepare(lease));
       return new Response(lease.body(handle), {
         headers: { "content-type": "application/json" },
       });

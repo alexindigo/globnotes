@@ -8,13 +8,17 @@ import {
 } from "../../shared/ownership.js";
 
 export type ReleaseOutcome = { status: "settled" } | { status: "aborted" };
+export interface ExecutionProvenance {
+  readonly pre: boolean;
+  readonly viewer?: ViewerAuthority;
+  readonly causal: Readonly<{ parentId?: string; depth: number }>;
+}
 export interface ExecutionContext {
   readonly resources: OwnershipScope;
-  readonly viewer?: ViewerAuthority;
+  readonly provenance: ExecutionProvenance;
   retained?: boolean;
   parentId?: string;
-  reference: InvocationReference;
-  causal: { parentId?: string; depth: number };
+  readonly reference: InvocationReference;
   open: boolean;
   release: Promise<ReleaseOutcome>;
   settle(outcome: ReleaseOutcome): void;
@@ -24,18 +28,19 @@ export interface ExecutionContext {
 /** Host-owned record. IDs correlate execution, never confer manifest grants. */
 export function executionContext(
   kind: InvocationReference["kind"],
-  pre: boolean,
-  causal: ExecutionContext["causal"] = { depth: 0 },
-  viewer?: ViewerAuthority,
+  { pre, viewer, causal }: ExecutionProvenance,
 ): ExecutionContext {
   const resources = createOwnershipScope();
   let resolve!: (outcome: ReleaseOutcome) => void;
   let settled = false;
   const context: ExecutionContext = {
     resources,
-    viewer,
+    provenance: Object.freeze({
+      pre,
+      viewer,
+      causal: Object.freeze({ parentId: causal.parentId, depth: causal.depth }),
+    }),
     reference: Object.freeze({ id: createUuid(), kind, pre }),
-    causal: Object.freeze({ parentId: causal.parentId, depth: causal.depth }),
     open: true,
     release: new Promise((yes) => {
       resolve = yes;

@@ -233,7 +233,8 @@ interface Job {
   kind: "call" | "invoke" | "dispose";
   name: string;
   args: unknown[];
-  pre: boolean;
+  /** Queue lane, independent of the actual invocation's restrictions. */
+  guard: boolean;
   target?: Slot;
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -248,13 +249,13 @@ interface ViewerSource {
 }
 interface Slot {
   worker: Worker;
-  generation: string;
+  readonly generation: string;
   ready: boolean;
   usable: boolean;
   retired: boolean;
   generationRetired: Promise<void>;
   retireGeneration(): void;
-  source?: Source;
+  readonly source?: Source;
   exports: Set<string>;
   startIdentity: object;
   initialization: "pending" | "running" | "complete";
@@ -479,9 +480,10 @@ export class PluginHost {
           this.viewerRefusals.add(refusal);
           for (const slot of this.slots) {
             for (const context of slot.contexts.values()) {
+              const viewer = context.provenance.viewer;
               if (
-                context.retained && context.open && context.viewer &&
-                this.viewerBindings.get(context.viewer)?.sources.has(source)
+                context.retained && context.open && viewer &&
+                this.viewerBindings.get(viewer)?.sources.has(source)
               ) this.releaseContext(slot, context, true);
             }
           }
@@ -519,18 +521,19 @@ export class PluginHost {
     if (!parent.open || !this.valid(slot) || this.stopping) {
       throw new Error("context closed");
     }
-    if (!parent.viewer) return slot.background;
-    parent.viewer.assertCurrent();
+    const { viewer, pre, causal } = parent.provenance;
+    if (!viewer && !pre && !causal.parentId && causal.depth === 0) {
+      return slot.background;
+    }
+    viewer?.assertCurrent();
     if (
-      [...slot.contexts.values()].filter((context) => context.retained)
-        .length >= VIEWER_CONTINUATION_LIMIT
+      viewer &&
+      [...slot.contexts.values()].filter((context) =>
+          context.retained && context.provenance.viewer
+        )
+          .length >= VIEWER_CONTINUATION_LIMIT
     ) throw new Error("viewer continuation capacity exhausted");
-    const child = executionContext(
-      "continuation",
-      parent.reference.pre,
-      parent.causal,
-      parent.viewer,
-    );
+    const child = executionContext("continuation", parent.provenance);
     child.retained = true;
     this.ownContext(slot, parent, child, true);
     return child;
@@ -746,7 +749,10 @@ export class PluginHost {
         rejectReady,
         readyPromise,
         startupSettlement: readyPromise.then(() => undefined, () => undefined),
-        background: executionContext("background", false),
+        background: executionContext("background", {
+          pre: false,
+          causal: { depth: 0 },
+        }),
         contexts: new Map(),
         resources: createOwnershipScope(),
         handlerContexts: new Map(),
@@ -930,7 +936,7 @@ export class PluginHost {
                 throw new Error("registration context is not retained");
               }
               try {
-                context.viewer?.assertCurrent();
+                context.provenance.viewer?.assertCurrent();
               } catch {
                 return;
               }
@@ -952,9 +958,7 @@ export class PluginHost {
               registrationDependencies(data.registration).length &&
               slot.initialization !== "pending"
             ) throw new Error("job dependencies are sealed");
-            if (context.retained) {
-              slot.handlerContexts.set(data.handlerId, context);
-            }
+            slot.handlerContexts.set(data.handlerId, context);
             this.registry.set(
               data.handlerId,
               structuredClone(data.registration),
@@ -975,7 +979,7 @@ export class PluginHost {
             this.serviceJobs.required(removed.id);
           this.registry.delete(data.handlerId);
           const context = slot.handlerContexts.get(data.handlerId);
-          if (context) this.releaseContext(slot, context);
+          if (context?.retained) this.releaseContext(slot, context);
           slot.handlerContexts.delete(data.handlerId);
           if (removed?.kind === "job" && !requiredJob && !this.stopping) {
             this.serviceJobs.remove(removed.id);
@@ -1025,7 +1029,7 @@ export class PluginHost {
             slot.activeVersioning = null;
           } else slot.active = null;
           try {
-            job.context.viewer?.assertCurrent();
+            job.context.provenance.viewer?.assertCurrent();
             if (data.ok) job.resolve(data.value);
             else {
               job.reject(
@@ -1066,7 +1070,7 @@ export class PluginHost {
                 value = this.retainContext(slot, context).reference;
               } else if (data.method === "context.begin") {
                 if (
-                  !context.retained || !context.viewer ||
+                  !context.retained ||
                   [...slot.contexts.values()].some((child) =>
                     child.parentId === context.reference.id
                   )
@@ -1075,12 +1079,10 @@ export class PluginHost {
                     "continuation is unavailable or already running",
                   );
                 }
-                context.viewer.assertCurrent();
+                context.provenance.viewer?.assertCurrent();
                 const child = executionContext(
                   "invocation",
-                  context.reference.pre,
-                  context.causal,
-                  context.viewer,
+                  context.provenance,
                 );
                 child.parentId = context.reference.id;
                 this.ownContext(slot, context, child, false);
@@ -1152,7 +1154,10 @@ export class PluginHost {
             return;
           }
           const receipt = receiptRequired
-            ? executionContext("background", false)
+            ? executionContext("background", {
+              pre: false,
+              causal: { depth: 0 },
+            })
             : undefined;
           if (receipt) {
             const timer = this.clock.deadline(NETWORK_LIMITS.receiptMs, () => {
@@ -1166,6 +1171,7 @@ export class PluginHost {
             });
           }
           const generation = slot.generation, source = slot.source;
+          const { viewer, pre, causal } = context.provenance;
           const sourceBinding = source ? { ...source } : undefined;
           let effect: FsEffect = "none";
           let viewerDenied: "read" | "operation" | undefined;
@@ -1181,9 +1187,9 @@ export class PluginHost {
               !sourceCurrent || !generationCurrent() || !context.open ||
               slot.generation !== generation || slot.source !== source
             ) return false;
-            if (context.viewer) {
+            if (viewer) {
               try {
-                context.viewer.assertCurrent(rpcOperation(data.method));
+                viewer.assertCurrent(rpcOperation(data.method));
               } catch (error) {
                 viewerDenied = error instanceof Error &&
                     this.viewerRefusals.has(error)
@@ -1218,7 +1224,7 @@ export class PluginHost {
             generation,
             id: data.id,
             ok: false,
-            value: context.viewer
+            value: viewer
               ? "plugin operation denied"
               : error instanceof Error
               ? error.message
@@ -1283,7 +1289,7 @@ export class PluginHost {
               },
             );
             const authority: RpcAuthority = {
-              viewer: context.viewer,
+              viewer,
               reportFsEffect: filesystem
                 ? (outcome) => effect = outcome
                 : undefined,
@@ -1300,9 +1306,9 @@ export class PluginHost {
               },
               generation: slot.generation,
               role: this.role,
-              // The host's current job determines protection, never a worker flag.
-              pre: context.reference.pre,
-              causal: context.causal,
+              // The originating host context determines protection, never a worker flag.
+              pre,
+              causal,
               current,
               generationCurrent,
               release: context.release,
@@ -1689,7 +1695,7 @@ export class PluginHost {
         kind,
         name,
         args,
-        pre,
+        guard: pre,
         target,
         invocation,
         resolve: (value) => {
@@ -1840,18 +1846,29 @@ export class PluginHost {
     // A retired owner or scrubbed candidate must never enter a Worker merely
     // because it was admitted while an earlier ordinary job was still running.
     let args: unknown[];
-    const owner = slot.handlerContexts.get(job.name);
-    const viewer = this.bindViewer(owner?.viewer, job.invocation?.viewer);
+    const owner = job.kind === "invoke"
+      ? slot.handlerContexts.get(job.name)
+      : undefined;
+    const registered = owner?.provenance;
+    const viewer = this.bindViewer(registered?.viewer, job.invocation?.viewer);
+    const sourceCause = job.invocation?.causal;
+    const assertRegistration = () => {
+      // Registration and all of its invocations share this slot's grants and source.
+      if (
+        job.kind === "invoke" &&
+        (!owner?.open || slot.handlerContexts.get(job.name) !== owner)
+      ) {
+        throw new Error("plugin handler unavailable");
+      }
+    };
     try {
-      if (owner && !owner.open) throw new Error("handler context retired");
+      assertRegistration();
       viewer?.assertCurrent();
       args = job.invocation?.prepareArgs?.() ?? job.args;
       // Inspect argument getters/clone before the final viewer fence and post.
       args = structuredClone(args);
       viewer?.assertCurrent();
-      if (job.kind === "invoke" && !this.registrations.has(job.name)) {
-        throw new Error("plugin handler unavailable");
-      }
+      assertRegistration();
     } catch (error) {
       job.timer();
       job.reject(
@@ -1861,13 +1878,21 @@ export class PluginHost {
     }
     job.context = executionContext(
       job.kind === "dispose" ? "disposal" : "invocation",
-      job.pre,
-      job.invocation?.causal,
-      viewer,
+      {
+        pre: job.guard || registered?.pre === true,
+        viewer,
+        causal: {
+          parentId: sourceCause?.parentId ?? registered?.causal.parentId,
+          depth: Math.max(
+            sourceCause?.depth ?? 0,
+            registered?.causal.depth ?? 0,
+          ),
+        },
+      },
     );
     slot.contexts.set(job.context.reference.id, job.context);
     // pump owns lane eligibility; an admitted guard never supersedes another.
-    if (job.pre && this.role === "service") {
+    if (job.guard && this.role === "service") {
       slot.activeGuard = job;
     } else if (
       this.role === "service" && job.invocation?.lane === "versioning"
@@ -1891,7 +1916,7 @@ export class PluginHost {
         ...common,
         handlerId: job.name,
         args,
-        pre: job.pre,
+        pre: job.context.provenance.pre,
       }
       : job.kind === "dispose"
       ? { type: "dispose", ...common }
@@ -2126,7 +2151,7 @@ export class PluginHost {
       for (const context of [...slot.contexts.values()]) {
         if (!context.retained || !context.open) continue;
         try {
-          context.viewer?.assertCurrent();
+          context.provenance.viewer?.assertCurrent();
         } catch { /* the viewer owner retired its resources */ }
       }
       if (this.role !== "render" && this.failedDetail) return;
@@ -2171,9 +2196,9 @@ export class PluginHost {
     const cancelled = [
       ...this.guardQueue.splice(0),
       ...this.versioningQueue.splice(0),
-      ...this.queue.filter((job) => job.pre),
+      ...this.queue.filter((job) => job.guard),
     ];
-    this.queue = this.queue.filter((job) => !job.pre);
+    this.queue = this.queue.filter((job) => !job.guard);
     for (const job of cancelled) {
       job.timer();
       job.reject(new Error("plugin guard owner disabled before execution"));

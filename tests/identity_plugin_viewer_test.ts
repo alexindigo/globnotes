@@ -30,12 +30,13 @@ import { METADATA_LIMITS } from "../server/metadata/contracts.ts";
 import { WorkerDeliveryGate } from "./helpers/worker_liveness.ts";
 
 const source =
-  `let status=Promise.withResolvers(), fsOutcome, observedCause=Promise.withResolvers();export function activate(ctx){
+  `let status=Promise.withResolvers(), fsOutcome, endpointVisits=0, observedCause=Promise.withResolvers();export function enteredEndpoint(){endpointVisits++;}export function activate(ctx){
   const follow = kind => ctx.actions.request('create',{path:'causal-output',content:kind,base:{kind:'absent'}});
   ctx.hooks.on('on-create',fact=>{if(fact.path==='causal-input')return follow('create');if(fact.path==='causal-output')observedCause.resolve([fact.causalParent,fact.causalDepth]);});
   ctx.hooks.on('on-sync',fact=>{if(fact.operationId==='source-sync')return follow('sync');});
   ctx.commands.register({id:'causal-result',label:'Causal result',target:'server'},()=>observedCause.promise);
   ctx.commands.register({id:'echo',label:'Echo',target:'server'},payload=>payload);
+  ctx.commands.register({id:'endpoint-visits',label:'Endpoint visits',target:'server'},()=>endpointVisits);
   ctx.commands.register({id:'timer',label:'Timer',target:'server'},()=>{
     status=Promise.withResolvers();ctx.timers.setTimeout(async()=>{try{await ctx.readNote('gate');
       const receipt=await ctx.actions.request('create',{path:'viewer-output',content:'live-edit',base:{kind:'absent'}});
@@ -69,7 +70,7 @@ async function withViewer(run: (f: ViewerFixture) => Promise<void>) {
     files: {
       "service.js": source,
       "endpoints/get.js":
-        `export default async function(request,ctx){if(request.query.length){await ctx.readNote('gate');return 'private';}let outcome,requestId;try{requestId=(await ctx.actions.request('create',{path:'endpoint-output',content:'endpoint-live-edit',base:{kind:'absent'}})).requestId;outcome='accepted';}catch{outcome='denied';}return {outcome,requestId,headers:request.headers,snapshot:ctx.snapshot};}`,
+        `import {enteredEndpoint} from '../service.js';export default async function(request,ctx){enteredEndpoint();if(request.query.length){await ctx.readNote('gate');return 'private';}let outcome,requestId;try{requestId=(await ctx.actions.request('create',{path:'endpoint-output',content:'endpoint-live-edit',base:{kind:'absent'}})).requestId;outcome='accepted';}catch{outcome='denied';}return {outcome,requestId,headers:request.headers,snapshot:ctx.snapshot};}`,
     },
     fault: async (method, args, boundary) => {
       if (
@@ -407,6 +408,82 @@ Deno.test("identity viewer: filesystem refusal preserves effect status and no su
       assertEquals(Deno.readTextFileSync(filename), "A");
     });
   }));
+
+for (
+  const route of ["proxy", "render-get", "render-post", "command"] as const
+) {
+  Deno.test(`identity viewer: ${route} does not enter work after the admitted vault is replaced`, () =>
+    withViewer(async (f) => {
+      f.policy("edit");
+      const previous = state.pluginEndpoints;
+      f.scope.defer(() => {
+        state.pluginEndpoints = previous;
+      });
+      state.pluginEndpoints = new PluginEndpoints(() => f.runtime);
+      const milestones: string[] = [];
+      const auth = {
+        ...f.auth,
+        async lease(...args: Parameters<typeof f.auth.lease>) {
+          const lease = await f.auth.lease(...args);
+          lease.assertCurrent();
+          milestones.push("admitted");
+          f.replace();
+          f.authority.viewer(f.token.principal).assertCurrent("editNotes");
+          milestones.push("replacement current");
+          return lease;
+        },
+      };
+      const raw = new Request(
+        `http://fixture/${route === "proxy" ? "_/api/plugins/viewer/" : route}`,
+        { headers: { authorization: `Bearer ${f.token.access_token}` } },
+      );
+      const request = {
+        _raw: raw,
+        method: "GET",
+        headers: raw.headers,
+        params: {
+          id: f.id,
+          command: "direct",
+          get path() {
+            milestones.push("read note");
+            return "gate";
+          },
+        },
+        query: new URLSearchParams(),
+        body: {
+          get stream() {
+            milestones.push("acquire stream");
+            return null;
+          },
+          text() {
+            milestones.push("acquire text");
+            return Promise.resolve("buffer");
+          },
+          json() {
+            milestones.push("acquire json");
+            return Promise.resolve({});
+          },
+        },
+      };
+      const invoke = () =>
+        route === "proxy"
+          ? createIdentityPluginProxy(auth)(request)
+          : route === "render-get"
+          ? createIdentityNoteRender(auth)(
+            request as unknown as PathfinderRequest<{ path: string }>,
+          )
+          : route === "render-post"
+          ? createIdentityRender(auth)(request as unknown as PathfinderRequest)
+          : createIdentityPluginCommand(auth, f.runtime)(
+            request as unknown as PathfinderRequest,
+          );
+      await assertRejects(invoke, OperationError, "Access policy changed");
+      assertEquals(milestones, ["admitted", "replacement current"]);
+      assertEquals(await f.command("endpoint-visits"), 0);
+      assertEquals(absent(`${f.fixture.vault}/endpoint-output.md`), true);
+      assertEquals(absent(`${f.fixture.vault}/direct-output.md`), true);
+    }));
+}
 
 Deno.test("identity viewer: fresh bundle projections, replacement and prepared render consumption", () =>
   withViewer(async (f) => {

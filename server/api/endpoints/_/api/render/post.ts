@@ -11,8 +11,7 @@ export function createIdentityRender(
 ) {
   const policy = createHttpPolicy(auth);
   return async (request: PathfinderRequest) => {
-    return await policy.read(request._raw, "readVault", async () => {
-      const viewer = await auth.viewer(request._raw);
+    return await policy.read(request._raw, "readVault", async ({ viewer }) => {
       const content = await request.body.text();
       const html = await renderMarkdown(content, {
         viewer,

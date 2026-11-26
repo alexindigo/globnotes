@@ -14,8 +14,7 @@ export function createIdentityPluginCommand(
 ) {
   const policy = createHttpPolicy(auth);
   return async (request: PathfinderRequest) => {
-    return await policy.json(request._raw, "readVault", async () => {
-      const viewer = await auth.viewer(request._raw);
+    return await policy.json(request._raw, "readVault", async ({ viewer }) => {
       const payload = await request.body.json();
       const result = await runtime.invokeCommand(
         String(request.params.id),

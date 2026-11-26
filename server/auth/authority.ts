@@ -78,6 +78,7 @@ export interface VaultAuthorityLease
   readonly aclRevision: number;
   readonly operation: VaultOperation;
   readonly principal: Principal;
+  readonly viewer: ViewerAuthority;
 }
 function unauthorized(): never {
   throw new HttpError(401, "Invalid authentication credentials.", {
@@ -237,45 +238,49 @@ export class InstanceAuthority {
       (context) => this.currentVault(context),
     );
     const vault = selected ? Object.freeze({ ...selected }) : null;
-    return (admittedPrincipal) => {
-      const principal = Object.freeze({ ...admittedPrincipal });
-      const { lease: retained } = createOperationLease("retained", [
-        (_id, native) =>
-          withAuthorityContext(native, (context) => {
-            this.#principal(principal, context);
-            if (
-              !vault || !sameAuthorityVault(this.currentVault(context), vault)
-            ) {
-              changed();
-            }
-            if (!vault.lifecycle.operational(context)) changed();
-            return undefined;
-          }),
-      ], [lifetime]);
-      if (!this.capabilities(principal, vault).canRead) forbidden();
-      const operation = (required: VaultOperation = "readVault") => {
-        assertOperationLease(retained, "retained");
-        return createOperationLease("live", [() => {}], [
-          retained,
-          this.lease(principal, required).lease,
-        ]).lease;
-      };
-      return Object.freeze({
-        retained,
-        operation,
-        assertCurrent: (required?: VaultOperation) => {
-          operation(required).assertCurrent();
-        },
-        sessionCurrent: () => {
-          try {
-            assertOperationLease(retained, "retained");
-            return true;
-          } catch {
-            return false;
+    return (principal) =>
+      this.#bindViewer(Object.freeze({ ...principal }), vault);
+  }
+  #bindViewer(
+    principal: Principal,
+    vault: AuthorityVault | null,
+  ): ViewerAuthority {
+    const { lease: retained } = createOperationLease("retained", [
+      (_id, native) =>
+        withAuthorityContext(native, (context) => {
+          this.#principal(principal, context);
+          if (
+            !vault || !sameAuthorityVault(this.currentVault(context), vault)
+          ) {
+            changed();
           }
-        },
-      });
+          if (!vault.lifecycle.operational(context)) changed();
+          return undefined;
+        }),
+    ], [this.lifetime]);
+    if (!this.capabilities(principal, vault).canRead) forbidden();
+    const operation = (required: VaultOperation = "readVault") => {
+      assertOperationLease(retained, "retained");
+      return createOperationLease("live", [() => {}], [
+        retained,
+        this.#prepareLease(required, vault ?? changed())(principal).lease,
+      ]).lease;
     };
+    return Object.freeze({
+      retained,
+      operation,
+      assertCurrent: (required?: VaultOperation) => {
+        operation(required).assertCurrent();
+      },
+      sessionCurrent: () => {
+        try {
+          assertOperationLease(retained, "retained");
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    });
   }
   viewer(principal: Principal): ViewerAuthority {
     return this.prepareViewer()(principal);
@@ -285,13 +290,19 @@ export class InstanceAuthority {
   prepareLease(
     operation: VaultOperation,
   ): (principal: Principal) => VaultAuthorityLease {
+    return this.#prepareLease(operation);
+  }
+  #prepareLease(
+    operation: VaultOperation,
+    boundVault?: AuthorityVault,
+  ): (principal: Principal) => VaultAuthorityLease {
     const lifetime = this.lifetime;
     assertOperationLease(lifetime, "live");
     // Capture now, but report target/storage errors only after authenticating.
     // A failed capture is retained too; it must never be retried under a new owner.
     const captured = withAuthorityContext(undefined, (context) => {
       try {
-        const selected = this.currentVault(context);
+        const selected = boundVault ?? this.currentVault(context);
         if (!selected || selected.id !== selected.acl.vaultId) {
           throw new HttpError(404, "Vault unavailable.");
         }
@@ -357,6 +368,9 @@ export class InstanceAuthority {
         (id, native) =>
           withAuthorityContext(native, (context) => guard(context, id)),
       ], [lifetime]);
+      // Retained viewer operations may see fresh ACLs, but can never select a
+      // different vault from the live lease which admitted the caller.
+      const viewer = this.#bindViewer(principal, vault);
       const assertCurrent = lease.assertCurrent;
       assertCurrent();
       return Object.freeze({
@@ -366,7 +380,7 @@ export class InstanceAuthority {
         aclRevision: snapshot.value.revision,
         operation,
         principal: Object.freeze({ ...principal }),
-        viewer: this.viewer(principal),
+        viewer,
         epoch,
         assertCurrent,
       });

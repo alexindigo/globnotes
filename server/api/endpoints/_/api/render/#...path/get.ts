@@ -15,8 +15,7 @@ export function createIdentityNoteRender(
 ) {
   const policy = createHttpPolicy(auth);
   return async (request: PathfinderRequest<{ path: string }>) => {
-    return await policy.read(request._raw, "readVault", async () => {
-      const viewer = await auth.viewer(request._raw);
+    return await policy.read(request._raw, "readVault", async ({ viewer }) => {
       return await renderNote(request, viewer);
     });
   };
